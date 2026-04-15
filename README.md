@@ -37,4 +37,31 @@ bun run start
 
 ## 配置文件
 
-程序配置存储在 `~/.moss/settings.json`。你可以手动修改该文件来配置自定义的 API 地址（如 MiniMax）、模型名称或环境变量。UI 的设置页面会以增量方式更新此文件，不会删除你手动添加的自定义 Key。
+程序配置存储在 `~/.moss/settings.json`。你可以手动修改该文件来配置自定义的 API 地址、模型名称或环境变量。
+
+### 配置示例
+
+```json
+{
+  "model": "MiniMax-M2.7",
+  "bypassPermissions": true,
+  "maxTurns": 100,
+  "thinkingMode": "disabled",
+  "thinkingBudgetTokens": 16000,
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "your-api-key"
+  }
+}
+```
+
+### 参数说明
+
+- **model**: 指定使用的模型名称。
+- **bypassPermissions**: 是否跳过工具执行的权限确认（建议仅在受控环境下开启）。
+- **maxTurns**: 单次会话的最大轮数。
+- **thinkingMode**: 思考模式配置（如 `disabled`, `enabled`）。
+- **thinkingBudgetTokens**: 思考过程的 Token 预算。
+- **env**: 环境变量配置，可用于设置 `ANTHROPIC_BASE_URL` (API 中转地址) 和 `ANTHROPIC_AUTH_TOKEN` (API Key)。
+
+UI 的设置页面会以增量方式更新此文件，不会删除你手动添加的自定义 Key。

@@ -21,16 +21,12 @@ import type { CanUseToolFn } from './utils/permissions/permissions.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverrideGenerator } from './utils/cwd.js'
 
-// 全局初始化，只执行一次
-let globalInitDone = false
-function ensureGlobalInit() {
-  if (globalInitDone) return
-  globalInitDone = true
-  enableConfigs()
-}
+import { bootstrapHeadless } from './bootstrap/headless.js'
+import type { Message } from './types/message.js'
 
+// 全局初始化，只执行一次
 export function getAuthDebugSnapshot() {
-  ensureGlobalInit()
+  enableConfigs()
 
   const settings = getSettings_DEPRECATED() || {}
   const globalConfig = getGlobalConfig()
@@ -100,9 +96,11 @@ export class ClaudeSession {
   async #getEngine(): Promise<QueryEngine> {
     if (this.#engine) return this.#engine
 
-    ensureGlobalInit()
-
     const { cwd, model, appendSystemPrompt, permissionMode, onPermissionRequest, maxTurns, thinkingConfig } = this.#opts
+
+    // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
+    const bootstrapResult = await bootstrapHeadless(cwd)
+    const { initialMessages, mcp } = bootstrapResult
 
     // 权限上下文
     const permissionContext = {
@@ -122,6 +120,12 @@ export class ClaudeSession {
     const store = createStore(
       {
         ...getDefaultAppState(),
+        mcp: {
+          ...getDefaultAppState().mcp,
+          clients: mcp.clients,
+          commands: mcp.commands,
+          tools: mcp.tools,
+        },
         toolPermissionContext: permissionContext,
       },
       () => {},
@@ -141,7 +145,7 @@ export class ClaudeSession {
       cwd,
       tools,
       commands,
-      mcpClients: [],
+      mcpClients: mcp.clients,
       agents: [],
       canUseTool,
       getAppState: () => store.getState(),
@@ -151,6 +155,7 @@ export class ClaudeSession {
       appendSystemPrompt: appendSystemPrompt || undefined,
       thinkingConfig,
       maxTurns,
+      initialMessages,
     })
 
     return this.#engine
