@@ -33,9 +33,21 @@ function formatRelativeTime(timestamp: number): string {
   return `${Math.floor(diff / day)}天前`;
 }
 
+function formatSidebarPreview(preview: string): string {
+  const raw = String(preview || '').trim();
+  if (!raw) return '';
+
+  const withoutFence = raw.includes('```') ? raw.split('```')[0] : raw;
+  const singleLine = withoutFence.replace(/\s+/g, ' ').trim();
+  if (!singleLine) return '';
+
+  return singleLine.length > 48 ? `${singleLine.slice(0, 48)}...` : singleLine;
+}
+
 function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) {
   return summaries.map((session) => ({
     ...session,
+    preview: formatSidebarPreview(session.preview),
     time: formatRelativeTime(session.updatedAt),
     isPinned: pinnedIds.has(session.id),
   }));
@@ -76,7 +88,6 @@ function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>
 export default function App() {
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [authNotice, setAuthNotice] = React.useState('');
   const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
@@ -248,15 +259,9 @@ export default function App() {
     void (async () => {
       try {
         const status = await window.agentDesktop.getStatus();
-        const authDebug = await window.agentDesktop.getAuthDebug();
         const nextSettings = await window.agentDesktop.getSettings();
         if (!status.cliReady) {
           setBootError('缺少 cli-node.js。先在仓库根目录执行 bun run build:node。');
-        }
-        if (authDebug) {
-          setAuthNotice(
-            `认证: apiKey=${authDebug.apiKeySource || 'none'} / token=${authDebug.authTokenSource || 'none'}`
-          );
         }
         applyDesktopSettings(nextSettings);
         await refreshApps();
@@ -394,6 +399,12 @@ export default function App() {
   const handleNewSession = React.useCallback(async () => {
     const created = await window.agentDesktop.createSession({});
     await openSession(created.summary.id);
+    setActiveView('chat');
+  }, [openSession]);
+
+  const handleSelectSession = React.useCallback(async (sessionId: string) => {
+    await openSession(sessionId);
+    setActiveView('chat');
   }, [openSession]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
@@ -510,6 +521,11 @@ export default function App() {
   const handleRefreshWorkspace = React.useCallback(async () => {
     await refreshWorkspaceSnapshot();
   }, [refreshWorkspaceSnapshot]);
+
+  const handleOpenWorkspace = React.useCallback(async () => {
+    if (!activeSessionId) return;
+    await window.agentDesktop.openWorkspace({ sessionId: activeSessionId });
+  }, [activeSessionId]);
 
   const handleToggleFolder = React.useCallback(async (path: string) => {
     const next = new Set(expandedDirs);
@@ -792,7 +808,7 @@ export default function App() {
         activeView={activeView}
         appsCount={apps.length}
         onChangeView={setActiveView}
-        onSelectSession={openSession}
+        onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
         onRenameSession={handleRenameSession}
@@ -804,11 +820,14 @@ export default function App() {
           <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
             <ResizablePanel defaultSize={65} minSize={40} className="min-h-0">
               <ChatArea
-                title={activeDetail?.title || 'AI 助手'}
+                title={
+                  activeDetail?.title === 'New Session'
+                    ? ''
+                    : (activeDetail?.title || 'AI 助手')
+                }
                 subtitle={
                   bootError ||
                   permissionNotice ||
-                  authNotice ||
                   (activeDetail ? `工作区: ${activeDetail.workspace}` : '选择一个会话开始')
                 }
                 messages={chatMessages}
@@ -832,12 +851,10 @@ export default function App() {
 
             <ResizablePanel defaultSize={35} minSize={25} maxSize={50} className="min-h-0">
               <TaskPanel
-                workspacePath={activeDetail?.workspace || ''}
-                canChangeWorkspace={Boolean(activeDetail && activeDetail.messageCount === 0)}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}
                 onRefresh={handleRefreshWorkspace}
-                onPickWorkspace={handlePickWorkspace}
+                onOpenWorkspace={handleOpenWorkspace}
                 treeItems={workspaceTree}
                 expandedPaths={expandedDirs}
                 selectedFilePath={selectedFilePath}

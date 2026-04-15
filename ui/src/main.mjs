@@ -15,6 +15,8 @@ const repoRoot = path.resolve(uiRoot, '..');
 const cliPath = path.join(repoRoot, 'cli-node.js');
 const sdkPath = path.join(repoRoot, 'electron-direct.mjs');
 const rendererHtml = path.join(uiRoot, 'dist', 'renderer', 'index.html');
+const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.env.VITE_DEV_SERVER_URL).trim();
+const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 const MAX_FILE_BYTES = 200 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
@@ -359,6 +361,7 @@ function deletePersistedSession(sessionId) {
 function hydratePersistedSessions() {
   const rows = loadSessionsStmt.all();
   for (const row of rows) {
+    const history = parseStoredHistory(row.history_json);
     const sessionRecord = {
       id: row.id,
       title: row.title,
@@ -367,9 +370,9 @@ function hydratePersistedSessions() {
       updatedAt: row.updated_at,
       busy: false,
       messageCount: row.message_count,
-      preview: row.preview || '',
+      preview: row.preview || deriveSessionPreview(history),
       underlyingSessionId: row.underlying_session_id || null,
-      history: parseStoredHistory(row.history_json),
+      history,
       runtime: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
@@ -512,6 +515,76 @@ function getSessionSummary(sessionRecord) {
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
   };
+}
+
+function normalizePreviewText(value, maxLength = 120) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function extractTextFromAssistantMessage(message) {
+  if (!Array.isArray(message?.message?.content)) return '';
+  return message.message.content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+}
+
+function extractPreviewFromAssistantMessage(message) {
+  const text = extractTextFromAssistantMessage(message);
+  if (text) return normalizePreviewText(text);
+  return '';
+}
+
+function extractPreviewFromStreamEvent(message) {
+  const event = message?.event;
+  if (!event || typeof event !== 'object') return '';
+
+  if (
+    event.type === 'content_block_delta' &&
+    event.delta?.type === 'text_delta' &&
+    typeof event.delta.text === 'string'
+  ) {
+    return normalizePreviewText(event.delta.text);
+  }
+
+  return '';
+}
+
+function deriveSessionPreview(history) {
+  if (!Array.isArray(history) || history.length === 0) return '';
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (!entry || typeof entry !== 'object') continue;
+
+    if (entry.type === 'assistant') {
+      const preview = extractPreviewFromAssistantMessage(entry);
+      if (preview) return preview;
+      continue;
+    }
+
+    if (entry.type === 'stream_event') {
+      const preview = extractPreviewFromStreamEvent(entry);
+      if (preview) return preview;
+      continue;
+    }
+
+    if (entry.type === 'user' && typeof entry.prompt === 'string') {
+      const preview = normalizePreviewText(entry.prompt);
+      if (preview) return preview;
+      continue;
+    }
+
+    if (entry.type === 'error' && typeof entry.message === 'string') {
+      const preview = normalizePreviewText(entry.message);
+      if (preview) return preview;
+    }
+  }
+
+  return '';
 }
 
 function getBootStatus() {
@@ -1487,15 +1560,6 @@ async function callAppTool(appState, name, args = {}) {
   }
 }
 
-function extractTextFromAssistantMessage(message) {
-  if (!Array.isArray(message?.message?.content)) return '';
-  return message.message.content
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
-}
-
 function extractAppPayloadFromText(content) {
   const htmlMatch = content.match(/```html\s*([\s\S]*?)```/i);
   if (!htmlMatch) {
@@ -1884,11 +1948,17 @@ function createWindow() {
     },
   });
 
-  if (!hasFile(rendererHtml)) {
-    throw new Error(`Missing renderer build at ${rendererHtml}. Run "vite build" in ui first.`);
+  if (rendererDevServerUrl) {
+    void mainWindow.loadURL(rendererDevServerUrl);
+    if (shouldOpenDevTools) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  } else {
+    if (!hasFile(rendererHtml)) {
+      throw new Error(`Missing renderer build at ${rendererHtml}. Run "vite build" in ui first.`);
+    }
+    void mainWindow.loadFile(rendererHtml);
   }
-
-  mainWindow.loadFile(rendererHtml);
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -2053,6 +2123,15 @@ ipcMain.handle('agent:pick-directory', async () => {
     return null;
   }
   return response.filePaths[0];
+});
+
+ipcMain.handle('workspace:open', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  const result = await shell.openPath(sessionRecord.workspace);
+  if (result) {
+    throw new Error(result);
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, workspace }) => {
@@ -2270,11 +2349,11 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
       }
       sessionRecord.history.push(message);
       sessionRecord.updatedAt = Date.now();
+      sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
       if (message.type === 'assistant') {
         const assistantText = extractTextFromAssistantMessage(message);
         if (assistantText) {
           latestAssistantText = assistantText;
-          sessionRecord.preview = assistantText;
         }
       } else if (
         message.type === 'stream_event' &&

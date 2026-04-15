@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
+  openWorkspace: (payload) => ipcRenderer.invoke('workspace:open', payload),
   send: (payload) => ipcRenderer.invoke('agent:send', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
   listApps: () => ipcRenderer.invoke('app:list'),

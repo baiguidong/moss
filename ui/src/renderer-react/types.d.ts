@@ -75,10 +75,11 @@ declare global {
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       pickDirectory: () => Promise<string | null>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
+      openWorkspace: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       send: (payload: {
         sessionId: string;
         prompt: string;
-        mode?: 'chat' | 'create-app' | 'iterate-app';
+        mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app';
         appName?: string;
       }) => Promise<any>;
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;

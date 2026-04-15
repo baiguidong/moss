@@ -9,11 +9,11 @@
   "scripts": {
     "build:renderer": "vite build",
     "start": "vite build && electron .",
-    "dev": "vite build && electron .",
-    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && tsc --noEmit",
+    "dev": "node scripts/dev.mjs start",
+    "dev:renderer": "vite",
+    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && node --check scripts/dev.mjs && tsc --noEmit",
     "dist:win": "vite build && electron-builder --win",
-    "dist:mac": "vite build && electron-builder --mac",
-    "dist:all": "vite build && electron-builder --win --mac"
+    "dist:mac": "vite build && electron-builder --mac"
   },
   "build": {
     "appId": "com.moss.ai",

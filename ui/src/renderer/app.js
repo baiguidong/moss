@@ -103,7 +103,7 @@ function renderSessionList() {
       void openSession(session.id);
     });
 
-    const preview = session.preview || '尚未开始对话';
+    const preview = session.preview || '';
     item.innerHTML = `
       <div class="session-item-top">
         <div class="session-item-title">${escapeHtml(session.title)}</div>

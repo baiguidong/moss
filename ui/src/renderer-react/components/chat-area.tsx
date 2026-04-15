@@ -283,7 +283,7 @@ export function ChatArea({
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="font-semibold text-foreground">{title}</h1>
+            {title ? <h1 className="font-semibold text-foreground">{title}</h1> : null}
             <p className={cn("text-xs", subtitle.includes("未登录") || subtitle.includes("login") ? "text-destructive font-medium animate-pulse" : "text-muted-foreground")}>
               {subtitle}
             </p>
@@ -394,9 +394,6 @@ export function ChatArea({
             </Button>
           </div>
         </div>
-        <p className="mt-2 text-center text-[10px] text-muted-foreground">
-          当前后端直接连接本地 Claude Code agent，请核实重要信息
-        </p>
         </div>
       </div>
     </div>
