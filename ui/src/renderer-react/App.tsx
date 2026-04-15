@@ -5,11 +5,6 @@ import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from '@/components/ui/resizable';
 import { Textarea } from '@/components/ui/textarea';
 import { buildChatMessages } from '@/lib/agent-transcript';
 import type {
@@ -44,13 +39,67 @@ function formatSidebarPreview(preview: string): string {
   return singleLine.length > 48 ? `${singleLine.slice(0, 48)}...` : singleLine;
 }
 
+function basename(filePath: string): string {
+  if (!filePath) return '';
+  const normalized = filePath.replace(/[\\/]+$/, '');
+  const parts = normalized.split(/[\\/]/);
+  return parts[parts.length - 1] || normalized;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function loadPanelLayout(): LayoutState {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return DEFAULT_LAYOUT;
+    const parsed = JSON.parse(raw);
+    return {
+      leftWidth: clamp(Number(parsed.leftWidth) || DEFAULT_LAYOUT.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
+      rightWidth: clamp(Number(parsed.rightWidth) || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+      leftCollapsed: Boolean(parsed.leftCollapsed),
+      rightCollapsed: Boolean(parsed.rightCollapsed),
+    };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
+
 function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) {
   return summaries.map((session) => ({
     ...session,
     preview: formatSidebarPreview(session.preview),
     time: formatRelativeTime(session.updatedAt),
+    workspaceLabel: basename(session.workspace),
     isPinned: pinnedIds.has(session.id),
   }));
+}
+
+type ThemeMode = 'dark' | 'light';
+type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app';
+type LayoutState = {
+  leftWidth: number;
+  rightWidth: number;
+  leftCollapsed: boolean;
+  rightCollapsed: boolean;
+};
+
+const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
+const DEFAULT_LAYOUT: LayoutState = {
+  leftWidth: 248,
+  rightWidth: 280,
+  leftCollapsed: false,
+  rightCollapsed: false,
+};
+const LEFT_WIDTH_RANGE = { min: 210, max: 420 };
+const RIGHT_WIDTH_RANGE = { min: 280, max: 560 };
+
+function upsertSummary(list: SessionSummary[], summary: SessionSummary) {
+  const next = list.some((entry) => entry.id === summary.id)
+    ? list.map((entry) => (entry.id === summary.id ? summary : entry))
+    : [summary, ...list];
+  return next.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>, expandedDirs: Set<string>): FileTreeNode[] {
@@ -86,13 +135,26 @@ function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>
 }
 
 export default function App() {
+  const isMacOS =
+    typeof navigator !== 'undefined' &&
+    /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
   const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
+    try {
+      const stored = localStorage.getItem('ui.themeMode');
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch {}
+    return 'dark';
+  });
+  const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
+  const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
+  const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
@@ -114,12 +176,23 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = React.useState(false);
   const [settingsNotice, setSettingsNotice] = React.useState('');
+  const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
+  const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<PreviewTabData[]>([]);
   const openSessionRequestIdRef = React.useRef(0);
+
+  const clearSessionWorkspaceState = React.useCallback(() => {
+    setDirectoryCache(new Map());
+    setExpandedDirs(new Set());
+    setSelectedFilePath(null);
+    setPreviewTabs([]);
+    setActivePreviewPath(null);
+    setWorkspaceQuery('');
+  }, []);
 
   const persistPinned = React.useCallback((next: Set<string>) => {
     setPinnedIds(next);
@@ -149,6 +222,22 @@ export default function App() {
     setSettingsDraft(next);
   }, []);
 
+  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean }) => {
+    setActiveView('chat');
+    setActiveSessionId(null);
+    setActiveDetail(null);
+    clearSessionWorkspaceState();
+    if (!options?.preserveIntent) {
+      setComposerIntent('chat');
+    }
+    if (options?.resetInput) {
+      setInput('');
+    }
+    if (options?.resetApp) {
+      setSelectedAppName('');
+    }
+  }, [clearSessionWorkspaceState]);
+
   const openSession = React.useCallback(async (sessionId: string) => {
     const requestId = ++openSessionRequestIdRef.current;
     const detail = await window.agentDesktop.getSession({ sessionId });
@@ -158,13 +247,15 @@ export default function App() {
     setActiveView('chat');
     setActiveSessionId(sessionId);
     setActiveDetail(detail);
-    setDirectoryCache(new Map());
-    setExpandedDirs(new Set());
-    setSelectedFilePath(null);
-    setPreviewTabs([]);
-    setActivePreviewPath(null);
-    setWorkspaceQuery('');
-  }, []);
+    clearSessionWorkspaceState();
+  }, [clearSessionWorkspaceState]);
+
+  const createAndOpenSession = React.useCallback(async () => {
+    const created = await window.agentDesktop.createSession({});
+    setSummaries((prev) => upsertSummary(prev, created.summary));
+    await openSession(created.summary.id);
+    return created.summary.id;
+  }, [openSession]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     const data = await window.agentDesktop.listWorkspaceDir({ sessionId, dirPath: workspace });
@@ -174,6 +265,11 @@ export default function App() {
   React.useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  React.useEffect(() => {
+    layoutRef.current = layout;
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+  }, [layout]);
 
   React.useEffect(() => {
     activeDetailRef.current = activeDetail;
@@ -186,6 +282,19 @@ export default function App() {
   React.useEffect(() => {
     previewTabsRef.current = previewTabs;
   }, [previewTabs]);
+
+  React.useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', themeMode === 'dark');
+    root.style.colorScheme = themeMode;
+    localStorage.setItem('ui.themeMode', themeMode);
+  }, [themeMode]);
+
+  React.useEffect(() => {
+    return () => {
+      document.body.classList.remove('layout-resizing');
+    };
+  }, []);
 
   React.useEffect(() => {
     if (selectedAppName && !apps.some((entry) => entry.name === selectedAppName)) {
@@ -265,14 +374,10 @@ export default function App() {
         }
         applyDesktopSettings(nextSettings);
         await refreshApps();
-        const list = await refreshSummaries();
+        await refreshSummaries();
         if (cancelled) return;
-        if (list.length > 0) {
-          await openSession(list[0].id);
-        } else {
-          setActiveSessionId(null);
-          setActiveDetail(null);
-        }
+        setActiveSessionId(null);
+        setActiveDetail(null);
       } catch (error: any) {
         if (!cancelled) {
           setBootError(error?.message || String(error));
@@ -297,11 +402,7 @@ export default function App() {
 
     const offState = window.agentDesktop.onState((payload) => {
       if (payload?.summary) {
-        setSummaries((prev) =>
-          prev
-            .map((entry) => (entry.id === payload.summary.id ? payload.summary : entry))
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-        );
+        setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
           setActiveDetail((prev) => (prev ? { ...prev, ...payload.summary } : prev));
         }
@@ -320,12 +421,7 @@ export default function App() {
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
-      setSummaries((prev) => {
-        const next = prev.some((entry) => entry.id === summary.id)
-          ? prev.map((entry) => (entry.id === summary.id ? summary : entry))
-          : [summary, ...prev];
-        return next.sort((a, b) => b.updatedAt - a.updatedAt);
-      });
+      setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
         setActiveDetail((prev) => (prev ? { ...prev, ...summary } : prev));
       }
@@ -334,8 +430,7 @@ export default function App() {
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       if (sessionId === activeSessionIdRef.current) {
-        setActiveSessionId(null);
-        setActiveDetail(null);
+        navigateToHome();
       }
     });
 
@@ -372,7 +467,7 @@ export default function App() {
       offWorkspaceChanged();
       offSettingsChanged();
     };
-  }, [applyDesktopSettings, refreshApps, refreshWorkspaceSnapshot]);
+  }, [applyDesktopSettings, navigateToHome, refreshApps, refreshWorkspaceSnapshot]);
 
   const sidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -396,11 +491,49 @@ export default function App() {
     [previewTabs, activePreviewPath]
   );
 
+  const toggleSidebar = React.useCallback((side: 'left' | 'right') => {
+    setLayout((prev) => (
+      side === 'left'
+        ? { ...prev, leftCollapsed: !prev.leftCollapsed }
+        : { ...prev, rightCollapsed: !prev.rightCollapsed }
+    ));
+  }, []);
+
+  const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
+    const start = layoutRef.current;
+    if (side === 'left' && start.leftCollapsed) return;
+    if (side === 'right' && start.rightCollapsed) return;
+
+    document.body.classList.add('layout-resizing');
+
+    const onMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - clientX;
+      setLayout((prev) => (
+        side === 'left'
+          ? {
+              ...prev,
+              leftWidth: clamp(start.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
+            }
+          : {
+              ...prev,
+              rightWidth: clamp(start.rightWidth - delta, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+            }
+      ));
+    };
+
+    const onMouseUp = () => {
+      document.body.classList.remove('layout-resizing');
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, []);
+
   const handleNewSession = React.useCallback(async () => {
-    const created = await window.agentDesktop.createSession({});
-    await openSession(created.summary.id);
-    setActiveView('chat');
-  }, [openSession]);
+    navigateToHome({ resetInput: true, resetApp: true });
+  }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
     await openSession(sessionId);
@@ -409,27 +542,26 @@ export default function App() {
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
     await window.agentDesktop.deleteSession({ sessionId });
-    const list = await refreshSummaries();
     if (activeSessionId === sessionId) {
-      if (list.length > 0) {
-        await openSession(list[0].id);
-      } else {
-        setActiveSessionId(null);
-        setActiveDetail(null);
-      }
+      navigateToHome();
     }
-  }, [activeSessionId, openSession, refreshSummaries]);
+    await refreshSummaries();
+  }, [activeSessionId, navigateToHome, refreshSummaries]);
 
-  const handleRenameSession = React.useCallback(async (sessionId: string) => {
-    const current = summaries.find((entry) => entry.id === sessionId);
-    const nextTitle = window.prompt('重命名会话', current?.title || 'New Session');
-    if (!nextTitle) return;
-    const detail = await window.agentDesktop.updateSession({ sessionId, title: nextTitle });
-    setSummaries((prev) => prev.map((entry) => (entry.id === sessionId ? detail : entry)));
-    if (activeSessionId === sessionId) {
-      setActiveDetail(detail);
+  const handleRenameSession = React.useCallback(async (sessionId: string, newTitle: string) => {
+    if (!newTitle.trim()) return;
+    try {
+      await window.agentDesktop.updateSession({ sessionId, title: newTitle });
+    } catch (e) {
+      console.error('Rename failed:', e);
     }
-  }, [activeSessionId, summaries]);
+    setSummaries((prev) => prev.map((entry) =>
+      entry.id === sessionId ? { ...entry, title: newTitle } : entry
+    ));
+    if (activeSessionId === sessionId) {
+      setActiveDetail((prev) => (prev ? { ...prev, title: newTitle } : prev));
+    }
+  }, [activeSessionId]);
 
   const handleTogglePin = React.useCallback((sessionId: string) => {
     const next = new Set(pinnedIds);
@@ -438,66 +570,78 @@ export default function App() {
     persistPinned(next);
   }, [persistPinned, pinnedIds]);
 
+  const submitPrompt = React.useCallback(async (intent: ComposerIntent) => {
+    if (!input.trim()) return;
+    if (activeDetail?.busy || planDecisionBusy) return;
+    if (intent === 'iterate-app' && !selectedAppName) return;
+
+    const prompt = input.trim();
+    setInput('');
+
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      sessionId = await createAndOpenSession();
+    }
+    if (!sessionId) return;
+
+    const result = await window.agentDesktop.send({
+      sessionId,
+      prompt,
+      mode: intent === 'chat' ? undefined : intent,
+      appName: intent === 'iterate-app' ? selectedAppName : undefined,
+    });
+    const detail = await window.agentDesktop.getSession({ sessionId });
+    setActiveDetail(detail);
+    setSummaries((prev) => upsertSummary(prev, detail));
+
+    if (intent === 'create-app' || intent === 'iterate-app') {
+      await refreshApps();
+      const changedApp = result?.createdApp || result?.updatedApp;
+      if (changedApp?.name) {
+        setSelectedAppName(changedApp.name);
+        setComposerIntent('iterate-app');
+        await loadAppVersions(changedApp.name);
+      }
+    }
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName]);
+
   const handleSend = React.useCallback(async () => {
-    if (!activeSessionId || !input.trim()) return;
-    const prompt = input.trim();
-    setInput('');
-    await window.agentDesktop.send({ sessionId: activeSessionId, prompt });
-    const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
-    setActiveDetail(detail);
-  }, [activeSessionId, input]);
+    await submitPrompt(composerIntent);
+  }, [composerIntent, submitPrompt]);
 
-  const handlePlan = React.useCallback(async () => {
-    if (!activeSessionId || !input.trim()) return;
-    const prompt = input.trim();
-    setInput('');
-    await window.agentDesktop.send({
-      sessionId: activeSessionId,
-      prompt,
-      mode: 'plan',
-    });
-    const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
-    setActiveDetail(detail);
-  }, [activeSessionId, input]);
+  const handleApprovePlan = React.useCallback(async () => {
+    if (!activeSessionId) return;
+    setPlanDecisionBusy(true);
+    try {
+      const result = await window.agentDesktop.approvePlan({ sessionId: activeSessionId });
+      const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
+      setActiveDetail(detail);
+      setSummaries((prev) => upsertSummary(prev, detail));
 
-  const handleCreateApp = React.useCallback(async () => {
-    if (!activeSessionId || !input.trim()) return;
-    const prompt = input.trim();
-    setInput('');
-    const result = await window.agentDesktop.send({
-      sessionId: activeSessionId,
-      prompt,
-      mode: 'create-app',
-    });
-    const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
-    setActiveDetail(detail);
-    await refreshApps();
-    if (result?.createdApp) {
-      setSelectedAppName(result.createdApp.name);
-      await loadAppVersions(result.createdApp.name);
-      setActiveView('apps');
+      const changedApp = result?.createdApp;
+      if (changedApp?.name) {
+        await refreshApps();
+        setSelectedAppName(changedApp.name);
+        setComposerIntent('iterate-app');
+        await loadAppVersions(changedApp.name);
+      }
+    } finally {
+      setPlanDecisionBusy(false);
     }
-  }, [activeSessionId, input, loadAppVersions, refreshApps]);
+  }, [activeSessionId, loadAppVersions, refreshApps]);
 
-  const handleIterateApp = React.useCallback(async () => {
-    if (!activeSessionId || !input.trim() || !selectedAppName) return;
-    const prompt = input.trim();
-    setInput('');
-    const result = await window.agentDesktop.send({
-      sessionId: activeSessionId,
-      prompt,
-      mode: 'iterate-app',
-      appName: selectedAppName,
-    });
-    const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
-    setActiveDetail(detail);
-    await refreshApps();
-    if (result?.updatedApp) {
-      setSelectedAppName(result.updatedApp.name);
-      await loadAppVersions(result.updatedApp.name);
-      setActiveView('apps');
+  const handleRejectPlan = React.useCallback(async () => {
+    if (!activeSessionId) return;
+    setPlanDecisionBusy(true);
+    try {
+      const detail = await window.agentDesktop.rejectPlan({ sessionId: activeSessionId });
+      const nextDetail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
+      setActiveDetail(nextDetail);
+      setSummaries((prev) => upsertSummary(prev, detail?.summary || nextDetail));
+    } finally {
+      setPlanDecisionBusy(false);
     }
-  }, [activeSessionId, input, loadAppVersions, refreshApps, selectedAppName]);
+  }, [activeSessionId]);
 
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -568,11 +712,10 @@ export default function App() {
     setSelectedAppName(name);
     setActiveView('chat');
     if (!activeSessionId) {
-      const created = await window.agentDesktop.createSession({});
-      setSummaries((prev) => [created.summary, ...prev].sort((a, b) => b.updatedAt - a.updatedAt));
-      await openSession(created.summary.id);
+      navigateToHome({ preserveIntent: true });
     }
-  }, [activeSessionId, openSession]);
+    setComposerIntent('iterate-app');
+  }, [activeSessionId, navigateToHome]);
 
   const handleDeleteApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.deleteApp({ name });
@@ -585,7 +728,11 @@ export default function App() {
   }, [refreshApps]);
 
   const handleRollbackApp = React.useCallback(async (name: string, versionId: string) => {
-    await window.agentDesktop.rollbackApp({ name, versionId });
+    const result = await window.agentDesktop.rollbackApp({ name, versionId });
+    if (result?.app?.name) {
+      setSelectedAppName(result.app.name);
+      setComposerIntent('iterate-app');
+    }
     await refreshApps();
     await loadAppVersions(name);
   }, [loadAppVersions, refreshApps]);
@@ -695,6 +842,18 @@ export default function App() {
                 }}
                 placeholder="claude-sonnet-4-6"
               />
+              <p className="mt-4 text-sm font-medium text-foreground">图片模型</p>
+              <Input
+                className="mt-2 bg-background text-foreground"
+                value={settingsDraft?.visionModel || ''}
+                onChange={(event) => {
+                  if (!settingsDraft) return;
+                  setSettingsDraft({
+                    ...settingsDraft,
+                    visionModel: event.target.value,
+                  });
+                }}
+              />
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
@@ -757,6 +916,57 @@ export default function App() {
                 />
               )}
             </div>
+
+            <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
+              <p className="text-sm font-medium text-foreground">API URL</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                自定义 API 端点地址，留空则使用默认地址。
+              </p>
+              <Input
+                className="mt-4 bg-background text-foreground"
+                value={settingsDraft?.url || ''}
+                onChange={(event) => {
+                  if (!settingsDraft) return;
+                  setSettingsDraft({
+                    ...settingsDraft,
+                    url: event.target.value,
+                  });
+                }}
+                placeholder="https://api.anthropic.com"
+              />
+            </div>
+
+            <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
+              <p className="text-sm font-medium text-foreground">API Key</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                自定义 API Key，留空则使用环境变量中的密钥。
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Input
+                  className="bg-background text-foreground font-mono text-xs"
+                  value={settingsDraft?.apiKey || ''}
+                  onChange={(event) => {
+                    if (!settingsDraft) return;
+                    setSettingsDraft({
+                      ...settingsDraft,
+                      apiKey: event.target.value,
+                    });
+                  }}
+                  placeholder="sk-ant-..."
+                />
+                {settingsDraft?.apiKey && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(settingsDraft.apiKey || '');
+                    }}
+                  >
+                    复制
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5">
@@ -781,11 +991,29 @@ export default function App() {
           <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5 text-sm leading-7">
             <p className="font-medium text-foreground">当前存储</p>
             <p className="mt-2 text-muted-foreground">
-              设置文件：{desktopSettings?.settingsPath || '加载中'}
+              配置文件：{desktopSettings?.settingsPath || '加载中'}
             </p>
             <p className="text-muted-foreground">
-              认证文件：{desktopSettings?.settingsPath || '~/.moss/settings.json'}
+              API URL：{desktopSettings?.url || '（未设置）'}
             </p>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">API Key：</span>
+              {desktopSettings?.apiKey ? (
+                <>
+                  <code className="text-xs text-muted-foreground">{'********' + desktopSettings.apiKey.slice(-4)}</code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1 text-xs"
+                    onClick={() => navigator.clipboard.writeText(desktopSettings.apiKey || '')}
+                  >
+                    复制
+                  </Button>
+                </>
+              ) : (
+                <span className="text-muted-foreground">（未设置）</span>
+              )}
+            </div>
             {desktopSettings?.settingsParseError && (
               <p className="mt-2 text-destructive">
                 解析设置文件失败：{desktopSettings.settingsParseError}
@@ -801,56 +1029,141 @@ export default function App() {
   );
 
   return (
-    <div className="dark flex h-screen w-full overflow-hidden">
-      <AppSidebar
-        sessions={sidebarSessions}
-        activeSessionId={activeSessionId}
-        activeView={activeView}
-        appsCount={apps.length}
-        onChangeView={setActiveView}
-        onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
-        onDeleteSession={handleDeleteSession}
-        onRenameSession={handleRenameSession}
-        onTogglePin={handleTogglePin}
-      />
+    <div className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}>
+      <div className="moss-window-chrome shrink-0">
+        <div
+          className="moss-window-drag h-9"
+          style={{ paddingLeft: isMacOS ? 84 : 0 }}
+        />
+      </div>
 
-      <div className="min-h-0 flex-1">
-        {activeView === 'chat' ? (
-          <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
-            <ResizablePanel defaultSize={65} minSize={40} className="min-h-0">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div
+          className="min-h-0 shrink-0 overflow-hidden"
+          style={{ width: layout.leftCollapsed ? 68 : layout.leftWidth }}
+        >
+          <AppSidebar
+            sessions={sidebarSessions}
+            activeSessionId={activeSessionId}
+            activeView={activeView}
+            appsCount={apps.length}
+            themeMode={themeMode}
+            collapsed={layout.leftCollapsed}
+            searchQuery={sessionSearchQuery}
+            onChangeView={setActiveView}
+            onChangeTheme={setThemeMode}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            onDeleteSession={handleDeleteSession}
+            onRenameSession={handleRenameSession}
+            onTogglePin={handleTogglePin}
+            onToggleCollapse={() => toggleSidebar('left')}
+            onSearchChange={setSessionSearchQuery}
+          />
+        </div>
+
+        <div
+          className={`
+            relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
+            before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
+            hover:before:bg-primary/60 lg:block
+          `}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            startResize('left', event.clientX);
+          }}
+        />
+
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          {(bootError || permissionNotice) && (
+            <div className="pointer-events-none absolute right-4 top-4 z-20 max-w-md rounded-2xl border border-border/80 bg-card/92 px-3 py-2 text-xs text-muted-foreground shadow-[0_18px_48px_-36px_rgba(0,0,0,0.6)] backdrop-blur">
+              {bootError || permissionNotice}
+            </div>
+          )}
+          {activeView === 'chat' ? (
+            activeSessionId ? (
               <ChatArea
-                title={
-                  activeDetail?.title === 'New Session'
-                    ? ''
-                    : (activeDetail?.title || 'AI 助手')
-                }
-                subtitle={
-                  bootError ||
-                  permissionNotice ||
-                  (activeDetail ? `工作区: ${activeDetail.workspace}` : '选择一个会话开始')
-                }
                 messages={chatMessages}
                 value={input}
-                apps={apps}
                 selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy)}
                 hasActiveSession={Boolean(activeSessionId)}
-                onCreateSession={handleNewSession}
+                sessionTitle={activeDetail?.title || 'New Session'}
+                sessionMessageCount={activeDetail?.messageCount || 0}
+                pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
+                planDecisionBusy={planDecisionBusy}
+                leftCollapsed={layout.leftCollapsed}
+                rightCollapsed={layout.rightCollapsed}
+                composerIntent={composerIntent}
                 onChange={setInput}
-                onSelectAppName={setSelectedAppName}
+                onComposerIntentChange={setComposerIntent}
+                onToggleLeftSidebar={() => toggleSidebar('left')}
+                onToggleRightSidebar={() => toggleSidebar('right')}
+                onApprovePlan={handleApprovePlan}
+                onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
-                onPlan={handlePlan}
-                onCreateApp={handleCreateApp}
-                onIterateApp={handleIterateApp}
                 onStop={handleStop}
               />
-            </ResizablePanel>
+            ) : (
+              <ChatArea
+                messages={[]}
+                value={input}
+                selectedAppName={selectedAppName}
+                loading={false}
+                hasActiveSession={false}
+                sessionTitle=""
+                sessionMessageCount={0}
+                pendingPlanApproval={null}
+                planDecisionBusy={false}
+                leftCollapsed={layout.leftCollapsed}
+                rightCollapsed={layout.rightCollapsed}
+                composerIntent={composerIntent}
+                onChange={setInput}
+                onComposerIntentChange={setComposerIntent}
+                onToggleLeftSidebar={() => toggleSidebar('left')}
+                onToggleRightSidebar={() => toggleSidebar('right')}
+                onApprovePlan={handleApprovePlan}
+                onRejectPlan={handleRejectPlan}
+                onSend={handleSend}
+                onStop={handleStop}
+              />
+            )
+          ) : activeView === 'apps' ? (
+            <AppsPanel
+              apps={apps}
+              versionsByApp={versionsByApp}
+              onLaunch={handleLaunchApp}
+              onDelete={handleDeleteApp}
+              onIterate={handleIterateExistingApp}
+              onLoadVersions={loadAppVersions}
+              onRollback={handleRollbackApp}
+            />
+          ) : (
+            renderSettingsView()
+          )}
+        </div>
 
-            <ResizableHandle withHandle className="bg-border" />
+        {activeView === 'chat' && activeSessionId && (
+          <>
+            <div
+              className={`
+                relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
+                before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
+                hover:before:bg-primary/60 lg:block
+              `}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                startResize('right', event.clientX);
+              }}
+            />
 
-            <ResizablePanel defaultSize={35} minSize={25} maxSize={50} className="min-h-0">
+            <div
+              className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
+              style={{ width: layout.rightCollapsed ? 68 : layout.rightWidth }}
+            >
               <TaskPanel
+                collapsed={layout.rightCollapsed}
+                onToggleCollapse={() => toggleSidebar('right')}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}
                 onRefresh={handleRefreshWorkspace}
@@ -866,20 +1179,8 @@ export default function App() {
                 previewContent={activePreview?.content || '点击文件后在这里预览内容。'}
                 previewTitle={activePreview?.relativePath || '未选择文件'}
               />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        ) : activeView === 'apps' ? (
-          <AppsPanel
-            apps={apps}
-            versionsByApp={versionsByApp}
-            onLaunch={handleLaunchApp}
-            onDelete={handleDeleteApp}
-            onIterate={handleIterateExistingApp}
-            onLoadVersions={loadAppVersions}
-            onRollback={handleRollbackApp}
-          />
-        ) : (
-          renderSettingsView()
+            </div>
+          </>
         )}
       </div>
     </div>

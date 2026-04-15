@@ -1,15 +1,110 @@
 "use client";
 
 import * as React from "react";
-import { Send, Paperclip, Mic, Sparkles, Bot, User, Square, MonitorPlay, Pencil } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Loader,
+  Send,
+  Square,
+  User,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ToolSteps } from "@/components/tool-steps";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { ChatMessage } from "@/lib/agent-transcript";
-import type { StoredApp } from "../types";
+
+type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app";
+type PendingPlanApproval = {
+  kind: "create-app";
+  originalPrompt: string;
+  plan: string;
+  requestedAt: number;
+};
+
+type IntentOption = {
+  id: ComposerIntent;
+  title: string;
+};
+
+const intentOptions: IntentOption[] = [
+  {
+    id: "chat",
+    title: "普通对话",
+  },
+  {
+    id: "plan",
+    title: "先做计划",
+  },
+  {
+    id: "create-app",
+    title: "创建 App",
+  },
+];
+
+function SessionTabBar({
+  title,
+  messageCount,
+  leftCollapsed,
+  rightCollapsed,
+  onToggleLeft,
+  onToggleRight,
+}: {
+  title: string;
+  messageCount: number;
+  leftCollapsed: boolean;
+  rightCollapsed: boolean;
+  onToggleLeft: () => void;
+  onToggleRight: () => void;
+}) {
+  return (
+    <div className="shrink-0 border-b border-border/70 bg-background/88 px-3 py-2 backdrop-blur sm:px-4">
+      <div className="mx-auto flex max-w-[980px] items-center justify-between gap-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-full"
+          onClick={onToggleLeft}
+          aria-label={leftCollapsed ? "展开左侧栏" : "收起左侧栏"}
+        >
+          {leftCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </Button>
+
+        <div className="min-w-0 max-w-[calc(100%-6rem)] rounded-full border border-border/75 bg-card/88 px-4 py-1.5 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.7)]">
+          <div className="flex items-center justify-center gap-2">
+            <span className="truncate text-sm font-medium text-foreground">
+              {title || "New Session"}
+            </span>
+            <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+              {messageCount} 条
+            </span>
+          </div>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-full"
+          onClick={onToggleRight}
+          aria-label={rightCollapsed ? "展开右侧栏" : "收起右侧栏"}
+        >
+          {rightCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ThinkingBlock({
   thinking,
@@ -19,35 +114,15 @@ function ThinkingBlock({
   streaming?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(true);
-  const wasStreamingRef = React.useRef(Boolean(streaming));
-  const autoCollapsedRef = React.useRef(false);
 
   React.useEffect(() => {
     if (streaming) {
-      autoCollapsedRef.current = false;
       setExpanded(true);
     }
   }, [streaming]);
 
-  React.useEffect(() => {
-    const wasStreaming = wasStreamingRef.current;
-    wasStreamingRef.current = Boolean(streaming);
-
-    if (streaming) return;
-    if (!wasStreaming || autoCollapsedRef.current) return;
-
-    // 当流式结束时，我们不再自动折叠，而是让它保持展开，
-    // 类似于 tool steps 的逻辑，或者保持一个默认状态
-    // const timer = window.setTimeout(() => {
-    //   autoCollapsedRef.current = true;
-    //   setExpanded(false);
-    // }, 600);
-
-    // return () => window.clearTimeout(timer);
-  }, [streaming, thinking]);
-
   return (
-    <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/70">
+    <div className="overflow-hidden rounded-[24px] border border-border/80 bg-card/75 shadow-[0_14px_45px_-36px_rgba(0,0,0,0.8)]">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -75,13 +150,12 @@ function ThinkingBlock({
   );
 }
 
-function renderTextSegments(content: string) {
+function renderTextSegments(content: string, streaming = false) {
   const normalized = content.trim();
   if (!normalized) return null;
 
-  // 这里的正则改为不分大小写
   const fenceRegex = /```([\w-]*)\n?([\s\S]*?)```/gi;
-  const segments: Array<{ type: "text" | "code"; value: string; language?: string }> = [];
+  const segments: Array<{ type: "text" | "code"; value: string; language?: string; incomplete?: boolean }> = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -91,53 +165,87 @@ function renderTextSegments(content: string) {
       segments.push({ type: "text", value: textBefore });
     }
 
-    const langPart = (match[1] || "").toLowerCase();
-    // 增强过滤：支持 html, htm 以及带参数的代码块标签
-    if (langPart.startsWith("html") || langPart.startsWith("htm") || langPart === "app-meta") {
-      // 跳过，不推入 segments
-    } else {
-      segments.push({
-        type: "code",
-        language: match[1] || "",
-        value: match[2].trimEnd(),
-      });
-    }
+    segments.push({
+      type: "code",
+      language: match[1] || "",
+      value: match[2].trimEnd(),
+    });
     lastIndex = match.index + match[0].length;
   }
 
   const trailing = normalized.slice(lastIndex).trim();
   if (trailing) {
-    segments.push({ type: "text", value: trailing });
+    const incompleteFenceMatch = trailing.match(/^```([\w-]*)\n?([\s\S]*)$/i);
+    if (incompleteFenceMatch) {
+      segments.push({
+        type: "code",
+        language: incompleteFenceMatch[1] || "",
+        value: incompleteFenceMatch[2].trimEnd(),
+        incomplete: true,
+      });
+    } else {
+      segments.push({ type: "text", value: trailing });
+    }
   }
 
   if (segments.length === 0) return null;
 
   return segments.map((segment, index) => {
     if (segment.type === "code") {
+      const language = (segment.language || "").toLowerCase();
+      const lines = segment.value.split("\n").length;
+      const displayName =
+        language === "app-meta"
+          ? "app-meta.json"
+          : language === "html" || language === "htm"
+            ? "index.html"
+            : segment.language
+              ? `snippet.${segment.language}`
+              : "code.txt";
+
       return (
-        <div key={`${segment.type}-${index}`} className="overflow-hidden rounded-xl border border-border/70 bg-background/70">
-          {segment.language && (
-            <div className="border-b border-border/70 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              {segment.language}
+        <Collapsible
+          key={`${segment.type}-${index}`}
+          defaultOpen={false}
+          className="overflow-hidden rounded-2xl border border-border/70 bg-background/70"
+        >
+          <CollapsibleTrigger className="group w-full">
+            <div className="flex items-center justify-between gap-3 px-3 py-3 text-left">
+              <div className="min-w-0 flex items-center gap-2">
+                <FileText className="h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-[12px] font-medium text-foreground">
+                    {`Generated ${displayName}`}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {segment.incomplete && streaming ? "生成中" : `${lines} lines`}
+                    {segment.language ? ` · ${segment.language}` : ""}
+                  </div>
+                </div>
+              </div>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
             </div>
-          )}
-          <pre className="overflow-x-auto p-3 text-[12px] leading-6 text-foreground">
-            <code>{segment.value}</code>
-          </pre>
-        </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border/70 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              {segment.language || "code"}
+            </div>
+            <pre className="max-h-[26rem] overflow-auto p-3 text-[12px] leading-6 text-foreground">
+              <code>{segment.value}</code>
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
       );
     }
 
-    return segment.value
-      .split(/\n{2,}/)
-      .map((paragraph, paragraphIndex) => (
-        <p
-          key={`${segment.type}-${index}-${paragraphIndex}`}
-          className="whitespace-pre-wrap break-words leading-7"
-        >
-          {paragraph.trim()}
-        </p>
-      ));
+    return segment.value.split(/\n{2,}/).map((paragraph, paragraphIndex) => (
+      <p
+        key={`${segment.type}-${index}-${paragraphIndex}`}
+        className="whitespace-pre-wrap break-words leading-7"
+      >
+        {paragraph.trim()}
+      </p>
+    ));
   });
 }
 
@@ -148,13 +256,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-      <Avatar className={cn("h-8 w-8 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
+      <Avatar className={cn("h-9 w-9 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
         <AvatarFallback
           className={cn(
             "text-xs",
             isUser
               ? "bg-primary text-primary-foreground"
-              : "bg-gradient-to-br from-primary/20 to-primary/10 text-primary"
+              : "bg-gradient-to-br from-primary/25 to-primary/10 text-primary",
           )}
         >
           {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
@@ -162,12 +270,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </Avatar>
       <div
         className={cn(
-          "space-y-2",
+          "space-y-3",
           isUser
             ? "max-w-[78%] flex flex-col items-end"
             : message.toolSteps?.length
-            ? "w-full max-w-4xl"
-            : "max-w-[78%]"
+              ? "w-full max-w-4xl"
+              : "max-w-[82%]",
         )}
       >
         {!isUser && message.toolSteps && message.toolSteps.length > 0 && (
@@ -181,19 +289,20 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {(hasBody || isUser || (!hasThinking && !message.toolSteps?.length)) && (
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+              "rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-[0_18px_55px_-40px_rgba(0,0,0,0.85)]",
               isUser
-                ? "rounded-tr-sm bg-primary text-primary-foreground"
-                : "rounded-tl-sm bg-muted text-foreground"
+                ? "rounded-tr-md bg-primary text-primary-foreground"
+                : "rounded-tl-md border border-border/70 bg-card/88 text-foreground",
             )}
           >
             <div className="space-y-3">
               {hasBody ? (
-                renderTextSegments(message.content)
+                renderTextSegments(message.content, message.streaming)
               ) : (
-                <p className="text-xs text-muted-foreground">
-                  {message.streaming ? "正在生成响应..." : "已处理工具调用"}
-                </p>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader className={cn("h-3.5 w-3.5 animate-spin", message.streaming ? "opacity-100" : "opacity-60")} />
+                  {!message.streaming && <span>Working...</span>}
+                </div>
               )}
 
               {message.meta && message.meta.length > 0 && (
@@ -204,8 +313,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                       className={cn(
                         "rounded-full border px-2 py-0.5 text-[10px]",
                         isUser
-                          ? "border-primary-foreground/20 text-primary-foreground/80"
-                          : "border-border bg-background/60 text-muted-foreground"
+                          ? "border-primary-foreground/20 text-primary-foreground/75"
+                          : "border-border bg-background/60 text-muted-foreground",
                       )}
                     >
                       {entry}
@@ -214,18 +323,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                 </div>
               )}
             </div>
-            <span
-              className={cn(
-                "mt-2 block text-[10px]",
-                isUser ? "text-primary-foreground/60" : "text-muted-foreground"
-              )}
-            >
-              {message.timestamp.toLocaleTimeString("zh-CN", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-              {message.streaming ? " · 响应中" : ""}
-            </span>
           </div>
         )}
       </div>
@@ -233,167 +330,347 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+function IntentChip({
+  option,
+  active,
+  disabled,
+  onClick,
+}: {
+  option: IntentOption;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
+        active
+          ? "border-primary/35 bg-primary/10 text-primary"
+          : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-45",
+      )}
+    >
+      <span>{option.title}</span>
+    </button>
+  );
+}
+
+function PlanApprovalCard({
+  pendingPlanApproval,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  pendingPlanApproval: PendingPlanApproval;
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <div className="rounded-[24px] border border-primary/25 bg-card/92 p-4 shadow-[0_18px_55px_-40px_rgba(0,0,0,0.75)]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-primary">
+          创建 App 计划待确认
+        </span>
+        <span className="text-xs text-muted-foreground">
+          批准后才会真正开始生成 App
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-7 text-foreground">
+        <span className="font-medium">需求：</span>
+        {pendingPlanApproval.originalPrompt}
+      </p>
+      <div className="mt-3 overflow-hidden rounded-2xl border border-border/70 bg-background/75">
+        <div className="border-b border-border/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+          已生成的计划
+        </div>
+        <pre className="max-h-[18rem] overflow-auto whitespace-pre-wrap break-words px-3 py-3 text-[12px] leading-6 text-foreground">
+          {pendingPlanApproval.plan}
+        </pre>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          className="rounded-full px-4"
+          onClick={onApprove}
+          disabled={busy}
+        >
+          {busy ? "正在执行..." : "批准并创建 App"}
+        </Button>
+        <Button
+          variant="outline"
+          className="rounded-full px-4"
+          onClick={onReject}
+          disabled={busy}
+        >
+          退回计划
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ComposerPanel({
+  value,
+  selectedAppName,
+  loading,
+  composerIntent,
+  hasActiveSession,
+  onChange,
+  onComposerIntentChange,
+  onSend,
+  onStop,
+}: {
+  value: string;
+  selectedAppName: string;
+  loading: boolean;
+  composerIntent: ComposerIntent;
+  hasActiveSession: boolean;
+  onChange: (value: string) => void;
+  onComposerIntentChange: (intent: ComposerIntent) => void;
+  onSend: () => void;
+  onStop?: () => void;
+}) {
+  const submitDisabled =
+    !value.trim() || loading || (composerIntent === "iterate-app" && !selectedAppName);
+  const isHomeComposer = !hasActiveSession;
+
+  return (
+    <div
+      className={cn(
+        "rounded-[26px] border border-border/80 bg-card/92 backdrop-blur",
+        isHomeComposer
+          ? "shadow-[0_24px_80px_-44px_rgba(0,0,0,0.55)]"
+          : "shadow-[0_16px_54px_-38px_rgba(0,0,0,0.45)]",
+      )}
+    >
+      <div className="relative">
+        <Textarea
+          placeholder={
+            isHomeComposer
+              ? composerIntent === "iterate-app" && selectedAppName
+                ? `描述你想如何修改 ${selectedAppName}...`
+                : composerIntent === "create-app"
+                  ? "描述你想创建的 App、目标用户、交互和风格..."
+                  : composerIntent === "plan"
+                    ? "描述需求，我会先给出计划..."
+                    : "输入任务、问题或想法..."
+              : "继续输入消息..."
+          }
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={cn(
+            "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
+            isHomeComposer ? "min-h-[220px] pb-18 pr-26" : "min-h-[92px] pb-16 pr-26",
+          )}
+          rows={isHomeComposer ? 7 : 3}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              if (submitDisabled) {
+                return;
+              }
+              event.preventDefault();
+              void onSend();
+            }
+          }}
+        />
+
+        <div className="absolute bottom-3 right-3 flex items-center gap-2">
+          {!isHomeComposer && loading && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 rounded-full"
+              onClick={onStop}
+            >
+              <Square className="h-3.5 w-3.5" />
+            </Button>
+          )}
+
+          <Button
+            className="h-9 rounded-full px-3.5 sm:px-4"
+            disabled={submitDisabled}
+            onClick={onSend}
+          >
+            <Send className="h-4 w-4" />
+            发送
+          </Button>
+        </div>
+      </div>
+
+      {isHomeComposer && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 px-3 py-3 sm:px-4 sm:gap-2">
+          {intentOptions.map((option) => (
+            <IntentChip
+              key={option.id}
+              option={option}
+              active={composerIntent === option.id}
+              onClick={() => onComposerIntentChange(option.id)}
+            />
+          ))}
+          {composerIntent === "iterate-app" && selectedAppName && (
+            <span className="rounded-full border border-border/70 px-3 py-1.5 text-xs text-muted-foreground">
+              更新 {selectedAppName}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeLanding({
+  value,
+  selectedAppName,
+  loading,
+  composerIntent,
+  onChange,
+  onComposerIntentChange,
+  onSend,
+}: {
+  value: string;
+  selectedAppName: string;
+  loading: boolean;
+  composerIntent: ComposerIntent;
+  onChange: (value: string) => void;
+  onComposerIntentChange: (intent: ComposerIntent) => void;
+  onSend: () => void;
+}) {
+  return (
+    <div className="mx-auto flex h-full w-full max-w-[860px] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
+      <div className="mb-8 text-center sm:mb-10">
+        <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+          欢迎使用
+        </div>
+        <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl">
+          What can I do for you?
+        </h1>
+        <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
+          让 moss 帮你查看代码、修改项目、规划任务，或者直接开始一个新的构建目标。
+        </p>
+      </div>
+
+      <ComposerPanel
+        value={value}
+        selectedAppName={selectedAppName}
+        loading={loading}
+        composerIntent={composerIntent}
+        hasActiveSession={false}
+        onChange={onChange}
+        onComposerIntentChange={onComposerIntentChange}
+        onSend={onSend}
+      />
+    </div>
+  );
+}
+
 export function ChatArea({
-  title,
-  subtitle,
   messages,
   value,
-  apps,
   selectedAppName,
   loading,
   hasActiveSession,
-  onCreateSession,
+  sessionTitle,
+  sessionMessageCount,
+  pendingPlanApproval,
+  planDecisionBusy,
+  leftCollapsed,
+  rightCollapsed,
+  composerIntent,
   onChange,
-  onSelectAppName,
+  onComposerIntentChange,
+  onToggleLeftSidebar,
+  onToggleRightSidebar,
+  onApprovePlan,
+  onRejectPlan,
   onSend,
-  onPlan,
-  onCreateApp,
-  onIterateApp,
   onStop,
 }: {
-  title: string;
-  subtitle: string;
   messages: ChatMessage[];
   value: string;
-  apps: StoredApp[];
   selectedAppName: string;
   loading: boolean;
   hasActiveSession: boolean;
-  onCreateSession: () => void;
+  sessionTitle: string;
+  sessionMessageCount: number;
+  pendingPlanApproval: PendingPlanApproval | null;
+  planDecisionBusy: boolean;
+  leftCollapsed: boolean;
+  rightCollapsed: boolean;
+  composerIntent: ComposerIntent;
   onChange: (value: string) => void;
-  onSelectAppName: (value: string) => void;
+  onComposerIntentChange: (intent: ComposerIntent) => void;
+  onToggleLeftSidebar: () => void;
+  onToggleRightSidebar: () => void;
+  onApprovePlan: () => void;
+  onRejectPlan: () => void;
   onSend: () => void;
-  onPlan: () => void;
-  onCreateApp: () => void;
-  onIterateApp: () => void;
   onStop: () => void;
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
-  const selectedApp = apps.find((entry) => entry.name === selectedAppName) || null;
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-primary/5">
-            <Sparkles className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            {title ? <h1 className="font-semibold text-foreground">{title}</h1> : null}
-            <p className={cn("text-xs", subtitle.includes("未登录") || subtitle.includes("login") ? "text-destructive font-medium animate-pulse" : "text-muted-foreground")}>
-              {subtitle}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {loading && (
-            <Button variant="outline" size="sm" onClick={onStop} className="gap-2">
-              <Square className="h-3.5 w-3.5" />
-              停止
-            </Button>
-          )}
-        </div>
+  if (!hasActiveSession) {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
+        <HomeLanding
+          value={value}
+          selectedAppName={selectedAppName}
+          loading={loading}
+          composerIntent={composerIntent}
+          onChange={onChange}
+          onComposerIntentChange={onComposerIntentChange}
+          onSend={onSend}
+        />
       </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
+      <SessionTabBar
+        title={sessionTitle}
+        messageCount={sessionMessageCount}
+        leftCollapsed={leftCollapsed}
+        rightCollapsed={rightCollapsed}
+        onToggleLeft={onToggleLeftSidebar}
+        onToggleRight={onToggleRightSidebar}
+      />
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-5">
-          {!hasActiveSession ? (
-            <div className="flex min-h-[420px] items-center justify-center">
-              <div className="w-full max-w-xl rounded-[28px] border border-border/80 bg-card/80 p-8 text-center shadow-[0_24px_80px_-36px_rgba(0,0,0,0.45)]">
-                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5">
-                  <Sparkles className="h-7 w-7 text-primary" />
-                </div>
-                <h2 className="text-2xl font-semibold text-foreground">开始一个新会话</h2>
-                <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-muted-foreground">
-                  创建会话后再进入聊天工作区。后续一轮里的多个工具调用会聚合在同一个 tool 框里展示。
-                </p>
-                <Button className="mt-6 h-11 rounded-xl px-6 text-sm" onClick={onCreateSession}>
-                  新建会话
-                </Button>
-              </div>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex min-h-[300px] items-center justify-center text-center text-sm text-muted-foreground">
-              新建会话后，直接在下方输入任务。聊天区会按本地 agent 的真实事件流解析并展示。
-            </div>
-          ) : (
-            messages.map((message) => <MessageBubble key={message.id} message={message} />)
+        <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-3 py-3 sm:px-4 sm:py-4">
+          {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
+          {pendingPlanApproval?.kind === "create-app" && (
+            <PlanApprovalCard
+              pendingPlanApproval={pendingPlanApproval}
+              busy={planDecisionBusy || loading}
+              onApprove={onApprovePlan}
+              onReject={onRejectPlan}
+            />
           )}
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 border-t border-border bg-background/95 p-4 backdrop-blur">
-        <div className="mx-auto max-w-4xl">
-          <div className="relative rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-primary/50 focus-within:shadow-md focus-within:shadow-primary/5">
-          <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                模式选择
-              </p>
-              <p className="mt-1 truncate text-xs text-muted-foreground">
-                {selectedApp
-                  ? `当前会更新 ${selectedApp.name}`
-                  : "选择“发送”直接对话，选择“生成 App”进入开发流"}
-              </p>
-            </div>
-            <select
-              value={selectedAppName}
-              onChange={(event) => onSelectAppName(event.target.value)}
-              className="h-9 min-w-[180px] rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary/50"
-              disabled={!hasActiveSession || loading}
-            >
-              <option value="">普通对话 / 新 App</option>
-              {apps.map((app) => (
-                <option key={app.name} value={app.name}>
-                  {app.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Textarea
-            placeholder={selectedApp ? `描述你想如何修改 ${selectedApp.name}...` : "输入任务或普通消息..."}
+      <div className="shrink-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
+        <div className="mx-auto max-w-[980px]">
+          <ComposerPanel
             value={value}
-            onChange={(event) => onChange(event.target.value)}
-            className="min-h-[72px] max-h-[180px] resize-none border-0 bg-transparent px-4 py-3 pr-64 text-sm leading-6 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0"
-            rows={2}
-            disabled={!hasActiveSession}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void onSend();
-              }
-            }}
+            selectedAppName={selectedAppName}
+            loading={loading}
+            composerIntent={composerIntent}
+            hasActiveSession
+            onChange={onChange}
+            onComposerIntentChange={onComposerIntentChange}
+            onSend={onSend}
+            onStop={onStop}
           />
-          <div className="absolute bottom-3 right-3 flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 rounded-xl px-3 text-xs font-medium text-muted-foreground"
-              disabled={!hasActiveSession || !value.trim() || loading}
-              onClick={onPlan}
-            >
-              <Pencil className="mr-1.5 h-4 w-4" />
-              制定计划
-            </Button>
-            <Button
-              className="h-9 rounded-xl bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-              disabled={!hasActiveSession || !value.trim() || loading}
-              onClick={selectedApp ? onIterateApp : onCreateApp}
-            >
-              {selectedApp ? <Pencil className="mr-1.5 h-4 w-4" /> : <MonitorPlay className="mr-1.5 h-4 w-4" />}
-              {selectedApp ? "更新 App" : "生成 App"}
-            </Button>
-            <Button size="icon" className="h-9 w-9" disabled={!hasActiveSession || !value.trim() || loading} onClick={onSend}>
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
         </div>
       </div>
     </div>

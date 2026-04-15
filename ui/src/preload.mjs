@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
   openWorkspace: (payload) => ipcRenderer.invoke('workspace:open', payload),
   send: (payload) => ipcRenderer.invoke('agent:send', payload),
+  approvePlan: (payload) => ipcRenderer.invoke('agent:approve-plan', payload),
+  rejectPlan: (payload) => ipcRenderer.invoke('agent:reject-plan', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
   listApps: () => ipcRenderer.invoke('app:list'),
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),

@@ -2,23 +2,21 @@
 
 import * as React from "react";
 import {
-  Box,
+  ChevronLeft,
+  ChevronRight,
   LayoutGrid,
-  Plus,
-  Settings,
-  MoreHorizontal,
-  Trash2,
-  Edit3,
+  MoonStar,
+  PenSquare,
   Pin,
+  Search,
+  Settings,
+  SunMedium,
+  Trash2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +31,9 @@ export interface SidebarSession {
   title: string;
   preview: string;
   time: string;
+  workspaceLabel: string;
+  messageCount: number;
+  busy: boolean;
   isPinned?: boolean;
 }
 
@@ -41,49 +42,18 @@ interface AppSidebarProps {
   activeSessionId: string | null;
   activeView: "chat" | "apps" | "settings";
   appsCount: number;
+  themeMode: "dark" | "light";
+  collapsed: boolean;
+  searchQuery: string;
   onChangeView: (view: "chat" | "apps" | "settings") => void;
+  onChangeTheme: (theme: "dark" | "light") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
-  onRenameSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, newTitle: string) => void;
   onTogglePin: (sessionId: string) => void;
-}
-
-function NavItem({
-  icon,
-  label,
-  isActive,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  isActive?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <TooltipProvider delayDuration={0}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClick}
-            className={cn(
-              "h-10 w-10 rounded-xl transition-all",
-              isActive
-                ? "bg-primary text-primary-foreground shadow-md"
-                : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            )}
-          >
-            {icon}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="bg-popover text-popover-foreground">
-          {label}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
+  onToggleCollapse: () => void;
+  onSearchChange: (query: string) => void;
 }
 
 function SessionItem({
@@ -98,82 +68,144 @@ function SessionItem({
   isActive: boolean;
   onClick: () => void;
   onDelete: () => void;
-  onRename: () => void;
+  onRename: (newTitle: string) => void;
   onTogglePin: () => void;
 }) {
-  const [showMenu, setShowMenu] = React.useState(false);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editValue, setEditValue] = React.useState(session.title);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  const handleRename = () => {
+    setEditValue(session.title);
+    setIsEditing(true);
+  };
+
+  const handleConfirmRename = () => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== session.title) {
+      onRename(trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleConfirmRename();
+    } else if (e.key === 'Escape') {
+      setIsEditing(false);
+      setEditValue(session.title);
+    }
+  };
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      onMouseEnter={() => setShowMenu(true)}
-      onMouseLeave={() => setShowMenu(false)}
       className={cn(
-        "group relative flex cursor-pointer flex-col gap-1 rounded-xl border px-3 py-2.5 transition-all",
+        "group relative w-full max-w-full overflow-hidden rounded-xl border px-2 py-1 pr-14 text-left transition-colors",
         isActive
-          ? "border-primary/30 bg-primary/12 shadow-sm"
-          : "border-sidebar-border/70 bg-sidebar-accent/20 hover:bg-sidebar-accent/50"
+          ? "border-primary/25 bg-primary/10 shadow-[0_8px-24px_-24px_rgba(0,0,0,0.65)]"
+          : "border-transparent bg-transparent hover:border-sidebar-border/70 hover:bg-sidebar-accent/80",
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0 flex-1 flex items-center gap-2 overflow-hidden">
-          {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
-          <span
-            className={cn(
-              "block min-w-0 truncate text-sm font-medium",
-              isActive ? "text-primary" : "text-sidebar-foreground"
-            )}
-            title={session.title}
-          >
-            {session.title}
-          </span>
-        </div>
-        <div
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+        <span
           className={cn(
-            "flex items-center gap-1 transition-opacity",
-            showMenu ? "opacity-100" : "opacity-0"
+            "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap",
+            session.busy
+              ? "bg-primary/14 text-primary"
+              : "bg-sidebar-accent text-sidebar-foreground/60",
           )}
         >
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-sidebar-foreground/50 hover:text-sidebar-foreground"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-40"
+          {session.messageCount}
+        </span>
+        {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleConfirmRename}
+            onKeyDown={handleKeyDown}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-0 flex-1 rounded border border-primary/50 bg-background px-1 text-[13px] font-medium leading-5 text-sidebar-foreground outline-none focus:border-primary"
+          />
+        ) : (
+          <span className="block w-0 min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-sidebar-foreground">
+            {session.title}
+          </span>
+        )}
+      </div>
+      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6 shrink-0 rounded-lg"
               onClick={(event) => event.stopPropagation()}
             >
-              <DropdownMenuItem onClick={onTogglePin}>
-                <Pin className="mr-2 h-4 w-4" />
-                {session.isPinned ? "取消置顶" : "置顶"}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onRename}>
-                <Edit3 className="mr-2 h-4 w-4" />
-                重命名
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={onDelete}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                删除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+              <Settings className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-40"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DropdownMenuItem onClick={onTogglePin}>
+              <Pin className="mr-2 h-4 w-4" />
+              {session.isPinned ? "取消置顶" : "置顶会话"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleRename}>
+              <PenSquare className="mr-2 h-4 w-4" />
+              重命名
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive" onClick={onDelete}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              删除
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className="block min-w-0 flex-1 truncate text-xs text-sidebar-foreground/50">
-          {session.preview || ""}
-        </span>
-        <span className="shrink-0 text-xs text-sidebar-foreground/40">{session.time}</span>
-      </div>
-    </div>
+    </button>
+  );
+}
+
+function ThemeButton({
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-colors",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "bg-sidebar-accent text-sidebar-foreground/65 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground",
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -181,106 +213,153 @@ export function AppSidebar({
   sessions,
   activeSessionId,
   activeView,
+  appsCount,
+  themeMode,
+  collapsed,
+  searchQuery,
   onChangeView,
+  onChangeTheme,
   onSelectSession,
   onNewSession,
   onDeleteSession,
   onRenameSession,
   onTogglePin,
+  onToggleCollapse,
+  onSearchChange,
 }: AppSidebarProps) {
-  const pinnedSessions = sessions.filter((session) => session.isPinned);
-  const recentSessions = sessions.filter((session) => !session.isPinned);
+  const filteredSessions = sessions.filter((session) =>
+    session.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const pinnedSessions = filteredSessions.filter((session) => session.isPinned);
+  const recentSessions = filteredSessions.filter((session) => !session.isPinned);
+  const orderedSessions = [...pinnedSessions, ...recentSessions];
 
   return (
-    <div className="flex h-full min-h-0 w-72 flex-col border-r border-sidebar-border bg-sidebar">
-      <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/70 shadow-md">
-            <Box className="h-4.5 w-4.5 text-primary-foreground" />
-          </div>
-          <span className="text-base font-semibold text-sidebar-foreground">Moss</span>
-        </div>
-      </div>
-
-      <div className="border-b border-sidebar-border px-3 py-2">
-        <Button
-          variant="outline"
-          className="w-full justify-center gap-2 rounded-lg border-sidebar-border bg-sidebar-accent/50 text-sidebar-foreground hover:bg-sidebar-accent"
-          onClick={onNewSession}
-        >
-          <Plus className="h-4 w-4" />
-          新会话
-        </Button>
-      </div>
-
-      <div className="border-b border-sidebar-border px-4 py-3 text-center text-sm font-medium text-sidebar-foreground">
-        历史会话
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-1 p-2">
-          {pinnedSessions.length > 0 && (
-            <div className="mb-2">
-              <div className="px-2 py-1.5 text-xs font-medium text-sidebar-foreground/40">置顶会话</div>
-              {pinnedSessions.map((session) => (
-                <SessionItem
-                  key={session.id}
-                  session={session}
-                  isActive={activeSessionId === session.id}
-                  onClick={() => onSelectSession(session.id)}
-                  onDelete={() => onDeleteSession(session.id)}
-                  onRename={() => onRenameSession(session.id)}
-                  onTogglePin={() => onTogglePin(session.id)}
-                />
-              ))}
+    <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
+      <div className={cn("border-b border-sidebar-border/80", collapsed ? "px-2 py-3" : "px-3 py-3")}>
+        <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
+          {!collapsed && (
+            <div className="min-w-0">
+              <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
+                moss
+              </div>
             </div>
           )}
-
-          <div>
-            {recentSessions.map((session) => (
-              <SessionItem
-                key={session.id}
-                session={session}
-                isActive={activeSessionId === session.id}
-                onClick={() => onSelectSession(session.id)}
-                onDelete={() => onDeleteSession(session.id)}
-                onRename={() => onRenameSession(session.id)}
-                onTogglePin={() => onTogglePin(session.id)}
-              />
-            ))}
-          </div>
-        </div>
-      </ScrollArea>
-
-      <div className="border-t border-sidebar-border px-3 py-2">
-        <div className="flex items-center gap-1">
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
+            className="h-8 w-8 rounded-xl"
+            onClick={onToggleCollapse}
+            aria-label={collapsed ? "展开左侧栏" : "收起左侧栏"}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </Button>
+        </div>
+
+        <Button
+          variant="outline"
+          className={cn(
+            "mt-3 h-9 rounded-xl border-sidebar-border bg-sidebar-accent/60 px-3 text-sm text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            collapsed ? "w-full justify-center px-0" : "w-full justify-center",
+          )}
+          onClick={onNewSession}
+        >
+          <PenSquare className="h-4 w-4" />
+          {!collapsed && "新会话"}
+        </Button>
+
+        {!collapsed && (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <ThemeButton
+              active={themeMode === "light"}
+              icon={<SunMedium className="h-3.5 w-3.5" />}
+              label="浅色"
+              onClick={() => onChangeTheme("light")}
+            />
+            <ThemeButton
+              active={themeMode === "dark"}
+              icon={<MoonStar className="h-3.5 w-3.5" />}
+              label="暗色"
+              onClick={() => onChangeTheme("dark")}
+            />
+          </div>
+        )}
+      </div>
+
+      {!collapsed && (
+        <>
+          <div className="border-b border-sidebar-border px-3 py-2">
+            <div className="flex min-w-0 items-center justify-between text-[11px] uppercase tracking-[0.2em] text-sidebar-foreground/40">
+              <span className="truncate">会话</span>
+              <span>{filteredSessions.length}</span>
+            </div>
+            <div className="relative mt-2">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="搜索..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="h-7 rounded-lg bg-sidebar-accent/50 pl-8 pr-7 text-xs placeholder:text-muted-foreground/60"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute right-0 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => onSearchChange("")}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="space-y-1.5 p-2 max-w-full overflow-hidden">
+              {orderedSessions.length > 0 ? (
+                orderedSessions.map((session) => (
+                  <SessionItem
+                    key={session.id}
+                    session={session}
+                    isActive={activeSessionId === session.id}
+                    onClick={() => onSelectSession(session.id)}
+                    onDelete={() => onDeleteSession(session.id)}
+                    onRename={(newTitle) => onRenameSession(session.id, newTitle)}
+                    onTogglePin={() => onTogglePin(session.id)}
+                  />
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
+                  还没有历史会话。
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </>
+      )}
+
+      <div className="border-t border-sidebar-border px-2.5 py-2.5">
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant={activeView === "apps" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
             onClick={() => onChangeView("apps")}
-            className={cn(
-              "flex-1 gap-2 rounded-lg transition-all",
-              activeView === "apps"
-                ? "bg-sidebar-accent text-sidebar-foreground"
-                : "text-sidebar-foreground/60 hover:text-sidebar-foreground"
-            )}
           >
             <LayoutGrid className="h-4 w-4" />
-            Apps
+            {!collapsed && (
+              <>
+                Apps
+                <span className="ml-auto text-[11px] text-muted-foreground">{appsCount}</span>
+              </>
+            )}
           </Button>
           <Button
-            variant="ghost"
-            size="sm"
+            variant={activeView === "settings" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
             onClick={() => onChangeView("settings")}
-            className={cn(
-              "flex-1 gap-2 rounded-lg transition-all",
-              activeView === "settings"
-                ? "bg-sidebar-accent text-sidebar-foreground"
-                : "text-sidebar-foreground/60 hover:text-sidebar-foreground"
-            )}
           >
             <Settings className="h-4 w-4" />
-            设置
+            {!collapsed && "设置"}
           </Button>
         </div>
       </div>

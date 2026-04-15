@@ -34,10 +34,14 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   appendSystemPrompt: '',
   thinkingMode: 'adaptive',
   thinkingBudgetTokens: 16000,
+  url: '',
+  apiKey: '',
 });
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
+const APP_CURRENT_VERSION_FILENAME = 'current-version.json';
+const SESSION_APP_BUILD_SUBDIR = '.moss-app-build';
 const APP_METADATA_SCRIPT_TYPE = 'application/ld+json';
 const APP_PRD_SCRIPT_TYPE = 'application/x-goose-prd';
 const APP_SCHEMA_CONTEXT = 'urn:goose.ai:schema';
@@ -55,6 +59,7 @@ let claudeRuntimeModulePromise = null;
 const sessions = new Map();
 const appWindows = new Map();
 const appWindowStates = new Map();
+const debugWindows = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
 fs.mkdirSync(USER_TMP_DIR, { recursive: true });
@@ -195,6 +200,22 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.bypassPermissions = DEFAULT_DESKTOP_SETTINGS.bypassPermissions;
   }
 
+  if (typeof source.url === 'string') {
+    result.url = source.url.trim();
+  } else if (result.url === undefined) {
+    result.url = DEFAULT_DESKTOP_SETTINGS.url;
+  }
+
+  if (typeof source.apiKey === 'string') {
+    result.apiKey = source.apiKey.trim();
+  } else if (result.apiKey === undefined) {
+    result.apiKey = DEFAULT_DESKTOP_SETTINGS.apiKey;
+  }
+
+  if (typeof source.visionModel === 'string' && source.visionModel.trim()) {
+    result.visionModel = source.visionModel.trim();
+  }
+
   return result;
 }
 
@@ -215,10 +236,19 @@ function loadDesktopSettings() {
     result.exists = true;
     const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
     const parsed = JSON.parse(raw);
+    // 从 env 中提取 url 和 apiKey
+    const env = parsed && parsed.env && typeof parsed.env === 'object' ? parsed.env : {};
+    const urlFromEnv = typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL.trim() : '';
+    const apiKeyFromEnv = typeof env.ANTHROPIC_AUTH_TOKEN === 'string' ? env.ANTHROPIC_AUTH_TOKEN.trim() : '';
     // 启动加载时，保留原始 JSON 中的所有 key，只对标准 key 进行合并/格式化
+    const normalized = normalizeDesktopSettings(parsed, parsed);
     result.value = {
       ...parsed,
-      ...normalizeDesktopSettings(parsed, parsed)
+      ...normalized,
+      // 从 env 中读取 url 和 apiKey
+      url: urlFromEnv || normalized.url || DEFAULT_DESKTOP_SETTINGS.url,
+      apiKey: apiKeyFromEnv || normalized.apiKey || DEFAULT_DESKTOP_SETTINGS.apiKey,
+      visionModel: normalized.visionModel || '',
     };
     result.loaded = true;
     return result;
@@ -243,7 +273,39 @@ function getDesktopSettingsPayload(extra = {}) {
 }
 
 function saveDesktopSettings(nextSettings) {
-  fs.writeFileSync(DESKTOP_SETTINGS_PATH, `${JSON.stringify(nextSettings, null, 2)}\n`, 'utf8');
+  // 读取现有文件，保留 env 等其他配置
+  let existingEnv = {};
+  try {
+    if (fs.existsSync(DESKTOP_SETTINGS_PATH)) {
+      const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
+      const existing = JSON.parse(raw);
+      if (existing && existing.env && typeof existing.env === 'object') {
+        existingEnv = existing.env;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 将 url 和 apiKey 存入 env
+  const env = { ...existingEnv };
+  if (nextSettings.url) {
+    env.ANTHROPIC_BASE_URL = nextSettings.url;
+  }
+  if (nextSettings.apiKey) {
+    env.ANTHROPIC_AUTH_TOKEN = nextSettings.apiKey;
+  }
+
+  // 构建完整的保存对象，保留所有现有配置
+  const toSave = {
+    ...nextSettings,
+    env,
+    // 从顶级别存，避免重复
+    url: undefined,
+    apiKey: undefined,
+  };
+  // 删除 undefined 字段
+  Object.keys(toSave).forEach(k => toSave[k] === undefined && delete toSave[k]);
+
+  fs.writeFileSync(DESKTOP_SETTINGS_PATH, `${JSON.stringify(toSave, null, 2)}\n`, 'utf8');
   desktopSettingsState = {
     path: DESKTOP_SETTINGS_PATH,
     exists: true,
@@ -275,6 +337,9 @@ function buildClaudeSessionConfig(cwd) {
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(),
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
+    url: desktopSettings.url || undefined,
+    apiKey: desktopSettings.apiKey || undefined,
+    visionModel: desktopSettings.visionModel || undefined,
   };
 }
 
@@ -372,6 +437,7 @@ function hydratePersistedSessions() {
       messageCount: row.message_count,
       preview: row.preview || deriveSessionPreview(history),
       underlyingSessionId: row.underlying_session_id || null,
+      pendingPlanApproval: derivePendingPlanApproval(history),
       history,
       runtime: null,
       workspaceWatcher: null,
@@ -514,6 +580,7 @@ function getSessionSummary(sessionRecord) {
     messageCount: sessionRecord.messageCount,
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
+    pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
   };
 }
 
@@ -585,6 +652,153 @@ function deriveSessionPreview(history) {
   }
 
   return '';
+}
+
+function derivePendingPlanApproval(history) {
+  if (!Array.isArray(history)) return null;
+
+  let pending = null;
+  for (const entry of history) {
+    if (!entry || entry.type !== 'app_plan_state' || entry.kind !== 'create-app') continue;
+
+    if (entry.state === 'awaiting_approval') {
+      pending = {
+        kind: 'create-app',
+        originalPrompt: typeof entry.originalPrompt === 'string' ? entry.originalPrompt : '',
+        plan: typeof entry.plan === 'string' ? entry.plan : '',
+        requestedAt: typeof entry.timestamp === 'number' ? entry.timestamp : Date.now(),
+      };
+      continue;
+    }
+
+    if (entry.state === 'approved' || entry.state === 'rejected') {
+      pending = null;
+    }
+  }
+
+  return pending;
+}
+
+function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
+  sessionRecord.history.push(event);
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+  schedulePersistSession(sessionRecord);
+  if (sender && !sender.isDestroyed()) {
+    sender.send('agent:event', { sessionId: sessionRecord.id, payload: event });
+  }
+}
+
+function setPendingPlanApproval(sessionRecord, pendingPlanApproval) {
+  sessionRecord.pendingPlanApproval = pendingPlanApproval;
+  sessionRecord.updatedAt = Date.now();
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+}
+
+async function runSessionPrompt({
+  sessionRecord,
+  sender,
+  runtimePrompt,
+  visibleUserPrompt,
+}) {
+  const runtime = await ensureRuntime(sessionRecord);
+
+  if (typeof visibleUserPrompt === 'string' && visibleUserPrompt.trim()) {
+    const trimmedUserPrompt = visibleUserPrompt.trim();
+    const userEvent = {
+      type: 'user',
+      prompt: trimmedUserPrompt,
+      timestamp: Date.now(),
+    };
+
+    sessionRecord.history.push(userEvent);
+    sessionRecord.messageCount += 1;
+    sessionRecord.updatedAt = Date.now();
+    sessionRecord.preview = trimmedUserPrompt;
+    if (sessionRecord.title === 'New Session') {
+      sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
+    }
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+    if (!sender.isDestroyed()) {
+      sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
+    }
+  }
+
+  sessionRecord.busy = true;
+  sessionRecord.updatedAt = Date.now();
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  emitToRenderer('agent:state', { sessionId: sessionRecord.id, busy: true });
+
+  try {
+    let latestAssistantText = '';
+    let streamedAssistantText = '';
+
+    for await (const message of runtime.send(runtimePrompt)) {
+      if (message.session_id) {
+        sessionRecord.underlyingSessionId = message.session_id;
+      }
+      sessionRecord.history.push(message);
+      sessionRecord.updatedAt = Date.now();
+      sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+      if (message.type === 'assistant') {
+        const assistantText = extractTextFromAssistantMessage(message);
+        if (assistantText) {
+          latestAssistantText = assistantText;
+        }
+      } else if (
+        message.type === 'stream_event' &&
+        message.event?.type === 'content_block_delta' &&
+        message.event?.delta?.type === 'text_delta' &&
+        typeof message.event.delta.text === 'string'
+      ) {
+        streamedAssistantText += message.event.delta.text;
+      }
+      schedulePersistSession(sessionRecord);
+      if (!sender.isDestroyed()) {
+        sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
+      }
+    }
+
+    return {
+      latestAssistantText,
+      streamedAssistantText,
+    };
+  } catch (error) {
+    let message = error instanceof Error ? error.message : String(error);
+    if (/Failed to authenticate|API Error:\s*403|API Error:\s*401|forbidden|unauthorized/i.test(message)) {
+      try {
+        const authDebug = await getAuthDebugSnapshot();
+        const summary = formatAuthDebug(authDebug);
+        if (summary) {
+          message = `${message}\n[auth debug] ${summary}`;
+        }
+      } catch {}
+    }
+    const errorEvent = {
+      type: 'error',
+      message,
+      timestamp: Date.now(),
+    };
+    sessionRecord.history.push(errorEvent);
+    schedulePersistSession(sessionRecord, true);
+    if (!sender.isDestroyed()) {
+      sender.send('agent:event', { sessionId: sessionRecord.id, payload: errorEvent });
+    }
+    throw error;
+  } finally {
+    sessionRecord.busy = false;
+    sessionRecord.updatedAt = Date.now();
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+    emitToRenderer('agent:state', {
+      sessionId: sessionRecord.id,
+      busy: false,
+      summary: getSessionSummary(sessionRecord),
+    });
+  }
 }
 
 function getBootStatus() {
@@ -683,8 +897,142 @@ function getAppStoragePath(name) {
   return path.join(ensureAppDataDir(name), APP_STORAGE_FILENAME);
 }
 
+function getAppCurrentVersionPath(name) {
+  return path.join(ensureAppDataDir(name), APP_CURRENT_VERSION_FILENAME);
+}
+
 function getAppFilePath(name) {
   return path.join(ensureAppsDir(), `${name}.html`);
+}
+
+function parseAppVersionIndex(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : null;
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const semverMatch = raw.match(/^0\.0\.(\d+)$/);
+  if (!semverMatch) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(semverMatch[1], 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+}
+
+function formatAppVersionNumber(value) {
+  const parsed = parseAppVersionIndex(value);
+  if (!parsed) {
+    return null;
+  }
+  return `0.0.${parsed}`;
+}
+
+function readAppCurrentVersion(name) {
+  const currentVersionPath = getAppCurrentVersionPath(name);
+  if (!fs.existsSync(currentVersionPath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(currentVersionPath, 'utf8'));
+    const id = String(parsed.id || '').trim();
+    const version = formatAppVersionNumber(parsed.version);
+    if (!id && !version) {
+      return null;
+    }
+    return {
+      id: id || null,
+      version,
+    };
+  } catch (error) {
+    console.warn(`Failed to load current app version from ${currentVersionPath}:`, error);
+    return null;
+  }
+}
+
+function writeAppCurrentVersion(name, versionSelection) {
+  const payload = {
+    id: String(versionSelection?.id || '').trim(),
+    version: formatAppVersionNumber(versionSelection?.version),
+  };
+  fs.writeFileSync(getAppCurrentVersionPath(name), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function loadAppVersionSnapshots(name) {
+  const versionsDir = ensureAppVersionsDir(name);
+  const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
+  const snapshots = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const filePath = path.join(versionsDir, entry.name);
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      snapshots.push({
+        id: String(parsed.id || path.basename(entry.name, '.json')),
+        version: formatAppVersionNumber(parsed.version),
+        createdAt: Number(parsed.createdAt) || Date.now(),
+        reason: String(parsed.reason || 'updated'),
+        note: String(parsed.note || ''),
+        description: String(parsed.description || ''),
+        width: Number(parsed.width) || 900,
+        height: Number(parsed.height) || 700,
+        resizable: parsed.resizable !== false,
+        prd: String(parsed.prd || ''),
+        html: String(parsed.html || ''),
+      });
+    } catch (error) {
+      console.warn(`Failed to load app version snapshot from ${filePath}:`, error);
+    }
+  }
+
+  snapshots.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  let assignedVersion = 0;
+  for (const snapshot of snapshots) {
+    if (snapshot.version) {
+      assignedVersion = Math.max(assignedVersion, parseAppVersionIndex(snapshot.version) || 0);
+      continue;
+    }
+    assignedVersion += 1;
+    snapshot.version = formatAppVersionNumber(assignedVersion);
+  }
+
+  return snapshots;
+}
+
+function getLatestAppVersionSnapshot(name, snapshots = loadAppVersionSnapshots(name)) {
+  return snapshots[snapshots.length - 1] || null;
+}
+
+function getCurrentAppVersionSnapshot(name, snapshots = loadAppVersionSnapshots(name)) {
+  const currentSelection = readAppCurrentVersion(name);
+  let currentSnapshot = null;
+
+  if (currentSelection?.id) {
+    currentSnapshot = snapshots.find((snapshot) => snapshot.id === currentSelection.id) || null;
+  }
+  if (!currentSnapshot && currentSelection?.version) {
+    currentSnapshot =
+      snapshots.find((snapshot) => snapshot.version === currentSelection.version) || null;
+  }
+  if (!currentSnapshot) {
+    currentSnapshot = getLatestAppVersionSnapshot(name, snapshots);
+  }
+
+  if (
+    currentSnapshot &&
+    (
+      currentSelection?.id !== currentSnapshot.id ||
+      currentSelection?.version !== currentSnapshot.version
+    )
+  ) {
+    writeAppCurrentVersion(name, currentSnapshot);
+  }
+
+  return currentSnapshot;
 }
 
 function buildStoredAppHtml(appRecord) {
@@ -698,7 +1046,7 @@ function buildStoredAppHtml(appRecord) {
     resizable: appRecord.resizable,
     mcpServers: ['apps'],
     runtime: {
-      hostApi: 'window.gooseApp',
+      hostApi: 'window.mossApp',
       capabilities: ['storage', 'files', 'agent', 'resources'],
     },
   };
@@ -782,7 +1130,9 @@ function listStoredApps() {
       const fileContent = fs.readFileSync(filePath, 'utf8');
       const parsed = parseStoredAppHtml(fileContent, filePath);
       const stat = fs.statSync(filePath);
-      const versions = listAppVersionSnapshots(parsed.name);
+      const versions = loadAppVersionSnapshots(parsed.name);
+      const latestVersion = getLatestAppVersionSnapshot(parsed.name, versions);
+      const currentVersion = getCurrentAppVersionSnapshot(parsed.name, versions);
       apps.push({
         name: parsed.name,
         description: parsed.description,
@@ -793,7 +1143,10 @@ function listStoredApps() {
         createdAt: stat.birthtimeMs || stat.ctimeMs || Date.now(),
         updatedAt: stat.mtimeMs || Date.now(),
         versionCount: versions.length,
-        latestVersionId: versions[0]?.id || null,
+        latestVersionId: latestVersion?.id || null,
+        latestVersion: latestVersion?.version || null,
+        currentVersionId: currentVersion?.id || latestVersion?.id || null,
+        currentVersion: currentVersion?.version || latestVersion?.version || null,
       });
     } catch (error) {
       console.warn(`Failed to load stored app from ${filePath}:`, error);
@@ -832,6 +1185,9 @@ function saveStoredApp(appRecord) {
     updatedAt: stat.mtimeMs || Date.now(),
     versionCount: 1,
     latestVersionId: snapshot.id,
+    latestVersion: snapshot.version,
+    currentVersionId: snapshot.id,
+    currentVersion: snapshot.version,
   };
 }
 
@@ -845,8 +1201,19 @@ function updateStoredApp(name, appRecord, options = {}) {
   const snapshot = options.saveVersion === false
     ? null
     : saveAppVersionSnapshot(nextRecord, { reason: options.reason || 'updated' });
+  if (
+    options.saveVersion === false &&
+    (options.currentVersionId || options.currentVersion)
+  ) {
+    writeAppCurrentVersion(name, {
+      id: options.currentVersionId,
+      version: options.currentVersion,
+    });
+  }
   const stat = fs.statSync(existing.filePath);
-  const versions = listAppVersionSnapshots(name);
+  const versions = loadAppVersionSnapshots(name);
+  const latestVersion = getLatestAppVersionSnapshot(name, versions);
+  const currentVersion = getCurrentAppVersionSnapshot(name, versions);
 
   return {
     name,
@@ -858,13 +1225,24 @@ function updateStoredApp(name, appRecord, options = {}) {
     createdAt: stat.birthtimeMs || stat.ctimeMs || Date.now(),
     updatedAt: stat.mtimeMs || Date.now(),
     versionCount: versions.length,
-    latestVersionId: snapshot?.id || versions[0]?.id || null,
+    latestVersionId: latestVersion?.id || snapshot?.id || null,
+    latestVersion: latestVersion?.version || snapshot?.version || null,
+    currentVersionId: currentVersion?.id || snapshot?.id || null,
+    currentVersion: currentVersion?.version || snapshot?.version || null,
   };
 }
 
 function toAppVersionSnapshotRecord(appRecord, extra = {}) {
+  const existingSnapshots = Array.isArray(extra.existingSnapshots) ? extra.existingSnapshots : [];
+  const nextVersionNumber =
+    existingSnapshots.reduce((max, snapshot) => {
+      const versionNumber = parseAppVersionIndex(snapshot.version);
+      return versionNumber ? Math.max(max, versionNumber) : max;
+    }, 0) + 1;
+
   return {
     id: extra.id || `${Date.now()}-${randomUUID().slice(0, 8)}`,
+    version: formatAppVersionNumber(extra.version) || formatAppVersionNumber(nextVersionNumber),
     appName: appRecord.name,
     createdAt: extra.createdAt || Date.now(),
     reason: extra.reason || 'updated',
@@ -879,58 +1257,52 @@ function toAppVersionSnapshotRecord(appRecord, extra = {}) {
 }
 
 function saveAppVersionSnapshot(appRecord, extra = {}) {
-  const snapshot = toAppVersionSnapshotRecord(appRecord, extra);
+  const existingSnapshots = loadAppVersionSnapshots(appRecord.name);
+  const snapshot = toAppVersionSnapshotRecord(appRecord, {
+    ...extra,
+    existingSnapshots,
+  });
   const filePath = path.join(ensureAppVersionsDir(appRecord.name), `${snapshot.id}.json`);
   fs.writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+  writeAppCurrentVersion(appRecord.name, snapshot);
   return snapshot;
 }
 
 function listAppVersionSnapshots(name) {
-  const versionsDir = ensureAppVersionsDir(name);
-  const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
-  const versions = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const filePath = path.join(versionsDir, entry.name);
-    try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      versions.push({
-        id: String(parsed.id || path.basename(entry.name, '.json')),
-        createdAt: Number(parsed.createdAt) || Date.now(),
-        reason: String(parsed.reason || 'updated'),
-        note: String(parsed.note || ''),
-        description: String(parsed.description || ''),
-        width: Number(parsed.width) || 900,
-        height: Number(parsed.height) || 700,
-        resizable: parsed.resizable !== false,
-      });
-    } catch (error) {
-      console.warn(`Failed to load app version snapshot from ${filePath}:`, error);
-    }
-  }
-
-  return versions.sort((a, b) => b.createdAt - a.createdAt);
+  const snapshots = loadAppVersionSnapshots(name);
+  const currentSnapshot = getCurrentAppVersionSnapshot(name, snapshots);
+  const latestSnapshot = getLatestAppVersionSnapshot(name, snapshots);
+  return [...snapshots]
+    .sort((a, b) => {
+      const versionDiff = (parseAppVersionIndex(b.version) || 0) - (parseAppVersionIndex(a.version) || 0);
+      return versionDiff || b.createdAt - a.createdAt;
+    })
+    .map(({ id, version, createdAt, reason, note, description, width, height, resizable }) => ({
+      id,
+      version,
+      createdAt,
+      reason,
+      note,
+      description,
+      width,
+      height,
+      resizable,
+      isCurrent: id === currentSnapshot?.id,
+      isLatest: id === latestSnapshot?.id,
+    }));
 }
 
 function getAppVersionSnapshot(name, versionId) {
-  const targetPath = path.join(ensureAppVersionsDir(name), `${versionId}.json`);
-  if (!fs.existsSync(targetPath)) {
+  const normalizedVersion = formatAppVersionNumber(versionId);
+  const snapshot = loadAppVersionSnapshots(name).find(
+    (entry) => entry.id === versionId || (normalizedVersion && entry.version === normalizedVersion)
+  );
+  if (!snapshot) {
     throw new Error(`Unknown app version: ${versionId}`);
   }
-  const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
   return {
-    id: String(parsed.id || versionId),
+    ...snapshot,
     appName: name,
-    createdAt: Number(parsed.createdAt) || Date.now(),
-    reason: String(parsed.reason || 'updated'),
-    note: String(parsed.note || ''),
-    description: String(parsed.description || ''),
-    width: Number(parsed.width) || 900,
-    height: Number(parsed.height) || 700,
-    resizable: parsed.resizable !== false,
-    prd: String(parsed.prd || ''),
-    html: String(parsed.html || ''),
   };
 }
 
@@ -946,13 +1318,11 @@ function rollbackAppToVersion(name, versionId) {
     html: snapshot.html,
   }, {
     saveVersion: false,
+    currentVersionId: snapshot.id,
+    currentVersion: snapshot.version,
   });
 
-  return {
-    ...rolledBackApp,
-    versionCount: listAppVersionSnapshots(name).length,
-    latestVersionId: versionId,
-  };
+  return rolledBackApp;
 }
 
 function deleteStoredApp(name) {
@@ -1062,7 +1432,7 @@ function getAppInfoPayload(appState) {
     dataDir: appState.dataDir,
     filesDir: appState.filesDir,
     versionsDir: appState.versionsDir,
-    hostApi: 'window.gooseApp',
+    hostApi: 'window.mossApp',
   };
 }
 
@@ -1539,6 +1909,7 @@ async function callAppTool(appState, name, args = {}) {
         app: rolledBack,
       });
       refreshOpenAppWindow(appState.name);
+      launchAppWindowByEntry(rolledBack);
       return {
         ok: true,
         versionId,
@@ -1598,28 +1969,104 @@ function extractAppPayloadFromText(content) {
   };
 }
 
-function buildCreateAppPrompt(prd) {
+function getSessionAppBuildPaths(sessionRecord) {
+  const buildDir = path.join(sessionRecord.workspace, SESSION_APP_BUILD_SUBDIR);
+  return {
+    buildDir,
+    metadataPath: path.join(buildDir, 'app-meta.json'),
+    htmlPath: path.join(buildDir, 'index.html'),
+  };
+}
+
+function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
+  const { metadataPath, htmlPath } = getSessionAppBuildPaths(sessionRecord);
+
+  if (!fs.existsSync(metadataPath)) {
+    throw new Error(`App metadata file was not created: ${metadataPath}`);
+  }
+  if (!fs.existsSync(htmlPath)) {
+    throw new Error(`App html file was not created: ${htmlPath}`);
+  }
+
+  let metadata;
+  try {
+    metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `Failed to parse generated app metadata JSON: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const html = fs.readFileSync(htmlPath, 'utf8').trim();
+  if (!html.toLowerCase().includes('<html')) {
+    throw new Error(`Generated HTML file did not contain a full HTML document: ${htmlPath}`);
+  }
+
+  return {
+    name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
+    description: String(metadata?.description || '').trim(),
+    width: Number(metadata?.width) || 900,
+    height: Number(metadata?.height) || 700,
+    resizable: metadata?.resizable !== false,
+    html,
+  };
+}
+
+function buildCreateAppPlanPrompt(prd) {
   return [
-    'You are generating a standalone single-file desktop mini app.',
-    'First, output your thinking process and a step-by-step execution plan. Explain what features you are implementing and how.',
-    'Then, return the final app code in exactly two fenced blocks at the very END of your response.',
-    'First block must be ```app-meta with JSON.',
-    'Second block must be ```html containing the full code.',
+    'You are in planning mode for a standalone single-file desktop mini app.',
+    'All natural-language output must be in Simplified Chinese.',
+    'Produce an implementation plan only. Do NOT output any app code, HTML, JSON metadata, or fenced code blocks.',
+    'Your plan must be concrete enough for user approval.',
+    'Include these sections in plain markdown:',
+    '1. Goal',
+    '2. Core features',
+    '3. UI and interaction design',
+    '4. Data and state handling',
+    '5. Execution steps',
+    '6. Risks or open questions',
+    '',
+    'App request:',
+    String(prd || '').trim(),
+  ].join('\n');
+}
+
+function buildCreateAppExecutionPrompt(prd, approvedPlan, buildPaths) {
+  return [
+    'You are implementing a standalone single-file desktop mini app using workspace tools.',
+    'All natural-language output must be in Simplified Chinese.',
+    'The user has already approved the implementation plan below. You must follow it.',
+    '',
+    'Approved plan:',
+    String(approvedPlan || '').trim() || '(empty)',
+    '',
+    'Use file tools to create or overwrite these exact files inside the workspace:',
+    `- ${buildPaths.metadataPath}`,
+    `- ${buildPaths.htmlPath}`,
+    '',
+    'Write the app metadata JSON to app-meta.json with this shape:',
+    '{ "name": string, "description": string, "width": number, "height": number, "resizable": boolean }',
+    '',
+    'Write the full standalone HTML document to index.html.',
+    'Do not return the full app code in chat unless it is strictly necessary.',
+    'Your final assistant message should be a short implementation summary in Simplified Chinese only.',
     'Rules:',
-    '- BE VERBOSE about your plan and progress BEFORE outputting the code.',
+    '- Do not change scope unless absolutely necessary.',
+    '- Use tools for the actual file creation so the execution is visible.',
+    '- You may read back the files to verify them before finishing.',
     '- Use vanilla HTML/CSS/JavaScript only.',
     '- Keep the app fully self-contained.',
     '- Make the UI polished and usable.',
     '- Name must be lowercase and hyphenated.',
-    '- The app runs inside Electron and can access a host runtime API via window.gooseApp.',
+    '- The app runs inside Electron and can access a host runtime API via window.mossApp.',
     '',
     'Available host runtime APIs (all async):',
-    '- window.gooseApp.getAppInfo()',
-    '- window.gooseApp.readResource(uri)',
-    '- window.gooseApp.storage.get(key), set(key, value), remove(key), listKeys()',
-    '- window.gooseApp.files.list(path?), readText(path), writeText(path, content), delete(path), mkdir(path)',
-    '- window.gooseApp.agent.send({ prompt, systemPrompt? })',
-    '- window.gooseApp.agent.reset()',
+    '- window.mossApp.getAppInfo()',
+    '- window.mossApp.readResource(uri)',
+    '- window.mossApp.storage.getItem(key), setItem(key, value), removeItem(key), list()',
+    '- window.mossApp.files.list(path?), readText(path), writeText(path, content), delete(path), mkdir(path)',
+    '- window.mossApp.agent.send({ prompt, systemPrompt? })',
+    '- window.mossApp.agent.reset()',
     '',
     'App request:',
     String(prd || '').trim(),
@@ -1629,6 +2076,7 @@ function buildCreateAppPrompt(prd) {
 function buildIterateAppPrompt(appRecord, feedback) {
   return [
     'You are updating an existing standalone single-file desktop mini app.',
+    'All natural-language analysis, plans, explanations, and summaries must be in Simplified Chinese.',
     'First, analyze the requested changes and output your modification plan step-by-step.',
     'Then, return the full updated app code in exactly two fenced blocks at the very END of your response.',
     'First block must be ```app-meta with JSON.',
@@ -1638,7 +2086,7 @@ function buildIterateAppPrompt(appRecord, feedback) {
     '- Keep the app name unchanged.',
     '- Use vanilla HTML/CSS/JavaScript only.',
     '- Keep the app fully self-contained.',
-    '- The app runs inside Electron and can access a host runtime API via window.gooseApp.',
+    '- The app runs inside Electron and can access a host runtime API via window.mossApp.',
     '',
     'Current app PRD:',
     appRecord.prd || '(empty)',
@@ -1761,6 +2209,7 @@ function createSessionRecord({ workspace } = {}) {
     messageCount: 0,
     preview: '',
     underlyingSessionId: null,
+    pendingPlanApproval: null,
     history: [],
     runtime: null,
     workspaceWatcher: null,
@@ -1938,8 +2387,17 @@ function createWindow() {
     height: 980,
     minWidth: 1220,
     minHeight: 780,
-    title: 'Claude Code Electron UI',
+    title: 'Moss',
     backgroundColor: '#09111c',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    titleBarOverlay: process.platform === 'darwin'
+      ? false
+      : {
+          color: '#09111c',
+          symbolColor: '#dbe4ea',
+          height: 36,
+        },
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
@@ -2184,6 +2642,7 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
 ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
   const rolledBack = rollbackAppToVersion(name, versionId);
   refreshOpenAppWindow(name);
+  launchAppWindowByEntry(rolledBack);
   emitAppsChanged({
     action: 'rolled-back',
     app: rolledBack,
@@ -2203,6 +2662,83 @@ ipcMain.handle('app:delete', async (_event, { name }) => {
   deleteStoredApp(name);
   emitAppsChanged({ action: 'deleted', name });
   return { ok: true };
+});
+
+ipcMain.handle('app:open-debug', async (event, { name }) => {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!parentWindow) return { error: 'No parent window' };
+
+  const existingDebug = debugWindows.get(name);
+  if (existingDebug && !existingDebug.isDestroyed()) {
+    existingDebug.focus();
+    return { ok: true };
+  }
+
+  const debugWindow = new BrowserWindow({
+    title: `Moss Debug - ${name}`,
+    width: 500,
+    height: 600,
+    minWidth: 400,
+    minHeight: 400,
+    resizable: true,
+    backgroundColor: '#0b1120',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'debug-preload.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  debugWindows.set(name, debugWindow);
+  debugWindow.setParentWindow(parentWindow);
+
+  debugWindow.on('closed', () => {
+    debugWindows.delete(name);
+  });
+
+  debugWindow.webContents.on('did-finish-load', () => {
+    debugWindow.webContents.send('debug:init', { name });
+  });
+
+  const debugHtmlPath = path.join(__dirname, 'debug.html');
+  void debugWindow.loadFile(debugHtmlPath);
+
+  return { ok: true };
+});
+
+ipcMain.on('debug:close', (event) => {
+  const debugWindow = BrowserWindow.fromWebContents(event.sender);
+  if (debugWindow) {
+    debugWindow.close();
+  }
+});
+
+ipcMain.on('debug:send-to-agent', (event, { prompt, appName }) => {
+  const debugWindow = BrowserWindow.fromWebContents(event.sender);
+  const parentWindow = debugWindow?.getParentWindow();
+  if (!parentWindow) return;
+
+  const appState = appWindowStates.get(parentWindow.webContents.id);
+  if (!appState || !appState.runtime) return;
+
+  // Forward events to debug window
+  const originalEmit = appState.runtime.emit;
+  if (originalEmit) {
+    appState.runtime.emit = function(...args) {
+      if (debugWindow && !debugWindow.isDestroyed()) {
+        debugWindow.webContents.send('debug:agent-event', args[0]);
+      }
+      return originalEmit.apply(this, args);
+    };
+  }
+
+  appState.runtime.agent.send(prompt, (err, response) => {
+    if (debugWindow && !debugWindow.isDestroyed()) {
+      debugWindow.webContents.send('debug:response', response);
+    }
+  });
 });
 
 ipcMain.handle('app-runtime:get-info', async (event) => {
@@ -2303,6 +2839,10 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
   const isIterateAppMode = mode === 'iterate-app';
   const isPlanOnly = mode === 'plan';
 
+  if (isCreateAppMode && sessionRecord.pendingPlanApproval) {
+    throw new Error('There is already a pending app creation plan awaiting approval.');
+  }
+
   let iterateTarget = null;
   if (isIterateAppMode) {
     if (!appName || typeof appName !== 'string') {
@@ -2312,75 +2852,76 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
   }
 
   const runtimePrompt = isCreateAppMode
-    ? buildCreateAppPrompt(trimmedPrompt)
+    ? buildCreateAppPlanPrompt(trimmedPrompt)
     : isIterateAppMode
       ? buildIterateAppPrompt(iterateTarget, trimmedPrompt)
       : isPlanOnly
         ? `Please create a step-by-step implementation plan for the following request. Do NOT output any code blocks yet, just the logical plan: ${trimmedPrompt}`
         : trimmedPrompt;
 
-  const runtime = await ensureRuntime(sessionRecord);
-  const userEvent = {
-    type: 'user',
-    prompt: trimmedPrompt,
-    timestamp: Date.now(),
-  };
+  const {
+    latestAssistantText,
+    streamedAssistantText,
+  } = await runSessionPrompt({
+    sessionRecord,
+    sender: event.sender,
+    runtimePrompt,
+    visibleUserPrompt: trimmedPrompt,
+  });
 
-  sessionRecord.history.push(userEvent);
-  sessionRecord.messageCount += 1;
-  sessionRecord.updatedAt = Date.now();
-  sessionRecord.preview = trimmedPrompt;
-  if (sessionRecord.title === 'New Session') {
-    sessionRecord.title = buildSessionTitle(trimmedPrompt);
-  }
-  sessionRecord.busy = true;
-  schedulePersistSession(sessionRecord, true);
-  emitSessionMeta(sessionRecord);
-  event.sender.send('agent:event', { sessionId, payload: userEvent });
-  emitToRenderer('agent:state', { sessionId, busy: true });
-
-  try {
-    let latestAssistantText = '';
-    let streamedAssistantText = '';
-
-    for await (const message of runtime.send(runtimePrompt)) {
-      if (message.session_id) {
-        sessionRecord.underlyingSessionId = message.session_id;
-      }
-      sessionRecord.history.push(message);
-      sessionRecord.updatedAt = Date.now();
-      sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
-      if (message.type === 'assistant') {
-        const assistantText = extractTextFromAssistantMessage(message);
-        if (assistantText) {
-          latestAssistantText = assistantText;
-        }
-      } else if (
-        message.type === 'stream_event' &&
-        message.event?.type === 'content_block_delta' &&
-        message.event?.delta?.type === 'text_delta' &&
-        typeof message.event.delta.text === 'string'
-      ) {
-        streamedAssistantText += message.event.delta.text;
-      }
-      schedulePersistSession(sessionRecord);
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('agent:event', { sessionId, payload: message });
-      }
+  let createdApp = null;
+  let updatedApp = null;
+  if (isCreateAppMode) {
+    const planText = String(latestAssistantText || streamedAssistantText || '').trim();
+    if (!planText) {
+      throw new Error('Planner did not return a usable app creation plan.');
     }
+    const pendingPlanApproval = {
+      kind: 'create-app',
+      originalPrompt: trimmedPrompt,
+      plan: planText,
+      requestedAt: Date.now(),
+    };
+    pushSessionHistoryEvent(sessionRecord, {
+      type: 'app_plan_state',
+      kind: 'create-app',
+      state: 'awaiting_approval',
+      originalPrompt: trimmedPrompt,
+      plan: planText,
+      timestamp: pendingPlanApproval.requestedAt,
+    }, event.sender);
+    setPendingPlanApproval(sessionRecord, pendingPlanApproval);
+  } else if (isIterateAppMode) {
+    const payload = extractAppPayloadFromText(latestAssistantText || streamedAssistantText);
+    const nextPrd = iterateTarget.prd
+      ? `${iterateTarget.prd}\n\nUpdate request:\n${trimmedPrompt}`
+      : trimmedPrompt;
+    updatedApp = updateStoredApp(iterateTarget.name, {
+      ...payload,
+      prd: nextPrd,
+    });
+    refreshOpenAppWindow(updatedApp.name);
+    launchAppWindowByEntry(updatedApp);
+    emitAppsChanged({
+      action: 'updated',
+      app: {
+        name: updatedApp.name,
+        description: updatedApp.description,
+        width: updatedApp.width,
+        height: updatedApp.height,
+        resizable: updatedApp.resizable,
+        createdAt: updatedApp.createdAt,
+        updatedAt: updatedApp.updatedAt,
+      },
+    });
+  }
 
-    let createdApp = null;
-    let updatedApp = null;
-    if (isCreateAppMode) {
-      const payload = extractAppPayloadFromText(latestAssistantText || streamedAssistantText);
-      createdApp = saveStoredApp({
-        ...payload,
-        prd: trimmedPrompt,
-      });
-      launchAppWindowByEntry(createdApp);
-      emitAppsChanged({
-        action: 'created',
-        app: {
+  return {
+    ok: true,
+    sessionId,
+    summary: getSessionSummary(sessionRecord),
+    createdApp: createdApp
+      ? {
           name: createdApp.name,
           description: createdApp.description,
           width: createdApp.width,
@@ -2388,21 +2929,11 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
           resizable: createdApp.resizable,
           createdAt: createdApp.createdAt,
           updatedAt: createdApp.updatedAt,
-        },
-      });
-    } else if (isIterateAppMode) {
-      const payload = extractAppPayloadFromText(latestAssistantText || streamedAssistantText);
-      const nextPrd = iterateTarget.prd
-        ? `${iterateTarget.prd}\n\nUpdate request:\n${trimmedPrompt}`
-        : trimmedPrompt;
-      updatedApp = updateStoredApp(iterateTarget.name, {
-        ...payload,
-        prd: nextPrd,
-      });
-      refreshOpenAppWindow(updatedApp.name);
-      emitAppsChanged({
-        action: 'updated',
-        app: {
+        }
+      : null,
+    pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
+    updatedApp: updatedApp
+      ? {
           name: updatedApp.name,
           description: updatedApp.description,
           width: updatedApp.width,
@@ -2410,68 +2941,106 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
           resizable: updatedApp.resizable,
           createdAt: updatedApp.createdAt,
           updatedAt: updatedApp.updatedAt,
-        },
-      });
-    }
-
-    return {
-      ok: true,
-      sessionId,
-      summary: getSessionSummary(sessionRecord),
-      createdApp: createdApp
-        ? {
-            name: createdApp.name,
-            description: createdApp.description,
-            width: createdApp.width,
-            height: createdApp.height,
-            resizable: createdApp.resizable,
-            createdAt: createdApp.createdAt,
-            updatedAt: createdApp.updatedAt,
-          }
-        : null,
-      updatedApp: updatedApp
-        ? {
-            name: updatedApp.name,
-            description: updatedApp.description,
-            width: updatedApp.width,
-            height: updatedApp.height,
-            resizable: updatedApp.resizable,
-            createdAt: updatedApp.createdAt,
-            updatedAt: updatedApp.updatedAt,
-          }
-        : null,
-    };
-  } catch (error) {
-    let message = error instanceof Error ? error.message : String(error);
-    if (/Failed to authenticate|API Error:\s*403|API Error:\s*401|forbidden|unauthorized/i.test(message)) {
-      try {
-        const authDebug = await getAuthDebugSnapshot();
-        const summary = formatAuthDebug(authDebug);
-        if (summary) {
-          message = `${message}\n[auth debug] ${summary}`;
         }
-      } catch {}
-    }
-    const errorEvent = {
-      type: 'error',
-      message,
-      timestamp: Date.now(),
-    };
-    sessionRecord.history.push(errorEvent);
-    schedulePersistSession(sessionRecord, true);
-    if (!event.sender.isDestroyed()) {
-      event.sender.send('agent:event', { sessionId, payload: errorEvent });
-    }
-    throw error;
-  } finally {
-    sessionRecord.busy = false;
-    sessionRecord.updatedAt = Date.now();
-    schedulePersistSession(sessionRecord, true);
-    emitSessionMeta(sessionRecord);
-    emitToRenderer('agent:state', {
-      sessionId,
-      busy: false,
-      summary: getSessionSummary(sessionRecord),
-    });
+      : null,
+  };
+});
+
+ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  if (sessionRecord.busy) {
+    throw new Error('This session is already processing a request.');
   }
+  const pendingPlanApproval = sessionRecord.pendingPlanApproval;
+  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'create-app') {
+    throw new Error('There is no app creation plan waiting for approval.');
+  }
+
+  pushSessionHistoryEvent(sessionRecord, {
+    type: 'app_plan_state',
+    kind: 'create-app',
+    state: 'approved',
+    originalPrompt: pendingPlanApproval.originalPrompt,
+    plan: pendingPlanApproval.plan,
+    timestamp: Date.now(),
+  }, event.sender);
+  setPendingPlanApproval(sessionRecord, null);
+
+  const buildPaths = getSessionAppBuildPaths(sessionRecord);
+  fs.mkdirSync(buildPaths.buildDir, { recursive: true });
+
+  const {
+    latestAssistantText,
+    streamedAssistantText,
+  } = await runSessionPrompt({
+    sessionRecord,
+    sender: event.sender,
+    runtimePrompt: buildCreateAppExecutionPrompt(
+      pendingPlanApproval.originalPrompt,
+      pendingPlanApproval.plan,
+      buildPaths,
+    ),
+  });
+
+  const payload = readGeneratedAppPayloadFromWorkspace(sessionRecord);
+  const createdApp = saveStoredApp({
+    ...payload,
+    prd: pendingPlanApproval.originalPrompt,
+  });
+
+  launchAppWindowByEntry(createdApp);
+  emitAppsChanged({
+    action: 'created',
+    app: {
+      name: createdApp.name,
+      description: createdApp.description,
+      width: createdApp.width,
+      height: createdApp.height,
+      resizable: createdApp.resizable,
+      createdAt: createdApp.createdAt,
+      updatedAt: createdApp.updatedAt,
+    },
+  });
+
+  return {
+    ok: true,
+    sessionId,
+    summary: getSessionSummary(sessionRecord),
+    createdApp: {
+      name: createdApp.name,
+      description: createdApp.description,
+      width: createdApp.width,
+      height: createdApp.height,
+      resizable: createdApp.resizable,
+      createdAt: createdApp.createdAt,
+      updatedAt: createdApp.updatedAt,
+    },
+  };
+});
+
+ipcMain.handle('agent:reject-plan', async (event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  if (sessionRecord.busy) {
+    throw new Error('This session is already processing a request.');
+  }
+  const pendingPlanApproval = sessionRecord.pendingPlanApproval;
+  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'create-app') {
+    throw new Error('There is no app creation plan waiting for approval.');
+  }
+
+  pushSessionHistoryEvent(sessionRecord, {
+    type: 'app_plan_state',
+    kind: 'create-app',
+    state: 'rejected',
+    originalPrompt: pendingPlanApproval.originalPrompt,
+    plan: pendingPlanApproval.plan,
+    timestamp: Date.now(),
+  }, event.sender);
+  setPendingPlanApproval(sessionRecord, null);
+
+  return {
+    ok: true,
+    sessionId,
+    summary: getSessionSummary(sessionRecord),
+  };
 });

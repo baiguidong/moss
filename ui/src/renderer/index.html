@@ -7,14 +7,16 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar panel">
+    <div id="appShell" class="app-shell">
+      <aside id="leftSidebar" class="sidebar panel">
         <div class="sidebar-head">
-          <div>
-            <div class="eyebrow">Sudowork-style Sidebar</div>
-            <h1>本地 Agent</h1>
+          <div class="sidebar-brand">
+            <div class="brand-mark">moss</div>
           </div>
-          <button id="newSessionBtn" class="primary">新建会话</button>
+          <div class="sidebar-head-actions">
+            <button id="toggleLeftSidebarBtn" class="ghost panel-toggle" type="button" aria-label="收起左侧栏">◂</button>
+            <button id="newSessionBtn" class="primary">新建会话</button>
+          </div>
         </div>
 
         <div class="status-strip">
@@ -25,6 +27,8 @@
         <div class="sidebar-section-title">会话列表</div>
         <div id="sessionList" class="session-list"></div>
       </aside>
+
+      <div id="leftResizeHandle" class="panel-resizer" data-side="left" role="separator" aria-label="调整左侧栏宽度"></div>
 
       <main class="chat-column panel">
         <header class="chat-header">
@@ -50,7 +54,9 @@
         </section>
       </main>
 
-      <aside class="workspace-column panel">
+      <div id="rightResizeHandle" class="panel-resizer" data-side="right" role="separator" aria-label="调整右侧栏宽度"></div>
+
+      <aside id="rightSidebar" class="workspace-column panel">
         <header class="workspace-header">
           <div>
             <div class="eyebrow">Workspace</div>
@@ -58,6 +64,7 @@
             <div id="workspaceMeta" class="workspace-meta">选择会话后可浏览目录</div>
           </div>
           <div class="workspace-actions">
+            <button id="toggleRightSidebarBtn" class="ghost panel-toggle" type="button" aria-label="收起右侧栏">▸</button>
             <button id="pickDirBtn" class="ghost" disabled>选择目录</button>
             <button id="refreshTreeBtn" class="ghost" disabled>刷新</button>
           </div>

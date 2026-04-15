@@ -8,6 +8,7 @@ export type ToolStep = {
   duration?: number;
   result?: string;
   inputSummary?: string;
+  statusText?: string;
 };
 
 export type ChatMessage = {
@@ -160,6 +161,7 @@ function ensureToolStep(message: MutableChatMessage, block: any): ToolStep {
     status: 'running',
     result: buildToolDetail(block?.input),
     inputSummary: extractInputSummary(block?.input),
+    statusText: '进行中',
   };
   toolSteps.push(step);
   return step;
@@ -188,6 +190,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
   const toolOwners = new Map<string, MutableChatMessage>();
   let currentAssistant: MutableChatMessage | null = null;
   let turnIndex = -1;
+  let assistantIndex = -1;
 
   const getCurrentAssistant = (timestamp: Date) => {
     if (currentAssistant && !currentAssistant._finalized) {
@@ -197,8 +200,9 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       return currentAssistant;
     }
 
+    assistantIndex += 1;
     const assistant: MutableChatMessage = {
-      id: `assistant-turn-${Math.max(turnIndex, 0)}`,
+      id: `assistant-${assistantIndex}`,
       role: 'assistant',
       content: '',
       timestamp,
@@ -242,9 +246,37 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
             tool_name: block.tool_name || 'Tool',
           });
           step.status = block.is_error ? 'error' : 'success';
+          step.statusText = block.is_error ? '执行失败' : '执行完成';
           step.result = buildToolDetail(undefined, summarizeToolResultBlock(block));
         }
       }
+      continue;
+    }
+
+    if (event?.type === 'app_plan_state' && event?.kind === 'create-app') {
+      finalizeAssistant(currentAssistant);
+
+      let content = '';
+      if (event.state === 'awaiting_approval') {
+        content = '创建 App 的计划已经生成，等待你确认后才会继续执行。';
+      } else if (event.state === 'approved') {
+        content = '已批准创建 App 计划，开始按计划生成应用。';
+      } else if (event.state === 'rejected') {
+        content = '已退回创建 App 计划，当前不会继续生成应用。';
+      }
+
+      if (content) {
+        assistantIndex += 1;
+        messages.push({
+          id: `assistant-${assistantIndex}`,
+          role: 'assistant',
+          content,
+          timestamp,
+          meta: ['创建 App'],
+        });
+      }
+
+      currentAssistant = null;
       continue;
     }
 
@@ -255,6 +287,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       if (streamEvent?.type === 'content_block_start' && streamEvent.content_block?.type === 'tool_use') {
         const step = ensureToolStep(assistant, streamEvent.content_block);
         step.status = 'running';
+        step.statusText = '进行中';
         step.result = buildToolDetail(streamEvent.content_block.input);
         toolOwners.set(step.id, assistant);
       } else if (streamEvent?.type === 'content_block_start' && streamEvent.content_block?.type === 'thinking') {
@@ -271,6 +304,33 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
             step.result = `${step.result || 'Input'}${step.result ? '\n' : '\n'}${streamEvent.delta.partial_json}`;
           }
         }
+      }
+      continue;
+    }
+
+    if (event?.type === 'tool_progress') {
+      const assistant = getCurrentAssistant(timestamp);
+      const toolId = String(event?.parent_tool_use_id || event?.tool_use_id || '');
+      const owner = (toolId && toolOwners.get(toolId)) || assistant;
+      const step = ensureToolStep(owner, {
+        id: toolId,
+        tool_name: event?.tool_name || 'Tool',
+      });
+      step.status = 'running';
+      step.statusText = typeof event?.elapsed_time_seconds === 'number'
+        ? `运行 ${event.elapsed_time_seconds}s`
+        : '进行中';
+      if (typeof event?.elapsed_time_seconds === 'number') {
+        step.duration = event.elapsed_time_seconds * 1000;
+      }
+      continue;
+    }
+
+    if (event?.type === 'system') {
+      const assistant = getCurrentAssistant(timestamp);
+      const content = normalizeText(event?.content);
+      if (content) {
+        addMeta(assistant, content);
       }
       continue;
     }
@@ -294,6 +354,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
           } else if (block.type === 'tool_use') {
             const step = ensureToolStep(assistant, block);
             step.status = 'running';
+            step.statusText = '进行中';
             step.result = buildToolDetail(block.input);
             toolOwners.set(step.id, assistant);
           }
@@ -314,6 +375,9 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
         for (const step of assistant.toolSteps) {
           if (step.status === 'running' || step.status === 'pending') {
             step.status = event.subtype === 'success' ? 'success' : 'error';
+            if (!step.statusText || step.statusText === '进行中' || step.statusText.startsWith('运行 ')) {
+              step.statusText = event.subtype === 'success' ? '执行完成' : '执行失败';
+            }
           }
         }
       }

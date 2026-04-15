@@ -9,6 +9,13 @@ import {
 } from './workspace.js';
 
 const els = {
+  appShell: document.getElementById('appShell'),
+  leftSidebar: document.getElementById('leftSidebar'),
+  rightSidebar: document.getElementById('rightSidebar'),
+  leftResizeHandle: document.getElementById('leftResizeHandle'),
+  rightResizeHandle: document.getElementById('rightResizeHandle'),
+  toggleLeftSidebarBtn: document.getElementById('toggleLeftSidebarBtn'),
+  toggleRightSidebarBtn: document.getElementById('toggleRightSidebarBtn'),
   cliStatusPill: document.getElementById('cliStatusPill'),
   sdkStatusPill: document.getElementById('sdkStatusPill'),
   newSessionBtn: document.getElementById('newSessionBtn'),
@@ -37,6 +44,16 @@ const els = {
   filePreviewContent: document.getElementById('filePreviewContent'),
 };
 
+const LAYOUT_STORAGE_KEY = 'moss:desktop-layout:v1';
+const DEFAULT_LAYOUT = {
+  leftWidth: 276,
+  rightWidth: 336,
+  leftCollapsed: false,
+  rightCollapsed: false,
+};
+const LEFT_WIDTH_RANGE = { min: 220, max: 520 };
+const RIGHT_WIDTH_RANGE = { min: 260, max: 640 };
+
 const state = {
   sessions: [],
   activeSessionId: null,
@@ -48,7 +65,105 @@ const state = {
   activePreviewPath: null,
   activeWorkspaceTab: 'files',
   workspaceQuery: '',
+  layout: loadLayoutState(),
 };
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function loadLayoutState() {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_LAYOUT };
+    const parsed = JSON.parse(raw);
+    return {
+      leftWidth: clamp(Number(parsed.leftWidth) || DEFAULT_LAYOUT.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
+      rightWidth: clamp(Number(parsed.rightWidth) || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+      leftCollapsed: Boolean(parsed.leftCollapsed),
+      rightCollapsed: Boolean(parsed.rightCollapsed),
+    };
+  } catch {
+    return { ...DEFAULT_LAYOUT };
+  }
+}
+
+function persistLayoutState() {
+  try {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
+  } catch {
+    // Ignore storage failures and keep the in-memory layout state.
+  }
+}
+
+function applyLayoutState() {
+  els.appShell.style.setProperty('--left-panel-width', `${state.layout.leftWidth}px`);
+  els.appShell.style.setProperty('--right-panel-width', `${state.layout.rightWidth}px`);
+  els.appShell.classList.toggle('left-collapsed', state.layout.leftCollapsed);
+  els.appShell.classList.toggle('right-collapsed', state.layout.rightCollapsed);
+  els.leftSidebar.classList.toggle('collapsed', state.layout.leftCollapsed);
+  els.rightSidebar.classList.toggle('collapsed', state.layout.rightCollapsed);
+  els.leftResizeHandle.classList.toggle('disabled', state.layout.leftCollapsed);
+  els.rightResizeHandle.classList.toggle('disabled', state.layout.rightCollapsed);
+  els.toggleLeftSidebarBtn.textContent = state.layout.leftCollapsed ? '▸' : '◂';
+  els.toggleLeftSidebarBtn.setAttribute('aria-label', state.layout.leftCollapsed ? '展开左侧栏' : '收起左侧栏');
+  els.toggleRightSidebarBtn.textContent = state.layout.rightCollapsed ? '◂' : '▸';
+  els.toggleRightSidebarBtn.setAttribute('aria-label', state.layout.rightCollapsed ? '展开右侧栏' : '收起右侧栏');
+}
+
+function updateLayout(patch, { persist = true } = {}) {
+  state.layout = { ...state.layout, ...patch };
+  applyLayoutState();
+  if (persist) {
+    persistLayoutState();
+  }
+}
+
+function toggleSidebar(side) {
+  if (side === 'left') {
+    updateLayout({ leftCollapsed: !state.layout.leftCollapsed });
+    return;
+  }
+  updateLayout({ rightCollapsed: !state.layout.rightCollapsed });
+}
+
+function startResize(side, event) {
+  if (window.matchMedia('(max-width: 1120px)').matches) return;
+  if (side === 'left' && state.layout.leftCollapsed) return;
+  if (side === 'right' && state.layout.rightCollapsed) return;
+  event.preventDefault();
+
+  const startX = event.clientX;
+  const startWidth = side === 'left' ? state.layout.leftWidth : state.layout.rightWidth;
+  const handle = side === 'left' ? els.leftResizeHandle : els.rightResizeHandle;
+
+  handle.classList.add('active');
+  document.body.classList.add('is-resizing');
+
+  const onMouseMove = (moveEvent) => {
+    const delta = moveEvent.clientX - startX;
+    if (side === 'left') {
+      updateLayout({
+        leftWidth: clamp(startWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
+      }, { persist: false });
+      return;
+    }
+    updateLayout({
+      rightWidth: clamp(startWidth - delta, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+    }, { persist: false });
+  };
+
+  const onMouseUp = () => {
+    handle.classList.remove('active');
+    document.body.classList.remove('is-resizing');
+    persistLayoutState();
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+  };
+
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+}
 
 function formatTime(timestamp) {
   if (!timestamp) return '-';
@@ -103,13 +218,11 @@ function renderSessionList() {
       void openSession(session.id);
     });
 
-    const preview = session.preview || '';
     item.innerHTML = `
       <div class="session-item-top">
         <div class="session-item-title">${escapeHtml(session.title)}</div>
         <div class="session-item-time">${session.busy ? '运行中' : formatShortTime(session.updatedAt)}</div>
       </div>
-      <div class="session-item-preview">${escapeHtml(preview)}</div>
       <div class="session-item-bottom">
         <div class="session-item-workspace">${escapeHtml(basename(session.workspace) || session.workspace || '-')}</div>
         <div class="session-item-time">${session.messageCount || 0} 条</div>
@@ -366,9 +479,30 @@ function wireEvents() {
     renderWorkspaceHeader(els, state.sessionDetail);
     setBusyForActiveSession();
   });
+
+  els.leftResizeHandle.addEventListener('mousedown', (event) => {
+    startResize('left', event);
+  });
+
+  els.rightResizeHandle.addEventListener('mousedown', (event) => {
+    startResize('right', event);
+  });
+
+  els.toggleLeftSidebarBtn.addEventListener('click', () => {
+    toggleSidebar('left');
+  });
+
+  els.toggleRightSidebarBtn.addEventListener('click', () => {
+    toggleSidebar('right');
+  });
+
+  window.addEventListener('resize', () => {
+    applyLayoutState();
+  });
 }
 
 async function bootstrap() {
+  applyLayoutState();
   const status = await window.agentDesktop.getStatus();
   setStatusPill(els.cliStatusPill, status.cliReady);
   setStatusPill(els.sdkStatusPill, status.sdkReady);

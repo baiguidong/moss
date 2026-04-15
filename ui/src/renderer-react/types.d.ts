@@ -1,3 +1,10 @@
+export type PendingPlanApproval = {
+  kind: 'create-app';
+  originalPrompt: string;
+  plan: string;
+  requestedAt: number;
+};
+
 export type SessionSummary = {
   id: string;
   title: string;
@@ -8,6 +15,7 @@ export type SessionSummary = {
   messageCount: number;
   sessionId: string | null;
   preview: string;
+  pendingPlanApproval?: PendingPlanApproval | null;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -23,6 +31,9 @@ export type DesktopSettings = {
   appendSystemPrompt: string;
   thinkingMode: 'adaptive' | 'enabled' | 'disabled';
   thinkingBudgetTokens: number;
+  url: string;
+  apiKey: string;
+  visionModel: string;
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;
@@ -40,10 +51,14 @@ export type StoredApp = {
   updatedAt: number;
   versionCount?: number;
   latestVersionId?: string | null;
+  latestVersion?: string | null;
+  currentVersionId?: string | null;
+  currentVersion?: string | null;
 };
 
 export type AppVersion = {
   id: string;
+  version: string;
   createdAt: number;
   reason: string;
   note: string;
@@ -51,6 +66,8 @@ export type AppVersion = {
   width: number;
   height: number;
   resizable: boolean;
+  isCurrent?: boolean;
+  isLatest?: boolean;
 };
 
 export type FileTreeNode = {
@@ -82,6 +99,8 @@ declare global {
         mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app';
         appName?: string;
       }) => Promise<any>;
+      approvePlan: (payload: { sessionId: string }) => Promise<any>;
+      rejectPlan: (payload: { sessionId: string }) => Promise<any>;
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       listApps: () => Promise<StoredApp[]>;
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
