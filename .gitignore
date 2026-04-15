@@ -9,3 +9,4 @@ ui/dist/
 ui/node_modules/
 cli-node.js
 cli.js
+electron-direct.mjs
