@@ -100,7 +100,7 @@ export class ClaudeSession {
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
     const bootstrapResult = await bootstrapHeadless(cwd)
-    const { initialMessages, mcp } = bootstrapResult
+    const { initialMessages, mcp, agents: customAgents } = bootstrapResult
 
     // 权限上下文
     const permissionContext = {
@@ -146,7 +146,7 @@ export class ClaudeSession {
       tools,
       commands,
       mcpClients: mcp.clients,
-      agents: [],
+      agents: customAgents,
       canUseTool,
       getAppState: () => store.getState(),
       setAppState: f => store.setState(f),

@@ -28,6 +28,34 @@ bun install
 bun run start
 ```
 
+## 开发与部署
+
+### 1. 构建核心 Agent 逻辑
+
+```bash
+# 生成 electron-direct.mjs 和相关依赖
+bun run build:node
+```
+
+### 2. 应用打包 (EXE/DMG)
+
+确保已执行上述二进制准备步骤，然后进入 `ui` 目录执行打包命令：
+
+```bash
+cd ui
+
+# 打包 Windows (exe)
+bun run dist:win
+
+# 打包 macOS (dmg)
+bun run dist:mac
+
+# 打包所有平台
+bun run dist:all
+```
+
+生成的安装包将位于 `ui/dist/installers` 目录下。
+
 ## 核心功能
 
 - **可视化 Agent 对话**：直接连接本地 Agent，支持流式输出和思考过程展示。

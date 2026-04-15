@@ -1,6 +1,8 @@
 {
   "name": "claude-code-electron-mvp",
   "version": "0.2.0",
+  "description": "Moss - AI coding agent desktop client",
+  "author": "Moss AI Team",
   "private": true,
   "type": "module",
   "main": "src/main.mjs",
@@ -8,7 +10,46 @@
     "build:renderer": "vite build",
     "start": "vite build && electron .",
     "dev": "vite build && electron .",
-    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && tsc --noEmit"
+    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && tsc --noEmit",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:mac": "vite build && electron-builder --mac",
+    "dist:all": "vite build && electron-builder --win --mac"
+  },
+  "build": {
+    "appId": "com.moss.ai",
+    "productName": "Moss",
+    "directories": {
+      "output": "dist/installers",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/renderer/**/*",
+      "src/**/*",
+      "index.html",
+      "package.json",
+      "../electron-direct.mjs",
+      "../cli-node.js"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "dependencies": {
     "@radix-ui/react-avatar": "1.1.11",
@@ -33,6 +74,7 @@
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.4",
     "electron": "40.8.3",
+    "electron-builder": "^26.8.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
     "typescript": "^5.9.3",
