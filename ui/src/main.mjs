@@ -520,7 +520,7 @@ function getBootStatus() {
     uiRoot,
     cliPath,
     sdkPath,
-    cliReady: hasFile(cliPath),
+    cliReady: true, // 核心改动：不再依赖外部 cli-node.js，因为逻辑已经由 electron-direct.mjs 嵌入
     sdkReady: hasFile(sdkPath),
     sessionsCount: sessions.size,
     defaultBypassPermissions: DEFAULT_BYPASS_PERMISSIONS,

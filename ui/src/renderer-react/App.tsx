@@ -821,11 +821,10 @@ export default function App() {
                 onChange={setInput}
                 onSelectAppName={setSelectedAppName}
                 onSend={handleSend}
+                onPlan={handlePlan}
                 onCreateApp={handleCreateApp}
                 onIterateApp={handleIterateApp}
                 onStop={handleStop}
-                onConfirmExecute={selectedAppName ? handleConfirmIterate : handleConfirmExecute}
-                canExecutePlan={chatMessages.length > 0 && chatMessages[chatMessages.length - 1].role === 'assistant' && !chatMessages[chatMessages.length - 1].streaming}
               />
             </ResizablePanel>
 

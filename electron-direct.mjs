@@ -6380,6 +6380,7 @@ var init_lodash = __esm(() => {
 });
 
 // src/utils/envUtils.ts
+import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 function getTeamsDir() {
@@ -6438,7 +6439,15 @@ var getClaudeConfigHomeDir, VERTEX_REGION_OVERRIDES;
 var init_envUtils = __esm(() => {
   init_memoize();
   getClaudeConfigHomeDir = memoize_default(() => {
-    return (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")).normalize("NFC");
+    if (process.env.CLAUDE_CONFIG_DIR) {
+      return process.env.CLAUDE_CONFIG_DIR.normalize("NFC");
+    }
+    const mossDir = join(homedir(), ".moss").normalize("NFC");
+    const claudeDir = join(homedir(), ".claude").normalize("NFC");
+    if (existsSync(mossDir)) {
+      return mossDir;
+    }
+    return claudeDir;
   }, () => process.env.CLAUDE_CONFIG_DIR);
   VERTEX_REGION_OVERRIDES = [
     ["claude-haiku-4-5", "VERTEX_REGION_CLAUDE_HAIKU_4_5"],
@@ -57080,7 +57089,12 @@ var init_types2 = __esm(() => {
       startDirectory: exports_external.string().optional().describe("Default working directory on the remote host. " + "Supports tilde expansion (e.g. ~/projects). " + "If not specified, defaults to the remote user home directory. " + "Can be overridden by the [dir] positional argument in `claude ssh <config> [dir]`.")
     })).optional().describe("SSH connection configurations for remote environments. " + "Typically set in managed settings by enterprise administrators " + "to pre-configure SSH connections for team members."),
     claudeMdExcludes: exports_external.array(exports_external.string()).optional().describe("Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. " + "Patterns are matched against absolute file paths using picomatch. " + "Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). " + 'Examples: "/home/user/monorepo/CLAUDE.md", "**/code/CLAUDE.md", "**/some-dir/.claude/rules/**"'),
-    pluginTrustMessage: exports_external.string().optional().describe("Custom message to append to the plugin trust warning shown before installation. " + "Only read from policy settings (managed-settings.json / MDM). " + "Useful for enterprise administrators to add organization-specific context " + '(e.g., "All plugins from our internal marketplace are vetted and approved.").')
+    pluginTrustMessage: exports_external.string().optional().describe("Custom message to append to the plugin trust warning shown before installation. " + "Only read from policy settings (managed-settings.json / MDM). " + "Useful for enterprise administrators to add organization-specific context " + '(e.g., "All plugins from our internal marketplace are vetted and approved.").'),
+    bypassPermissions: exports_external.boolean().optional().describe("Skip all permission checks (equivalent to --dangerously-skip-permissions). " + "Use with caution."),
+    maxTurns: exports_external.number().int().positive().optional().describe("Maximum number of agentic turns before stopping"),
+    appendSystemPrompt: exports_external.string().optional().describe("Text to append to the system prompt"),
+    thinkingMode: exports_external.enum(["enabled", "adaptive", "disabled"]).optional().describe("Thinking mode for supported models. " + '"enabled" uses a fixed token budget, "adaptive" lets Claude decide, "disabled" turns off thinking.'),
+    thinkingBudgetTokens: exports_external.number().int().positive().optional().describe('Token budget for thinking when thinkingMode is "enabled" (default: 16000)')
   }).passthrough());
 });
 
@@ -57391,7 +57405,7 @@ var init_constants4 = __esm(() => {
 
 // src/utils/settings/mdm/rawRead.ts
 import { execFile } from "child_process";
-import { existsSync as existsSync2 } from "fs";
+import { existsSync as existsSync3 } from "fs";
 function execFilePromise(cmd, args) {
   return new Promise((resolve7) => {
     execFile(cmd, args, { encoding: "utf-8", timeout: MDM_SUBPROCESS_TIMEOUT_MS }, (err, stdout) => {
@@ -57404,7 +57418,7 @@ function fireRawRead() {
     if (process.platform === "darwin") {
       const plistPaths = getMacOSPlistPaths();
       const allResults = await Promise.all(plistPaths.map(async ({ path: path9, label }) => {
-        if (!existsSync2(path9)) {
+        if (!existsSync3(path9)) {
           return { stdout: "", label, ok: false };
         }
         const { stdout, code } = await execFilePromise(PLUTIL_PATH, [
@@ -80490,7 +80504,7 @@ var require_eventsource = __commonJS((exports, module) => {
 
 // node_modules/undici/index.js
 var require_undici = __commonJS((exports, module) => {
-  var __filename = "/Users/bgd/repo/claude-code-sourcemap/restored-src/node_modules/undici/index.js";
+  var __filename = "/Users/bgd/repo/moss/node_modules/undici/index.js";
   var Client = require_client();
   var Dispatcher = require_dispatcher();
   var Pool = require_pool();
@@ -91998,7 +92012,7 @@ var require_package = __commonJS((exports, module) => {
 
 // node_modules/@aws-sdk/util-user-agent-node/dist-cjs/index.js
 var require_dist_cjs41 = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/claude-code-sourcemap/restored-src/node_modules/@aws-sdk/util-user-agent-node/dist-cjs";
+  var __dirname = "/Users/bgd/repo/moss/node_modules/@aws-sdk/util-user-agent-node/dist-cjs";
   var node_os = __require("node:os");
   var node_process = __require("node:process");
   var utilConfigProvider = require_dist_cjs35();
@@ -159366,7 +159380,7 @@ async function _executeApiKeyHelper(isNonInteractiveSession) {
   if (isApiKeyHelperFromProjectOrLocalSettings()) {
     const hasTrust = checkHasTrustDialogAccepted();
     if (!hasTrust && !isNonInteractiveSession) {
-      const error52 = new Error(`Security: apiKeyHelper executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`);
+      const error52 = new Error(`Security: apiKeyHelper executed before workspace trust is confirmed. If you see this message, post in ${""}.`);
       logAntError("apiKeyHelper invoked before trust check", error52);
       logEvent("tengu_apiKeyHelper_missing_trust11", {});
       return null;
@@ -159410,7 +159424,7 @@ async function runAwsAuthRefresh() {
   if (isAwsAuthRefreshFromProjectSettings()) {
     const hasTrust = checkHasTrustDialogAccepted();
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error52 = new Error(`Security: awsAuthRefresh executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`);
+      const error52 = new Error(`Security: awsAuthRefresh executed before workspace trust is confirmed. If you see this message, post in ${""}.`);
       logAntError("awsAuthRefresh invoked before trust check", error52);
       logEvent("tengu_awsAuthRefresh_missing_trust", {});
       return false;
@@ -159470,7 +159484,7 @@ async function getAwsCredsFromCredentialExport() {
   if (isAwsCredentialExportFromProjectSettings()) {
     const hasTrust = checkHasTrustDialogAccepted();
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error52 = new Error(`Security: awsCredentialExport executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`);
+      const error52 = new Error(`Security: awsCredentialExport executed before workspace trust is confirmed. If you see this message, post in ${""}.`);
       logAntError("awsCredentialExport invoked before trust check", error52);
       logEvent("tengu_awsCredentialExport_missing_trust", {});
       return null;
@@ -159555,7 +159569,7 @@ async function runGcpAuthRefresh() {
   if (isGcpAuthRefreshFromProjectSettings()) {
     const hasTrust = checkHasTrustDialogAccepted();
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error52 = new Error(`Security: gcpAuthRefresh executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`);
+      const error52 = new Error("Security: gcpAuthRefresh executed before workspace trust is confirmed. If you see this message, post in .");
       logAntError("gcpAuthRefresh invoked before trust check", error52);
       logEvent("tengu_gcpAuthRefresh_missing_trust", {});
       return false;
@@ -160256,7 +160270,7 @@ var init_auth2 = __esm(() => {
 
 // src/utils/userAgent.ts
 function getClaudeCodeUserAgent() {
-  return `claude-code/${MACRO.VERSION}`;
+  return `claude-code/${"2.1.88"}`;
 }
 
 // src/utils/workloadContext.ts
@@ -160275,7 +160289,7 @@ function getUserAgent() {
   const clientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP ? `, client-app/${process.env.CLAUDE_AGENT_SDK_CLIENT_APP}` : "";
   const workload = getWorkload();
   const workloadSuffix = workload ? `, workload/${workload}` : "";
-  return `claude-cli/${MACRO.VERSION} (${process.env.USER_TYPE}, ${process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli"}${agentSdkVersion}${clientApp}${workloadSuffix})`;
+  return `claude-cli/${"2.1.88"} (${process.env.USER_TYPE}, ${process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli"}${agentSdkVersion}${clientApp}${workloadSuffix})`;
 }
 function getMCPUserAgent() {
   const parts = [];
@@ -160289,7 +160303,7 @@ function getMCPUserAgent() {
     parts.push(`client-app/${process.env.CLAUDE_AGENT_SDK_CLIENT_APP}`);
   }
   const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-  return `claude-code/${MACRO.VERSION}${suffix}`;
+  return `claude-code/${"2.1.88"}${suffix}`;
 }
 function getWebFetchUserAgent() {
   return `Claude-User (${getClaudeCodeUserAgent()}; +https://support.anthropic.com/)`;
@@ -160406,7 +160420,7 @@ var init_user = __esm(() => {
       deviceId,
       sessionId: getSessionId(),
       email: getEmail(),
-      appVersion: MACRO.VERSION,
+      appVersion: "2.1.88",
       platform: getHostPlatformForAnalytics(),
       organizationUuid,
       accountUuid,
@@ -167193,7 +167207,7 @@ var init_metadata = __esm(() => {
   COMPOUND_OPERATOR_REGEX = /\s*(?:&&|\|\||[;|])\s*/;
   WHITESPACE_REGEX = /\s+/;
   getVersionBase = memoize_default(() => {
-    const match = MACRO.VERSION.match(/^\d+\.\d+\.\d+(?:-[a-z]+)?/);
+    const match = "2.1.88".match(/^\d+\.\d+\.\d+(?:-[a-z]+)?/);
     return match ? match[0] : undefined;
   });
   buildEnvContext = memoize_default(async () => {
@@ -167233,9 +167247,9 @@ var init_metadata = __esm(() => {
       isGithubAction: isEnvTruthy(process.env.GITHUB_ACTIONS),
       isClaudeCodeAction: isEnvTruthy(process.env.CLAUDE_CODE_ACTION),
       isClaudeAiAuth: isClaudeAISubscriber(),
-      version: MACRO.VERSION,
+      version: "2.1.88",
       versionBase: getVersionBase(),
-      buildTime: MACRO.BUILD_TIME,
+      buildTime: "2026-04-15T09:03:41.481Z",
       deploymentEnvironment: env4.detectDeploymentEnvironment(),
       ...isEnvTruthy(process.env.GITHUB_ACTIONS) && {
         githubEventName: process.env.GITHUB_EVENT_NAME,
@@ -175986,7 +176000,7 @@ function getAttributionHeader(fingerprint) {
   if (!isAttributionHeaderEnabled()) {
     return "";
   }
-  const version6 = `${MACRO.VERSION}.${fingerprint}`;
+  const version6 = `${"2.1.88"}.${fingerprint}`;
   const entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT ?? "unknown";
   const cch = "";
   const workload = getWorkload();
@@ -284753,7 +284767,7 @@ function getAssistantMessageFromError(error52, model, options) {
     if (process.env.USER_TYPE === "ant") {
       const baseMessage = `API Error: 400 ${error52.message}
 
-Run /share and post the JSON file to ${MACRO.FEEDBACK_CHANNEL}.`;
+Run /share and post the JSON file to ${""}.`;
       const rewindInstruction = getIsNonInteractiveSession() ? "" : " Then, use /rewind to recover the conversation.";
       return createAssistantAPIErrorMessage({
         content: baseMessage + rewindInstruction,
@@ -284789,7 +284803,7 @@ Run /share and post the JSON file to ${MACRO.FEEDBACK_CHANNEL}.`;
   if (process.env.USER_TYPE === "ant" && !process.env.ANTHROPIC_MODEL && error52 instanceof Error && error52.message.toLowerCase().includes("invalid model name")) {
     const orgId = getOauthAccountInfo()?.organizationUuid;
     const baseMsg = `[ANT-ONLY] Your org isn't gated into the \`${model}\` model. Either run \`claude\` with \`ANTHROPIC_MODEL=${getDefaultMainLoopModelSetting()}\``;
-    const msg = orgId ? `${baseMsg} or share your orgId (${orgId}) in ${MACRO.FEEDBACK_CHANNEL} for help getting access.` : `${baseMsg} or reach out in ${MACRO.FEEDBACK_CHANNEL} for help getting access.`;
+    const msg = orgId ? `${baseMsg} or share your orgId (${orgId}) in ${""} for help getting access.` : `${baseMsg} or reach out in ${""} for help getting access.`;
     return createAssistantAPIErrorMessage({
       content: msg,
       error: "invalid_request"
@@ -285175,7 +285189,7 @@ function Feedback({
       platform: env4.platform,
       gitRepo: envInfo.isGit,
       terminal: env4.terminal,
-      version: MACRO.VERSION,
+      version: "2.1.88",
       transcript: normalizeMessagesForAPI(messages),
       errors: sanitizedErrors,
       lastApiRequest: getLastAPIRequest(),
@@ -285314,7 +285328,7 @@ function Feedback({
     dimColor: true
   }, description)), /* @__PURE__ */ React48.createElement(ThemedText, null, "- Environment info:", " ", /* @__PURE__ */ React48.createElement(ThemedText, {
     dimColor: true
-  }, env4.platform, ", ", env4.terminal, ", v", MACRO.VERSION)), envInfo.gitState && /* @__PURE__ */ React48.createElement(ThemedText, null, "- Git repo metadata:", " ", /* @__PURE__ */ React48.createElement(ThemedText, {
+  }, env4.platform, ", ", env4.terminal, ", v", "2.1.88")), envInfo.gitState && /* @__PURE__ */ React48.createElement(ThemedText, null, "- Git repo metadata:", " ", /* @__PURE__ */ React48.createElement(ThemedText, {
     dimColor: true
   }, envInfo.gitState.branchName, envInfo.gitState.commitHash ? `, ${envInfo.gitState.commitHash.slice(0, 7)}` : "", envInfo.gitState.remoteUrl ? ` @ ${envInfo.gitState.remoteUrl}` : "", !envInfo.gitState.isHeadOnRemote && ", not synced", !envInfo.gitState.isClean && ", has local changes")), /* @__PURE__ */ React48.createElement(ThemedText, null, "- Current session transcript")), /* @__PURE__ */ React48.createElement(ThemedBox_default, {
     marginTop: 1
@@ -285351,7 +285365,7 @@ ${sanitizedDescription}
 ` + `**Environment Info**
 ` + `- Platform: ${env4.platform}
 ` + `- Terminal: ${env4.terminal}
-` + `- Version: ${MACRO.VERSION || "unknown"}
+` + `- Version: ${"2.1.88"}
 ` + `- Feedback ID: ${feedbackId}
 ` + `
 **Errors**
@@ -289172,6 +289186,10 @@ function shouldEnableThinkingByDefault() {
     return parseInt(process.env.MAX_THINKING_TOKENS, 10) > 0;
   }
   const { settings } = getSettingsWithErrors();
+  if (settings.thinkingMode === "disabled")
+    return false;
+  if (settings.thinkingMode === "enabled" || settings.thinkingMode === "adaptive")
+    return true;
   if (settings.alwaysThinkingEnabled === false) {
     return false;
   }
@@ -297710,7 +297728,7 @@ Complete the user's request by providing accurate, documentation-based guidance.
 }
 function getFeedbackGuideline() {
   if (isUsing3PServices()) {
-    return `- When you cannot find an answer or the feature doesn't exist, direct the user to ${MACRO.ISSUES_EXPLAINER}`;
+    return `- When you cannot find an answer or the feature doesn't exist, direct the user to ${""}`;
   }
   return "- When you cannot find an answer or the feature doesn't exist, direct the user to use /feedback to report a feature request or bug";
 }
@@ -318316,7 +318334,7 @@ async function getMcpHeadersFromHelper(serverName, config3) {
   if ("scope" in config3 && isMcpServerFromProjectOrLocalSettings(config3) && !getIsNonInteractiveSession()) {
     const hasTrust = checkHasTrustDialogAccepted();
     if (!hasTrust) {
-      const error52 = new Error(`Security: headersHelper for MCP server '${serverName}' executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`);
+      const error52 = new Error(`Security: headersHelper for MCP server '${serverName}' executed before workspace trust is confirmed. If you see this message, post in ${""}.`);
       logAntError("MCP headersHelper invoked before trust check", error52);
       logEvent("tengu_mcp_headersHelper_missing_trust", {});
       return null;
@@ -321837,7 +321855,7 @@ function computeFingerprint(messageText, version6) {
 }
 function computeFingerprintFromMessages(messages) {
   const firstMessageText = extractFirstMessageText(messages);
-  return computeFingerprint(firstMessageText, MACRO.VERSION);
+  return computeFingerprint(firstMessageText, "2.1.88");
 }
 var FINGERPRINT_SALT = "59cf53e54c78";
 var init_fingerprint = () => {};
@@ -321879,7 +321897,7 @@ async function sideQuery(opts) {
     betas.push(STRUCTURED_OUTPUTS_BETA_HEADER);
   }
   const messageText = extractFirstUserMessageText(messages);
-  const fingerprint = computeFingerprint(messageText, MACRO.VERSION);
+  const fingerprint = computeFingerprint(messageText, "2.1.88");
   const attributionHeader = getAttributionHeader(fingerprint);
   const systemBlocks = [
     attributionHeader ? { type: "text", text: attributionHeader } : null,
@@ -323106,7 +323124,7 @@ var init_client9 = __esm(() => {
       const client5 = new Client({
         name: "claude-code",
         title: "Claude Code",
-        version: MACRO.VERSION ?? "unknown",
+        version: "2.1.88",
         description: "Anthropic's agentic coding tool",
         websiteUrl: PRODUCT_URL
       }, {
@@ -345283,7 +345301,7 @@ function getTelemetryAttributes() {
     attributes["session.id"] = sessionId;
   }
   if (shouldIncludeAttribute("OTEL_METRICS_INCLUDE_VERSION")) {
-    attributes["app.version"] = MACRO.VERSION;
+    attributes["app.version"] = "2.1.88";
   }
   const oauthAccount = getOauthAccountInfo();
   if (oauthAccount) {
@@ -396918,7 +396936,7 @@ var require_src18 = __commonJS((exports) => {
 
 // node_modules/@grpc/grpc-js/build/src/channelz.js
 var require_channelz = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/claude-code-sourcemap/restored-src/node_modules/@grpc/grpc-js/build/src";
+  var __dirname = "/Users/bgd/repo/moss/node_modules/@grpc/grpc-js/build/src";
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.registerChannelzSocket = exports.registerChannelzServer = exports.registerChannelzSubchannel = exports.registerChannelzChannel = exports.ChannelzCallTrackerStub = exports.ChannelzCallTracker = exports.ChannelzChildrenTrackerStub = exports.ChannelzChildrenTracker = exports.ChannelzTrace = exports.ChannelzTraceStub = undefined;
   exports.unregisterChannelzRef = unregisterChannelzRef;
@@ -402321,7 +402339,7 @@ var require_duration = __commonJS((exports) => {
 
 // node_modules/@grpc/grpc-js/build/src/orca.js
 var require_orca = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/claude-code-sourcemap/restored-src/node_modules/@grpc/grpc-js/build/src";
+  var __dirname = "/Users/bgd/repo/moss/node_modules/@grpc/grpc-js/build/src";
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.OrcaOobMetricsSubchannelWrapper = exports.GRPC_METRICS_HEADER = exports.ServerMetricRecorder = exports.PerRequestMetricRecorder = undefined;
   exports.createOrcaClient = createOrcaClient;
@@ -408074,7 +408092,7 @@ async function initializeBetaTracing(resource) {
   });
   import_api_logs.logs.setGlobalLoggerProvider(loggerProvider);
   setLoggerProvider(loggerProvider);
-  const eventLogger = import_api_logs.logs.getLogger("com.anthropic.claude_code.events", MACRO.VERSION);
+  const eventLogger = import_api_logs.logs.getLogger("com.anthropic.claude_code.events", "2.1.88");
   setEventLogger(eventLogger);
   process.on("beforeExit", async () => {
     await loggerProvider?.forceFlush();
@@ -408114,7 +408132,7 @@ async function initializeTelemetry() {
   const platform5 = getPlatform();
   const baseAttributes = {
     [import_semantic_conventions.ATTR_SERVICE_NAME]: "claude-code",
-    [import_semantic_conventions.ATTR_SERVICE_VERSION]: MACRO.VERSION
+    [import_semantic_conventions.ATTR_SERVICE_VERSION]: "2.1.88"
   };
   if (platform5 === "wsl") {
     const wslVersion = getWslVersion();
@@ -408159,7 +408177,7 @@ async function initializeTelemetry() {
       } catch {}
     };
     registerCleanup(shutdownTelemetry2);
-    return meterProvider2.getMeter("com.anthropic.claude_code", MACRO.VERSION);
+    return meterProvider2.getMeter("com.anthropic.claude_code", "2.1.88");
   }
   const meterProvider = new import_sdk_metrics2.MeterProvider({
     resource,
@@ -408179,7 +408197,7 @@ async function initializeTelemetry() {
       });
       import_api_logs.logs.setGlobalLoggerProvider(loggerProvider);
       setLoggerProvider(loggerProvider);
-      const eventLogger = import_api_logs.logs.getLogger("com.anthropic.claude_code.events", MACRO.VERSION);
+      const eventLogger = import_api_logs.logs.getLogger("com.anthropic.claude_code.events", "2.1.88");
       setEventLogger(eventLogger);
       logForDebugging("[3P telemetry] Event logger set successfully");
       process.on("beforeExit", async () => {
@@ -408241,7 +408259,7 @@ Current timeout: ${timeoutMs}ms
     }
   };
   registerCleanup(shutdownTelemetry);
-  return meterProvider.getMeter("com.anthropic.claude_code", MACRO.VERSION);
+  return meterProvider.getMeter("com.anthropic.claude_code", "2.1.88");
 }
 async function flushTelemetry() {
   const meterProvider = getMeterProvider();
@@ -408873,7 +408891,7 @@ async function checkGlobalInstallPermissions() {
   }
 }
 async function getNpmDistTags() {
-  const result = await execFileNoThrowWithCwd("npm", ["view", MACRO.PACKAGE_URL, "dist-tags", "--json", "--prefer-online"], { abortSignal: AbortSignal.timeout(5000), cwd: homedir21() });
+  const result = await execFileNoThrowWithCwd("npm", ["view", "@anthropic-ai/claude-code", "dist-tags", "--json", "--prefer-online"], { abortSignal: AbortSignal.timeout(5000), cwd: homedir21() });
   if (result.code !== 0) {
     logForDebugging(`npm view dist-tags failed with code ${result.code}`);
     return { latest: null, stable: null };
@@ -409204,9 +409222,7 @@ async function detectMultipleInstallations() {
     installations.push({ type: "npm-local", path: localPath });
   }
   const packagesToCheck = ["@anthropic-ai/claude-code"];
-  if (MACRO.PACKAGE_URL && MACRO.PACKAGE_URL !== "@anthropic-ai/claude-code") {
-    packagesToCheck.push(MACRO.PACKAGE_URL);
-  }
+  if (false) {}
   const npmResult = await execFileNoThrow("npm", [
     "-g",
     "config",
@@ -409388,7 +409404,7 @@ function detectLinuxGlobPatternWarnings() {
 }
 async function getDoctorDiagnostic() {
   const installationType = await getCurrentInstallationType();
-  const version6 = typeof MACRO !== "undefined" && MACRO.VERSION ? MACRO.VERSION : "unknown";
+  const version6 = typeof MACRO !== "undefined" ? "2.1.88" : "unknown";
   const installationPath = await getInstallationPath();
   const invokedBinary = getInvokedBinary();
   const multipleInstallations = await detectMultipleInstallations();
@@ -409400,9 +409416,7 @@ async function getDoctorDiagnostic() {
     for (const install of npmInstalls) {
       if (install.type === "npm-global") {
         let uninstallCmd = "npm -g uninstall @anthropic-ai/claude-code";
-        if (MACRO.PACKAGE_URL && MACRO.PACKAGE_URL !== "@anthropic-ai/claude-code") {
-          uninstallCmd += ` && npm -g uninstall ${MACRO.PACKAGE_URL}`;
-        }
+        if (false) {}
         warnings.push({
           issue: `Leftover npm global installation at ${install.path}`,
           fix: `Run: ${uninstallCmd}`
@@ -468546,7 +468560,7 @@ function buildPrimarySection() {
   }, "/rename to add a name");
   return [{
     label: "Version",
-    value: MACRO.VERSION
+    value: "2.1.88"
   }, {
     label: "Session name",
     value: nameValue
@@ -471924,7 +471938,7 @@ function Config({
       });
     }
   })) : showSubmenu === "ChannelDowngrade" ? /* @__PURE__ */ React180.createElement(ChannelDowngradeDialog, {
-    currentVersion: MACRO.VERSION,
+    currentVersion: "2.1.88",
     onChoice: (choice) => {
       setShowSubmenu(null);
       setTabsHidden(false);
@@ -471936,7 +471950,7 @@ function Config({
         autoUpdatesChannel: "stable"
       };
       if (choice === "stay") {
-        newSettings.minimumVersion = MACRO.VERSION;
+        newSettings.minimumVersion = "2.1.88";
       }
       updateSettingsForSource("userSettings", newSettings);
       setSettingsData((prev_27) => ({
@@ -478628,7 +478642,7 @@ function HelpV2(t0) {
   let t6;
   if ($4[31] !== tabs) {
     t6 = /* @__PURE__ */ React207.createElement(Tabs, {
-      title: `Claude Code v${MACRO.VERSION}`,
+      title: `Claude Code v${"2.1.88"}`,
       color: "professionalBlue",
       defaultTab: "general"
     }, tabs);
@@ -498754,9 +498768,9 @@ function getAllReleaseNotes(changelogContent = getStoredChangelogFromMemory()) {
     return [];
   }
 }
-function checkForReleaseNotesSync(lastSeenVersion, currentVersion = MACRO.VERSION) {
+function checkForReleaseNotesSync(lastSeenVersion, currentVersion = "2.1.88") {
   if (process.env.USER_TYPE === "ant") {
-    const changelog = MACRO.VERSION_CHANGELOG;
+    const changelog = "";
     if (changelog) {
       const commits = changelog.trim().split(`
 `).filter(Boolean);
@@ -499795,7 +499809,7 @@ function getRecentActivitySync() {
   return cachedActivity;
 }
 function getLogoDisplayData() {
-  const version6 = process.env.DEMO_VERSION ?? MACRO.VERSION;
+  const version6 = process.env.DEMO_VERSION ?? "2.1.88";
   const serverUrl = getDirectConnectServerUrl();
   const displayPath = process.env.DEMO_VERSION ? "/code/claude" : getDisplayPath(getCwd());
   const cwd2 = serverUrl ? `${displayPath} in ${serverUrl.replace(/^https?:\/\//, "")}` : displayPath;
@@ -499827,7 +499841,7 @@ function formatModelAndBilling(modelName, billingType, availableWidth) {
 }
 function getRecentReleaseNotesSync(maxItems) {
   if (process.env.USER_TYPE === "ant") {
-    const changelog2 = MACRO.VERSION_CHANGELOG;
+    const changelog2 = "";
     if (changelog2) {
       const commits = changelog2.trim().split(`
 `).filter(Boolean);
@@ -501164,7 +501178,7 @@ function LogoV2() {
   if ($4[2] === Symbol.for("react.memo_cache_sentinel")) {
     t2 = () => {
       const currentConfig = getGlobalConfig();
-      if (currentConfig.lastReleaseNotesSeen === MACRO.VERSION) {
+      if (currentConfig.lastReleaseNotesSeen === "2.1.88") {
         return;
       }
       saveGlobalConfig(_temp327);
@@ -501702,12 +501716,12 @@ function LogoV2() {
   return t41;
 }
 function _temp327(current) {
-  if (current.lastReleaseNotesSeen === MACRO.VERSION) {
+  if (current.lastReleaseNotesSeen === "2.1.88") {
     return current;
   }
   return {
     ...current,
-    lastReleaseNotesSeen: MACRO.VERSION
+    lastReleaseNotesSeen: "2.1.88"
   };
 }
 function _temp243(s_0) {
@@ -513509,7 +513523,7 @@ function optionForPermissionSaveDestination(saveDestination) {
     case "userSettings":
       return {
         label: "User settings",
-        description: `Saved in at ~/.claude/settings.json`,
+        description: `Saved in ${getSettingsFilePathForSource("userSettings")}`,
         value: saveDestination
       };
   }
@@ -524630,7 +524644,7 @@ async function captureMemoryDiagnostics(trigger, dumpNumber = 0) {
     smapsRollup,
     platform: process.platform,
     nodeVersion: process.version,
-    ccVersion: MACRO.VERSION
+    ccVersion: "2.1.88"
   };
 }
 async function performHeapDump(trigger = "manual", dumpNumber = 0) {
@@ -524910,7 +524924,7 @@ var init_bridge_kick = __esm(() => {
 var call56 = async () => {
   return {
     type: "text",
-    value: MACRO.BUILD_TIME ? `${MACRO.VERSION} (built ${MACRO.BUILD_TIME})` : MACRO.VERSION
+    value: `${"2.1.88"} (built ${"2026-04-15T09:03:41.481Z"})`
   };
 }, version6, version_default;
 var init_version = __esm(() => {
@@ -532834,7 +532848,7 @@ function generateHtmlReport(data, insights) {
 </html>`;
 }
 function buildExportData(data, insights, facets, remoteStats) {
-  const version7 = typeof MACRO !== "undefined" ? MACRO.VERSION : "unknown";
+  const version7 = typeof MACRO !== "undefined" ? "2.1.88" : "unknown";
   const remote_hosts_collected = remoteStats?.hosts.filter((h3) => h3.sessionCount > 0).map((h3) => h3.name);
   const facets_summary = {
     total: facets.size,
@@ -536940,7 +536954,7 @@ var init_sessionStorage = __esm(() => {
   init_settings2();
   init_slowOperations();
   init_uuid2();
-  VERSION5 = typeof MACRO !== "undefined" ? MACRO.VERSION : "unknown";
+  VERSION5 = typeof MACRO !== "undefined" ? "2.1.88" : "unknown";
   MAX_TOMBSTONE_REWRITE_BYTES = 50 * 1024 * 1024;
   SKIP_FIRST_PROMPT_PATTERN = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
   EPHEMERAL_PROGRESS_TYPES = new Set([
@@ -538136,7 +538150,7 @@ var init_filesystem = __esm(() => {
   });
   getBundledSkillsRoot = memoize_default(function getBundledSkillsRoot2() {
     const nonce = randomBytes16(16).toString("hex");
-    return join121(getClaudeTempDir(), "bundled-skills", MACRO.VERSION, nonce);
+    return join121(getClaudeTempDir(), "bundled-skills", "2.1.88", nonce);
   });
   getResolvedWorkingDirPaths = memoize_default(getPathsForPermissionCheck);
 });
@@ -542961,7 +542975,7 @@ function getSimpleDoingTasksSection() {
   ];
   const userHelpSubitems = [
     `/help: Get help with using Claude Code`,
-    `To give feedback, users should ${MACRO.ISSUES_EXPLAINER}`
+    `To give feedback, users should ${""}`
   ];
   const items = [
     `The user will primarily request you to perform software engineering tasks. These may include solving bugs, adding new functionality, refactoring code, explaining code, and more. When given an unclear or generic instruction, consider it in the context of these software engineering tasks and the current working directory. For example, if the user asks you to change "methodName" to snake case, do not reply with just "method_name", instead find the method in the code and modify the code.`,
@@ -543925,9 +543939,9 @@ function getAnthropicEnvMetadata() {
   };
 }
 function getBuildAgeMinutes() {
-  if (!MACRO.BUILD_TIME)
-    return;
-  const buildTime = new Date(MACRO.BUILD_TIME).getTime();
+  if (false)
+    ;
+  const buildTime = new Date("2026-04-15T09:03:41.481Z").getTime();
   if (isNaN(buildTime))
     return;
   return Math.floor((Date.now() - buildTime) / 60000);
@@ -555601,7 +555615,7 @@ function buildSystemInitMessage(inputs) {
     slash_commands: inputs.commands.filter((c4) => c4.userInvocable !== false).map((c4) => c4.name),
     apiKeySource: getAnthropicApiKeyWithSource().source,
     betas: getSdkBetas(),
-    claude_code_version: MACRO.VERSION,
+    claude_code_version: "2.1.88",
     output_style: outputStyle2,
     agents: inputs.agents.map((agent) => agent.agentType),
     skills: inputs.skills.filter((s2) => s2.userInvocable !== false).map((skill) => skill.name),
