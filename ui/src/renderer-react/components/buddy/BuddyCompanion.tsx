@@ -20,6 +20,20 @@ function getFrame(species: string, tick: number): number {
   return frame;
 }
 
+const BUDDY_POSITION_KEY = 'ui.buddyPosition';
+
+function getStoredPosition(): { x: number; y: number } {
+  try {
+    const stored = localStorage.getItem(BUDDY_POSITION_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return { x: 16, y: window.innerHeight - 120 };
+}
+
+function savePosition(pos: { x: number; y: number }) {
+  localStorage.setItem(BUDDY_POSITION_KEY, JSON.stringify(pos));
+}
+
 export function BuddyCompanion({
   compact = false,
 }: {
@@ -27,6 +41,9 @@ export function BuddyCompanion({
 }) {
   const [tick, setTick] = React.useState(0);
   const [showCard, setShowCard] = React.useState(false);
+  const [pos, setPos] = React.useState(getStoredPosition);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [dragStart, setDragStart] = React.useState({ x: 0, y: 0 });
 
   // Re-read from localStorage every render to pick up changes from BuddySummary
   const companion = isBuddyEnabled() ? getCompanion() : null;
@@ -39,6 +56,23 @@ export function BuddyCompanion({
     return () => window.clearInterval(timer);
   }, [companion]);
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pos.x, y: e.clientY - pos.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setPos({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+  };
+
+  const handleMouseUp = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    savePosition(pos);
+  };
+
   if (!companion) return null;
 
   const frame = getFrame(companion.species, tick);
@@ -47,24 +81,40 @@ export function BuddyCompanion({
 
   if (compact) {
     return (
-      <button
-        onClick={() => setShowCard(!showCard)}
-        className="relative flex h-10 w-10 items-center justify-center rounded-full border-2 shadow-md transition-transform hover:scale-110"
-        style={{
-          background: `linear-gradient(135deg, ${rarityColor}40, ${rarityColor}20)`,
-          borderColor: rarityColor,
-        }}
-        title={companion.name}
+      <div
+        className="fixed z-50 cursor-move select-none"
+        style={{ left: pos.x, top: pos.y }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
       >
-        <pre className="text-[6px] leading-none text-foreground">
-          {lines.slice(0, 3).join('\n')}
-        </pre>
-      </button>
+        <button
+          onClick={() => setShowCard(!showCard)}
+          className="relative flex h-10 w-10 items-center justify-center rounded-full border-2 shadow-md transition-transform hover:scale-110"
+          style={{
+            background: `linear-gradient(135deg, ${rarityColor}40, ${rarityColor}20)`,
+            borderColor: rarityColor,
+          }}
+          title={companion.name}
+        >
+          <pre className="text-[6px] leading-none text-foreground">
+            {lines.slice(0, 3).join('\n')}
+          </pre>
+        </button>
+      </div>
     );
   }
 
   return (
-    <div className="relative">
+    <div
+      className="fixed z-50 cursor-move select-none"
+      style={{ left: pos.x, top: pos.y }}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+    >
       <button
         onClick={() => setShowCard(!showCard)}
         className="group relative flex flex-col items-center gap-1 rounded-xl border border-border/60 bg-card/80 px-4 py-3 shadow-md transition-all hover:bg-card"

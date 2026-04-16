@@ -1272,9 +1272,7 @@ export default function App() {
           }}
         />
         {isBuddyEnabled() && (
-          <div className="fixed bottom-4 left-4 z-50">
-            <BuddyCompanion key={forceBuddyUpdate} />
-          </div>
+          <BuddyCompanion key={forceBuddyUpdate} />
         )}
       </div>
     </div>
