@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
   openWorkspace: (payload) => ipcRenderer.invoke('workspace:open', payload),
+  copyFileToWorkspace: (payload) => ipcRenderer.invoke('workspace:copyFileToWorkspace', payload),
   send: (payload) => ipcRenderer.invoke('agent:send', payload),
   approvePlan: (payload) => ipcRenderer.invoke('agent:approve-plan', payload),
   rejectPlan: (payload) => ipcRenderer.invoke('agent:reject-plan', payload),
@@ -24,6 +25,13 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   deleteApp: (payload) => ipcRenderer.invoke('app:delete', payload),
   listWorkspaceDir: (payload) => ipcRenderer.invoke('workspace:list-dir', payload),
   readWorkspaceFile: (payload) => ipcRenderer.invoke('workspace:read-file', payload),
+  fs: {
+    getImageBase64: (path) => ipcRenderer.invoke('fs:getImageBase64', { path }),
+    getFileMetadata: (path) => ipcRenderer.invoke('fs:getFileMetadata', { path }),
+    createTempFile: (fileName) => ipcRenderer.invoke('fs:createTempFile', { fileName }),
+    writeFile: (path, data) => ipcRenderer.invoke('fs:writeFile', { path, data }),
+    saveImageToWorkspace: (sessionId, fileName, data) => ipcRenderer.invoke('workspace:saveImage', { sessionId, fileName, data }),
+  },
   onEvent: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:event', handler);
@@ -64,4 +72,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.on('agent:settings-changed', handler);
     return () => ipcRenderer.off('agent:settings-changed', handler);
   },
+  // Sub-agent execution window management
+  listExecutions: () => ipcRenderer.invoke('execution:list'),
+  focusExecution: (executionId) => ipcRenderer.invoke('execution:focus', { executionId }),
 });

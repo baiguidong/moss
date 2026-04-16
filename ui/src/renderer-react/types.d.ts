@@ -1,5 +1,5 @@
 export type PendingPlanApproval = {
-  kind: 'create-app';
+  kind: 'create-app' | 'plan';
   originalPrompt: string;
   plan: string;
   requestedAt: number;
@@ -93,11 +93,13 @@ declare global {
       pickDirectory: () => Promise<string | null>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
       openWorkspace: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
       send: (payload: {
         sessionId: string;
         prompt: string;
         mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app';
         appName?: string;
+        files?: string[];
       }) => Promise<any>;
       approvePlan: (payload: { sessionId: string }) => Promise<any>;
       rejectPlan: (payload: { sessionId: string }) => Promise<any>;
@@ -109,6 +111,13 @@ declare global {
       deleteApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
       readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<any>;
+      fs: {
+        getImageBase64: (path: string) => Promise<string | null>;
+        getFileMetadata: (path: string) => Promise<{ size: number } | null>;
+        createTempFile: (fileName: string) => Promise<string | null>;
+        writeFile: (path: string, data: number[]) => Promise<boolean>;
+        saveImageToWorkspace: (sessionId: string, fileName: string, data: number[]) => Promise<{ path: string } | { error: string }>;
+      };
       onEvent: (callback: (payload: any) => void) => () => void;
       onState: (callback: (payload: any) => void) => () => void;
       onPermission: (callback: (payload: any) => void) => () => void;
@@ -117,8 +126,19 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
+      listExecutions: () => Promise<{ executions: ExecutionSummary[] }>;
+      focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
     };
   }
 }
+
+export type ExecutionSummary = {
+  id: string;
+  originalPrompt: string;
+  busy: boolean;
+  workspace: string;
+  hasBubble: boolean;
+  createdAt: number;
+};
 
 export {};

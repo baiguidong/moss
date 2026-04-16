@@ -3,6 +3,8 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
+import { ExecutionPetPanel } from '@/components/execution-pet-panel';
+import SnakeGame from '@/components/SnakeGame';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,6 +13,7 @@ import type {
   AgentEvent,
   AppVersion,
   DesktopSettings,
+  ExecutionSummary,
   FileTreeNode,
   SessionDetail,
   SessionSummary,
@@ -140,7 +143,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
+  const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings' | 'snake'>('chat');
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
     try {
       const stored = localStorage.getItem('ui.themeMode');
@@ -177,6 +180,7 @@ export default function App() {
   const [settingsSaving, setSettingsSaving] = React.useState(false);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
+  const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
@@ -301,6 +305,27 @@ export default function App() {
       setSelectedAppName('');
     }
   }, [apps, selectedAppName]);
+
+  // Poll for active sub-agent executions (pets)
+  React.useEffect(() => {
+    let mounted = true;
+    const loadExecutions = async () => {
+      try {
+        const result = await window.agentDesktop.listExecutions();
+        if (mounted && result?.executions) {
+          setExecutions(result.executions);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadExecutions();
+    const timer = window.setInterval(loadExecutions, 3000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!activeDetail?.workspace || !activeSessionId) {
@@ -570,8 +595,10 @@ export default function App() {
     persistPinned(next);
   }, [persistPinned, pinnedIds]);
 
-  const submitPrompt = React.useCallback(async (intent: ComposerIntent) => {
-    if (!input.trim()) return;
+  const submitPrompt = React.useCallback(async (intent: ComposerIntent, files?: Array<{ name: string; path: string }>) => {
+    const hasText = input.trim().length > 0;
+    const hasFiles = files && files.length > 0;
+    if (!hasText && !hasFiles) return;
     if (activeDetail?.busy || planDecisionBusy) return;
     if (intent === 'iterate-app' && !selectedAppName) return;
 
@@ -579,16 +606,36 @@ export default function App() {
     setInput('');
 
     let sessionId = activeSessionId;
+    let sessionJustCreated = false;
     if (!sessionId) {
       sessionId = await createAndOpenSession();
+      sessionJustCreated = true;
     }
     if (!sessionId) return;
+
+    // If we just created a new session and have files, copy them to the new workspace
+    let filesToSend = files;
+    if (sessionJustCreated && hasFiles) {
+      const newFiles: Array<{ name: string; path: string }> = [];
+      for (const file of files!) {
+        const result = await window.agentDesktop.copyFileToWorkspace({
+          sessionId,
+          sourcePath: file.path,
+          fileName: file.name,
+        }) as { path: string } | { error: string };
+        if ('path' in result) {
+          newFiles.push({ name: file.name, path: result.path });
+        }
+      }
+      filesToSend = newFiles;
+    }
 
     const result = await window.agentDesktop.send({
       sessionId,
       prompt,
       mode: intent === 'chat' ? undefined : intent,
       appName: intent === 'iterate-app' ? selectedAppName : undefined,
+      files: filesToSend?.map(f => f.path),
     });
     const detail = await window.agentDesktop.getSession({ sessionId });
     setActiveDetail(detail);
@@ -605,8 +652,8 @@ export default function App() {
     }
   }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName]);
 
-  const handleSend = React.useCallback(async () => {
-    await submitPrompt(composerIntent);
+  const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>) => {
+    await submitPrompt(composerIntent, files);
   }, [composerIntent, submitPrompt]);
 
   const handleApprovePlan = React.useCallback(async () => {
@@ -1090,6 +1137,7 @@ export default function App() {
                 hasActiveSession={Boolean(activeSessionId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
                 sessionMessageCount={activeDetail?.messageCount || 0}
+                sessionId={activeSessionId || undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
                 planDecisionBusy={planDecisionBusy}
                 leftCollapsed={layout.leftCollapsed}
@@ -1138,6 +1186,8 @@ export default function App() {
               onLoadVersions={loadAppVersions}
               onRollback={handleRollbackApp}
             />
+          ) : activeView === 'snake' ? (
+            <SnakeGame />
           ) : (
             renderSettingsView()
           )}
@@ -1182,6 +1232,13 @@ export default function App() {
             </div>
           </>
         )}
+
+        <ExecutionPetPanel
+          executions={executions}
+          onFocus={(executionId) => {
+            void window.agentDesktop.focusExecution(executionId);
+          }}
+        />
       </div>
     </div>
   );

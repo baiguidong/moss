@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -57,9 +57,12 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 
 const sessions = new Map();
+const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
 const appWindows = new Map();
 const appWindowStates = new Map();
 const debugWindows = new Map();
+const executionWindows = new Map(); // name -> BrowserWindow
+const executionWindowStates = new Map(); // webContents.id -> state
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
 fs.mkdirSync(USER_TMP_DIR, { recursive: true });
@@ -67,6 +70,12 @@ fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 const persistSessionStmt = (() => {
+  // Migration: add is_sub_agent column if table exists but column is missing
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_sub_agent INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -77,14 +86,15 @@ const persistSessionStmt = (() => {
       message_count INTEGER NOT NULL,
       preview TEXT NOT NULL,
       underlying_session_id TEXT,
-      history_json TEXT NOT NULL
+      history_json TEXT NOT NULL,
+      is_sub_agent INTEGER NOT NULL DEFAULT 0
     )
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, underlying_session_id, history_json
+      id, title, workspace, created_at, updated_at, message_count, preview, underlying_session_id, history_json, is_sub_agent
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -94,7 +104,8 @@ const persistSessionStmt = (() => {
       message_count = excluded.message_count,
       preview = excluded.preview,
       underlying_session_id = excluded.underlying_session_id,
-      history_json = excluded.history_json
+      history_json = excluded.history_json,
+      is_sub_agent = excluded.is_sub_agent
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -108,9 +119,27 @@ const loadSessionsStmt = sessionDb.prepare(`
     message_count,
     preview,
     underlying_session_id,
-    history_json
+    history_json,
+    is_sub_agent
   FROM sessions
+  WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
+`);
+const loadSubAgentSessionsStmt = sessionDb.prepare(`
+  SELECT
+    id,
+    title,
+    workspace,
+    created_at,
+    updated_at,
+    message_count,
+    preview,
+    underlying_session_id,
+    history_json,
+    is_sub_agent
+  FROM sessions
+  WHERE is_sub_agent = 1
+  ORDER BY created_at ASC
 `);
 
 function loadLocalSettingsAuthConfig() {
@@ -381,7 +410,7 @@ function parseStoredHistory(historyJson) {
   }
 }
 
-function toPersistedSessionRow(sessionRecord) {
+function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
   return [
     sessionRecord.id,
     sessionRecord.title,
@@ -392,11 +421,12 @@ function toPersistedSessionRow(sessionRecord) {
     sessionRecord.preview || '',
     sessionRecord.underlyingSessionId,
     JSON.stringify(sessionRecord.history || []),
+    isSubAgent ? 1 : 0,
   ];
 }
 
-function persistSessionRecord(sessionRecord) {
-  persistSessionStmt.run(...toPersistedSessionRow(sessionRecord));
+function persistSessionRecord(sessionRecord, isSubAgent = false) {
+  persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
 }
 
 function flushPendingSessionPersist(sessionRecord) {
@@ -404,7 +434,7 @@ function flushPendingSessionPersist(sessionRecord) {
     clearTimeout(sessionRecord.persistTimer);
     sessionRecord.persistTimer = null;
   }
-  persistSessionRecord(sessionRecord);
+  persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
 }
 
 function schedulePersistSession(sessionRecord, immediate = false) {
@@ -415,7 +445,7 @@ function schedulePersistSession(sessionRecord, immediate = false) {
   if (sessionRecord.persistTimer) return;
   sessionRecord.persistTimer = setTimeout(() => {
     sessionRecord.persistTimer = null;
-    persistSessionRecord(sessionRecord);
+    persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
   }, 200);
 }
 
@@ -445,6 +475,30 @@ function hydratePersistedSessions() {
       persistTimer: null,
     };
     sessions.set(sessionRecord.id, sessionRecord);
+  }
+
+  // Load sub-agent sessions
+  const subAgentRows = loadSubAgentSessionsStmt.all();
+  for (const row of subAgentRows) {
+    const history = parseStoredHistory(row.history_json);
+    const sessionRecord = {
+      id: row.id,
+      title: row.title,
+      workspace: row.workspace,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      busy: false,
+      messageCount: row.message_count,
+      preview: row.preview || deriveSessionPreview(history),
+      underlyingSessionId: row.underlying_session_id || null,
+      pendingPlanApproval: null,
+      history,
+      runtime: null,
+      workspaceWatcher: null,
+      workspaceWatcherSyncTimer: null,
+      persistTimer: null,
+    };
+    subAgentSessions.set(sessionRecord.id, sessionRecord);
   }
 }
 
@@ -701,6 +755,7 @@ async function runSessionPrompt({
   sender,
   runtimePrompt,
   visibleUserPrompt,
+  attachments = [],
 }) {
   const runtime = await ensureRuntime(sessionRecord);
 
@@ -711,6 +766,10 @@ async function runSessionPrompt({
       prompt: trimmedUserPrompt,
       timestamp: Date.now(),
     };
+    if (attachments.length > 0) {
+      userEvent.files = attachments;
+      userEvent.images = attachments.filter((p) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p));
+    }
 
     sessionRecord.history.push(userEvent);
     sessionRecord.messageCount += 1;
@@ -2175,6 +2234,196 @@ function launchAppWindowByEntry(appEntry) {
   return appWindow;
 }
 
+const executionHtmlDev = rendererDevServerUrl ? `${rendererDevServerUrl}/src/execution.html` : null;
+const executionHtmlProd = path.join(uiRoot, 'dist', 'renderer', 'src', 'execution.html');
+
+function emitToExecutionWindow(webContents, channel, payload) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents.send(channel, payload);
+}
+
+async function launchPlanExecutionWindow({ originalPrompt, plan, mainWindow, originalSessionId }) {
+  const execWindow = new BrowserWindow({
+    title: 'Plan Execution',
+    width: 800,
+    height: 700,
+    resizable: true,
+    backgroundColor: '#09111c',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'execution-preload.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const execSessionId = randomUUID();
+  const execWorkspace = path.join(MOSS_WORKSPACES_DIR, execSessionId);
+  fs.mkdirSync(execWorkspace, { recursive: true });
+
+  const execSessionRecord = createSessionRecord({ workspace: execWorkspace, isSubAgent: true });
+  // Update the id to execSessionId and store in subAgentSessions
+  execSessionRecord.id = execSessionId;
+  subAgentSessions.set(execSessionId, execSessionRecord);
+
+  const execState = {
+    id: execSessionId,
+    window: execWindow,
+    originalPrompt,
+    plan,
+    busy: false,
+    sessionRecord: execSessionRecord,
+    workspace: execWorkspace,
+    mainWindow, // the main window that initiated this execution
+    originalSessionId, // the main window's session ID
+  };
+  executionWindows.set(execSessionId, execWindow);
+  executionWindowStates.set(execWindow.webContents.id, execState);
+
+  execWindow.on('close', (event) => {
+    // Prevent actual close, just hide the window so we can restore it later
+    event.preventDefault();
+    execWindow.hide();
+  });
+
+  // Load the execution HTML
+  if (rendererDevServerUrl) {
+    void execWindow.loadURL(executionHtmlDev);
+  } else {
+    if (!hasFile(executionHtmlProd)) {
+      throw new Error(`Missing execution.html at ${executionHtmlProd}. Run "vite build" in ui first.`);
+    }
+    void execWindow.loadFile(executionHtmlProd);
+  }
+
+  // Send initial state to the execution window
+  execWindow.webContents.once('did-finish-load', () => {
+    execState.busy = true;
+    emitToExecutionWindow(execWindow.webContents, 'execution:init', {
+      originalPrompt,
+      plan,
+      busy: true,
+      workspace: execWorkspace,
+    });
+    // Run the plan execution in the background
+    void runPlanExecution(execSessionRecord, execWindow, execState, originalPrompt, plan);
+  });
+
+  return execSessionId;
+}
+
+async function runPlanExecution(execSessionRecord, execWindow, execState, originalPrompt, plan) {
+  const { mainWindow } = execState;
+
+  const sendEvent = (channel, data) => {
+    if (execWindow.webContents.isDestroyed()) return;
+    execWindow.webContents.send(channel, data);
+    // Also send to bubble window if it exists
+    if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
+      execState.bubbleWindow.webContents.send(channel, data);
+    }
+  };
+
+  // Notify main window of execution state changes
+  const notifyMainWindow = (type, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.send(type, data);
+    }
+  };
+
+  const runtimePrompt = `You are executing an approved implementation plan.
+
+Original user request: ${originalPrompt}
+
+Approved plan:
+${plan}
+
+Follow the plan step by step. Use tools to complete each step. Report progress as you complete each step. When you encounter an error, describe it clearly.
+
+Important:
+- Execute ALL steps in the plan
+- Use file operation tools to create/modify files as needed
+- Report each completed step
+- Do not stop until all steps are complete`;
+
+  const runtime = await ensureRuntime(execSessionRecord);
+
+  // Add user message to history
+  const userEvent = {
+    type: 'user',
+    prompt: originalPrompt,
+    timestamp: Date.now(),
+  };
+  execSessionRecord.history.push(userEvent);
+  execSessionRecord.messageCount += 1;
+  execSessionRecord.busy = true;
+  execSessionRecord.updatedAt = Date.now();
+  schedulePersistSession(execSessionRecord);
+
+  sendEvent('execution:state', { busy: true });
+
+  try {
+    for await (const message of runtime.send(runtimePrompt)) {
+      if (message.session_id) {
+        execSessionRecord.underlyingSessionId = message.session_id;
+      }
+      execSessionRecord.history.push(message);
+      execSessionRecord.updatedAt = Date.now();
+      execSessionRecord.preview = deriveSessionPreview(execSessionRecord.history);
+      schedulePersistSession(execSessionRecord);
+      sendEvent('execution:event', { sessionId: execSessionRecord.id, payload: message });
+    }
+    execSessionRecord.busy = false;
+    execState.busy = false; // Update execState so execution:list returns correct state
+    schedulePersistSession(execSessionRecord, true); // Persist final state
+    sendEvent('execution:event', { type: 'message_stop' });
+    sendEvent('execution:state', { busy: false });
+
+    // Build summary of completed work
+    const summaryMessage = `Sub-agent task completed:\n\nOriginal request: ${execState.originalPrompt}\n\nPlan executed:\n${execState.plan}`;
+
+    // Push completion message to main session history so main agent can see it
+    const mainSessionRecord = getSessionRecord(execState.originalSessionId);
+    if (mainSessionRecord) {
+      pushSessionHistoryEvent(mainSessionRecord, {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }],
+        },
+        timestamp: Date.now(),
+      }, mainWindow.webContents);
+      schedulePersistSession(mainSessionRecord);
+      // Notify main window to refresh
+      notifyMainWindow('agent:event', {
+        sessionId: execState.originalSessionId,
+        payload: { type: 'message', message: { role: 'user', content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }] } },
+      });
+    }
+  } catch (error) {
+    execSessionRecord.busy = false;
+    execState.busy = false; // Update execState so execution:list returns correct state
+    schedulePersistSession(execSessionRecord, true); // Persist final state
+    const message = error instanceof Error ? error.message : String(error);
+    sendEvent('execution:event', { type: 'error', message });
+    sendEvent('execution:state', { busy: false });
+    notifyMainWindow('agent:event', {
+      sessionId: execState.originalSessionId,
+      payload: { type: 'plan_execution_error', message },
+    });
+  }
+}
+
+function disposeSessionRuntime(sessionRecord) {
+  if (sessionRecord?.runtime) {
+    try {
+      sessionRecord.runtime.abort();
+    } catch {}
+    sessionRecord.runtime = null;
+  }
+}
+
 function ensureInsideRoot(rootPath, targetPath) {
   const resolvedRoot = path.resolve(rootPath);
   const resolvedTarget = path.resolve(targetPath);
@@ -2185,7 +2434,7 @@ function ensureInsideRoot(rootPath, targetPath) {
   return resolvedTarget;
 }
 
-function createSessionRecord({ workspace } = {}) {
+function createSessionRecord({ workspace, isSubAgent = false } = {}) {
   const now = Date.now();
   const normalizedWorkspace = normalizeWorkspace(workspace);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
@@ -2215,11 +2464,16 @@ function createSessionRecord({ workspace } = {}) {
     workspaceWatcher: null,
     workspaceWatcherSyncTimer: null,
     persistTimer: null,
+    isSubAgent,
   };
-  sessions.set(sessionRecord.id, sessionRecord);
-  persistSessionRecord(sessionRecord);
-  void startWorkspaceWatcher(sessionRecord);
-  emitSessionMeta(sessionRecord);
+  if (!isSubAgent) {
+    sessions.set(sessionRecord.id, sessionRecord);
+  }
+  persistSessionRecord(sessionRecord, isSubAgent);
+  if (!isSubAgent) {
+    void startWorkspaceWatcher(sessionRecord);
+    emitSessionMeta(sessionRecord);
+  }
   return sessionRecord;
 }
 
@@ -2470,6 +2724,25 @@ async function readWorkspaceFile(sessionRecord, filePath) {
   }
 
   const buffer = await fsp.readFile(targetPath);
+  const ext = path.extname(targetPath).toLowerCase().replace(/^\./, '');
+  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+  if (imageExts.includes(ext)) {
+    const mimeMap = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+      svg: 'image/svg+xml', ico: 'image/x-icon',
+    };
+    const mime = mimeMap[ext] || 'image/png';
+    const base64 = buffer.toString('base64');
+    return {
+      path: targetPath,
+      relativePath: path.relative(sessionRecord.workspace, targetPath),
+      size: stat.size,
+      truncated: false,
+      content: `data:${mime};base64,${base64}`,
+    };
+  }
+
   if (buffer.includes(0)) {
     return {
       path: targetPath,
@@ -2825,14 +3098,85 @@ ipcMain.handle('app-runtime:agent:reset', async (event) => {
   return callAppTool(appState, 'agent.reset');
 });
 
-ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName }) => {
+ipcMain.handle('fs:getImageBase64', async (event, { path: filePath }) => {
+  try {
+    const ext = path.extname(filePath || '').toLowerCase().replace(/^\./, '');
+    const mimeMap = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+      svg: 'image/svg+xml', ico: 'image/x-icon',
+    };
+    const mime = mimeMap[ext] || 'application/octet-stream';
+    const base64 = await fsp.readFile(filePath, { encoding: 'base64' });
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('fs:getFileMetadata', async (event, { path: filePath }) => {
+  try {
+    const stats = await fsp.stat(filePath);
+    return { size: stats.size };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('fs:createTempFile', async (event, { fileName }) => {
+  try {
+    const safeFileName = String(fileName || '').replace(/[<>:"/\\|?*]/g, '_');
+    const tempPath = path.join(os.tmpdir(), `moss_${Date.now()}_${safeFileName}`);
+    return tempPath;
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('fs:writeFile', async (event, { path: filePath, data }) => {
+  try {
+    await fsp.writeFile(filePath, Buffer.from(data));
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('workspace:saveImage', async (event, { sessionId, fileName, data }) => {
+  try {
+    const sessionRecord = getSessionRecord(sessionId);
+    const safeName = String(fileName || 'image').replace(/[<>:"/\\|?*]/g, '_');
+    const filePath = path.join(sessionRecord.workspace, safeName);
+    await fsp.writeFile(filePath, Buffer.from(data));
+    return { path: filePath };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
+ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourcePath, fileName }) => {
+  try {
+    const sessionRecord = getSessionRecord(sessionId);
+    const safeName = String(fileName || path.basename(sourcePath)).replace(/[<>:"/\\|?*]/g, '_');
+    const destPath = path.join(sessionRecord.workspace, safeName);
+    const data = await fsp.readFile(sourcePath);
+    await fsp.writeFile(destPath, data);
+    return { path: destPath };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
+ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files }) => {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
   }
 
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
-  if (!trimmedPrompt) {
+  const filePaths = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f.trim()) : [];
+
+  if (!trimmedPrompt && filePaths.length === 0) {
     throw new Error('Prompt is required.');
   }
   const isCreateAppMode = mode === 'create-app';
@@ -2841,6 +3185,9 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
 
   if (isCreateAppMode && sessionRecord.pendingPlanApproval) {
     throw new Error('There is already a pending app creation plan awaiting approval.');
+  }
+  if (isPlanOnly && sessionRecord.pendingPlanApproval) {
+    throw new Error('There is already a pending plan awaiting approval.');
   }
 
   let iterateTarget = null;
@@ -2856,8 +3203,10 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
     : isIterateAppMode
       ? buildIterateAppPrompt(iterateTarget, trimmedPrompt)
       : isPlanOnly
-        ? `Please create a step-by-step implementation plan for the following request. Do NOT output any code blocks yet, just the logical plan: ${trimmedPrompt}`
+        ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
         : trimmedPrompt;
+
+  const visibleUserPrompt = trimmedPrompt;
 
   const {
     latestAssistantText,
@@ -2866,7 +3215,8 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
     sessionRecord,
     sender: event.sender,
     runtimePrompt,
-    visibleUserPrompt: trimmedPrompt,
+    visibleUserPrompt,
+    attachments: filePaths,
   });
 
   let createdApp = null;
@@ -2914,6 +3264,57 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName })
         updatedAt: updatedApp.updatedAt,
       },
     });
+  } else if (isPlanOnly) {
+    // Check if agent used any tools - if so, it didn't follow the plan-only instruction
+    const usedTools = sessionRecord.history.some((msg) => {
+      if (msg.type === 'user') {
+        const content = msg.message && msg.message.content;
+        return Array.isArray(content) && content.some((block) => block && block.type === 'tool_result');
+      }
+      if (msg.type === 'assistant') {
+        const content = msg.message && msg.message.content;
+        return Array.isArray(content) && content.some((block) => block && block.type === 'tool_use');
+      }
+      return false;
+    });
+    if (usedTools) {
+      sessionRecord.busy = false;
+      sessionRecord.preview = '';
+      pushSessionHistoryEvent(sessionRecord, {
+        type: 'app_plan_state',
+        kind: 'plan',
+        state: 'rejected',
+        originalPrompt: trimmedPrompt,
+        plan: '',
+        timestamp: Date.now(),
+      }, event.sender);
+      setPendingPlanApproval(sessionRecord, null);
+      return {
+        ok: false,
+        error: 'Agent attempted to execute tools instead of just creating a plan. Please try again.',
+        sessionId,
+      };
+    }
+
+    const planText = String(latestAssistantText || streamedAssistantText || '').trim();
+    if (!planText) {
+      throw new Error('Planner did not return a usable plan.');
+    }
+    const pendingPlanApproval = {
+      kind: 'plan',
+      originalPrompt: trimmedPrompt,
+      plan: planText,
+      requestedAt: Date.now(),
+    };
+    pushSessionHistoryEvent(sessionRecord, {
+      type: 'app_plan_state',
+      kind: 'plan',
+      state: 'awaiting_approval',
+      originalPrompt: trimmedPrompt,
+      plan: planText,
+      timestamp: pendingPlanApproval.requestedAt,
+    }, event.sender);
+    setPendingPlanApproval(sessionRecord, pendingPlanApproval);
   }
 
   return {
@@ -2952,13 +3353,13 @@ ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
     throw new Error('This session is already processing a request.');
   }
   const pendingPlanApproval = sessionRecord.pendingPlanApproval;
-  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'create-app') {
-    throw new Error('There is no app creation plan waiting for approval.');
+  if (!pendingPlanApproval || (pendingPlanApproval.kind !== 'create-app' && pendingPlanApproval.kind !== 'plan')) {
+    throw new Error('There is no plan waiting for approval.');
   }
 
   pushSessionHistoryEvent(sessionRecord, {
     type: 'app_plan_state',
-    kind: 'create-app',
+    kind: pendingPlanApproval.kind,
     state: 'approved',
     originalPrompt: pendingPlanApproval.originalPrompt,
     plan: pendingPlanApproval.plan,
@@ -2966,6 +3367,23 @@ ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
   }, event.sender);
   setPendingPlanApproval(sessionRecord, null);
 
+  if (pendingPlanApproval.kind === 'plan') {
+    // Launch separate execution window with sub-agent
+    const executionSessionId = await launchPlanExecutionWindow({
+      originalPrompt: pendingPlanApproval.originalPrompt,
+      plan: pendingPlanApproval.plan,
+      mainWindow: event.sender,
+      originalSessionId: sessionId,
+    });
+    return {
+      ok: true,
+      sessionId,
+      executionSessionId,
+      summary: getSessionSummary(sessionRecord),
+    };
+  }
+
+  // create-app flow (existing)
   const buildPaths = getSessionAppBuildPaths(sessionRecord);
   fs.mkdirSync(buildPaths.buildDir, { recursive: true });
 
@@ -3024,13 +3442,13 @@ ipcMain.handle('agent:reject-plan', async (event, { sessionId }) => {
     throw new Error('This session is already processing a request.');
   }
   const pendingPlanApproval = sessionRecord.pendingPlanApproval;
-  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'create-app') {
-    throw new Error('There is no app creation plan waiting for approval.');
+  if (!pendingPlanApproval || (pendingPlanApproval.kind !== 'create-app' && pendingPlanApproval.kind !== 'plan')) {
+    throw new Error('There is no plan waiting for approval.');
   }
 
   pushSessionHistoryEvent(sessionRecord, {
     type: 'app_plan_state',
-    kind: 'create-app',
+    kind: pendingPlanApproval.kind,
     state: 'rejected',
     originalPrompt: pendingPlanApproval.originalPrompt,
     plan: pendingPlanApproval.plan,
@@ -3043,4 +3461,208 @@ ipcMain.handle('agent:reject-plan', async (event, { sessionId }) => {
     sessionId,
     summary: getSessionSummary(sessionRecord),
   };
+});
+
+ipcMain.handle('execution:abort', async (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) return { error: 'No sender window' };
+  const execState = [...executionWindowStates.values()].find(
+    (s) => s.window === senderWindow || s.bubbleWindow === senderWindow,
+  );
+  if (!execState) return { error: 'Not an execution window' };
+  if (execState.sessionRecord && execState.sessionRecord.runtime) {
+    try {
+      execState.sessionRecord.runtime.abort();
+    } catch {}
+  }
+  execState.busy = false;
+  // Notify both windows
+  if (!execState.window.isDestroyed()) {
+    execState.window.webContents.send('execution:state', { busy: false });
+  }
+  if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
+    execState.bubbleWindow.webContents.send('execution:state', { busy: false });
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('execution:get-initial-state', async (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) return { error: 'No sender window' };
+  const execState = [...executionWindowStates.values()].find(
+    (s) => s.window === senderWindow || s.bubbleWindow === senderWindow,
+  );
+  if (!execState) return { error: 'Not an execution window' };
+  return {
+    originalPrompt: execState.originalPrompt,
+    plan: execState.plan,
+    busy: execState.busy,
+    workspace: execState.workspace,
+    steps: [],
+    logLines: [],
+  };
+});
+
+ipcMain.handle('execution:list', async () => {
+  // Return list of all active execution windows (for the floating pet panel)
+  const list = [...executionWindowStates.values()].map((state) => ({
+    id: state.id,
+    originalPrompt: state.originalPrompt,
+    busy: state.busy,
+    workspace: state.workspace,
+    hasBubble: Boolean(state.bubbleWindow && !state.bubbleWindow.isDestroyed()),
+    createdAt: state.sessionRecord?.createdAt || Date.now(),
+  }));
+  // Sort by creation time, oldest first
+  list.sort((a, b) => a.createdAt - b.createdAt);
+  return { executions: list };
+});
+
+ipcMain.handle('execution:focus', async (_event, { executionId }) => {
+  const execState = [...executionWindowStates.values()].find((s) => s.id === executionId);
+  if (!execState) return { error: 'Execution not found' };
+
+  if (execState.window.isDestroyed()) {
+    return { error: 'Execution window was closed. Please restart.' };
+  }
+
+  if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
+    execState.bubbleWindow.close();
+  }
+  execState.window.webContents.send('execution:state', { busy: execState.busy });
+  if (!execState.busy) {
+    execState.window.webContents.send('execution:event', { type: 'message_stop' });
+  }
+  execState.window.show();
+  execState.window.focus();
+  return { ok: true };
+});
+
+ipcMain.handle('execution:list-files', async (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) return { error: 'No sender window' };
+  const execState = [...executionWindowStates.values()].find(
+    (s) => s.window === senderWindow || s.bubbleWindow === senderWindow,
+  );
+  if (!execState) return { error: 'Not an execution window' };
+
+  try {
+    const entries = fs.readdirSync(execState.workspace, { withFileTypes: true });
+    const files = entries
+      .filter(e => e.isFile())
+      .map(e => ({ name: e.name, path: path.join(execState.workspace, e.name) }));
+    return { files, workspace: execState.workspace };
+  } catch (err) {
+    return { files: [], workspace: execState.workspace, error: String(err) };
+  }
+});
+
+ipcMain.handle('execution:send', async (event, { message }) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) return { error: 'No sender window' };
+  // Look up by main window ID (bubble's webContents.id won't be in the map)
+  const execState = [...executionWindowStates.values()].find(
+    (s) => s.window === senderWindow || s.bubbleWindow === senderWindow,
+  );
+  if (!execState) return { error: 'Not an execution window' };
+
+  const { sessionRecord } = execState;
+  const sendEvent = (channel, data) => {
+    // Send to main window
+    if (!execState.window.isDestroyed()) {
+      execState.window.webContents.send(channel, data);
+    }
+    // Send to bubble if it exists
+    if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
+      execState.bubbleWindow.webContents.send(channel, data);
+    }
+  };
+
+  // Add user message to history
+  const userEvent = {
+    type: 'user',
+    prompt: message,
+    timestamp: Date.now(),
+  };
+  sessionRecord.history.push(userEvent);
+  sessionRecord.messageCount += 1;
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.busy = true;
+  sessionRecord.preview = message;
+
+  sendEvent('execution:event', { sessionId: sessionRecord.id, payload: userEvent });
+  sendEvent('execution:state', { busy: true });
+
+  try {
+    const runtime = await ensureRuntime(sessionRecord);
+    for await (const msg of runtime.send(message)) {
+      if (msg.session_id) {
+        sessionRecord.underlyingSessionId = msg.session_id;
+      }
+      sessionRecord.history.push(msg);
+      sessionRecord.updatedAt = Date.now();
+      sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+      sendEvent('execution:event', { sessionId: sessionRecord.id, payload: msg });
+    }
+    sessionRecord.busy = false;
+    sendEvent('execution:event', { sessionId: sessionRecord.id, payload: { type: 'message_stop' } });
+    sendEvent('execution:state', { busy: false });
+    return { ok: true };
+  } catch (error) {
+    sessionRecord.busy = false;
+    const errMsg = error instanceof Error ? error.message : String(error);
+    sendEvent('execution:event', { sessionId: sessionRecord.id, payload: { type: 'error', message: errMsg } });
+    sendEvent('execution:state', { busy: false });
+    return { error: errMsg };
+  }
+});
+
+ipcMain.handle('execution:minimize', async (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) return { error: 'No sender window' };
+  const execState = [...executionWindowStates.values()].find(
+    (s) => s.window === senderWindow || s.bubbleWindow === senderWindow,
+  );
+  if (!execState) return { error: 'Not an execution window' };
+
+  // Just hide the window - the pet panel in main window shows status
+  senderWindow.hide();
+  return { ok: true };
+});
+
+ipcMain.handle('execution:restore', async (event) => {
+  const bubbleWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!bubbleWindow) return { error: 'No sender window' };
+
+  // Find the execState that owns this bubble
+  let execState = null;
+  for (const [, state] of executionWindowStates) {
+    if (state.bubbleWindow === bubbleWindow) {
+      execState = state;
+      break;
+    }
+  }
+
+  // Close bubble
+  if (!bubbleWindow.isDestroyed()) {
+    bubbleWindow.close();
+  }
+
+  // Restore and show main window
+  const mainWindow = execState?.window;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // Send current state to main window before showing it, since hidden windows
+    // may not process IPC events in real-time and can have stale state
+    if (execState) {
+      if (!mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('execution:state', { busy: execState.busy });
+        if (!execState.busy) {
+          mainWindow.webContents.send('execution:event', { type: 'message_stop' });
+        }
+      }
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  return { ok: true };
 });

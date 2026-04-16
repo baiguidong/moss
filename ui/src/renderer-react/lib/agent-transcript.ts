@@ -21,6 +21,8 @@ export type ChatMessage = {
   toolsComplete?: boolean;
   meta?: string[];
   streaming?: boolean;
+  images?: string[];
+  files?: string[];
 };
 
 type AgentEvent = Record<string, any>;
@@ -210,6 +212,8 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       toolsComplete: false,
       meta: [],
       streaming: false,
+      images: [],
+      files: [],
       _finalized: false,
     };
     messages.push(assistant);
@@ -229,6 +233,8 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
         role: 'user',
         content: event.prompt,
         timestamp,
+        images: event.images || [],
+        files: event.files ? (event.files as string[]).filter((f: string) => !/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f)) : [],
       });
       currentAssistant = null;
       continue;
@@ -342,6 +348,8 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       assistant.thinking = '';
       assistant.toolSteps = assistant.toolSteps || [];
       assistant.meta = assistant.meta || [];
+      assistant.images = [];
+      assistant.files = [];
       assistant.toolsComplete = false;
 
       if (Array.isArray(event?.message?.content)) {
@@ -357,6 +365,12 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
             step.statusText = '进行中';
             step.result = buildToolDetail(block.input);
             toolOwners.set(step.id, assistant);
+          } else if (block.type === 'image' && typeof block.source === 'object') {
+            const imgSrc = block.source?.data || block.source?.url || '';
+            if (imgSrc) {
+              if (!assistant.images) assistant.images = [];
+              if (!assistant.images.includes(imgSrc)) assistant.images.push(imgSrc);
+            }
           }
         }
       }

@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Check,
   FileText,
   Loader,
   Send,
@@ -23,11 +25,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { FilePreview } from "@/components/file-preview";
+import { MarkdownView } from "@/components/markdown-view";
+import { pasteService } from "@/lib/paste-service";
 import type { ChatMessage } from "@/lib/agent-transcript";
 
 type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app";
 type PendingPlanApproval = {
-  kind: "create-app";
+  kind: "create-app" | "plan";
   originalPrompt: string;
   plan: string;
   requestedAt: number;
@@ -40,12 +45,8 @@ type IntentOption = {
 
 const intentOptions: IntentOption[] = [
   {
-    id: "chat",
-    title: "普通对话",
-  },
-  {
     id: "plan",
-    title: "先做计划",
+    title: "Copilot",
   },
   {
     id: "create-app",
@@ -253,6 +254,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   const hasBody = Boolean(message.content.trim());
   const hasThinking = Boolean(message.thinking?.trim());
+  const hasImages = message.images && message.images.length > 0;
+  const hasFiles = message.files && message.files.length > 0;
 
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -286,43 +289,71 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <ThinkingBlock thinking={message.thinking!} streaming={message.streaming} />
         )}
 
-        {(hasBody || isUser || (!hasThinking && !message.toolSteps?.length)) && (
-          <div
-            className={cn(
-              "rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-[0_18px_55px_-40px_rgba(0,0,0,0.85)]",
-              isUser
-                ? "rounded-tr-md bg-primary text-primary-foreground"
-                : "rounded-tl-md border border-border/70 bg-card/88 text-foreground",
-            )}
-          >
-            <div className="space-y-3">
-              {hasBody ? (
-                renderTextSegments(message.content, message.streaming)
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader className={cn("h-3.5 w-3.5 animate-spin", message.streaming ? "opacity-100" : "opacity-60")} />
-                  {!message.streaming && <span>Working...</span>}
-                </div>
-              )}
+        {(hasImages || hasFiles) && (
+          <div className="flex flex-wrap gap-2">
+            {message.images?.map((imgPath, i) => (
+              <FilePreview key={`img-${i}`} path={imgPath} readonly />
+            ))}
+            {message.files?.map((filePath, i) => (
+              <FilePreview key={`file-${i}`} path={filePath} readonly />
+            ))}
+          </div>
+        )}
 
-              {message.meta && message.meta.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {message.meta.map((entry) => (
-                    <span
-                      key={entry}
-                      className={cn(
-                        "rounded-full border px-2 py-0.5 text-[10px]",
-                        isUser
-                          ? "border-primary-foreground/20 text-primary-foreground/75"
-                          : "border-border bg-background/60 text-muted-foreground",
-                      )}
-                    >
-                      {entry}
-                    </span>
-                  ))}
-                </div>
+        {(hasBody || isUser || (!hasThinking && !message.toolSteps?.length)) && (
+          <div className="group relative">
+            <div
+              className={cn(
+                "rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-[0_18px_55px_-40px_rgba(0,0,0,0.85)]",
+                isUser
+                  ? "rounded-tr-md bg-primary text-primary-foreground"
+                  : "rounded-tl-md border border-border/70 bg-card/88 text-foreground",
               )}
+            >
+              <div className="space-y-3">
+                {hasBody ? (
+                  isUser ? (
+                    <p className="whitespace-pre-wrap break-words leading-7">{message.content}</p>
+                  ) : (
+                    <MarkdownView>{message.content}</MarkdownView>
+                  )
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader className={cn("h-3.5 w-3.5 animate-spin", message.streaming ? "opacity-100" : "opacity-60")} />
+                    {!message.streaming && <span>Working...</span>}
+                  </div>
+                )}
+
+                {message.meta && message.meta.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {message.meta.map((entry) => (
+                      <span
+                        key={entry}
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[10px]",
+                          isUser
+                            ? "border-primary-foreground/20 text-primary-foreground/75"
+                            : "border-border bg-background/60 text-muted-foreground",
+                        )}
+                      >
+                        {entry}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+            {isUser && hasBody && (
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(message.content);
+                }}
+                className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-primary-foreground/20"
+                title="复制"
+              >
+                <Copy className="h-3.5 w-3.5 text-primary-foreground/80" />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -370,14 +401,15 @@ function PlanApprovalCard({
   onApprove: () => void;
   onReject: () => void;
 }) {
+  const isCreateApp = pendingPlanApproval.kind === "create-app";
   return (
     <div className="rounded-[24px] border border-primary/25 bg-card/92 p-4 shadow-[0_18px_55px_-40px_rgba(0,0,0,0.75)]">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-primary">
-          创建 App 计划待确认
+          {isCreateApp ? "创建 App 计划待确认" : "执行计划待确认"}
         </span>
         <span className="text-xs text-muted-foreground">
-          批准后才会真正开始生成 App
+          {isCreateApp ? "批准后才会真正开始生成 App" : "批准后将启动独立子 Agent 执行"}
         </span>
       </div>
       <p className="mt-3 text-sm leading-7 text-foreground">
@@ -398,7 +430,7 @@ function PlanApprovalCard({
           onClick={onApprove}
           disabled={busy}
         >
-          {busy ? "正在执行..." : "批准并创建 App"}
+          {busy ? "正在执行..." : isCreateApp ? "批准并创建 App" : "批准并执行"}
         </Button>
         <Button
           variant="outline"
@@ -419,6 +451,7 @@ function ComposerPanel({
   loading,
   composerIntent,
   hasActiveSession,
+  sessionId,
   onChange,
   onComposerIntentChange,
   onSend,
@@ -429,14 +462,138 @@ function ComposerPanel({
   loading: boolean;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
+  sessionId?: string;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
-  onSend: () => void;
+  onSend: (files?: Array<{ name: string; path: string }>) => void;
   onStop?: () => void;
 }) {
-  const submitDisabled =
-    !value.trim() || loading || (composerIntent === "iterate-app" && !selectedAppName);
+  const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  const composerId = React.useRef<string>('composer-' + Math.random().toString(36).slice(2));
   const isHomeComposer = !hasActiveSession;
+  const submitDisabled =
+    (!value.trim() && attachments.length === 0) || loading || (composerIntent === "iterate-app" && !selectedAppName);
+
+  React.useEffect(() => {
+    pasteService.init();
+    pasteService.registerHandler(composerId.current, async (event) => {
+      const handled = await pasteService.handlePaste(
+        event,
+        (files) => setAttachments(prev => [...prev, ...files]),
+        undefined
+      );
+      return handled;
+    });
+    pasteService.setLastFocusedComponent(composerId.current);
+    return () => {
+      pasteService.unregisterHandler(composerId.current);
+    };
+  }, []);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    const newAttachments: Array<{ name: string; path: string }> = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const filePath = (file as File & { path?: string }).path;
+      if (filePath) {
+        newAttachments.push({ name: file.name, path: filePath });
+      } else if (file.type.startsWith('image/')) {
+        const ext = file.name.split('.').pop() || 'png';
+        const fileName = file.name || `pasted_image.${ext}`;
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const data = Array.from(new Uint8Array(arrayBuffer));
+          let savedPath: string | null = null;
+          if (sessionId) {
+            const result = await window.agentDesktop.fs.saveImageToWorkspace(sessionId, fileName, data) as { path: string } | { error: string };
+            if ('path' in result) savedPath = result.path;
+          }
+          if (!savedPath) {
+            const tempPath = await window.agentDesktop.fs.createTempFile(fileName);
+            if (tempPath) {
+              await window.agentDesktop.fs.writeFile(tempPath, data);
+              savedPath = tempPath;
+            }
+          }
+          if (savedPath) {
+            newAttachments.push({ name: fileName, path: savedPath });
+          }
+        } catch (err) {
+          console.error('Failed to save dropped image:', err);
+        }
+      }
+    }
+    if (newAttachments.length > 0) {
+      setAttachments(prev => [...prev, ...newAttachments]);
+    }
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const clipboardItems = e.clipboardData?.items;
+    if (!clipboardItems) return;
+
+    const newAttachments: Array<{ name: string; path: string }> = [];
+    for (let i = 0; i < clipboardItems.length; i++) {
+      const item = clipboardItems[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          const ext = item.type.split('/')[1] || 'png';
+          const fileName = file.name || `pasted_image.${ext}`;
+          try {
+            const arrayBuffer = await file.arrayBuffer();
+            const data = Array.from(new Uint8Array(arrayBuffer));
+
+            let savedPath: string | null = null;
+            if (sessionId) {
+              const result = await window.agentDesktop.fs.saveImageToWorkspace(sessionId, fileName, data) as { path: string } | { error: string };
+              if ('path' in result) savedPath = result.path;
+            }
+            if (!savedPath) {
+              // Fallback to temp file
+              const tempPath = await window.agentDesktop.fs.createTempFile(fileName);
+              if (tempPath) {
+                await window.agentDesktop.fs.writeFile(tempPath, data);
+                savedPath = tempPath;
+              }
+            }
+
+            if (savedPath) {
+              newAttachments.push({ name: fileName, path: savedPath });
+            }
+          } catch (err) {
+            console.error('Failed to save pasted image:', err);
+          }
+        }
+      }
+    }
+    if (newAttachments.length > 0) {
+      e.preventDefault();
+      setAttachments(prev => [...prev, ...newAttachments]);
+    }
+  };
+
+  const handleSendClick = () => {
+    const files = attachments.length > 0 ? attachments : undefined;
+    onSend(files);
+    setAttachments([]);
+  };
 
   return (
     <div
@@ -446,6 +603,8 @@ function ComposerPanel({
           ? "shadow-[0_24px_80px_-44px_rgba(0,0,0,0.55)]"
           : "shadow-[0_16px_54px_-38px_rgba(0,0,0,0.45)]",
       )}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       <div className="relative">
         <Textarea
@@ -468,15 +627,28 @@ function ComposerPanel({
           )}
           rows={isHomeComposer ? 7 : 3}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               if (submitDisabled) {
                 return;
               }
               event.preventDefault();
-              void onSend();
+              void handleSendClick();
             }
           }}
+          onPaste={handlePaste}
         />
+
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-4 pb-2">
+            {attachments.map((file, index) => (
+              <FilePreview
+                key={`${file.path}-${index}`}
+                path={file.path}
+                onRemove={() => handleRemoveAttachment(index)}
+              />
+            ))}
+          </div>
+        )}
 
         <div className="absolute bottom-3 right-3 flex items-center gap-2">
           {!isHomeComposer && loading && (
@@ -493,7 +665,7 @@ function ComposerPanel({
           <Button
             className="h-9 rounded-full px-3.5 sm:px-4"
             disabled={submitDisabled}
-            onClick={onSend}
+            onClick={handleSendClick}
           >
             <Send className="h-4 w-4" />
             发送
@@ -501,7 +673,7 @@ function ComposerPanel({
         </div>
       </div>
 
-      {isHomeComposer && (
+      {isHomeComposer && composerIntent !== "chat" && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 px-3 py-3 sm:px-4 sm:gap-2">
           {intentOptions.map((option) => (
             <IntentChip
@@ -527,6 +699,7 @@ function HomeLanding({
   selectedAppName,
   loading,
   composerIntent,
+  sessionId,
   onChange,
   onComposerIntentChange,
   onSend,
@@ -535,9 +708,10 @@ function HomeLanding({
   selectedAppName: string;
   loading: boolean;
   composerIntent: ComposerIntent;
+  sessionId?: string;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
-  onSend: () => void;
+  onSend: (files?: Array<{ name: string; path: string }>) => void;
 }) {
   return (
     <div className="mx-auto flex h-full w-full max-w-[860px] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
@@ -553,12 +727,28 @@ function HomeLanding({
         </p>
       </div>
 
+      {composerIntent === "chat" && (
+        <div className="mb-6 flex justify-center gap-4">
+          {intentOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onComposerIntentChange(option.id)}
+              className="rounded-full border border-border/70 bg-card/60 px-6 py-3 text-sm font-medium text-foreground shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+            >
+              {option.title}
+            </button>
+          ))}
+        </div>
+      )}
+
       <ComposerPanel
         value={value}
         selectedAppName={selectedAppName}
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
+        sessionId={sessionId}
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
         onSend={onSend}
@@ -575,6 +765,7 @@ export function ChatArea({
   hasActiveSession,
   sessionTitle,
   sessionMessageCount,
+  sessionId,
   pendingPlanApproval,
   planDecisionBusy,
   leftCollapsed,
@@ -596,6 +787,7 @@ export function ChatArea({
   hasActiveSession: boolean;
   sessionTitle: string;
   sessionMessageCount: number;
+  sessionId?: string;
   pendingPlanApproval: PendingPlanApproval | null;
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
@@ -607,7 +799,7 @@ export function ChatArea({
   onToggleRightSidebar: () => void;
   onApprovePlan: () => void;
   onRejectPlan: () => void;
-  onSend: () => void;
+  onSend: (files?: Array<{ name: string; path: string }>) => void;
   onStop: () => void;
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
@@ -624,6 +816,7 @@ export function ChatArea({
           selectedAppName={selectedAppName}
           loading={loading}
           composerIntent={composerIntent}
+          sessionId={sessionId}
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
           onSend={onSend}
@@ -646,7 +839,7 @@ export function ChatArea({
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-3 py-3 sm:px-4 sm:py-4">
           {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-          {pendingPlanApproval?.kind === "create-app" && (
+          {pendingPlanApproval && (
             <PlanApprovalCard
               pendingPlanApproval={pendingPlanApproval}
               busy={planDecisionBusy || loading}
@@ -666,6 +859,7 @@ export function ChatArea({
             loading={loading}
             composerIntent={composerIntent}
             hasActiveSession
+            sessionId={sessionId}
             onChange={onChange}
             onComposerIntentChange={onComposerIntentChange}
             onSend={onSend}

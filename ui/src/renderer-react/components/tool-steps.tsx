@@ -120,6 +120,12 @@ function SingleToolStep({ step }: { step: ToolStep }) {
   const canExpand = Boolean(detail);
   const [expanded, setExpanded] = React.useState(step.status === "running" || step.status === "error");
 
+  const MAX_RESULT_LINES = 10;
+  const lines = detail.split("\n");
+  const truncatedDetail = lines.length > MAX_RESULT_LINES
+    ? lines.slice(0, MAX_RESULT_LINES).join("\n") + "\n... (truncated)"
+    : detail;
+
   React.useEffect(() => {
     if (step.status === "running") {
       setExpanded(true);
@@ -197,7 +203,7 @@ function SingleToolStep({ step }: { step: ToolStep }) {
       {canExpand && expanded && (
         <div className="border-t border-border/60 bg-background/55 px-3 py-3">
           <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-6 text-foreground/90">
-            {detail}
+            {truncatedDetail}
           </pre>
         </div>
       )}
