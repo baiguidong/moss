@@ -4,7 +4,6 @@ import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { ExecutionPetPanel } from '@/components/execution-pet-panel';
-import SnakeGame from '@/components/SnakeGame';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -143,7 +142,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings' | 'snake'>('chat');
+  const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
     try {
       const stored = localStorage.getItem('ui.themeMode');
@@ -1190,8 +1189,6 @@ export default function App() {
               onLoadVersions={loadAppVersions}
               onRollback={handleRollbackApp}
             />
-          ) : activeView === 'snake' ? (
-            <SnakeGame />
           ) : (
             renderSettingsView()
           )}

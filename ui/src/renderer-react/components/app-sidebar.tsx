@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  Gamepad2,
   LayoutGrid,
   MoonStar,
   PenSquare,
@@ -46,7 +45,7 @@ interface AppSidebarProps {
   themeMode: "dark" | "light";
   collapsed: boolean;
   searchQuery: string;
-  onChangeView: (view: "chat" | "apps" | "settings" | "snake") => void;
+  onChangeView: (view: "chat" | "apps" | "settings") => void;
   onChangeTheme: (theme: "dark" | "light") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -340,7 +339,7 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Button
             variant={activeView === "apps" ? "secondary" : "ghost"}
             className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
@@ -353,14 +352,6 @@ export function AppSidebar({
                 <span className="ml-auto text-[11px] text-muted-foreground">{appsCount}</span>
               </>
             )}
-          </Button>
-          <Button
-            variant={activeView === "snake" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
-            onClick={() => onChangeView("snake")}
-          >
-            <Gamepad2 className="h-4 w-4" />
-            {!collapsed && "游戏"}
           </Button>
           <Button
             variant={activeView === "settings" ? "secondary" : "ghost"}
