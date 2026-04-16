@@ -81,9 +81,6 @@ export function TaskPanel({
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <Cloud className="h-4 w-4 text-primary" />
               <span>临时空间</span>
-              <Badge variant="default" className="h-5 rounded-full px-2 text-[10px]">
-                {treeItems.length}
-              </Badge>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">

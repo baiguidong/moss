@@ -75,4 +75,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   // Sub-agent execution window management
   listExecutions: (sessionId) => ipcRenderer.invoke('execution:list', { sessionId }),
   focusExecution: (executionId) => ipcRenderer.invoke('execution:focus', { executionId }),
+  // Cron task management
+  cronList: () => ipcRenderer.invoke('cron:list'),
+  cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
 });

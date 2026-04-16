@@ -8,11 +8,14 @@
 //
 // File format:
 //   { "tasks": [{ id, cron, prompt, createdAt, recurring?, permanent? }] }
+//
+// Global cron file (~/.moss/cron_tasks.json) mirrors all tasks for app access.
 
 import { randomUUID } from 'crypto'
 import { readFileSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
+import os from 'os'
 import {
   addSessionCronTask,
   getProjectRoot,
@@ -210,11 +213,15 @@ export async function addCronTask(
   }
   if (!durable) {
     addSessionCronTask({ ...task, ...(agentId ? { agentId } : {}) })
+    // Also write to global file so apps can list all tasks
+    await addCronTaskToGlobalFile(task)
     return id
   }
   const tasks = await readCronTasks()
   tasks.push(task)
   await writeCronTasks(tasks)
+  // Also write to global file so apps can list all tasks
+  await addCronTaskToGlobalFile(task)
   return id
 }
 
@@ -238,6 +245,8 @@ export async function removeCronTasks(
   // (returns 0) on miss, so pre-existing durable-delete paths fall through
   // without allocating.
   if (dir === undefined && removeSessionCronTasks(ids) === ids.length) {
+    // Still remove from global file so apps see accurate list
+    await removeCronTasksFromGlobalFile(ids)
     return
   }
   const idSet = new Set(ids)
@@ -245,6 +254,8 @@ export async function removeCronTasks(
   const remaining = tasks.filter(t => !idSet.has(t.id))
   if (remaining.length === tasks.length) return
   await writeCronTasks(remaining, dir)
+  // Also remove from global file so apps see accurate list
+  await removeCronTasksFromGlobalFile(ids)
 }
 
 /**
@@ -455,4 +466,74 @@ export function findMissedTasks(tasks: CronTask[], nowMs: number): CronTask[] {
     const next = nextCronRunMs(t.cron, t.createdAt)
     return next !== null && next < nowMs
   })
+}
+
+// ============================================================================
+// Global cron file for app access (~/.moss/cron_tasks.json)
+// All cron tasks are mirrored here (not just durable ones) so apps can read them.
+// ============================================================================
+
+const GLOBAL_CRON_FILE = '.moss/cron_tasks.json'
+
+function getGlobalCronFilePath(): string {
+  return join(process.env.HOME ?? os.homedir(), GLOBAL_CRON_FILE)
+}
+
+async function readGlobalCronTasks(): Promise<CronTask[]> {
+  const fs = getFsImplementation()
+  const filePath = getGlobalCronFilePath()
+  try {
+    const raw = await fs.readFile(filePath, { encoding: 'utf-8' })
+    const parsed = safeParseJSON(raw, false)
+    if (!parsed || typeof parsed !== 'object') return []
+    const tasks = (parsed as { tasks?: CronTask[] }).tasks
+    if (!Array.isArray(tasks)) return []
+    return tasks.filter(
+      t =>
+        t &&
+        typeof t.id === 'string' &&
+        typeof t.cron === 'string' &&
+        typeof t.prompt === 'string' &&
+        typeof t.createdAt === 'number',
+    )
+  } catch {
+    return []
+  }
+}
+
+async function writeGlobalCronTasks(tasks: CronTask[]): Promise<void> {
+  const fs = getFsImplementation()
+  const filePath = getGlobalCronFilePath()
+  const dir = filePath.substring(0, filePath.lastIndexOf('/'))
+  await mkdir(dir, { recursive: true })
+  await writeFile(filePath, jsonStringify({ tasks }, null, 2) + '\n', 'utf-8')
+}
+
+/**
+ * Add a task to the global cron file for app access.
+ * Called alongside addSessionCronTask so apps can list all tasks.
+ */
+export async function addCronTaskToGlobalFile(task: CronTask): Promise<void> {
+  try {
+    const tasks = await readGlobalCronTasks()
+    tasks.push(task)
+    await writeGlobalCronTasks(tasks)
+  } catch (e) {
+    logForDebugging(`[GlobalCron] failed to add task: ${e}`)
+  }
+}
+
+/**
+ * Remove tasks from the global cron file.
+ * Called alongside removeCronTasks so apps see accurate list.
+ */
+export async function removeCronTasksFromGlobalFile(ids: string[]): Promise<void> {
+  try {
+    const tasks = await readGlobalCronTasks()
+    const idSet = new Set(ids)
+    const remaining = tasks.filter(t => !idSet.has(t.id))
+    await writeGlobalCronTasks(remaining)
+  } catch (e) {
+    logForDebugging(`[GlobalCron] failed to remove tasks: ${e}`)
+  }
 }

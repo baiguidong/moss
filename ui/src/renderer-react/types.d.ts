@@ -128,6 +128,8 @@ declare global {
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
       listExecutions: (sessionId?: string) => Promise<{ executions: ExecutionSummary[] }>;
       focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
+      cronList: () => Promise<CronTask[]>;
+      cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
     };
   }
 }
@@ -139,6 +141,16 @@ export type ExecutionSummary = {
   workspace: string;
   hasBubble: boolean;
   createdAt: number;
+};
+
+export type CronTask = {
+  id: string;
+  cron: string;
+  prompt: string;
+  createdAt: number;
+  lastFiredAt?: number;
+  recurring?: boolean;
+  permanent?: boolean;
 };
 
 export {};
