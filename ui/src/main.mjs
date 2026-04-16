@@ -155,7 +155,7 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     history_json,
     is_sub_agent
   FROM sessions
-  WHERE is_sub_agent = 1 AND underlying_session_id = ?
+  WHERE is_sub_agent = 1 AND (underlying_session_id = ? OR underlying_session_id IS NULL)
   ORDER BY created_at ASC
 `);
 
@@ -2284,7 +2284,10 @@ async function launchPlanExecutionWindow({ originalPrompt, plan, mainWindow, ori
   const execSessionRecord = createSessionRecord({ workspace: execWorkspace, isSubAgent: true });
   // Update the id to execSessionId and store in subAgentSessions
   execSessionRecord.id = execSessionId;
+  execSessionRecord.underlyingSessionId = originalSessionId;
   subAgentSessions.set(execSessionId, execSessionRecord);
+  // Re-persist with the correct underlyingSessionId
+  persistSessionRecord(execSessionRecord, true);
 
   const execState = {
     id: execSessionId,
