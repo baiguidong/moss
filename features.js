@@ -70,13 +70,13 @@ export const EXPERIMENTAL = {
   EXTRACT_MEMORIES: false,
 
   // 后台 Session：允许多个 session 并行运行在后台
-  BG_SESSIONS: false,
+  BG_SESSIONS: true,
 
   // 主动建议：Claude 主动提出下一步操作建议（实验性，可能影响响应速度）
-  PROACTIVE: false,
+  PROACTIVE: true,
 
   // Skill 快速搜索：输入 / 时模糊搜索可用 skill
-  QUICK_SEARCH: false,
+  QUICK_SEARCH: true,
 
   // 实验性 Skill 搜索算法：更智能但尚未稳定
   EXPERIMENTAL_SKILL_SEARCH: false,
@@ -85,28 +85,28 @@ export const EXPERIMENTAL = {
   BUILTIN_EXPLORE_PLAN_AGENTS: false,
 
   // MCP 富文本输出：MCP 工具结果支持格式化展示（表格、代码块等）
-  MCP_RICH_OUTPUT: false,
+  MCP_RICH_OUTPUT: true,
 
   // MCP Skill：通过 MCP 服务器暴露 skill，扩展 /skill 能力
-  MCP_SKILLS: false,
+  MCP_SKILLS: true,
 
   // Workflow 脚本：支持 .workflow 格式的多步骤脚本（WorkflowTool 为 stub，功能受限）
-  WORKFLOW_SCRIPTS: false,
+  WORKFLOW_SCRIPTS: true,
 
   // 定时任务（Cron）工具：让 Claude 创建和管理 cron 触发的 agent 任务
-  AGENT_TRIGGERS: false,
+  AGENT_TRIGGERS: true,
 
   // 模板支持：CLAUDE.md 中使用模板变量
   TEMPLATES: false,
 
   // 离开摘要：长时间无操作后，回来时显示 session 摘要
-  AWAY_SUMMARY: false,
+  AWAY_SUMMARY: true,
 
   // Prompt 缓存中断检测：检测并提示 prompt cache 失效，帮助优化 token 成本
   PROMPT_CACHE_BREAK_DETECTION: false,
 
   // Buddy 伴侣精灵：在终端显示像素风格的小动物陪伴图标（纯彩蛋）
-  BUDDY: false,
+  BUDDY: true,
 };
 
 // =============================================================================
