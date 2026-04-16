@@ -3523,15 +3523,22 @@ ipcMain.handle('execution:get-initial-state', async (event) => {
 });
 
 ipcMain.handle('execution:list', async (_event, { sessionId } = {}) => {
-  // Return list of all active execution windows (for the floating pet panel)
-  const list = [...executionWindowStates.values()].map((state) => ({
-    id: state.id,
-    originalPrompt: state.originalPrompt,
-    busy: state.busy,
-    workspace: state.workspace,
-    hasBubble: Boolean(state.bubbleWindow && !state.bubbleWindow.isDestroyed()),
-    createdAt: state.sessionRecord?.createdAt || Date.now(),
-  }));
+  // Return list of all execution windows for the given session
+  const list = [];
+
+  // Filter executionWindowStates by sessionId (both active windows and their originalSessionId)
+  for (const state of executionWindowStates.values()) {
+    // If no sessionId provided, show all. Otherwise only show matching ones.
+    if (sessionId && state.originalSessionId !== sessionId) continue;
+    list.push({
+      id: state.id,
+      originalPrompt: state.originalPrompt,
+      busy: state.busy,
+      workspace: state.workspace,
+      hasBubble: Boolean(state.bubbleWindow && !state.bubbleWindow.isDestroyed()),
+      createdAt: state.sessionRecord?.createdAt || Date.now(),
+    });
+  }
 
   // If sessionId provided, also include persisted sub-agent sessions from database
   if (sessionId) {
@@ -3569,9 +3576,6 @@ ipcMain.handle('execution:focus', async (_event, { executionId }) => {
     execState.bubbleWindow.close();
   }
   execState.window.webContents.send('execution:state', { busy: execState.busy });
-  if (!execState.busy) {
-    execState.window.webContents.send('execution:event', { type: 'message_stop' });
-  }
   execState.window.show();
   execState.window.focus();
   return { ok: true };

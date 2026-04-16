@@ -136,6 +136,10 @@ function ExecutionView() {
       if (msg.type === 'message_stop') {
         setBusy(false);
         setCompleted(true);
+        // Mark any remaining in_progress steps as completed
+        setSteps((prev) =>
+          prev.map((s) => (s.status === 'in_progress' ? { ...s, status: 'completed' } : s))
+        );
         setChatLines((prev) => [...prev, { id: nextId(), role: 'system', text: '执行完成' }]);
         window.mossExecution.listFiles().then((result) => {
           if (result.files) {
@@ -185,14 +189,16 @@ function ExecutionView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--background)', color: 'var(--foreground)', fontFamily: 'system-ui, sans-serif' }}>
-      {/* Header - draggable on non-macOS */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...(isMac ? {} : { WebkitAppRegion: 'drag' }) }}>
-        <div>
-          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--muted-foreground)', marginBottom: '4px' }}>
-            计划执行 {completed && <span style={{ color: 'var(--accent)', marginLeft: 8 }}>✓ 完成</span>}
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', maxWidth: 400 }} className="truncate">
-            {originalPrompt}
+      {/* Header - draggable on non-macOS, padded on macOS for traffic lights */}
+      <div style={{ padding: '12px 16px', paddingLeft: isMac ? 70 : 16, borderBottom: '1px solid var(--border)', background: 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...(isMac ? {} : { WebkitAppRegion: 'drag' }) }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+          <div>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--muted-foreground)', marginBottom: '4px' }}>
+              计划执行 {completed && <span style={{ color: 'var(--accent)', marginLeft: 8 }}>✓ 完成</span>}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', maxWidth: 400 }} className="truncate">
+              {originalPrompt}
+            </div>
           </div>
         </div>
         <button
