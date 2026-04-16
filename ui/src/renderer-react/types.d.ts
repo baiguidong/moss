@@ -126,7 +126,7 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
-      listExecutions: () => Promise<{ executions: ExecutionSummary[] }>;
+      listExecutions: (sessionId?: string) => Promise<{ executions: ExecutionSummary[] }>;
       focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
     };
   }

@@ -308,10 +308,14 @@ export default function App() {
 
   // Poll for active sub-agent executions (pets)
   React.useEffect(() => {
+    if (!activeSessionId) {
+      setExecutions([]);
+      return;
+    }
     let mounted = true;
     const loadExecutions = async () => {
       try {
-        const result = await window.agentDesktop.listExecutions();
+        const result = await window.agentDesktop.listExecutions(activeSessionId);
         if (mounted && result?.executions) {
           setExecutions(result.executions);
         }
@@ -325,7 +329,7 @@ export default function App() {
       mounted = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [activeSessionId]);
 
   React.useEffect(() => {
     if (!activeDetail?.workspace || !activeSessionId) {

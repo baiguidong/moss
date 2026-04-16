@@ -73,6 +73,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     return () => ipcRenderer.off('agent:settings-changed', handler);
   },
   // Sub-agent execution window management
-  listExecutions: () => ipcRenderer.invoke('execution:list'),
+  listExecutions: (sessionId) => ipcRenderer.invoke('execution:list', { sessionId }),
   focusExecution: (executionId) => ipcRenderer.invoke('execution:focus', { executionId }),
 });

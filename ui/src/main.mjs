@@ -142,6 +142,23 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
   ORDER BY created_at ASC
 `);
 
+const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
+  SELECT
+    id,
+    title,
+    workspace,
+    created_at,
+    updated_at,
+    message_count,
+    preview,
+    underlying_session_id,
+    history_json,
+    is_sub_agent
+  FROM sessions
+  WHERE is_sub_agent = 1 AND underlying_session_id = ?
+  ORDER BY created_at ASC
+`);
+
 function loadLocalSettingsAuthConfig() {
   const result = {
     path: AUTH_SETTINGS_PATH,
@@ -3505,7 +3522,7 @@ ipcMain.handle('execution:get-initial-state', async (event) => {
   };
 });
 
-ipcMain.handle('execution:list', async () => {
+ipcMain.handle('execution:list', async (_event, { sessionId } = {}) => {
   // Return list of all active execution windows (for the floating pet panel)
   const list = [...executionWindowStates.values()].map((state) => ({
     id: state.id,
@@ -3515,6 +3532,26 @@ ipcMain.handle('execution:list', async () => {
     hasBubble: Boolean(state.bubbleWindow && !state.bubbleWindow.isDestroyed()),
     createdAt: state.sessionRecord?.createdAt || Date.now(),
   }));
+
+  // If sessionId provided, also include persisted sub-agent sessions from database
+  if (sessionId) {
+    const dbSubAgents = loadSubAgentSessionsByParentStmt.all(sessionId);
+    for (const row of dbSubAgents) {
+      // Skip if already in executionWindowStates (active window exists)
+      if (executionWindowStates.has(row.id)) continue;
+      // Determine busy state from subAgentSessions if loaded
+      const subAgentSession = subAgentSessions.get(row.id);
+      list.push({
+        id: row.id,
+        originalPrompt: row.preview || row.title || '子 Agent',
+        busy: subAgentSession?.busy || false,
+        workspace: row.workspace,
+        hasBubble: false,
+        createdAt: row.created_at,
+      });
+    }
+  }
+
   // Sort by creation time, oldest first
   list.sort((a, b) => a.createdAt - b.createdAt);
   return { executions: list };
