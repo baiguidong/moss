@@ -26,19 +26,10 @@ export function BuddyCompanion({
   compact?: boolean;
 }) {
   const [tick, setTick] = React.useState(0);
-  const [companion, setCompanion] = React.useState<Companion | null>(null);
   const [showCard, setShowCard] = React.useState(false);
-  const [hatched, setHatched] = React.useState(false);
 
-  React.useEffect(() => {
-    if (!isBuddyEnabled()) {
-      setCompanion(null);
-      return;
-    }
-    const c = getCompanion();
-    setCompanion(c || null);
-    setHatched(Boolean(c));
-  }, []);
+  // Re-read from localStorage every render to pick up changes from BuddySummary
+  const companion = isBuddyEnabled() ? getCompanion() : null;
 
   React.useEffect(() => {
     if (!companion) return;
@@ -48,7 +39,7 @@ export function BuddyCompanion({
     return () => window.clearInterval(timer);
   }, [companion]);
 
-  if (!isBuddyEnabled() || !companion) return null;
+  if (!companion) return null;
 
   const frame = getFrame(companion.species, tick);
   const lines = renderSprite(companion, frame);
