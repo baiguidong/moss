@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from 'react';
-import { getCompanion, isBuddyEnabled, setBuddyEnabled } from './buddy-companion';
+import { getCompanion, isBuddyEnabled, saveCompanion, setBuddyEnabled } from './buddy-companion';
 import { renderSprite, spriteFrameCount } from './buddy-sprites';
 import { RARITY_STARS, RARITY_COLORS } from './buddy-types';
 import type { Companion, StatName } from './buddy-types';
@@ -171,8 +171,19 @@ export function BuddySummary() {
         <Bot className="h-8 w-8 text-muted-foreground" />
         <div className="flex-1">
           <div className="text-sm font-medium text-foreground">Buddy 伴侣精灵</div>
-          <div className="text-xs text-muted-foreground">开启后会在侧边栏显示你的专属宠物</div>
+          <div className="text-xs text-muted-foreground">点击下方按钮孵化你的专属宠物</div>
         </div>
+        <button
+          onClick={() => {
+            const c = saveCompanion({ name: 'Buddy', personality: '活泼可爱的小家伙' });
+            setCompanion(c);
+            setName(c.name);
+            setPersonality(c.personality);
+          }}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground"
+        >
+          孵化宠物
+        </button>
       </div>
     );
   }
