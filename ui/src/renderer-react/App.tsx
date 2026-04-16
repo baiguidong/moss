@@ -4,6 +4,7 @@ import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { ExecutionPetPanel } from '@/components/execution-pet-panel';
+import { BuddyCompanion, BuddySummary, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -180,6 +181,7 @@ export default function App() {
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
+  const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
@@ -1074,6 +1076,35 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {/* Buddy Settings */}
+        <div className="rounded-[28px] border border-border/80 bg-card/80 p-8 shadow-[0_24px_80px_-36px_rgba(0,0,0,0.45)]">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-foreground">Buddy 伴侣精灵</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                开启后在侧边栏显示你的专属宠物陪伴。
+              </p>
+            </div>
+            <label className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{isBuddyEnabled() ? '已开启' : '已关闭'}</span>
+              <input
+                type="checkbox"
+                className="h-5 w-5 rounded border-border bg-background text-primary"
+                checked={isBuddyEnabled()}
+                onChange={(event) => {
+                  setBuddyEnabled(event.target.checked);
+                  setForceBuddyUpdate((n) => n + 1);
+                }}
+              />
+            </label>
+          </div>
+          {isBuddyEnabled() && (
+            <div className="mt-4">
+              <BuddySummary />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1240,6 +1271,11 @@ export default function App() {
             void window.agentDesktop.focusExecution(executionId);
           }}
         />
+        {isBuddyEnabled() && (
+          <div className="fixed bottom-4 left-4 z-50">
+            <BuddyCompanion key={forceBuddyUpdate} />
+          </div>
+        )}
       </div>
     </div>
   );
