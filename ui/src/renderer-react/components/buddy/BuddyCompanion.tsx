@@ -57,21 +57,32 @@ export function BuddyCompanion({
   }, [companion]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('button')) return;
+    // Don't drag if clicking the close button inside the stats card
+    if ((e.target as HTMLElement).closest('.buddy-card-close')) return;
     setIsDragging(true);
     setDragStart({ x: e.clientX - pos.x, y: e.clientY - pos.y });
+    e.preventDefault();
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  React.useEffect(() => {
     if (!isDragging) return;
-    setPos({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
-  };
 
-  const handleMouseUp = () => {
-    if (!isDragging) return;
-    setIsDragging(false);
-    savePosition(pos);
-  };
+    const onMouseMove = (e: MouseEvent) => {
+      setPos({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+    };
+
+    const onMouseUp = () => {
+      setIsDragging(false);
+      savePosition(pos);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isDragging, dragStart, pos]);
 
   if (!companion) return null;
 
@@ -85,9 +96,6 @@ export function BuddyCompanion({
         className="fixed z-50 cursor-move select-none"
         style={{ left: pos.x, top: pos.y }}
         onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
       >
         <button
           onClick={() => setShowCard(!showCard)}
@@ -111,9 +119,6 @@ export function BuddyCompanion({
       className="fixed z-50 cursor-move select-none"
       style={{ left: pos.x, top: pos.y }}
       onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
     >
       <button
         onClick={() => setShowCard(!showCard)}
@@ -150,7 +155,7 @@ export function BuddyCompanion({
             </div>
             <button
               onClick={() => setShowCard(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="buddy-card-close text-xs text-muted-foreground hover:text-foreground"
             >
               ✕
             </button>
