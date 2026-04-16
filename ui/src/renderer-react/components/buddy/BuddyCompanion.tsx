@@ -213,9 +213,8 @@ export function BuddySummary() {
         <div className="flex gap-2">
           <button
             onClick={() => {
-              const { saveCompanion } = require('./buddy-companion');
-              saveCompanion({ name, personality });
-              setCompanion({ ...companion, name, personality });
+              const updated = saveCompanion({ name, personality });
+              setCompanion(updated);
               setEditing(false);
             }}
             className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground"
