@@ -155,7 +155,7 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     history_json,
     is_sub_agent
   FROM sessions
-  WHERE is_sub_agent = 1 AND (underlying_session_id = ? OR underlying_session_id IS NULL)
+  WHERE is_sub_agent = 1 AND underlying_session_id = ?
   ORDER BY created_at ASC
 `);
 
