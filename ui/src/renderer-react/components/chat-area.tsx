@@ -623,26 +623,6 @@ function ComposerPanel({
       onDrop={handleDrop}
     >
       <div className="relative">
-        {/* Selected intent tag - shown above textarea inside composer panel */}
-        {composerIntent !== "chat" && (
-          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-            <span className="text-xs text-muted-foreground">模式：</span>
-            {intentOptions.map((option) => (
-              <IntentChip
-                key={option.id}
-                option={option}
-                active={composerIntent === option.id}
-                onClick={() => onComposerIntentChange(option.id)}
-                onRemove={composerIntent === option.id ? () => onComposerIntentChange("chat") : undefined}
-              />
-            ))}
-            {composerIntent === "iterate-app" && selectedAppName && (
-              <span className="rounded-full border border-border/70 px-3 py-1.5 text-xs text-muted-foreground">
-                更新 {selectedAppName}
-              </span>
-            )}
-          </div>
-        )}
         <Textarea
           placeholder={
             isHomeComposer
@@ -708,6 +688,25 @@ function ComposerPanel({
           </Button>
         </div>
       </div>
+
+      {/* Selected intent tag - shown below textarea inside composer panel */}
+      {isHomeComposer && composerIntent !== "chat" && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-4 py-2">
+          <span className="text-xs text-muted-foreground">模式：</span>
+          <IntentChip
+            key={composerIntent}
+            option={intentOptions.find(o => o.id === composerIntent)!}
+            active={true}
+            onClick={() => onComposerIntentChange("chat")}
+            onRemove={() => onComposerIntentChange("chat")}
+          />
+          {composerIntent === "iterate-app" && selectedAppName && (
+            <span className="rounded-full border border-border/70 px-3 py-1.5 text-xs text-muted-foreground">
+              更新 {selectedAppName}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -745,20 +744,18 @@ function HomeLanding({
         </p>
       </div>
 
-      {composerIntent === "chat" && (
-        <div className="mb-6 flex justify-center gap-4">
-          {intentOptions.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onComposerIntentChange(option.id)}
-              className="rounded-full border border-border/70 bg-card/60 px-6 py-3 text-sm font-medium text-foreground shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-            >
-              {option.title}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="mb-6 flex justify-center gap-4">
+        {intentOptions.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onComposerIntentChange(option.id)}
+            className="rounded-full border border-border/70 bg-card/60 px-6 py-3 text-sm font-medium text-foreground shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+          >
+            {option.title}
+          </button>
+        ))}
+      </div>
 
       <ComposerPanel
         value={value}
