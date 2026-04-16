@@ -7,6 +7,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -944,6 +945,27 @@ function slugifyAppName(input) {
 function ensureAppsDir() {
   fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
   return MOSS_APPS_DIR;
+}
+
+/**
+ * Initialize bundled apps from src/apps to generated-apps directory.
+ * Copies all HTML apps from src/apps to MOSS_APPS_DIR on startup.
+ */
+function initializeBundledApps() {
+  const bundledAppsDir = path.join(uiRoot, 'src', 'apps');
+  ensureAppsDir();
+
+  try {
+    fs.readdirSync(bundledAppsDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
+      .forEach(entry => {
+        const srcPath = path.join(bundledAppsDir, entry.name);
+        const dstPath = path.join(MOSS_APPS_DIR, entry.name);
+        fs.copyFileSync(srcPath, dstPath);
+      });
+  } catch (err) {
+    console.warn('[app-init] Failed to initialize bundled apps:', err.message);
+  }
 }
 
 function ensureAppDataRootDir() {
@@ -2785,6 +2807,12 @@ async function readWorkspaceFile(sessionRecord, filePath) {
 }
 
 app.whenReady().then(() => {
+  // Initialize bundled apps from src/apps to generated-apps
+  initializeBundledApps();
+
+  // Register skill store IPC handlers
+  registerSkillStoreIpcHandlers();
+
   createWindow();
   for (const sessionRecord of sessions.values()) {
     void startWorkspaceWatcher(sessionRecord);
@@ -2919,6 +2947,31 @@ ipcMain.handle('workspace:list-dir', async (_event, { sessionId, dirPath }) => {
 ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) => {
   const sessionRecord = getSessionRecord(sessionId);
   return readWorkspaceFile(sessionRecord, filePath);
+});
+
+// Cron task handlers - read from global ~/.moss/cron_tasks.json
+ipcMain.handle('cron:list', async () => {
+  const cronFilePath = path.join(os.homedir(), '.moss', 'cron_tasks.json');
+  try {
+    const raw = await fsp.readFile(cronFilePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed.tasks || [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle('cron:delete', async (_event, { taskId }) => {
+  const cronFilePath = path.join(os.homedir(), '.moss', 'cron_tasks.json');
+  try {
+    const raw = await fsp.readFile(cronFilePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    parsed.tasks = (parsed.tasks || []).filter(t => t.id !== taskId);
+    await fsp.writeFile(cronFilePath, JSON.stringify(parsed, null, 2) + '\n', 'utf-8');
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Failed to delete task' };
+  }
 });
 
 ipcMain.handle('app:list', async () => {
@@ -3142,6 +3195,41 @@ ipcMain.handle('fs:getFileMetadata', async (event, { path: filePath }) => {
     return { size: stats.size };
   } catch {
     return null;
+  }
+});
+
+ipcMain.handle('fs:getHomeDir', async () => {
+  return os.homedir();
+});
+
+ipcMain.handle('fs:readText', async (event, { path: filePath }) => {
+  try {
+    const content = await fsp.readFile(filePath, 'utf-8');
+    return { ok: true, content };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fs:delete', async (event, { path: filePath }) => {
+  try {
+    await fsp.rm(filePath, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fs:list', async (event, { path: dirPath }) => {
+  try {
+    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    return entries.map(entry => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      isFile: entry.isFile(),
+    }));
+  } catch (err) {
+    return [];
   }
 });
 

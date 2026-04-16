@@ -7,13 +7,14 @@
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
-    "build:renderer": "vite build",
+    "build:renderer": "vite build && mkdir -p dist/apps && cp -r src/apps/* dist/apps/",
     "start": "vite build && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
     "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && node --check scripts/dev.mjs && tsc --noEmit",
     "dist:win": "vite build && electron-builder --win",
-    "dist:mac": "vite build && electron-builder --mac"
+    "dist:mac": "vite build && electron-builder --mac",
+    "install-app": "node -e \"const fs=require('fs');const path=require('path');const s=process.argv[2];if(!s){console.log('Usage: npm run install-app <app-name>');process.exit(1);}const src='src/apps/'+s+'.html';const dst=path.join(process.env.HOME,'.moss','generated-apps',s+'.html');fs.mkdirSync(path.dirname(dst),{recursive:true});fs.copyFileSync(src,dst);console.log('Installed:',dst);\""
   },
   "build": {
     "appId": "com.moss.ai",
@@ -61,6 +62,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.564.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
