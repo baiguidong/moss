@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { buildChatMessages } from '@/lib/agent-transcript';
+import { PRESET_THEMES, DEFAULT_THEME_ID, type ICssTheme } from '@/theme/presets';
+import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
 import type {
   AgentEvent,
   AppVersion,
@@ -158,7 +160,10 @@ export default function App() {
       const stored = localStorage.getItem('ui.themeMode');
       if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
     } catch {}
-    return 'system';
+    return 'light';
+  });
+  const [cssThemeId, setCssThemeId] = React.useState<string>(() => {
+    return getStoredThemeId() || 'grid-theme';
   });
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
@@ -318,6 +323,13 @@ export default function App() {
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, [themeMode]);
+
+  // Apply CSS theme when cssThemeId changes
+  React.useEffect(() => {
+    const theme = PRESET_THEMES.find((t) => t.id === cssThemeId);
+    applyCssTheme(theme?.css || null);
+    setStoredThemeId(cssThemeId);
+  }, [cssThemeId]);
 
   React.useEffect(() => {
     return () => {
@@ -1177,6 +1189,30 @@ export default function App() {
               <MoonStar className="h-5 w-5" />
               <span>暗色</span>
             </button>
+          </div>
+        </div>
+
+        {/* CSS Theme Presets */}
+        <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5">
+          <p className="text-sm font-medium text-foreground">背景样式</p>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">
+            选择预设的背景样式。
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            {PRESET_THEMES.map((theme) => (
+              <button
+                key={theme.id}
+                type="button"
+                onClick={() => setCssThemeId(theme.id)}
+                className={`rounded-xl border px-4 py-2 text-xs font-medium transition-colors ${
+                  cssThemeId === theme.id
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
+              >
+                {theme.name}
+              </button>
+            ))}
           </div>
         </div>
       </div>
