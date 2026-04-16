@@ -2250,6 +2250,8 @@ async function launchPlanExecutionWindow({ originalPrompt, plan, mainWindow, ori
     resizable: true,
     backgroundColor: '#09111c',
     autoHideMenuBar: true,
+    frame: false,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'execution-preload.mjs'),
       sandbox: false,

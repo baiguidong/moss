@@ -18,6 +18,12 @@ declare global {
   }
 }
 
+// Apply theme from localStorage (same as main app)
+const storedTheme = localStorage.getItem('ui.themeMode');
+const isDark = storedTheme === 'dark' || (!storedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+document.documentElement.classList.toggle('dark', isDark);
+document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+
 type Step = {
   text: string;
   status: 'pending' | 'in_progress' | 'completed';
@@ -175,21 +181,23 @@ function ExecutionView() {
     await window.mossExecution.sendMessage(text);
   }
 
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#09111c', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif' }}>
-      {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#0d1520', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--background)', color: 'var(--foreground)', fontFamily: 'system-ui, sans-serif' }}>
+      {/* Header - draggable on non-macOS */}
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...(isMac ? {} : { WebkitAppRegion: 'drag' }) }}>
         <div>
-          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#64748b', marginBottom: '4px' }}>
-            计划执行 {completed && <span style={{ color: '#22c55e', marginLeft: 8 }}>✓ 完成</span>}
+          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--muted-foreground)', marginBottom: '4px' }}>
+            计划执行 {completed && <span style={{ color: 'var(--accent)', marginLeft: 8 }}>✓ 完成</span>}
           </div>
-          <div style={{ fontSize: '12px', color: '#94a3b8', maxWidth: 400 }} className="truncate">
+          <div style={{ fontSize: '12px', color: 'var(--muted-foreground)', maxWidth: 400 }} className="truncate">
             {originalPrompt}
           </div>
         </div>
         <button
           onClick={() => void window.mossExecution.minimize()}
-          style={{ padding: '4px 10px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#64748b', fontSize: 11, cursor: 'pointer' }}
+          style={{ padding: '4px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted-foreground)', fontSize: 11, cursor: 'pointer', ...(isMac ? {} : { WebkitAppRegion: 'no-drag' }) }}
         >
           最小化
         </button>
@@ -198,13 +206,13 @@ function ExecutionView() {
       {/* Body: Steps + Chat */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Steps Panel */}
-        <div style={{ width: 240, borderRight: '1px solid rgba(255,255,255,0.06)', padding: '12px', overflow: 'auto' }}>
-          <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#475569', marginBottom: 10 }}>
+        <div style={{ width: 240, borderRight: '1px solid var(--border)', padding: '12px', overflow: 'auto' }}>
+          <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--muted-foreground)', marginBottom: 10 }}>
             执行步骤
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {steps.map((step, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: step.status === 'in_progress' ? 'rgba(59,130,246,0.15)' : step.status === 'completed' ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.02)' }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: step.status === 'in_progress' ? 'color-mix(in oklch, var(--primary) 15%, transparent)' : step.status === 'completed' ? 'color-mix(in oklch, var(--accent) 8%, transparent)' : 'transparent' }}>
                 <span style={{
                   width: 18,
                   height: 18,
@@ -215,14 +223,14 @@ function ExecutionView() {
                   fontSize: 9,
                   fontWeight: 700,
                   flexShrink: 0,
-                  background: step.status === 'completed' ? '#22c55e' : step.status === 'in_progress' ? '#3b82f6' : 'rgba(255,255,255,0.1)',
-                  color: step.status === 'pending' ? '#64748b' : '#fff',
+                  background: step.status === 'completed' ? 'var(--accent)' : step.status === 'in_progress' ? 'var(--primary)' : 'var(--muted-foreground)',
+                  color: step.status === 'pending' ? 'var(--background)' : 'var(--primary-foreground)',
                 }}>
                   {step.status === 'completed' ? '✓' : step.status === 'in_progress' ? '●' : i + 1}
                 </span>
                 <span style={{
                   fontSize: 11,
-                  color: step.status === 'completed' ? '#64748b' : step.status === 'in_progress' ? '#e2e8f0' : '#94a3b8',
+                  color: step.status === 'completed' ? 'var(--muted-foreground)' : step.status === 'in_progress' ? 'var(--foreground)' : 'var(--muted-foreground)',
                   textDecoration: step.status === 'completed' ? 'line-through' : 'none',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -237,14 +245,14 @@ function ExecutionView() {
           {/* Files */}
           {workspace && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#475569', marginBottom: 8 }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--muted-foreground)', marginBottom: 8 }}>
                 工作区
               </div>
-              <div style={{ fontSize: 10, color: '#60a5fa', wordBreak: 'break-all', marginBottom: 8 }}>{workspace}</div>
+              <div style={{ fontSize: 10, color: 'var(--primary)', wordBreak: 'break-all', marginBottom: 8 }}>{workspace}</div>
               {files.map((f, i) => (
-                <div key={i} style={{ fontSize: 11, color: '#94a3b8', padding: '2px 0' }}>📄 {f.name}</div>
+                <div key={i} style={{ fontSize: 11, color: 'var(--muted-foreground)', padding: '2px 0' }}>📄 {f.name}</div>
               ))}
-              {completed && files.length === 0 && <div style={{ fontSize: 11, color: '#475569' }}>无文件</div>}
+              {completed && files.length === 0 && <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>无文件</div>}
             </div>
           )}
         </div>
@@ -258,11 +266,11 @@ function ExecutionView() {
                   maxWidth: '80%',
                   padding: '8px 12px',
                   borderRadius: line.role === 'user' ? '12px 12px 0 12px' : '12px 12px 12px 0',
-                  background: line.role === 'user' ? 'rgba(59,130,246,0.2)' : line.role === 'tool' ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.05)',
-                  border: line.role === 'user' ? '1px solid rgba(59,130,246,0.3)' : line.role === 'tool' ? '1px solid rgba(168,85,247,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                  background: line.role === 'user' ? 'color-mix(in oklch, var(--primary) 20%, transparent)' : line.role === 'tool' ? 'color-mix(in oklch, var(--accent) 15%, transparent)' : 'var(--card)',
+                  border: line.role === 'user' ? '1px solid color-mix(in oklch, var(--primary) 30%, transparent)' : line.role === 'tool' ? '1px solid color-mix(in oklch, var(--accent) 20%, transparent)' : '1px solid var(--border)',
                   fontSize: 12,
                   lineHeight: 1.5,
-                  color: line.role === 'system' ? '#94a3b8' : '#e2e8f0',
+                  color: line.role === 'system' ? 'var(--muted-foreground)' : 'var(--foreground)',
                   fontStyle: line.role === 'system' ? 'italic' : 'normal',
                 }}>
                   {line.text}
@@ -270,13 +278,13 @@ function ExecutionView() {
               </div>
             ))}
             {busy && chatLines[chatLines.length - 1]?.role !== 'assistant' && (
-              <div style={{ fontSize: 12, color: '#475569' }}>思考中...</div>
+              <div style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>思考中...</div>
             )}
             <div ref={chatEndRef} />
           </div>
 
           {/* Input */}
-          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -285,11 +293,11 @@ function ExecutionView() {
               disabled={busy && !completed}
               style={{
                 flex: 1,
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--card)',
+                border: '1px solid var(--border)',
                 borderRadius: 20,
                 padding: '8px 16px',
-                color: '#e2e8f0',
+                color: 'var(--foreground)',
                 fontSize: 13,
                 outline: 'none',
               }}
@@ -300,9 +308,9 @@ function ExecutionView() {
               style={{
                 padding: '8px 16px',
                 borderRadius: 20,
-                background: input.trim() && !busy ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(59,130,246,0.3)',
-                color: input.trim() ? '#60a5fa' : '#475569',
+                background: input.trim() && !busy ? 'color-mix(in oklch, var(--primary) 30%, transparent)' : 'transparent',
+                border: '1px solid color-mix(in oklch, var(--primary) 30%, transparent)',
+                color: input.trim() && !busy ? 'var(--primary)' : 'var(--muted-foreground)',
                 fontSize: 12,
                 cursor: input.trim() && !busy ? 'pointer' : 'not-allowed',
               }}
@@ -312,7 +320,7 @@ function ExecutionView() {
             {busy && !completed && (
               <button
                 onClick={() => void window.mossExecution.abort()}
-                style={{ padding: '8px 12px', borderRadius: 20, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.1)', color: '#f87171', fontSize: 12, cursor: 'pointer' }}
+                style={{ padding: '8px 12px', borderRadius: 20, border: '1px solid color-mix(in oklch, var(--destructive) 30%, transparent)', background: 'color-mix(in oklch, var(--destructive) 10%, transparent)', color: 'var(--destructive)', fontSize: 12, cursor: 'pointer' }}
               >
                 停止
               </button>
