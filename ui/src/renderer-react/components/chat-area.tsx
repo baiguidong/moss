@@ -13,6 +13,7 @@ import {
   Send,
   Square,
   User,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -366,27 +367,42 @@ function IntentChip({
   active,
   disabled,
   onClick,
+  onRemove,
 }: {
   option: IntentOption;
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
+  onRemove?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
+    <span
       className={cn(
-        "rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
+        "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
         active
           ? "border-primary/35 bg-primary/10 text-primary"
           : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
         disabled && "cursor-not-allowed opacity-45",
       )}
     >
-      <span>{option.title}</span>
-    </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onClick}
+        className="flex items-center gap-1.5"
+      >
+        <span>{option.title}</span>
+      </button>
+      {active && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="ml-1 rounded-full p-0.5 hover:bg-primary/20"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -673,14 +689,17 @@ function ComposerPanel({
         </div>
       </div>
 
+      {/* Selected intent tag for home composer - shown inline above textarea */}
       {isHomeComposer && composerIntent !== "chat" && (
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 px-3 py-3 sm:px-4 sm:gap-2">
+        <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-4 py-2">
+          <span className="text-xs text-muted-foreground">模式：</span>
           {intentOptions.map((option) => (
             <IntentChip
               key={option.id}
               option={option}
               active={composerIntent === option.id}
               onClick={() => onComposerIntentChange(option.id)}
+              onRemove={composerIntent === option.id ? () => onComposerIntentChange("chat") : undefined}
             />
           ))}
           {composerIntent === "iterate-app" && selectedAppName && (
@@ -811,6 +830,17 @@ export function ChatArea({
   if (!hasActiveSession) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
+        {/* Session header placeholder to keep layout consistent */}
+        <div className="shrink-0 border-b border-border/70 bg-background/88 px-4 py-2">
+          <div className="mx-auto flex max-w-[980px] items-center justify-center gap-3">
+            <div className="h-8 rounded-full border border-border/75 bg-muted/40 px-4 py-1.5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">New Session</span>
+              </div>
+            </div>
+          </div>
+        </div>
         <HomeLanding
           value={value}
           selectedAppName={selectedAppName}
