@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
+import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2810,8 +2811,9 @@ app.whenReady().then(() => {
   // Initialize bundled apps from src/apps to generated-apps
   initializeBundledApps();
 
-  // Register skill store IPC handlers
+  // Register app IPC handlers
   registerSkillStoreIpcHandlers();
+  registerCronIpcHandlers();
 
   createWindow();
   for (const sessionRecord of sessions.values()) {
@@ -2947,31 +2949,6 @@ ipcMain.handle('workspace:list-dir', async (_event, { sessionId, dirPath }) => {
 ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) => {
   const sessionRecord = getSessionRecord(sessionId);
   return readWorkspaceFile(sessionRecord, filePath);
-});
-
-// Cron task handlers - read from global ~/.moss/cron_tasks.json
-ipcMain.handle('cron:list', async () => {
-  const cronFilePath = path.join(os.homedir(), '.moss', 'cron_tasks.json');
-  try {
-    const raw = await fsp.readFile(cronFilePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return parsed.tasks || [];
-  } catch {
-    return [];
-  }
-});
-
-ipcMain.handle('cron:delete', async (_event, { taskId }) => {
-  const cronFilePath = path.join(os.homedir(), '.moss', 'cron_tasks.json');
-  try {
-    const raw = await fsp.readFile(cronFilePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    parsed.tasks = (parsed.tasks || []).filter(t => t.id !== taskId);
-    await fsp.writeFile(cronFilePath, JSON.stringify(parsed, null, 2) + '\n', 'utf-8');
-    return { ok: true };
-  } catch {
-    return { ok: false, error: 'Failed to delete task' };
-  }
 });
 
 ipcMain.handle('app:list', async () => {

@@ -25,7 +25,7 @@ const mossApp = {
   },
   cron: {
     list: () => ipcRenderer.invoke('cron:list'),
-    delete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
+    delete: (id) => ipcRenderer.invoke('cron:delete', { id }),
   },
   skillStore: {
     fetchSkills: (params) => ipcRenderer.invoke('skill-store:fetchSkills', params),

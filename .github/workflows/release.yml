@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            script: npm run dist:mac
+          - os: windows-latest
+            script: npm run dist:win
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Build parent JS files
+        run: bun run build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Create build resources directory
+        run: mkdir -p ui/build
+
+      - name: Build ${{ matrix.os == 'macos-latest' && 'macOS' || 'Windows' }} installer
+        run: ${{ matrix.script }}
+        working-directory: ui
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Create Release
+        if: matrix.os == 'macos-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ui/dist/installers/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

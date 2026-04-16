@@ -323,11 +323,11 @@
     }
 
     // Delete task
-    async function deleteTask(taskId) {
+    async function deleteTask(id) {
       if (!confirm('确定要删除这个定时任务吗？')) return;
 
       try {
-        await window.mossApp.cron.delete(taskId);
+        await window.mossApp.cron.delete(id);
         await loadTasks();
       } catch (err) {
         alert('删除失败: ' + err.message);

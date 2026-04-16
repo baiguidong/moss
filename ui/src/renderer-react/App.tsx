@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Monitor, MoonStar, SunMedium } from 'lucide-react';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
@@ -79,7 +80,7 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
   }));
 }
 
-type ThemeMode = 'dark' | 'light';
+type ThemeMode = 'dark' | 'light' | 'system';
 type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app';
 type LayoutState = {
   leftWidth: number;
@@ -144,12 +145,20 @@ export default function App() {
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
   const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
+  const getSystemTheme = (): 'dark' | 'light' => {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  };
+
+  const resolveTheme = (pref: ThemeMode): 'dark' | 'light' => {
+    return pref === 'system' ? getSystemTheme() : pref;
+  };
+
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
     try {
       const stored = localStorage.getItem('ui.themeMode');
-      if (stored === 'light' || stored === 'dark') return stored;
+      if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
     } catch {}
-    return 'dark';
+    return 'system';
   });
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
@@ -290,9 +299,24 @@ export default function App() {
 
   React.useEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle('dark', themeMode === 'dark');
-    root.style.colorScheme = themeMode;
+    const resolved = resolveTheme(themeMode);
+    root.setAttribute('data-theme', resolved);
+    root.style.colorScheme = resolved;
     localStorage.setItem('ui.themeMode', themeMode);
+  }, [themeMode]);
+
+  // Listen for system theme changes when in system mode
+  React.useEffect(() => {
+    if (themeMode !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => {
+      const root = document.documentElement;
+      const resolved = resolveTheme('system');
+      root.setAttribute('data-theme', resolved);
+      root.style.colorScheme = resolved;
+    };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
   }, [themeMode]);
 
   React.useEffect(() => {
@@ -1104,6 +1128,56 @@ export default function App() {
               <BuddySummary />
             </div>
           )}
+        </div>
+
+        {/* Theme Settings */}
+        <div className="rounded-[28px] border border-border/80 bg-card/80 p-8 shadow-[0_24px_80px_-36px_rgba(0,0,0,0.45)]">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-foreground">主题</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                选择浅色、暗色或跟随系统的主题模式。
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-3" style={{ maxWidth: 280 }}>
+            <button
+              type="button"
+              onClick={() => setThemeMode('light')}
+              className={`flex flex-col items-center gap-2 rounded-xl border px-4 py-3 text-xs font-medium transition-colors ${
+                themeMode === 'light'
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+            >
+              <SunMedium className="h-5 w-5" />
+              <span>浅色</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setThemeMode('system')}
+              className={`flex flex-col items-center gap-2 rounded-xl border px-4 py-3 text-xs font-medium transition-colors ${
+                themeMode === 'system'
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+            >
+              <Monitor className="h-5 w-5" />
+              <span>跟随系统</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setThemeMode('dark')}
+              className={`flex flex-col items-center gap-2 rounded-xl border px-4 py-3 text-xs font-medium transition-colors ${
+                themeMode === 'dark'
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+            >
+              <MoonStar className="h-5 w-5" />
+              <span>暗色</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

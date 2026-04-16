@@ -826,17 +826,6 @@ export function ChatArea({
   if (!hasActiveSession) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
-        {/* Session header placeholder to keep layout consistent */}
-        <div className="shrink-0 border-b border-border/70 bg-background/88 px-4 py-2">
-          <div className="mx-auto flex max-w-[980px] items-center justify-center gap-3">
-            <div className="h-8 rounded-full border border-border/75 bg-muted/40 px-4 py-1.5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">New Session</span>
-              </div>
-            </div>
-          </div>
-        </div>
         <HomeLanding
           value={value}
           selectedAppName={selectedAppName}

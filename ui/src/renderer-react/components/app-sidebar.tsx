@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
+  Monitor,
   MoonStar,
   PenSquare,
   Pin,
@@ -42,11 +43,11 @@ interface AppSidebarProps {
   activeSessionId: string | null;
   activeView: "chat" | "apps" | "settings" | "snake";
   appsCount: number;
-  themeMode: "dark" | "light";
+  themeMode: "dark" | "light" | "system";
   collapsed: boolean;
   searchQuery: string;
   onChangeView: (view: "chat" | "apps" | "settings") => void;
-  onChangeTheme: (theme: "dark" | "light") => void;
+  onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
@@ -267,23 +268,6 @@ export function AppSidebar({
           <PenSquare className="h-4 w-4" />
           {!collapsed && "新会话"}
         </Button>
-
-        {!collapsed && (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <ThemeButton
-              active={themeMode === "light"}
-              icon={<SunMedium className="h-3.5 w-3.5" />}
-              label="浅色"
-              onClick={() => onChangeTheme("light")}
-            />
-            <ThemeButton
-              active={themeMode === "dark"}
-              icon={<MoonStar className="h-3.5 w-3.5" />}
-              label="暗色"
-              onClick={() => onChangeTheme("dark")}
-            />
-          </div>
-        )}
       </div>
 
       {!collapsed && (

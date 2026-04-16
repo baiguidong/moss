@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Build parent JS files
+        run: bun run build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: TypeScript type check
+        run: npm run check
+        working-directory: ui
+
+  build-renderer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Build parent JS files
+        run: bun run build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Create build resources directory
+        run: mkdir -p ui/build
+
+      - name: Build renderer
+        run: npm run build:renderer
+        working-directory: ui
+
+      - name: Upload renderer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-build
+          path: ui/dist/renderer
+          retention-days: 7
+
+  build-mac:
+    runs-on: macos-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Build parent JS files
+        run: bun run build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Create build resources directory
+        run: mkdir -p ui/build
+
+      - name: Build macOS installer
+        run: npm run dist:mac
+        working-directory: ui
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: ui/dist/installers
+          retention-days: 7
+
+  build-win:
+    runs-on: windows-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Build parent JS files
+        run: bun run build
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Create build resources directory
+        run: mkdir -p ui/build
+
+      - name: Build Windows installer
+        run: npm run dist:win
+        working-directory: ui
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-build
+          path: ui/dist/installers
+          retention-days: 7

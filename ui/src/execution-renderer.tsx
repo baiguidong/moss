@@ -19,10 +19,16 @@ declare global {
 }
 
 // Apply theme from localStorage (same as main app)
-const storedTheme = localStorage.getItem('ui.themeMode');
-const isDark = storedTheme === 'dark' || (!storedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
-document.documentElement.classList.toggle('dark', isDark);
-document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+const getSystemTheme = (): 'dark' | 'light' => {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+const resolveTheme = (pref: 'dark' | 'light' | 'system'): 'dark' | 'light' => {
+  return pref === 'system' ? getSystemTheme() : pref;
+};
+const storedTheme = localStorage.getItem('ui.themeMode') as 'dark' | 'light' | 'system' | null;
+const resolvedTheme = storedTheme ? resolveTheme(storedTheme) : getSystemTheme();
+document.documentElement.setAttribute('data-theme', resolvedTheme);
+document.documentElement.style.colorScheme = resolvedTheme;
 
 type Step = {
   text: string;
