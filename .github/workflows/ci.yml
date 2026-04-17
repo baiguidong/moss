@@ -145,6 +145,7 @@ jobs:
 
       - name: Create build resources directory
         run: mkdir -p ui/build
+        shell: bash
 
       - name: Build Windows installer
         run: bun run dist:win
