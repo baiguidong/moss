@@ -22,9 +22,7 @@ const coordinatorModeStorage = new AsyncLocalStorage<{
  * Returns undefined if not running within a session context.
  */
 export function getSessionCoordinatorMode(): boolean | undefined {
-  const v = coordinatorModeStorage.getStore()?.coordinatorMode
-  console.log('[sessionCoordinatorContext] getSessionCoordinatorMode:', v)
-  return v
+  return coordinatorModeStorage.getStore()?.coordinatorMode
 }
 
 /**
@@ -35,6 +33,5 @@ export function runWithCoordinatorMode<T>(
   coordinatorMode: boolean,
   fn: () => T,
 ): T {
-  console.log('[sessionCoordinatorContext] runWithCoordinatorMode:', coordinatorMode)
   return coordinatorModeStorage.run({ coordinatorMode }, fn)
 }

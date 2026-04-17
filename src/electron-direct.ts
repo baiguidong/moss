@@ -154,7 +154,6 @@ export class ClaudeSession {
     const coordinatorSystemPrompt = this.#opts.coordinatorMode
       ? getCoordinatorSystemPrompt()
       : undefined
-    console.log('[electron-direct] coordinatorMode:', this.#opts.coordinatorMode, 'coordinatorSystemPrompt length:', coordinatorSystemPrompt?.length ?? 0)
 
     this.#engine = new QueryEngine({
       cwd,

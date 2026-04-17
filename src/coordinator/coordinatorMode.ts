@@ -38,7 +38,6 @@ import { getSessionCoordinatorMode } from '../utils/sessionCoordinatorContext.js
 export function isCoordinatorMode(): boolean {
   // Session context (per-session isolation) — set by ClaudeSession.runWithCoordinatorMode()
   const sessionMode = getSessionCoordinatorMode()
-  console.log('[coordinatorMode] isCoordinatorMode called, sessionMode:', sessionMode, 'env:', isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE))
   if (sessionMode !== undefined) {
     return sessionMode
   }

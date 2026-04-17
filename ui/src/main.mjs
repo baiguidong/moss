@@ -2650,7 +2650,6 @@ async function ensureRuntime(sessionRecord) {
     const currentCoordinatorMode = sessionRecord.isCoordinatorMode ?? false
     const existingCoordinatorMode = sessionRecord.runtime.coordinatorMode ?? false
     if (currentCoordinatorMode !== existingCoordinatorMode) {
-      console.log('[ensureRuntime] coordinatorMode changed (' + existingCoordinatorMode + ' -> ' + currentCoordinatorMode + '), recreating runtime');
       sessionRecord.runtime.dispose()
       sessionRecord.runtime = null
     } else {
@@ -2659,7 +2658,6 @@ async function ensureRuntime(sessionRecord) {
   }
 
   const ClaudeSession = await getClaudeSessionCtor();
-  console.log('[ensureRuntime] creating ClaudeSession, sessionRecord.isCoordinatorMode:', sessionRecord.isCoordinatorMode);
 
   sessionRecord.runtime = new ClaudeSession({
     ...buildClaudeSessionConfig(sessionRecord.workspace),
@@ -3283,7 +3281,6 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
 
   // Store coordinator mode flag on sessionRecord so runtime can read it
   sessionRecord.isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
-  console.log('[agent:send] coordinatorMode received:', coordinatorMode, 'mode:', mode, 'sessionRecord.isCoordinatorMode:', sessionRecord.isCoordinatorMode);
 
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const filePaths = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f.trim()) : [];
