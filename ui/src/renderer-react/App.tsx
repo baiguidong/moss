@@ -4,7 +4,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
-import { ExecutionPetPanel, CoordinatorTaskPanel } from '@/components/execution-pet-panel';
+import { ExecutionPetPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, BuddySummary, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -546,6 +546,49 @@ export default function App() {
       applyDesktopSettings(payload);
     });
 
+    // Listen for teammate spawn events to auto-create execution windows
+    const offTeammateSpawned = window.agentDesktop.onTeammateSpawned(async (payload) => {
+      const { sessionId, taskId, description, prompt } = payload;
+      if (sessionId !== activeSessionIdRef.current) return;
+      console.log(`[App] Teammate spawned: ${taskId} - ${description}`);
+      // Create execution window for this teammate
+      try {
+        await window.agentDesktop.createExecutionForTeammate({
+          sessionId,
+          taskId,
+          description,
+          prompt,
+        });
+        // Refresh executions list
+        const executions = await window.agentDesktop.listExecutions(sessionId);
+        if (executions?.executions) {
+          setExecutions(executions.executions);
+        }
+      } catch (err) {
+        console.error('[App] Failed to create execution window for teammate:', err);
+      }
+    });
+
+    // Listen for teammate completion events
+    const offTeammateCompleted = window.agentDesktop.onTeammateCompleted(async (payload) => {
+      const { sessionId, taskId, description, status } = payload;
+      if (sessionId !== activeSessionIdRef.current) return;
+      console.log(`[App] Teammate completed: ${taskId} - ${description}, status=${status}`);
+
+      // Update the execution window state via IPC
+      try {
+        await window.agentDesktop.updateTeammateState({ taskId, sessionId, completed: true });
+      } catch (err) {
+        console.error('[App] Failed to update teammate state:', err);
+      }
+
+      // Refresh executions list
+      const executions = await window.agentDesktop.listExecutions(sessionId);
+      if (executions?.executions) {
+        setExecutions(executions.executions);
+      }
+    });
+
     return () => {
       if (workspaceRefreshTimerRef.current) {
         window.clearTimeout(workspaceRefreshTimerRef.current);
@@ -559,6 +602,8 @@ export default function App() {
       offAppsChanged();
       offWorkspaceChanged();
       offSettingsChanged();
+      offTeammateSpawned();
+      offTeammateCompleted();
     };
   }, [applyDesktopSettings, navigateToHome, refreshApps, refreshWorkspaceSnapshot]);
 
@@ -1442,7 +1487,6 @@ export default function App() {
             void window.agentDesktop.focusExecution(executionId);
           }}
         />
-        <CoordinatorTaskPanel tasks={coordinatorTasks} />
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}

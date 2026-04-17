@@ -75,7 +75,19 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   // Sub-agent execution window management
   listExecutions: (sessionId) => ipcRenderer.invoke('execution:list', { sessionId }),
   focusExecution: (executionId) => ipcRenderer.invoke('execution:focus', { executionId }),
+  createExecutionForTeammate: (payload) => ipcRenderer.invoke('execution:create-for-teammate', payload),
+  updateTeammateState: (payload) => ipcRenderer.invoke('execution:update-teammate-state', payload),
   listCoordinatorTasks: (sessionId) => ipcRenderer.invoke('coordinator:list-tasks', { sessionId }),
+  onTeammateSpawned: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('coordinator:teammate-spawned', handler);
+    return () => ipcRenderer.off('coordinator:teammate-spawned', handler);
+  },
+  onTeammateCompleted: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('coordinator:teammate-completed', handler);
+    return () => ipcRenderer.off('coordinator:teammate-completed', handler);
+  },
   // Cron task management
   cronList: () => ipcRenderer.invoke('cron:list'),
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),

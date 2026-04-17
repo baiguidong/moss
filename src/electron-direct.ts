@@ -79,6 +79,8 @@ export class ClaudeSession {
   readonly sessionId = randomUUID()
 
   #engine: QueryEngine | null = null
+  #store: ReturnType<typeof createStore> | null = null
+  #pendingListeners: Array<() => void> = []
   #opts: Required<ClaudeSessionOptions>
   #queue: Array<() => void> = []
   #processing = false
@@ -126,7 +128,7 @@ export class ClaudeSession {
     }
 
     // AppState store（每个 session 独立）
-    const store = createStore(
+    this.#store = createStore(
       {
         ...getDefaultAppState(),
         mcp: {
@@ -139,6 +141,13 @@ export class ClaudeSession {
       },
       () => {},
     )
+    const store = this.#store
+
+    // Attach all pending listeners to the newly created store
+    for (const listener of this.#pendingListeners) {
+      store.subscribe(listener)
+    }
+    this.#pendingListeners = []
 
     // 工具列表
     const tools = getTools(permissionContext)
@@ -224,5 +233,24 @@ export class ClaudeSession {
   dispose() {
     this.#disposed = true
     this.#engine = null
+    this.#pendingListeners = []
+  }
+
+  /** 订阅 app state 变化（用于通知前端新 teammate task 等） */
+  subscribe(listener: () => void): () => void {
+    if (this.#store) {
+      return this.#store.subscribe(listener)
+    }
+    // Store not ready yet - queue the listener to be attached when store is created
+    this.#pendingListeners.push(listener)
+    return () => {
+      const idx = this.#pendingListeners.indexOf(listener)
+      if (idx !== -1) this.#pendingListeners.splice(idx, 1)
+    }
+  }
+
+  /** 获取当前 app state */
+  getAppState() {
+    return this.#store?.getState() ?? null
   }
 }

@@ -175,8 +175,8 @@ Each "You:" block is a separate coordinator turn. The "User:" block is a \`<task
 You:
   Let me start some research on that.
 
-  ${AGENT_TOOL_NAME}({ description: "Investigate auth bug", subagent_type: "worker", prompt: "..." })
-  ${AGENT_TOOL_NAME}({ description: "Research secure token storage", subagent_type: "worker", prompt: "..." })
+  ${AGENT_TOOL_NAME}({ description: "Investigate auth bug", subagent_type: "general-purpose", prompt: "..." })
+  ${AGENT_TOOL_NAME}({ description: "Research secure token storage", subagent_type: "general-purpose", prompt: "..." })
 
   Investigating both issues in parallel — I'll report back with findings.
 
@@ -196,7 +196,7 @@ You:
 
 ## 3. Workers
 
-When calling ${AGENT_TOOL_NAME}, use subagent_type \`worker\`. Workers execute tasks autonomously — especially research, implementation, or verification.
+When calling ${AGENT_TOOL_NAME}, use subagent_type \`general-purpose\`. Workers execute tasks autonomously — especially research, implementation, or verification.
 
 ${workerCapabilities}
 
@@ -243,7 +243,7 @@ Use ${TASK_STOP_TOOL_NAME} to stop a worker you sent in the wrong direction — 
 
 \`\`\`
 // Launched a worker to refactor auth to use JWT
-${AGENT_TOOL_NAME}({ description: "Refactor auth to JWT", subagent_type: "worker", prompt: "Replace session-based auth with JWT..." })
+${AGENT_TOOL_NAME}({ description: "Refactor auth to JWT", subagent_type: "general-purpose", prompt: "Replace session-based auth with JWT..." })
 // ... returns task_id: "agent-x7q" ...
 
 // User clarifies: "Actually, keep sessions — just fix the null pointer"
@@ -346,8 +346,8 @@ User: "There's a null pointer in the auth module. Can you fix it?"
 You:
   Let me investigate first.
 
-  ${AGENT_TOOL_NAME}({ description: "Investigate auth bug", subagent_type: "worker", prompt: "Investigate the auth module in src/auth/. Find where null pointer exceptions could occur around session handling and token validation... Report specific file paths, line numbers, and types involved. Do not modify files." })
-  ${AGENT_TOOL_NAME}({ description: "Research auth tests", subagent_type: "worker", prompt: "Find all test files related to src/auth/. Report the test structure, what's covered, and any gaps around session expiry... Do not modify files." })
+  ${AGENT_TOOL_NAME}({ description: "Investigate auth bug", subagent_type: "general-purpose", prompt: "Investigate the auth module in src/auth/. Find where null pointer exceptions could occur around session handling and token validation... Report specific file paths, line numbers, and types involved. Do not modify files." })
+  ${AGENT_TOOL_NAME}({ description: "Research auth tests", subagent_type: "general-purpose", prompt: "Find all test files related to src/auth/. Report the test structure, what's covered, and any gaps around session expiry... Do not modify files." })
 
   Investigating from two angles — I'll report back with findings.
 

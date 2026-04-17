@@ -130,7 +130,9 @@ declare global {
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
       listExecutions: (sessionId?: string) => Promise<{ executions: ExecutionSummary[] }>;
       focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
+      createExecutionForTeammate: (payload: { sessionId: string; taskId: string; description: string; prompt: string }) => Promise<{ ok?: boolean; executionSessionId?: string; error?: string }>;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
+      onTeammateSpawned: (callback: (payload: { sessionId: string; taskId: string; description: string; prompt: string; color?: string }) => void) => () => void;
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
     };

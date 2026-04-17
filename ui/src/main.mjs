@@ -2695,6 +2695,103 @@ async function ensureRuntime(sessionRecord) {
     },
   });
 
+  // Coordinator mode: subscribe to store changes to auto-create windows for teammate tasks
+  if (sessionRecord.isCoordinatorMode) {
+    const knownTaskIds = new Set();
+    const completedTaskIds = new Set();
+    console.log(`[coordinator] Setting up subscription for session ${sessionRecord.id}`);
+
+    // Initialize with existing tasks
+    try {
+      const state = sessionRecord.runtime.getAppState?.();
+      console.log(`[coordinator] Initial state:`, JSON.stringify(state?.tasks ? Object.keys(state.tasks) : []));
+      if (state?.tasks) {
+        for (const task of Object.values(state.tasks)) {
+          if (task.type === 'in_process_teammate' || task.type === 'local_agent') {
+            knownTaskIds.add(task.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`[coordinator] Initial getAppState failed (store not ready yet):`, e.message);
+    }
+
+    sessionRecord.runtime.subscribe(() => {
+      console.log(`[coordinator] Subscription callback fired!`);
+      try {
+        const state = sessionRecord.runtime.getAppState?.();
+        console.log(`[coordinator] getAppState result:`, state ? 'has state' : 'null');
+        if (!state?.tasks) {
+          console.log(`[coordinator] No tasks in state`);
+          return;
+        }
+
+        const currentTaskIds = Object.keys(state.tasks);
+        console.log(`[coordinator] Current tasks:`, currentTaskIds);
+
+        const mainWin = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+
+        // Check for new tasks and task completions
+        for (const task of Object.values(state.tasks)) {
+          console.log(`[coordinator] Task ${task.id}: type=${task.type}, status=${task.status}, known=${knownTaskIds.has(task.id)}, completed=${completedTaskIds.has(task.id)}`);
+          const isTeammate = task.type === 'in_process_teammate' || task.type === 'local_agent';
+          const isCompleted = task.status === 'completed' || task.status === 'error';
+
+          if (isTeammate && !knownTaskIds.has(task.id)) {
+            knownTaskIds.add(task.id);
+            // New teammate task detected - create execution window
+            const taskId = task.id;
+            const description = task.description || task.identity?.agentName || 'Worker';
+            const prompt = task.prompt || task.description || 'Worker task';
+            console.log(`[coordinator] New teammate task detected: ${taskId} - ${description}`);
+
+            // Emit event to renderer to create execution window
+            if (mainWin) {
+              console.log(`[coordinator] Sending teammate-spawned event to renderer`);
+              mainWin.webContents.send('coordinator:teammate-spawned', {
+                sessionId: sessionRecord.id,
+                taskId,
+                description,
+                prompt,
+                color: task.identity?.color || '#8b5cf6',
+              });
+            }
+          } else if (isTeammate && isCompleted && !completedTaskIds.has(task.id)) {
+            // Teammate task completed
+            completedTaskIds.add(task.id);
+            const taskId = task.id;
+            const description = task.description || task.identity?.agentName || 'Worker';
+            console.log(`[coordinator] Teammate task completed: ${taskId} - ${description}`);
+
+            // Send completion event to renderer to update window
+            if (mainWin) {
+              mainWin.webContents.send('coordinator:teammate-completed', {
+                sessionId: sessionRecord.id,
+                taskId,
+                description,
+                status: task.status,
+              });
+            }
+
+            // Also send completion message to main session history
+            const completionMsg = `[Worker completed] ${description}`;
+            pushSessionHistoryEvent(sessionRecord, {
+              type: 'user',
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: completionMsg }],
+              },
+              timestamp: Date.now(),
+            }, mainWin?.webContents);
+          }
+        }
+      } catch (err) {
+        console.error('[coordinator] Error in teammate subscription:', err);
+      }
+    });
+    console.log(`[coordinator] Subscription setup complete`);
+  }
+
   return sessionRecord.runtime;
 }
 
@@ -3651,7 +3748,15 @@ ipcMain.handle('execution:list', async (_event, { sessionId } = {}) => {
     const dbSubAgents = loadSubAgentSessionsByParentStmt.all(sessionId);
     for (const row of dbSubAgents) {
       // Skip if already in executionWindowStates (active window exists)
-      if (executionWindowStates.has(row.id)) continue;
+      // Need to check by session id, not webContents id
+      let alreadyExists = false;
+      for (const state of executionWindowStates.values()) {
+        if (state.sessionRecord?.id === row.id) {
+          alreadyExists = true;
+          break;
+        }
+      }
+      if (alreadyExists) continue;
       // Determine busy state from subAgentSessions if loaded
       const subAgentSession = subAgentSessions.get(row.id);
       list.push({
@@ -3684,7 +3789,7 @@ ipcMain.handle('coordinator:list-tasks', async (_event, { sessionId }) => {
       return { tasks: [] };
     }
     const tasks = Object.values(state.tasks)
-      .filter(t => t.type === 'in_process_teammate')
+      .filter(t => t.type === 'in_process_teammate' || t.type === 'local_agent')
       .map(t => ({
         id: t.id,
         name: t.identity?.agentName || t.id,
@@ -3697,6 +3802,123 @@ ipcMain.handle('coordinator:list-tasks', async (_event, { sessionId }) => {
   } catch {
     return { tasks: [] };
   }
+});
+
+ipcMain.handle('execution:create-for-teammate', async (event, { sessionId, taskId, description, prompt }) => {
+  console.log(`[execution:create-for-teammate] Called with taskId=${taskId}, description=${description}`);
+
+  // Check if already created for this taskId
+  for (const state of executionWindowStates.values()) {
+    if (state.teammateTaskId === taskId && state.originalSessionId === sessionId) {
+      console.log(`[execution:create-for-teammate] Already exists for taskId=${taskId}, skipping`);
+      return { ok: true, executionSessionId: state.id, alreadyExists: true };
+    }
+  }
+
+  // Create an execution window for a coordinator teammate task
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  const mainWin = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
+  if (!mainWin) {
+    console.log(`[execution:create-for-teammate] No main window available`);
+    return { error: 'No main window' };
+  }
+
+  const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
+  if (!sessionRecord) return { error: 'Session not found' };
+
+  const execSessionId = randomUUID();
+  const execWorkspace = path.join(MOSS_WORKSPACES_DIR, execSessionId);
+  fs.mkdirSync(execWorkspace, { recursive: true });
+
+  const execSessionRecord = createSessionRecord({ workspace: execWorkspace, isSubAgent: true });
+  execSessionRecord.id = execSessionId;
+  execSessionRecord.underlyingSessionId = sessionId;
+  subAgentSessions.set(execSessionId, execSessionRecord);
+  persistSessionRecord(execSessionRecord, true);
+
+  const execWindow = new BrowserWindow({
+    title: `Worker: ${description || taskId}`,
+    width: 800,
+    height: 700,
+    resizable: true,
+    backgroundColor: '#09111c',
+    autoHideMenuBar: true,
+    frame: false,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    show: false,  // Don't show window automatically - just show in panel
+    webPreferences: {
+      preload: path.join(__dirname, 'execution-preload.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const execState = {
+    id: execSessionId,
+    window: execWindow,
+    originalPrompt: prompt || description || 'Worker task',
+    plan: prompt || description || 'Worker task',
+    busy: true,
+    sessionRecord: execSessionRecord,
+    workspace: execWorkspace,
+    mainWindow: mainWin,
+    originalSessionId: sessionId,
+    teammateTaskId: taskId,
+  };
+  executionWindows.set(execSessionId, execWindow);
+  executionWindowStates.set(execWindow.webContents.id, execState);
+
+  execWindow.on('close', (event) => {
+    event.preventDefault();
+    execWindow.hide();
+  });
+
+  if (rendererDevServerUrl) {
+    void execWindow.loadURL(executionHtmlDev);
+  } else {
+    if (!hasFile(executionHtmlProd)) {
+      return { error: `Missing execution.html at ${executionHtmlProd}` };
+    }
+    void execWindow.loadFile(executionHtmlProd);
+  }
+
+  // Ensure window stays hidden
+  execWindow.hide();
+
+  execWindow.webContents.once('did-finish-load', () => {
+    console.log(`[execution:create-for-teammate] Window loaded for ${taskId}`);
+    emitToExecutionWindow(execWindow.webContents, 'execution:init', {
+      originalPrompt: prompt || description || 'Worker task',
+      plan: prompt || description || 'Worker task',
+      busy: false,  // Teammate runs in coordinator runtime, can't track progress here
+      workspace: execWorkspace,
+    });
+    // Don't show window - just add to ExecutionPetPanel as a hidden/minimized icon
+    console.log(`[execution:create-for-teammate] Window ready for ${taskId} (minimized)`);
+  });
+
+  console.log(`[execution:create-for-teammate] Returning success for ${taskId}, execSessionId=${execSessionId}`);
+  return { ok: true, executionSessionId: execSessionId };
+});
+
+ipcMain.handle('execution:update-teammate-state', async (event, { taskId, sessionId, completed }) => {
+  // Find execution window by teammateTaskId and update its state
+  for (const state of executionWindowStates.values()) {
+    if (state.teammateTaskId === taskId && state.originalSessionId === sessionId) {
+      console.log(`[execution:update-teammate-state] Found window for taskId=${taskId}, completed=${completed}`);
+      if (completed) {
+        state.busy = false;  // Update the busy state so execution:list returns correct value
+        if (!state.window.isDestroyed()) {
+          state.window.webContents.send('execution:event', { type: 'message_stop' });
+          state.window.webContents.send('execution:state', { busy: false });
+        }
+      }
+      return { ok: true };
+    }
+  }
+  console.log(`[execution:update-teammate-state] No window found for taskId=${taskId}`);
+  return { ok: false, error: 'Not found' };
 });
 
 ipcMain.handle('execution:focus', async (_event, { executionId }) => {
