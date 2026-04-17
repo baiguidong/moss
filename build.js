@@ -25,6 +25,11 @@ const defines = [
 const aliases = [
   '--alias=bun:bundle=./bun-bundle-feature.js',
   '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp/index.js',
+  '--alias=@anthropic-ai/bedrock-sdk=./vendor/@anthropic-ai/bedrock-sdk/index.mjs',
+  '--alias=@anthropic-ai/foundry-sdk=./vendor/@anthropic-ai/foundry-sdk/index.mjs',
+  '--alias=@anthropic-ai/vertex-sdk=./vendor/@anthropic-ai/vertex-sdk/index.mjs',
+  '--alias=@anthropic-ai/mcpb=./vendor/@anthropic-ai/mcpb/index.mjs',
+  '--alias=modifiers-napi=./vendor/modifiers-napi/index.js',
 ]
 
 function build(label, args) {

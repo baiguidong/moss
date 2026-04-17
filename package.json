@@ -8,7 +8,7 @@
   "scripts": {
     "build": "bun run build.js",
     "build:node": "bun run build.js --target=node",
-    "postinstall": "mkdir -p node_modules/@ant && cp -r vendor/@ant/claude-for-chrome-mcp node_modules/@ant/"
+    "postinstall": "mkdir -p node_modules/@ant node_modules/@anthropic-ai src/commands/memory && cp -r vendor/@ant/* node_modules/@ant/ && cp -r vendor/@anthropic-ai/* node_modules/@anthropic-ai/ && cp -r vendor/modifiers-napi node_modules/ && cp vendor/commands-memory-stub/index.js src/commands/memory/index.js"
   },
   "dependencies": {
     "@alcalzone/ansi-tokenize": "^0.3.0",
