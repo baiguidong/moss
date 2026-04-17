@@ -7,7 +7,8 @@
   },
   "scripts": {
     "build": "bun run build.js",
-    "build:node": "bun run build.js --target=node"
+    "build:node": "bun run build.js --target=node",
+    "postinstall": "mkdir -p node_modules/@ant && cp -r vendor/@ant/claude-for-chrome-mcp node_modules/@ant/"
   },
   "dependencies": {
     "@alcalzone/ansi-tokenize": "^0.3.0",
@@ -43,6 +44,7 @@
     "ajv": "^8.18.0",
     "asciichart": "^1.5.25",
     "auto-bind": "^5.0.1",
+    "axios": "^1.15.0",
     "bidi-js": "^1.0.3",
     "chalk": "*",
     "chokidar": "^5.0.0",

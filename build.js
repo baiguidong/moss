@@ -24,7 +24,7 @@ const defines = [
 
 const aliases = [
   '--alias=bun:bundle=./bun-bundle-feature.js',
-  '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp',
+  '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp/index.js',
 ]
 
 function build(label, args) {
