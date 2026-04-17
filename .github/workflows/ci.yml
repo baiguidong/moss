@@ -144,8 +144,7 @@ jobs:
         working-directory: ui
 
       - name: Create build resources directory
-        run: mkdir -p ui/build
-        shell: bash
+        run: New-Item -ItemType Directory -Force -Path ui/build
 
       - name: Build Windows installer
         run: bun run dist:win
