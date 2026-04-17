@@ -105,6 +105,9 @@ export const EXPERIMENTAL = {
   // Prompt 缓存中断检测：检测并提示 prompt cache 失效，帮助优化 token 成本
   PROMPT_CACHE_BREAK_DETECTION: false,
 
+  // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
+  COORDINATOR_MODE: true,
+
   // Buddy 伴侣精灵：在终端显示像素风格的小动物陪伴图标（纯彩蛋）
   BUDDY: true,
 };
@@ -154,7 +157,6 @@ export const INTERNAL_ONLY = {
   CCR_REMOTE_SETUP: false,   // CCR 远程初始化
 
   BRIDGE_MODE: false,        // 连接 claude.ai 网页版的桥接模式
-  COORDINATOR_MODE: false,   // 内部多 agent 协调器
   DAEMON: false,             // 后台守护进程模式
   DIRECT_CONNECT: false,     // 直连内部服务
   LODESTONE: false,          // 内部服务定位系统

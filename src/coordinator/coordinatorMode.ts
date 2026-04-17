@@ -33,11 +33,17 @@ const INTERNAL_WORKER_TOOLS = new Set([
   SYNTHETIC_OUTPUT_TOOL_NAME,
 ])
 
+import { getSessionCoordinatorMode } from '../utils/sessionCoordinatorContext.js'
+
 export function isCoordinatorMode(): boolean {
-  if (feature('COORDINATOR_MODE')) {
-    return isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE)
+  // Session context (per-session isolation) — set by ClaudeSession.runWithCoordinatorMode()
+  const sessionMode = getSessionCoordinatorMode()
+  console.log('[coordinatorMode] isCoordinatorMode called, sessionMode:', sessionMode, 'env:', isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE))
+  if (sessionMode !== undefined) {
+    return sessionMode
   }
-  return false
+  // CLI fallback: use env var for backward compatibility
+  return isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE)
 }
 
 /**

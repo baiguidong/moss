@@ -22,7 +22,9 @@ import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverrideGenerator } from './utils/cwd.js'
 
 import { bootstrapHeadless } from './bootstrap/headless.js'
+import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
 import type { Message } from './types/message.js'
+import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 
 // 全局初始化，只执行一次
 export function getAuthDebugSnapshot() {
@@ -69,6 +71,8 @@ export interface ClaudeSessionOptions {
   maxTurns?: number
   /** 思考配置 */
   thinkingConfig?: ThinkingConfig
+  /** 是否启用 Coordinator 模式（多 worker 并行编排）*/
+  coordinatorMode?: boolean
 }
 
 export class ClaudeSession {
@@ -80,6 +84,10 @@ export class ClaudeSession {
   #processing = false
   #disposed = false
 
+  get coordinatorMode(): boolean {
+    return this.#opts.coordinatorMode
+  }
+
   constructor(opts: ClaudeSessionOptions = {}) {
     this.#opts = {
       cwd: opts.cwd ?? process.cwd(),
@@ -89,6 +97,7 @@ export class ClaudeSession {
       onPermissionRequest: opts.onPermissionRequest ?? (() => Promise.resolve(true)),
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
+      coordinatorMode: opts.coordinatorMode ?? false,
     }
   }
 
@@ -141,6 +150,12 @@ export class ClaudeSession {
     // 文件状态缓存（100MB 上限）
     const fileCache = createFileStateCacheWithSizeLimit(1000, 100 * 1024 * 1024)
 
+    // Coordinator mode: use coordinator system prompt (replaces default)
+    const coordinatorSystemPrompt = this.#opts.coordinatorMode
+      ? getCoordinatorSystemPrompt()
+      : undefined
+    console.log('[electron-direct] coordinatorMode:', this.#opts.coordinatorMode, 'coordinatorSystemPrompt length:', coordinatorSystemPrompt?.length ?? 0)
+
     this.#engine = new QueryEngine({
       cwd,
       tools,
@@ -152,6 +167,7 @@ export class ClaudeSession {
       setAppState: f => store.setState(f),
       readFileCache: fileCache,
       userSpecifiedModel: model,
+      customSystemPrompt: coordinatorSystemPrompt,
       appendSystemPrompt: appendSystemPrompt || undefined,
       thinkingConfig,
       maxTurns,
@@ -188,7 +204,10 @@ export class ClaudeSession {
       // QueryEngine.submitMessage 是 AsyncGenerator
       yield* runWithCwdOverrideGenerator(
         this.#opts.cwd,
-        () => engine.submitMessage(prompt) as AsyncGenerator<SDKMessage>,
+        () => runWithCoordinatorMode(
+          this.#opts.coordinatorMode,
+          () => engine.submitMessage(prompt) as AsyncGenerator<SDKMessage>,
+        ),
       )
     } finally {
       this.#processing = false

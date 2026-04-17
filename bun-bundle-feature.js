@@ -13,3 +13,4 @@ const ENABLED = new Set(
 export function feature(name) {
   return ENABLED.has(name)
 }
+// TEST_BUN_BUNDLE_ALIAS
