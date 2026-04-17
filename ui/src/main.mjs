@@ -1147,6 +1147,8 @@ function buildStoredAppHtml(appRecord) {
     '@context': APP_SCHEMA_CONTEXT,
     '@type': APP_SCHEMA_TYPE,
     name: appRecord.name,
+    title: appRecord.title || appRecord.name,
+    icon: appRecord.icon || '',
     description: appRecord.description,
     width: appRecord.width,
     height: appRecord.height,
@@ -1203,6 +1205,10 @@ function parseStoredAppHtml(fileContent, filePath = '') {
     new RegExp(`<script type="${prdScriptType}"[^>]*>\\s*([\\s\\S]*?)\\s*<\\/script>`, 'i')
   );
 
+  // Extract <title> tag content for display name
+  const titleMatch = fileContent.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const title = titleMatch?.[1]?.trim() || metadata.description?.split(' - ')[0] || metadata.name || '';
+
   const cleanHtml = fileContent
     .replace(
       new RegExp(`<script type="${metadataScriptType}"[^>]*>[\\s\\S]*?<\\/script>`, 'ig'),
@@ -1216,7 +1222,9 @@ function parseStoredAppHtml(fileContent, filePath = '') {
 
   return {
     name: String(metadata.name || ''),
+    title: String(title),
     description: String(metadata.description || ''),
+    icon: String(metadata.icon || ''),
     width: Number(metadata.width) || 900,
     height: Number(metadata.height) || 700,
     resizable: metadata.resizable !== false,
@@ -1242,7 +1250,9 @@ function listStoredApps() {
       const currentVersion = getCurrentAppVersionSnapshot(parsed.name, versions);
       apps.push({
         name: parsed.name,
+        title: parsed.title,
         description: parsed.description,
+        icon: parsed.icon,
         width: parsed.width,
         height: parsed.height,
         resizable: parsed.resizable,
@@ -2068,6 +2078,8 @@ function extractAppPayloadFromText(content) {
 
   return {
     name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
+    title: String(metadata?.title || metadata?.name || '').trim(),
+    icon: String(metadata?.icon || '').trim(),
     description: String(metadata?.description || '').trim(),
     width: Number(metadata?.width) || 900,
     height: Number(metadata?.height) || 700,
@@ -2111,6 +2123,8 @@ function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
 
   return {
     name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
+    title: String(metadata?.title || metadata?.name || '').trim(),
+    icon: String(metadata?.icon || '').trim(),
     description: String(metadata?.description || '').trim(),
     width: Number(metadata?.width) || 900,
     height: Number(metadata?.height) || 700,
@@ -2127,11 +2141,12 @@ function buildCreateAppPlanPrompt(prd) {
     'Your plan must be concrete enough for user approval.',
     'Include these sections in plain markdown:',
     '1. Goal',
-    '2. Core features',
-    '3. UI and interaction design',
-    '4. Data and state handling',
-    '5. Execution steps',
-    '6. Risks or open questions',
+    '2. App metadata (name slug, display title, SVG icon as data URI)',
+    '3. Core features',
+    '4. UI and interaction design',
+    '5. Data and state handling',
+    '6. Execution steps',
+    '7. Risks or open questions',
     '',
     'App request:',
     String(prd || '').trim(),
@@ -2152,7 +2167,8 @@ function buildCreateAppExecutionPrompt(prd, approvedPlan, buildPaths) {
     `- ${buildPaths.htmlPath}`,
     '',
     'Write the app metadata JSON to app-meta.json with this shape:',
-    '{ "name": string, "description": string, "width": number, "height": number, "resizable": boolean }',
+    '{ "name": string, "title": string, "icon": string, "description": string, "width": number, "height": number, "resizable": boolean }',
+    '"name" is a lowercase slug like "my-app", "title" is the display name in Chinese like "我的应用", "icon" is a simple SVG emoji as data URI like "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><text y=\'.9em\' font-size=\'90\'>🎯</text></svg>"',
     '',
     'Write the full standalone HTML document to index.html.',
     'Do not return the full app code in chat unless it is strictly necessary.',

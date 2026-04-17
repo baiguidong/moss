@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import {
-  ChevronLeft,
-  ChevronRight,
   LayoutGrid,
   Monitor,
   MoonStar,
@@ -251,15 +249,6 @@ export function AppSidebar({
           ) : (
             <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-xl"
-            onClick={onToggleCollapse}
-            aria-label={collapsed ? "展开左侧栏" : "收起左侧栏"}
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </Button>
         </div>
 
         <Button
@@ -275,7 +264,27 @@ export function AppSidebar({
         </Button>
       </div>
 
-      {!collapsed && (
+      {collapsed ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col items-center gap-1.5 p-2">
+            {orderedSessions.map((session) => (
+              <button
+                key={session.id}
+                onClick={() => onSelectSession(session.id)}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  activeSessionId === session.id
+                    ? "bg-primary/20 text-primary"
+                    : "bg-sidebar-accent/60 text-sidebar-foreground hover:bg-sidebar-accent"
+                )}
+                title={session.title}
+              >
+                {session.title.charAt(0).toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      ) : (
         <>
           <div className="border-b border-sidebar-border px-3 py-2">
             <div className="flex min-w-0 items-center justify-between text-[11px] uppercase tracking-[0.2em] text-sidebar-foreground/40">
@@ -328,10 +337,10 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        <div className="grid grid-cols-2 gap-2">
+        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
           <Button
             variant={activeView === "apps" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("apps")}
           >
             <LayoutGrid className="h-4 w-4" />
@@ -344,7 +353,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "settings" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0" : "justify-start")}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("settings")}
           >
             <Settings className="h-4 w-4" />

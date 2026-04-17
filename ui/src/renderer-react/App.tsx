@@ -408,7 +408,10 @@ export default function App() {
     const detail = activeDetailRef.current;
     if (!sessionId || !detail?.workspace) return;
 
-    const pathsToRefresh = [detail.workspace, ...Array.from(expandedDirsRef.current)];
+    const validExpandedDirs = Array.from(expandedDirsRef.current).filter((p) =>
+      p.startsWith(detail.workspace)
+    );
+    const pathsToRefresh = [detail.workspace, ...validExpandedDirs];
     const refreshedEntries = await Promise.all(
       pathsToRefresh.map(async (dirPath) => {
         try {
@@ -1457,7 +1460,7 @@ export default function App() {
 
             <div
               className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
-              style={{ width: layout.rightCollapsed ? 68 : layout.rightWidth }}
+              style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth }}
             >
               <TaskPanel
                 collapsed={layout.rightCollapsed}

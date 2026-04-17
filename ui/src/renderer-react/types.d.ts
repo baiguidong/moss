@@ -44,7 +44,9 @@ export type DesktopSettings = {
 
 export type StoredApp = {
   name: string;
+  title: string;
   description: string;
+  icon: string;
   width: number;
   height: number;
   resizable: boolean;

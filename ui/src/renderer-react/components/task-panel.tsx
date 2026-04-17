@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import {
-  ChevronLeft,
-  ChevronRight,
   Search,
   X,
   RefreshCw,
@@ -75,52 +73,15 @@ export function TaskPanel({
 
   return (
     <div className="flex h-full flex-col bg-[linear-gradient(180deg,color-mix(in_oklab,var(--card)_96%,transparent),color-mix(in_oklab,var(--background)_94%,transparent))]">
-      <div className="border-b border-border/80 px-3 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
+      {collapsed ? null : (
+        <>
+          <div className="border-b border-border/80 px-3 py-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <Cloud className="h-4 w-4 text-primary" />
-              <span>临时空间</span>
+              <span>工作空间</span>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-xl"
-              onClick={onToggleCollapse}
-              aria-label={collapsed ? "展开右侧栏" : "收起右侧栏"}
-            >
-              {collapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </Button>
-            {!collapsed && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground",
-                  isRefreshing && "animate-spin"
-                )}
-                onClick={handleRefresh}
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
 
-      {collapsed ? (
-        <div className="flex flex-1 items-center justify-center px-2 py-4">
-          <div className="flex flex-col items-center gap-3 text-muted-foreground">
-            <Cloud className="h-5 w-5 text-primary" />
-            <span className="text-[10px] uppercase tracking-[0.2em] [writing-mode:vertical-rl]">
-              workspace
-            </span>
-          </div>
-        </div>
-      ) : (
-        <>
           <div className="border-b border-border/80 px-3 py-2.5">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">

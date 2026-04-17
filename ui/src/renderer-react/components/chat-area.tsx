@@ -4,8 +4,6 @@ import * as React from "react";
 import {
   Bot,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   Check,
   FileText,
@@ -14,6 +12,10 @@ import {
   Square,
   User,
   X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -48,16 +50,16 @@ type IntentOption = {
 const intentOptions: IntentOption[] = [
   {
     id: "coordinator",
-    title: "Coordinator",
+    title: "boss",
     description: "主 agent 协调多个 worker 并行执行复杂任务",
   },
   {
     id: "plan",
-    title: "Copilot",
+    title: "plan",
   },
   {
     id: "create-app",
-    title: "创建 App",
+    title: "app",
   },
 ];
 
@@ -86,7 +88,7 @@ function SessionTabBar({
           onClick={onToggleLeft}
           aria-label={leftCollapsed ? "展开左侧栏" : "收起左侧栏"}
         >
-          {leftCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
         <div className="min-w-0 max-w-[calc(100%-6rem)] rounded-full border border-border/75 bg-card/88 px-4 py-1.5 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.7)]">
@@ -107,7 +109,7 @@ function SessionTabBar({
           onClick={onToggleRight}
           aria-label={rightCollapsed ? "展开右侧栏" : "收起右侧栏"}
         >
-          {rightCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {rightCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
         </Button>
       </div>
     </div>
@@ -483,6 +485,7 @@ function ComposerPanel({
   composerIntent,
   hasActiveSession,
   sessionId,
+  showModeButtons,
   onChange,
   onComposerIntentChange,
   onSend,
@@ -494,6 +497,7 @@ function ComposerPanel({
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
   sessionId?: string;
+  showModeButtons?: boolean;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
@@ -704,6 +708,31 @@ function ComposerPanel({
             发送
           </Button>
         </div>
+
+        {showModeButtons && (
+          <div className="absolute bottom-3 left-3 flex items-center gap-1">
+            {intentOptions
+              .filter((o) => o.id !== "chat")
+              .map((option) => (
+                <Button
+                  key={option.id}
+                  variant={composerIntent === option.id ? "default" : "outline"}
+                  size="sm"
+                  className={cn(
+                    "h-7 rounded-full px-2.5 text-xs",
+                    composerIntent === option.id && "bg-green-500 hover:bg-green-600 border-green-500"
+                  )}
+                  onClick={() =>
+                    onComposerIntentChange(
+                      composerIntent === option.id ? "chat" : (option.id as ComposerIntent)
+                    )
+                  }
+                >
+                  {option.title}
+                </Button>
+              ))}
+          </div>
+        )}
       </div>
 
       {/* Selected intent tag - shown below textarea inside composer panel */}
@@ -881,23 +910,6 @@ export function ChatArea({
       </ScrollArea>
 
       <div className="shrink-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
-        {/* Selected intent tag - shown inside composer for active session */}
-        {composerIntent !== "chat" && (
-          <div className="mx-auto max-w-[980px] mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">模式：</span>
-              {intentOptions.map((option) => (
-                <IntentChip
-                  key={option.id}
-                  option={option}
-                  active={composerIntent === option.id}
-                  onClick={() => onComposerIntentChange(option.id)}
-                  onRemove={composerIntent === option.id ? () => onComposerIntentChange("chat") : undefined}
-                />
-              ))}
-            </div>
-          </div>
-        )}
         <div className="mx-auto max-w-[980px]">
           <ComposerPanel
             value={value}
@@ -905,6 +917,7 @@ export function ChatArea({
             loading={loading}
             composerIntent={composerIntent}
             hasActiveSession
+            showModeButtons
             sessionId={sessionId}
             onChange={onChange}
             onComposerIntentChange={onComposerIntentChange}

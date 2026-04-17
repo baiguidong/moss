@@ -14,12 +14,22 @@ function formatTimestamp(timestamp: number) {
   });
 }
 
-function formatAppName(name: string) {
-  return name
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+function AppIcon({ icon, name }: { icon: string; name: string }) {
+  if (!icon) {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        <MonitorPlay className="h-5 w-5" />
+      </div>
+    );
+  }
+  // icon is a data URI like "data:image/svg+xml,<svg>...</svg>"
+  const svgContent = icon.replace(/^data:image\/svg\+xml,?/, '');
+  return (
+    <div
+      className="h-10 w-10 shrink-0 overflow-hidden rounded-xl"
+      dangerouslySetInnerHTML={{ __html: svgContent }}
+    />
+  );
 }
 
 export function AppsPanel({
@@ -74,15 +84,18 @@ export function AppsPanel({
                 className="rounded-[28px] border border-border/80 bg-card/72 p-5 shadow-[0_20px_70px_-48px_rgba(0,0,0,0.65)]"
               >
                 <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-base font-semibold text-foreground">
-                      {formatAppName(app.name)}
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      {app.description || "未填写描述"}
-                    </p>
+                  <div className="flex items-start gap-3 min-w-0">
+                    <AppIcon icon={app.icon} name={app.name} />
+                    <div className="min-w-0">
+                      <h2 className="truncate text-base font-semibold text-foreground">
+                        {app.title || app.name}
+                      </h2>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                        {app.description || "未填写描述"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <div className="rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground shrink-0">
                     {app.width} × {app.height}
                   </div>
                 </div>
