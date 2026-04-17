@@ -22,6 +22,11 @@ const defines = [
   `--define=MACRO.VERSION_CHANGELOG=""`,
 ]
 
+const aliases = [
+  '--alias=bun:bundle=./bun-bundle-feature.js',
+  '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp',
+]
+
 function build(label, args) {
   console.log(`\nBuilding ${label}`)
   const result = spawnSync('bun', args, { stdio: 'inherit' })
@@ -36,7 +41,7 @@ if (!onlyNode) {
     'build', 'src/entrypoints/cli.tsx',
     '--outfile=cli.js',
     '--target=bun',
-    '--alias=bun:bundle=./bun-bundle-feature.js',
+    ...aliases,
     ...defines,
   ])
 }
@@ -46,7 +51,7 @@ build('cli-node.js', [
   'build', 'src/entrypoints/cli.tsx',
   '--outfile=cli-node.js',
   '--target=node',
-  '--alias=bun:bundle=./bun-bundle-feature.js',
+  ...aliases,
   ...defines,
 ])
 
@@ -56,6 +61,6 @@ build('electron-direct.mjs', [
   '--outfile=electron-direct.mjs',
   '--target=node',
   '--format=esm',
-  '--alias=bun:bundle=./bun-bundle-feature.js',
+  ...aliases,
   ...defines,
 ])
