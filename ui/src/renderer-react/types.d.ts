@@ -135,6 +135,8 @@ declare global {
       createExecutionForTeammate: (payload: { sessionId: string; taskId: string; description: string; prompt: string }) => Promise<{ ok?: boolean; executionSessionId?: string; error?: string }>;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
       onTeammateSpawned: (callback: (payload: { sessionId: string; taskId: string; description: string; prompt: string; color?: string }) => void) => () => void;
+      onTeammateCompleted: (callback: (payload: { sessionId: string; taskId: string; description: string; status: string }) => void) => () => void;
+      updateTeammateState: (payload: { sessionId: string; taskId: string; completed?: boolean }) => Promise<{ ok?: boolean; error?: string }>;
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
     };
