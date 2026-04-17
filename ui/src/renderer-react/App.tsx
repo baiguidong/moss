@@ -192,7 +192,6 @@ export default function App() {
   const [activePreviewPath, setActivePreviewPath] = React.useState<string | null>(null);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
-  const [settingsSaving, setSettingsSaving] = React.useState(false);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
@@ -901,70 +900,21 @@ export default function App() {
     await loadAppVersions(name);
   }, [loadAppVersions, refreshApps]);
 
-  const handleSaveSettings = React.useCallback(async () => {
-    if (!settingsDraft || !desktopSettings) return;
-    setSettingsSaving(true);
+  const autoSaveSettings = React.useCallback(async (key: keyof DesktopSettings, value: any) => {
     try {
-      const payload: Partial<DesktopSettings> = {};
-
-      // 仅当值发生变化且不为空时，才加入更新负载
-      if (settingsDraft.bypassPermissions !== desktopSettings.bypassPermissions) {
-        payload.bypassPermissions = settingsDraft.bypassPermissions;
-      }
-      if (settingsDraft.model && settingsDraft.model !== desktopSettings.model) {
-        payload.model = settingsDraft.model;
-      }
-      if (settingsDraft.maxTurns !== desktopSettings.maxTurns) {
-        payload.maxTurns = settingsDraft.maxTurns;
-      }
-      if (settingsDraft.appendSystemPrompt !== desktopSettings.appendSystemPrompt) {
-        payload.appendSystemPrompt = settingsDraft.appendSystemPrompt;
-      }
-      if (settingsDraft.thinkingMode !== desktopSettings.thinkingMode) {
-        payload.thinkingMode = settingsDraft.thinkingMode;
-      }
-      if (settingsDraft.thinkingBudgetTokens !== desktopSettings.thinkingBudgetTokens) {
-        payload.thinkingBudgetTokens = settingsDraft.thinkingBudgetTokens;
-      }
-      if ((settingsDraft.coordinatorMode ?? false) !== (desktopSettings.coordinatorMode ?? false)) {
-        payload.coordinatorMode = settingsDraft.coordinatorMode ?? false;
-      }
-
-      if (Object.keys(payload).length === 0) {
-        setSettingsNotice('配置未发生变化');
-        return;
-      }
-
+      const payload = { [key]: value };
       const saved = await window.agentDesktop.updateSettings(payload);
       applyDesktopSettings(saved);
-      const suffix = saved.skippedSessionCount
-        ? `；${saved.skippedSessionCount} 个已有会话已建立运行时，新配置主要对新会话生效`
-        : '';
-      setSettingsNotice(`已保存到 ${saved.settingsPath}${suffix}`);
     } catch (error: any) {
       setSettingsNotice(error?.message || String(error));
-    } finally {
-      setSettingsSaving(false);
     }
-  }, [applyDesktopSettings, desktopSettings, settingsDraft]);
+  }, [applyDesktopSettings]);
 
   const renderSettingsView = () => (
     <div className="h-full overflow-auto bg-background px-8 py-8">
       <div className="mx-auto max-w-4xl space-y-6">
         <div className="rounded-[28px] border border-border/80 bg-card/80 p-8 shadow-[0_24px_80px_-36px_rgba(0,0,0,0.45)]">
-          <div className="flex items-start justify-between gap-6">
-            <div>
-              <h2 className="text-2xl font-semibold text-foreground">桌面端设置</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-                这里配置嵌入式 Claude agent 的默认运行参数。当前支持的项目来自本地嵌入层实际支持的 Claude CLI 会话参数。
-              </p>
-            </div>
-            <Button onClick={handleSaveSettings} disabled={!settingsDraft || settingsSaving}>
-              {settingsSaving ? '保存中...' : '保存设置'}
-            </Button>
-          </div>
-
-          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">权限模式</p>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">
@@ -977,10 +927,12 @@ export default function App() {
                   checked={Boolean(settingsDraft?.bypassPermissions)}
                   onChange={(event) => {
                     if (!settingsDraft) return;
+                    const value = event.target.checked;
                     setSettingsDraft({
                       ...settingsDraft,
-                      bypassPermissions: event.target.checked,
+                      bypassPermissions: value,
                     });
+                    void autoSaveSettings('bypassPermissions', value);
                   }}
                 />
                 <div>
@@ -993,46 +945,18 @@ export default function App() {
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
-              <p className="text-sm font-medium text-foreground">Agent 模式</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                启用后，Agent 将作为协调者启动多个 worker 并行处理复杂任务。
-              </p>
-              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/70 px-4 py-3">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4 rounded border-border bg-background text-primary"
-                  checked={Boolean(settingsDraft?.coordinatorMode)}
-                  onChange={(event) => {
-                    if (!settingsDraft) return;
-                    setSettingsDraft({
-                      ...settingsDraft,
-                      coordinatorMode: event.target.checked,
-                    });
-                  }}
-                />
-                <div>
-                  <p className="text-sm font-medium text-foreground">启用 Coordinator Mode</p>
-                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                    主 agent 协调多个 worker 并行执行，适合复杂任务。Worker 结果通过 PET 面板显示。
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">默认模型</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                对应 CLI 里的 `model`，会作为新会话的默认主模型。
-              </p>
               <Input
                 className="mt-4 bg-background text-foreground"
                 value={settingsDraft?.model || ''}
                 onChange={(event) => {
                   if (!settingsDraft) return;
+                  const value = event.target.value;
                   setSettingsDraft({
                     ...settingsDraft,
-                    model: event.target.value,
+                    model: value,
                   });
+                  void autoSaveSettings('model', value);
                 }}
                 placeholder="claude-sonnet-4-6"
               />
@@ -1042,19 +966,18 @@ export default function App() {
                 value={settingsDraft?.visionModel || ''}
                 onChange={(event) => {
                   if (!settingsDraft) return;
+                  const value = event.target.value;
                   setSettingsDraft({
                     ...settingsDraft,
-                    visionModel: event.target.value,
+                    visionModel: value,
                   });
+                  void autoSaveSettings('visionModel', value);
                 }}
               />
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">最大轮次</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                对应 CLI 里的 `maxTurns`，限制单次会话的最大 agent turn 数。
-              </p>
               <Input
                 type="number"
                 min={1}
@@ -1063,28 +986,29 @@ export default function App() {
                 value={settingsDraft?.maxTurns ?? 100}
                 onChange={(event) => {
                   if (!settingsDraft) return;
+                  const value = Number.parseInt(event.target.value || '1', 10);
                   setSettingsDraft({
                     ...settingsDraft,
-                    maxTurns: Number.parseInt(event.target.value || '1', 10),
+                    maxTurns: value,
                   });
+                  void autoSaveSettings('maxTurns', value);
                 }}
               />
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">思考模式</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                对应 CLI 的 thinking 能力。`adaptive` 让模型自行决定，`enabled` 使用固定预算，`disabled` 关闭扩展思考。
-              </p>
               <select
                 className="mt-4 h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
                 value={settingsDraft?.thinkingMode || 'disabled'}
                 onChange={(event) => {
                   if (!settingsDraft) return;
+                  const value = event.target.value as DesktopSettings['thinkingMode'];
                   setSettingsDraft({
                     ...settingsDraft,
-                    thinkingMode: event.target.value as DesktopSettings['thinkingMode'],
+                    thinkingMode: value,
                   });
+                  void autoSaveSettings('thinkingMode', value);
                 }}
               >
                 <option value="disabled">disabled (关闭)</option>
@@ -1101,10 +1025,12 @@ export default function App() {
                   value={settingsDraft?.thinkingBudgetTokens ?? 16000}
                   onChange={(event) => {
                     if (!settingsDraft) return;
+                    const value = Number.parseInt(event.target.value || '1024', 10);
                     setSettingsDraft({
                       ...settingsDraft,
-                      thinkingBudgetTokens: Number.parseInt(event.target.value || '1024', 10),
+                      thinkingBudgetTokens: value,
                     });
+                    void autoSaveSettings('thinkingBudgetTokens', value);
                   }}
                   placeholder="thinking budget tokens"
                 />
@@ -1121,10 +1047,12 @@ export default function App() {
                 value={settingsDraft?.url || ''}
                 onChange={(event) => {
                   if (!settingsDraft) return;
+                  const value = event.target.value;
                   setSettingsDraft({
                     ...settingsDraft,
-                    url: event.target.value,
+                    url: value,
                   });
+                  void autoSaveSettings('url', value);
                 }}
                 placeholder="https://api.anthropic.com"
               />
@@ -1141,10 +1069,12 @@ export default function App() {
                   value={settingsDraft?.apiKey || ''}
                   onChange={(event) => {
                     if (!settingsDraft) return;
+                    const value = event.target.value;
                     setSettingsDraft({
                       ...settingsDraft,
-                      apiKey: event.target.value,
+                      apiKey: value,
                     });
+                    void autoSaveSettings('apiKey', value);
                   }}
                   placeholder="sk-ant-..."
                 />
@@ -1165,61 +1095,25 @@ export default function App() {
 
           <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5">
             <p className="text-sm font-medium text-foreground">追加系统提示</p>
-            <p className="mt-1 text-xs leading-6 text-muted-foreground">
-              对应 CLI 里的 `appendSystemPrompt`。会追加到默认系统提示后面，适合放全局开发约束或回复风格。
-            </p>
             <Textarea
               className="mt-4 min-h-[180px] bg-background text-foreground"
               value={settingsDraft?.appendSystemPrompt || ''}
               onChange={(event) => {
                 if (!settingsDraft) return;
+                const value = event.target.value;
                 setSettingsDraft({
                   ...settingsDraft,
-                  appendSystemPrompt: event.target.value,
+                  appendSystemPrompt: value,
                 });
+                void autoSaveSettings('appendSystemPrompt', value);
               }}
               placeholder="例如：默认使用中文回复；修改代码前先解释关键影响；避免自动删除用户未要求的文件。"
             />
           </div>
 
-          <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5 text-sm leading-7">
-            <p className="font-medium text-foreground">当前存储</p>
-            <p className="mt-2 text-muted-foreground">
-              配置文件：{desktopSettings?.settingsPath || '加载中'}
-            </p>
-            <p className="text-muted-foreground">
-              API URL：{desktopSettings?.url || '（未设置）'}
-            </p>
-            <p className="text-muted-foreground">
-              Coordinator Mode：{desktopSettings?.coordinatorMode ? '已启用' : '已关闭'}
-            </p>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">API Key：</span>
-              {desktopSettings?.apiKey ? (
-                <>
-                  <code className="text-xs text-muted-foreground">{'********' + desktopSettings.apiKey.slice(-4)}</code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 px-1 text-xs"
-                    onClick={() => navigator.clipboard.writeText(desktopSettings.apiKey || '')}
-                  >
-                    复制
-                  </Button>
-                </>
-              ) : (
-                <span className="text-muted-foreground">（未设置）</span>
-              )}
-            </div>
-            {desktopSettings?.settingsParseError && (
-              <p className="mt-2 text-destructive">
-                解析设置文件失败：{desktopSettings.settingsParseError}
-              </p>
-            )}
-            {settingsNotice && (
+          {settingsNotice && (
               <p className="mt-2 text-muted-foreground">{settingsNotice}</p>
             )}
-          </div>
         </div>
 
         {/* Buddy Settings */}

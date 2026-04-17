@@ -24,7 +24,7 @@ const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS ==
 const MAX_FILE_BYTES = 200 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
-const USER_TMP_DIR = path.join(os.homedir(), 'tmp');
+const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
 const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'generated-app-data');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
@@ -264,6 +264,8 @@ function normalizeDesktopSettings(input, existing = {}) {
 
   if (typeof source.visionModel === 'string' && source.visionModel.trim()) {
     result.visionModel = source.visionModel.trim();
+  } else if (result.visionModel === undefined) {
+    result.visionModel = '';
   }
 
   if (source.coordinatorMode !== undefined) {
