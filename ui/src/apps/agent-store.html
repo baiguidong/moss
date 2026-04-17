@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:;">
-  <title>技能商店</title>
+  <title>助手商店</title>
   <script type="application/ld+json">
   {
     "@context": "urn:goose.ai:schema",
     "@type": "GooseApp",
-    "name": "skill-store",
-    "icon": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
-    "description": "技能商店 - 浏览和安装来自 Hub 的技能",
+    "name": "agent-store",
+    "icon": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>",
+    "description": "助手商店 - 浏览和安装来自 Hub 的数字助手",
     "width": 980,
     "height": 680,
     "resizable": true,
@@ -62,7 +62,6 @@
       padding: 16px;
     }
 
-    /* Header */
     .header {
       display: flex;
       align-items: center;
@@ -141,39 +140,6 @@
       color: var(--text-tertiary);
     }
 
-    .import-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 0 10px;
-      height: 34px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      cursor: pointer;
-      font-size: 12px;
-      color: var(--text);
-      transition: all 0.15s;
-      flex-shrink: 0;
-    }
-
-    .import-btn:hover {
-      border-color: var(--primary);
-    }
-
-    .import-btn .icon {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: var(--primary-light);
-      color: var(--primary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-    }
-
-    /* Category filter */
     .categories {
       display: flex;
       gap: 6px;
@@ -209,7 +175,6 @@
       color: white;
     }
 
-    /* Content area */
     .content {
       flex: 1;
       min-height: 0;
@@ -230,7 +195,6 @@
       border-radius: 3px;
     }
 
-    /* Loading & Empty */
     .loading, .empty {
       display: flex;
       flex-direction: column;
@@ -263,16 +227,14 @@
       font-size: 13px;
     }
 
-    /* Skill grid */
-    .skill-grid {
+    .agent-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 8px;
       padding-bottom: 16px;
     }
 
-    /* Skill card */
-    .skill-card {
+    .agent-card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -286,12 +248,12 @@
       overflow: hidden;
     }
 
-    .skill-card:hover {
+    .agent-card:hover {
       border-color: var(--primary);
       background: var(--card-hover);
     }
 
-    .skill-card .icon-wrap {
+    .agent-card .icon-wrap {
       width: 48px;
       flex-shrink: 0;
       display: flex;
@@ -299,7 +261,7 @@
       align-items: center;
     }
 
-    .skill-card .icon {
+    .agent-card .icon {
       width: 48px;
       height: 48px;
       border-radius: 8px;
@@ -311,13 +273,13 @@
       font-size: 22px;
     }
 
-    .skill-card .icon img {
+    .agent-card .icon img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
 
-    .skill-card .installed-badge {
+    .agent-card .installed-badge {
       margin-top: 6px;
       padding: 0 5px;
       font-size: 10px;
@@ -325,22 +287,17 @@
       line-height: 18px;
     }
 
-    .skill-card .installed-badge.installed {
+    .agent-card .installed-badge.installed {
       background: var(--primary-light);
       color: var(--primary);
     }
 
-    .skill-card .installed-badge.update {
-      background: var(--warning-light);
-      color: var(--warning);
-    }
-
-    .skill-card .content-wrap {
+    .agent-card .content-wrap {
       flex: 1;
       min-width: 0;
     }
 
-    .skill-card .name {
+    .agent-card .name {
       font-size: 13px;
       font-weight: 500;
       color: var(--text);
@@ -350,7 +307,7 @@
       padding-right: 50px;
     }
 
-    .skill-card .desc {
+    .agent-card .desc {
       font-size: 11px;
       color: var(--text-secondary);
       margin-top: 3px;
@@ -361,13 +318,13 @@
       overflow: hidden;
     }
 
-    .skill-card .action {
+    .agent-card .action {
       position: absolute;
       top: 10px;
       right: 10px;
     }
 
-    .skill-card .action .install-btn {
+    .agent-card .action .install-btn {
       height: 24px;
       padding: 0 8px;
       border-radius: 999px;
@@ -383,43 +340,33 @@
       transition: all 0.15s;
     }
 
-    .skill-card .action .install-btn:hover {
+    .agent-card .action .install-btn:hover {
       background: var(--border);
       color: var(--text);
     }
 
-    .skill-card .action .update-btn {
-      background: var(--warning-light);
-      color: var(--warning);
-    }
-
-    .skill-card .action .update-btn:hover {
-      opacity: 0.8;
-    }
-
-    .skill-card .action .installed-btn {
+    .agent-card .action .installed-btn {
       background: var(--primary-light);
       color: var(--primary);
     }
 
-    .skill-card .progress {
+    .agent-card .progress {
       width: 52px;
     }
 
-    .skill-card .progress-bar {
+    .agent-card .progress-bar {
       height: 4px;
       background: var(--border);
       border-radius: 2px;
       overflow: hidden;
     }
 
-    .skill-card .progress-bar .fill {
+    .agent-card .progress-bar .fill {
       height: 100%;
       background: var(--primary);
       transition: width 0.2s;
     }
 
-    /* Installed section */
     .installed-section {
       margin-bottom: 20px;
     }
@@ -456,7 +403,6 @@
       color: var(--text-tertiary);
     }
 
-    /* Detail modal */
     .modal-overlay {
       position: fixed;
       inset: 0;
@@ -682,7 +628,6 @@
       padding: 32px;
     }
 
-    /* Feature list */
     .feature-list {
       display: flex;
       flex-direction: column;
@@ -705,7 +650,6 @@
       flex-shrink: 0;
     }
 
-    /* Utility */
     .hidden {
       display: none !important;
     }
@@ -713,32 +657,25 @@
 </head>
 <body>
   <div class="app">
-    <!-- Header -->
     <div class="header">
       <div class="tabs">
         <button class="tab active" data-tab="store">
-          技能库
+          助手库
         </button>
         <button class="tab" data-tab="installed">
-          我的技能
+          我的助手
           <span class="badge" id="installedBadge">0</span>
         </button>
       </div>
       <div class="search-box">
         <input type="text" id="searchInput" placeholder="搜索..." />
       </div>
-      <button class="import-btn hidden" id="importBtn">
-        <span class="icon">+</span>
-        <span>上传</span>
-      </button>
     </div>
 
-    <!-- Category filter (store tab only) -->
     <div class="categories" id="categoriesBar">
       <button class="category-pill active" data-category="all">精选</button>
     </div>
 
-    <!-- Content -->
     <div class="content" id="content">
       <div class="loading">
         <div class="spinner"></div>
@@ -746,7 +683,6 @@
     </div>
   </div>
 
-  <!-- Detail Modal -->
   <div class="modal-overlay hidden" id="detailModal">
     <div class="modal">
       <div class="modal-header">
@@ -759,24 +695,58 @@
     </div>
   </div>
 
+  <!-- Edit Modal for installed assistants -->
+  <div class="modal-overlay hidden" id="editModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span style="font-size:14px;font-weight:500;color:var(--text)">编辑助手</span>
+        <button class="modal-close" id="editModalClose">✕</button>
+      </div>
+      <div class="modal-body" id="editModalBody">
+        <div class="edit-field" style="margin-bottom:16px">
+          <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">名称</label>
+          <input type="text" id="editNameInput" style="width:100%;background:var(--card-hover);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);outline:none" />
+        </div>
+        <div class="edit-field" style="margin-bottom:16px">
+          <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">描述</label>
+          <textarea id="editDescInput" rows="3" style="width:100%;background:var(--card-hover);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);outline:none;resize:vertical;line-height:1.5"></textarea>
+        </div>
+        <div class="edit-field" style="margin-bottom:16px">
+          <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">头像 URL</label>
+          <input type="text" id="editAvatarInput" placeholder="https://..." style="width:100%;background:var(--card-hover);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);outline:none" />
+        </div>
+        <div id="editSkillsList" style="margin-bottom:8px"></div>
+      </div>
+      <div class="modal-footer" id="editModalFooter">
+        <button class="btn btn-primary" id="editSaveBtn" style="flex:1">保存</button>
+      </div>
+    </div>
+  </div>
+
   <script>
-    // ==================== State ====================
     const state = {
       activeTab: 'store',
-      skills: [],
+      assistants: [],
       categories: [],
       selectedCategory: 'all',
       searchQuery: '',
       installedList: [],
-      installingSkillId: null,
+      installingAssistantId: null,
       installProgress: 0,
       nextCursor: null,
       hasMore: false,
       loading: false,
       loadingMore: false,
+      editingAssistant: null,
+      editName: '',
+      editDescription: '',
+      editAvatar: '',
+      detailAssistant: null,
+      detailData: null,
+      detailSkills: [],
+      detailSkillTags: {},
     };
 
-    // ==================== DOM refs ====================
     const $ = (sel) => document.querySelector(sel);
     const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -784,27 +754,26 @@
     const categoriesBar = $('#categoriesBar');
     const searchInput = $('#searchInput');
     const installedBadge = $('#installedBadge');
-    const importBtn = $('#importBtn');
     const detailModal = $('#detailModal');
     const modalBody = $('#modalBody');
     const modalFooter = $('#modalFooter');
     const modalClose = $('#modalClose');
+    const editModal = $('#editModal');
+    const editModalBody = $('#editModalBody');
+    const editModalClose = $('#editModalClose');
+    const editNameInput = $('#editNameInput');
+    const editDescInput = $('#editDescInput');
+    const editAvatarInput = $('#editAvatarInput');
+    const editSkillsList = $('#editSkillsList');
+    const editSaveBtn = $('#editSaveBtn');
 
-    // ==================== Utils ====================
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
 
-    function normalizeVersion(version) {
-      const v = (version || '').trim().toLowerCase();
-      if (v === 'unknown' || v === 'unkown') return '';
-      return v;
-    }
-
-    // ==================== API ====================
-    async function fetchSkills(cursor, append = false) {
+    async function fetchAssistants(cursor, append = false) {
       try {
         if (append) state.loadingMore = true;
         else state.loading = true;
@@ -816,22 +785,22 @@
         if (state.searchQuery.trim()) params.query = state.searchQuery.trim();
         params.limit = 40;
 
-        const res = await window.mossApp.skillStore.fetchSkills(params);
+        const res = await window.mossApp.agentStore.fetchAssistants(params);
 
         if (res.success && res.data) {
-          const newSkills = res.data.skills || [];
+          const newAssistants = res.data.assistants || [];
           if (append) {
-            const existingIds = new Set(state.skills.map(s => s.id));
-            const unique = newSkills.filter(s => !existingIds.has(s.id));
-            state.skills = [...state.skills, ...unique];
+            const existingIds = new Set(state.assistants.map(s => s.id));
+            const unique = newAssistants.filter(s => !existingIds.has(s.id));
+            state.assistants = [...state.assistants, ...unique];
           } else {
-            state.skills = newSkills;
+            state.assistants = newAssistants;
           }
           state.nextCursor = res.data.next_cursor || null;
           state.hasMore = res.data.has_more || false;
         }
       } catch (err) {
-        console.error('fetchSkills error:', err);
+        console.error('fetchAssistants error:', err);
       } finally {
         state.loading = false;
         state.loadingMore = false;
@@ -841,7 +810,7 @@
 
     async function fetchCategories() {
       try {
-        const res = await window.mossApp.skillStore.fetchCategories();
+        const res = await window.mossApp.agentStore.fetchCategories();
         if (res.success && res.data) {
           state.categories = res.data;
           renderCategories();
@@ -851,26 +820,25 @@
       }
     }
 
-    async function fetchInstalledSkills() {
+    async function fetchInstalledAssistants() {
       try {
-        const res = await window.mossApp.skillStore.getInstalledSkills();
+        const res = await window.mossApp.agentStore.getInstalledAssistants();
         if (res.success && res.data) {
           state.installedList = res.data;
           installedBadge.textContent = res.data.length;
           render();
         }
       } catch (err) {
-        console.error('fetchInstalledSkills error:', err);
+        console.error('fetchInstalledAssistants error:', err);
       }
     }
 
-    async function installSkill(skill) {
-      if (state.installingSkillId) return;
-      state.installingSkillId = skill.id;
+    async function installAssistant(assistant, skillIds = []) {
+      if (state.installingAssistantId) return;
+      state.installingAssistantId = assistant.id;
       state.installProgress = 0;
       render();
 
-      // Simulate progress
       const progressInterval = setInterval(() => {
         if (state.installProgress < 85) {
           state.installProgress += 10;
@@ -879,39 +847,35 @@
       }, 200);
 
       try {
-        // Fetch detail to get version info
-        const detailRes = await window.mossApp.skillStore.fetchSkillDetail(skill.id);
-        console.log('[SkillStore] detailRes:', JSON.stringify(detailRes).slice(0, 500));
-        if (!detailRes.success || !detailRes.data) {
-          alert('获取技能详情失败: ' + (detailRes.error || JSON.stringify(detailRes.data)));
+        const sourceUrl = assistant._sourceUrl;
+        if (!sourceUrl) {
+          alert('该助手暂不支持安装');
           return;
         }
 
-        // Check if versions array exists and has items
-        const versions = detailRes.data.versions || [];
-        console.log('[SkillStore] versions:', JSON.stringify(versions).slice(0, 300));
-        if (!versions || versions.length === 0) {
-          alert('技能无可用版本');
-          return;
-        }
-
-        const latest = versions[0];
-        console.log('[SkillStore] Installing with:', { name: skill.name, sourceUrl: latest.source_url, version: latest.version });
-        const res = await window.mossApp.skillStore.downloadAndInstall({
-          skillName: skill.name,
-          sourceUrl: latest.source_url,
-          version: latest.version,
-          checksum: latest.checksum,
-          skillMeta: skill,
+        const res = await window.mossApp.agentStore.downloadAndInstall({
+          assistantName: assistant.name,
+          sourceUrl: sourceUrl,
+          version: '1.0.0',
+          checksum: '',
+          assistantMeta: assistant,
+          selectedSkillIds: skillIds,
         });
-        console.log('[SkillStore] install result:', res);
 
         clearInterval(progressInterval);
         state.installProgress = 100;
 
         if (res.success) {
-          await fetchInstalledSkills();
-          await fetchSkills(); // Refresh store list to update "已安装" badges
+          let msg = '安装成功';
+          if (res.data?.installedSkills?.length > 0) {
+            msg += `，${res.data.installedSkills.length} 个技能安装成功`;
+          }
+          if (res.data?.failedSkills?.length > 0) {
+            msg += `，${res.data.failedSkills.length} 个技能安装失败`;
+          }
+          alert(msg);
+          await fetchInstalledAssistants();
+          await fetchAssistants();
           closeDetailModal();
         } else {
           alert('安装失败: ' + (res.error || '未知错误'));
@@ -920,19 +884,19 @@
         clearInterval(progressInterval);
         alert('安装失败: ' + err.message);
       } finally {
-        state.installingSkillId = null;
+        state.installingAssistantId = null;
         state.installProgress = 0;
         render();
       }
     }
 
-    async function uninstallSkill(skillName) {
-      if (!confirm('确认卸载该技能？')) return;
+    async function uninstallAssistant(assistantName) {
+      if (!confirm('确认卸载该助手？')) return;
 
       try {
-        const res = await window.mossApp.skillStore.uninstall(skillName);
+        const res = await window.mossApp.agentStore.uninstall(assistantName);
         if (res.success) {
-          await fetchInstalledSkills();
+          await fetchInstalledAssistants();
           closeDetailModal();
         } else {
           alert('卸载失败: ' + (res.error || '未知错误'));
@@ -942,24 +906,6 @@
       }
     }
 
-    async function openImportDialog() {
-      try {
-        const res = await window.mossApp.skillStore.openImportDialog();
-        if (!res.success || res.error === 'Canceled') return;
-
-        const importRes = await window.mossApp.skillStore.importLocal(res.data.filePath);
-        if (importRes.success) {
-          alert('导入成功');
-          await fetchInstalledSkills();
-        } else {
-          alert('导入失败: ' + (importRes.error || '未知错误'));
-        }
-      } catch (err) {
-        alert('导入失败: ' + err.message);
-      }
-    }
-
-    // ==================== Render ====================
     function render() {
       if (state.activeTab === 'store') {
         renderStore();
@@ -970,36 +916,33 @@
 
     function renderStore() {
       categoriesBar.classList.remove('hidden');
-      importBtn.classList.add('hidden');
 
       if (state.loading) {
         content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
         return;
       }
 
-      if (state.skills.length === 0) {
+      if (state.assistants.length === 0) {
         content.innerHTML = `
           <div class="empty">
-            <div class="icon">⚡</div>
-            <p>暂无技能</p>
+            <div class="icon">🤖</div>
+            <p>暂无助手</p>
           </div>
         `;
         return;
       }
 
       const html = `
-        <div class="skill-grid">
-          ${state.skills.map(skill => renderSkillCard(skill)).join('')}
+        <div class="agent-grid">
+          ${state.assistants.map(a => renderAgentCard(a)).join('')}
         </div>
         ${state.loadingMore ? '<div class="loading"><div class="spinner"></div></div>' : ''}
-        ${!state.hasMore && !state.loadingMore ? '' : ''}
       `;
       content.innerHTML = html;
     }
 
     function renderInstalled() {
       categoriesBar.classList.add('hidden');
-      importBtn.classList.remove('hidden');
 
       if (state.loading) {
         content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -1009,63 +952,30 @@
       if (state.installedList.length === 0) {
         content.innerHTML = `
           <div class="empty">
-            <div class="icon">⚡</div>
-            <p>暂无已安装的技能</p>
+            <div class="icon">🤖</div>
+            <p>暂无已安装的助手</p>
           </div>
         `;
         return;
       }
 
-      const custom = state.installedList.filter(s => !s.isBuiltin && s.isUploaded);
-      const hub = state.installedList.filter(s => !s.isBuiltin && s.isHubInstalled);
-      const builtin = state.installedList.filter(s => s.isBuiltin);
-      // Local skills - neither builtin, hub, nor uploaded (e.g., skills in ~/.claude/skills without meta)
-      const local = state.installedList.filter(s => !s.isBuiltin && !s.isHubInstalled && !s.isUploaded);
-
-      let html = '';
-
-      // Custom skills
-      html += renderInstalledSection('自定义技能', custom, 'customSkills');
-      // Hub skills
-      html += renderInstalledSection('Hub 技能', hub, 'hubSkills');
-      // Local skills
-      html += renderInstalledSection('本地技能', local, 'localSkills');
-      // Builtin skills
-      html += renderInstalledSection('内置技能', builtin, 'builtinSkills');
-
-      content.innerHTML = html;
-    }
-
-    function renderInstalledSection(title, skills, emptyKey) {
-      const count = skills.length;
-      if (count === 0) {
-        return `
-          <div class="installed-section">
-            <div class="installed-section-header">
-              <span class="installed-section-title">${title}</span>
-              <span class="installed-section-count">0</span>
-            </div>
-            <div class="installed-section-empty">暂无${title}</div>
-          </div>
-        `;
-      }
-
-      return `
+      const html = `
         <div class="installed-section">
           <div class="installed-section-header">
-            <span class="installed-section-title">${title}</span>
-            <span class="installed-section-count">${count}</span>
+            <span class="installed-section-title">已安装助手</span>
+            <span class="installed-section-count">${state.installedList.length}</span>
           </div>
-          <div class="skill-grid">
-            ${skills.map(skill => renderInstalledCard(skill)).join('')}
+          <div class="agent-grid">
+            ${state.installedList.map(a => renderInstalledCard(a)).join('')}
           </div>
         </div>
       `;
+      content.innerHTML = html;
     }
 
-    function renderSkillCard(skill) {
-      const isInstalled = state.installedList.some(s => s.name === skill.name || s.meta?.id === skill.id);
-      const isInstalling = state.installingSkillId === skill.id;
+    function renderAgentCard(assistant) {
+      const isInstalled = state.installedList.some(s => s.name === assistant.name);
+      const isInstalling = state.installingAssistantId === assistant.id;
 
       let badgeHtml = '';
       if (isInstalled) {
@@ -1081,46 +991,46 @@
             </div>
           </div>
         `;
-      } else if (!isInstalled) {
+      } else if (!isInstalled && assistant._sourceUrl) {
+        const skillIds = (assistant.skills || []).join(',');
         actionHtml = `
           <div class="action">
-            <button class="install-btn" data-install="${skill.id}">安装</button>
+            <button class="install-btn" data-install="${assistant.id}" data-skill-ids="${skillIds}">安装</button>
           </div>
         `;
       }
 
-      const iconHtml = skill.icon
-        ? `<img src="${escapeHtml(skill.icon)}" alt="${escapeHtml(skill.display_name || skill.name)}" onerror="this.parentElement.innerHTML='${escapeHtml(skill.emoji || '📦')}'"/>`
-        : escapeHtml(skill.emoji || '📦');
+      const iconHtml = assistant.avatar
+        ? `<img src="${escapeHtml(assistant.avatar)}" alt="${escapeHtml(assistant.display_name || assistant.name)}" onerror="this.parentElement.innerHTML='${escapeHtml(assistant.emoji || '🤖')}'"/>`
+        : escapeHtml(assistant.emoji || '🤖');
 
       return `
-        <div class="skill-card" data-skill-id="${skill.id}">
+        <div class="agent-card" data-assistant-id="${assistant.id}">
           <div class="icon-wrap">
             <div class="icon">${iconHtml}</div>
             ${badgeHtml}
           </div>
           <div class="content-wrap">
-            <div class="name">${escapeHtml(skill.display_name || skill.name)}</div>
-            <div class="desc">${escapeHtml(skill.description || '')}</div>
+            <div class="name">${escapeHtml(assistant.display_name || assistant.name)}</div>
+            <div class="desc">${escapeHtml(assistant.description || '')}</div>
           </div>
           ${actionHtml}
         </div>
       `;
     }
 
-    function renderInstalledCard(skill) {
-      const displayName = skill.meta?.display_name || skill.displayName || skill.name;
-      const description = skill.meta?.description || skill.description || '';
-      const emoji = skill.meta?.emoji || skill.emoji || '⚡';
-      const icon = skill.meta?.icon || skill.icon || '';
-      const version = normalizeVersion(skill.meta?.installed_version || skill.version);
+    function renderInstalledCard(assistant) {
+      const displayName = assistant.displayName || assistant.name;
+      const description = assistant.description || '';
+      const emoji = assistant.emoji || '🤖';
+      const avatar = assistant.avatar || '';
 
-      const iconHtml = icon
-        ? `<img src="${escapeHtml(icon)}" alt="${escapeHtml(displayName)}" onerror="this.parentElement.innerHTML='${escapeHtml(emoji)}'"/>`
+      const iconHtml = avatar
+        ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(displayName)}" onerror="this.parentElement.innerHTML='${escapeHtml(emoji)}'"/>`
         : escapeHtml(emoji);
 
       return `
-        <div class="skill-card" data-installed-skill="${skill.name}">
+        <div class="agent-card" data-installed-card="${assistant.name}">
           <div class="icon-wrap">
             <div class="icon">${iconHtml}</div>
           </div>
@@ -1128,8 +1038,8 @@
             <div class="name">${escapeHtml(displayName)}</div>
             <div class="desc">${escapeHtml(description)}</div>
           </div>
-          <div class="action" data-action-skill="${skill.name}">
-            <button class="install-btn" data-uninstall="${skill.name}" title="卸载">✕</button>
+          <div class="action" data-action-assistant="${assistant.name}">
+            <button class="install-btn" data-uninstall="${assistant.name}" title="卸载">✕</button>
           </div>
         </div>
       `;
@@ -1145,28 +1055,53 @@
       `).join('');
     }
 
-    // ==================== Detail Modal ====================
-    function openDetailModal(skill) {
+    function openDetailModal(assistant) {
       detailModal.classList.remove('hidden');
       modalBody.innerHTML = '<div class="loading-content"><div class="spinner"></div></div>';
       modalFooter.innerHTML = '';
 
-      const isInstalled = state.installedList.some(s => s.name === skill.name || s.meta?.id === skill.id);
+      state.detailAssistant = assistant;
+      state.detailData = null;
+      state.detailSkills = [];
+
+      const isInstalled = state.installedList.some(s => s.name === assistant.name);
 
       Promise.all([
-        window.mossApp.skillStore.fetchSkillDetail(skill.id),
-      ]).then(([detailRes]) => {
+        window.mossApp.agentStore.fetchAssistantDetail(assistant.id),
+        window.mossApp.skillStore.getInstalledSkills(),
+      ]).then(async ([detailRes, installedSkillsRes]) => {
         const detail = detailRes.success ? detailRes.data : null;
-        renderModalContent(skill, detail, isInstalled);
+        state.detailData = detail;
+
+        // Get installed skill names for checking
+        const installedSkillNames = new Set(
+          (installedSkillsRes.success ? installedSkillsRes.data : []).map(s => s.name)
+        );
+
+        // Fetch skill details for associated skills
+        const skillIds = assistant.skills || [];
+        let skills = [];
+        if (skillIds.length > 0) {
+          const skillsRes = await window.mossApp.agentStore.fetchSkillDetailsByIds(skillIds);
+          if (skillsRes.success && skillsRes.data) {
+            skills = skillsRes.data.map(s => ({
+              ...s,
+              isInstalled: installedSkillNames.has(s.name),
+            }));
+          }
+        }
+        state.detailSkills = skills;
+
+        renderModalContent(assistant, detail, skills, isInstalled);
       });
     }
 
-    function renderModalContent(skill, detail, isInstalled) {
-      const iconHtml = skill.icon
-        ? `<img src="${escapeHtml(skill.icon)}" alt="${escapeHtml(skill.display_name || skill.name)}" onerror="this.innerHTML='${escapeHtml(skill.emoji || '📦')}'"/>`
-        : `<div style="font-size:34px">${escapeHtml(skill.emoji || '📦')}</div>`;
+    function renderModalContent(assistant, detail, skills, isInstalled) {
+      const iconHtml = assistant.avatar
+        ? `<img src="${escapeHtml(assistant.avatar)}" alt="${escapeHtml(assistant.display_name || assistant.name)}" onerror="this.innerHTML='${escapeHtml(assistant.emoji || '🤖')}'"/>`
+        : `<div style="font-size:34px">${escapeHtml(assistant.emoji || '🤖')}</div>`;
 
-      const categoriesHtml = (skill.categories || []).map(c =>
+      const categoriesHtml = (assistant.categories || []).map(c =>
         `<span class="modal-category">${escapeHtml(c)}</span>`
       ).join('');
 
@@ -1193,16 +1128,47 @@
         } catch {}
       }
 
+      // Skills section
+      let skillsHtml = '';
+      if (skills && skills.length > 0) {
+        const skillBadges = skills.map(skill => {
+          const skillIcon = skill.icon
+            ? `<img src="${escapeHtml(skill.icon)}" style="width:28px;height:28px;border-radius:6px;object-fit:cover" onerror="this.parentElement.innerHTML='${escapeHtml(skill.emoji || '📦')}'"/>`
+            : escapeHtml(skill.emoji || '📦');
+          const installedClass = skill.isInstalled ? 'background:var(--primary-light);color:var(--primary)' : 'background:var(--card-hover);color:var(--text-secondary)';
+          return `
+            <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--card-hover);border-radius:8px;">
+              <div style="width:28px;height:28px;border-radius:6px;overflow:hidden;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                ${skillIcon}
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(skill.display_name || skill.name)}</div>
+              </div>
+              <span style="padding:2px 6px;border-radius:4px;font-size:10px;${installedClass}">
+                ${skill.isInstalled ? '已安装' : '未安装'}
+              </span>
+            </div>
+          `;
+        }).join('');
+        skillsHtml = `
+          <div class="modal-section">
+            <div class="modal-section-title"><span class="icon">⚡</span> 关联技能 <span style="font-weight:400;color:var(--text-tertiary)">(${skills.length})</span></div>
+            <div style="display:flex;flex-direction:column;gap:6px">${skillBadges}</div>
+            <div style="margin-top:8px;font-size:11px;color:var(--text-tertiary)">安装助手时会自动安装关联的技能</div>
+          </div>
+        `;
+      }
+
       modalBody.innerHTML = `
         <div class="modal-icon-wrap">
           <div class="modal-icon">${iconHtml}</div>
-          <div class="modal-name">${escapeHtml(skill.display_name || skill.name)}</div>
+          <div class="modal-name">${escapeHtml(assistant.display_name || assistant.name)}</div>
           ${categoriesHtml ? `<div class="modal-categories">${categoriesHtml}</div>` : ''}
         </div>
 
         <div class="modal-section">
-          <div class="modal-section-title"><span class="icon">✦</span> 技能介绍</div>
-          <div class="modal-section-desc">${escapeHtml(skill.description || '')}</div>
+          <div class="modal-section-title"><span class="icon">✦</span> 助手介绍</div>
+          <div class="modal-section-desc">${escapeHtml(assistant.description || '')}</div>
         </div>
 
         ${featuresHtml ? `
@@ -1211,19 +1177,22 @@
             <div class="feature-list">${featuresHtml}</div>
           </div>
         ` : ''}
+
+        ${skillsHtml}
       `;
 
-      renderModalFooter(skill, detail, isInstalled);
+      renderModalFooter(assistant, detail, skills, isInstalled);
     }
 
-    function renderModalFooter(skill, detail, isInstalled) {
-      const latestVersion = detail?.versions?.[0];
-      const isInstalling = state.installingSkillId === skill.id;
+    function renderModalFooter(assistant, detail, skills, isInstalled) {
+      const isInstalling = state.installingAssistantId === assistant.id;
+      const hasSourceUrl = assistant._sourceUrl;
+      const skillIds = (skills || []).map(s => s.id);
 
       if (isInstalled) {
         modalFooter.innerHTML = `
           <button class="btn btn-primary" data-action="use">去使用</button>
-          <button class="btn-icon danger" data-action="uninstall" data-skill="${skill.name}">✕</button>
+          <button class="btn-icon danger" data-action="uninstall" data-assistant="${assistant.name}">✕</button>
         `;
       } else if (isInstalling) {
         modalFooter.innerHTML = `
@@ -1231,10 +1200,13 @@
             <div class="progress-bar"><div class="fill" style="width:${state.installProgress}%"></div></div>
           </div>
         `;
-      } else if (latestVersion) {
+      } else if (hasSourceUrl) {
         modalFooter.innerHTML = `
-          <button class="btn btn-primary" data-action="install" data-skill-id="${skill.id}">安装技能</button>
-          <button class="btn btn-secondary" data-action="download" data-skill-id="${skill.id}">下载</button>
+          <button class="btn btn-primary" data-action="install" data-assistant-id="${assistant.id}" data-skill-ids="${skillIds.join(',')}">安装助手</button>
+        `;
+      } else {
+        modalFooter.innerHTML = `
+          <span style="color:var(--text-tertiary);font-size:12px">该助手暂不支持安装</span>
         `;
       }
 
@@ -1250,124 +1222,194 @@
       detailModal.classList.add('hidden');
     }
 
-    // ==================== Event Handlers ====================
+    async function openEditModal(assistant) {
+      state.editingAssistant = assistant;
+      state.editName = assistant.displayName || assistant.name || '';
+      state.editDescription = assistant.description || '';
+      state.editAvatar = assistant.avatar || '';
+
+      editNameInput.value = state.editName;
+      editDescInput.value = state.editDescription;
+      editAvatarInput.value = state.editAvatar;
+
+      // Show loading skills
+      editSkillsList.innerHTML = '<div style="font-size:12px;color:var(--text-secondary)">加载关联技能...</div>';
+
+      editModal.classList.remove('hidden');
+
+      // Fetch associated skills
+      if (assistant.skills && assistant.skills.length > 0) {
+        try {
+          const res = await window.mossApp.agentStore.fetchSkillDetailsByIds(assistant.skills);
+          if (res.success && res.data && res.data.length > 0) {
+            const skillBadges = res.data.map(skill => {
+              const icon = skill.icon ? `<img src="${escapeHtml(skill.icon)}" style="width:16px;height:16px;border-radius:3px;object-fit:cover" onerror="this.parentElement.textContent='${escapeHtml(skill.emoji || '📦')}'"/>` : escapeHtml(skill.emoji || '📦');
+              return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--card-hover);border-radius:6px;font-size:11px;color:var(--text-secondary)">${icon} ${escapeHtml(skill.display_name || skill.name)}</span>`;
+            }).join('');
+            editSkillsList.innerHTML = `<div style="margin-bottom:6px;font-size:12px;color:var(--text-secondary)">关联技能</div>${skillBadges}`;
+          } else {
+            editSkillsList.innerHTML = '';
+          }
+        } catch {
+          editSkillsList.innerHTML = '';
+        }
+      } else {
+        editSkillsList.innerHTML = '';
+      }
+    }
+
+    function closeEditModal() {
+      editModal.classList.add('hidden');
+      state.editingAssistant = null;
+    }
+
+    async function saveAssistantEdit() {
+      if (!state.editingAssistant) return;
+
+      const name = editNameInput.value.trim();
+      const description = editDescInput.value.trim();
+      const avatar = editAvatarInput.value.trim();
+
+      try {
+        const res = await window.mossApp.agentStore.updateAssistantMeta(state.editingAssistant.name, {
+          display_name: name,
+          description: description,
+          avatar: avatar,
+        });
+
+        if (res.success) {
+          await fetchInstalledAssistants();
+          closeEditModal();
+        } else {
+          alert('保存失败: ' + (res.error || '未知错误'));
+        }
+      } catch (err) {
+        alert('保存失败: ' + err.message);
+      }
+    }
+
     function setupEventListeners() {
-      // Tab switching
       $$('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
           $$('.tab').forEach(t => t.classList.remove('active'));
           tab.classList.add('active');
           state.activeTab = tab.dataset.tab;
-          state.skills = [];
+          state.assistants = [];
           state.nextCursor = null;
           state.hasMore = false;
           if (state.activeTab === 'store') {
-            fetchSkills();
+            fetchAssistants();
           } else {
-            fetchInstalledSkills();
+            fetchInstalledAssistants();
           }
         });
       });
 
-      // Search
       let searchTimer;
       searchInput.addEventListener('input', () => {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => {
           state.searchQuery = searchInput.value;
-          state.skills = [];
+          state.assistants = [];
           state.nextCursor = null;
           state.hasMore = false;
-          fetchSkills();
+          fetchAssistants();
         }, 300);
       });
 
-      // Category filter
       categoriesBar.addEventListener('click', (e) => {
         const pill = e.target.closest('.category-pill');
         if (!pill) return;
         $$('.category-pill').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
         state.selectedCategory = pill.dataset.category;
-        state.skills = [];
+        state.assistants = [];
         state.nextCursor = null;
         state.hasMore = false;
-        fetchSkills();
+        fetchAssistants();
       });
 
-      // Skill card click (open detail)
       content.addEventListener('click', (e) => {
-        const card = e.target.closest('.skill-card');
+        const card = e.target.closest('.agent-card');
         if (!card) return;
 
-        // Check for install/uninstall button first
         const installBtn = e.target.closest('[data-install]');
         if (installBtn) {
-          const skillId = installBtn.dataset.install;
-          const skill = state.skills.find(s => s.id === skillId);
-          if (skill) installSkill(skill);
+          const assistantId = installBtn.dataset.install;
+          const skillIdsStr = installBtn.dataset.skillIds || '';
+          const skillIds = skillIdsStr ? skillIdsStr.split(',').filter(Boolean) : [];
+          const assistant = state.assistants.find(s => s.id === assistantId);
+          if (assistant) installAssistant(assistant, skillIds);
           return;
         }
 
         const uninstallBtn = e.target.closest('[data-uninstall]');
         if (uninstallBtn) {
-          const skillName = uninstallBtn.dataset.uninstall;
-          uninstallSkill(skillName);
+          const assistantName = uninstallBtn.dataset.uninstall;
+          uninstallAssistant(assistantName);
           return;
         }
 
-        // Open detail modal
-        const skillId = card.dataset.skillId;
-        if (skillId) {
-          const skill = state.skills.find(s => s.id === skillId);
-          if (skill) openDetailModal(skill);
+        const installedCard = e.target.closest('[data-installed-card]');
+        if (installedCard) {
+          const assistantName = installedCard.dataset.installedCard;
+          const assistant = state.installedList.find(s => s.name === assistantName);
+          if (assistant) openEditModal(assistant);
+          return;
+        }
+
+        const assistantId = card.dataset.assistantId;
+        if (assistantId) {
+          const assistant = state.assistants.find(s => s.id === assistantId);
+          if (assistant) openDetailModal(assistant);
         }
       });
 
-      // Modal close
       modalClose.addEventListener('click', closeDetailModal);
       detailModal.addEventListener('click', (e) => {
         if (e.target === detailModal) closeDetailModal();
       });
 
-      // Modal actions
       modalFooter.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
         const action = btn.dataset.action;
-        const skillId = btn.dataset.skillId;
-        const skillName = btn.dataset.skill;
+        const assistantId = btn.dataset.assistantId;
+        const assistantName = btn.dataset.assistant;
 
-        if (action === 'install' && skillId) {
-          const skill = state.skills.find(s => s.id === skillId);
-          if (skill) installSkill(skill);
-        } else if (action === 'uninstall' && skillName) {
-          uninstallSkill(skillName);
+        if (action === 'install' && assistantId) {
+          const assistant = state.assistants.find(s => s.id === assistantId);
+          const skillIdsStr = btn.dataset.skillIds || '';
+          const skillIds = skillIdsStr ? skillIdsStr.split(',').filter(Boolean) : [];
+          if (assistant) installAssistant(assistant, skillIds);
+        } else if (action === 'uninstall' && assistantName) {
+          uninstallAssistant(assistantName);
         } else if (action === 'use') {
           closeDetailModal();
         }
       });
 
-      // Import button
-      importBtn.addEventListener('click', openImportDialog);
+      editModalClose.addEventListener('click', closeEditModal);
+      editModal.addEventListener('click', (e) => {
+        if (e.target === editModal) closeEditModal();
+      });
+      editSaveBtn.addEventListener('click', saveAssistantEdit);
 
-      // Infinite scroll
       content.addEventListener('scroll', () => {
         if (!state.hasMore || state.loadingMore || state.activeTab !== 'store') return;
         const { scrollTop, scrollHeight, clientHeight } = content;
         if (scrollHeight - scrollTop - clientHeight < 100 && state.nextCursor) {
-          fetchSkills(state.nextCursor, true);
+          fetchAssistants(state.nextCursor, true);
         }
       });
     }
 
-    // ==================== Init ====================
     async function init() {
       setupEventListeners();
       await Promise.all([
         fetchCategories(),
-        fetchSkills(),
-        fetchInstalledSkills(),
+        fetchAssistants(),
+        fetchInstalledAssistants(),
       ]);
     }
 

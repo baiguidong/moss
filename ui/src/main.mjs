@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
+import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +39,7 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
+  coordinatorMode: false,
 });
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
@@ -262,6 +264,12 @@ function normalizeDesktopSettings(input, existing = {}) {
 
   if (typeof source.visionModel === 'string' && source.visionModel.trim()) {
     result.visionModel = source.visionModel.trim();
+  }
+
+  if (source.coordinatorMode !== undefined) {
+    result.coordinatorMode = Boolean(source.coordinatorMode);
+  } else if (result.coordinatorMode === undefined) {
+    result.coordinatorMode = DEFAULT_DESKTOP_SETTINGS.coordinatorMode;
   }
 
   return result;
@@ -2677,6 +2685,7 @@ async function ensureRuntime(sessionRecord) {
       return false;
     },
   });
+
   return sessionRecord.runtime;
 }
 
@@ -2813,6 +2822,7 @@ app.whenReady().then(() => {
 
   // Register app IPC handlers
   registerSkillStoreIpcHandlers();
+  registerAgentIpcHandlers();
   registerCronIpcHandlers();
 
   createWindow();
@@ -3254,11 +3264,14 @@ ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourc
   }
 });
 
-ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files }) => {
+ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode }) => {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
   }
+
+  // Store coordinator mode flag on sessionRecord so runtime can read it
+  sessionRecord.isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
 
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const filePaths = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f.trim()) : [];
@@ -3269,6 +3282,7 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   const isCreateAppMode = mode === 'create-app';
   const isIterateAppMode = mode === 'iterate-app';
   const isPlanOnly = mode === 'plan';
+  const isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
 
   if (isCreateAppMode && sessionRecord.pendingPlanApproval) {
     throw new Error('There is already a pending app creation plan awaiting approval.');
@@ -3295,6 +3309,14 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
 
   const visibleUserPrompt = trimmedPrompt;
 
+  // Set coordinator mode env var before creating runtime
+  const previousCoordinatorMode = process.env.CLAUDE_CODE_COORDINATOR_MODE;
+  if (isCoordinatorMode) {
+    process.env.CLAUDE_CODE_COORDINATOR_MODE = '1';
+  } else {
+    delete process.env.CLAUDE_CODE_COORDINATOR_MODE;
+  }
+
   const {
     latestAssistantText,
     streamedAssistantText,
@@ -3304,6 +3326,13 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
     runtimePrompt,
     visibleUserPrompt,
     attachments: filePaths,
+  }).finally(() => {
+    // Restore previous coordinator mode setting
+    if (previousCoordinatorMode !== undefined) {
+      process.env.CLAUDE_CODE_COORDINATOR_MODE = previousCoordinatorMode;
+    } else {
+      delete process.env.CLAUDE_CODE_COORDINATOR_MODE;
+    }
   });
 
   let createdApp = null;
@@ -3630,6 +3659,35 @@ ipcMain.handle('execution:list', async (_event, { sessionId } = {}) => {
   // Sort by creation time, oldest first
   list.sort((a, b) => a.createdAt - b.createdAt);
   return { executions: list };
+});
+
+ipcMain.handle('coordinator:list-tasks', async (_event, { sessionId }) => {
+  // List in-process teammate tasks from the coordinator session's runtime
+  const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
+  if (!sessionRecord?.runtime) {
+    return { tasks: [] };
+  }
+
+  try {
+    // Use the public getAppState() method added to ClaudeSession
+    const state = sessionRecord.runtime.getAppState?.();
+    if (!state?.tasks) {
+      return { tasks: [] };
+    }
+    const tasks = Object.values(state.tasks)
+      .filter(t => t.type === 'in_process_teammate')
+      .map(t => ({
+        id: t.id,
+        name: t.identity?.agentName || t.id,
+        status: t.status,
+        isIdle: t.isIdle || false,
+        description: t.description || '',
+        color: t.identity?.color || '#8b5cf6',
+      }));
+    return { tasks };
+  } catch {
+    return { tasks: [] };
+  }
 });
 
 ipcMain.handle('execution:focus', async (_event, { executionId }) => {

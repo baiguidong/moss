@@ -37,6 +37,17 @@ const mossApp = {
     importLocal: (sourcePath) => ipcRenderer.invoke('skill-store:importLocal', { sourcePath }),
     openImportDialog: () => ipcRenderer.invoke('skill-store:openImportDialog'),
   },
+  agentStore: {
+    fetchAssistants: (params) => ipcRenderer.invoke('agent:fetchAssistants', params),
+    fetchCategories: () => ipcRenderer.invoke('agent:fetchCategories'),
+    fetchAssistantDetail: (assistantId) => ipcRenderer.invoke('agent:fetchAssistantDetail', { assistantId }),
+    getInstalledAssistants: () => ipcRenderer.invoke('agent:getInstalledAssistants'),
+    downloadAndInstall: (params) => ipcRenderer.invoke('agent:downloadAndInstall', params),
+    uninstall: (assistantName, sourcePath) => ipcRenderer.invoke('agent:uninstall', { assistantName, sourcePath }),
+    updateAssistantMeta: (assistantName, updates) => ipcRenderer.invoke('agent:updateAssistantMeta', { assistantName, updates }),
+    getAssistantContext: (assistantName) => ipcRenderer.invoke('agent:getAssistantContext', { assistantName }),
+    fetchSkillDetailsByIds: (skillIds) => ipcRenderer.invoke('agent:fetchSkillDetailsByIds', { skillIds }),
+  },
   openDebug: () => ipcRenderer.invoke('app:open-debug', { name: document.title }),
   onAgentEvent: (callback) => {
     const handler = (_event, data) => callback(data);

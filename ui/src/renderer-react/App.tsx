@@ -4,7 +4,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
-import { ExecutionPetPanel } from '@/components/execution-pet-panel';
+import { ExecutionPetPanel, CoordinatorTaskPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, BuddySummary, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTh
 import type {
   AgentEvent,
   AppVersion,
+  CoordinatorTask,
   DesktopSettings,
   ExecutionSummary,
   FileTreeNode,
@@ -83,7 +84,7 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app';
+type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app' | 'coordinator';
 type LayoutState = {
   leftWidth: number;
   rightWidth: number;
@@ -195,6 +196,7 @@ export default function App() {
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
+  const [coordinatorTasks, setCoordinatorTasks] = React.useState<CoordinatorTask[]>([]);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
   const layoutRef = React.useRef(layout);
@@ -362,6 +364,31 @@ export default function App() {
     };
     loadExecutions();
     const timer = window.setInterval(loadExecutions, 3000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [activeSessionId]);
+
+  // Poll for coordinator mode in-process teammate tasks
+  React.useEffect(() => {
+    if (!activeSessionId) {
+      setCoordinatorTasks([]);
+      return;
+    }
+    let mounted = true;
+    const loadCoordinatorTasks = async () => {
+      try {
+        const result = await window.agentDesktop.listCoordinatorTasks(activeSessionId);
+        if (mounted && result?.tasks) {
+          setCoordinatorTasks(result.tasks);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadCoordinatorTasks();
+    const timer = window.setInterval(loadCoordinatorTasks, 2000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -677,6 +704,7 @@ export default function App() {
       mode: intent === 'chat' ? undefined : intent,
       appName: intent === 'iterate-app' ? selectedAppName : undefined,
       files: filesToSend?.map(f => f.path),
+      coordinatorMode: intent === 'coordinator' ? true : undefined,
     });
     const detail = await window.agentDesktop.getSession({ sessionId });
     setActiveDetail(detail);
@@ -850,6 +878,9 @@ export default function App() {
       if (settingsDraft.thinkingBudgetTokens !== desktopSettings.thinkingBudgetTokens) {
         payload.thinkingBudgetTokens = settingsDraft.thinkingBudgetTokens;
       }
+      if ((settingsDraft.coordinatorMode ?? false) !== (desktopSettings.coordinatorMode ?? false)) {
+        payload.coordinatorMode = settingsDraft.coordinatorMode ?? false;
+      }
 
       if (Object.keys(payload).length === 0) {
         setSettingsNotice('配置未发生变化');
@@ -908,6 +939,33 @@ export default function App() {
                   <p className="text-sm font-medium text-foreground">跳过所有权限确认</p>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
                     适合你完全信任当前工作区和工具执行结果的场景。
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
+              <p className="text-sm font-medium text-foreground">Agent 模式</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                启用后，Agent 将作为协调者启动多个 worker 并行处理复杂任务。
+              </p>
+              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/70 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-border bg-background text-primary"
+                  checked={Boolean(settingsDraft?.coordinatorMode)}
+                  onChange={(event) => {
+                    if (!settingsDraft) return;
+                    setSettingsDraft({
+                      ...settingsDraft,
+                      coordinatorMode: event.target.checked,
+                    });
+                  }}
+                />
+                <div>
+                  <p className="text-sm font-medium text-foreground">启用 Coordinator Mode</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    主 agent 协调多个 worker 并行执行，适合复杂任务。Worker 结果通过 PET 面板显示。
                   </p>
                 </div>
               </label>
@@ -1083,6 +1141,9 @@ export default function App() {
             </p>
             <p className="text-muted-foreground">
               API URL：{desktopSettings?.url || '（未设置）'}
+            </p>
+            <p className="text-muted-foreground">
+              Coordinator Mode：{desktopSettings?.coordinatorMode ? '已启用' : '已关闭'}
             </p>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">API Key：</span>
@@ -1381,6 +1442,7 @@ export default function App() {
             void window.agentDesktop.focusExecution(executionId);
           }}
         />
+        <CoordinatorTaskPanel tasks={coordinatorTasks} />
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}

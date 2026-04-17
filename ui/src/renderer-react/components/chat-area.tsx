@@ -31,7 +31,7 @@ import { MarkdownView } from "@/components/markdown-view";
 import { pasteService } from "@/lib/paste-service";
 import type { ChatMessage } from "@/lib/agent-transcript";
 
-type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app";
+type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app" | "coordinator";
 type PendingPlanApproval = {
   kind: "create-app" | "plan";
   originalPrompt: string;
@@ -42,9 +42,15 @@ type PendingPlanApproval = {
 type IntentOption = {
   id: ComposerIntent;
   title: string;
+  description?: string;
 };
 
 const intentOptions: IntentOption[] = [
+  {
+    id: "coordinator",
+    title: "Coordinator",
+    description: "主 agent 协调多个 worker 并行执行复杂任务",
+  },
   {
     id: "plan",
     title: "Copilot",
@@ -375,15 +381,19 @@ function IntentChip({
   onClick: () => void;
   onRemove?: () => void;
 }) {
+  const isCoordinator = option.id === "coordinator";
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
-        active
-          ? "border-primary/35 bg-primary/10 text-primary"
-          : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
+        active && isCoordinator
+          ? "border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-600 dark:text-purple-400"
+          : active
+            ? "border-primary/35 bg-primary/10 text-primary"
+            : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
         disabled && "cursor-not-allowed opacity-45",
       )}
+      title={option.description}
     >
       <button
         type="button"
@@ -392,6 +402,11 @@ function IntentChip({
         className="flex items-center gap-1.5"
       >
         <span>{option.title}</span>
+        {active && option.description && (
+          <span className="hidden text-[10px] opacity-70 sm:inline">
+            {option.description}
+          </span>
+        )}
       </button>
       {active && onRemove && (
         <button
@@ -630,9 +645,11 @@ function ComposerPanel({
                 ? `描述你想如何修改 ${selectedAppName}...`
                 : composerIntent === "create-app"
                   ? "描述你想创建的 App、目标用户、交互和风格..."
-                  : composerIntent === "plan"
-                    ? "描述需求，我会先给出计划..."
-                    : "输入任务、问题或想法..."
+                  : composerIntent === "coordinator"
+                    ? "描述复杂任务，我会启动多个 worker 并行执行..."
+                    : composerIntent === "plan"
+                      ? "描述需求，我会先给出计划..."
+                      : "输入任务、问题或想法..."
               : "继续输入消息..."
           }
           value={value}
@@ -731,16 +748,13 @@ function HomeLanding({
   onSend: (files?: Array<{ name: string; path: string }>) => void;
 }) {
   return (
-    <div className="mx-auto flex h-full w-full max-w-[860px] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
+    <div className="mx-auto flex h-[60%] w-full max-w-[80%] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
       <div className="mb-8 text-center sm:mb-10">
-        <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-          欢迎使用
-        </div>
-        <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl">
-          What can I do for you?
+        <h1 className="mt-24 text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
+          Hi，今天有什么安排？
         </h1>
         <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
-          让 moss 帮你查看代码、修改项目、规划任务，或者直接开始一个新的构建目标。
+          让 moss 帮你创建App、规划任务，或者直接开始一个新的构建目标。
         </p>
       </div>
 

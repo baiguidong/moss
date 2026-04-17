@@ -239,12 +239,17 @@ export function AppSidebar({
     <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn("border-b border-sidebar-border/80", collapsed ? "px-2 py-3" : "px-3 py-3")}>
         <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
-          {!collapsed && (
+          {!collapsed ? (
             <div className="min-w-0">
-              <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
-                moss
+              <div className="flex items-center gap-2">
+                <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
+                <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
+                  moss
+                </div>
               </div>
             </div>
+          ) : (
+            <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
           )}
           <Button
             variant="ghost"

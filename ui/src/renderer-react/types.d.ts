@@ -39,6 +39,7 @@ export type DesktopSettings = {
   settingsLoaded: boolean;
   settingsParseError: string;
   skippedSessionCount?: number;
+  coordinatorMode?: boolean;
 };
 
 export type StoredApp = {
@@ -97,9 +98,10 @@ declare global {
       send: (payload: {
         sessionId: string;
         prompt: string;
-        mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app';
+        mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app' | 'coordinator';
         appName?: string;
         files?: string[];
+        coordinatorMode?: boolean;
       }) => Promise<any>;
       approvePlan: (payload: { sessionId: string }) => Promise<any>;
       rejectPlan: (payload: { sessionId: string }) => Promise<any>;
@@ -128,6 +130,7 @@ declare global {
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
       listExecutions: (sessionId?: string) => Promise<{ executions: ExecutionSummary[] }>;
       focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
+      listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
     };
@@ -141,6 +144,15 @@ export type ExecutionSummary = {
   workspace: string;
   hasBubble: boolean;
   createdAt: number;
+};
+
+export type CoordinatorTask = {
+  id: string;
+  name: string;
+  status: string;
+  isIdle: boolean;
+  description: string;
+  color: string;
 };
 
 export type CronTask = {

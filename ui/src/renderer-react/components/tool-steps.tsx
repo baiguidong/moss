@@ -7,7 +7,6 @@ import {
   ChevronDown,
   Clock3,
   Loader2,
-  TerminalSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,14 +43,6 @@ function StatusIndicator({ status }: { status: ToolStatus }) {
     return <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />;
   }
   return <Clock3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />;
-}
-
-function getStatusLabel(step: ToolStep): string {
-  if (step.statusText?.trim()) return step.statusText.trim();
-  if (step.status === "running") return "进行中";
-  if (step.status === "success") return "执行完成";
-  if (step.status === "error") return "执行失败";
-  return "等待中";
 }
 
 function getActionVerb(step: ToolStep): string {
@@ -106,19 +97,28 @@ function extractOutputText(result?: string): string {
 
 function getResultSubtitle(step: ToolStep): string | undefined {
   const text = extractOutputText(step.result);
-  if (!text) return undefined;
-  const firstLine = text
-    .split("\n")
-    .map((line) => line.trim())
-    .find(Boolean);
-  return firstLine ? firstLine.slice(0, 140) : undefined;
+  if (text) {
+    const firstLine = text
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    return firstLine ? firstLine.slice(0, 140) : undefined;
+  }
+  // For pending/running state, show inputSummary as subtitle if no result yet
+  if ((step.status === "pending" || step.status === "running") && step.inputSummary?.trim()) {
+    return step.inputSummary.trim().slice(0, 140);
+  }
+  return undefined;
 }
 
-function SingleToolStep({ step }: { step: ToolStep }) {
+function SingleToolStep({ step, isComplete }: { step: ToolStep; isComplete?: boolean }) {
   const detail = step.result?.trim() || "";
   const subtitle = getResultSubtitle(step);
   const canExpand = Boolean(detail);
-  const [expanded, setExpanded] = React.useState(step.status === "running" || step.status === "error");
+  // When isComplete is true (tools done), default to collapsed
+  const [expanded, setExpanded] = React.useState(
+    (step.status === "running" || step.status === "error") && !isComplete
+  );
 
   const MAX_RESULT_LINES = 10;
   const lines = detail.split("\n");
@@ -126,16 +126,26 @@ function SingleToolStep({ step }: { step: ToolStep }) {
     ? lines.slice(0, MAX_RESULT_LINES).join("\n") + "\n... (truncated)"
     : detail;
 
+  // Auto-collapse when tools complete
   React.useEffect(() => {
-    if (step.status === "running") {
+    if (isComplete && expanded) {
+      setExpanded(false);
+    }
+  }, [isComplete]);
+
+  React.useEffect(() => {
+    if (step.status === "running" && !isComplete) {
       setExpanded(true);
     }
-  }, [step.status]);
+  }, [step.status, isComplete]);
+
+  // When collapsed, show compact single line
+  const isCollapsed = !expanded;
 
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-2xl border bg-card/40 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.5)]",
+        "overflow-hidden rounded-xl border bg-card/40",
         step.status === "running"
           ? "border-primary/45"
           : step.status === "error"
@@ -148,51 +158,25 @@ function SingleToolStep({ step }: { step: ToolStep }) {
         disabled={!canExpand}
         onClick={() => canExpand && setExpanded((value) => !value)}
         className={cn(
-          "w-full px-3 py-3 text-left",
+          "w-full text-left",
+          isCollapsed ? "px-3 py-2" : "px-3 py-2",
           canExpand ? "cursor-pointer" : "cursor-default",
         )}
       >
-        <div className="flex items-start gap-2">
+        <div className="flex items-center gap-2">
           <StatusIndicator status={step.status} />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate font-mono text-[12px] font-semibold text-foreground">
-                {buildHeadline(step)}
-              </span>
-              <span
-                className={cn(
-                  "rounded-full border px-2 py-0.5 text-[10px]",
-                  step.status === "running"
-                    ? "border-primary/30 bg-primary/10 text-primary"
-                    : step.status === "success"
-                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600"
-                      : step.status === "error"
-                        ? "border-destructive/25 bg-destructive/10 text-destructive"
-                        : "border-border bg-background/60 text-muted-foreground",
-                )}
-              >
-                {getStatusLabel(step)}
-              </span>
-              {typeof step.duration === "number" && step.duration > 0 && (
-                <span className="text-[10px] text-muted-foreground">
-                  {(step.duration / 1000).toFixed(step.duration >= 10_000 ? 0 : 1)}s
-                </span>
-              )}
-            </div>
-            <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <TerminalSquare className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{step.name}</span>
-            </div>
-            {subtitle && (
-              <div className="mt-1.5 truncate text-[11px] text-muted-foreground/80">
-                {subtitle}
-              </div>
-            )}
-          </div>
+          <span className="truncate font-mono text-[12px] text-foreground">
+            {buildHeadline(step)}
+          </span>
+          {subtitle && (
+            <span className="shrink-0 truncate text-[11px] text-muted-foreground">
+              · {subtitle}
+            </span>
+          )}
           {canExpand && (
             <ChevronDown
               className={cn(
-                "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
                 expanded && "rotate-180",
               )}
             />
@@ -201,8 +185,8 @@ function SingleToolStep({ step }: { step: ToolStep }) {
       </button>
 
       {canExpand && expanded && (
-        <div className="border-t border-border/60 bg-background/55 px-3 py-3">
-          <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-6 text-foreground/90">
+        <div className="border-t border-border/60 bg-background/55 px-3 py-2">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-foreground/90">
             {truncatedDetail}
           </pre>
         </div>
@@ -228,7 +212,7 @@ export function ToolSteps({
   }, [steps]);
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-1", className)}>
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <span className="font-medium text-foreground">执行步骤</span>
         <span>{steps.length} 项</span>
@@ -244,11 +228,11 @@ export function ToolSteps({
       </div>
       <div
         ref={listRef}
-        className="space-y-2 overflow-y-auto pr-1"
+        className="space-y-1 overflow-y-auto pr-1"
         style={{ maxHeight: `${ITEM_ROW_HEIGHT * MAX_VISIBLE_ITEMS}px` }}
       >
         {steps.map((step) => (
-          <SingleToolStep key={step.id} step={step} />
+          <SingleToolStep key={step.id} step={step} isComplete={isComplete} />
         ))}
       </div>
       {hasMore && <div className="text-[11px] text-muted-foreground">已自动滚动到最新步骤</div>}
