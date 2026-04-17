@@ -13,11 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        include:
-          - os: macos-latest
-            script: npm run dist:mac
-          - os: windows-latest
-            script: npm run dist:win
+        os: [macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +27,7 @@ jobs:
         run: bun install
 
       - name: Build parent JS files
-        run: bun run build
+        run: bun run build:node
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,14 +36,14 @@ jobs:
           cache: 'npm'
 
       - name: Install UI dependencies
-        run: npm ci
+        run: bun install
         working-directory: ui
 
       - name: Create build resources directory
         run: mkdir -p ui/build
 
       - name: Build ${{ matrix.os == 'macos-latest' && 'macOS' || 'Windows' }} installer
-        run: ${{ matrix.script }}
+        run: bun run ${{ matrix.os == 'macos-latest' && 'dist:mac' || 'dist:win' }}
         working-directory: ui
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
