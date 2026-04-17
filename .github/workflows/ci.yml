@@ -27,10 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install UI dependencies
-        run: npm ci
+        run: bun install
         working-directory: ui
 
       - name: TypeScript type check
@@ -57,10 +56,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install UI dependencies
-        run: npm ci
+        run: bun install
         working-directory: ui
 
       - name: Create build resources directory
@@ -98,10 +96,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install UI dependencies
-        run: npm ci
+        run: bun install
         working-directory: ui
 
       - name: Create build resources directory
@@ -141,10 +138,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install UI dependencies
-        run: npm ci
+        run: bun install
         working-directory: ui
 
       - name: Create build resources directory
