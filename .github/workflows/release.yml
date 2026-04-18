@@ -40,7 +40,7 @@ jobs:
         working-directory: ui
 
       - name: Create build resources directory
-        run: mkdir -p ui/build
+        run: node -e "require('node:fs').mkdirSync('ui/build', { recursive: true })"
 
       - name: Build ${{ matrix.os == 'macos-latest' && 'macOS' || 'Windows' }} installer
         run: bun run ${{ matrix.os == 'macos-latest' && 'dist:mac' || 'dist:win' }}
