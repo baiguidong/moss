@@ -18,6 +18,7 @@ import type { HookCallbackMatcher } from 'src/types/hooks.js'
 import { randomUUID } from 'src/utils/crypto.js'
 import type { ModelSetting } from 'src/utils/model/model.js'
 import type { ModelStrings } from 'src/utils/model/modelStrings.js'
+import { getSessionIdContext } from 'src/utils/sessionIdContext.js'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { resetSettingsCache } from 'src/utils/settings/settingsCache.js'
 import type { PluginHookMatcher } from 'src/utils/settings/types.js'
@@ -429,7 +430,7 @@ function getInitialState(): State {
 const STATE: State = getInitialState()
 
 export function getSessionId(): SessionId {
-  return STATE.sessionId
+  return getSessionIdContext() ?? STATE.sessionId
 }
 
 export function regenerateSessionId(
@@ -1755,4 +1756,3 @@ export function getPromptId(): string | null {
 export function setPromptId(id: string | null): void {
   STATE.promptId = id
 }
-

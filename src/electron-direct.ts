@@ -18,13 +18,18 @@ import { getAccountInformation, getAnthropicApiKeyWithSource, getAuthTokenSource
 import { getSettings_DEPRECATED } from './utils/settings/settings.js'
 import type { SDKMessage } from './entrypoints/agentSdkTypes.js'
 import type { CanUseToolFn } from './utils/permissions/permissions.js'
+import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
-import { runWithCwdOverrideGenerator } from './utils/cwd.js'
+import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
 
 import { bootstrapHeadless } from './bootstrap/headless.js'
 import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
-import type { Message } from './types/message.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
+import { asSessionId, type SessionId } from './types/ids.js'
+import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './utils/sessionIdContext.js'
+import { getRunningTasks } from './utils/task/framework.js'
+import { isBackgroundTask } from './tasks/types.js'
+import { sleep } from './utils/sleep.js'
 
 // 全局初始化，只执行一次
 export function getAuthDebugSnapshot() {
@@ -202,19 +207,135 @@ export class ClaudeSession {
     })
 
     try {
-      const engine = await this.#getEngine()
+      const sessionId = asSessionId(this.sessionId)
+      const runInSessionContext = <T>(fn: () => T): T =>
+        runWithSessionIdContext(sessionId, () =>
+          runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
+        )
+
+      const engine = await runWithCwdOverride(this.#opts.cwd, () =>
+        runInSessionContext(() => this.#getEngine()),
+      )
 
       const prompt = typeof text === 'string' ? text : text as any
       const abortController = signal
         ? (() => { const ac = new AbortController(); signal.addEventListener('abort', () => ac.abort()); return ac })()
         : undefined
+      const waitSignal = abortController?.signal ?? signal
+      let finalResult: SDKMessage | undefined
+
+      const isCurrentSessionMainThreadTaskNotification = (
+        cmd: {
+          agentId?: unknown
+          mode: string
+          sessionId?: SessionId
+        },
+      ) =>
+        cmd.agentId === undefined &&
+        cmd.mode === 'task-notification' &&
+        (cmd.sessionId === undefined || cmd.sessionId === sessionId)
+
+      const dequeueMainThreadTaskNotification = () =>
+        this.#opts.coordinatorMode
+          ? dequeue(isCurrentSessionMainThreadTaskNotification)
+          : undefined
+
+      const hasQueuedMainThreadTaskNotification = () =>
+        this.#opts.coordinatorMode &&
+        peek(isCurrentSessionMainThreadTaskNotification) !== undefined
+
+      const hasRunningBackgroundTasks = () => {
+        if (!this.#opts.coordinatorMode) return false
+        const state = this.#store?.getState()
+        if (!state) return false
+        return getRunningTasks(state).some(
+          task => isBackgroundTask(task) && task.type !== 'in_process_teammate',
+        )
+      }
 
       // QueryEngine.submitMessage 是 AsyncGenerator
-      yield* runWithCwdOverrideGenerator(
-        this.#opts.cwd,
-        () => runWithCoordinatorMode(
-          this.#opts.coordinatorMode,
-          () => engine.submitMessage(prompt) as AsyncGenerator<SDKMessage>,
+      yield* runWithCwdOverrideGenerator(this.#opts.cwd, () =>
+        runWithSessionIdContextGenerator(sessionId, () =>
+          (async function* () {
+            const runTurn = async function* (
+              turnPrompt: string | Array<{ type: string; [k: string]: unknown }>,
+              mode: 'prompt' | 'task-notification',
+              uuid?: string,
+            ): AsyncGenerator<SDKMessage> {
+              const iterator = runInSessionContext(() =>
+                engine.submitMessage(turnPrompt, { uuid, mode }),
+              )
+
+              try {
+                while (true) {
+                  const result = await runInSessionContext(() => iterator.next())
+                  if (result.done) {
+                    return
+                  }
+                  if (result.value.type === 'result') {
+                    finalResult = result.value
+                    continue
+                  }
+                  yield result.value
+                }
+              } finally {
+                if (typeof iterator.return === 'function') {
+                  await runInSessionContext(() => iterator.return!())
+                }
+              }
+            }
+
+            let nextTurn:
+              | {
+                  value: string | Array<{ type: string; [k: string]: unknown }>
+                  mode: 'prompt' | 'task-notification'
+                  uuid?: string
+                }
+              | undefined = {
+              value: prompt,
+              mode: 'prompt',
+            }
+
+            // Mirror CLI coordinator semantics: keep the foreground send alive
+            // while background tasks are still running so task notifications
+            // can trigger follow-up turns without waiting for new user input.
+            do {
+              if (waitSignal?.aborted) {
+                break
+              }
+
+              if (nextTurn) {
+                yield* runTurn(nextTurn.value, nextTurn.mode, nextTurn.uuid)
+                nextTurn = undefined
+              }
+
+              const queuedNotification = dequeueMainThreadTaskNotification()
+              if (queuedNotification) {
+                nextTurn = {
+                  value: queuedNotification.value as
+                    | string
+                    | Array<{ type: string; [k: string]: unknown }>,
+                  mode: 'task-notification',
+                  uuid: queuedNotification.uuid,
+                }
+                continue
+              }
+
+              if (!hasRunningBackgroundTasks()) {
+                break
+              }
+
+              await sleep(100, waitSignal, { unref: true })
+            } while (
+              nextTurn !== undefined ||
+              hasQueuedMainThreadTaskNotification() ||
+              hasRunningBackgroundTasks()
+            )
+
+            if (finalResult) {
+              yield finalResult
+            }
+          })(),
         ),
       )
     } finally {

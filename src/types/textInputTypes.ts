@@ -6,7 +6,7 @@ import type { Key } from '../ink.js'
 import type { PastedContent } from '../utils/config.js'
 import type { ImageDimensions } from '../utils/imageResizer.js'
 import type { TextHighlight } from '../utils/textHighlighting.js'
-import type { AgentId } from './ids.js'
+import type { AgentId, SessionId } from './ids.js'
 import type { AssistantMessage, MessageOrigin } from './message.js'
 
 /**
@@ -355,6 +355,11 @@ export type QueuedCommand = {
    * unified the queue but lost the isolation the dual-queue accidentally had).
    */
   agentId?: AgentId
+  /**
+   * Session that owns this command. Undefined only for legacy/unscoped queue
+   * entries; new enqueue paths stamp the active session automatically.
+   */
+  sessionId?: SessionId
 }
 
 /**

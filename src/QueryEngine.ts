@@ -40,7 +40,10 @@ import { type Tools, type ToolUseContext, toolMatchesName } from './Tool.js'
 import type { AgentDefinition } from './tools/AgentTool/loadAgentsDir.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from './tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import type { Message } from './types/message.js'
-import type { OrphanedPermission } from './types/textInputTypes.js'
+import type {
+  OrphanedPermission,
+  PromptInputMode,
+} from './types/textInputTypes.js'
 import { createAbortController } from './utils/abortController.js'
 import type { AttributionState } from './utils/commitAttribution.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -208,7 +211,7 @@ export class QueryEngine {
 
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean },
+    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const {
       cwd,
@@ -415,7 +418,7 @@ export class QueryEngine {
       resultText,
     } = await processUserInput({
       input: prompt,
-      mode: 'prompt',
+      mode: options?.mode ?? 'prompt',
       setToolJSX: () => {},
       context: {
         ...processUserInputContext,
