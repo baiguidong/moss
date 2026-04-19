@@ -970,12 +970,20 @@ export default function App() {
     const frozen = frozenWorkerThreadsRef.current;
     if (live.length === 0 && frozen.length === 0) return [];
 
-    // Detect a new coordinator run: live has task IDs we've never seen in
-    // frozen. If frozen already has workers from a previous run, discard them
-    // so the stale summary doesn't bleed into the new conversation.
+    // Detect a genuinely new coordinator run vs incremental task spawning within
+    // the same run.
+    //
+    // Workers are spawned one by one: the first poll may show [A], the next [A,B],
+    // then [A,B,C]. Each arrival has hasNewTasks=true, but the OLD task IDs are
+    // still present in live — so this is the same run, not a new one.
+    //
+    // A truly new run is: new task IDs appeared AND ALL previous frozen IDs have
+    // disappeared from live (the SDK cleared the old run's task list).
     const frozenIds = new Set(frozen.map((t) => t.id));
+    const liveIds  = new Set(live.map((t) => t.id));
     const hasNewTasks = live.some((t) => !frozenIds.has(t.id));
-    if (hasNewTasks && frozen.length > 0) {
+    const allOldGone  = frozen.every((t) => !liveIds.has(t.id));
+    if (hasNewTasks && frozen.length > 0 && allOldGone) {
       // New run started — archive the previous run's workers, then reset frozen.
       // Can't call setState here (inside memo), so signal via ref; the effect below
       // will pick this up and update archivedWorkerThreads state.
