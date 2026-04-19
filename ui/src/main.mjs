@@ -23,6 +23,7 @@ const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 const MAX_FILE_BYTES = 200 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
+const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
 const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
 const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
 const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps');
@@ -51,6 +52,7 @@ const APP_PRD_SCRIPT_TYPE = 'application/x-goose-prd';
 const APP_SCHEMA_CONTEXT = 'urn:goose.ai:schema';
 const APP_SCHEMA_TYPE = 'GooseApp';
 const APP_CSP_CONTENT = "default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:;";
+const EVENT_TRACE_ENABLED = process.env.MOSS_EVENT_TRACE !== '0';
 
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
 process.env.CLAUDE_CODE_ENTRYPOINT = 'local-agent';
@@ -74,9 +76,14 @@ fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 const persistSessionStmt = (() => {
-  // Migration: add is_sub_agent column if table exists but column is missing
+  // Migration: add columns if table exists but columns are missing
   try {
     sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_sub_agent INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN worker_summaries_json TEXT`);
   } catch {
     // Column may already exist or table doesn't exist yet
   }
@@ -91,14 +98,15 @@ const persistSessionStmt = (() => {
       preview TEXT NOT NULL,
       underlying_session_id TEXT,
       history_json TEXT NOT NULL,
-      is_sub_agent INTEGER NOT NULL DEFAULT 0
+      is_sub_agent INTEGER NOT NULL DEFAULT 0,
+      worker_summaries_json TEXT
     )
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, underlying_session_id, history_json, is_sub_agent
+      id, title, workspace, created_at, updated_at, message_count, preview, underlying_session_id, history_json, is_sub_agent, worker_summaries_json
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -109,7 +117,8 @@ const persistSessionStmt = (() => {
       preview = excluded.preview,
       underlying_session_id = excluded.underlying_session_id,
       history_json = excluded.history_json,
-      is_sub_agent = excluded.is_sub_agent
+      is_sub_agent = excluded.is_sub_agent,
+      worker_summaries_json = excluded.worker_summaries_json
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -124,7 +133,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     preview,
     underlying_session_id,
     history_json,
-    is_sub_agent
+    is_sub_agent,
+    worker_summaries_json
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -140,7 +150,8 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     preview,
     underlying_session_id,
     history_json,
-    is_sub_agent
+    is_sub_agent,
+    worker_summaries_json
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -157,11 +168,112 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     preview,
     underlying_session_id,
     history_json,
-    is_sub_agent
+    is_sub_agent,
+    worker_summaries_json
   FROM sessions
   WHERE is_sub_agent = 1 AND underlying_session_id = ?
   ORDER BY created_at ASC
 `);
+
+function extractTaskNotificationSummary(text) {
+  if (typeof text !== 'string' || !text.includes('<task-notification>')) {
+    return null;
+  }
+
+  const extractTag = (tagName) => {
+    const match = text.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, 'i'));
+    return match?.[1]?.trim() || '';
+  };
+
+  return {
+    taskId: extractTag('task-id'),
+    status: extractTag('status'),
+    summary: extractTag('summary'),
+  };
+}
+
+function summarizeEventForTrace(event) {
+  if (!event || typeof event !== 'object') {
+    return { type: typeof event, detail: String(event) };
+  }
+
+  const summary = {
+    type: event.type || 'unknown',
+  };
+
+  if (typeof event.subtype === 'string') {
+    summary.subtype = event.subtype;
+  }
+
+  if (typeof event.session_id === 'string') {
+    summary.runtimeSessionId = event.session_id;
+  }
+
+  if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+    summary.blockTypes = event.message.content.map((block) => block?.type).filter(Boolean);
+    const toolUses = event.message.content
+      .filter((block) => block?.type === 'tool_use')
+      .map((block) => ({
+        id: block.id,
+        name: block.name,
+      }));
+    if (toolUses.length > 0) {
+      summary.toolUses = toolUses;
+    }
+  } else if (event.type === 'user') {
+    if (typeof event.prompt === 'string') {
+      summary.promptPreview = event.prompt.slice(0, 160);
+    }
+    if (Array.isArray(event.message?.content)) {
+      summary.blockTypes = event.message.content.map((block) => block?.type).filter(Boolean);
+      const textBlocks = event.message.content
+        .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block) => block.text);
+      if (textBlocks.length > 0) {
+        const taskNotification = extractTaskNotificationSummary(textBlocks.join('\n\n'));
+        if (taskNotification) {
+          summary.taskNotification = taskNotification;
+        } else {
+          summary.textPreview = textBlocks.join('\n\n').slice(0, 160);
+        }
+      }
+      const toolResults = event.message.content
+        .filter((block) => block?.type === 'tool_result')
+        .map((block) => ({
+          toolUseId: block.tool_use_id,
+          isError: Boolean(block.is_error),
+        }));
+      if (toolResults.length > 0) {
+        summary.toolResults = toolResults;
+      }
+    }
+  } else if (event.type === 'stream_event') {
+    summary.streamType = event.event?.type;
+    if (event.event?.content_block?.type) {
+      summary.blockType = event.event.content_block.type;
+    }
+    if (event.event?.delta?.type) {
+      summary.deltaType = event.event.delta.type;
+    }
+  } else if (event.type === 'error') {
+    summary.message = String(event.message || '').slice(0, 200);
+  } else if (event.type === 'tool_progress') {
+    summary.toolName = event.tool_name;
+    summary.toolUseId = event.tool_use_id || event.parent_tool_use_id;
+  }
+
+  return summary;
+}
+
+function traceEventFlow(label, context = {}, payload) {
+  if (!EVENT_TRACE_ENABLED) return;
+  const summary = summarizeEventForTrace(payload);
+  console.log(`[event-trace] ${label}`, {
+    ...context,
+    summary,
+    payload,
+  });
+}
 
 function loadLocalSettingsAuthConfig() {
   const result = {
@@ -451,6 +563,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.underlyingSessionId,
     JSON.stringify(sessionRecord.history || []),
     isSubAgent ? 1 : 0,
+    sessionRecord.workerSummariesJson || null,
   ];
 }
 
@@ -498,6 +611,7 @@ function hydratePersistedSessions() {
       underlyingSessionId: row.underlying_session_id || null,
       pendingPlanApproval: derivePendingPlanApproval(history),
       history,
+      workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
@@ -522,6 +636,7 @@ function hydratePersistedSessions() {
       underlyingSessionId: row.underlying_session_id || null,
       pendingPlanApproval: null,
       history,
+      workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
@@ -767,7 +882,15 @@ function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
   schedulePersistSession(sessionRecord);
+  traceEventFlow('session-history:push', {
+    sessionId: sessionRecord.id,
+    isCoordinatorMode: Boolean(sessionRecord.isCoordinatorMode),
+  }, event);
   if (sender && !sender.isDestroyed()) {
+    traceEventFlow('ipc:agent:event', {
+      sessionId: sessionRecord.id,
+      target: 'main-renderer',
+    }, event);
     sender.send('agent:event', { sessionId: sessionRecord.id, payload: event });
   }
 }
@@ -810,6 +933,11 @@ async function runSessionPrompt({
     schedulePersistSession(sessionRecord, true);
     emitSessionMeta(sessionRecord);
     if (!sender.isDestroyed()) {
+      traceEventFlow('ipc:agent:event', {
+        sessionId: sessionRecord.id,
+        target: 'main-renderer',
+        phase: 'user-prompt',
+      }, userEvent);
       sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
     }
   }
@@ -846,6 +974,11 @@ async function runSessionPrompt({
       }
       schedulePersistSession(sessionRecord);
       if (!sender.isDestroyed()) {
+        traceEventFlow('ipc:agent:event', {
+          sessionId: sessionRecord.id,
+          target: 'main-renderer',
+          phase: 'runtime-stream',
+        }, message);
         sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
       }
     }
@@ -873,6 +1006,11 @@ async function runSessionPrompt({
     sessionRecord.history.push(errorEvent);
     schedulePersistSession(sessionRecord, true);
     if (!sender.isDestroyed()) {
+      traceEventFlow('ipc:agent:event', {
+        sessionId: sessionRecord.id,
+        target: 'main-renderer',
+        phase: 'runtime-error',
+      }, errorEvent);
       sender.send('agent:event', { sessionId: sessionRecord.id, payload: errorEvent });
     }
     throw error;
@@ -2389,6 +2527,13 @@ async function runPlanExecution(execSessionRecord, execWindow, execState, origin
 
   const sendEvent = (channel, data) => {
     if (execWindow.webContents.isDestroyed()) return;
+    if (channel === 'execution:event') {
+      traceEventFlow('ipc:execution:event', {
+        executionSessionId: execSessionRecord.id,
+        originalSessionId: execState.originalSessionId,
+        target: 'execution-window',
+      }, data?.payload || data);
+    }
     execWindow.webContents.send(channel, data);
     // Also send to bubble window if it exists
     if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
@@ -2471,6 +2616,11 @@ Important:
         sessionId: execState.originalSessionId,
         payload: { type: 'message', message: { role: 'user', content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }] } },
       });
+      traceEventFlow('ipc:agent:event', {
+        sessionId: execState.originalSessionId,
+        target: 'main-renderer',
+        phase: 'plan-execution-complete',
+      }, { type: 'message', message: { role: 'user', content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }] } });
     }
   } catch (error) {
     execSessionRecord.busy = false;
@@ -2479,6 +2629,11 @@ Important:
     const message = error instanceof Error ? error.message : String(error);
     sendEvent('execution:event', { type: 'error', message });
     sendEvent('execution:state', { busy: false });
+    traceEventFlow('ipc:agent:event', {
+      sessionId: execState.originalSessionId,
+      target: 'main-renderer',
+      phase: 'plan-execution-error',
+    }, { type: 'plan_execution_error', message });
     notifyMainWindow('agent:event', {
       sessionId: execState.originalSessionId,
       payload: { type: 'plan_execution_error', message },
@@ -2505,7 +2660,7 @@ function ensureInsideRoot(rootPath, targetPath) {
   return resolvedTarget;
 }
 
-function createSessionRecord({ workspace, isSubAgent = false } = {}) {
+function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
   const now = Date.now();
   const normalizedWorkspace = normalizeWorkspace(workspace);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
@@ -2521,7 +2676,7 @@ function createSessionRecord({ workspace, isSubAgent = false } = {}) {
 
   const sessionRecord = {
     id: randomUUID(),
-    title: 'New Session',
+    title: title || 'New Session',
     workspace: normalizedWorkspace,
     createdAt: now,
     updatedAt: now,
@@ -2554,6 +2709,30 @@ function getSessionRecord(sessionId) {
     throw new Error(`Unknown session: ${sessionId}`);
   }
   return sessionRecord;
+}
+
+// SDK writes task-notification queue-operation events directly to its .jsonl transcript file,
+// bypassing the runtime.send() stream. This helper reads those events so the UI can display
+// async worker results even when the coordinator never ran a second turn.
+// Find the subagents directory for a session.
+// The SDK stores sub-agent files under:
+//   MOSS_PROJECTS_DIR/{sanitized_cwd}/{sessionId}/subagents/
+// The CWD used by the SDK runtime may differ from sessionRecord.workspace
+// (e.g. in coordinator mode the runtime runs inside an execution window workspace),
+// so we search all workspace subdirectories for the matching sessionId directory.
+async function findSessionSubagentDir(underlyingSessionId) {
+  if (!underlyingSessionId) return null;
+  try {
+    const workspaceDirs = await fsp.readdir(MOSS_PROJECTS_DIR);
+    for (const dir of workspaceDirs) {
+      const candidate = path.join(MOSS_PROJECTS_DIR, dir, underlyingSessionId, 'subagents');
+      try {
+        await fsp.access(candidate);
+        return candidate;
+      } catch {}
+    }
+  } catch {}
+  return null;
 }
 
 function disposeRuntime(sessionRecord) {
@@ -2892,7 +3071,7 @@ ipcMain.handle('agent:list-sessions', () => {
 });
 
 ipcMain.handle('agent:create-session', (_event, payload = {}) => {
-  const sessionRecord = createSessionRecord({ workspace: payload.workspace });
+  const sessionRecord = createSessionRecord({ workspace: payload.workspace, title: payload.title });
   return {
     summary: getSessionSummary(sessionRecord),
     detail: {
@@ -2907,7 +3086,55 @@ ipcMain.handle('agent:get-session', (_event, { sessionId }) => {
   return {
     ...getSessionSummary(sessionRecord),
     history: sessionRecord.history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
   };
+});
+
+ipcMain.handle('agent:set-worker-summaries', (_event, { sessionId, workerSummariesJson }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  sessionRecord.workerSummariesJson = workerSummariesJson || null;
+  schedulePersistSession(sessionRecord);
+  return { ok: true };
+});
+
+// Read worker (sub-agent) results directly from the SDK's subagents directory.
+// Each async worker has its own .jsonl file under:
+//   MOSS_PROJECTS_DIR/{encoded_workspace}/{sessionId}/subagents/agent-{agentId}.jsonl
+// This is the authoritative source for worker output, not the coordinator's event stream.
+ipcMain.handle('agent:get-worker-results', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  const subagentDir = await findSessionSubagentDir(sessionRecord.underlyingSessionId);
+  if (!subagentDir) return { results: {} };
+
+  const results = {};
+  try {
+    const files = await fsp.readdir(subagentDir);
+    for (const file of files) {
+      if (!file.startsWith('agent-') || !file.endsWith('.jsonl')) continue;
+      const agentId = file.slice('agent-'.length, -'.jsonl'.length);
+      const jsonlPath = path.join(subagentDir, file);
+      try {
+        const content = await fsp.readFile(jsonlPath, 'utf-8');
+        const events = [];
+        let resultText = null;
+        let status = 'running';
+        for (const line of content.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            events.push(event);
+            if (event?.type === 'result') {
+              resultText = typeof event.result === 'string' ? event.result.trim() : null;
+              status = event.subtype === 'success' ? 'completed' : 'failed';
+            }
+          } catch {}
+        }
+        results[agentId] = { resultText, status, events };
+      } catch {}
+    }
+  } catch {}
+
+  return { results };
 });
 
 ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
@@ -2946,6 +3173,19 @@ ipcMain.handle('agent:pick-directory', async () => {
     return null;
   }
   return response.filePaths[0];
+});
+
+ipcMain.handle('agent:pick-files', async () => {
+  const response = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (response.canceled || response.filePaths.length === 0) {
+    return [];
+  }
+  return response.filePaths.map((filePath) => ({
+    name: path.basename(filePath),
+    path: filePath,
+  }));
 });
 
 ipcMain.handle('workspace:open', async (_event, { sessionId }) => {
@@ -3716,6 +3956,7 @@ ipcMain.handle('coordinator:list-tasks', async (_event, { sessionId }) => {
       .filter(t => t.type === 'in_process_teammate' || t.type === 'local_agent')
       .map(t => ({
         id: t.id,
+        agentId: t.identity?.agentId || null,
         name: t.identity?.agentName || t.id,
         status: t.status,
         isIdle: t.isIdle || false,
@@ -3894,6 +4135,14 @@ ipcMain.handle('execution:send', async (event, { message }) => {
   const sendEvent = (channel, data) => {
     // Send to main window
     if (!execState.window.isDestroyed()) {
+      if (channel === 'execution:event') {
+        traceEventFlow('ipc:execution:event', {
+          executionSessionId: sessionRecord.id,
+          originalSessionId: execState.originalSessionId,
+          teammateTaskId: execState.teammateTaskId,
+          target: 'execution-window',
+        }, data?.payload || data);
+      }
       execState.window.webContents.send(channel, data);
     }
     // Send to bubble if it exists

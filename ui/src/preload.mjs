@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
+  pickFiles: () => ipcRenderer.invoke('agent:pick-files'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
   openWorkspace: (payload) => ipcRenderer.invoke('workspace:open', payload),
   copyFileToWorkspace: (payload) => ipcRenderer.invoke('workspace:copyFileToWorkspace', payload),
@@ -88,6 +89,9 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.on('coordinator:teammate-completed', handler);
     return () => ipcRenderer.off('coordinator:teammate-completed', handler);
   },
+  // Worker (sub-agent) results from SDK subagents directory
+  getWorkerResults: (payload) => ipcRenderer.invoke('agent:get-worker-results', payload),
+  setWorkerSummaries: (payload) => ipcRenderer.invoke('agent:set-worker-summaries', payload),
   // Cron task management
   cronList: () => ipcRenderer.invoke('cron:list'),
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),

@@ -20,6 +20,7 @@ export type SessionSummary = {
 
 export type SessionDetail = SessionSummary & {
   history: AgentEvent[];
+  workerSummariesJson: string | null;
 };
 
 export type AgentEvent = Record<string, any>;
@@ -89,11 +90,12 @@ declare global {
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
       listSessions: () => Promise<SessionSummary[]>;
-      createSession: (payload?: { workspace?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       pickDirectory: () => Promise<string | null>;
+      pickFiles: () => Promise<Array<{ name: string; path: string }>>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
       openWorkspace: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
@@ -137,6 +139,8 @@ declare global {
       onTeammateSpawned: (callback: (payload: { sessionId: string; taskId: string; description: string; prompt: string; color?: string }) => void) => () => void;
       onTeammateCompleted: (callback: (payload: { sessionId: string; taskId: string; description: string; status: string }) => void) => () => void;
       updateTeammateState: (payload: { sessionId: string; taskId: string; completed?: boolean }) => Promise<{ ok?: boolean; error?: string }>;
+      getWorkerResults: (payload: { sessionId: string }) => Promise<{ results: Record<string, WorkerSubagentResult> }>;
+      setWorkerSummaries: (payload: { sessionId: string; workerSummariesJson: string | null }) => Promise<{ ok: boolean }>;
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
     };
@@ -154,6 +158,7 @@ export type ExecutionSummary = {
 
 export type CoordinatorTask = {
   id: string;
+  agentId: string | null;
   name: string;
   status: string;
   isIdle: boolean;
@@ -169,6 +174,12 @@ export type CronTask = {
   lastFiredAt?: number;
   recurring?: boolean;
   permanent?: boolean;
+};
+
+export type WorkerSubagentResult = {
+  resultText: string | null;
+  status: string;
+  events: any[];
 };
 
 export {};

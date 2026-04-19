@@ -7,7 +7,9 @@ import {
   Copy,
   Check,
   FileText,
+  FolderOpen,
   Loader,
+  Plus,
   Send,
   Square,
   User,
@@ -21,8 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ToolSteps } from "@/components/tool-steps";
+import { ChatTranscript } from "@/components/chat-transcript";
 import {
   Collapsible,
   CollapsibleContent,
@@ -30,8 +31,9 @@ import {
 } from "@/components/ui/collapsible";
 import { FilePreview } from "@/components/file-preview";
 import { MarkdownView } from "@/components/markdown-view";
+import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
-import type { ChatMessage } from "@/lib/agent-transcript";
+import type { ChatMessage, WorkerThread } from "@/lib/agent-transcript";
 
 type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app" | "coordinator";
 type PendingPlanApproval = {
@@ -47,6 +49,11 @@ type IntentOption = {
   description?: string;
 };
 
+const chatIntentOption: IntentOption = {
+  id: "chat",
+  title: "chat",
+};
+
 const intentOptions: IntentOption[] = [
   {
     id: "coordinator",
@@ -56,10 +63,17 @@ const intentOptions: IntentOption[] = [
   {
     id: "plan",
     title: "plan",
+    description: "规划任务步骤和执行计划",
   },
   {
     id: "create-app",
     title: "app",
+    description: "创建一个新的 App",
+  },
+  {
+    id: "iterate-app",
+    title: "迭代",
+    description: "迭代现有 App",
   },
 ];
 
@@ -112,50 +126,6 @@ function SessionTabBar({
           {rightCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
         </Button>
       </div>
-    </div>
-  );
-}
-
-function ThinkingBlock({
-  thinking,
-  streaming,
-}: {
-  thinking: string;
-  streaming?: boolean;
-}) {
-  const [expanded, setExpanded] = React.useState(true);
-
-  React.useEffect(() => {
-    if (streaming) {
-      setExpanded(true);
-    }
-  }, [streaming]);
-
-  return (
-    <div className="overflow-hidden rounded-[24px] border border-border/80 bg-card/75 shadow-[0_14px_45px_-36px_rgba(0,0,0,0.8)]">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 border-b border-border/70 px-4 py-3 text-left"
-      >
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            思考过程
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {streaming ? "正在生成思考内容" : "展示模型返回的 thinking 内容块"}
-          </p>
-        </div>
-        <span className="shrink-0 text-xs text-muted-foreground">{expanded ? "收起" : "展开"}</span>
-      </button>
-
-      {expanded && (
-        <div className="max-h-[22rem] overflow-auto px-4 py-3">
-          <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-foreground">
-            {thinking}
-          </pre>
-        </div>
-      )}
     </div>
   );
 }
@@ -259,117 +229,6 @@ function renderTextSegments(content: string, streaming = false) {
   });
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user";
-  const hasBody = Boolean(message.content.trim());
-  const hasThinking = Boolean(message.thinking?.trim());
-  const hasImages = message.images && message.images.length > 0;
-  const hasFiles = message.files && message.files.length > 0;
-
-  return (
-    <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-      <Avatar className={cn("h-9 w-9 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
-        <AvatarFallback
-          className={cn(
-            "text-xs",
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-gradient-to-br from-primary/25 to-primary/10 text-primary",
-          )}
-        >
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-        </AvatarFallback>
-      </Avatar>
-      <div
-        className={cn(
-          "space-y-3",
-          isUser
-            ? "max-w-[78%] flex flex-col items-end"
-            : message.toolSteps?.length
-              ? "w-full max-w-4xl"
-              : "max-w-[82%]",
-        )}
-      >
-        {!isUser && message.toolSteps && message.toolSteps.length > 0 && (
-          <ToolSteps steps={message.toolSteps} isComplete={message.toolsComplete} />
-        )}
-
-        {!isUser && hasThinking && (
-          <ThinkingBlock thinking={message.thinking!} streaming={message.streaming} />
-        )}
-
-        {(hasImages || hasFiles) && (
-          <div className="flex flex-wrap gap-2">
-            {message.images?.map((imgPath, i) => (
-              <FilePreview key={`img-${i}`} path={imgPath} readonly />
-            ))}
-            {message.files?.map((filePath, i) => (
-              <FilePreview key={`file-${i}`} path={filePath} readonly />
-            ))}
-          </div>
-        )}
-
-        {(hasBody || isUser || (!hasThinking && !message.toolSteps?.length)) && (
-          <div className="group relative">
-            <div
-              className={cn(
-                "rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-[0_18px_55px_-40px_rgba(0,0,0,0.85)]",
-                isUser
-                  ? "rounded-tr-md bg-primary text-primary-foreground"
-                  : "rounded-tl-md border border-border/70 bg-card/88 text-foreground",
-              )}
-            >
-              <div className="space-y-3">
-                {hasBody ? (
-                  isUser ? (
-                    <p className="whitespace-pre-wrap break-words leading-7">{message.content}</p>
-                  ) : (
-                    <MarkdownView>{message.content}</MarkdownView>
-                  )
-                ) : (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader className={cn("h-3.5 w-3.5 animate-spin", message.streaming ? "opacity-100" : "opacity-60")} />
-                    {!message.streaming && <span>Working...</span>}
-                  </div>
-                )}
-
-                {message.meta && message.meta.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {message.meta.map((entry) => (
-                      <span
-                        key={entry}
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 text-[10px]",
-                          isUser
-                            ? "border-primary-foreground/20 text-primary-foreground/75"
-                            : "border-border bg-background/60 text-muted-foreground",
-                        )}
-                      >
-                        {entry}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            {isUser && hasBody && (
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(message.content);
-                }}
-                className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-primary-foreground/20"
-                title="复制"
-              >
-                <Copy className="h-3.5 w-3.5 text-primary-foreground/80" />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function IntentChip({
   option,
   active,
@@ -383,12 +242,12 @@ function IntentChip({
   onClick: () => void;
   onRemove?: () => void;
 }) {
-  const isCoordinator = option.id === "coordinator";
+  const hasDescription = !!option.description;
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
-        active && isCoordinator
+        active && hasDescription
           ? "border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-600 dark:text-purple-400"
           : active
             ? "border-primary/35 bg-primary/10 text-primary"
@@ -486,6 +345,10 @@ function ComposerPanel({
   hasActiveSession,
   sessionId,
   showModeButtons,
+  attachments: externalAttachments,
+  onAttachmentsChange,
+  workspace,
+  onWorkspaceChange,
   onChange,
   onComposerIntentChange,
   onSend,
@@ -498,14 +361,35 @@ function ComposerPanel({
   hasActiveSession: boolean;
   sessionId?: string;
   showModeButtons?: boolean;
+  attachments?: Array<{ name: string; path: string }>;
+  onAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
+  workspace?: string;
+  onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
   onStop?: () => void;
 }) {
-  const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  const [internalAttachments, setInternalAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  const attachments = externalAttachments ?? internalAttachments;
+  const setAttachments = React.useCallback((
+    updater: Array<{ name: string; path: string }> | ((prev: Array<{ name: string; path: string }>) => Array<{ name: string; path: string }>)
+  ) => {
+    if (typeof updater === 'function') {
+      if (onAttachmentsChange) {
+        onAttachmentsChange(updater(externalAttachments ?? internalAttachments));
+      } else {
+        setInternalAttachments(updater);
+      }
+    } else {
+      onAttachmentsChange?.(updater);
+    }
+  }, [onAttachmentsChange, externalAttachments, internalAttachments]);
   const composerId = React.useRef<string>('composer-' + Math.random().toString(36).slice(2));
   const isHomeComposer = !hasActiveSession;
+  const activeIntentOption = composerIntent === "chat"
+    ? null
+    : intentOptions.find((option) => option.id === composerIntent) ?? null;
   const submitDisabled =
     (!value.trim() && attachments.length === 0) || loading || (composerIntent === "iterate-app" && !selectedAppName);
 
@@ -577,6 +461,20 @@ function ComposerPanel({
 
   const handleRemoveAttachment = (index: number) => {
     setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSelectFile = async () => {
+    const files = await window.agentDesktop.pickFiles();
+    if (files.length > 0) {
+      setAttachments(prev => [...prev, ...files]);
+    }
+  };
+
+  const handleSelectDirectory = async () => {
+    const dir = await window.agentDesktop.pickDirectory();
+    if (dir) {
+      onWorkspaceChange?.(dir);
+    }
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -660,9 +558,9 @@ function ComposerPanel({
           onChange={(event) => onChange(event.target.value)}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
-            isHomeComposer ? "min-h-[220px] pb-18 pr-26" : "min-h-[92px] pb-16 pr-26",
+            isHomeComposer ? "min-h-[160px] pb-4" : "min-h-[92px] pb-16 pr-26",
           )}
-          rows={isHomeComposer ? 7 : 3}
+          rows={isHomeComposer ? 5 : 3}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               if (submitDisabled) {
@@ -675,7 +573,7 @@ function ComposerPanel({
           onPaste={handlePaste}
         />
 
-        {attachments.length > 0 && (
+        {!isHomeComposer && attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-4 pb-2">
             {attachments.map((file, index) => (
               <FilePreview
@@ -687,32 +585,34 @@ function ComposerPanel({
           </div>
         )}
 
-        <div className="absolute bottom-3 right-3 flex items-center gap-2">
-          {!isHomeComposer && loading && (
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-9 w-9 rounded-full"
-              onClick={onStop}
-            >
-              <Square className="h-3.5 w-3.5" />
-            </Button>
-          )}
+        {!isHomeComposer && (
+          <div className="absolute bottom-3 right-3 flex items-center gap-2">
+            {loading && (
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 rounded-full"
+                onClick={onStop}
+              >
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+            )}
 
-          <Button
-            className="h-9 rounded-full px-3.5 sm:px-4"
-            disabled={submitDisabled}
-            onClick={handleSendClick}
-          >
-            <Send className="h-4 w-4" />
-            发送
-          </Button>
-        </div>
+            <Button
+              className="h-9 rounded-full px-3.5 sm:px-4"
+              disabled={submitDisabled}
+              onClick={handleSendClick}
+            >
+              <Send className="h-4 w-4" />
+              发送
+            </Button>
+          </div>
+        )}
 
         {showModeButtons && (
           <div className="absolute bottom-3 left-3 flex items-center gap-1">
             {intentOptions
-              .filter((o) => o.id !== "chat")
+              .filter((o) => o.id !== "chat" && (o.id !== "iterate-app" || !!selectedAppName))
               .map((option) => (
                 <Button
                   key={option.id}
@@ -735,24 +635,105 @@ function ComposerPanel({
         )}
       </div>
 
-      {/* Selected intent tag - shown below textarea inside composer panel */}
-      {isHomeComposer && composerIntent !== "chat" && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-4 py-2">
-          <span className="text-xs text-muted-foreground">模式：</span>
-          <IntentChip
-            key={composerIntent}
-            option={intentOptions.find(o => o.id === composerIntent)!}
-            active={true}
-            onClick={() => onComposerIntentChange("chat")}
-            onRemove={() => onComposerIntentChange("chat")}
-          />
-          {composerIntent === "iterate-app" && selectedAppName && (
-            <span className="rounded-full border border-border/70 px-3 py-1.5 text-xs text-muted-foreground">
-              更新 {selectedAppName}
-            </span>
+      {isHomeComposer && (
+        <div className="px-4 py-3 sm:px-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectFile}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                title="选择文件"
+              >
+                <Plus className="h-3 w-3" />
+                <FileText className="h-3.5 w-3.5" />
+                <span>文件</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectDirectory}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                title="选择目录"
+              >
+                <Plus className="h-3 w-3" />
+                <FolderOpen className="h-3.5 w-3.5" />
+                <span>目录</span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="text-xs text-muted-foreground">模式：</span>
+              {activeIntentOption ? (
+                <>
+                  <IntentChip
+                    key={composerIntent}
+                    option={activeIntentOption}
+                    active={true}
+                    onClick={() => onComposerIntentChange("chat")}
+                    onRemove={() => onComposerIntentChange("chat")}
+                  />
+                  {composerIntent === "iterate-app" && selectedAppName && (
+                    <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
+                      更新 {selectedAppName}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 px-2.5 py-1 text-xs text-purple-600 dark:text-purple-400">
+                  chat
+                </span>
+              )}
+
+              <Button
+                className="h-9 rounded-full px-3.5 sm:px-4"
+                disabled={submitDisabled}
+                onClick={handleSendClick}
+              >
+                <Send className="h-4 w-4" />
+                发送
+              </Button>
+            </div>
+          </div>
+
+          {(attachments.length > 0 || workspace) && (
+            <div className="mt-3 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                {attachments.map((file, index) => (
+                  <span
+                    key={`${file.path}-${index}`}
+                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-foreground"
+                  >
+                    <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="max-w-[180px] truncate">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveAttachment(index)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+
+                {workspace && (
+                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/10 px-2.5 py-1 text-xs text-green-600">
+                    <FolderOpen className="h-3 w-3 shrink-0" />
+                    <span className="max-w-[220px] truncate">{workspace.split('/').pop() || workspace}</span>
+                    <button
+                      type="button"
+                      onClick={() => onWorkspaceChange?.(undefined)}
+                      className="text-green-600/60 hover:text-green-600"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
+
     </div>
   );
 }
@@ -763,6 +744,10 @@ function HomeLanding({
   loading,
   composerIntent,
   sessionId,
+  attachments,
+  onAttachmentsChange,
+  workspace,
+  onWorkspaceChange,
   onChange,
   onComposerIntentChange,
   onSend,
@@ -772,6 +757,10 @@ function HomeLanding({
   loading: boolean;
   composerIntent: ComposerIntent;
   sessionId?: string;
+  attachments: Array<{ name: string; path: string }>;
+  onAttachmentsChange: (attachments: Array<{ name: string; path: string }>) => void;
+  workspace?: string;
+  onWorkspaceChange: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
@@ -779,7 +768,7 @@ function HomeLanding({
   return (
     <div className="mx-auto flex h-[60%] w-full max-w-[80%] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
       <div className="mb-8 text-center sm:mb-10">
-        <h1 className="mt-24 text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
+        <h1 className="mt-36 text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
           Hi，今天有什么安排？
         </h1>
         <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
@@ -788,16 +777,26 @@ function HomeLanding({
       </div>
 
       <div className="mb-6 flex justify-center gap-4">
-        {intentOptions.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => onComposerIntentChange(option.id)}
-            className="rounded-full border border-border/70 bg-card/60 px-6 py-3 text-sm font-medium text-foreground shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-          >
-            {option.title}
-          </button>
-        ))}
+        {[chatIntentOption, ...intentOptions]
+          .filter((o) => o.id !== "iterate-app" || !!selectedAppName)
+          .map((option) => {
+          const isSelected = composerIntent === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onComposerIntentChange(option.id)}
+              className={cn(
+                "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
+                isSelected
+                  ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+                  : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+              )}
+            >
+              {option.title}
+            </button>
+          );
+        })}
       </div>
 
       <ComposerPanel
@@ -807,6 +806,10 @@ function HomeLanding({
         composerIntent={composerIntent}
         hasActiveSession={false}
         sessionId={sessionId}
+        attachments={attachments}
+        onAttachmentsChange={onAttachmentsChange}
+        workspace={workspace}
+        onWorkspaceChange={onWorkspaceChange}
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
         onSend={onSend}
@@ -829,6 +832,9 @@ export function ChatArea({
   leftCollapsed,
   rightCollapsed,
   composerIntent,
+  workerThreads,
+  archivedWorkerThreads,
+  activeWorkerThreadId,
   onChange,
   onComposerIntentChange,
   onToggleLeftSidebar,
@@ -837,6 +843,7 @@ export function ChatArea({
   onRejectPlan,
   onSend,
   onStop,
+  onToggleWorkerThread,
 }: {
   messages: ChatMessage[];
   value: string;
@@ -851,20 +858,37 @@ export function ChatArea({
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   composerIntent: ComposerIntent;
+  workerThreads: WorkerThread[];
+  archivedWorkerThreads: WorkerThread[];
+  activeWorkerThreadId: string | null;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onToggleLeftSidebar: () => void;
   onToggleRightSidebar: () => void;
   onApprovePlan: () => void;
   onRejectPlan: () => void;
-  onSend: (files?: Array<{ name: string; path: string }>) => void;
+  onSend: (files?: Array<{ name: string; path: string }>, workspace?: string) => void;
   onStop: () => void;
+  onToggleWorkerThread: (threadId: string | null) => void;
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
+  const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  const [workspace, setWorkspace] = React.useState<string | undefined>();
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
+
+  React.useEffect(() => {
+    if (hasActiveSession) {
+      setAttachments([]);
+      setWorkspace(undefined);
+    }
+  }, [hasActiveSession]);
+
+  const handleHomeLandingSend = (files: Array<{ name: string; path: string }> | undefined) => {
+    onSend(files, workspace);
+  };
 
   if (!hasActiveSession) {
     return (
@@ -875,9 +899,13 @@ export function ChatArea({
           loading={loading}
           composerIntent={composerIntent}
           sessionId={sessionId}
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
-          onSend={onSend}
+          onSend={handleHomeLandingSend}
         />
       </div>
     );
@@ -895,22 +923,29 @@ export function ChatArea({
       />
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-3 py-3 sm:px-4 sm:py-4">
-          {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
+        <div>
+          <ChatTranscript messages={messages} bottomRef={bottomRef} />
           {pendingPlanApproval && (
-            <PlanApprovalCard
-              pendingPlanApproval={pendingPlanApproval}
-              busy={planDecisionBusy || loading}
-              onApprove={onApprovePlan}
-              onReject={onRejectPlan}
-            />
+            <div className="mx-auto w-full max-w-[980px] px-3 pb-3 sm:px-4 sm:pb-4">
+              <PlanApprovalCard
+                pendingPlanApproval={pendingPlanApproval}
+                busy={planDecisionBusy || loading}
+                onApprove={onApprovePlan}
+                onReject={onRejectPlan}
+              />
+            </div>
           )}
-          <div ref={bottomRef} />
         </div>
       </ScrollArea>
 
       <div className="shrink-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto max-w-[980px]">
+          <WorkerThreadPanel
+            threads={workerThreads}
+            archivedThreads={archivedWorkerThreads}
+            activeThreadId={activeWorkerThreadId}
+            onToggleThread={onToggleWorkerThread}
+          />
           <ComposerPanel
             value={value}
             selectedAppName={selectedAppName}

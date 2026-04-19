@@ -25,6 +25,38 @@ export type ChatMessage = {
   files?: string[];
 };
 
+export type WorkerThreadStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export type WorkerThread = {
+  id: string;
+  title: string;
+  prompt: string;
+  status: WorkerThreadStatus;
+  agentId?: string;
+  description?: string;
+  summary?: string;
+  resultText?: string;
+  messages: ChatMessage[];
+};
+
+export type AgentTranscriptDebugInfo = {
+  historyLength: number;
+  mainHistoryLength: number;
+  derivedWorkers: Array<{
+    id: string;
+    title: string;
+    status: WorkerThreadStatus;
+    promptPreview: string;
+    resultPreview: string;
+    messageCount: number;
+  }>;
+  mainMessages: Array<{
+    role: 'user' | 'assistant';
+    contentPreview: string;
+    meta?: string[];
+  }>;
+};
+
 type AgentEvent = Record<string, any>;
 
 type MutableChatMessage = ChatMessage & {
@@ -133,6 +165,211 @@ function buildToolDetail(input: unknown, output?: unknown): string {
   }
   return parts.join('\n\n').trim();
 }
+
+function normalizeTextFromContentBlocks(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => {
+      if (!block || typeof block !== 'object') return '';
+      if ((block as any).type === 'text' && typeof (block as any).text === 'string') {
+        return (block as any).text;
+      }
+      if ((block as any).type === 'thinking' && typeof (block as any).thinking === 'string') {
+        return (block as any).thinking;
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+}
+
+function previewText(value: unknown, max = 120): string {
+  const text = normalizeText(value).replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+// ---------------------------------------------------------------------------
+// Event classifiers used for main-chat sanitization
+// ---------------------------------------------------------------------------
+
+function isWorkerCompletionEvent(event: AgentEvent): boolean {
+  return (
+    event?.type === 'user' &&
+    !!event?.tool_use_result &&
+    typeof event.tool_use_result === 'object' &&
+    typeof event.tool_use_result.agentId === 'string' &&
+    typeof event.tool_use_result.status === 'string' &&
+    event.tool_use_result.status !== 'async_launched'
+  );
+}
+
+function isWorkerAsyncLaunchEvent(event: AgentEvent): boolean {
+  return (
+    event?.type === 'user' &&
+    !!event?.tool_use_result &&
+    typeof event.tool_use_result === 'object' &&
+    typeof event.tool_use_result.agentId === 'string' &&
+    event.tool_use_result.status === 'async_launched'
+  );
+}
+
+function isSidechainEvent(event: AgentEvent): boolean {
+  return (
+    !!event &&
+    typeof event === 'object' &&
+    event.isSidechain === true &&
+    typeof event.agentId === 'string' &&
+    event.agentId.trim().length > 0
+  );
+}
+
+function isWorkerLaunchToolUse(block: any): boolean {
+  const toolName = String(block?.name || '').trim();
+  return (
+    block?.type === 'tool_use' &&
+    toolName === 'Agent' &&
+    typeof block?.id === 'string' &&
+    block?.input &&
+    typeof block.input === 'object' &&
+    typeof block.input.prompt === 'string'
+  );
+}
+
+// Strip Agent tool-use blocks from a top-level assistant event so the
+// coordinator's "I'm launching workers" message shows its text but not the
+// raw tool invocation JSON.
+function stripWorkerLaunchBlocks(event: AgentEvent): AgentEvent | null {
+  if (event?.type !== 'assistant' || !Array.isArray(event?.message?.content)) {
+    return event;
+  }
+  const filtered = event.message.content.filter((block: any) => !isWorkerLaunchToolUse(block));
+  if (filtered.length === event.message.content.length) return event;
+  if (filtered.length === 0) return null;
+  return { ...event, message: { ...event.message, content: filtered } };
+}
+
+// Collect all Agent tool-use IDs from the coordinator's own assistant messages.
+// In coordinator mode the SDK normalises in-process worker events into plain
+// assistant/user events that carry parent_tool_use_id pointing back to the
+// Agent call that spawned the worker. We use these IDs to drop worker events.
+function collectAgentToolUseIds(history: AgentEvent[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of history) {
+    if (event?.type !== 'assistant' || !Array.isArray(event?.message?.content)) continue;
+    for (const block of event.message.content) {
+      if (
+        block?.type === 'tool_use' &&
+        String(block?.name || '').trim() === 'Agent' &&
+        typeof block?.id === 'string'
+      ) {
+        ids.add(block.id);
+      }
+    }
+  }
+  return ids;
+}
+
+// Remove worker-related events from main chat history.
+// Workers are now a separate data source (subagent .jsonl files), so their
+// events must not appear in the coordinator's chat transcript.
+function sanitizeMainHistory(history: AgentEvent[]): AgentEvent[] {
+  // Build the set of Agent tool-use IDs once so we can filter worker events.
+  const agentToolIds = collectAgentToolUseIds(history);
+
+  const result: AgentEvent[] = [];
+  for (const event of history) {
+    if (!event || typeof event !== 'object') continue;
+    // Drop events that belong to a worker sub-agent (isSidechain path)
+    if (isSidechainEvent(event)) continue;
+    if (isWorkerAsyncLaunchEvent(event)) continue;
+    if (isWorkerCompletionEvent(event)) continue;
+    // Drop in-process worker events: the SDK normalises them from progress
+    // wrappers into plain assistant/user events but attaches parent_tool_use_id
+    // referencing the coordinator's Agent tool call.
+    if (
+      agentToolIds.size > 0 &&
+      typeof event.parent_tool_use_id === 'string' &&
+      agentToolIds.has(event.parent_tool_use_id)
+    ) {
+      continue;
+    }
+    // Drop user events whose message content consists only of tool_result
+    // blocks for Agent calls — these are the coordinator receiving back the
+    // worker results and should not appear as orphaned tool steps in the chat.
+    if (
+      agentToolIds.size > 0 &&
+      event?.type === 'user' &&
+      Array.isArray(event?.message?.content) &&
+      event.message.content.length > 0 &&
+      event.message.content.every(
+        (block: any) =>
+          block?.type === 'tool_result' &&
+          typeof block?.tool_use_id === 'string' &&
+          agentToolIds.has(block.tool_use_id),
+      )
+    ) {
+      continue;
+    }
+    const stripped = stripWorkerLaunchBlocks(event);
+    if (stripped) result.push(stripped);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Public builders
+// ---------------------------------------------------------------------------
+
+// Build chat messages from a worker sub-agent's raw .jsonl events.
+// The events come directly from the SDK file and are the authoritative source
+// of worker content — no history-splitting or routing heuristics needed.
+export function buildWorkerMessagesFromSubagentEvents(events: any[]): ChatMessage[] {
+  // system events only carry the system-prompt text; skip them so they don't
+  // appear as an extra message bubble in the worker panel.
+  const filtered = events.filter(
+    (e) => e && typeof e === 'object' && e.type !== 'system',
+  );
+  return buildChatMessages(filtered);
+}
+
+export function buildMainChatMessagesFromHistory(history: AgentEvent[]): ChatMessage[] {
+  const sanitized = sanitizeMainHistory(history);
+  // Result text is now embedded inline by buildChatMessages when processing 'result'
+  // events (if the assistant had no content yet), so no separate fallback needed.
+  return buildChatMessages(sanitized);
+}
+
+export function collectAgentTranscriptDebugInfo(
+  history: AgentEvent[],
+  workerThreads: WorkerThread[],
+  mainMessages: ChatMessage[],
+): AgentTranscriptDebugInfo {
+  const sanitized = sanitizeMainHistory(history);
+
+  return {
+    historyLength: history.length,
+    mainHistoryLength: sanitized.length,
+    derivedWorkers: workerThreads.map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      status: thread.status,
+      promptPreview: previewText(thread.prompt),
+      resultPreview: previewText(thread.resultText),
+      messageCount: thread.messages.length,
+    })),
+    mainMessages: mainMessages.map((message) => ({
+      role: message.role,
+      contentPreview: previewText(message.content),
+      meta: message.meta,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Core message builder — shared by main chat and worker panels
+// ---------------------------------------------------------------------------
 
 function ensureMeta(message: MutableChatMessage) {
   if (!message.meta) message.meta = [];
@@ -394,6 +631,12 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
             }
           }
         }
+      }
+      // If no assistant content was built from event stream (common in coordinator
+      // mode where the final text lives only in the result event), use it directly.
+      const resultText = typeof event.result === 'string' ? event.result.trim() : '';
+      if (resultText && !assistant.content.trim()) {
+        assistant.content = resultText;
       }
       finalizeAssistant(assistant);
       continue;

@@ -9,7 +9,14 @@ import { BuddyCompanion, BuddySummary, isBuddyEnabled, setBuddyEnabled } from '@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { buildChatMessages } from '@/lib/agent-transcript';
+import {
+  collectAgentTranscriptDebugInfo,
+  buildMainChatMessagesFromHistory,
+  buildWorkerMessagesFromSubagentEvents,
+  type ChatMessage,
+  type WorkerThread,
+  type WorkerThreadStatus,
+} from '@/lib/agent-transcript';
 import { PRESET_THEMES, DEFAULT_THEME_ID, type ICssTheme } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
 import type {
@@ -22,7 +29,23 @@ import type {
   SessionDetail,
   SessionSummary,
   StoredApp,
+  WorkerSubagentResult,
 } from './types';
+
+type RendererDebugEntry = {
+  source: 'renderer';
+  label: string;
+  timestamp: string;
+  payload: Record<string, any>;
+};
+
+type RendererDebugSink = ((entry: RendererDebugEntry) => void) | null;
+
+let rendererDebugSink: RendererDebugSink = null;
+
+function setRendererDebugSink(sink: RendererDebugSink) {
+  rendererDebugSink = sink;
+}
 
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -72,6 +95,7 @@ function loadPanelLayout(): LayoutState {
     return DEFAULT_LAYOUT;
   }
 }
+
 
 function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) {
   return summaries.map((session) => ({
@@ -141,6 +165,109 @@ function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>
     .filter(Boolean) as FileTreeNode[];
 }
 
+function summarizeRendererEvent(payload: any) {
+  const event = payload?.payload ?? payload;
+  if (!event || typeof event !== 'object') {
+    return { type: typeof event, detail: String(event) };
+  }
+
+  const summary: Record<string, any> = {
+    type: event.type || 'unknown',
+  };
+
+  if (typeof event.subtype === 'string') {
+    summary.subtype = event.subtype;
+  }
+
+  if (typeof event.session_id === 'string') {
+    summary.runtimeSessionId = event.session_id;
+  }
+
+  if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+    summary.blockTypes = event.message.content.map((block: any) => block?.type).filter(Boolean);
+    summary.toolUses = event.message.content
+      .filter((block: any) => block?.type === 'tool_use')
+      .map((block: any) => ({ id: block.id, name: block.name }));
+  } else if (event.type === 'user') {
+    if (typeof event.prompt === 'string') {
+      summary.promptPreview = event.prompt.slice(0, 120);
+    }
+    if (Array.isArray(event.message?.content)) {
+      summary.blockTypes = event.message.content.map((block: any) => block?.type).filter(Boolean);
+      const text = event.message.content
+        .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block: any) => block.text)
+        .join('\n\n');
+      if (text) {
+        summary.textPreview = text.slice(0, 160);
+      }
+      summary.toolResults = event.message.content
+        .filter((block: any) => block?.type === 'tool_result')
+        .map((block: any) => ({ toolUseId: block.tool_use_id, isError: Boolean(block.is_error) }));
+    }
+  } else if (event.type === 'stream_event') {
+    summary.streamType = event.event?.type;
+    summary.blockType = event.event?.content_block?.type;
+    summary.deltaType = event.event?.delta?.type;
+  } else if (event.type === 'tool_progress') {
+    summary.toolName = event.tool_name;
+    summary.toolUseId = event.tool_use_id || event.parent_tool_use_id;
+  } else if (event.type === 'error') {
+    summary.message = String(event.message || '').slice(0, 200);
+  }
+
+  return summary;
+}
+
+function traceRendererEvent(label: string, payload: any, extra: Record<string, any> = {}) {
+  const entryPayload = {
+    ...extra,
+    summary: summarizeRendererEvent(payload),
+    payload,
+  };
+  console.log(`[event-trace][renderer] ${label}`, entryPayload);
+  rendererDebugSink?.({
+    source: 'renderer',
+    label: `[event-trace][renderer] ${label}`,
+    timestamp: new Date().toISOString(),
+    payload: entryPayload,
+  });
+}
+
+function logCoordinatorDebug(label: string, payload: Record<string, any>) {
+  console.log(label, payload);
+  rendererDebugSink?.({
+    source: 'renderer',
+    label,
+    timestamp: new Date().toISOString(),
+    payload,
+  });
+}
+
+function serializeDebugEntry(entry: RendererDebugEntry): string {
+  try {
+    return JSON.stringify(entry);
+  } catch (error) {
+    return JSON.stringify({
+      source: entry.source,
+      label: entry.label,
+      timestamp: entry.timestamp,
+      payload: {
+        error: `Failed to serialize debug payload: ${String(error)}`,
+      },
+    });
+  }
+}
+
+function mapCoordinatorTaskStatus(status: string | undefined): 'running' | 'completed' | 'failed' | undefined {
+  const normalized = String(status || '').toLowerCase();
+  if (!normalized) return undefined;
+  if (/(fail|error|killed|stopped|cancel)/.test(normalized)) return 'failed';
+  if (/(complete|completed|done|success|finished)/.test(normalized)) return 'completed';
+  if (/(run|running|pending|queued|waiting|spawned|created|active)/.test(normalized)) return 'running';
+  return undefined;
+}
+
 export default function App() {
   const isMacOS =
     typeof navigator !== 'undefined' &&
@@ -196,8 +323,28 @@ export default function App() {
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
   const [coordinatorTasks, setCoordinatorTasks] = React.useState<CoordinatorTask[]>([]);
+  const [activeWorkerThreadId, setActiveWorkerThreadId] = React.useState<string | null>(null);
+  const [stickyWorkerTaskStatuses, setStickyWorkerTaskStatuses] = React.useState<Record<string, 'completed' | 'failed'>>({});
+  const [workerSubagentResults, setWorkerSubagentResults] = React.useState<Record<string, WorkerSubagentResult>>({});
+  // Workers from previous coordinator runs in the same session (persisted across switches).
+  const [archivedWorkerThreads, setArchivedWorkerThreads] = React.useState<WorkerThread[]>([]);
+  const archivedWorkerThreadsRef = React.useRef<WorkerThread[]>([]);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
+  const debugLogFilePathRef = React.useRef<string | null>(null);
+  const debugLogLinesRef = React.useRef<string[]>([]);
+  const debugLogFlushTimerRef = React.useRef<number | null>(null);
+  const refreshedTerminalWorkerIdsRef = React.useRef<Set<string>>(new Set());
+  // Tracks which task IDs were present in the previous coordinatorTasks poll,
+  // so we can detect disappearances (tasks that completed without a terminal status).
+  const prevCoordinatorTaskIdsRef = React.useRef<Set<string>>(new Set());
+  // Keeps the last non-empty thread list so the worker panel and summary stay
+  // visible after the backend clears coordinatorTasks on completion.
+  const frozenWorkerThreadsRef = React.useRef<WorkerThread[]>([]);
+  // When the memo detects a new run (new task IDs while frozen is non-empty), it
+  // stores the old frozen workers here so the effect can archive them to state.
+  const pendingArchiveRef = React.useRef<WorkerThread[] | null>(null);
+  const prevBusyRef = React.useRef<boolean | undefined>(undefined);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
@@ -270,8 +417,8 @@ export default function App() {
     clearSessionWorkspaceState();
   }, [clearSessionWorkspaceState]);
 
-  const createAndOpenSession = React.useCallback(async () => {
-    const created = await window.agentDesktop.createSession({});
+  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string) => {
+    const created = await window.agentDesktop.createSession(workspace ? { title, workspace } : title ? { title } : {});
     setSummaries((prev) => upsertSummary(prev, created.summary));
     await openSession(created.summary.id);
     return created.summary.id;
@@ -395,6 +542,159 @@ export default function App() {
   }, [activeSessionId]);
 
   React.useEffect(() => {
+    setStickyWorkerTaskStatuses({});
+    setWorkerSubagentResults({});
+    setArchivedWorkerThreads([]);
+    archivedWorkerThreadsRef.current = [];
+    refreshedTerminalWorkerIdsRef.current = new Set();
+    prevCoordinatorTaskIdsRef.current = new Set();
+    frozenWorkerThreadsRef.current = [];
+    pendingArchiveRef.current = null;
+    prevBusyRef.current = undefined;
+  }, [activeSessionId]);
+
+  // Track busy transitions:
+  // false → true: new coordinator request started — reset auxiliary tracking state.
+  //               frozenWorkerThreadsRef is intentionally NOT cleared here so
+  //               multi-turn coordinator follow-ups keep workers visible.
+  //               The resolvedWorkerThreads memo archives old workers when new task IDs appear.
+  // true  → false: coordinator just finished — persist worker states to SQLite so
+  //               the worker panel survives session switches and app restarts.
+  React.useEffect(() => {
+    const busy = Boolean(activeDetail?.busy);
+    if (prevBusyRef.current === false && busy === true) {
+      setStickyWorkerTaskStatuses({});
+      setWorkerSubagentResults({});
+      refreshedTerminalWorkerIdsRef.current = new Set();
+      prevCoordinatorTaskIdsRef.current = new Set();
+    } else if (prevBusyRef.current === true && busy === false) {
+      const threads = frozenWorkerThreadsRef.current;
+      const archived = archivedWorkerThreadsRef.current;
+      const sid = activeSessionIdRef.current;
+      if ((threads.length > 0 || archived.length > 0) && sid) {
+        // Persist worker metadata (messages excluded — they live in .jsonl files).
+        const data = {
+          current: threads.map((t) => ({ ...t, messages: [] as ChatMessage[] })),
+          archived: archived.map((t) => ({ ...t, messages: [] as ChatMessage[] })),
+        };
+        void window.agentDesktop.setWorkerSummaries({
+          sessionId: sid,
+          workerSummariesJson: JSON.stringify(data),
+        });
+      }
+    }
+    prevBusyRef.current = busy;
+  }, [activeDetail?.busy]);
+
+  // After each render, flush any pending archive produced by the resolvedWorkerThreads memo.
+  // The memo can't call setState, so it signals via pendingArchiveRef.
+  React.useEffect(() => {
+    if (!pendingArchiveRef.current) return;
+    const toArchive = pendingArchiveRef.current;
+    pendingArchiveRef.current = null;
+    setArchivedWorkerThreads((prev) => {
+      const next = [...toArchive, ...prev];
+      archivedWorkerThreadsRef.current = next;
+      return next;
+    });
+  });
+
+  // Restore worker panel from SQLite when opening a session that had previous coordinator runs.
+  // The saved JSON is the lightweight worker summary; full event streams are re-fetched
+  // from .jsonl files via getWorkerResults.
+  React.useEffect(() => {
+    const json = activeDetail?.workerSummariesJson;
+    if (!activeSessionId || !json) return;
+    if (frozenWorkerThreadsRef.current.length > 0) return; // live data already present
+    try {
+      const saved = JSON.parse(json);
+      // Support both the old format (WorkerThread[]) and the new format ({current, archived}).
+      let current: WorkerThread[] = [];
+      let archived: WorkerThread[] = [];
+      if (Array.isArray(saved)) {
+        current = saved;
+      } else if (saved && typeof saved === 'object') {
+        if (Array.isArray(saved.current)) current = saved.current;
+        if (Array.isArray(saved.archived)) archived = saved.archived;
+      }
+      if (current.length === 0 && archived.length === 0) return;
+      frozenWorkerThreadsRef.current = current;
+      setArchivedWorkerThreads(archived);
+      archivedWorkerThreadsRef.current = archived;
+      // Re-fetch event streams to populate message history — also triggers a re-render
+      // so resolvedWorkerThreads picks up the restored frozenWorkerThreadsRef.
+      void window.agentDesktop.getWorkerResults({ sessionId: activeSessionId })
+        .then((res) => {
+          if (activeSessionIdRef.current !== activeSessionId) return;
+          setWorkerSubagentResults(res?.results ?? {});
+        });
+    } catch {}
+  }, [activeSessionId, activeDetail?.workerSummariesJson]);
+
+  const flushDebugLogToFile = React.useCallback(async () => {
+    const filePath = debugLogFilePathRef.current;
+    if (!filePath) return;
+    const text = debugLogLinesRef.current.join('\n');
+    const bytes = Array.from(new TextEncoder().encode(text ? `${text}\n` : ''));
+    await window.agentDesktop.fs.writeFile(filePath, bytes);
+  }, []);
+
+  const enqueueDebugLogLine = React.useCallback((entry: RendererDebugEntry) => {
+    const serialized = serializeDebugEntry(entry);
+    debugLogLinesRef.current.push(serialized);
+
+    if (debugLogFlushTimerRef.current !== null) return;
+    debugLogFlushTimerRef.current = window.setTimeout(() => {
+      debugLogFlushTimerRef.current = null;
+      void flushDebugLogToFile();
+    }, 250);
+  }, [flushDebugLogToFile]);
+
+  React.useEffect(() => {
+    setRendererDebugSink((entry) => {
+      enqueueDebugLogLine(entry);
+    });
+    return () => {
+      setRendererDebugSink(null);
+    };
+  }, [enqueueDebugLogLine]);
+
+  React.useEffect(() => {
+    const workspace = activeDetail?.workspace;
+    if (!workspace) {
+      debugLogFilePathRef.current = null;
+      return;
+    }
+
+    const nextPath = `${workspace.replace(/[\\/]+$/, '')}/coordinator-ui-debug.log`;
+    if (debugLogFilePathRef.current === nextPath) return;
+
+    debugLogFilePathRef.current = nextPath;
+    debugLogLinesRef.current = [];
+    enqueueDebugLogLine({
+      source: 'renderer',
+      label: '[coordinator-debug] log-file-initialized',
+      timestamp: new Date().toISOString(),
+      payload: {
+        sessionId: activeSessionId,
+        workspace,
+        filePath: nextPath,
+      },
+    });
+    void flushDebugLogToFile();
+  }, [activeDetail?.workspace, activeSessionId, enqueueDebugLogLine, flushDebugLogToFile]);
+
+  React.useEffect(() => {
+    return () => {
+      if (debugLogFlushTimerRef.current !== null) {
+        window.clearTimeout(debugLogFlushTimerRef.current);
+        debugLogFlushTimerRef.current = null;
+      }
+      void flushDebugLogToFile();
+    };
+  }, [flushDebugLogToFile]);
+
+  React.useEffect(() => {
     if (!activeDetail?.workspace || !activeSessionId) {
       setDirectoryCache(new Map());
       return;
@@ -489,6 +789,9 @@ export default function App() {
 
     const offEvent = window.agentDesktop.onEvent((payload) => {
       if (payload.sessionId !== activeSessionIdRef.current) return;
+      traceRendererEvent('agent:event', payload, {
+        activeSessionId: activeSessionIdRef.current,
+      });
       setActiveDetail((prev) => {
         if (!prev) return prev;
         return { ...prev, history: [...prev.history, payload.payload] };
@@ -496,6 +799,9 @@ export default function App() {
     });
 
     const offState = window.agentDesktop.onState((payload) => {
+      traceRendererEvent('agent:state', payload, {
+        activeSessionId: activeSessionIdRef.current,
+      });
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
@@ -506,6 +812,9 @@ export default function App() {
 
     const offPermission = window.agentDesktop.onPermission((payload) => {
       if (payload?.sessionId !== activeSessionIdRef.current) return;
+      traceRendererEvent('agent:permission', payload, {
+        activeSessionId: activeSessionIdRef.current,
+      });
       const toolName = payload?.request?.tool_name || 'Tool';
       setPermissionNotice(`${toolName} 正在请求权限确认`);
       window.setTimeout(() => {
@@ -516,6 +825,9 @@ export default function App() {
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
+      traceRendererEvent('agent:session-meta', summary, {
+        activeSessionId: activeSessionIdRef.current,
+      });
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
         setActiveDetail((prev) => (prev ? { ...prev, ...summary } : prev));
@@ -552,7 +864,10 @@ export default function App() {
     const offTeammateSpawned = window.agentDesktop.onTeammateSpawned(async (payload) => {
       const { sessionId, taskId, description, prompt } = payload;
       if (sessionId !== activeSessionIdRef.current) return;
-      console.log(`[App] Teammate spawned: ${taskId} - ${description}`);
+      traceRendererEvent('coordinator:teammate-spawned', payload, {
+        activeSessionId: activeSessionIdRef.current,
+        taskId,
+      });
       // Create execution window for this teammate
       try {
         await window.agentDesktop.createExecutionForTeammate({
@@ -575,7 +890,11 @@ export default function App() {
     const offTeammateCompleted = window.agentDesktop.onTeammateCompleted(async (payload) => {
       const { sessionId, taskId, description, status } = payload;
       if (sessionId !== activeSessionIdRef.current) return;
-      console.log(`[App] Teammate completed: ${taskId} - ${description}, status=${status}`);
+      traceRendererEvent('coordinator:teammate-completed', payload, {
+        activeSessionId: activeSessionIdRef.current,
+        taskId,
+        status,
+      });
 
       // Update the execution window state via IPC
       try {
@@ -614,10 +933,225 @@ export default function App() {
     [summaries, pinnedIds]
   );
 
+  // Worker threads are built directly from coordinatorTasks (authoritative for
+  // list + agentId + status) and workerSubagentResults (authoritative for content).
+  // The frozen list accumulates all workers ever seen so completed ones remain
+  // visible even after the backend removes them from coordinatorTasks.
+  const resolvedWorkerThreads = React.useMemo(() => {
+    const live = coordinatorTasks.map((task, index) => {
+      const stickyStatus = stickyWorkerTaskStatuses[task.id];
+      const taskStatus = mapCoordinatorTaskStatus(task.status);
+      // isIdle is the SDK-native signal: true means the worker has finished.
+      const status: WorkerThreadStatus = stickyStatus
+        || (task.isIdle ? (taskStatus === 'failed' ? 'failed' : 'completed') : taskStatus)
+        || 'queued';
+      // agentId (e.g. "alice@team1") is the key used in .jsonl filenames;
+      // task.id is the internal taskId which differs from the file-based agentId.
+      const resultKey = task.agentId || task.id;
+      const subagentResult = workerSubagentResults[resultKey];
+      const resultText = subagentResult?.resultText || undefined;
+      const summary = resultText || undefined;
+      const messages = subagentResult?.events?.length
+        ? buildWorkerMessagesFromSubagentEvents(subagentResult.events)
+        : [];
+      return {
+        id: task.id,
+        title: task.description || task.name || `Worker ${index + 1}`,
+        prompt: '',
+        status,
+        agentId: task.agentId || task.id,
+        description: task.description,
+        summary,
+        resultText,
+        messages,
+      };
+    });
+
+    const frozen = frozenWorkerThreadsRef.current;
+    if (live.length === 0 && frozen.length === 0) return [];
+
+    // Detect a new coordinator run: live has task IDs we've never seen in
+    // frozen. If frozen already has workers from a previous run, discard them
+    // so the stale summary doesn't bleed into the new conversation.
+    const frozenIds = new Set(frozen.map((t) => t.id));
+    const hasNewTasks = live.some((t) => !frozenIds.has(t.id));
+    if (hasNewTasks && frozen.length > 0) {
+      // New run started — archive the previous run's workers, then reset frozen.
+      // Can't call setState here (inside memo), so signal via ref; the effect below
+      // will pick this up and update archivedWorkerThreads state.
+      pendingArchiveRef.current = frozen;
+      frozenWorkerThreadsRef.current = live;
+      return live;
+    }
+
+    // Merge: preserve original ordering from frozen, update with live data where
+    // available, and append any brand-new workers not yet in frozen.
+    const liveById = new Map(live.map((t) => [t.id, t]));
+    const merged = [
+      ...frozen.map((t) => {
+        const liveVersion = liveById.get(t.id);
+        if (liveVersion) return liveVersion;
+        // Task no longer in live (completed and removed by backend). Re-apply the
+        // latest sticky status and worker results so the panel shows correct state.
+        const stickyStatus = stickyWorkerTaskStatuses[t.id];
+        const resultKey = t.agentId || t.id;
+        const subagentResult = workerSubagentResults[resultKey];
+        const resultText = subagentResult?.resultText || t.resultText;
+        const messages = subagentResult?.events?.length
+          ? buildWorkerMessagesFromSubagentEvents(subagentResult.events)
+          : t.messages;
+        return {
+          ...t,
+          status: (stickyStatus || t.status) as WorkerThreadStatus,
+          resultText,
+          summary: resultText || t.summary,
+          messages,
+        };
+      }),
+      ...live.filter((t) => !frozenIds.has(t.id)),
+    ];
+
+    frozenWorkerThreadsRef.current = merged;
+    return merged;
+  }, [coordinatorTasks, stickyWorkerTaskStatuses, workerSubagentResults]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+
+    const currentTaskIds = new Set(coordinatorTasks.map((t) => t.id));
+
+    // Two complementary signals for task completion:
+    // 1. task.isIdle === true  — SDK-native: task finished but still in the list
+    // 2. task disappeared from list — SDK sometimes removes tasks without status update
+    const prevIds = prevCoordinatorTaskIdsRef.current;
+    const disappearedIds = [...prevIds].filter(
+      (id) => !currentTaskIds.has(id) && !refreshedTerminalWorkerIdsRef.current.has(id),
+    );
+    prevCoordinatorTaskIdsRef.current = currentTaskIds;
+
+    const nextSticky: Record<string, 'completed' | 'failed'> = {};
+    for (const task of coordinatorTasks) {
+      const taskStatus = mapCoordinatorTaskStatus(task.status);
+      // isIdle is the SDK-native signal that a worker finished (primary source)
+      if (task.isIdle || taskStatus === 'completed' || taskStatus === 'failed') {
+        nextSticky[task.id] = taskStatus === 'failed' ? 'failed' : 'completed';
+      }
+    }
+    // Disappeared tasks: treat as completed (SDK sometimes removes without status)
+    for (const id of disappearedIds) {
+      nextSticky[id] = 'completed';
+    }
+
+    const newTerminalTaskIds = Object.keys(nextSticky).filter(
+      (taskId) => !refreshedTerminalWorkerIdsRef.current.has(taskId),
+    );
+
+    if (Object.keys(nextSticky).length > 0) {
+      setStickyWorkerTaskStatuses((prev) => {
+        let changed = false;
+        const merged = { ...prev };
+        for (const [taskId, status] of Object.entries(nextSticky)) {
+          if (merged[taskId] !== status) {
+            merged[taskId] = status;
+            changed = true;
+          }
+        }
+        return changed ? merged : prev;
+      });
+    }
+
+    if (newTerminalTaskIds.length === 0) return;
+
+    newTerminalTaskIds.forEach((taskId) => {
+      refreshedTerminalWorkerIdsRef.current.add(taskId);
+    });
+
+    void (async () => {
+      try {
+        const [detail, workerResultsRes] = await Promise.all([
+          window.agentDesktop.getSession({ sessionId: activeSessionId }),
+          window.agentDesktop.getWorkerResults({ sessionId: activeSessionId }),
+        ]);
+        if (activeSessionIdRef.current !== activeSessionId) return;
+        setActiveDetail(detail);
+        if (workerResultsRes?.results) {
+          setWorkerSubagentResults((prev) => ({ ...prev, ...workerResultsRes.results }));
+        }
+      } catch {
+        // ignore refresh failures; polling will retry on the next change
+      }
+    })();
+  }, [activeSessionId, coordinatorTasks]);
+
+  // chatMessages is built exclusively from session history.
+  // The coordinator agent produces its own formatted summary in the history;
+  // the UI must not generate its own summary on top of it.
+  // Worker status is shown in WorkerThreadPanel, not injected into chatMessages.
   const chatMessages = React.useMemo(
-    () => buildChatMessages(activeDetail?.history || []),
-    [activeDetail?.history]
+    () => buildMainChatMessagesFromHistory(activeDetail?.history || []),
+    [activeDetail?.history],
   );
+
+  const transcriptDebugInfo = React.useMemo(
+    () => collectAgentTranscriptDebugInfo(
+      activeDetail?.history || [],
+      resolvedWorkerThreads,
+      chatMessages,
+    ),
+    [activeDetail?.history, resolvedWorkerThreads, chatMessages]
+  );
+
+  React.useEffect(() => {
+    if (!activeSessionId || !activeDetail?.history?.length) return;
+    logCoordinatorDebug('[coordinator-debug] transcript-derivation', {
+      sessionId: activeSessionId,
+      busy: Boolean(activeDetail?.busy),
+      info: transcriptDebugInfo,
+    });
+  }, [activeSessionId, activeDetail?.busy, activeDetail?.history?.length, transcriptDebugInfo]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+    logCoordinatorDebug('[coordinator-debug] task-snapshot', {
+      sessionId: activeSessionId,
+      tasks: coordinatorTasks.map((task) => ({
+        id: task.id,
+        name: task.name,
+        status: task.status,
+        isIdle: task.isIdle,
+        description: task.description,
+      })),
+    });
+  }, [activeSessionId, coordinatorTasks]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+    logCoordinatorDebug('[coordinator-debug] worker-task-reconcile', {
+      sessionId: activeSessionId,
+      workerCount: resolvedWorkerThreads.length,
+      taskCount: coordinatorTasks.length,
+      workers: resolvedWorkerThreads.map((thread) => ({
+        id: thread.id,
+        agentId: thread.agentId,
+        title: thread.title,
+        status: thread.status,
+        hasResultText: Boolean(thread.resultText?.trim()),
+        messageCount: thread.messages.length,
+      })),
+    });
+  }, [activeSessionId, coordinatorTasks, resolvedWorkerThreads]);
+
+  React.useEffect(() => {
+    if (resolvedWorkerThreads.length === 0) {
+      setActiveWorkerThreadId(null);
+      return;
+    }
+    setActiveWorkerThreadId((current) => (
+      current && resolvedWorkerThreads.some((thread) => thread.id === current)
+        ? current
+        : null
+    ));
+  }, [resolvedWorkerThreads]);
 
   const workspaceTree = React.useMemo(() => {
     if (!activeDetail?.workspace) return [];
@@ -710,7 +1244,7 @@ export default function App() {
     persistPinned(next);
   }, [persistPinned, pinnedIds]);
 
-  const submitPrompt = React.useCallback(async (intent: ComposerIntent, files?: Array<{ name: string; path: string }>) => {
+  const submitPrompt = React.useCallback(async (intent: ComposerIntent, files?: Array<{ name: string; path: string }>, workspace?: string) => {
     const hasText = input.trim().length > 0;
     const hasFiles = files && files.length > 0;
     if (!hasText && !hasFiles) return;
@@ -723,7 +1257,7 @@ export default function App() {
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
     if (!sessionId) {
-      sessionId = await createAndOpenSession();
+      sessionId = await createAndOpenSession(undefined, workspace);
       sessionJustCreated = true;
     }
     if (!sessionId) return;
@@ -744,6 +1278,15 @@ export default function App() {
       }
       filesToSend = newFiles;
     }
+
+    // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
+    // intentionally NOT cleared here so multi-turn coordinators keep their
+    // worker panel visible during follow-up turns. The resolvedWorkerThreads
+    // memo resets frozen automatically when genuinely new task IDs appear.
+    refreshedTerminalWorkerIdsRef.current = new Set();
+    prevCoordinatorTaskIdsRef.current = new Set();
+    setStickyWorkerTaskStatuses({});
+    setWorkerSubagentResults({});
 
     const result = await window.agentDesktop.send({
       sessionId,
@@ -768,8 +1311,8 @@ export default function App() {
     }
   }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName]);
 
-  const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>) => {
-    await submitPrompt(composerIntent, files);
+  const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>, workspace?: string) => {
+    await submitPrompt(composerIntent, files, workspace);
   }, [composerIntent, submitPrompt]);
 
   const handleApprovePlan = React.useCallback(async () => {
@@ -874,11 +1417,12 @@ export default function App() {
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     setSelectedAppName(name);
     setActiveView('chat');
+    setComposerIntent('iterate-app');
     if (!activeSessionId) {
       navigateToHome({ preserveIntent: true });
+      await createAndOpenSession(`迭代 ${name}`);
     }
-    setComposerIntent('iterate-app');
-  }, [activeSessionId, navigateToHome]);
+  }, [activeSessionId, navigateToHome, createAndOpenSession]);
 
   const handleDeleteApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.deleteApp({ name });
@@ -1290,6 +1834,9 @@ export default function App() {
                 leftCollapsed={layout.leftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
+                workerThreads={resolvedWorkerThreads}
+                archivedWorkerThreads={archivedWorkerThreads}
+                activeWorkerThreadId={activeWorkerThreadId}
                 onChange={setInput}
                 onComposerIntentChange={setComposerIntent}
                 onToggleLeftSidebar={() => toggleSidebar('left')}
@@ -1298,6 +1845,7 @@ export default function App() {
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
                 onStop={handleStop}
+                onToggleWorkerThread={setActiveWorkerThreadId}
               />
             ) : (
               <ChatArea
@@ -1313,6 +1861,9 @@ export default function App() {
                 leftCollapsed={layout.leftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
+                workerThreads={[]}
+                archivedWorkerThreads={[]}
+                activeWorkerThreadId={null}
                 onChange={setInput}
                 onComposerIntentChange={setComposerIntent}
                 onToggleLeftSidebar={() => toggleSidebar('left')}
@@ -1321,6 +1872,7 @@ export default function App() {
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
                 onStop={handleStop}
+                onToggleWorkerThread={setActiveWorkerThreadId}
               />
             )
           ) : activeView === 'apps' ? (
