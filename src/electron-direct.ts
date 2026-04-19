@@ -224,7 +224,7 @@ export class ClaudeSession {
       const waitSignal = abortController?.signal ?? signal
       let finalResult: SDKMessage | undefined
 
-      const isCurrentSessionMainThreadTaskNotification = (
+      const isCurrentSessionMainThreadCommand = (
         cmd: {
           agentId?: unknown
           mode: string
@@ -232,17 +232,17 @@ export class ClaudeSession {
         },
       ) =>
         cmd.agentId === undefined &&
-        cmd.mode === 'task-notification' &&
+        (cmd.mode === 'task-notification' || cmd.mode === 'orphaned-permission') &&
         (cmd.sessionId === undefined || cmd.sessionId === sessionId)
 
       const dequeueMainThreadTaskNotification = () =>
         this.#opts.coordinatorMode
-          ? dequeue(isCurrentSessionMainThreadTaskNotification)
+          ? dequeue(isCurrentSessionMainThreadCommand)
           : undefined
 
       const hasQueuedMainThreadTaskNotification = () =>
         this.#opts.coordinatorMode &&
-        peek(isCurrentSessionMainThreadTaskNotification) !== undefined
+        peek(isCurrentSessionMainThreadCommand) !== undefined
 
       const hasRunningBackgroundTasks = () => {
         if (!this.#opts.coordinatorMode) return false
@@ -259,16 +259,14 @@ export class ClaudeSession {
           (async function* () {
             const runTurn = async function* (
               turnPrompt: string | Array<{ type: string; [k: string]: unknown }>,
-              mode: 'prompt' | 'task-notification',
+              mode: 'prompt' | 'task-notification' | 'orphaned-permission',
               uuid?: string,
             ): AsyncGenerator<SDKMessage> {
-              const iterator = runInSessionContext(() =>
-                engine.submitMessage(turnPrompt, { uuid, mode }),
-              )
+              const iterator = engine.submitMessage(turnPrompt, { uuid, mode })
 
               try {
                 while (true) {
-                  const result = await runInSessionContext(() => iterator.next())
+                  const result = await iterator.next()
                   if (result.done) {
                     return
                   }
@@ -280,7 +278,7 @@ export class ClaudeSession {
                 }
               } finally {
                 if (typeof iterator.return === 'function') {
-                  await runInSessionContext(() => iterator.return!())
+                  await iterator.return()
                 }
               }
             }
@@ -288,7 +286,7 @@ export class ClaudeSession {
             let nextTurn:
               | {
                   value: string | Array<{ type: string; [k: string]: unknown }>
-                  mode: 'prompt' | 'task-notification'
+                  mode: 'prompt' | 'task-notification' | 'orphaned-permission'
                   uuid?: string
                 }
               | undefined = {
@@ -309,14 +307,14 @@ export class ClaudeSession {
                 nextTurn = undefined
               }
 
-              const queuedNotification = dequeueMainThreadTaskNotification()
-              if (queuedNotification) {
+              const queuedCmd = dequeueMainThreadTaskNotification()
+              if (queuedCmd) {
                 nextTurn = {
-                  value: queuedNotification.value as
+                  value: queuedCmd.value as
                     | string
                     | Array<{ type: string; [k: string]: unknown }>,
-                  mode: 'task-notification',
-                  uuid: queuedNotification.uuid,
+                  mode: queuedCmd.mode as 'task-notification' | 'orphaned-permission',
+                  uuid: queuedCmd.uuid,
                 }
                 continue
               }
