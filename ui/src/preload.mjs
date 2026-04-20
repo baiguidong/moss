@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getFileMetadata: (path) => ipcRenderer.invoke('fs:getFileMetadata', { path }),
     createTempFile: (fileName) => ipcRenderer.invoke('fs:createTempFile', { fileName }),
     writeFile: (path, data) => ipcRenderer.invoke('fs:writeFile', { path, data }),
+    getAppIcon: () => ipcRenderer.invoke('fs:getAppIcon'),
     saveImageToWorkspace: (sessionId, fileName, data) => ipcRenderer.invoke('workspace:saveImage', { sessionId, fileName, data }),
   },
   onEvent: (callback) => {
