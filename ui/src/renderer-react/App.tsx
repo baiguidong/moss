@@ -1833,6 +1833,7 @@ export default function App() {
                 value={input}
                 selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy)}
+                sessionBusy={Boolean(activeDetail?.busy)}
                 hasActiveSession={Boolean(activeSessionId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
                 sessionMessageCount={activeDetail?.messageCount || 0}
@@ -1861,6 +1862,7 @@ export default function App() {
                 value={input}
                 selectedAppName={selectedAppName}
                 loading={false}
+                sessionBusy={false}
                 hasActiveSession={false}
                 sessionTitle=""
                 sessionMessageCount={0}

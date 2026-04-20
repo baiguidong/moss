@@ -104,9 +104,11 @@ function SessionItem({
   };
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => e.key === 'Enter' && onClick()}
       className={cn(
         "group relative w-full max-w-full overflow-hidden rounded-xl border px-2 py-1 pr-14 text-left transition-colors",
         isActive
@@ -176,7 +178,7 @@ function SessionItem({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </button>
+    </div>
   );
 }
 

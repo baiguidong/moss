@@ -3491,6 +3491,25 @@ ipcMain.handle('fs:getHomeDir', async () => {
   return os.homedir();
 });
 
+ipcMain.handle('fs:getAppIcon', async () => {
+  try {
+    // Try production path first, then dev path
+    const prodIcon = path.join(uiRoot, 'dist', 'build', 'icon.png');
+    const devIcon = path.join(uiRoot, 'public', 'build', 'icon.png');
+    const iconPath = fs.existsSync(prodIcon) ? prodIcon : (fs.existsSync(devIcon) ? devIcon : null);
+    console.log('[getAppIcon] uiRoot=', uiRoot, 'prodIcon=', prodIcon, 'devIcon=', devIcon, 'resolved=', iconPath);
+    if (!iconPath) {
+      return null;
+    }
+    const base64 = await fsp.readFile(iconPath, { encoding: 'base64' });
+    console.log('[getAppIcon] success, size=', base64.length);
+    return `data:image/png;base64,${base64}`;
+  } catch (err) {
+    console.error('[getAppIcon] error:', err);
+    return null;
+  }
+});
+
 ipcMain.handle('fs:readText', async (event, { path: filePath }) => {
   try {
     const content = await fsp.readFile(filePath, 'utf-8');

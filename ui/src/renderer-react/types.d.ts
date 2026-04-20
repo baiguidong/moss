@@ -123,6 +123,7 @@ declare global {
         createTempFile: (fileName: string) => Promise<string | null>;
         writeFile: (path: string, data: number[]) => Promise<boolean>;
         saveImageToWorkspace: (sessionId: string, fileName: string, data: number[]) => Promise<{ path: string } | { error: string }>;
+        getAppIcon: () => Promise<string | null>;
       };
       onEvent: (callback: (payload: any) => void) => () => void;
       onState: (callback: (payload: any) => void) => () => void;

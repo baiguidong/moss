@@ -58,7 +58,7 @@ function ThinkingBlock({
   );
 }
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+export function MessageBubble({ message, sessionBusy }: { message: ChatMessage; sessionBusy?: boolean }) {
   const isUser = message.role === "user";
   const hasBody = Boolean(message.content.trim());
   const hasThinking = Boolean(message.thinking?.trim());
@@ -66,29 +66,22 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   const hasFiles = message.files && message.files.length > 0;
 
   const [iconSrc, setIconSrc] = React.useState<string | null>(null);
-  const [iconLoaded, setIconLoaded] = React.useState(false);
+
+  // AI is actively working: session is busy, streaming, thinking, or tools running
+  const isBusy = sessionBusy || message.streaming || Boolean(message.thinking) ||
+    ((message.toolSteps?.length ?? 0) > 0 && !message.toolsComplete);
 
   React.useEffect(() => {
     if (isUser) return;
     if (iconSrc) return;
-    setIconLoaded(false);
     window.agentDesktop.fs.getAppIcon().then((icon) => {
       if (icon) setIconSrc(icon);
-      setIconLoaded(true);
-    }).catch(() => setIconLoaded(true));
+    }).catch(() => {});
   }, [isUser]);
 
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-      {!isUser && iconSrc ? (
-        <div className="relative size-9 shrink-0 overflow-hidden rounded-full bg-gradient-to-br from-primary/25 to-primary/10">
-          <img
-            src={iconSrc}
-            alt="Moss"
-            className={cn("size-full object-cover", message.streaming && iconLoaded && "animate-spin")}
-          />
-        </div>
-      ) : (
+      {!isUser && (
         <Avatar className={cn("h-9 w-9 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
           <AvatarFallback
             className={cn(
@@ -98,7 +91,13 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
                 : "bg-gradient-to-br from-primary/25 to-primary/10 text-primary",
             )}
           >
-            {isUser ? <User className="h-4 w-4" /> : <Bot className={cn("h-4 w-4", message.streaming && "animate-spin")} />}
+            {isUser ? (
+              <User className="h-4 w-4" />
+            ) : iconSrc ? (
+              <img src={iconSrc} alt="Moss" className={cn("size-full object-cover rounded-full", isBusy && "animate-spin")} />
+            ) : (
+              <Bot className={cn("h-4 w-4", isBusy && "animate-spin")} />
+            )}
           </AvatarFallback>
         </Avatar>
       )}
@@ -196,15 +195,27 @@ export function ChatTranscript({
   messages,
   bottomRef,
   emptyState,
+  sessionBusy,
 }: {
   messages: ChatMessage[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
   emptyState?: React.ReactNode;
+  sessionBusy?: boolean;
 }) {
+  const isLastAssistant = (index: number) => {
+    if (!sessionBusy) return false;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') {
+        return i === index;
+      }
+    }
+    return false;
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-3 py-3 sm:px-4 sm:py-4">
       {messages.length > 0
-        ? messages.map((message) => <MessageBubble key={message.id} message={message} />)
+        ? messages.map((message, index) => <MessageBubble key={message.id} message={message} sessionBusy={isLastAssistant(index)} />)
         : emptyState ?? (
             <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">
               暂无消息

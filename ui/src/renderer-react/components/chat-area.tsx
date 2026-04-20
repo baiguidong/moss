@@ -823,6 +823,7 @@ export function ChatArea({
   value,
   selectedAppName,
   loading,
+  sessionBusy,
   hasActiveSession,
   sessionTitle,
   sessionMessageCount,
@@ -849,6 +850,7 @@ export function ChatArea({
   value: string;
   selectedAppName: string;
   loading: boolean;
+  sessionBusy?: boolean;
   hasActiveSession: boolean;
   sessionTitle: string;
   sessionMessageCount: number;
@@ -924,7 +926,7 @@ export function ChatArea({
 
       <ScrollArea className="min-h-0 flex-1">
         <div>
-          <ChatTranscript messages={messages} bottomRef={bottomRef} />
+          <ChatTranscript messages={messages} bottomRef={bottomRef} sessionBusy={sessionBusy} />
           {pendingPlanApproval && (
             <div className="mx-auto w-full max-w-[980px] px-3 pb-3 sm:px-4 sm:pb-4">
               <PlanApprovalCard
