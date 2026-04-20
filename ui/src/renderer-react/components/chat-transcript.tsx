@@ -8,7 +8,7 @@ import {
   User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ToolSteps } from "@/components/tool-steps";
 import { FilePreview } from "@/components/file-preview";
 import { MarkdownView } from "@/components/markdown-view";
@@ -65,20 +65,43 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   const hasImages = message.images && message.images.length > 0;
   const hasFiles = message.files && message.files.length > 0;
 
+  const [iconSrc, setIconSrc] = React.useState<string | null>(null);
+  const [iconLoaded, setIconLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isUser) return;
+    if (iconSrc) return;
+    setIconLoaded(false);
+    window.agentDesktop.fs.getAppIcon().then((icon) => {
+      if (icon) setIconSrc(icon);
+      setIconLoaded(true);
+    }).catch(() => setIconLoaded(true));
+  }, [isUser]);
+
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-      <Avatar className={cn("h-9 w-9 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
-        <AvatarFallback
-          className={cn(
-            "text-xs",
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-gradient-to-br from-primary/25 to-primary/10 text-primary",
-          )}
-        >
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-        </AvatarFallback>
-      </Avatar>
+      {!isUser && iconSrc ? (
+        <div className="relative size-9 shrink-0 overflow-hidden rounded-full bg-gradient-to-br from-primary/25 to-primary/10">
+          <img
+            src={iconSrc}
+            alt="Moss"
+            className={cn("size-full object-cover", message.streaming && iconLoaded && "animate-spin")}
+          />
+        </div>
+      ) : (
+        <Avatar className={cn("h-9 w-9 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
+          <AvatarFallback
+            className={cn(
+              "text-xs",
+              isUser
+                ? "bg-primary text-primary-foreground"
+                : "bg-gradient-to-br from-primary/25 to-primary/10 text-primary",
+            )}
+          >
+            {isUser ? <User className="h-4 w-4" /> : <Bot className={cn("h-4 w-4", message.streaming && "animate-spin")} />}
+          </AvatarFallback>
+        </Avatar>
+      )}
       <div
         className={cn(
           "space-y-3",
