@@ -3497,15 +3497,12 @@ ipcMain.handle('fs:getAppIcon', async () => {
     const prodIcon = path.join(uiRoot, 'dist', 'build', 'icon.png');
     const devIcon = path.join(uiRoot, 'public', 'build', 'icon.png');
     const iconPath = fs.existsSync(prodIcon) ? prodIcon : (fs.existsSync(devIcon) ? devIcon : null);
-    console.log('[getAppIcon] uiRoot=', uiRoot, 'prodIcon=', prodIcon, 'devIcon=', devIcon, 'resolved=', iconPath);
     if (!iconPath) {
       return null;
     }
     const base64 = await fsp.readFile(iconPath, { encoding: 'base64' });
-    console.log('[getAppIcon] success, size=', base64.length);
     return `data:image/png;base64,${base64}`;
-  } catch (err) {
-    console.error('[getAppIcon] error:', err);
+  } catch {
     return null;
   }
 });
