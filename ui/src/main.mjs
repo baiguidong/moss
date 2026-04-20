@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
+import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +42,8 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   url: '',
   apiKey: '',
   coordinatorMode: false,
+  logRotationMaxSize: 10 * 1024 * 1024, // 10MB
+  logRotationMaxFiles: 5,
 });
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
@@ -386,6 +389,24 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.coordinatorMode = DEFAULT_DESKTOP_SETTINGS.coordinatorMode;
   }
 
+  if (source.logRotationMaxSize !== undefined) {
+    let size = Number.parseInt(String(source.logRotationMaxSize), 10);
+    if (Number.isFinite(size) && size >= 1024 * 1024) {
+      result.logRotationMaxSize = Math.min(size, 100 * 1024 * 1024);
+    }
+  } else if (result.logRotationMaxSize === undefined) {
+    result.logRotationMaxSize = DEFAULT_DESKTOP_SETTINGS.logRotationMaxSize;
+  }
+
+  if (source.logRotationMaxFiles !== undefined) {
+    let files = Number.parseInt(String(source.logRotationMaxFiles), 10);
+    if (Number.isFinite(files) && files >= 1 && files <= 20) {
+      result.logRotationMaxFiles = files;
+    }
+  } else if (result.logRotationMaxFiles === undefined) {
+    result.logRotationMaxFiles = DEFAULT_DESKTOP_SETTINGS.logRotationMaxFiles;
+  }
+
   return result;
 }
 
@@ -424,12 +445,14 @@ function loadDesktopSettings() {
     return result;
   } catch (error) {
     result.parseError = error instanceof Error ? error.message : String(error);
+    mossLog('error', 'settings', 'Failed to load settings', { error: result.parseError });
     return result;
   }
 }
 
 let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
+mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
 
 function getDesktopSettingsPayload(extra = {}) {
   return {
@@ -521,6 +544,7 @@ function refreshDesktopSettings(payload = {}) {
     ...normalizeDesktopSettings(payload, desktopSettings)
   };
   saveDesktopSettings(nextSettings);
+  mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
 
   let skippedSessionCount = 0;
   for (const sessionRecord of sessions.values()) {
@@ -2699,6 +2723,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
   if (!isSubAgent) {
     void startWorkspaceWatcher(sessionRecord);
     emitSessionMeta(sessionRecord);
+    mossLog('info', 'session', 'Session created', { sessionId: sessionRecord.id, workspace: normalizedWorkspace, isSubAgent });
   }
   return sessionRecord;
 }
@@ -2937,6 +2962,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  mossLog('info', 'app', 'Main window created');
 }
 
 async function listDirectoryEntries(sessionRecord, dirPath) {
@@ -3030,9 +3056,12 @@ app.whenReady().then(() => {
   initializeBundledApps();
 
   // Register app IPC handlers
+  registerLogIpcHandlers();
   registerSkillStoreIpcHandlers();
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
+
+  mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
 
   createWindow();
   for (const sessionRecord of sessions.values()) {
@@ -3042,8 +3071,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      mossLog('info', 'app', 'Main window recreated on activate');
     }
   });
+  mossLog('info', 'app', 'Application ready');
 });
 
 app.on('window-all-closed', () => {
@@ -3157,6 +3188,7 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
 
 ipcMain.handle('agent:delete-session', (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
+  mossLog('info', 'session', 'Session deleted', { sessionId, workspace: sessionRecord.workspace });
   closeWorkspaceWatcher(sessionRecord);
   disposeRuntime(sessionRecord);
   sessions.delete(sessionId);

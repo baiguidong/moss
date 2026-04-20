@@ -95,4 +95,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   // Cron task management
   cronList: () => ipcRenderer.invoke('cron:list'),
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
+  // Log management
+  logGetPath: () => ipcRenderer.invoke('log:get-path'),
+  logDownload: () => ipcRenderer.invoke('log:download'),
+  logWrite: (payload) => ipcRenderer.invoke('log:write', payload),
 });
