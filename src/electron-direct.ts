@@ -4,9 +4,12 @@
  * 直接在当前 Node.js 进程中运行 QueryEngine，无 IPC/序列化开销。
  */
 
+// Enable interview phase for plan mode by default
+process.env.CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE = 'true'
+
 import { randomUUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
-import { getEmptyToolPermissionContext } from './Tool.js'
+import { getEmptyToolPermissionContext, setGlobalAppEventBridge, type MossAppEvent, type MossAppEventResult } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
@@ -78,6 +81,8 @@ export interface ClaudeSessionOptions {
   thinkingConfig?: ThinkingConfig
   /** 是否启用 Coordinator 模式（多 worker 并行编排）*/
   coordinatorMode?: boolean
+  /** App 事件回调，用于 MossTool 保存/打开 app */
+  onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
 }
 
 export class ClaudeSession {
@@ -96,6 +101,9 @@ export class ClaudeSession {
   }
 
   constructor(opts: ClaudeSessionOptions = {}) {
+    if (opts.onAppEvent) {
+      setGlobalAppEventBridge(opts.onAppEvent)
+    }
     this.#opts = {
       cwd: opts.cwd ?? process.cwd(),
       model: opts.model ?? 'claude-sonnet-4-6',
@@ -105,6 +113,7 @@ export class ClaudeSession {
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
+      onAppEvent: opts.onAppEvent,
     }
   }
 
@@ -112,7 +121,7 @@ export class ClaudeSession {
   async #getEngine(): Promise<QueryEngine> {
     if (this.#engine) return this.#engine
 
-    const { cwd, model, appendSystemPrompt, permissionMode, onPermissionRequest, maxTurns, thinkingConfig } = this.#opts
+    const { cwd, model, appendSystemPrompt, permissionMode, onPermissionRequest, maxTurns, thinkingConfig, onAppEvent } = this.#opts
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
     const bootstrapResult = await bootstrapHeadless(cwd)
@@ -185,6 +194,7 @@ export class ClaudeSession {
       thinkingConfig,
       maxTurns,
       initialMessages,
+      emitAppEvent: onAppEvent,
     })
 
     return this.#engine

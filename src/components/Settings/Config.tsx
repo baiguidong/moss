@@ -325,23 +325,33 @@ export function Config({
       });
     }
   }, {
-    id: 'thinkingEnabled',
+    id: 'thinkingMode',
     label: 'Thinking mode',
-    value: thinkingEnabled ?? true,
-    type: 'boolean' as const,
-    onChange(enabled: boolean) {
-      setAppState(prev_6 => ({
-        ...prev_6,
-        thinkingEnabled: enabled
-      }));
-      updateSettingsForSource('userSettings', {
-        alwaysThinkingEnabled: enabled ? undefined : false
-      });
-      logEvent('tengu_thinking_toggled', {
-        enabled
-      });
+    value: settingsData?.thinkingMode ?? 'adaptive',
+    options: ['enabled', 'adaptive', 'disabled'],
+    type: 'enum' as const,
+    onChange(mode: string) {
+      updateSettingsForSource('userSettings', { thinkingMode: mode });
+      setSettingsData(prev_6 => ({ ...prev_6, thinkingMode: mode as 'enabled' | 'adaptive' | 'disabled' }));
+      logEvent('tengu_config_changed', { setting: 'thinkingMode', value: mode });
     }
   },
+  // Thinking budget - only shown when thinkingMode is 'enabled'
+  ...(settingsData?.thinkingMode === 'enabled' ? [{
+    id: 'thinkingBudgetTokens',
+    label: 'Thinking budget (tokens)',
+    value: String(settingsData?.thinkingBudgetTokens ?? 16000),
+    options: ['4000', '8000', '16000', '32000'],
+    type: 'enum' as const,
+    onChange(val: string) {
+      const num = parseInt(val, 10);
+      if (!isNaN(num) && num > 0) {
+        updateSettingsForSource('userSettings', { thinkingBudgetTokens: num });
+        setSettingsData(prev_7 => ({ ...prev_7, thinkingBudgetTokens: num }));
+        logEvent('tengu_config_changed', { setting: 'thinkingBudgetTokens', value: num });
+      }
+    }
+  }] : []),
   // Fast mode toggle (ant-only, eliminated from external builds)
   ...(isFastModeEnabled() && isFastModeAvailable() ? [{
     id: 'fastMode',

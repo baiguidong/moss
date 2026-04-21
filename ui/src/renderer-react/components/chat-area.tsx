@@ -34,6 +34,7 @@ import { MarkdownView } from "@/components/markdown-view";
 import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
 import type { ChatMessage, WorkerThread } from "@/lib/agent-transcript";
+import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
 
 type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app" | "coordinator";
 type PendingPlanApproval = {
@@ -353,6 +354,8 @@ function ComposerPanel({
   onComposerIntentChange,
   onSend,
   onStop,
+  selectedAssistant,
+  onClearAssistant,
 }: {
   value: string;
   selectedAppName: string;
@@ -367,6 +370,8 @@ function ComposerPanel({
   onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
+  selectedAssistant?: InstalledAssistant | null;
+  onClearAssistant?: () => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
   onStop?: () => void;
 }) {
@@ -558,7 +563,7 @@ function ComposerPanel({
           onChange={(event) => onChange(event.target.value)}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
-            isHomeComposer ? "min-h-[160px] pb-4" : "min-h-[92px] pb-16 pr-26",
+            isHomeComposer ? "min-h-[160px] pb-4" : "min-h-[92px] pb-36 pr-26",
           )}
           rows={isHomeComposer ? 5 : 3}
           onKeyDown={(event) => {
@@ -582,6 +587,22 @@ function ComposerPanel({
                 onRemove={() => handleRemoveAttachment(index)}
               />
             ))}
+          </div>
+        )}
+
+        {!isHomeComposer && selectedAssistant && (
+          <div className="absolute bottom-12 left-3 flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
+              <Bot className="h-3 w-3" />
+              <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
+              <button
+                type="button"
+                onClick={onClearAssistant}
+                className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
           </div>
         )}
 
@@ -662,6 +683,19 @@ function ComposerPanel({
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {selectedAssistant && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
+                  <Bot className="h-3 w-3" />
+                  <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
+                  <button
+                    type="button"
+                    onClick={onClearAssistant}
+                    className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               <span className="text-xs text-muted-foreground">模式：</span>
               {activeIntentOption ? (
                 <>
@@ -751,6 +785,10 @@ function HomeLanding({
   onChange,
   onComposerIntentChange,
   onSend,
+  installedAssistants,
+  selectedAssistant,
+  onSelectAssistant,
+  onClearAssistant,
 }: {
   value: string;
   selectedAppName: string;
@@ -764,6 +802,10 @@ function HomeLanding({
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
+  installedAssistants?: InstalledAssistant[];
+  selectedAssistant?: InstalledAssistant | null;
+  onSelectAssistant?: (assistant: InstalledAssistant) => void;
+  onClearAssistant?: () => void;
 }) {
   return (
     <div className="mx-auto flex h-[60%] w-full max-w-[80%] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
@@ -813,7 +855,18 @@ function HomeLanding({
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
         onSend={onSend}
+        selectedAssistant={selectedAssistant ?? null}
+        onClearAssistant={onClearAssistant}
       />
+      {installedAssistants && onSelectAssistant && (
+        <div className="mt-8">
+          <AssistantSelectionArea
+            assistants={installedAssistants}
+            selectedAssistant={selectedAssistant ?? null}
+            onSelectAssistant={onSelectAssistant}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -845,6 +898,10 @@ export function ChatArea({
   onSend,
   onStop,
   onToggleWorkerThread,
+  installedAssistants,
+  selectedAssistant,
+  onSelectAssistant,
+  onClearAssistant,
 }: {
   messages: ChatMessage[];
   value: string;
@@ -872,6 +929,10 @@ export function ChatArea({
   onSend: (files?: Array<{ name: string; path: string }>, workspace?: string) => void;
   onStop: () => void;
   onToggleWorkerThread: (threadId: string | null) => void;
+  installedAssistants?: InstalledAssistant[];
+  selectedAssistant?: InstalledAssistant | null;
+  onSelectAssistant?: (assistant: InstalledAssistant) => void;
+  onClearAssistant?: () => void;
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
@@ -908,7 +969,12 @@ export function ChatArea({
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
           onSend={handleHomeLandingSend}
+          installedAssistants={installedAssistants}
+          selectedAssistant={selectedAssistant ?? null}
+          onSelectAssistant={onSelectAssistant}
+          onClearAssistant={onClearAssistant ?? (() => {})}
         />
+        <div className="shrink-0 px-3 pb-4 sm:px-4" />
       </div>
     );
   }

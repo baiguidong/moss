@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
+import electron from 'electron';
+const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu } = electron;
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -9,8 +10,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
+import { createMossAppEventHandler } from './app-ipc.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
+import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
+import { autoUpdaterService } from './auto-updater-service.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +34,12 @@ const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
 const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'generated-app-data');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
+const MOSS_SYSTEM_SKILLS_DIR = path.join(MOSS_HOME, 'skills', 'system');
+const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
+const ASSISTANT_SYSTEM_DIR = path.join(MOSS_HOME, 'assistants', 'system');
+const ASSISTANT_HUB_DIR = path.join(MOSS_HOME, 'assistants', 'hub');
+const ASSISTANT_CUSTOM_DIR = path.join(MOSS_HOME, 'assistants', '_my-custom-assistant');
+const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
@@ -1122,10 +1132,12 @@ function ensureAppsDir() {
 
 /**
  * Initialize bundled apps from src/apps to generated-apps directory.
- * Copies all HTML apps from src/apps to MOSS_APPS_DIR on startup.
+ * In packaged mode, reads from process.resourcesPath/apps.
  */
 function initializeBundledApps() {
-  const bundledAppsDir = path.join(uiRoot, 'src', 'apps');
+  const bundledAppsDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'apps')
+    : path.join(uiRoot, 'src', 'apps');
   ensureAppsDir();
 
   try {
@@ -1134,10 +1146,68 @@ function initializeBundledApps() {
       .forEach(entry => {
         const srcPath = path.join(bundledAppsDir, entry.name);
         const dstPath = path.join(MOSS_APPS_DIR, entry.name);
-        fs.copyFileSync(srcPath, dstPath);
+        fs.copyFileSync(srcPath, dstPath, fs.constants.COPYFILE_EXCL);
       });
   } catch (err) {
     console.warn('[app-init] Failed to initialize bundled apps:', err.message);
+  }
+}
+
+/**
+ * Initialize bundled skills from repo skills directory to ~/.moss/skills/system.
+ * In packaged mode, reads from process.resourcesPath/skills.
+ */
+function initializeBundledSkills() {
+  fs.mkdirSync(MOSS_SYSTEM_SKILLS_DIR, { recursive: true });
+
+  try {
+    const srcDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'skills')
+      : MOSS_REPO_SKILLS_DIR;
+    if (!fs.existsSync(srcDir)) return;
+
+    fs.readdirSync(srcDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .forEach(entry => {
+        const srcPath = path.join(srcDir, entry.name);
+        const dstPath = path.join(MOSS_SYSTEM_SKILLS_DIR, entry.name);
+        try {
+          fs.cpSync(srcPath, dstPath, { recursive: true });
+        } catch (copyErr) {
+          console.warn(`[skill-init] Failed to copy skill ${entry.name}:`, copyErr.message);
+        }
+      });
+  } catch (err) {
+    console.warn('[skill-init] Failed to initialize bundled skills:', err.message);
+  }
+}
+
+/**
+ * Initialize bundled assistants from repo assistants directory to ~/.moss/assistants/_system.
+ * In packaged mode, reads from process.resourcesPath/assistants.
+ */
+function initializeBundledAssistants() {
+  fs.mkdirSync(ASSISTANT_SYSTEM_DIR, { recursive: true });
+
+  try {
+    const srcDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'assistants')
+      : MOSS_REPO_ASSISTANTS_DIR;
+    if (!fs.existsSync(srcDir)) return;
+
+    fs.readdirSync(srcDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .forEach(entry => {
+        const srcPath = path.join(srcDir, entry.name);
+        const dstPath = path.join(ASSISTANT_SYSTEM_DIR, entry.name);
+        try {
+          fs.cpSync(srcPath, dstPath, { recursive: true });
+        } catch (copyErr) {
+          console.warn(`[assistant-init] Failed to copy assistant ${entry.name}:`, copyErr.message);
+        }
+      });
+  } catch (err) {
+    console.warn('[assistant-init] Failed to initialize bundled assistants:', err.message);
   }
 }
 
@@ -1927,6 +1997,7 @@ async function ensureAppAgentRuntime(appState) {
 
       return response.response === 0;
     },
+    onAppEvent: mossAppEventHandler,
   });
   return appState.runtime;
 }
@@ -2853,6 +2924,48 @@ async function syncWorkspaceWatcher(sessionRecord) {
   }
 }
 
+/**
+ * Handler for MossTool app events from agent runtime.
+ * This maps event types to internal app functions and returns results.
+ */
+const mossAppEventHandler = createMossAppEventHandler(
+  {
+    launchAppWindow: launchAppWindowByEntry,
+    previewAppFile: (filePath) => {
+      const previewWindow = new BrowserWindow({
+        title: `Preview - ${path.basename(filePath)}`,
+        width: 900,
+        height: 700,
+        resizable: true,
+        backgroundColor: '#0b1120',
+        autoHideMenuBar: true,
+        webPreferences: {
+          sandbox: false,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      })
+      void previewWindow.loadFile(filePath)
+    },
+    refreshOpenAppWindow: (name) => {
+      const win = appWindows.get(name)
+      if (win && !win.isDestroyed()) {
+        win.reload()
+      }
+    },
+    getOpenAppWindow: (name) => appWindows.get(name),
+    closeAppWindow: (name) => {
+      const win = appWindows.get(name)
+      if (win && !win.isDestroyed()) {
+        win.close()
+      }
+    },
+  },
+  {
+    emitAppsChanged,
+  },
+)
+
 async function startWorkspaceWatcher(sessionRecord) {
   closeWorkspaceWatcher(sessionRecord);
   sessionRecord.workspaceWatcher = {
@@ -2915,6 +3028,7 @@ async function ensureRuntime(sessionRecord) {
 
       return false;
     },
+    onAppEvent: mossAppEventHandler,
   });
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
@@ -2963,6 +3077,99 @@ function createWindow() {
     mainWindow = null;
   });
   mossLog('info', 'app', 'Main window created');
+}
+
+// Set main window reference for update IPC after window creation
+function initializeAutoUpdater() {
+  setMainWindowRef(mainWindow);
+
+  // Initialize auto-updater service
+  autoUpdaterService.initialize((status) => {
+    mainWindow?.webContents.send('auto-update:status', status);
+  });
+
+  // Auto-check for updates after startup (skip in dev/CI)
+  const skipAutoUpdate = process.env.MOSS_DISABLE_AUTO_UPDATE === 'true' || process.env.CI === 'true';
+  if (!skipAutoUpdate) {
+    setTimeout(() => {
+      mossLog('info', 'Update', 'Starting auto-update check...');
+      autoUpdaterService.checkForUpdatesAndNotify();
+    }, 3000);
+  }
+
+  // Set up application menu with "Check for Updates..."
+  const isMac = process.platform === 'darwin';
+  const template = [];
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  }
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      ...(isMac
+        ? [
+            { role: 'pasteAndMatchStyle' },
+            { role: 'delete' },
+            { role: 'selectAll' },
+          ]
+        : [
+            { role: 'delete' },
+            { type: 'separator' },
+            { role: 'selectAll' },
+          ]),
+    ],
+  });
+
+  template.push({
+    label: 'View',
+    submenu: [
+      { role: 'reload' },
+      { role: 'forceReload' },
+      { role: 'toggleDevTools' },
+      { type: 'separator' },
+      { role: 'resetZoom' },
+      { role: 'zoomIn' },
+      { role: 'zoomOut' },
+      { type: 'separator' },
+      { role: 'togglefullscreen' },
+    ],
+  });
+
+  template.push({
+    label: 'Help',
+    submenu: [
+      {
+        label: 'Check for Updates...',
+        click: () => {
+          mainWindow?.webContents.send('update:open-modal');
+        },
+      },
+    ],
+  });
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 async function listDirectoryEntries(sessionRecord, dirPath) {
@@ -3055,15 +3262,23 @@ app.whenReady().then(() => {
   // Initialize bundled apps from src/apps to generated-apps
   initializeBundledApps();
 
+  // Initialize bundled skills from repo skills to ~/.moss/skills/system
+  initializeBundledSkills();
+
+  // Initialize bundled assistants from repo assistants to ~/.moss/assistants/_system
+  initializeBundledAssistants();
+
   // Register app IPC handlers
   registerLogIpcHandlers();
   registerSkillStoreIpcHandlers();
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
+  initUpdateIpcHandlers();
 
   mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
 
   createWindow();
+  initializeAutoUpdater();
   for (const sessionRecord of sessions.values()) {
     void startWorkspaceWatcher(sessionRecord);
   }
@@ -3299,6 +3514,32 @@ ipcMain.handle('app:delete', async (_event, { name }) => {
   deleteStoredApp(name);
   emitAppsChanged({ action: 'deleted', name });
   return { ok: true };
+});
+
+ipcMain.handle('app:save', async (_event, { sessionId, launch = true }) => {
+  try {
+    const sessionRecord = getSessionRecord(sessionId);
+    const payload = readGeneratedAppPayloadFromWorkspace(sessionRecord);
+    const createdApp = saveStoredApp(payload);
+    if (launch) {
+      launchAppWindowByEntry(createdApp);
+    }
+    emitAppsChanged({
+      action: 'created',
+      app: {
+        name: createdApp.name,
+        description: createdApp.description,
+        width: createdApp.width,
+        height: createdApp.height,
+        resizable: createdApp.resizable,
+        createdAt: createdApp.createdAt,
+        updatedAt: createdApp.updatedAt,
+      },
+    });
+    return { ok: true, app: createdApp };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle('app:open-debug', async (event, { name }) => {
@@ -3582,7 +3823,7 @@ ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourc
   }
 });
 
-ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode }) => {
+ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode, assistantName }) => {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
@@ -3617,13 +3858,123 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
     iterateTarget = loadStoredAppContent(appName);
   }
 
+  // Build assistant context prefix (rules + skills list)
+  let assistantContextPrefix = '';
+  let assistantEnabledSkills = [];
+  if (assistantName) {
+    try {
+      // Find assistant directory
+      const searchDirs = [
+        { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
+        { dir: ASSISTANT_HUB_DIR, category: 'hub' },
+        { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
+      ];
+      let assistantDir = null;
+      for (const { dir } of searchDirs) {
+        const candidate = path.join(dir, assistantName);
+        try {
+          await fsp.access(candidate);
+          assistantDir = candidate;
+          break;
+        } catch {
+          // Not found in this directory
+        }
+      }
+
+      let assistantRules = '';
+      if (assistantDir) {
+        // Read assistant meta to get rule file
+        const metaPath = path.join(assistantDir, '_moss_meta.json');
+        let ruleFile;
+        try {
+          const metaContent = await fsp.readFile(metaPath, 'utf-8');
+          const meta = JSON.parse(metaContent);
+          ruleFile = meta.ruleFile;
+          // Also get enabled skills (support both enabledSkills and skills field)
+          if (meta.enabledSkills && Array.isArray(meta.enabledSkills)) {
+            assistantEnabledSkills = meta.enabledSkills;
+          } else if (meta.skills && Array.isArray(meta.skills)) {
+            assistantEnabledSkills = meta.skills;
+          }
+        } catch {
+          // No meta
+        }
+
+        // Read rule file
+        if (ruleFile) {
+          try {
+            assistantRules = await fsp.readFile(path.join(assistantDir, ruleFile), 'utf-8');
+          } catch {
+            // Try common rule file names
+          }
+        }
+        if (!assistantRules) {
+          const files = await fsp.readdir(assistantDir);
+          const mdFile = files.find(f => f.endsWith('.md') && f !== '_moss_meta.json');
+          if (mdFile) {
+            assistantRules = await fsp.readFile(path.join(assistantDir, mdFile), 'utf-8');
+          }
+        }
+      }
+
+      // Get skill info for enabled skills
+      let skillsInfo = '';
+      let skillDirsInfo = '';
+      const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+      const MOSS_SKILLS_HUB_DIR = path.join(MOSS_HOME, 'skills', 'hub');
+      const MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_HOME, 'skills', 'system');
+      const MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_HOME, 'skills', 'custom');
+
+      if (assistantEnabledSkills && assistantEnabledSkills.length > 0) {
+        const skillInfos = [];
+
+        for (const skillId of assistantEnabledSkills) {
+          let foundPath = null;
+          for (const dir of [USER_SKILLS_DIR, MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_SYSTEM_DIR, MOSS_SKILLS_CUSTOM_DIR]) {
+            const skillDir = path.join(dir, skillId);
+            try {
+              await fsp.access(skillDir);
+              foundPath = skillDir;
+              break;
+            } catch {
+              // Not found in this directory
+            }
+          }
+          if (foundPath) {
+            skillInfos.push({ name: skillId, path: foundPath });
+          }
+        }
+
+        if (skillInfos.length > 0) {
+          skillsInfo = '\n\n## Skills Available\n' +
+            skillInfos.map(s => `- ${s.name}: ${s.path}`).join('\n');
+        }
+      }
+
+      // Always include skill search directories
+      skillDirsInfo = `\n\n## Skill Search Directories\nWhen looking for skills, search in:\n- ${MOSS_SKILLS_HUB_DIR}\n- ${MOSS_SKILLS_SYSTEM_DIR}\n- ${MOSS_SKILLS_CUSTOM_DIR}\n- ${USER_SKILLS_DIR}`;
+
+      if (assistantRules || skillsInfo || skillDirsInfo) {
+        assistantContextPrefix = `
+
+${assistantRules}${skillsInfo}${skillDirsInfo}
+
+---
+
+`;
+      }
+    } catch (err) {
+      console.error('[agent:send] Failed to load assistant context:', err);
+    }
+  }
+
   const runtimePrompt = isCreateAppMode
     ? buildCreateAppPlanPrompt(trimmedPrompt)
     : isIterateAppMode
       ? buildIterateAppPrompt(iterateTarget, trimmedPrompt)
       : isPlanOnly
         ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-        : trimmedPrompt;
+        : assistantContextPrefix + trimmedPrompt;
 
   const visibleUserPrompt = trimmedPrompt;
 
@@ -3734,21 +4085,15 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
     if (!planText) {
       throw new Error('Planner did not return a usable plan.');
     }
-    const pendingPlanApproval = {
-      kind: 'plan',
-      originalPrompt: trimmedPrompt,
-      plan: planText,
-      requestedAt: Date.now(),
-    };
+    // Plan mode: store plan in history but don't show approval card - treat like normal conversation
     pushSessionHistoryEvent(sessionRecord, {
       type: 'app_plan_state',
       kind: 'plan',
       state: 'awaiting_approval',
       originalPrompt: trimmedPrompt,
       plan: planText,
-      timestamp: pendingPlanApproval.requestedAt,
+      timestamp: Date.now(),
     }, event.sender);
-    setPendingPlanApproval(sessionRecord, pendingPlanApproval);
   }
 
   return {
@@ -3802,17 +4147,10 @@ ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
   setPendingPlanApproval(sessionRecord, null);
 
   if (pendingPlanApproval.kind === 'plan') {
-    // Launch separate execution window with sub-agent
-    const executionSessionId = await launchPlanExecutionWindow({
-      originalPrompt: pendingPlanApproval.originalPrompt,
-      plan: pendingPlanApproval.plan,
-      mainWindow: event.sender,
-      originalSessionId: sessionId,
-    });
+    // Plan mode: just clear the pending state, no separate execution
     return {
       ok: true,
       sessionId,
-      executionSessionId,
       summary: getSessionSummary(sessionRecord),
     };
   }

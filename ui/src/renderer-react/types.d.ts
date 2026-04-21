@@ -106,6 +106,7 @@ declare global {
         appName?: string;
         files?: string[];
         coordinatorMode?: boolean;
+        assistantName?: string;
       }) => Promise<any>;
       approvePlan: (payload: { sessionId: string }) => Promise<any>;
       rejectPlan: (payload: { sessionId: string }) => Promise<any>;
@@ -115,6 +116,7 @@ declare global {
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
       rollbackApp: (payload: { name: string; versionId: string }) => Promise<{ ok: boolean; app: StoredApp }>;
       deleteApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
+      saveApp: (payload: { sessionId: string; launch?: boolean }) => Promise<{ ok: boolean; app?: StoredApp; error?: string }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
       readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<any>;
       fs: {
@@ -144,6 +146,23 @@ declare global {
       setWorkerSummaries: (payload: { sessionId: string; workerSummariesJson: string | null }) => Promise<{ ok: boolean }>;
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
+      getInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
+      getAssistantContext: (assistantName: string) => Promise<{ success: boolean; data?: string; error?: string }>;
+      getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ name: string; path: string }>; error?: string }>;
+      update: {
+        check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: UpdateCheckResult; msg?: string }>;
+        download: (params: { url: string; fileName?: string }) => Promise<{ success: boolean; data?: { downloadId: string; filePath: string }; msg?: string }>;
+        onOpenModal: (callback: () => void) => () => void;
+        onDownloadProgress: (callback: (evt: UpdateDownloadProgressEvent) => void) => () => void;
+      };
+      autoUpdate: {
+        check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: { updateInfo?: { version: string; releaseDate?: string; releaseNotes?: string } }; msg?: string }>;
+        download: () => Promise<{ success: boolean; msg?: string }>;
+        quitAndInstall: () => Promise<void>;
+        getDownloadedFilePath: () => Promise<{ success: boolean; data?: { path: string | null } }>;
+        getMirrorStatus: () => Promise<{ success: boolean; data?: { useMirror: boolean; reason: string } }>;
+        onStatus: (callback: (evt: AutoUpdateStatus) => void) => () => void;
+      };
     };
   }
 }
@@ -181,6 +200,77 @@ export type WorkerSubagentResult = {
   resultText: string | null;
   status: string;
   events: any[];
+};
+
+export type InstalledAssistant = {
+  name: string;
+  displayName: string;
+  description: string;
+  avatar: string;
+  emoji: string;
+  category: string;
+  categories: string[];
+  version: string;
+  source: string;
+  isBuiltin: boolean;
+  isHubInstalled: boolean;
+  tag: string;
+  enabled: boolean;
+  skills: string[];
+  enabledSkills: string[];
+};
+
+// Update types
+export type UpdateReleaseInfo = {
+  tagName: string;
+  version: string;
+  name?: string;
+  body?: string;
+  htmlUrl: string;
+  publishedAt?: string;
+  prerelease: boolean;
+  draft: boolean;
+  assets: GitHubReleaseAsset[];
+  recommendedAsset?: GitHubReleaseAsset;
+};
+
+export type GitHubReleaseAsset = {
+  name: string;
+  url: string;
+  size: number;
+  contentType?: string;
+};
+
+export type UpdateCheckResult = {
+  currentVersion: string;
+  updateAvailable: boolean;
+  latest?: UpdateReleaseInfo;
+};
+
+export type UpdateDownloadProgressEvent = {
+  downloadId: string;
+  status: 'starting' | 'downloading' | 'completed' | 'error' | 'cancelled';
+  receivedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  bytesPerSecond?: number;
+  filePath?: string;
+  error?: string;
+};
+
+export type AutoUpdateStatus = {
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'cancelled';
+  version?: string;
+  releaseDate?: string;
+  releaseNotes?: string;
+  progress?: {
+    bytesPerSecond: number;
+    percent: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
+  downloadedFilePath?: string;
 };
 
 export {};

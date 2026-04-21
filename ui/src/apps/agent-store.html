@@ -1079,15 +1079,31 @@
         );
 
         // Fetch skill details for associated skills
-        const skillIds = assistant.skills || [];
+        // For installed assistants, use assistant.skills (local); for Hub assistants, use detail.skills (from API)
+        const skillIds = detail?.skills || assistant.skills || [];
         let skills = [];
+
         if (skillIds.length > 0) {
-          const skillsRes = await window.mossApp.agentStore.fetchSkillDetailsByIds(skillIds);
-          if (skillsRes.success && skillsRes.data) {
-            skills = skillsRes.data.map(s => ({
-              ...s,
-              isInstalled: installedSkillNames.has(s.name),
-            }));
+          // Use locally installed skills directly if available
+          const localSkillsData = installedSkillsRes.success ? installedSkillsRes.data : [];
+          const localSkillMap = new Map(localSkillsData.map(s => [s.name, s]));
+
+          for (const skillId of skillIds) {
+            if (localSkillMap.has(skillId)) {
+              // Use local skill data
+              skills.push({ ...localSkillMap.get(skillId), isInstalled: true });
+            }
+          }
+
+          // If still no skills found (e.g. Hub skill not installed locally), try Hub API
+          if (skills.length === 0) {
+            const skillsRes = await window.mossApp.agentStore.fetchSkillDetailsByIds(skillIds);
+            if (skillsRes.success && skillsRes.data) {
+              skills = skillsRes.data.map(s => ({
+                ...s,
+                isInstalled: installedSkillNames.has(s.name),
+              }));
+            }
           }
         }
         state.detailSkills = skills;
@@ -1338,7 +1354,7 @@
           const assistantId = installBtn.dataset.install;
           const skillIdsStr = installBtn.dataset.skillIds || '';
           const skillIds = skillIdsStr ? skillIdsStr.split(',').filter(Boolean) : [];
-          const assistant = state.assistants.find(s => s.id === assistantId);
+          const assistant = state.assistants.find(s => String(s.id) === assistantId);
           if (assistant) installAssistant(assistant, skillIds);
           return;
         }
@@ -1360,7 +1376,7 @@
 
         const assistantId = card.dataset.assistantId;
         if (assistantId) {
-          const assistant = state.assistants.find(s => s.id === assistantId);
+          const assistant = state.assistants.find(s => String(s.id) === assistantId);
           if (assistant) openDetailModal(assistant);
         }
       });
@@ -1378,7 +1394,7 @@
         const assistantName = btn.dataset.assistant;
 
         if (action === 'install' && assistantId) {
-          const assistant = state.assistants.find(s => s.id === assistantId);
+          const assistant = state.assistants.find(s => String(s.id) === assistantId);
           const skillIdsStr = btn.dataset.skillIds || '';
           const skillIds = skillIdsStr ? skillIdsStr.split(',').filter(Boolean) : [];
           if (assistant) installAssistant(assistant, skillIds);

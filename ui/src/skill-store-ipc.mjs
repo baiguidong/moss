@@ -1,4 +1,5 @@
-import { ipcMain, dialog } from 'electron';
+import electron from 'electron';
+const { ipcMain, dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -262,6 +263,74 @@ async function getInstalledSkills() {
     }
   } catch {
     // Moss hub dir doesn't exist
+  }
+
+  // Check moss managed skills (system subdirectory)
+  try {
+    const systemDir = path.join(MOSS_SKILLS_DIR, 'system');
+    await fsp.access(systemDir);
+    const entries = await fsp.readdir(systemDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillDir = path.join(systemDir, entry.name);
+        const meta = await readSkillMeta(skillDir);
+        const version = await readSkillVersion(skillDir);
+
+        if (meta) {
+          skills.push({
+            name: meta.name || entry.name,
+            displayName: meta.display_name || meta.name || entry.name,
+            description: meta.description || '',
+            version: meta.installed_version || version,
+            icon: meta.icon || '',
+            emoji: meta.emoji || '',
+            category: meta.category || '',
+            categories: meta.categories || [],
+            isBuiltin: meta.is_builtin || false,
+            isHubInstalled: false,
+            isUploaded: false,
+            enabled: meta.enabled !== false,
+            source: skillDir,
+          });
+        }
+      }
+    }
+  } catch {
+    // Moss system dir doesn't exist
+  }
+
+  // Check moss managed skills (custom subdirectory)
+  try {
+    const customDir = path.join(MOSS_SKILLS_DIR, 'custom');
+    await fsp.access(customDir);
+    const entries = await fsp.readdir(customDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillDir = path.join(customDir, entry.name);
+        const meta = await readSkillMeta(skillDir);
+        const version = await readSkillVersion(skillDir);
+
+        if (meta) {
+          skills.push({
+            name: meta.name || entry.name,
+            displayName: meta.display_name || meta.name || entry.name,
+            description: meta.description || '',
+            version: meta.installed_version || version,
+            icon: meta.icon || '',
+            emoji: meta.emoji || '',
+            category: meta.category || '',
+            categories: meta.categories || [],
+            isBuiltin: meta.is_builtin || false,
+            isHubInstalled: false,
+            isUploaded: meta.source_type === 'upload',
+            enabled: meta.enabled !== false,
+            source: skillDir,
+          });
+        }
+      }
+    }
+  } catch {
+    // Moss custom dir doesn't exist
   }
 
   return skills;

@@ -143,9 +143,11 @@ export function MessageBubble({ message, sessionBusy }: { message: ChatMessage; 
               <div className="space-y-3">
                 {hasBody ? (
                   isUser ? (
-                    <p className="whitespace-pre-wrap break-words leading-7">{message.content}</p>
+                    <p className="whitespace-pre-wrap break-words leading-7 pr-6">{message.content}</p>
                   ) : (
-                    <MarkdownView>{message.content}</MarkdownView>
+                    <div className="select-text">
+                      <MarkdownView>{message.content}</MarkdownView>
+                    </div>
                   )
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -173,15 +175,19 @@ export function MessageBubble({ message, sessionBusy }: { message: ChatMessage; 
                 )}
               </div>
             </div>
-            {isUser && hasBody && (
+            {hasBody && (
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(message.content);
                 }}
-                className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-primary-foreground/20"
+                className={cn(
+                  "absolute opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-black/10",
+                  isUser ? "right-2 top-2" : "left-2 top-2",
+                  "pointer-events-none",
+                )}
                 title="复制"
               >
-                <Copy className="h-3.5 w-3.5 text-primary-foreground/80" />
+                <Copy className={cn("h-3.5 w-3.5", isUser ? "text-primary-foreground/80" : "text-muted-foreground")} />
               </button>
             )}
           </div>

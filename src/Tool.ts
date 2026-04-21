@@ -297,6 +297,86 @@ export type ToolUseContext = {
    * and bust the cache. See forkSubagent.ts.
    */
   renderedSystemPrompt?: SystemPrompt
+  /** Callback for MossTool to emit app-related events (save, launch, update, etc.) to main process.
+   *  Returns a Promise with the result from the main process handler. */
+  emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+}
+
+/** App event types for MossTool */
+export type MossAppEvent =
+  | { type: 'app_build'; input: MossAppBuildInput }
+  | { type: 'app_preview'; input: MossAppPreviewInput }
+  | { type: 'app_publish'; input: MossAppPublishInput }
+  | { type: 'app_launch'; input: { name: string } }
+  | { type: 'app_update'; input: MossAppUpdateInput }
+  | { type: 'app_get_versions'; input: { name: string } }
+
+export type MossAppBuildInput = {
+  name: string
+  title?: string
+  description?: string
+  icon?: string
+  width?: number
+  height?: number
+  resizable?: boolean
+  html: string
+  prd?: string
+}
+
+export type MossAppPreviewInput = {
+  filePath: string
+}
+
+export type MossAppPublishInput = {
+  name: string
+  filePath: string
+  description: string
+  version?: string
+  reason?: string
+}
+
+export type MossAppSaveInput = {
+  name: string
+  title?: string
+  description?: string
+  icon?: string
+  width?: number
+  height?: number
+  resizable?: boolean
+  html: string
+  prd?: string
+}
+
+export type MossAppUpdateInput = {
+  name: string
+  title?: string
+  description?: string
+  icon?: string
+  width?: number
+  height?: number
+  resizable?: boolean
+  html?: string
+  prd?: string
+}
+
+export type MossAppEventResult =
+  | { ok: true; app?: unknown; apps?: unknown[]; versions?: unknown[]; filePath?: string }
+  | { ok: false; error: string }
+
+let globalAppEventBridge:
+  | ((event: MossAppEvent) => Promise<MossAppEventResult>)
+  | undefined
+
+export function setGlobalAppEventBridge(
+  handler: ((event: MossAppEvent) => Promise<MossAppEventResult>) | undefined,
+): void {
+  globalAppEventBridge = handler
+}
+
+export function getGlobalAppEventBridge():
+  | ((event: MossAppEvent) => Promise<MossAppEventResult>)
+  | undefined {
+  return globalAppEventBridge
 }
 
 // Re-export ToolProgressData from centralized location

@@ -1,4 +1,5 @@
-import { ipcMain, dialog } from 'electron';
+import electron from 'electron';
+const { ipcMain, dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';

@@ -96,8 +96,40 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   // Cron task management
   cronList: () => ipcRenderer.invoke('cron:list'),
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
+  // Assistant management
+  getInstalledAssistants: () => ipcRenderer.invoke('agent:getInstalledAssistants'),
+  getAssistantContext: (assistantName) => ipcRenderer.invoke('agent:getAssistantContext', { assistantName }),
+  getSkillInfosByIds: (skillIds) => ipcRenderer.invoke('agent:getSkillInfosByIds', { skillIds }),
   // Log management
   logGetPath: () => ipcRenderer.invoke('log:get-path'),
   logDownload: () => ipcRenderer.invoke('log:download'),
   logWrite: (payload) => ipcRenderer.invoke('log:write', payload),
+
+  // Update / Auto-update
+  update: {
+    check: (params) => ipcRenderer.invoke('update:check', params),
+    download: (params) => ipcRenderer.invoke('update:download', params),
+    onOpenModal: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('update:open-modal', handler);
+      return () => ipcRenderer.off('update:open-modal', handler);
+    },
+    onDownloadProgress: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('update:download-progress', handler);
+      return () => ipcRenderer.off('update:download-progress', handler);
+    },
+  },
+  autoUpdate: {
+    check: (params) => ipcRenderer.invoke('auto-update:check', params),
+    download: () => ipcRenderer.invoke('auto-update:download'),
+    quitAndInstall: () => ipcRenderer.invoke('auto-update:quit-and-install'),
+    getDownloadedFilePath: () => ipcRenderer.invoke('auto-update:get-downloaded-file-path'),
+    getMirrorStatus: () => ipcRenderer.invoke('auto-update:get-mirror-status'),
+    onStatus: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('auto-update:status', handler);
+      return () => ipcRenderer.off('auto-update:status', handler);
+    },
+  },
 });

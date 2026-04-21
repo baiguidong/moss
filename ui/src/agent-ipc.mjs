@@ -1,4 +1,5 @@
-import { ipcMain, dialog } from 'electron';
+import electron from 'electron';
+const { ipcMain, dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -10,8 +11,8 @@ import JSZip from 'jszip';
 
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
-const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, '_hub');
-const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_system');
+const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
+const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');
 const ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_my-custom-assistant');
 const ASSISTANT_HUB_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api/assistants';
 const ASSISTANT_HUB_CURSOR_URL = 'https://sudoclawhub.sudoprivacy.com/api/assistants/cursor';
@@ -326,7 +327,13 @@ export function registerAgentIpcHandlers() {
         headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
       });
       const result = await response.json();
-      return { success: true, data: result.data };
+      // Handle different response structures
+      let assistantData = result.data;
+      if (!assistantData) {
+        // Maybe the response has assistant directly or no wrapper
+        assistantData = result.assistant || result;
+      }
+      return { success: true, data: assistantData };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -625,6 +632,115 @@ export function registerAgentIpcHandlers() {
         }
       }
       return { success: true, data: content };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Get skill info (name + path) by skill IDs
+  const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+  const MOSS_SKILLS_HUB_DIR = path.join(MOSS_HOME, 'skills', 'hub');
+  const MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_HOME, 'skills', 'system');
+  const MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_HOME, 'skills', 'custom');
+
+  ipcMain.handle('agent:getSkillInfosByIds', async (_event, { skillIds }) => {
+    try {
+      if (!skillIds || skillIds.length === 0) {
+        return { success: true, data: [] };
+      }
+
+      const results = [];
+      const searchDirs = [
+        USER_SKILLS_DIR,
+        MOSS_SKILLS_HUB_DIR,
+        MOSS_SKILLS_SYSTEM_DIR,
+        MOSS_SKILLS_CUSTOM_DIR,
+      ];
+
+      for (const skillId of skillIds) {
+        let foundPath = null;
+        for (const dir of searchDirs) {
+          const skillDir = path.join(dir, skillId);
+          try {
+            await fsp.access(skillDir);
+            foundPath = skillDir;
+            break;
+          } catch {
+            // Not found in this directory
+          }
+        }
+        if (foundPath) {
+          results.push({ name: skillId, path: foundPath });
+        }
+      }
+
+      return { success: true, data: results };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Get assistant context (rules) + skills info combined
+  ipcMain.handle('agent:getAssistantContextWithSkills', async (_event, { assistantName }) => {
+    try {
+      if (!assistantName) {
+        return { success: true, data: { rules: '', skillsInfo: [] } };
+      }
+
+      // Get assistant rules
+      const result = findAssistantDir(assistantName);
+      let rules = '';
+      if (result) {
+        const metaPath = path.join(result.dir, ASSISTANT_META_FILE);
+        let ruleFile;
+        try {
+          const metaContent = await fsp.readFile(metaPath, 'utf-8');
+          const meta = JSON.parse(metaContent);
+          ruleFile = meta.ruleFile;
+        } catch {
+          // No meta
+        }
+
+        if (ruleFile) {
+          try {
+            rules = await fsp.readFile(path.join(result.dir, ruleFile), 'utf-8');
+          } catch {
+            // Try common rule file names
+          }
+        }
+        if (!rules) {
+          const files = await fsp.readdir(result.dir);
+          const mdFile = files.find(f => f.endsWith('.md') && f !== ASSISTANT_META_FILE);
+          if (mdFile) {
+            rules = await fsp.readFile(path.join(result.dir, mdFile), 'utf-8');
+          }
+        }
+      }
+
+      // Get enabled skills and their paths
+      const assistants = await getInstalledAssistants();
+      const assistant = assistants.find(a => a.name === assistantName);
+      const enabledSkills = assistant?.enabledSkills || [];
+
+      const skillsInfo = [];
+      for (const skillId of enabledSkills) {
+        let foundPath = null;
+        for (const dir of [USER_SKILLS_DIR, MOSS_SKILLS_HUB_DIR, path.join(MOSS_HOME, 'skills', 'system'), path.join(MOSS_HOME, 'skills', 'custom')]) {
+          const skillDir = path.join(dir, skillId);
+          try {
+            await fsp.access(skillDir);
+            foundPath = skillDir;
+            break;
+          } catch {
+            // Not found in this directory
+          }
+        }
+        if (foundPath) {
+          skillsInfo.push({ name: skillId, path: foundPath });
+        }
+      }
+
+      return { success: true, data: { rules, skillsInfo } };
     } catch (err) {
       return { success: false, error: err.message };
     }

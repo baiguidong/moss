@@ -36,7 +36,7 @@ import { query } from './query.js'
 import { categorizeRetryableAPIError } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
 import type { AppState } from './state/AppState.js'
-import { type Tools, type ToolUseContext, toolMatchesName } from './Tool.js'
+import { type Tools, type ToolUseContext, type MossAppEvent, type MossAppEventResult, toolMatchesName } from './Tool.js'
 import type { AgentDefinition } from './tools/AgentTool/loadAgentsDir.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from './tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import type { Message } from './types/message.js'
@@ -173,6 +173,8 @@ export type QueryEngineConfig = {
     yieldedSystemMsg: Message,
     store: Message[],
   ) => { messages: Message[]; executed: boolean } | undefined
+  /** Callback for MossTool to emit app-related events to main process. */
+  emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
 }
 
 /**
@@ -395,6 +397,7 @@ export class QueryEngine {
         })
       },
       setSDKStatus,
+      emitAppEvent: this.config.emitAppEvent,
     }
 
     // Handle orphaned permission (only once per engine lifetime)

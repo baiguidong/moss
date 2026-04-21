@@ -15,6 +15,7 @@ import { getSystemContext, getUserContext } from '../context.js'
 import type { MCPServerConnection } from '../services/mcp/types.js'
 import type { AppState } from '../state/AppStateStore.js'
 import type { Tools, ToolUseContext } from '../Tool.js'
+import type { MossAppEvent, MossAppEventResult } from '../Tool.js'
 import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
 import type { Message } from '../types/message.js'
 import { createAbortController } from './abortController.js'
@@ -97,6 +98,7 @@ export async function buildSideQuestionFallbackParams({
   appendSystemPrompt,
   thinkingConfig,
   agents,
+  emitAppEvent,
 }: {
   tools: Tools
   commands: Command[]
@@ -109,6 +111,7 @@ export async function buildSideQuestionFallbackParams({
   appendSystemPrompt: string | undefined
   thinkingConfig: ThinkingConfig | undefined
   agents: AgentDefinition[]
+  emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
 }): Promise<CacheSafeParams> {
   const mainLoopModel = getMainLoopModel()
   const appState = getAppState()
@@ -163,6 +166,7 @@ export async function buildSideQuestionFallbackParams({
     getAppState,
     setAppState,
     messages: forkContextMessages,
+    emitAppEvent,
     setInProgressToolUseIDs: () => {},
     setResponseLength: () => {},
     updateFileHistoryState: () => {},

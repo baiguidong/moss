@@ -3,6 +3,7 @@ import { Monitor, MoonStar, SunMedium } from 'lucide-react';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
+import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { ExecutionPetPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, BuddySummary, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
@@ -26,6 +27,7 @@ import type {
   DesktopSettings,
   ExecutionSummary,
   FileTreeNode,
+  InstalledAssistant,
   SessionDetail,
   SessionSummary,
   StoredApp,
@@ -300,6 +302,8 @@ export default function App() {
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
+  const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
+  const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
@@ -376,6 +380,13 @@ export default function App() {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
     return nextApps;
+  }, []);
+
+  const refreshAssistants = React.useCallback(async () => {
+    const result = await window.agentDesktop.getInstalledAssistants();
+    const assistants = result?.data ?? result ?? [];
+    setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
+    return assistants;
   }, []);
 
   const loadAppVersions = React.useCallback(async (name: string) => {
@@ -770,6 +781,7 @@ export default function App() {
         applyDesktopSettings(nextSettings);
         await refreshApps();
         await refreshSummaries();
+        await refreshAssistants();
         if (cancelled) return;
         setActiveSessionId(null);
         setActiveDetail(null);
@@ -783,7 +795,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries]);
+  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshAssistants]);
 
   React.useEffect(() => {
 
@@ -1303,6 +1315,7 @@ export default function App() {
       appName: intent === 'iterate-app' ? selectedAppName : undefined,
       files: filesToSend?.map(f => f.path),
       coordinatorMode: intent === 'coordinator' ? true : undefined,
+      assistantName: selectedAssistant?.name,
     });
     const detail = await window.agentDesktop.getSession({ sessionId });
     setActiveDetail(detail);
@@ -1317,7 +1330,7 @@ export default function App() {
         await loadAppVersions(changedApp.name);
       }
     }
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName, selectedAssistant]);
 
   const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>, workspace?: string) => {
     await submitPrompt(composerIntent, files, workspace);
@@ -1420,6 +1433,14 @@ export default function App() {
 
   const handleLaunchApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.launchApp({ name });
+  }, []);
+
+  const handleSelectAssistant = React.useCallback((assistant: InstalledAssistant) => {
+    setSelectedAssistant(assistant);
+  }, []);
+
+  const handleClearAssistant = React.useCallback(() => {
+    setSelectedAssistant(null);
   }, []);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
@@ -1855,6 +1876,10 @@ export default function App() {
                 onSend={handleSend}
                 onStop={handleStop}
                 onToggleWorkerThread={setActiveWorkerThreadId}
+                installedAssistants={installedAssistants}
+                selectedAssistant={selectedAssistant}
+                onSelectAssistant={handleSelectAssistant}
+                onClearAssistant={handleClearAssistant}
               />
             ) : (
               <ChatArea
@@ -1883,6 +1908,10 @@ export default function App() {
                 onSend={handleSend}
                 onStop={handleStop}
                 onToggleWorkerThread={setActiveWorkerThreadId}
+                installedAssistants={installedAssistants}
+                selectedAssistant={selectedAssistant}
+                onSelectAssistant={handleSelectAssistant}
+                onClearAssistant={handleClearAssistant}
               />
             )
           ) : activeView === 'apps' ? (
@@ -1949,6 +1978,7 @@ export default function App() {
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}
+        <UpdateModal />
       </div>
     </div>
   );

@@ -3333,6 +3333,10 @@ function getPlanModeInterviewInstructions(attachment: {
 ## Plan File Info:
 ${planFileInfo}
 
+## Important: When NOT to Plan
+
+If the user is just greeting you or making small talk (e.g., "hi", "hello", "你好", "thanks"), simply reply in a friendly manner. Do NOT create a plan or ask questions unless the user has given you an actual task to do (feature request, bug fix, refactor, etc.).
+
 ## Iterative Planning Workflow
 
 You are pair-planning with the user. Explore the code to build context, ask the user questions when you hit decisions you can't make alone, and write your findings into the plan file as you go. The plan file (above) is the ONLY file you may edit — it starts as a rough skeleton and gradually becomes the final plan.
