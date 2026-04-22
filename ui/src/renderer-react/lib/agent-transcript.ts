@@ -496,16 +496,16 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       continue;
     }
 
-    if (event?.type === 'app_plan_state' && event?.kind === 'create-app') {
+    if (event?.type === 'app_plan_state' && event?.kind === 'plan') {
       finalizeAssistant(currentAssistant);
 
       let content = '';
       if (event.state === 'awaiting_approval') {
-        content = '创建 App 的计划已经生成，等待你确认后才会继续执行。';
+        content = '执行计划已经生成，等待你确认后才会继续执行。';
       } else if (event.state === 'approved') {
-        content = '已批准创建 App 计划，开始按计划生成应用。';
+        content = '已批准执行计划，任务将按计划继续。';
       } else if (event.state === 'rejected') {
-        content = '已退回创建 App 计划，当前不会继续生成应用。';
+        content = '已退回执行计划，当前不会继续执行。';
       }
 
       if (content) {
@@ -515,7 +515,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
           role: 'assistant',
           content,
           timestamp,
-          meta: ['创建 App'],
+          meta: ['计划'],
         });
       }
 

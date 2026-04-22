@@ -6,8 +6,8 @@ import { jsonStringify } from '../../utils/slowOperations.js'
 const MOSS_TOOL_NAME = 'moss'
 
 const mossActionSchema = z.strictObject({
-  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_get_versions']),
-  name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, and app_get_versions.'),
+  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions']),
+  name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
   icon: z.string().optional(),
@@ -17,7 +17,7 @@ const mossActionSchema = z.strictObject({
   html: z.string().optional().describe('Full HTML content of the app. Required for app_build, optional for app_update.'),
   prd: z.string().optional(),
   versionId: z.string().optional(),
-  filePath: z.string().optional().describe('Path to a built app HTML file. Required for app_preview and app_publish.'),
+  filePath: z.string().optional().describe('Path to a built app HTML file. Required for app_preview and app_publish, optional for app_update.'),
   version: z.string().optional(),
   reason: z.string().optional(),
 })
@@ -30,6 +30,8 @@ const mossOutputSchema = z.object({
   apps: z.array(z.unknown()).optional(),
   versions: z.array(z.unknown()).optional(),
   filePath: z.string().optional(),
+  metadataPath: z.string().optional(),
+  htmlPath: z.string().optional(),
   error: z.string().optional(),
 })
 
@@ -45,7 +47,8 @@ export const MossTool = buildTool({
 - app_preview: Preview an HTML file
 - app_publish: Publish a built app file to the app store with version. Requires name, filePath, and description.
 - app_launch: Open an installed app
-- app_update: Update an existing app's metadata or HTML. html is optional here.
+- app_update: Update an existing app from filePath or metadata/html fields.
+- app_extract_to_workspace: Extract an installed app into the current session workspace as app-meta.json plus index.html.
 - app_get_versions: Get version history of an app`
   },
   async prompt() {
@@ -56,7 +59,8 @@ Parameter requirements:
 - app_preview requires \`filePath\`
 - app_publish requires \`name\`, \`filePath\`, and \`description\`
 - app_launch requires \`name\`
-- app_update requires \`name\` and accepts optional \`html\`
+- app_update requires \`name\` and accepts optional \`filePath\`, \`html\`, metadata fields, and \`reason\`
+- app_extract_to_workspace requires \`name\`
 - app_get_versions requires \`name\``
   },
   get inputSchema() {
@@ -172,8 +176,23 @@ Parameter requirements:
             width: input.width,
             height: input.height,
             resizable: input.resizable,
+            filePath: input.filePath,
             html: input.html,
             prd: input.prd,
+            reason: input.reason,
+          },
+        }
+        break
+
+      case 'app_extract_to_workspace':
+        if (!input.name) {
+          return { data: { ok: false, error: 'name is required for app_extract_to_workspace' } }
+        }
+        event = {
+          type: 'app_extract_to_workspace',
+          input: {
+            name: input.name,
+            versionId: input.versionId,
           },
         }
         break
@@ -203,6 +222,8 @@ Parameter requirements:
           apps: result.apps,
           versions: result.versions,
           filePath: result.filePath,
+          metadataPath: result.metadataPath,
+          htmlPath: result.htmlPath,
         },
       }
     } else {

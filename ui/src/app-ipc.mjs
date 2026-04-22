@@ -448,6 +448,8 @@ function saveAppVersionSnapshot(appRecord, extra = {}) {
   const snapshot = toAppVersionSnapshotRecord(appRecord, { ...extra, existingSnapshots })
   const filePath = path.join(ensureAppVersionsDir(appRecord.name), `${snapshot.id}.json`)
   fs.writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
+  // Invalidate again so the next read includes the snapshot we just wrote.
+  clearVersionSnapshotCache(appRecord.name)
   writeAppCurrentVersion(appRecord.name, snapshot)
   return snapshot
 }
@@ -612,6 +614,7 @@ export function updateStoredApp(name, appRecord, options = {}) {
     latestVersion: latestVersion?.version || snapshot?.version || null,
     currentVersionId: currentVersion?.id || snapshot?.id || null,
     currentVersion: currentVersion?.version || snapshot?.version || null,
+    publishedVersion: snapshot?.version || null,
   }
 }
 
@@ -682,6 +685,61 @@ export function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
   }
 }
 
+export function extractAppToWorkspace(name, sessionRecord, versionId) {
+  if (!sessionRecord?.workspace) {
+    throw new Error('Session workspace is required for app extraction')
+  }
+
+  const baseApp = loadStoredAppContent(name)
+  const source = versionId
+    ? {
+        ...baseApp,
+        ...getAppVersionSnapshot(name, versionId),
+      }
+    : baseApp
+  const buildPaths = getSessionAppBuildPaths(sessionRecord)
+
+  fs.mkdirSync(buildPaths.buildDir, { recursive: true })
+
+  const metadata = {
+    name,
+    title: String(source.title || name || ''),
+    icon: String(source.icon || ''),
+    description: String(source.description || ''),
+    width: Number(source.width) || 900,
+    height: Number(source.height) || 700,
+    resizable: source.resizable !== false,
+  }
+
+  fs.writeFileSync(buildPaths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
+  fs.writeFileSync(buildPaths.htmlPath, String(source.html || ''), 'utf8')
+
+  const appEntry = getStoredApp(name)
+  const extractedVersion = versionId
+    ? getAppVersionSnapshot(name, versionId).version || null
+    : appEntry.currentVersion || null
+
+  return {
+    app: {
+      name,
+      title: metadata.title,
+      icon: metadata.icon,
+      description: metadata.description,
+      width: metadata.width,
+      height: metadata.height,
+      resizable: metadata.resizable,
+      currentVersionId: appEntry.currentVersionId || null,
+      currentVersion: appEntry.currentVersion || null,
+      latestVersionId: appEntry.latestVersionId || null,
+      latestVersion: appEntry.latestVersion || null,
+      extractedVersionId: versionId || appEntry.currentVersionId || null,
+      extractedVersion,
+    },
+    metadataPath: buildPaths.metadataPath,
+    htmlPath: buildPaths.htmlPath,
+  }
+}
+
 /**
  * Build app metadata and HTML into a merged file.
  * Returns the path to the built file for later publishing.
@@ -745,6 +803,7 @@ export function publishAppFromFile(filePath, options = {}) {
     latestVersion: snapshot.version,
     currentVersionId: snapshot.id,
     currentVersion: snapshot.version,
+    publishedVersion: snapshot.version,
   }
 }
 
@@ -855,6 +914,7 @@ const MossAppEventTypes = [
   'app_publish',
   'app_launch',
   'app_update',
+  'app_extract_to_workspace',
   'app_get_versions',
 ]
 
@@ -868,7 +928,7 @@ const MossAppEventTypes = [
  */
 
 export function createMossAppEventHandler(windows, events) {
-  return async (event) => {
+  return async (event, sessionRecord = null) => {
     try {
       switch (event.type) {
         case 'app_build': {
@@ -892,8 +952,12 @@ export function createMossAppEventHandler(windows, events) {
             version: event.input.version,
             reason: event.input.reason,
           })
-          events.emitAppsChanged({ action: 'created', app: publishedApp })
-          return { ok: true, app: publishedApp }
+          const app = {
+            ...publishedApp,
+            publishedVersion: publishedApp.publishedVersion || null,
+          }
+          events.emitAppsChanged({ action: 'created', app })
+          return { ok: true, app }
         }
 
         case 'app_launch': {
@@ -903,10 +967,45 @@ export function createMossAppEventHandler(windows, events) {
         }
 
         case 'app_update': {
-          const { name, ...updates } = event.input
-          const updatedApp = updateStoredApp(name, updates)
-          events.emitAppsChanged({ action: 'updated', app: updatedApp })
-          return { ok: true, app: updatedApp }
+          const { name, filePath, reason, ...updates } = event.input
+          const definedUpdates = Object.fromEntries(
+            Object.entries(updates).filter(([, value]) => value !== undefined),
+          )
+          let normalizedUpdates = definedUpdates
+
+          if (filePath) {
+            if (!fs.existsSync(filePath)) {
+              throw new Error(`App file not found: ${filePath}`)
+            }
+            const fileContent = fs.readFileSync(filePath, 'utf8')
+            normalizedUpdates = {
+              ...parseStoredAppHtml(fileContent, filePath),
+              ...definedUpdates,
+            }
+          }
+
+          const updatedApp = updateStoredApp(name, normalizedUpdates, {
+            reason: reason || 'updated',
+          })
+          const app = {
+            ...updatedApp,
+            publishedVersion: updatedApp.publishedVersion || null,
+          }
+          events.emitAppsChanged({ action: 'updated', app })
+          return { ok: true, app }
+        }
+
+        case 'app_extract_to_workspace': {
+          if (!sessionRecord) {
+            throw new Error('Session context is required for app_extract_to_workspace')
+          }
+          const extracted = extractAppToWorkspace(event.input.name, sessionRecord, event.input.versionId)
+          return {
+            ok: true,
+            app: extracted.app,
+            metadataPath: extracted.metadataPath,
+            htmlPath: extracted.htmlPath,
+          }
         }
 
         case 'app_get_versions': {

@@ -2,6 +2,10 @@
 
 Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 的 Claude Code Agent 逻辑，提供了可视化的聊天界面、工作区文件管理以及生成式 Mini App 的运行环境。
 
+## 文档
+
+- [Direct Connect 使用说明](/Users/bgd/repo/moss/DIRECT_CONNECT.md)
+
 ## 快速启动
 
 ### 1. 编译依赖 (重要)

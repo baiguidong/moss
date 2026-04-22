@@ -3,12 +3,12 @@
  * 构建脚本：读取 features.js，生成 bun build 命令
  * 用法：bun run build.js [--target=node]
  */
-import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED } from './features.js'
+import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
 
 const onlyNode = process.argv.includes('--target=node')
 
-const enabledFeatures = Object.entries({ ...RECOMMENDED, ...EXPERIMENTAL, ...NATIVE_REQUIRED })
+const enabledFeatures = Object.entries({ ...RECOMMENDED, ...EXPERIMENTAL, ...NATIVE_REQUIRED, ...INTERNAL_ONLY })
   .filter(([, v]) => v)
   .map(([k]) => k)
 
@@ -64,6 +64,26 @@ build('cli-node.js', [
 build('electron-direct.mjs', [
   'build', 'src/electron-direct.ts',
   '--outfile=electron-direct.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])
+
+// direct-connect-server.mjs（独立服务端入口）
+build('direct-connect-server.mjs', [
+  'build', 'src/server/serverCli.ts',
+  '--outfile=direct-connect-server.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])
+
+// direct-connect-open.mjs（独立 headless 客户端入口）
+build('direct-connect-open.mjs', [
+  'build', 'src/server/openCli.ts',
+  '--outfile=direct-connect-open.mjs',
   '--target=node',
   '--format=esm',
   ...aliases,

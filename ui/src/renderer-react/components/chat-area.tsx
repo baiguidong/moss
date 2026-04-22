@@ -36,9 +36,9 @@ import { pasteService } from "@/lib/paste-service";
 import type { ChatMessage, WorkerThread } from "@/lib/agent-transcript";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
 
-type ComposerIntent = "chat" | "plan" | "create-app" | "iterate-app" | "coordinator";
+type ComposerIntent = "chat" | "plan" | "coordinator";
 type PendingPlanApproval = {
-  kind: "create-app" | "plan";
+  kind: "plan";
   originalPrompt: string;
   plan: string;
   requestedAt: number;
@@ -65,16 +65,6 @@ const intentOptions: IntentOption[] = [
     id: "plan",
     title: "plan",
     description: "规划任务步骤和执行计划",
-  },
-  {
-    id: "create-app",
-    title: "app",
-    description: "创建一个新的 App",
-  },
-  {
-    id: "iterate-app",
-    title: "迭代",
-    description: "迭代现有 App",
   },
 ];
 
@@ -294,15 +284,14 @@ function PlanApprovalCard({
   onApprove: () => void;
   onReject: () => void;
 }) {
-  const isCreateApp = pendingPlanApproval.kind === "create-app";
   return (
     <div className="rounded-[24px] border border-primary/25 bg-card/92 p-4 shadow-[0_18px_55px_-40px_rgba(0,0,0,0.75)]">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-primary">
-          {isCreateApp ? "创建 App 计划待确认" : "执行计划待确认"}
+          执行计划待确认
         </span>
         <span className="text-xs text-muted-foreground">
-          {isCreateApp ? "批准后才会真正开始生成 App" : "批准后将启动独立子 Agent 执行"}
+          批准后将启动独立子 Agent 执行
         </span>
       </div>
       <p className="mt-3 text-sm leading-7 text-foreground">
@@ -323,7 +312,7 @@ function PlanApprovalCard({
           onClick={onApprove}
           disabled={busy}
         >
-          {busy ? "正在执行..." : isCreateApp ? "批准并创建 App" : "批准并执行"}
+          {busy ? "正在执行..." : "批准并执行"}
         </Button>
         <Button
           variant="outline"
@@ -396,7 +385,7 @@ function ComposerPanel({
     ? null
     : intentOptions.find((option) => option.id === composerIntent) ?? null;
   const submitDisabled =
-    (!value.trim() && attachments.length === 0) || loading || (composerIntent === "iterate-app" && !selectedAppName);
+    (!value.trim() && attachments.length === 0) || loading;
 
   React.useEffect(() => {
     pasteService.init();
@@ -548,10 +537,10 @@ function ComposerPanel({
         <Textarea
           placeholder={
             isHomeComposer
-              ? composerIntent === "iterate-app" && selectedAppName
+              ? selectedAssistant?.name === "app-builder-assistant" && selectedAppName
                 ? `描述你想如何修改 ${selectedAppName}...`
-                : composerIntent === "create-app"
-                  ? "描述你想创建的 App、目标用户、交互和风格..."
+                : selectedAssistant?.name === "app-builder-assistant"
+                  ? "描述你想创建或修改的 App、目标用户、交互和风格..."
                   : composerIntent === "coordinator"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : composerIntent === "plan"
@@ -633,7 +622,7 @@ function ComposerPanel({
         {showModeButtons && (
           <div className="absolute bottom-3 left-3 flex items-center gap-1">
             {intentOptions
-              .filter((o) => o.id !== "chat" && (o.id !== "iterate-app" || !!selectedAppName))
+              .filter((o) => o.id !== "chat")
               .map((option) => (
                 <Button
                   key={option.id}
@@ -697,21 +686,26 @@ function ComposerPanel({
                 </span>
               )}
               <span className="text-xs text-muted-foreground">模式：</span>
+              {selectedAssistant && (
+                <span className="rounded-full border border-blue-500/40 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-2.5 py-1 text-xs text-blue-600 dark:text-blue-400 mr-2">
+                  {selectedAssistant.displayName || selectedAssistant.name}
+                </span>
+              )}
+
+              {selectedAssistant?.name === "app-builder-assistant" && selectedAppName && (
+                <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground mr-2">
+                  更新 {selectedAppName}
+                </span>
+              )}
+
               {activeIntentOption ? (
-                <>
-                  <IntentChip
-                    key={composerIntent}
-                    option={activeIntentOption}
-                    active={true}
-                    onClick={() => onComposerIntentChange("chat")}
-                    onRemove={() => onComposerIntentChange("chat")}
-                  />
-                  {composerIntent === "iterate-app" && selectedAppName && (
-                    <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
-                      更新 {selectedAppName}
-                    </span>
-                  )}
-                </>
+                <IntentChip
+                  key={composerIntent}
+                  option={activeIntentOption}
+                  active={true}
+                  onClick={() => onComposerIntentChange("chat")}
+                  onRemove={() => onComposerIntentChange("chat")}
+                />
               ) : (
                 <span className="rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 px-2.5 py-1 text-xs text-purple-600 dark:text-purple-400">
                   chat
@@ -814,13 +808,12 @@ function HomeLanding({
           Hi，今天有什么安排？
         </h1>
         <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
-          让 moss 帮你创建App、规划任务，或者直接开始一个新的构建目标。
+          让 moss 帮你规划任务、协同执行，或者通过助手直接开始一个新的构建目标。
         </p>
       </div>
 
       <div className="mb-6 flex justify-center gap-4">
         {[chatIntentOption, ...intentOptions]
-          .filter((o) => o.id !== "iterate-app" || !!selectedAppName)
           .map((option) => {
           const isSelected = composerIntent === option.id;
           return (
@@ -1026,6 +1019,8 @@ export function ChatArea({
             onComposerIntentChange={onComposerIntentChange}
             onSend={onSend}
             onStop={onStop}
+            selectedAssistant={selectedAssistant ?? null}
+            onClearAssistant={onClearAssistant}
           />
         </div>
       </div>

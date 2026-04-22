@@ -309,6 +309,7 @@ export type MossAppEvent =
   | { type: 'app_publish'; input: MossAppPublishInput }
   | { type: 'app_launch'; input: { name: string } }
   | { type: 'app_update'; input: MossAppUpdateInput }
+  | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
 
 export type MossAppBuildInput = {
@@ -355,12 +356,27 @@ export type MossAppUpdateInput = {
   width?: number
   height?: number
   resizable?: boolean
+  filePath?: string
   html?: string
   prd?: string
+  reason?: string
+}
+
+export type MossAppExtractToWorkspaceInput = {
+  name: string
+  versionId?: string
 }
 
 export type MossAppEventResult =
-  | { ok: true; app?: unknown; apps?: unknown[]; versions?: unknown[]; filePath?: string }
+  | {
+      ok: true
+      app?: unknown
+      apps?: unknown[]
+      versions?: unknown[]
+      filePath?: string
+      metadataPath?: string
+      htmlPath?: string
+    }
   | { ok: false; error: string }
 
 let globalAppEventBridge:

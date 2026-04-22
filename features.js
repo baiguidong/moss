@@ -158,7 +158,7 @@ export const INTERNAL_ONLY = {
 
   BRIDGE_MODE: false,        // 连接 claude.ai 网页版的桥接模式
   DAEMON: false,             // 后台守护进程模式
-  DIRECT_CONNECT: false,     // 直连内部服务
+  DIRECT_CONNECT: true,      // 直连服务
   LODESTONE: false,          // 内部服务定位系统
   TORCH: false,              // 内部 ML 推理加速
   CHICAGO_MCP: false,        // 内部 MCP 服务器

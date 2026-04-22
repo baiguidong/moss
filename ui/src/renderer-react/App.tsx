@@ -114,7 +114,7 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app' | 'coordinator';
+type ComposerIntent = 'chat' | 'plan' | 'coordinator';
 type LayoutState = {
   leftWidth: number;
   previewWidth: number;
@@ -951,7 +951,12 @@ export default function App() {
       }
     });
 
-    const offAppsChanged = window.agentDesktop.onAppsChanged(() => {
+    const offAppsChanged = window.agentDesktop.onAppsChanged((payload) => {
+      const changedName = payload?.app?.name;
+      if (changedName && selectedAssistant?.name === 'app-builder-assistant') {
+        setSelectedAppName(changedName);
+        void loadAppVersions(changedName);
+      }
       void refreshApps();
     });
 
@@ -1036,7 +1041,7 @@ export default function App() {
       offTeammateSpawned();
       offTeammateCompleted();
     };
-  }, [applyDesktopSettings, navigateToHome, refreshApps, refreshWorkspaceSnapshot]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant]);
 
   const sidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1472,7 +1477,6 @@ export default function App() {
     const hasFiles = files && files.length > 0;
     if (!hasText && !hasFiles) return;
     if (activeDetail?.busy || planDecisionBusy) return;
-    if (intent === 'iterate-app' && !selectedAppName) return;
 
     const prompt = input.trim();
     setInput('');
@@ -1511,11 +1515,11 @@ export default function App() {
     setStickyWorkerTaskStatuses({});
     setWorkerSubagentResults({});
 
-    const result = await window.agentDesktop.send({
+    await window.agentDesktop.send({
       sessionId,
       prompt,
       mode: intent === 'chat' ? undefined : intent,
-      appName: intent === 'iterate-app' ? selectedAppName : undefined,
+      appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
       files: filesToSend?.map(f => f.path),
       coordinatorMode: intent === 'coordinator' ? true : undefined,
       assistantName: selectedAssistant?.name,
@@ -1523,17 +1527,7 @@ export default function App() {
     const detail = await window.agentDesktop.getSession({ sessionId });
     setActiveDetail(detail);
     setSummaries((prev) => upsertSummary(prev, detail));
-
-    if (intent === 'create-app' || intent === 'iterate-app') {
-      await refreshApps();
-      const changedApp = result?.createdApp || result?.updatedApp;
-      if (changedApp?.name) {
-        setSelectedAppName(changedApp.name);
-        setComposerIntent('iterate-app');
-        await loadAppVersions(changedApp.name);
-      }
-    }
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, loadAppVersions, planDecisionBusy, refreshApps, selectedAppName, selectedAssistant]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, planDecisionBusy, selectedAppName, selectedAssistant]);
 
   const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>, workspace?: string) => {
     await submitPrompt(composerIntent, files, workspace);
@@ -1543,22 +1537,14 @@ export default function App() {
     if (!activeSessionId) return;
     setPlanDecisionBusy(true);
     try {
-      const result = await window.agentDesktop.approvePlan({ sessionId: activeSessionId });
+      await window.agentDesktop.approvePlan({ sessionId: activeSessionId });
       const detail = await window.agentDesktop.getSession({ sessionId: activeSessionId });
       setActiveDetail(detail);
       setSummaries((prev) => upsertSummary(prev, detail));
-
-      const changedApp = result?.createdApp;
-      if (changedApp?.name) {
-        await refreshApps();
-        setSelectedAppName(changedApp.name);
-        setComposerIntent('iterate-app');
-        await loadAppVersions(changedApp.name);
-      }
     } finally {
       setPlanDecisionBusy(false);
     }
-  }, [activeSessionId, loadAppVersions, refreshApps]);
+  }, [activeSessionId]);
 
   const handleRejectPlan = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -1647,15 +1633,19 @@ export default function App() {
   }, []);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
-    setSelectedAppName(name);
-    setActiveView('chat');
-    setComposerIntent('iterate-app');
-    if (!activeSessionId) {
-      const ok = navigateToHome({ preserveIntent: true });
-      if (!ok) return;
-      await createAndOpenSession(`迭代 ${name}`);
+    const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
+    if (appBuilderAssistant) {
+      setSelectedAssistant(appBuilderAssistant);
     }
-  }, [activeSessionId, navigateToHome, createAndOpenSession]);
+
+    const ok = navigateToHome({ preserveIntent: true });
+    if (!ok) return;
+    await createAndOpenSession(`迭代 ${name}`);
+
+    setSelectedAppName(name);
+    setComposerIntent('chat');
+    setActiveView('chat');
+  }, [navigateToHome, createAndOpenSession, installedAssistants]);
 
   const handleDeleteApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.deleteApp({ name });
@@ -1671,7 +1661,6 @@ export default function App() {
     const result = await window.agentDesktop.rollbackApp({ name, versionId });
     if (result?.app?.name) {
       setSelectedAppName(result.app.name);
-      setComposerIntent('iterate-app');
     }
     await refreshApps();
     await loadAppVersions(name);
@@ -1691,6 +1680,95 @@ export default function App() {
     <div className="h-full overflow-auto bg-background px-8 py-8">
       <div className="mx-auto max-w-4xl space-y-6">
         <div className="rounded-[28px] border border-border/80 bg-card/80 p-8 shadow-[0_24px_80px_-36px_rgba(0,0,0,0.45)]">
+          <div className="mb-6 rounded-2xl border border-border/70 bg-background/60 p-5">
+            <p className="text-sm font-medium text-foreground">Agent 运行方式</p>
+            <p className="mt-1 text-xs leading-6 text-muted-foreground">
+              `local` 使用当前电脑内嵌的 `electron-direct.mjs`。`remote-direct` 会把对话请求转发到远端 Direct Connect server。
+            </p>
+            <select
+              className="mt-4 h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
+              value={settingsDraft?.agentMode || 'local'}
+              onChange={(event) => {
+                if (!settingsDraft) return;
+                const value = event.target.value as DesktopSettings['agentMode'];
+                setSettingsDraft({
+                  ...settingsDraft,
+                  agentMode: value,
+                });
+                void autoSaveSettings('agentMode', value);
+              }}
+            >
+              <option value="local">local</option>
+              <option value="remote-direct">remote-direct</option>
+            </select>
+            {settingsDraft?.agentMode === 'remote-direct' && (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Remote Server URL</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    支持 `http://host:port`，也支持直接填 `cc://host:port?token=...`。
+                  </p>
+                  <Input
+                    className="mt-2 bg-background text-foreground"
+                    value={settingsDraft?.remoteDirectServerUrl || ''}
+                    onChange={(event) => {
+                      if (!settingsDraft) return;
+                      const value = event.target.value;
+                      setSettingsDraft({
+                        ...settingsDraft,
+                        remoteDirectServerUrl: value,
+                      });
+                      void autoSaveSettings('remoteDirectServerUrl', value);
+                    }}
+                    placeholder="http://127.0.0.1:43127 或 cc://server:43127?token=..."
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-foreground">Remote Token</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    当上面的地址不是 `cc://...token=...` 时，在这里单独填写 Bearer token。
+                  </p>
+                  <Input
+                    className="mt-2 bg-background text-foreground font-mono text-xs"
+                    value={settingsDraft?.remoteDirectAuthToken || ''}
+                    onChange={(event) => {
+                      if (!settingsDraft) return;
+                      const value = event.target.value;
+                      setSettingsDraft({
+                        ...settingsDraft,
+                        remoteDirectAuthToken: value,
+                      });
+                      void autoSaveSettings('remoteDirectAuthToken', value);
+                    }}
+                    placeholder="smoke-token"
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-foreground">Remote Workspace</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    可选。留空时由远端 server 自己决定工作目录。当前 UI 还不支持浏览远端文件树，附件上传也未接通。
+                  </p>
+                  <Input
+                    className="mt-2 bg-background text-foreground"
+                    value={settingsDraft?.remoteDirectWorkspace || ''}
+                    onChange={(event) => {
+                      if (!settingsDraft) return;
+                      const value = event.target.value;
+                      setSettingsDraft({
+                        ...settingsDraft,
+                        remoteDirectWorkspace: value,
+                      });
+                      void autoSaveSettings('remoteDirectWorkspace', value);
+                    }}
+                    placeholder="/srv/moss/workspaces/default"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">权限模式</p>
@@ -1723,6 +1801,9 @@ export default function App() {
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">默认模型</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                仅 `local` 模式生效。`remote-direct` 模式由远端服务自己的 Claude 配置决定。
+              </p>
               <Input
                 className="mt-4 bg-background text-foreground"
                 value={settingsDraft?.model || ''}
@@ -1755,6 +1836,9 @@ export default function App() {
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">最大轮次</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                当前仅 `local` 模式生效。
+              </p>
               <Input
                 type="number"
                 min={1}
@@ -1775,6 +1859,9 @@ export default function App() {
 
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">思考模式</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                当前仅 `local` 模式生效。
+              </p>
               <select
                 className="mt-4 h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
                 value={settingsDraft?.thinkingMode || 'disabled'}
@@ -1817,7 +1904,7 @@ export default function App() {
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">API URL</p>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                自定义 API 端点地址，留空则使用默认地址。
+                自定义 API 端点地址，留空则使用默认地址。仅 `local` 模式生效。
               </p>
               <Input
                 className="mt-4 bg-background text-foreground"
@@ -1838,7 +1925,7 @@ export default function App() {
             <div className="rounded-2xl border border-border/70 bg-background/60 p-5">
               <p className="text-sm font-medium text-foreground">API Key</p>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                自定义 API Key，留空则使用环境变量中的密钥。
+                自定义 API Key，留空则使用环境变量中的密钥。仅 `local` 模式生效。
               </p>
               <div className="mt-4 flex gap-2">
                 <Input
@@ -1872,6 +1959,9 @@ export default function App() {
 
           <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-5">
             <p className="text-sm font-medium text-foreground">追加系统提示</p>
+            <p className="mt-1 text-xs leading-6 text-muted-foreground">
+              当前仅 `local` 模式生效。`remote-direct` 模式不会把这里的系统提示下发给远端 session server。
+            </p>
             <Textarea
               className="mt-4 min-h-[180px] bg-background text-foreground"
               value={settingsDraft?.appendSystemPrompt || ''}

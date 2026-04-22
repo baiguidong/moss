@@ -33,6 +33,26 @@ import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './uti
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
 import { sleep } from './utils/sleep.js'
+export { startServer } from './server/server.js'
+export { SessionManager } from './server/sessionManager.js'
+export { DangerousBackend } from './server/backends/dangerousBackend.js'
+export {
+  startStandaloneDirectConnectServer,
+  type StandaloneServerOptions,
+} from './server/startStandaloneServer.js'
+export {
+  createDirectConnectSession,
+  DirectConnectError,
+} from './server/createDirectConnectSession.js'
+export {
+  DirectConnectSessionManager,
+  type DirectConnectConfig,
+} from './server/directConnectManager.js'
+export {
+  buildConnectUrl,
+  parseConnectUrl,
+} from './server/parseConnectUrl.js'
+export { runConnectHeadless } from './server/connectHeadless.js'
 
 // 全局初始化，只执行一次
 export function getAuthDebugSnapshot() {

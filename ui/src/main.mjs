@@ -49,6 +49,7 @@ const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
+  agentMode: 'local',
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
   maxTurns: 100,
@@ -57,6 +58,9 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
+  remoteDirectServerUrl: '',
+  remoteDirectAuthToken: '',
+  remoteDirectWorkspace: '',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
@@ -339,6 +343,12 @@ function normalizeDesktopSettings(input, existing = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
 
+  if (source.agentMode !== undefined) {
+    result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
+  } else if (result.agentMode === undefined) {
+    result.agentMode = DEFAULT_DESKTOP_SETTINGS.agentMode;
+  }
+
   if (typeof source.model === 'string' && source.model.trim()) {
     result.model = source.model.trim();
   } else if (result.model === undefined) {
@@ -391,6 +401,24 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.apiKey = source.apiKey.trim();
   } else if (result.apiKey === undefined) {
     result.apiKey = DEFAULT_DESKTOP_SETTINGS.apiKey;
+  }
+
+  if (typeof source.remoteDirectServerUrl === 'string') {
+    result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
+  } else if (result.remoteDirectServerUrl === undefined) {
+    result.remoteDirectServerUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
+  }
+
+  if (typeof source.remoteDirectAuthToken === 'string') {
+    result.remoteDirectAuthToken = source.remoteDirectAuthToken.trim();
+  } else if (result.remoteDirectAuthToken === undefined) {
+    result.remoteDirectAuthToken = DEFAULT_DESKTOP_SETTINGS.remoteDirectAuthToken;
+  }
+
+  if (typeof source.remoteDirectWorkspace === 'string') {
+    result.remoteDirectWorkspace = source.remoteDirectWorkspace.trim();
+  } else if (result.remoteDirectWorkspace === undefined) {
+    result.remoteDirectWorkspace = DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
   }
 
   if (typeof source.visionModel === 'string' && source.visionModel.trim()) {
@@ -552,6 +580,278 @@ function buildClaudeSessionConfig(cwd) {
   };
 }
 
+function getDesktopAgentMode(settings = desktopSettings) {
+  return settings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
+}
+
+function isRemoteDirectModeEnabled(settings = desktopSettings) {
+  return getDesktopAgentMode(settings) === 'remote-direct';
+}
+
+function getRemoteDirectWorkspace(settings = desktopSettings) {
+  const value = typeof settings?.remoteDirectWorkspace === 'string'
+    ? settings.remoteDirectWorkspace.trim()
+    : '';
+  return value || undefined;
+}
+
+async function resolveRemoteDirectConnection() {
+  const mod = await getClaudeRuntimeModule();
+  const raw = typeof desktopSettings.remoteDirectServerUrl === 'string'
+    ? desktopSettings.remoteDirectServerUrl.trim()
+    : '';
+  const fallbackAuthToken = typeof desktopSettings.remoteDirectAuthToken === 'string'
+    ? desktopSettings.remoteDirectAuthToken.trim() || undefined
+    : undefined;
+
+  if (!raw) {
+    throw new Error('Remote Direct server URL is required.');
+  }
+
+  if (raw.startsWith('cc://') || raw.startsWith('cc+unix://')) {
+    const url = new URL(raw);
+    const authToken = url.searchParams.get('token') || fallbackAuthToken;
+    if (!authToken) {
+      throw new Error(`Missing auth token in direct-connect URL: ${raw}`);
+    }
+    if (!url.hostname || !url.port) {
+      throw new Error(`Invalid direct-connect URL: ${raw}`);
+    }
+    return {
+      serverUrl: `http://${url.hostname}:${url.port}`,
+      authToken,
+    };
+  }
+
+  return {
+    serverUrl: raw.replace(/\/+$/, ''),
+    authToken: fallbackAuthToken,
+  };
+}
+
+function createRemoteDirectRuntime({
+  cwd,
+  onPermissionRequest,
+  onSessionCreated,
+  coordinatorMode = false,
+}) {
+  let disposed = false;
+  let activeManager = null;
+  let managerConnectPromise = null;
+  let currentTurn = null;
+  let sessionPromise = null;
+
+  const ensureSessionConfig = async () => {
+    if (sessionPromise) {
+      return sessionPromise;
+    }
+
+    sessionPromise = (async () => {
+      const mod = await getClaudeRuntimeModule();
+      if (
+        typeof mod.createDirectConnectSession !== 'function' ||
+        typeof mod.DirectConnectSessionManager !== 'function'
+      ) {
+        throw new Error(
+          'electron-direct.mjs did not export direct-connect runtime helpers.',
+        );
+      }
+
+      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      const created = await mod.createDirectConnectSession({
+        serverUrl,
+        authToken,
+        cwd: cwd || getRemoteDirectWorkspace() || undefined,
+        dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+      });
+
+      onSessionCreated?.(created);
+      return {
+        mod,
+        config: created.config,
+        workDir: created.workDir,
+      };
+    })().catch((error) => {
+      sessionPromise = null;
+      throw error;
+    });
+
+    return sessionPromise;
+  };
+
+  return {
+    kind: 'remote-direct',
+    coordinatorMode,
+    async *send(prompt) {
+      if (disposed) {
+        throw new Error('Remote runtime has been disposed.');
+      }
+      if (currentTurn) {
+        throw new Error('Remote runtime is already processing a request.');
+      }
+
+      const { mod, config } = await ensureSessionConfig();
+      const queue = [];
+      let pendingResolve = null;
+      let pendingReject = null;
+      let settled = false;
+      let pendingError = null;
+
+      const flushMessage = (message) => {
+        if (pendingResolve) {
+          const resolve = pendingResolve;
+          pendingResolve = null;
+          pendingReject = null;
+          resolve(message);
+          return;
+        }
+        queue.push(message);
+      };
+
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        pendingError = error instanceof Error ? error : new Error(String(error));
+        if (pendingReject) {
+          const reject = pendingReject;
+          pendingResolve = null;
+          pendingReject = null;
+          reject(pendingError);
+        }
+      };
+
+      const nextMessage = () =>
+        new Promise((resolve, reject) => {
+          if (queue.length > 0) {
+            resolve(queue.shift());
+            return;
+          }
+          if (pendingError) {
+            reject(pendingError);
+            return;
+          }
+          pendingResolve = resolve;
+          pendingReject = reject;
+        });
+
+      currentTurn = {
+        finished: false,
+        flushMessage,
+        fail,
+      };
+
+      const ensureManager = async () => {
+        if (activeManager?.isConnected?.()) {
+          return activeManager;
+        }
+
+        if (managerConnectPromise) {
+          await managerConnectPromise;
+          if (!activeManager?.isConnected?.()) {
+            throw new Error('Remote session failed to connect.');
+          }
+          return activeManager;
+        }
+
+        managerConnectPromise = new Promise((resolve, reject) => {
+          const manager = new mod.DirectConnectSessionManager(config, {
+            onConnected: () => {
+              managerConnectPromise = null;
+              resolve();
+            },
+            onMessage: (message) => {
+              if (!currentTurn) {
+                return;
+              }
+              currentTurn.flushMessage(message);
+              if (message?.type === 'result') {
+                currentTurn.finished = true;
+              }
+            },
+            onPermissionRequest: async (request, requestId) => {
+              try {
+                const allowed = await onPermissionRequest?.(request.tool_name, request.input);
+                manager.respondToPermissionRequest(requestId, allowed
+                  ? { behavior: 'allow' }
+                  : { behavior: 'deny', message: 'Denied by user' });
+              } catch (error) {
+                manager.respondToPermissionRequest(requestId, {
+                  behavior: 'deny',
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              }
+            },
+            onDisconnected: () => {
+              const turn = currentTurn;
+              activeManager = null;
+              managerConnectPromise = null;
+              if (turn && !turn.finished) {
+                turn.fail(new Error('Remote session disconnected before completion.'));
+              }
+            },
+            onError: (error) => {
+              const turn = currentTurn;
+              if (managerConnectPromise) {
+                managerConnectPromise = null;
+                reject(error);
+              }
+              if (turn) {
+                turn.fail(error);
+              }
+            },
+          });
+
+          activeManager = manager;
+
+          try {
+            manager.connect();
+          } catch (error) {
+            activeManager = null;
+            managerConnectPromise = null;
+            reject(error);
+          }
+        });
+
+        await managerConnectPromise;
+        return activeManager;
+      };
+
+      try {
+        const manager = await ensureManager();
+        const sent = manager.sendMessage(prompt);
+        if (!sent) {
+          throw new Error('Failed to send prompt to remote session.');
+        }
+
+        while (true) {
+          const message = await nextMessage();
+          yield message;
+          if (message?.type === 'result') {
+            break;
+          }
+        }
+        if (pendingError) {
+          throw pendingError;
+        }
+      } finally {
+        currentTurn = null;
+      }
+    },
+    abort() {
+      activeManager?.sendInterrupt?.();
+    },
+    dispose() {
+      disposed = true;
+      try {
+        activeManager?.disconnect?.();
+      } catch {}
+      activeManager = null;
+      managerConnectPromise = null;
+      currentTurn = null;
+    },
+  };
+}
+
 function refreshDesktopSettings(payload = {}) {
   // 这里不再只保留标准 key，而是将 payload 合并到现有的 desktopSettings 中
   // 这样可以保留用户手动在 settings.json 中添加的自定义 key（如 env, apiBaseUrl 等）
@@ -564,6 +864,10 @@ function refreshDesktopSettings(payload = {}) {
 
   let skippedSessionCount = 0;
   for (const sessionRecord of sessions.values()) {
+    if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
+      sessionRecord.agentMode = getDesktopAgentMode(nextSettings);
+      sessionRecord.remoteWorkspace = getRemoteDirectWorkspace(nextSettings) || null;
+    }
     if (!sessionRecord.runtime) continue;
     if (sessionRecord.busy || sessionRecord.messageCount > 0) {
       skippedSessionCount += 1;
@@ -808,10 +1112,13 @@ function hasFile(filePath) {
 }
 
 function getSessionSummary(sessionRecord) {
+  const workspace = sessionRecord.agentMode === 'remote-direct'
+    ? sessionRecord.remoteWorkspace || sessionRecord.workspace
+    : sessionRecord.workspace;
   return {
     id: sessionRecord.id,
     title: sessionRecord.title,
-    workspace: sessionRecord.workspace,
+    workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
     busy: sessionRecord.busy,
@@ -897,11 +1204,11 @@ function derivePendingPlanApproval(history) {
 
   let pending = null;
   for (const entry of history) {
-    if (!entry || entry.type !== 'app_plan_state' || entry.kind !== 'create-app') continue;
+    if (!entry || entry.type !== 'app_plan_state' || entry.kind !== 'plan') continue;
 
     if (entry.state === 'awaiting_approval') {
       pending = {
-        kind: 'create-app',
+        kind: 'plan',
         originalPrompt: typeof entry.originalPrompt === 'string' ? entry.originalPrompt : '',
         plan: typeof entry.plan === 'string' ? entry.plan : '',
         requestedAt: typeof entry.timestamp === 'number' ? entry.timestamp : Date.now(),
@@ -1551,6 +1858,7 @@ function saveStoredApp(appRecord) {
 function updateStoredApp(name, appRecord, options = {}) {
   const existing = getStoredApp(name);
   const nextRecord = {
+    ...existing,
     ...appRecord,
     name,
   };
@@ -1586,6 +1894,7 @@ function updateStoredApp(name, appRecord, options = {}) {
     latestVersion: latestVersion?.version || snapshot?.version || null,
     currentVersionId: currentVersion?.id || snapshot?.id || null,
     currentVersion: currentVersion?.version || snapshot?.version || null,
+    publishedVersion: snapshot?.version || null,
   };
 }
 
@@ -1614,6 +1923,7 @@ function toAppVersionSnapshotRecord(appRecord, extra = {}) {
 }
 
 function saveAppVersionSnapshot(appRecord, extra = {}) {
+  clearVersionSnapshotCache(appRecord.name);
   const existingSnapshots = loadAppVersionSnapshots(appRecord.name);
   const snapshot = toAppVersionSnapshotRecord(appRecord, {
     ...extra,
@@ -1621,6 +1931,8 @@ function saveAppVersionSnapshot(appRecord, extra = {}) {
   });
   const filePath = path.join(ensureAppVersionsDir(appRecord.name), `${snapshot.id}.json`);
   fs.writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+  // Invalidate again so the next read includes the snapshot we just wrote.
+  clearVersionSnapshotCache(appRecord.name);
   writeAppCurrentVersion(appRecord.name, snapshot);
   return snapshot;
 }
@@ -1722,6 +2034,7 @@ function createAppWindowState(appEntry, appWindow) {
     busy: false,
     currentAgentRequestId: null,
     currentAgentContext: '',
+    agentMode: getDesktopAgentMode(),
   };
   appWindowStates.set(appWindow.webContents.id, state);
   return state;
@@ -1976,34 +2289,49 @@ async function ensureAppAgentRuntime(appState) {
     return appState.runtime;
   }
 
+  const onPermissionRequest = async (toolName, input) => {
+    const toolLabel = toolName || 'Tool';
+    const detailParts = [];
+    if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
+
+    const dialogTarget = appState.window && !appState.window.isDestroyed()
+      ? appState.window
+      : mainWindow && !mainWindow.isDestroyed()
+        ? mainWindow
+        : undefined;
+
+    const response = await dialog.showMessageBox(dialogTarget, {
+      type: 'question',
+      buttons: ['允许', '拒绝'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: 'App 工具权限确认',
+      message: `${appState.name} 请求执行 ${toolLabel}`,
+      detail: detailParts.join('\n\n') || '应用中的 agent 请求工具执行权限。',
+    });
+
+    return response.response === 0;
+  };
+
+  if (appState.agentMode === 'remote-direct') {
+    appState.runtime = createRemoteDirectRuntime({
+      cwd: getRemoteDirectWorkspace() || undefined,
+      onPermissionRequest,
+      onSessionCreated: (created) => {
+        if (created?.workDir) {
+          appState.remoteWorkspace = created.workDir;
+        }
+      },
+    });
+    return appState.runtime;
+  }
+
   const ClaudeSession = await getClaudeSessionCtor();
   appState.runtime = new ClaudeSession({
     ...buildClaudeSessionConfig(appState.dataDir),
-    onPermissionRequest: async (toolName, input) => {
-      const toolLabel = toolName || 'Tool';
-      const detailParts = [];
-      if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
-
-      const dialogTarget = appState.window && !appState.window.isDestroyed()
-        ? appState.window
-        : mainWindow && !mainWindow.isDestroyed()
-          ? mainWindow
-          : undefined;
-
-      const response = await dialog.showMessageBox(dialogTarget, {
-        type: 'question',
-        buttons: ['允许', '拒绝'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-        title: 'App 工具权限确认',
-        message: `${appState.name} 请求执行 ${toolLabel}`,
-        detail: detailParts.join('\n\n') || '应用中的 agent 请求工具执行权限。',
-      });
-
-      return response.response === 0;
-    },
-    onAppEvent: mossAppEventHandler,
+    onPermissionRequest,
+    onAppEvent: (appEvent) => mossAppEventHandler(appEvent, appState),
   });
   return appState.runtime;
 }
@@ -2289,46 +2617,6 @@ async function callAppTool(appState, name, args = {}) {
   }
 }
 
-function extractAppPayloadFromText(content) {
-  const htmlMatch = content.match(/```html\s*([\s\S]*?)```/i);
-  if (!htmlMatch) {
-    throw new Error('Agent response did not contain an ```html``` block.');
-  }
-
-  const metaMatch =
-    content.match(/```app-meta\s*([\s\S]*?)```/i) ||
-    content.match(/```json\s*([\s\S]*?)```/i);
-
-  if (!metaMatch) {
-    throw new Error('Agent response did not contain an app metadata block.');
-  }
-
-  let metadata;
-  try {
-    metadata = JSON.parse(metaMatch[1]);
-  } catch (error) {
-    throw new Error(
-      `Failed to parse app metadata JSON: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const html = htmlMatch[1].trim();
-  if (!html.toLowerCase().includes('<html')) {
-    throw new Error('Generated HTML block did not contain a full HTML document.');
-  }
-
-  return {
-    name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
-    title: String(metadata?.title || metadata?.name || '').trim(),
-    icon: String(metadata?.icon || '').trim(),
-    description: String(metadata?.description || '').trim(),
-    width: Number(metadata?.width) || 900,
-    height: Number(metadata?.height) || 700,
-    resizable: metadata?.resizable !== false,
-    html,
-  };
-}
-
 function getSessionAppBuildPaths(sessionRecord) {
   const buildDir = path.join(sessionRecord.workspace, SESSION_APP_BUILD_SUBDIR);
   return {
@@ -2372,97 +2660,6 @@ function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
     resizable: metadata?.resizable !== false,
     html,
   };
-}
-
-function buildCreateAppPlanPrompt(prd) {
-  return [
-    'You are in planning mode for a standalone single-file desktop mini app.',
-    'All natural-language output must be in Simplified Chinese.',
-    'Produce an implementation plan only. Do NOT output any app code, HTML, JSON metadata, or fenced code blocks.',
-    'Your plan must be concrete enough for user approval.',
-    'Include these sections in plain markdown:',
-    '1. Goal',
-    '2. App metadata (name slug, display title, SVG icon as data URI)',
-    '3. Core features',
-    '4. UI and interaction design',
-    '5. Data and state handling',
-    '6. Execution steps',
-    '7. Risks or open questions',
-    '',
-    'App request:',
-    String(prd || '').trim(),
-  ].join('\n');
-}
-
-function buildCreateAppExecutionPrompt(prd, approvedPlan, buildPaths) {
-  return [
-    'You are implementing a standalone single-file desktop mini app using workspace tools.',
-    'All natural-language output must be in Simplified Chinese.',
-    'The user has already approved the implementation plan below. You must follow it.',
-    '',
-    'Approved plan:',
-    String(approvedPlan || '').trim() || '(empty)',
-    '',
-    'Use file tools to create or overwrite these exact files inside the workspace:',
-    `- ${buildPaths.metadataPath}`,
-    `- ${buildPaths.htmlPath}`,
-    '',
-    'Write the app metadata JSON to app-meta.json with this shape:',
-    '{ "name": string, "title": string, "icon": string, "description": string, "width": number, "height": number, "resizable": boolean }',
-    '"name" is a lowercase slug like "my-app", "title" is the display name in Chinese like "我的应用", "icon" is a simple SVG emoji as data URI like "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><text y=\'.9em\' font-size=\'90\'>🎯</text></svg>"',
-    '',
-    'Write the full standalone HTML document to index.html.',
-    'Do not return the full app code in chat unless it is strictly necessary.',
-    'Your final assistant message should be a short implementation summary in Simplified Chinese only.',
-    'Rules:',
-    '- Do not change scope unless absolutely necessary.',
-    '- Use tools for the actual file creation so the execution is visible.',
-    '- You may read back the files to verify them before finishing.',
-    '- Use vanilla HTML/CSS/JavaScript only.',
-    '- Keep the app fully self-contained.',
-    '- Make the UI polished and usable.',
-    '- Name must be lowercase and hyphenated.',
-    '- The app runs inside Electron and can access a host runtime API via window.mossApp.',
-    '',
-    'Available host runtime APIs (all async):',
-    '- window.mossApp.getAppInfo()',
-    '- window.mossApp.readResource(uri)',
-    '- window.mossApp.storage.getItem(key), setItem(key, value), removeItem(key), list()',
-    '- window.mossApp.files.list(path?), readText(path), writeText(path, content), delete(path), mkdir(path)',
-    '- window.mossApp.agent.send({ prompt, systemPrompt? })',
-    '- window.mossApp.agent.reset()',
-    '',
-    'App request:',
-    String(prd || '').trim(),
-  ].join('\n');
-}
-
-function buildIterateAppPrompt(appRecord, feedback) {
-  return [
-    'You are updating an existing standalone single-file desktop mini app.',
-    'All natural-language analysis, plans, explanations, and summaries must be in Simplified Chinese.',
-    'First, analyze the requested changes and output your modification plan step-by-step.',
-    'Then, return the full updated app code in exactly two fenced blocks at the very END of your response.',
-    'First block must be ```app-meta with JSON.',
-    'Second block must be ```html containing the full code.',
-    'Rules:',
-    '- BE VERBOSE about your analysis and what you are fixing/adding BEFORE outputting the code.',
-    '- Keep the app name unchanged.',
-    '- Use vanilla HTML/CSS/JavaScript only.',
-    '- Keep the app fully self-contained.',
-    '- The app runs inside Electron and can access a host runtime API via window.mossApp.',
-    '',
-    'Current app PRD:',
-    appRecord.prd || '(empty)',
-    '',
-    'Current app HTML:',
-    '```html',
-    appRecord.html || '',
-    '```',
-    '',
-    'Requested update:',
-    String(feedback || '').trim(),
-  ].join('\n');
 }
 
 function refreshOpenAppWindow(name) {
@@ -2779,6 +2976,8 @@ function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
     id: randomUUID(),
     title: title || 'New Session',
     workspace: normalizedWorkspace,
+    remoteWorkspace: getRemoteDirectWorkspace() || null,
+    agentMode: getDesktopAgentMode(),
     createdAt: now,
     updatedAt: now,
     busy: false,
@@ -2998,43 +3197,55 @@ async function ensureRuntime(sessionRecord) {
     }
   }
 
+  const onPermissionRequest = async (toolName, input) => {
+    const toolLabel = toolName || 'Tool';
+    const detailParts = [];
+    if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
+
+    emitToRenderer('agent:permission', {
+      sessionId: sessionRecord.id,
+      request: {
+        tool_name: toolName,
+        input,
+      },
+    });
+
+    const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const response = await dialog.showMessageBox(dialogTarget, {
+      type: 'question',
+      buttons: ['允许', '拒绝'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: '工具权限确认',
+      message: `${toolLabel} 请求执行`,
+      detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
+    });
+
+    return response.response === 0;
+  };
+
+  if (sessionRecord.agentMode === 'remote-direct') {
+    sessionRecord.runtime = createRemoteDirectRuntime({
+      cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || undefined,
+      coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
+      onPermissionRequest,
+      onSessionCreated: (created) => {
+        if (created?.workDir) {
+          sessionRecord.remoteWorkspace = created.workDir;
+        }
+      },
+    });
+    return sessionRecord.runtime;
+  }
+
   const ClaudeSession = await getClaudeSessionCtor();
 
   sessionRecord.runtime = new ClaudeSession({
     ...buildClaudeSessionConfig(sessionRecord.workspace),
     coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
-    onPermissionRequest: async (toolName, input) => {
-      const toolLabel = toolName || 'Tool';
-      const detailParts = [];
-      if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
-
-      emitToRenderer('agent:permission', {
-        sessionId: sessionRecord.id,
-        request: {
-          tool_name: toolName,
-          input,
-        },
-      });
-
-      const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-      const response = await dialog.showMessageBox(dialogTarget, {
-        type: 'question',
-        buttons: ['允许', '拒绝'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-        title: '工具权限确认',
-        message: `${toolLabel} 请求执行`,
-        detail: detailParts.join('\n\n') || '本地 agent 请求工具执行权限。',
-      });
-
-      if (response.response === 0) {
-        return true;
-      }
-
-      return false;
-    },
-    onAppEvent: mossAppEventHandler,
+    onPermissionRequest,
+    onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
@@ -3182,6 +3393,18 @@ function initializeAutoUpdater() {
 }
 
 async function listDirectoryEntries(sessionRecord, dirPath) {
+  if (sessionRecord.agentMode === 'remote-direct') {
+    const root = sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || '(remote workspace)';
+    return {
+      root,
+      path: root,
+      relativePath: '.',
+      items: [],
+      remote: true,
+      message: 'Remote Direct mode does not support browsing the remote workspace from this UI yet.',
+    };
+  }
+
   const root = sessionRecord.workspace;
   const targetPath = ensureInsideRoot(root, dirPath || root);
   const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
@@ -3309,6 +3532,10 @@ function getWorkspaceFilePreviewInfo(targetPath) {
 }
 
 async function readWorkspaceFile(sessionRecord, filePath) {
+  if (sessionRecord.agentMode === 'remote-direct') {
+    throw new Error('Remote Direct mode does not support reading remote workspace files from this UI yet.');
+  }
+
   const targetPath = ensureInsideRoot(sessionRecord.workspace, filePath);
   const stat = await fsp.stat(targetPath);
   if (!stat.isFile()) {
@@ -3576,6 +3803,16 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.messageCount > 0) {
     throw new Error('Workspace can only be changed before the first message.');
+  }
+  if (sessionRecord.agentMode === 'remote-direct') {
+    sessionRecord.remoteWorkspace = String(workspace || '').trim() || null;
+    sessionRecord.updatedAt = Date.now();
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+    return {
+      ...getSessionSummary(sessionRecord),
+      history: sessionRecord.history,
+    };
   }
   sessionRecord.workspace = normalizeWorkspace(workspace);
   await fsp.mkdir(sessionRecord.workspace, { recursive: true });
@@ -3929,6 +4166,9 @@ ipcMain.handle('fs:writeFile', async (event, { path: filePath, data }) => {
 ipcMain.handle('workspace:saveImage', async (event, { sessionId, fileName, data }) => {
   try {
     const sessionRecord = getSessionRecord(sessionId);
+    if (sessionRecord.agentMode === 'remote-direct') {
+      throw new Error('Remote Direct mode does not support uploading local images to the remote workspace yet.');
+    }
     const safeName = String(fileName || 'image').replace(/[<>:"/\\|?*]/g, '_');
     const filePath = path.join(sessionRecord.workspace, safeName);
     await fsp.writeFile(filePath, Buffer.from(data));
@@ -3941,6 +4181,9 @@ ipcMain.handle('workspace:saveImage', async (event, { sessionId, fileName, data 
 ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourcePath, fileName }) => {
   try {
     const sessionRecord = getSessionRecord(sessionId);
+    if (sessionRecord.agentMode === 'remote-direct') {
+      throw new Error('Remote Direct mode does not support uploading local files to the remote workspace yet.');
+    }
     const safeName = String(fileName || path.basename(sourcePath)).replace(/[<>:"/\\|?*]/g, '_');
     const destPath = path.join(sessionRecord.workspace, safeName);
     const data = await fsp.readFile(sourcePath);
@@ -3963,27 +4206,18 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const filePaths = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f.trim()) : [];
 
+  if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
+    throw new Error('Remote Direct mode does not support local file attachments yet.');
+  }
+
   if (!trimmedPrompt && filePaths.length === 0) {
     throw new Error('Prompt is required.');
   }
-  const isCreateAppMode = mode === 'create-app';
-  const isIterateAppMode = mode === 'iterate-app';
   const isPlanOnly = mode === 'plan';
   const isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
 
-  if (isCreateAppMode && sessionRecord.pendingPlanApproval) {
-    throw new Error('There is already a pending app creation plan awaiting approval.');
-  }
   if (isPlanOnly && sessionRecord.pendingPlanApproval) {
     throw new Error('There is already a pending plan awaiting approval.');
-  }
-
-  let iterateTarget = null;
-  if (isIterateAppMode) {
-    if (!appName || typeof appName !== 'string') {
-      throw new Error('App name is required for iterate-app mode.');
-    }
-    iterateTarget = loadStoredAppContent(appName);
   }
 
   // Build assistant context prefix (rules + skills list)
@@ -4006,6 +4240,33 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
           break;
         } catch {
           // Not found in this directory
+        }
+      }
+
+      // Fallback: resolve by logical meta.name when directory name differs.
+      if (!assistantDir) {
+        for (const { dir } of searchDirs) {
+          try {
+            const entries = await fsp.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+              const candidate = path.join(dir, entry.name);
+              const metaPath = path.join(candidate, '_moss_meta.json');
+              try {
+                const metaContent = await fsp.readFile(metaPath, 'utf-8');
+                const meta = JSON.parse(metaContent);
+                if (meta?.name === assistantName) {
+                  assistantDir = candidate;
+                  break;
+                }
+              } catch {
+                // Ignore invalid meta and continue scanning.
+              }
+            }
+            if (assistantDir) break;
+          } catch {
+            // Ignore missing directory and continue scanning.
+          }
         }
       }
 
@@ -4096,13 +4357,13 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
     }
   }
 
-  const runtimePrompt = isCreateAppMode
-    ? buildCreateAppPlanPrompt(trimmedPrompt)
-    : isIterateAppMode
-      ? buildIterateAppPrompt(iterateTarget, trimmedPrompt)
-      : isPlanOnly
-        ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-        : assistantContextPrefix + trimmedPrompt;
+  const appContextPrefix = appName && typeof appName === 'string'
+    ? `Current bound app context:\n- appName: ${appName}\n- This session is attached to an existing app. If you need editable source, first use moss(action: "app_extract_to_workspace", name: appName).\n\n`
+    : ''
+
+  const runtimePrompt = isPlanOnly
+    ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
+    : assistantContextPrefix + appContextPrefix + trimmedPrompt;
 
   const visibleUserPrompt = trimmedPrompt;
 
@@ -4132,52 +4393,7 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
     }
   });
 
-  let createdApp = null;
-  let updatedApp = null;
-  if (isCreateAppMode) {
-    const planText = String(latestAssistantText || streamedAssistantText || '').trim();
-    if (!planText) {
-      throw new Error('Planner did not return a usable app creation plan.');
-    }
-    const pendingPlanApproval = {
-      kind: 'create-app',
-      originalPrompt: trimmedPrompt,
-      plan: planText,
-      requestedAt: Date.now(),
-    };
-    pushSessionHistoryEvent(sessionRecord, {
-      type: 'app_plan_state',
-      kind: 'create-app',
-      state: 'awaiting_approval',
-      originalPrompt: trimmedPrompt,
-      plan: planText,
-      timestamp: pendingPlanApproval.requestedAt,
-    }, event.sender);
-    setPendingPlanApproval(sessionRecord, pendingPlanApproval);
-  } else if (isIterateAppMode) {
-    const payload = extractAppPayloadFromText(latestAssistantText || streamedAssistantText);
-    const nextPrd = iterateTarget.prd
-      ? `${iterateTarget.prd}\n\nUpdate request:\n${trimmedPrompt}`
-      : trimmedPrompt;
-    updatedApp = updateStoredApp(iterateTarget.name, {
-      ...payload,
-      prd: nextPrd,
-    });
-    refreshOpenAppWindow(updatedApp.name);
-    launchAppWindowByEntry(updatedApp);
-    emitAppsChanged({
-      action: 'updated',
-      app: {
-        name: updatedApp.name,
-        description: updatedApp.description,
-        width: updatedApp.width,
-        height: updatedApp.height,
-        resizable: updatedApp.resizable,
-        createdAt: updatedApp.createdAt,
-        updatedAt: updatedApp.updatedAt,
-      },
-    });
-  } else if (isPlanOnly) {
+  if (isPlanOnly) {
     // Check if agent used any tools - if so, it didn't follow the plan-only instruction
     const usedTools = sessionRecord.history.some((msg) => {
       if (msg.type === 'user') {
@@ -4228,29 +4444,7 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
     ok: true,
     sessionId,
     summary: getSessionSummary(sessionRecord),
-    createdApp: createdApp
-      ? {
-          name: createdApp.name,
-          description: createdApp.description,
-          width: createdApp.width,
-          height: createdApp.height,
-          resizable: createdApp.resizable,
-          createdAt: createdApp.createdAt,
-          updatedAt: createdApp.updatedAt,
-        }
-      : null,
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
-    updatedApp: updatedApp
-      ? {
-          name: updatedApp.name,
-          description: updatedApp.description,
-          width: updatedApp.width,
-          height: updatedApp.height,
-          resizable: updatedApp.resizable,
-          createdAt: updatedApp.createdAt,
-          updatedAt: updatedApp.updatedAt,
-        }
-      : null,
   };
 });
 
@@ -4260,7 +4454,7 @@ ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
     throw new Error('This session is already processing a request.');
   }
   const pendingPlanApproval = sessionRecord.pendingPlanApproval;
-  if (!pendingPlanApproval || (pendingPlanApproval.kind !== 'create-app' && pendingPlanApproval.kind !== 'plan')) {
+  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'plan') {
     throw new Error('There is no plan waiting for approval.');
   }
 
@@ -4274,65 +4468,10 @@ ipcMain.handle('agent:approve-plan', async (event, { sessionId }) => {
   }, event.sender);
   setPendingPlanApproval(sessionRecord, null);
 
-  if (pendingPlanApproval.kind === 'plan') {
-    // Plan mode: just clear the pending state, no separate execution
-    return {
-      ok: true,
-      sessionId,
-      summary: getSessionSummary(sessionRecord),
-    };
-  }
-
-  // create-app flow (existing)
-  const buildPaths = getSessionAppBuildPaths(sessionRecord);
-  fs.mkdirSync(buildPaths.buildDir, { recursive: true });
-
-  const {
-    latestAssistantText,
-    streamedAssistantText,
-  } = await runSessionPrompt({
-    sessionRecord,
-    sender: event.sender,
-    runtimePrompt: buildCreateAppExecutionPrompt(
-      pendingPlanApproval.originalPrompt,
-      pendingPlanApproval.plan,
-      buildPaths,
-    ),
-  });
-
-  const payload = readGeneratedAppPayloadFromWorkspace(sessionRecord);
-  const createdApp = saveStoredApp({
-    ...payload,
-    prd: pendingPlanApproval.originalPrompt,
-  });
-
-  launchAppWindowByEntry(createdApp);
-  emitAppsChanged({
-    action: 'created',
-    app: {
-      name: createdApp.name,
-      description: createdApp.description,
-      width: createdApp.width,
-      height: createdApp.height,
-      resizable: createdApp.resizable,
-      createdAt: createdApp.createdAt,
-      updatedAt: createdApp.updatedAt,
-    },
-  });
-
   return {
     ok: true,
     sessionId,
     summary: getSessionSummary(sessionRecord),
-    createdApp: {
-      name: createdApp.name,
-      description: createdApp.description,
-      width: createdApp.width,
-      height: createdApp.height,
-      resizable: createdApp.resizable,
-      createdAt: createdApp.createdAt,
-      updatedAt: createdApp.updatedAt,
-    },
   };
 });
 
@@ -4342,7 +4481,7 @@ ipcMain.handle('agent:reject-plan', async (event, { sessionId }) => {
     throw new Error('This session is already processing a request.');
   }
   const pendingPlanApproval = sessionRecord.pendingPlanApproval;
-  if (!pendingPlanApproval || (pendingPlanApproval.kind !== 'create-app' && pendingPlanApproval.kind !== 'plan')) {
+  if (!pendingPlanApproval || pendingPlanApproval.kind !== 'plan') {
     throw new Error('There is no plan waiting for approval.');
   }
 

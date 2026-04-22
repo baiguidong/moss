@@ -195,6 +195,28 @@ function findAssistantDir(name) {
     }
   }
 
+  // Fallback: scan assistant metadata and match by logical meta.name.
+  for (const { dir, category } of searchDirs) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+        const assistantDir = path.join(dir, entry.name);
+        const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+          if (meta?.name === name) {
+            return { dir: assistantDir, category };
+          }
+        } catch {
+          // Ignore invalid meta and continue scanning.
+        }
+      }
+    } catch {
+      // Ignore missing directory and continue scanning.
+    }
+  }
+
   return null;
 }
 
@@ -214,7 +236,7 @@ async function getInstalledAssistants() {
         const metaContent = await fsp.readFile(metaPath, 'utf-8');
         const meta = JSON.parse(metaContent);
         assistants.push({
-          name: dirName,
+          name: meta.name || dirName,
           displayName: meta.display_name || meta.name || dirName,
           description: meta.description || '',
           avatar: meta.avatar || '',

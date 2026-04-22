@@ -1,5 +1,5 @@
 export type PendingPlanApproval = {
-  kind: 'create-app' | 'plan';
+  kind: 'plan';
   originalPrompt: string;
   plan: string;
   requestedAt: number;
@@ -26,6 +26,7 @@ export type SessionDetail = SessionSummary & {
 export type AgentEvent = Record<string, any>;
 
 export type DesktopSettings = {
+  agentMode: 'local' | 'remote-direct';
   bypassPermissions: boolean;
   model: string;
   maxTurns: number;
@@ -34,6 +35,9 @@ export type DesktopSettings = {
   thinkingBudgetTokens: number;
   url: string;
   apiKey: string;
+  remoteDirectServerUrl: string;
+  remoteDirectAuthToken: string;
+  remoteDirectWorkspace: string;
   visionModel: string;
   settingsPath: string;
   settingsExists: boolean;
@@ -58,6 +62,7 @@ export type StoredApp = {
   latestVersion?: string | null;
   currentVersionId?: string | null;
   currentVersion?: string | null;
+  publishedVersion?: string | null;
 };
 
 export type AppVersion = {
@@ -154,7 +159,7 @@ declare global {
       send: (payload: {
         sessionId: string;
         prompt: string;
-        mode?: 'chat' | 'plan' | 'create-app' | 'iterate-app' | 'coordinator';
+        mode?: 'chat' | 'plan' | 'coordinator';
         appName?: string;
         files?: string[];
         coordinatorMode?: boolean;
