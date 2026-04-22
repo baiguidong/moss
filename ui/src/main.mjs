@@ -15,6 +15,12 @@ import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
 import { autoUpdaterService } from './auto-updater-service.mjs';
+import { registerDocumentIpcHandlers } from './process/bridge/document-bridge.mjs';
+import { registerLibreOfficeIpcHandlers } from './process/bridge/libreoffice-bridge.mjs';
+import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-history-bridge.mjs';
+import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
+import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
+import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -3056,6 +3062,9 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      webviewTag: true,
+      allowRunningInsecureContent: false,
+      webSecurity: true,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -3203,57 +3212,165 @@ async function listDirectoryEntries(sessionRecord, dirPath) {
   };
 }
 
+function getWorkspaceFilePreviewInfo(targetPath) {
+  const ext = path.extname(targetPath).toLowerCase().replace(/^\./, '');
+
+  const imageMimeByExt = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    svg: 'image/svg+xml',
+    ico: 'image/x-icon',
+    avif: 'image/avif',
+    tif: 'image/tiff',
+    tiff: 'image/tiff',
+  };
+
+  if (imageMimeByExt[ext]) {
+    return {
+      contentType: 'image',
+      language: 'image',
+      mimeType: imageMimeByExt[ext],
+    };
+  }
+
+  if (ext === 'pdf') {
+    return {
+      contentType: 'pdf',
+      language: 'pdf',
+      mimeType: 'application/pdf',
+    };
+  }
+
+  if (ext === 'md' || ext === 'markdown') {
+    return {
+      contentType: 'markdown',
+      language: 'markdown',
+      mimeType: 'text/markdown',
+    };
+  }
+
+  if (ext === 'html' || ext === 'htm') {
+    return {
+      contentType: 'html',
+      language: 'html',
+      mimeType: 'text/html',
+    };
+  }
+
+  if (ext === 'diff' || ext === 'patch') {
+    return {
+      contentType: 'diff',
+      language: 'diff',
+      mimeType: 'text/plain',
+    };
+  }
+
+  if (['doc', 'docx', 'odt'].includes(ext)) {
+    return {
+      contentType: 'word',
+      language: ext || 'word',
+      mimeType: 'application/octet-stream',
+    };
+  }
+
+  if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) {
+    return {
+      contentType: 'excel',
+      language: ext || 'excel',
+      mimeType: 'application/octet-stream',
+    };
+  }
+
+  if (['ppt', 'pptx', 'odp'].includes(ext)) {
+    return {
+      contentType: 'ppt',
+      language: ext || 'ppt',
+      mimeType: 'application/octet-stream',
+    };
+  }
+
+  if (['txt', 'log', 'text'].includes(ext)) {
+    return {
+      contentType: 'text',
+      language: 'text',
+      mimeType: 'text/plain',
+    };
+  }
+
+  return {
+    contentType: 'code',
+    language: ext || 'text',
+    mimeType: 'text/plain',
+  };
+}
+
 async function readWorkspaceFile(sessionRecord, filePath) {
   const targetPath = ensureInsideRoot(sessionRecord.workspace, filePath);
   const stat = await fsp.stat(targetPath);
   if (!stat.isFile()) {
     throw new Error('Target is not a file.');
   }
+  const previewInfo = getWorkspaceFilePreviewInfo(targetPath);
+  const baseResult = {
+    path: targetPath,
+    relativePath: path.relative(sessionRecord.workspace, targetPath),
+    size: stat.size,
+    truncated: false,
+    contentType: previewInfo.contentType,
+    language: previewInfo.language,
+    mimeType: previewInfo.mimeType,
+    metadata: {},
+  };
+
+  if (
+    previewInfo.contentType === 'image' ||
+    previewInfo.contentType === 'pdf' ||
+    previewInfo.contentType === 'word' ||
+    previewInfo.contentType === 'excel' ||
+    previewInfo.contentType === 'ppt'
+  ) {
+    return {
+      ...baseResult,
+      content: '',
+    };
+  }
+
   if (stat.size > MAX_FILE_BYTES) {
     return {
-      path: targetPath,
-      relativePath: path.relative(sessionRecord.workspace, targetPath),
-      size: stat.size,
+      ...baseResult,
       truncated: true,
+      metadata: {
+        ...baseResult.metadata,
+        previewEditable: false,
+        previewSaveable: false,
+        previewReason: 'truncated',
+      },
       content: `File too large to preview (${stat.size} bytes).`,
     };
   }
 
   const buffer = await fsp.readFile(targetPath);
-  const ext = path.extname(targetPath).toLowerCase().replace(/^\./, '');
-  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
-  if (imageExts.includes(ext)) {
-    const mimeMap = {
-      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-      gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
-      svg: 'image/svg+xml', ico: 'image/x-icon',
-    };
-    const mime = mimeMap[ext] || 'image/png';
-    const base64 = buffer.toString('base64');
-    return {
-      path: targetPath,
-      relativePath: path.relative(sessionRecord.workspace, targetPath),
-      size: stat.size,
-      truncated: false,
-      content: `data:${mime};base64,${base64}`,
-    };
-  }
-
   if (buffer.includes(0)) {
     return {
-      path: targetPath,
-      relativePath: path.relative(sessionRecord.workspace, targetPath),
-      size: stat.size,
-      truncated: false,
+      ...baseResult,
+      contentType: 'unsupported',
+      language: 'binary',
+      metadata: {
+        ...baseResult.metadata,
+        previewEditable: false,
+        previewSaveable: false,
+        previewReason: 'binary',
+      },
       content: 'Binary file preview is not supported in this app.',
     };
   }
 
   return {
-    path: targetPath,
-    relativePath: path.relative(sessionRecord.workspace, targetPath),
-    size: stat.size,
-    truncated: false,
+    ...baseResult,
     content: buffer.toString('utf8'),
   };
 }
@@ -3274,6 +3391,17 @@ app.whenReady().then(() => {
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
   initUpdateIpcHandlers();
+  registerDocumentIpcHandlers();
+  registerLibreOfficeIpcHandlers();
+  registerPreviewHistoryIpcHandlers();
+  registerPreviewIpcHandlers(() => mainWindow);
+  registerShellIpcHandlers();
+  registerWorkspaceIpcHandlers({
+    getSessionRecord,
+    ensureInsideRoot,
+    readWorkspaceFile,
+    fsp,
+  });
 
   mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
 

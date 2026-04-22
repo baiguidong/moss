@@ -3,6 +3,8 @@ import { Monitor, MoonStar, SunMedium } from 'lucide-react';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { ChatArea } from '@/components/chat-area';
+import { PreviewDrawer } from '@/components/preview-drawer';
+import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { ExecutionPetPanel } from '@/components/execution-pet-panel';
@@ -31,6 +33,7 @@ import type {
   SessionDetail,
   SessionSummary,
   StoredApp,
+  WorkspacePreviewData,
   WorkerSubagentResult,
 } from './types';
 
@@ -89,6 +92,7 @@ function loadPanelLayout(): LayoutState {
     const parsed = JSON.parse(raw);
     return {
       leftWidth: clamp(Number(parsed.leftWidth) || DEFAULT_LAYOUT.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
+      previewWidth: clamp(Number(parsed.previewWidth) || DEFAULT_LAYOUT.previewWidth, PREVIEW_WIDTH_RANGE.min, PREVIEW_WIDTH_RANGE.max),
       rightWidth: clamp(Number(parsed.rightWidth) || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
       leftCollapsed: Boolean(parsed.leftCollapsed),
       rightCollapsed: Boolean(parsed.rightCollapsed),
@@ -113,20 +117,76 @@ type ThemeMode = 'dark' | 'light' | 'system';
 type ComposerIntent = 'chat' | 'plan' | 'create-app' | 'iterate-app' | 'coordinator';
 type LayoutState = {
   leftWidth: number;
+  previewWidth: number;
   rightWidth: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
 };
 
+type PreviewTabMetadata = Record<string, unknown> & {
+  sessionId?: string;
+  workspace?: string;
+  originalContent?: string;
+  dirty?: boolean;
+  lastSavedAt?: number;
+  previewEditable?: boolean;
+  previewSaveable?: boolean;
+  previewReason?: string;
+};
+
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
 const DEFAULT_LAYOUT: LayoutState = {
   leftWidth: 248,
+  previewWidth: 420,
   rightWidth: 280,
   leftCollapsed: false,
   rightCollapsed: false,
 };
 const LEFT_WIDTH_RANGE = { min: 210, max: 420 };
+const PREVIEW_WIDTH_RANGE = { min: 320, max: 760 };
 const RIGHT_WIDTH_RANGE = { min: 280, max: 560 };
+
+function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): boolean {
+  return ['markdown', 'html', 'text', 'code', 'diff', 'url', 'unsupported'].includes(contentType);
+}
+
+function getPreviewTabMetadata(file: WorkspacePreviewData | null | undefined): PreviewTabMetadata {
+  return ((file?.metadata as PreviewTabMetadata | undefined) || {}) as PreviewTabMetadata;
+}
+
+function isDirtyPreviewTab(file: WorkspacePreviewData | null | undefined): boolean {
+  return Boolean(getPreviewTabMetadata(file).dirty);
+}
+
+function enrichWorkspacePreviewFile(
+  file: WorkspacePreviewData,
+  sessionId: string | null,
+  workspace: string | null | undefined,
+  existing?: WorkspacePreviewData | null
+): PreviewTabData {
+  if (file.path.startsWith('preview:')) {
+    return file;
+  }
+
+  const existingMetadata = getPreviewTabMetadata(existing);
+  const existingDirty = Boolean(existingMetadata.dirty);
+  const content = existingDirty ? existing?.content || file.content : file.content;
+
+  return {
+    ...file,
+    content,
+    metadata: {
+      ...(file.metadata || {}),
+      ...(existingDirty ? existingMetadata : {}),
+      sessionId: sessionId || existingMetadata.sessionId,
+      workspace: workspace || existingMetadata.workspace,
+      originalContent: canEditPreviewType(file.contentType)
+        ? file.content
+        : existingMetadata.originalContent,
+      dirty: existingDirty ? true : false,
+    },
+  };
+}
 
 function upsertSummary(list: SessionSummary[], summary: SessionSummary) {
   const next = list.some((entry) => entry.id === summary.id)
@@ -333,6 +393,8 @@ export default function App() {
   // Workers from previous coordinator runs in the same session (persisted across switches).
   const [archivedWorkerThreads, setArchivedWorkerThreads] = React.useState<WorkerThread[]>([]);
   const archivedWorkerThreadsRef = React.useRef<WorkerThread[]>([]);
+  const previewAutoCollapsedRightRef = React.useRef(false);
+  const previewAutoCollapsedBySessionRef = React.useRef<string | null>(null);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
   const debugLogFilePathRef = React.useRef<string | null>(null);
@@ -353,8 +415,17 @@ export default function App() {
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
-  const previewTabsRef = React.useRef<PreviewTabData[]>([]);
+  const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
   const openSessionRequestIdRef = React.useRef(0);
+  const getDirtyPreviewTabs = React.useCallback(
+    () => previewTabsRef.current.filter((tab) => isDirtyPreviewTab(tab)),
+    []
+  );
+  const confirmDiscardDirtyPreviewTabs = React.useCallback((message?: string) => {
+    const dirtyTabs = getDirtyPreviewTabs();
+    if (dirtyTabs.length === 0) return true;
+    return window.confirm(message || `有 ${dirtyTabs.length} 个预览存在未保存修改，确认放弃？`);
+  }, [getDirtyPreviewTabs]);
 
   const clearSessionWorkspaceState = React.useCallback(() => {
     setDirectoryCache(new Map());
@@ -363,6 +434,8 @@ export default function App() {
     setPreviewTabs([]);
     setActivePreviewPath(null);
     setWorkspaceQuery('');
+    previewAutoCollapsedRightRef.current = false;
+    previewAutoCollapsedBySessionRef.current = null;
   }, []);
 
   const persistPinned = React.useCallback((next: Set<string>) => {
@@ -400,7 +473,10 @@ export default function App() {
     setSettingsDraft(next);
   }, []);
 
-  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean }) => {
+  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
+    if (!options?.forceDiscardDirty && !confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认离开当前会话？')) {
+      return false;
+    }
     setActiveView('chat');
     setActiveSessionId(null);
     setActiveDetail(null);
@@ -414,19 +490,26 @@ export default function App() {
     if (options?.resetApp) {
       setSelectedAppName('');
     }
-  }, [clearSessionWorkspaceState]);
+    return true;
+  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
   const openSession = React.useCallback(async (sessionId: string) => {
+    if (activeSessionIdRef.current !== sessionId) {
+      if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认切换到其他会话？')) {
+        return false;
+      }
+    }
     const requestId = ++openSessionRequestIdRef.current;
     const detail = await window.agentDesktop.getSession({ sessionId });
     if (requestId !== openSessionRequestIdRef.current) {
-      return;
+      return false;
     }
     setActiveView('chat');
     setActiveSessionId(sessionId);
     setActiveDetail(detail);
     clearSessionWorkspaceState();
-  }, [clearSessionWorkspaceState]);
+    return true;
+  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
   const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string) => {
     const created = await window.agentDesktop.createSession(workspace ? { title, workspace } : title ? { title } : {});
@@ -460,6 +543,16 @@ export default function App() {
   React.useEffect(() => {
     previewTabsRef.current = previewTabs;
   }, [previewTabs]);
+
+  React.useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (getDirtyPreviewTabs().length === 0) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [getDirtyPreviewTabs]);
 
   React.useEffect(() => {
     const root = document.documentElement;
@@ -748,11 +841,16 @@ export default function App() {
 
     const refreshedTabs = await Promise.all(
       previewTabsRef.current.map(async (tab) => {
+        const metadata = getPreviewTabMetadata(tab);
+        if (metadata.dirty) {
+          return tab;
+        }
         try {
-          return await window.agentDesktop.readWorkspaceFile({
+          const refreshed = await window.agentDesktop.readWorkspaceFile({
             sessionId,
             filePath: tab.path,
           });
+          return enrichWorkspacePreviewFile(refreshed, sessionId, detail.workspace, tab);
         } catch {
           return null;
         }
@@ -1184,6 +1282,105 @@ export default function App() {
     () => previewTabs.find((entry) => entry.path === activePreviewPath) || null,
     [previewTabs, activePreviewPath]
   );
+  const previewDrawerVisible = Boolean(
+    activeView === 'chat' && activeSessionId && previewTabs.length > 0 && activePreview !== null
+  );
+
+  const restoreWorkspacePanelAfterPreview = React.useCallback(() => {
+    if (!activeSessionId) return;
+    if (!previewAutoCollapsedRightRef.current) return;
+    if (previewAutoCollapsedBySessionRef.current !== activeSessionId) return;
+    previewAutoCollapsedRightRef.current = false;
+    previewAutoCollapsedBySessionRef.current = null;
+    setLayout((prev) => (prev.rightCollapsed ? { ...prev, rightCollapsed: false } : prev));
+  }, [activeSessionId]);
+
+  const openPreviewDrawer = React.useCallback((file: WorkspacePreviewData) => {
+    setSelectedFilePath(file.path);
+    setPreviewTabs((prev) => {
+      const existing = prev.find((entry) => entry.path === file.path);
+      const nextFile = enrichWorkspacePreviewFile(file, activeSessionId, activeDetail?.workspace, existing);
+      if (existing) {
+        return prev.map((entry) => (entry.path === file.path ? nextFile : entry));
+      }
+      return [...prev, nextFile];
+    });
+    setActivePreviewPath(file.path);
+    setActiveView('chat');
+    setLayout((prev) => {
+      if (prev.rightCollapsed) return prev;
+      previewAutoCollapsedRightRef.current = true;
+      previewAutoCollapsedBySessionRef.current = activeSessionId;
+      return { ...prev, rightCollapsed: true };
+    });
+  }, [activeDetail?.workspace, activeSessionId]);
+
+  const handleClosePreviewTab = React.useCallback((path: string) => {
+    setPreviewTabs((prev) => {
+      const next = prev.filter((entry) => entry.path !== path);
+      const nextActivePath = next[0]?.path || null;
+      setActivePreviewPath((current) => {
+        if (current !== path) return current;
+        return nextActivePath;
+      });
+      setSelectedFilePath((current) => (current === path ? nextActivePath : current));
+      if (next.length === 0) {
+        restoreWorkspacePanelAfterPreview();
+      }
+      return next;
+    });
+  }, [restoreWorkspacePanelAfterPreview]);
+
+  const handleClosePreviewDrawer = React.useCallback(() => {
+    setPreviewTabs([]);
+    setActivePreviewPath(null);
+    setSelectedFilePath(null);
+    restoreWorkspacePanelAfterPreview();
+  }, [restoreWorkspacePanelAfterPreview]);
+
+  const handleUpdatePreviewTab = React.useCallback((path: string, patch: Partial<WorkspacePreviewData>) => {
+    setPreviewTabs((prev) => prev.map((entry) => (entry.path === path ? { ...entry, ...patch } : entry)));
+  }, []);
+
+  const handleCloseOtherPreviewTabs = React.useCallback((path: string) => {
+    setPreviewTabs((prev) => {
+      const active = prev.find((entry) => entry.path === path) || null;
+      const next = active ? [active] : [];
+      setActivePreviewPath(active?.path || null);
+      setSelectedFilePath(active?.path || null);
+      if (next.length === 0) restoreWorkspacePanelAfterPreview();
+      return next;
+    });
+  }, [restoreWorkspacePanelAfterPreview]);
+
+  const handleCloseAllPreviewTabs = React.useCallback(() => {
+    handleClosePreviewDrawer();
+  }, [handleClosePreviewDrawer]);
+
+  React.useEffect(() => {
+    if (previewTabs.length === 0) {
+      setActivePreviewPath(null);
+      restoreWorkspacePanelAfterPreview();
+    }
+  }, [previewTabs.length, restoreWorkspacePanelAfterPreview]);
+
+  React.useEffect(() => {
+    const unsubscribe = previewIpc.onOpen((payload) => {
+      const path = `preview:${payload.contentType}:${payload.metadata?.title || payload.content.slice(0, 48)}`;
+      openPreviewDrawer({
+        path,
+        relativePath: String(payload.metadata?.title || payload.metadata?.fileName || path),
+        content: payload.content,
+        contentType: payload.contentType,
+        language: String(payload.metadata?.language || ''),
+        mimeType: undefined,
+        metadata: payload.metadata,
+        size: typeof payload.content === 'string' ? payload.content.length : 0,
+        truncated: false,
+      });
+    });
+    return unsubscribe;
+  }, [openPreviewDrawer]);
 
   const toggleSidebar = React.useCallback((side: 'left' | 'right') => {
     setLayout((prev) => (
@@ -1193,7 +1390,7 @@ export default function App() {
     ));
   }, []);
 
-  const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
+  const startResize = React.useCallback((side: 'left' | 'preview' | 'right', clientX: number) => {
     const start = layoutRef.current;
     if (side === 'left' && start.leftCollapsed) return;
     if (side === 'right' && start.rightCollapsed) return;
@@ -1208,9 +1405,14 @@ export default function App() {
               ...prev,
               leftWidth: clamp(start.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
             }
-          : {
+          : side === 'right'
+            ? {
               ...prev,
               rightWidth: clamp(start.rightWidth - delta, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+            }
+            : {
+              ...prev,
+              previewWidth: clamp(start.previewWidth - delta, PREVIEW_WIDTH_RANGE.min, PREVIEW_WIDTH_RANGE.max),
             }
       ));
     };
@@ -1230,14 +1432,15 @@ export default function App() {
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
-    await openSession(sessionId);
+    const opened = await openSession(sessionId);
+    if (!opened) return;
     setActiveView('chat');
   }, [openSession]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
     await window.agentDesktop.deleteSession({ sessionId });
     if (activeSessionId === sessionId) {
-      navigateToHome();
+      navigateToHome({ forceDiscardDirty: true });
     }
     await refreshSummaries();
   }, [activeSessionId, navigateToHome, refreshSummaries]);
@@ -1377,6 +1580,9 @@ export default function App() {
 
   const handlePickWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
+    if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认切换工作区？')) {
+      return;
+    }
     const dir = await window.agentDesktop.pickDirectory();
     if (!dir) return;
     const detail = await window.agentDesktop.setSessionWorkspace({ sessionId: activeSessionId, workspace: dir });
@@ -1387,7 +1593,7 @@ export default function App() {
     setSelectedFilePath(null);
     setPreviewTabs([]);
     setActivePreviewPath(null);
-  }, [activeSessionId]);
+  }, [activeSessionId, confirmDiscardDirtyPreviewTabs]);
 
   const handleRefreshWorkspace = React.useCallback(async () => {
     await refreshWorkspaceSnapshot();
@@ -1416,20 +1622,17 @@ export default function App() {
 
   const handleSelectFile = React.useCallback(async (path: string) => {
     if (!activeSessionId) return;
+    const existing = previewTabsRef.current.find((entry) => entry.path === path);
+    if (existing) {
+      openPreviewDrawer(existing);
+      return;
+    }
     const data = await window.agentDesktop.readWorkspaceFile({
       sessionId: activeSessionId,
       filePath: path,
     });
-    setSelectedFilePath(path);
-    setPreviewTabs((prev) => {
-      const existing = prev.find((entry) => entry.path === data.path);
-      if (existing) {
-        return prev.map((entry) => (entry.path === data.path ? data : entry));
-      }
-      return [...prev, data];
-    });
-    setActivePreviewPath(data.path);
-  }, [activeSessionId]);
+    openPreviewDrawer(data);
+  }, [activeSessionId, openPreviewDrawer]);
 
   const handleLaunchApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.launchApp({ name });
@@ -1448,7 +1651,8 @@ export default function App() {
     setActiveView('chat');
     setComposerIntent('iterate-app');
     if (!activeSessionId) {
-      navigateToHome({ preserveIntent: true });
+      const ok = navigateToHome({ preserveIntent: true });
+      if (!ok) return;
       await createAndOpenSession(`迭代 ${name}`);
     }
   }, [activeSessionId, navigateToHome, createAndOpenSession]);
@@ -1929,6 +2133,39 @@ export default function App() {
           )}
         </div>
 
+        {previewDrawerVisible && (
+          <>
+            <div
+              className={`
+                relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
+                before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
+                hover:before:bg-primary/60 lg:block
+              `}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                startResize('preview', event.clientX);
+              }}
+            />
+
+            <div
+              className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
+              style={{ width: layout.previewWidth }}
+            >
+              <PreviewDrawer
+                visible={previewDrawerVisible}
+                tabs={previewTabs}
+                activePath={activePreviewPath}
+                onActivate={setActivePreviewPath}
+                onUpdateTab={handleUpdatePreviewTab}
+                onCloseTab={handleClosePreviewTab}
+                onCloseOthers={handleCloseOtherPreviewTabs}
+                onCloseAll={handleCloseAllPreviewTabs}
+                onCloseDrawer={handleClosePreviewDrawer}
+              />
+            </div>
+          </>
+        )}
+
         {activeView === 'chat' && activeSessionId && (
           <>
             <div
@@ -1962,7 +2199,6 @@ export default function App() {
                 previewTabs={previewTabs}
                 activePreviewPath={activePreviewPath}
                 onActivatePreview={setActivePreviewPath}
-                previewContent={activePreview?.content || '点击文件后在这里预览内容。'}
                 previewTitle={activePreview?.relativePath || '未选择文件'}
               />
             </div>

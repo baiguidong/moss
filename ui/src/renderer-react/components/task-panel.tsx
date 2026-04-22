@@ -15,15 +15,39 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { FileTree } from "@/components/file-tree";
-import type { FileTreeNode } from "@/types";
+import type { FileTreeNode, WorkspacePreviewData } from "@/types";
 
-export type PreviewTabData = {
-  path: string;
-  relativePath: string;
-  content: string;
-  size?: number;
-  truncated?: boolean;
-};
+export type PreviewTabData = WorkspacePreviewData;
+
+function previewLabel(tab: WorkspacePreviewData): string {
+  switch (tab.contentType) {
+    case "markdown":
+      return "Markdown";
+    case "html":
+      return "HTML";
+    case "image":
+      return "图片";
+    case "pdf":
+      return "PDF";
+    case "word":
+      return "Word";
+    case "excel":
+      return "Excel";
+    case "ppt":
+      return "PPT";
+    case "diff":
+      return "Diff";
+    case "url":
+      return "URL";
+    case "text":
+      return "文本";
+    case "unsupported":
+      return "不支持";
+    case "code":
+    default:
+      return "代码";
+  }
+}
 
 export function TaskPanel({
   collapsed,
@@ -40,7 +64,6 @@ export function TaskPanel({
   previewTabs,
   activePreviewPath,
   onActivatePreview,
-  previewContent,
   previewTitle,
 }: {
   collapsed: boolean;
@@ -57,10 +80,13 @@ export function TaskPanel({
   previewTabs: PreviewTabData[];
   activePreviewPath: string | null;
   onActivatePreview: (path: string) => void;
-  previewContent: string;
   previewTitle: string;
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const activePreviewTab = React.useMemo(
+    () => previewTabs.find((tab) => tab.path === activePreviewPath) || previewTabs[0] || null,
+    [activePreviewPath, previewTabs]
+  );
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -151,9 +177,18 @@ export function TaskPanel({
                   <FileText className="h-3.5 w-3.5" />
                   <span className="truncate">{previewTitle}</span>
                 </div>
-                <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all rounded-[18px] border border-border/60 bg-background/90 p-3 text-[11px] leading-relaxed text-muted-foreground">
-                  {previewContent}
-                </pre>
+                {activePreviewPath ? (
+                  <div className="rounded-[18px] border border-border/60 bg-background/90 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {activePreviewTab ? <Badge variant="secondary">{previewLabel(activePreviewTab)}</Badge> : null}
+                      <span>文件已在左侧预览抽屉打开。</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-[18px] border border-border/60 bg-background/90 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                    点击文件后会在左侧打开预览抽屉。
+                  </div>
+                )}
               </div>
             </div>
           </ScrollArea>

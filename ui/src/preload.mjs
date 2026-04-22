@@ -26,6 +26,51 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   deleteApp: (payload) => ipcRenderer.invoke('app:delete', payload),
   listWorkspaceDir: (payload) => ipcRenderer.invoke('workspace:list-dir', payload),
   readWorkspaceFile: (payload) => ipcRenderer.invoke('workspace:read-file', payload),
+  document: {
+    convert: (payload) => ipcRenderer.invoke('document.convert', payload),
+    libreOffice: {
+      isAvailable: () => ipcRenderer.invoke('document.libreoffice.is-available'),
+    },
+  },
+  libreOffice: {
+    checkInstalled: () => ipcRenderer.invoke('libreoffice.check-installed'),
+    install: () => ipcRenderer.invoke('libreoffice.install'),
+    installFromLocalFile: (payload) => ipcRenderer.invoke('libreoffice.install-from-local-file', payload),
+    uninstall: () => ipcRenderer.invoke('libreoffice.uninstall'),
+    getInstallState: () => ipcRenderer.invoke('libreoffice.get-install-state'),
+    onInstallProgress: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('libreoffice.install-progress', handler);
+      return () => ipcRenderer.off('libreoffice.install-progress', handler);
+    },
+    onInstallResult: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('libreoffice.install-result', handler);
+      return () => ipcRenderer.off('libreoffice.install-result', handler);
+    },
+  },
+  previewHistory: {
+    list: (payload) => ipcRenderer.invoke('previewHistory.list', payload),
+    save: (payload) => ipcRenderer.invoke('previewHistory.save', payload),
+    getContent: (payload) => ipcRenderer.invoke('previewHistory.getContent', payload),
+  },
+  preview: {
+    open: (payload) => ipcRenderer.invoke('preview.open', payload),
+    close: () => ipcRenderer.invoke('preview.close'),
+    onOpen: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('preview.open', handler);
+      return () => ipcRenderer.off('preview.open', handler);
+    },
+  },
+  workspace: {
+    writeFile: (payload) => ipcRenderer.invoke('workspace.write-file', payload),
+  },
+  shell: {
+    openFile: (filePath) => ipcRenderer.invoke('shell.open-file', filePath),
+    openExternal: (url) => ipcRenderer.invoke('shell.open-external', url),
+    showItemInFolder: (filePath) => ipcRenderer.invoke('shell.show-item-in-folder', filePath),
+  },
   fs: {
     getImageBase64: (path) => ipcRenderer.invoke('fs:getImageBase64', { path }),
     getFileMetadata: (path) => ipcRenderer.invoke('fs:getFileMetadata', { path }),

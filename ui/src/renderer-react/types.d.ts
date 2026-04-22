@@ -82,6 +82,58 @@ export type FileTreeNode = {
   children?: FileTreeNode[];
 };
 
+export type WorkspacePreviewContentType =
+  | 'markdown'
+  | 'html'
+  | 'image'
+  | 'pdf'
+  | 'diff'
+  | 'word'
+  | 'excel'
+  | 'ppt'
+  | 'url'
+  | 'text'
+  | 'code'
+  | 'unsupported';
+
+export type WorkspacePreviewData = {
+  path: string;
+  relativePath: string;
+  content: string;
+  size?: number;
+  truncated?: boolean;
+  contentType: WorkspacePreviewContentType;
+  language?: string;
+  mimeType?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type PreviewHistoryTarget = {
+  contentType: WorkspacePreviewContentType;
+  filePath?: string;
+  workspace?: string;
+  fileName?: string;
+  title?: string;
+  language?: string;
+  conversationId?: string;
+};
+
+export type PreviewSnapshotInfo = {
+  id: string;
+  label: string;
+  createdAt: number;
+  size: number;
+  contentType: WorkspacePreviewContentType;
+  fileName?: string;
+  filePath?: string;
+};
+
+declare namespace JSX {
+  interface IntrinsicElements {
+    webview: any;
+  }
+}
+
 declare global {
   interface Window {
     agentDesktop: {
@@ -118,7 +170,40 @@ declare global {
       deleteApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
       saveApp: (payload: { sessionId: string; launch?: boolean }) => Promise<{ ok: boolean; app?: StoredApp; error?: string }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
-      readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<any>;
+      readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<WorkspacePreviewData>;
+      document: {
+        convert: (payload: { filePath: string; to: 'libreoffice-pdf' | 'markdown' | 'word-html' | 'excel-json' | 'ppt-json' | 'pptx-arraybuffer' }) => Promise<any>;
+        libreOffice: {
+          isAvailable: () => Promise<boolean>;
+        };
+      };
+      libreOffice: {
+        checkInstalled: () => Promise<any>;
+        install: () => Promise<any>;
+        installFromLocalFile: (payload: { filePath: string }) => Promise<any>;
+        uninstall: () => Promise<any>;
+        getInstallState: () => Promise<any>;
+        onInstallProgress: (callback: (payload: { phase: string; percent?: number }) => void) => () => void;
+        onInstallResult: (callback: (payload: { success: boolean; msg?: string }) => void) => () => void;
+      };
+      previewHistory: {
+        list: (payload: { target: PreviewHistoryTarget }) => Promise<PreviewSnapshotInfo[]>;
+        save: (payload: { target: PreviewHistoryTarget; content: string }) => Promise<PreviewSnapshotInfo>;
+        getContent: (payload: { target: PreviewHistoryTarget; snapshotId: string }) => Promise<{ snapshot: PreviewSnapshotInfo; content: string } | null>;
+      };
+      preview: {
+        open: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => Promise<{ ok: boolean }>;
+        close: () => Promise<{ ok: boolean }>;
+        onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) => () => void;
+      };
+      workspace: {
+        writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;
+      };
+      shell: {
+        openFile: (filePath: string) => Promise<string>;
+        openExternal: (url: string) => Promise<{ ok: boolean }>;
+        showItemInFolder: (filePath: string) => Promise<{ ok: boolean }>;
+      };
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;
         getFileMetadata: (path: string) => Promise<{ size: number } | null>;
