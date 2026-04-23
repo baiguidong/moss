@@ -311,6 +311,7 @@ export type MossAppEvent =
   | { type: 'app_update'; input: MossAppUpdateInput }
   | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
+  | { type: 'image_generate'; input: MossImageGenerateInput }
 
 export type MossAppBuildInput = {
   name: string
@@ -367,13 +368,28 @@ export type MossAppExtractToWorkspaceInput = {
   versionId?: string
 }
 
+export type MossImageGenerateInput = {
+  prompt: string
+  aspect_ratio?: '1:1' | '16:9' | '4:3' | '3:2' | '2:3' | '3:4' | '9:16' | '21:9'
+  subject_reference?: Array<{
+    type: 'character'
+    image_file: string
+  }>
+  out_filepath: string
+}
+
 export type MossAppEventResult =
   | {
       ok: true
       app?: unknown
       apps?: unknown[]
       versions?: unknown[]
+      fileKind?: 'image'
       filePath?: string
+      filePaths?: string[]
+      previewUrl?: string
+      previewMarkdown?: string
+      mediaType?: string
       metadataPath?: string
       htmlPath?: string
     }

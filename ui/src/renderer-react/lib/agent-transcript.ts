@@ -105,6 +105,48 @@ function appendThinking(message: MutableChatMessage, text: string) {
   message.thinking = `${message.thinking || ''}${normalized}`;
 }
 
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeToolResultPayload(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string') {
+    const parsed = safeJsonParse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function collectImagePathsFromToolResult(content: unknown): string[] {
+  const payload = normalizeToolResultPayload(content);
+  if (!payload || payload.fileKind !== 'image') {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  if (typeof payload.filePath === 'string' && payload.filePath.trim()) {
+    candidates.push(payload.filePath);
+  }
+  if (Array.isArray(payload.filePaths)) {
+    for (const filePath of payload.filePaths) {
+      if (typeof filePath === 'string' && filePath.trim()) {
+        candidates.push(filePath);
+      }
+    }
+  }
+
+  return Array.from(new Set(candidates));
+}
+
 function summarizeThinkingBlock(block: any): string {
   if (block?.type === 'thinking' && typeof block.thinking === 'string') {
     return block.thinking;
@@ -424,6 +466,27 @@ function finalizeAssistant(message: MutableChatMessage | null) {
   message._finalized = true;
 }
 
+function extractUserText(event: AgentEvent): string {
+  if (typeof event?.prompt === 'string') {
+    return event.prompt;
+  }
+
+  const content = event?.message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block: any) => block.text)
+      .join('\n')
+      .trim();
+  }
+
+  return '';
+}
+
 export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
   const messages: MutableChatMessage[] = [];
   const toolOwners = new Map<string, MutableChatMessage>();
@@ -462,13 +525,15 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
     const event = history[index];
     const timestamp = safeDate(event?.timestamp);
 
-    if (event?.type === 'user' && typeof event?.prompt === 'string') {
+    const userText = event?.type === 'user' ? extractUserText(event) : '';
+
+    if (event?.type === 'user' && userText) {
       finalizeAssistant(currentAssistant);
       turnIndex += 1;
       messages.push({
         id: `user-${turnIndex}`,
         role: 'user',
-        content: event.prompt,
+        content: userText,
         timestamp,
         images: event.images || [],
         files: event.files ? (event.files as string[]).filter((f: string) => !/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f)) : [],
@@ -491,6 +556,16 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
           step.status = block.is_error ? 'error' : 'success';
           step.statusText = block.is_error ? '执行失败' : '执行完成';
           step.result = buildToolDetail(undefined, summarizeToolResultBlock(block));
+
+          const imagePaths = collectImagePathsFromToolResult(block.content);
+          if (imagePaths.length > 0) {
+            if (!owner.images) owner.images = [];
+            for (const imagePath of imagePaths) {
+              if (!owner.images.includes(imagePath)) {
+                owner.images.push(imagePath);
+              }
+            }
+          }
         }
       }
       continue;

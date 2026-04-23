@@ -5,8 +5,24 @@ import { jsonStringify } from '../../utils/slowOperations.js'
 
 const MOSS_TOOL_NAME = 'moss'
 
+const imageAspectRatioSchema = z.enum([
+  '1:1',
+  '16:9',
+  '4:3',
+  '3:2',
+  '2:3',
+  '3:4',
+  '9:16',
+  '21:9',
+])
+
+const subjectReferenceSchema = z.strictObject({
+  type: z.literal('character'),
+  image_file: z.string().url(),
+})
+
 const mossActionSchema = z.strictObject({
-  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions']),
+  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'image_generate']),
   name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -20,6 +36,10 @@ const mossActionSchema = z.strictObject({
   filePath: z.string().optional().describe('Path to a built app HTML file. Required for app_preview and app_publish, optional for app_update.'),
   version: z.string().optional(),
   reason: z.string().optional(),
+  prompt: z.string().optional().describe('Prompt for image generation. Required for image_generate.'),
+  aspect_ratio: imageAspectRatioSchema.optional().describe('Aspect ratio for generated images. Optional for image_generate; defaults in the main process if omitted.'),
+  subject_reference: z.array(subjectReferenceSchema).optional().describe('Reference images for image generation. Optional for image_generate.'),
+  out_filepath: z.string().optional().describe('Destination filepath for generated image output. Required for image_generate.'),
 })
 
 type MossActionInput = z.infer<typeof mossActionSchema>
@@ -29,7 +49,12 @@ const mossOutputSchema = z.object({
   app: z.unknown().optional(),
   apps: z.array(z.unknown()).optional(),
   versions: z.array(z.unknown()).optional(),
+  fileKind: z.literal('image').optional(),
   filePath: z.string().optional(),
+  filePaths: z.array(z.string()).optional(),
+  previewUrl: z.string().optional(),
+  previewMarkdown: z.string().optional(),
+  mediaType: z.string().optional(),
   metadataPath: z.string().optional(),
   htmlPath: z.string().optional(),
   error: z.string().optional(),
@@ -49,7 +74,8 @@ export const MossTool = buildTool({
 - app_launch: Open an installed app
 - app_update: Update an existing app from filePath or metadata/html fields.
 - app_extract_to_workspace: Extract an installed app into the current session workspace as app-meta.json plus index.html.
-- app_get_versions: Get version history of an app`
+- app_get_versions: Get version history of an app
+- image_generate: Generate one or more images via the main-process image handler and write them to disk`
   },
   async prompt() {
     return `Use moss tool to manage desktop apps.
@@ -61,7 +87,10 @@ Parameter requirements:
 - app_launch requires \`name\`
 - app_update requires \`name\` and accepts optional \`filePath\`, \`html\`, metadata fields, and \`reason\`
 - app_extract_to_workspace requires \`name\`
-- app_get_versions requires \`name\``
+- app_get_versions requires \`name\`
+- image_generate requires \`prompt\` and \`out_filepath\`; optionally accepts \`aspect_ratio\` and \`subject_reference\`
+- image_generate returns image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
+- After image_generate succeeds, if you reference the generated image in markdown, prefer \`previewMarkdown\` or use \`moss-image:///absolute/path/to/file.png\` directly`
   },
   get inputSchema() {
     return mossActionSchema
@@ -207,6 +236,24 @@ Parameter requirements:
         }
         break
 
+      case 'image_generate':
+        if (!input.prompt) {
+          return { data: { ok: false, error: 'prompt is required for image_generate' } }
+        }
+        if (!input.out_filepath) {
+          return { data: { ok: false, error: 'out_filepath is required for image_generate' } }
+        }
+        event = {
+          type: 'image_generate',
+          input: {
+            prompt: input.prompt,
+            aspect_ratio: input.aspect_ratio,
+            subject_reference: input.subject_reference,
+            out_filepath: input.out_filepath,
+          },
+        }
+        break
+
       default:
         return { data: { ok: false, error: `Unknown action: ${input.action}` } }
     }
@@ -222,6 +269,7 @@ Parameter requirements:
           apps: result.apps,
           versions: result.versions,
           filePath: result.filePath,
+          filePaths: result.filePaths,
           metadataPath: result.metadataPath,
           htmlPath: result.htmlPath,
         },

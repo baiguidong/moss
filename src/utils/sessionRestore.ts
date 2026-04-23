@@ -1,6 +1,5 @@
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
-import { dirname } from 'path'
 import {
   getMainLoopModelOverride,
   getSessionId,
@@ -44,6 +43,7 @@ import { createSystemMessage } from './messages.js'
 import { parseUserSpecifiedModel } from './model/model.js'
 import { getPlansDirectory } from './plans.js'
 import { setCwd } from './Shell.js'
+import { prepareLoadedSessionResume } from './sessionResumeCore.js'
 import {
   adoptResumedSessionFile,
   recordContentReplacement,
@@ -423,6 +423,11 @@ export async function processResumedConversation(
     initialState: AppState
   },
 ): Promise<ProcessedResume> {
+  const prepared = prepareLoadedSessionResume(result, {
+    forkSession: opts.forkSession,
+    sessionIdOverride: opts.sessionIdOverride,
+  })
+
   // Match coordinator/normal mode to the resumed session
   let modeWarning: string | undefined
   if (feature('COORDINATOR_MODE')) {
@@ -434,20 +439,13 @@ export async function processResumedConversation(
 
   // Reuse the resumed session's ID unless --fork-session is specified
   if (!opts.forkSession) {
-    const sid = opts.sessionIdOverride ?? result.sessionId
-    if (sid) {
-      // When resuming from a different project directory (git worktrees,
-      // cross-project), transcriptPath points to the actual file; its dirname
-      // is the project dir. Otherwise the session lives in the current project.
-      switchSession(
-        asSessionId(sid),
-        opts.transcriptPath ? dirname(opts.transcriptPath) : null,
-      )
+    if (prepared) {
+      switchSession(asSessionId(prepared.sessionId), prepared.projectDir)
       // Rename asciicast recording to match the resumed session ID so
       // getSessionRecordingPaths() can discover it during /share
       await renameRecordingForSession()
       await resetSessionFilePointer()
-      restoreCostStateForSession(sid)
+      restoreCostStateForSession(prepared.sessionId)
     }
   } else if (result.contentReplacements?.length) {
     // --fork-session keeps the fresh startup session ID. useLogMessages will

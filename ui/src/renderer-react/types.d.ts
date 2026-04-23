@@ -16,6 +16,7 @@ export type SessionSummary = {
   sessionId: string | null;
   preview: string;
   pendingPlanApproval?: PendingPlanApproval | null;
+  resumeReadOnlyReason?: string | null;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -35,6 +36,11 @@ export type DesktopSettings = {
   thinkingBudgetTokens: number;
   url: string;
   apiKey: string;
+  image: {
+    url: string;
+    apiKey: string;
+    model: string;
+  };
   remoteDirectServerUrl: string;
   remoteDirectAuthCenterUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
@@ -42,7 +48,6 @@ export type DesktopSettings = {
   remoteDirectUserPassword: string;
   remoteDirectApiKey: string;
   remoteDirectWorkspace: string;
-  visionModel: string;
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;

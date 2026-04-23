@@ -1,12 +1,15 @@
 import http from 'http'
 import { WebSocketServer } from 'ws'
-import type { ServerConfig } from './types.js'
+import { getLastSessionLog } from '../utils/sessionStorage.js'
+import { validateUuid } from '../utils/uuid.js'
+import type { ServerConfig, SessionIndexEntry } from './types.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import {
   type SessionManager,
   type SessionRuntimeOptions,
 } from './sessionManager.js'
 import { hasScope, type AuthContext } from './auth/token.js'
+import { readSessionIndex, removeSessionIndexEntry } from './sessionIndexStore.js'
 
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -149,6 +152,117 @@ export function startServer(
 } {
   const wss = new WebSocketServer({ noServer: true })
 
+  const buildWsUrl = (sessionId: string): string => {
+    const host =
+      config.host === '0.0.0.0' || config.host === '::'
+        ? '127.0.0.1'
+        : config.host
+    const address = server.address()
+    const actualPort =
+      typeof address === 'object' && address ? address.port : config.port
+    return `ws://${host}:${actualPort}/sessions/${sessionId}/ws`
+  }
+
+  const canAccessSession = (
+    session: { userId: string; orgId: string },
+    auth: AuthContext,
+    anyScope: string,
+  ): boolean =>
+    session.orgId === auth.orgId &&
+    (session.userId === auth.userId || hasScope(auth.scopes, anyScope))
+
+  const getOrResumeSession = async (
+    sessionId: string,
+    auth: AuthContext,
+    anyScope: string,
+  ) => {
+    const active = sessionManager.getSession(sessionId)
+    if (active) {
+      return canAccessSession(active, auth, anyScope) ? active : 'forbidden'
+    }
+
+    const index = await readSessionIndex()
+    const stored = index[sessionId]
+    if (!stored) {
+      return null
+    }
+    if (!canAccessSession(stored, auth, anyScope)) {
+      return 'forbidden'
+    }
+    return sessionManager.resumeSession(stored)
+  }
+
+  const getStoredSessionEntry = async (
+    sessionId: string,
+    auth: AuthContext,
+    anyScope: string,
+  ): Promise<SessionIndexEntry | null | 'forbidden'> => {
+    const index = await readSessionIndex()
+    const stored = index[sessionId]
+    if (!stored) {
+      return null
+    }
+    if (!canAccessSession(stored, auth, anyScope)) {
+      return 'forbidden'
+    }
+    return stored
+  }
+
+  const getSessionContextMetadata = async (
+    sessionId: string,
+    auth: AuthContext,
+    anyScope: string,
+  ): Promise<
+    | {
+        sessionId: string
+        transcriptSessionId: string
+        workDir: string
+        userId: string
+        orgId: string
+        role: string
+        scopes: string[]
+        runtime: SessionIndexEntry['runtime']
+        createdAt: number
+        lastActiveAt: number
+      }
+    | null
+    | 'forbidden'
+  > => {
+    const active = sessionManager.getSession(sessionId)
+    if (active) {
+      return {
+        sessionId: active.sessionId,
+        transcriptSessionId: active.sessionId,
+        workDir: active.workDir,
+        userId: active.userId,
+        orgId: active.orgId,
+        role: active.role,
+        scopes: active.scopes,
+        runtime: active.runtime,
+        createdAt: active.createdAt,
+        lastActiveAt: active.lastActiveAt,
+      }
+    }
+
+    const stored = await getStoredSessionEntry(sessionId, auth, anyScope)
+    if (!stored || stored === 'forbidden') {
+      return stored
+    }
+
+    return {
+      sessionId: stored.sessionId,
+      transcriptSessionId: stored.transcriptSessionId,
+      workDir: stored.cwd,
+      userId: stored.userId,
+      orgId: stored.orgId,
+      role: stored.role,
+      scopes: stored.scopes,
+      runtime: stored.runtime,
+      createdAt: stored.createdAt,
+      lastActiveAt: stored.lastActiveAt,
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://localhost')
@@ -178,23 +292,79 @@ export function startServer(
         return
       }
 
-      const sessionIdMatch = url.pathname.match(/^\/sessions\/([^/]+)$/)
-      if (req.method === 'GET' && sessionIdMatch) {
-        const sessionId = sessionIdMatch[1] || ''
-        const session = sessionManager.getSession(sessionId)
+      const sessionContextMatch = url.pathname.match(/^\/sessions\/([^/]+)\/context$/)
+      if (req.method === 'GET' && sessionContextMatch) {
+        const sessionId = sessionContextMatch[1] || ''
+        const session = await getSessionContextMetadata(
+          sessionId,
+          auth,
+          'sessions:attach:any',
+        )
         if (!session) {
           writeJson(res, 404, { error: 'Session not found' })
           return
         }
-        if (
-          session.orgId !== auth.orgId ||
-          (session.userId !== auth.userId &&
-            !hasScope(auth.scopes, 'sessions:attach:any'))
-        ) {
+        if (session === 'forbidden') {
           writeJson(res, 403, { error: 'Forbidden' })
           return
         }
-        writeJson(res, 200, { session })
+
+        const transcriptSessionId = validateUuid(session.transcriptSessionId)
+        if (!transcriptSessionId) {
+          writeJson(res, 500, { error: 'Invalid transcript session id' })
+          return
+        }
+
+        const log = await getLastSessionLog(transcriptSessionId)
+        if (!log) {
+          writeJson(res, 404, { error: 'Session context not found' })
+          return
+        }
+
+        writeJson(res, 200, {
+          session: {
+            sessionId: session.sessionId,
+            transcriptSessionId: session.transcriptSessionId,
+            workDir: session.workDir,
+            userId: session.userId,
+            orgId: session.orgId,
+            role: session.role,
+            scopes: session.scopes,
+            runtime: session.runtime,
+            createdAt: session.createdAt,
+            lastActiveAt: session.lastActiveAt,
+          },
+          context: {
+            customTitle: log.customTitle,
+            tag: log.tag,
+            summary: log.summary,
+            messages: log.messages,
+          },
+        })
+        return
+      }
+
+      const sessionIdMatch = url.pathname.match(/^\/sessions\/([^/]+)$/)
+      if (req.method === 'GET' && sessionIdMatch) {
+        const sessionId = sessionIdMatch[1] || ''
+        const session = await getOrResumeSession(
+          sessionId,
+          auth,
+          'sessions:attach:any',
+        )
+        if (!session) {
+          writeJson(res, 404, { error: 'Session not found' })
+          return
+        }
+        if (session === 'forbidden') {
+          writeJson(res, 403, { error: 'Forbidden' })
+          return
+        }
+
+        writeJson(res, 200, {
+          session,
+          ws_url: buildWsUrl(session.sessionId),
+        })
         return
       }
 
@@ -202,7 +372,18 @@ export function startServer(
         const sessionId = sessionIdMatch[1] || ''
         const session = sessionManager.getSession(sessionId)
         if (!session) {
-          writeJson(res, 404, { error: 'Session not found' })
+          const index = await readSessionIndex()
+          const stored = index[sessionId]
+          if (!stored) {
+            writeJson(res, 404, { error: 'Session not found' })
+            return
+          }
+          if (!canAccessSession(stored, auth, 'sessions:terminate:any')) {
+            writeJson(res, 403, { error: 'Forbidden' })
+            return
+          }
+          await removeSessionIndexEntry(sessionId)
+          writeJson(res, 200, { ok: true })
           return
         }
         if (
@@ -213,6 +394,7 @@ export function startServer(
           writeJson(res, 403, { error: 'Forbidden' })
           return
         }
+        await removeSessionIndexEntry(sessionId)
         sessionManager.destroySession(sessionId, true)
         writeJson(res, 200, { ok: true })
         return
@@ -285,17 +467,17 @@ export function startServer(
       }
 
       const sessionId = match[1] || ''
-      const session = sessionManager.getSession(sessionId)
+      const session = await getOrResumeSession(
+        sessionId,
+        auth,
+        'sessions:attach:any',
+      )
       if (!session) {
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
         socket.destroy()
         return
       }
-      if (
-        session.orgId !== auth.orgId ||
-        (session.userId !== auth.userId &&
-          !hasScope(auth.scopes, 'sessions:attach:any'))
-      ) {
+      if (session === 'forbidden') {
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
         socket.destroy()
         return

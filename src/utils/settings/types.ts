@@ -376,6 +376,15 @@ export const SettingsSchema = lazySchema(() =>
         .string()
         .optional()
         .describe('Override the default model used by Claude Code'),
+      imageGeneration: z
+        .object({
+          model: z
+            .string()
+            .optional()
+            .describe('Default model used by image generation handlers'),
+        })
+        .optional()
+        .describe('Image generation configuration for app-level image handlers'),
       // Enterprise allowlist of models
       availableModels: z
         .array(z.string())

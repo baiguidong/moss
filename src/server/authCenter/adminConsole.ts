@@ -244,6 +244,28 @@ export function renderAdminConsoleHtml(): string {
             <pre id="keysResult"></pre>
           </div>
         </section>
+
+        <section id="auditSection" class="hidden">
+          <h2>Session Audit</h2>
+          <div class="stack">
+            <div class="row">
+              <div>
+                <label for="auditUserId">User ID</label>
+                <input id="auditUserId" placeholder="user UUID" />
+              </div>
+              <div>
+                <label for="auditSessionId">Session ID</label>
+                <input id="auditSessionId" placeholder="session UUID" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="alt" id="queryUserSessionsBtn">Query User Sessions</button>
+              <button class="alt" id="querySessionContextBtn">Query Session Context</button>
+            </div>
+            <pre id="userSessionsResult"></pre>
+            <pre id="sessionContextResult"></pre>
+          </div>
+        </section>
       </div>
     </main>
 
@@ -261,6 +283,7 @@ export function renderAdminConsoleHtml(): string {
         document.getElementById('userAdminSection').classList.toggle('hidden', !signedIn)
         document.getElementById('apiKeyAdminSection').classList.toggle('hidden', !signedIn)
         document.getElementById('inventorySection').classList.toggle('hidden', !signedIn)
+        document.getElementById('auditSection').classList.toggle('hidden', !signedIn)
         document.getElementById('identityBadge').textContent = signedIn
           ? 'Signed in as ' + ((currentUser && currentUser.email) || 'unknown')
           : 'Not signed in'
@@ -441,6 +464,30 @@ export function renderAdminConsoleHtml(): string {
           print('keysResult', await request('/v1/admin/api-keys'))
         } catch (error) {
           print('keysResult', String(error))
+        }
+      }
+
+      document.getElementById('queryUserSessionsBtn').onclick = async () => {
+        try {
+          const userId = document.getElementById('auditUserId').value.trim()
+          print(
+            'userSessionsResult',
+            await request('/v1/admin/users/' + encodeURIComponent(userId) + '/sessions'),
+          )
+        } catch (error) {
+          print('userSessionsResult', String(error))
+        }
+      }
+
+      document.getElementById('querySessionContextBtn').onclick = async () => {
+        try {
+          const sessionId = document.getElementById('auditSessionId').value.trim()
+          print(
+            'sessionContextResult',
+            await request('/v1/admin/sessions/' + encodeURIComponent(sessionId) + '/context'),
+          )
+        } catch (error) {
+          print('sessionContextResult', String(error))
         }
       }
 

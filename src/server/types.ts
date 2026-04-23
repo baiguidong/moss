@@ -20,6 +20,29 @@ export const connectResponseSchema = lazySchema(() =>
   }),
 )
 
+export const attachSessionResponseSchema = lazySchema(() =>
+  z.object({
+    session: z.object({
+      sessionId: z.string(),
+      workDir: z.string(),
+      userId: z.string(),
+      orgId: z.string(),
+      role: z.string(),
+      scopes: z.array(z.string()),
+      runtime: z.object({
+        type: z.enum(['host', 'docker']),
+        dockerImage: z.string().optional(),
+        dockerMode: z.enum(['session', 'user']).optional(),
+        containerName: z.string().optional(),
+        configDir: z.string().optional(),
+      }),
+      createdAt: z.number(),
+      lastActiveAt: z.number(),
+    }),
+    ws_url: z.string(),
+  }),
+)
+
 export type ServerConfig = {
   port: number
   host: string

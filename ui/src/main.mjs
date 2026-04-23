@@ -58,6 +58,11 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
+  image: {
+    url: 'https://api.minimaxi.com/v1/image_generation',
+    apiKey: '',
+    model: '',
+  },
   remoteDirectServerUrl: '',
   remoteDirectAuthCenterUrl: '',
   remoteDirectCredentialMode: 'password',
@@ -80,6 +85,33 @@ const APP_SCHEMA_CONTEXT = 'urn:goose.ai:schema';
 const APP_SCHEMA_TYPE = 'GooseApp';
 const APP_CSP_CONTENT = "default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:;";
 const EVENT_TRACE_ENABLED = process.env.MOSS_EVENT_TRACE !== '0';
+const MAX_SANITIZED_PATH_LENGTH = 200;
+
+function djb2Hash(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+function sanitizeWorkspacePath(value) {
+  const sanitized = String(value || '').replace(/[^a-zA-Z0-9]/g, '-');
+  if (sanitized.length <= MAX_SANITIZED_PATH_LENGTH) {
+    return sanitized;
+  }
+  const hash = Math.abs(djb2Hash(String(value || ''))).toString(36);
+  return `${sanitized.slice(0, MAX_SANITIZED_PATH_LENGTH)}-${hash}`;
+}
+
+function getTranscriptPathForWorkspace(workspace, sessionId) {
+  if (!workspace || !sessionId) return null;
+  return path.join(
+    MOSS_PROJECTS_DIR,
+    sanitizeWorkspacePath(workspace),
+    `${sessionId}.jsonl`,
+  );
+}
 
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
 process.env.CLAUDE_CODE_ENTRYPOINT = 'local-agent';
@@ -407,6 +439,29 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.apiKey = DEFAULT_DESKTOP_SETTINGS.apiKey;
   }
 
+  const sourceImage = source.image && typeof source.image === 'object' ? source.image : {};
+  const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
+  result.image = {
+    url:
+      typeof sourceImage.url === 'string'
+        ? sourceImage.url.trim()
+        : typeof existingImage.url === 'string'
+          ? existingImage.url
+          : DEFAULT_DESKTOP_SETTINGS.image.url,
+    apiKey:
+      typeof sourceImage.apiKey === 'string'
+        ? sourceImage.apiKey.trim()
+        : typeof existingImage.apiKey === 'string'
+          ? existingImage.apiKey
+          : DEFAULT_DESKTOP_SETTINGS.image.apiKey,
+    model:
+      typeof sourceImage.model === 'string'
+        ? sourceImage.model.trim()
+        : typeof existingImage.model === 'string'
+          ? existingImage.model
+          : DEFAULT_DESKTOP_SETTINGS.image.model,
+  };
+
   if (typeof source.remoteDirectServerUrl === 'string') {
     result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
   } else if (result.remoteDirectServerUrl === undefined) {
@@ -449,12 +504,6 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.remoteDirectWorkspace = source.remoteDirectWorkspace.trim();
   } else if (result.remoteDirectWorkspace === undefined) {
     result.remoteDirectWorkspace = DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
-  }
-
-  if (typeof source.visionModel === 'string' && source.visionModel.trim()) {
-    result.visionModel = source.visionModel.trim();
-  } else if (result.visionModel === undefined) {
-    result.visionModel = '';
   }
 
   if (source.coordinatorMode !== undefined) {
@@ -513,7 +562,7 @@ function loadDesktopSettings() {
       // 从 env 中读取 url 和 apiKey
       url: urlFromEnv || normalized.url || DEFAULT_DESKTOP_SETTINGS.url,
       apiKey: apiKeyFromEnv || normalized.apiKey || DEFAULT_DESKTOP_SETTINGS.apiKey,
-      visionModel: normalized.visionModel || '',
+      image: normalized.image || { ...DEFAULT_DESKTOP_SETTINGS.image },
     };
     result.loaded = true;
     return result;
@@ -606,7 +655,6 @@ function buildClaudeSessionConfig(cwd) {
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
-    visionModel: desktopSettings.visionModel || undefined,
   };
 }
 
@@ -1077,9 +1125,11 @@ function hydratePersistedSessions() {
       history,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
+      resumeReadOnlyReason: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
       persistTimer: null,
+      isSubAgent: false,
     };
     sessions.set(sessionRecord.id, sessionRecord);
   }
@@ -1102,9 +1152,11 @@ function hydratePersistedSessions() {
       history,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
+      resumeReadOnlyReason: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
       persistTimer: null,
+      isSubAgent: true,
     };
     subAgentSessions.set(sessionRecord.id, sessionRecord);
   }
@@ -1178,6 +1230,14 @@ async function getClaudeSessionCtor() {
   return claudeSessionCtorPromise;
 }
 
+async function getResumeClaudeSessionFn() {
+  const mod = await getClaudeRuntimeModule();
+  if (typeof mod.resumeClaudeSession !== 'function') {
+    throw new Error('electron-direct.mjs did not export resumeClaudeSession.');
+  }
+  return mod.resumeClaudeSession;
+}
+
 async function getAuthDebugSnapshot() {
   const mod = await getClaudeRuntimeModule();
   if (typeof mod.getAuthDebugSnapshot === 'function') {
@@ -1246,6 +1306,7 @@ function getSessionSummary(sessionRecord) {
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
+    resumeReadOnlyReason: sessionRecord.resumeReadOnlyReason || null,
   };
 }
 
@@ -3107,6 +3168,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
     pendingPlanApproval: null,
     history: [],
     runtime: null,
+    resumeReadOnlyReason: null,
     workspaceWatcher: null,
     workspaceWatcherSyncTimer: null,
     persistTimer: null,
@@ -3289,6 +3351,9 @@ const mossAppEventHandler = createMossAppEventHandler(
   {
     emitAppsChanged,
   },
+  {
+    getSettings: () => desktopSettings,
+  },
 )
 
 async function startWorkspaceWatcher(sessionRecord) {
@@ -3372,6 +3437,108 @@ async function ensureRuntime(sessionRecord) {
   // All teammate events are already routed through the main coordinator session via the SDK
 
   return sessionRecord.runtime;
+}
+
+async function resumeSessionRecord(sessionRecord) {
+  if (sessionRecord.agentMode === 'remote-direct' || sessionRecord.isSubAgent) {
+    return null;
+  }
+  if (sessionRecord.runtime) {
+    return {
+      history: sessionRecord.history,
+      metadata: {
+        sessionId: sessionRecord.underlyingSessionId,
+        sourceSessionId: sessionRecord.underlyingSessionId,
+        projectDir: null,
+        cwd: sessionRecord.workspace,
+      },
+    };
+  }
+
+  if (!sessionRecord.underlyingSessionId) {
+    sessionRecord.resumeReadOnlyReason = null;
+    return null;
+  }
+
+  const targetSessionId = sessionRecord.underlyingSessionId;
+  const transcriptPath = getTranscriptPathForWorkspace(
+    sessionRecord.workspace,
+    targetSessionId,
+  );
+  const resumeClaudeSession = await getResumeClaudeSessionFn();
+
+  try {
+    const resumed = await resumeClaudeSession(targetSessionId, {
+      ...buildClaudeSessionConfig(sessionRecord.workspace),
+      sourceJsonlFile: transcriptPath || undefined,
+      onPermissionRequest: async (toolName, input) => {
+        const toolLabel = toolName || 'Tool';
+        const detailParts = [];
+        if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
+
+        emitToRenderer('agent:permission', {
+          sessionId: sessionRecord.id,
+          request: {
+            tool_name: toolName,
+            input,
+          },
+        });
+
+        const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+        const response = await dialog.showMessageBox(dialogTarget, {
+          type: 'question',
+          buttons: ['允许', '拒绝'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+          title: '工具权限确认',
+          message: `${toolLabel} 请求执行`,
+          detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
+        });
+
+        return response.response === 0;
+      },
+      onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
+    });
+
+    if (!resumed) {
+      sessionRecord.resumeReadOnlyReason = `找不到 Claude transcript：${targetSessionId}`;
+      sessionRecord.runtime = null;
+      return null;
+    }
+
+    sessionRecord.runtime = resumed.session;
+    sessionRecord.resumeReadOnlyReason = null;
+    sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
+    sessionRecord.history = Array.isArray(resumed.messages) ? resumed.messages : [];
+    sessionRecord.messageCount = sessionRecord.history.length;
+    sessionRecord.pendingPlanApproval = derivePendingPlanApproval(sessionRecord.history);
+    sessionRecord.updatedAt = Date.now();
+    sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+    if (resumed.metadata.customTitle) {
+      sessionRecord.title = resumed.metadata.customTitle;
+    }
+    if (resumed.metadata.mode) {
+      sessionRecord.isCoordinatorMode = resumed.metadata.mode === 'coordinator';
+    }
+    if (typeof resumed.metadata.cwd === 'string' && resumed.metadata.cwd.trim()) {
+      sessionRecord.workspace = resumed.metadata.cwd;
+    }
+    if (sessionRecord.workspaceWatcher) {
+      await syncWorkspaceWatcher(sessionRecord);
+    } else {
+      await startWorkspaceWatcher(sessionRecord);
+    }
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+    return { history: sessionRecord.history, metadata: resumed.metadata };
+  } catch (error) {
+    sessionRecord.runtime = null;
+    sessionRecord.resumeReadOnlyReason = error instanceof Error ? error.message : String(error);
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+    return null;
+  }
 }
 
 function createWindow() {
@@ -3804,11 +3971,26 @@ ipcMain.handle('agent:create-session', (_event, payload = {}) => {
 
 ipcMain.handle('agent:get-session', (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
-  return {
-    ...getSessionSummary(sessionRecord),
-    history: sessionRecord.history,
-    workerSummariesJson: sessionRecord.workerSummariesJson || null,
-  };
+  return resumeSessionRecord(sessionRecord).then((resumed) => {
+    const history = resumed?.history ?? sessionRecord.history;
+    const readOnlyHistory = sessionRecord.resumeReadOnlyReason
+      ? [
+          ...history,
+          {
+            type: 'error',
+            message: `无法恢复 Claude 会话，当前仅显示本地缓存历史：${sessionRecord.resumeReadOnlyReason}`,
+            timestamp: Date.now(),
+            readOnly: true,
+          },
+        ]
+      : history;
+
+    return {
+      ...getSessionSummary(sessionRecord),
+      history: readOnlyHistory,
+      workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    };
+  });
 });
 
 ipcMain.handle('agent:set-worker-summaries', (_event, { sessionId, workerSummariesJson }) => {
@@ -4318,6 +4500,12 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
+  }
+  if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
+    await resumeSessionRecord(sessionRecord);
+  }
+  if (sessionRecord.resumeReadOnlyReason) {
+    throw new Error(`当前会话未成功恢复，不能继续写入：${sessionRecord.resumeReadOnlyReason}`);
   }
 
   // Store coordinator mode flag on sessionRecord so runtime can read it

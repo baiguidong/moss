@@ -24,6 +24,7 @@ import type { CanUseToolFn } from './utils/permissions/permissions.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
+import type { Message } from './types/message.js'
 
 import { bootstrapHeadless } from './bootstrap/headless.js'
 import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
@@ -33,6 +34,11 @@ import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './uti
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
 import { sleep } from './utils/sleep.js'
+import {
+  prepareSessionResume,
+  type PreparedSessionResume,
+} from './utils/sessionResumeCore.js'
+import { restoreSessionStateFromLog } from './utils/sessionRestore.js'
 export { startServer } from './server/server.js'
 export { SessionManager } from './server/sessionManager.js'
 export { DangerousBackend } from './server/backends/dangerousBackend.js'
@@ -42,6 +48,7 @@ export {
 } from './server/startStandaloneServer.js'
 export {
   createDirectConnectSession,
+  attachDirectConnectSession,
   DirectConnectError,
 } from './server/createDirectConnectSession.js'
 export {
@@ -103,15 +110,39 @@ export interface ClaudeSessionOptions {
   coordinatorMode?: boolean
   /** App 事件回调，用于 MossTool 保存/打开 app */
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  /** 恢复后的 transcript session ID */
+  sessionId?: string
+  /** resume 后直接喂给 QueryEngine 的消息 */
+  initialMessages?: Message[]
+  /** transcript 所在项目目录；用于跨项目继续写回 */
+  projectDir?: string | null
+  /** 共享恢复核心产出的附加状态 */
+  resumeState?: PreparedSessionResume
+}
+
+type ResolvedClaudeSessionOptions = {
+  cwd: string
+  model: string
+  appendSystemPrompt: string
+  permissionMode: PermissionMode
+  onPermissionRequest: (tool: string, input: unknown) => Promise<boolean>
+  maxTurns: number
+  thinkingConfig: ThinkingConfig
+  coordinatorMode: boolean
+  onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  sessionId?: string
+  initialMessages?: Message[]
+  projectDir?: string | null
+  resumeState?: PreparedSessionResume
 }
 
 export class ClaudeSession {
-  readonly sessionId = randomUUID()
+  readonly sessionId: string
 
   #engine: QueryEngine | null = null
   #store: ReturnType<typeof createStore> | null = null
   #pendingListeners: Array<() => void> = []
-  #opts: Required<ClaudeSessionOptions>
+  #opts: ResolvedClaudeSessionOptions
   #queue: Array<() => void> = []
   #processing = false
   #disposed = false
@@ -124,6 +155,7 @@ export class ClaudeSession {
     if (opts.onAppEvent) {
       setGlobalAppEventBridge(opts.onAppEvent)
     }
+    this.sessionId = opts.sessionId ?? randomUUID()
     this.#opts = {
       cwd: opts.cwd ?? process.cwd(),
       model: opts.model ?? 'claude-sonnet-4-6',
@@ -134,6 +166,10 @@ export class ClaudeSession {
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
+      sessionId: opts.sessionId,
+      initialMessages: opts.initialMessages,
+      projectDir: opts.projectDir,
+      resumeState: opts.resumeState,
     }
   }
 
@@ -141,11 +177,23 @@ export class ClaudeSession {
   async #getEngine(): Promise<QueryEngine> {
     if (this.#engine) return this.#engine
 
-    const { cwd, model, appendSystemPrompt, permissionMode, onPermissionRequest, maxTurns, thinkingConfig, onAppEvent } = this.#opts
+    const {
+      cwd,
+      model,
+      appendSystemPrompt,
+      permissionMode,
+      onPermissionRequest,
+      maxTurns,
+      thinkingConfig,
+      onAppEvent,
+      initialMessages: resumedMessages,
+      resumeState,
+    } = this.#opts
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
     const bootstrapResult = await bootstrapHeadless(cwd)
-    const { initialMessages, mcp, agents: customAgents } = bootstrapResult
+    const { initialMessages: bootstrapMessages, mcp, agents: customAgents } =
+      bootstrapResult
 
     // 权限上下文
     const permissionContext = {
@@ -176,6 +224,10 @@ export class ClaudeSession {
       () => {},
     )
     const store = this.#store
+
+    if (resumeState) {
+      restoreSessionStateFromLog(resumeState, f => store.setState(f))
+    }
 
     // Attach all pending listeners to the newly created store
     for (const listener of this.#pendingListeners) {
@@ -213,7 +265,7 @@ export class ClaudeSession {
       appendSystemPrompt: appendSystemPrompt || undefined,
       thinkingConfig,
       maxTurns,
-      initialMessages,
+      initialMessages: resumedMessages ?? bootstrapMessages,
       emitAppEvent: onAppEvent,
     })
 
@@ -238,8 +290,9 @@ export class ClaudeSession {
 
     try {
       const sessionId = asSessionId(this.sessionId)
+      const projectDir = this.#opts.projectDir
       const runInSessionContext = <T>(fn: () => T): T =>
-        runWithSessionIdContext(sessionId, () =>
+        runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
         )
 
@@ -285,7 +338,7 @@ export class ClaudeSession {
 
       // QueryEngine.submitMessage 是 AsyncGenerator
       yield* runWithCwdOverrideGenerator(this.#opts.cwd, () =>
-        runWithSessionIdContextGenerator(sessionId, () =>
+        runWithSessionIdContextGenerator(sessionId, projectDir, () =>
           (async function* () {
             const runTurn = async function* (
               turnPrompt: string | Array<{ type: string; [k: string]: unknown }>,
@@ -401,5 +454,62 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
+  }
+}
+
+export interface ResumeClaudeSessionResult {
+  session: ClaudeSession
+  messages: Message[]
+  metadata: {
+    sessionId: string
+    sourceSessionId: string
+    customTitle?: string
+    projectDir: string | null
+    cwd: string | null
+    fullPath?: string
+    mode?: 'coordinator' | 'normal'
+  }
+}
+
+export async function resumeClaudeSession(
+  sessionId: string,
+  options: Omit<ClaudeSessionOptions, 'sessionId' | 'initialMessages' | 'projectDir'> & {
+    forkSession?: boolean
+    sourceJsonlFile?: string
+  } = {},
+): Promise<ResumeClaudeSessionResult | null> {
+  const { forkSession, sourceJsonlFile, ...sessionOptions } = options
+  const prepared = await prepareSessionResume(sessionId, {
+    forkSession,
+    sourceJsonlFile,
+  })
+  if (!prepared) {
+    return null
+  }
+
+  const session = new ClaudeSession({
+    ...sessionOptions,
+    cwd: prepared.cwd ?? sessionOptions.cwd,
+    coordinatorMode: prepared.mode
+      ? prepared.mode === 'coordinator'
+      : (sessionOptions.coordinatorMode ?? false),
+    sessionId: prepared.sessionId,
+    initialMessages: prepared.messages,
+    projectDir: prepared.projectDir,
+    resumeState: prepared,
+  })
+
+  return {
+    session,
+    messages: prepared.messages,
+    metadata: {
+      sessionId: prepared.sessionId,
+      sourceSessionId: prepared.sourceSessionId,
+      customTitle: prepared.customTitle,
+      projectDir: prepared.projectDir,
+      cwd: prepared.cwd,
+      fullPath: prepared.fullPath,
+      mode: prepared.mode,
+    },
   }
 }

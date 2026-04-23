@@ -7,6 +7,7 @@ import SyntaxHighlighter from 'react-syntax-highlighter';
 import { vs, vs2015 } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LocalImage } from "@/components/local-image";
 
 interface MarkdownViewProps {
   children: string;
@@ -125,7 +126,7 @@ export function MarkdownView({ children }: MarkdownViewProps) {
           hr: () => <hr className="my-4 border-border/70" />,
           p: ({ children }) => <p className="text-sm leading-relaxed my-2">{children}</p>,
           img: ({ src, alt }) => (
-            <img src={src} alt={alt} className="rounded-lg max-w-full my-2" />
+            <LocalImage src={typeof src === "string" ? src : ""} alt={alt} className="rounded-lg max-w-full my-2" />
           ),
         }}
       >

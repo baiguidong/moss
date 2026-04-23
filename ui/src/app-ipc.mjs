@@ -916,6 +916,7 @@ const MossAppEventTypes = [
   'app_update',
   'app_extract_to_workspace',
   'app_get_versions',
+  'image_generate',
 ]
 
 /**
@@ -923,11 +924,16 @@ const MossAppEventTypes = [
  * @property {boolean} ok
  * @property {StoredApp} [app]
  * @property {string} [filePath]
+ * @property {string[]} [filePaths]
  * @property {AppVersion[]} [versions]
  * @property {string} [error]
  */
 
-export function createMossAppEventHandler(windows, events) {
+export function createMossAppEventHandler(windows, events, options = {}) {
+  const getSettings = typeof options.getSettings === 'function'
+    ? options.getSettings
+    : () => ({})
+
   return async (event, sessionRecord = null) => {
     try {
       switch (event.type) {
@@ -1011,6 +1017,121 @@ export function createMossAppEventHandler(windows, events) {
         case 'app_get_versions': {
           const versions = listAppVersionSnapshots(event.input.name)
           return { ok: true, versions }
+        }
+
+        case 'image_generate': {
+          const { prompt, aspect_ratio, subject_reference, out_filepath } =
+            event.input || {}
+
+          if (!prompt || typeof prompt !== 'string') {
+            throw new Error('image_generate requires a prompt string')
+          }
+          if (!out_filepath || typeof out_filepath !== 'string') {
+            throw new Error('image_generate requires out_filepath')
+          }
+
+          const settings = getSettings() || {}
+          const imageSettings =
+            settings.image && typeof settings.image === 'object'
+              ? settings.image
+              : {}
+          const model =
+            typeof imageSettings.model === 'string'
+              ? imageSettings.model.trim()
+              : ''
+          if (!model) {
+            throw new Error('Image model is not configured in desktop settings (image.model)')
+          }
+
+          const apiKey =
+            typeof imageSettings.apiKey === 'string'
+              ? imageSettings.apiKey.trim()
+              : ''
+          if (!apiKey) {
+            throw new Error('Image API key is not configured in desktop settings (image.apiKey)')
+          }
+          const imageUrl =
+            typeof imageSettings.url === 'string'
+              ? imageSettings.url.trim()
+              : ''
+          if (!imageUrl) {
+            throw new Error('Image URL is not configured in desktop settings (image.url)')
+          }
+
+          const response = await fetch(imageUrl, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model,
+              prompt,
+              aspect_ratio: aspect_ratio || '1:1',
+              subject_reference,
+              response_format: 'base64',
+            }),
+          })
+
+          if (!response.ok) {
+            const detail = await response.text()
+            throw new Error(
+              `Image generation failed: ${response.status} ${detail}`,
+            )
+          }
+
+          const payload = await response.json()
+          const images = Array.isArray(payload?.data?.image_base64)
+            ? payload.data.image_base64
+            : []
+          if (images.length === 0) {
+            throw new Error('Image generation returned no images')
+          }
+
+          await fsp.mkdir(path.dirname(out_filepath), { recursive: true })
+
+          const parsedPath = path.parse(out_filepath)
+          const ext = parsedPath.ext || '.jpeg'
+          const basePath = path.join(parsedPath.dir, parsedPath.name)
+          const filePaths = []
+
+          const mimeMap = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp',
+            '.svg': 'image/svg+xml',
+            '.avif': 'image/avif',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+          }
+
+          for (let i = 0; i < images.length; i += 1) {
+            const filePath =
+              images.length === 1
+                ? out_filepath
+                : `${basePath}-${i}${ext}`
+            await fsp.writeFile(filePath, Buffer.from(images[i], 'base64'))
+            filePaths.push(filePath)
+          }
+
+          const firstPath = filePaths[0]
+          const previewUrl = `moss-image://${encodeURI(firstPath)}`
+          const previewMarkdown = `![generated image](${previewUrl})`
+          const mediaType =
+            mimeMap[path.extname(firstPath).toLowerCase()] || 'image/jpeg'
+
+          return {
+            ok: true,
+            fileKind: 'image',
+            filePath: firstPath,
+            filePaths,
+            previewUrl,
+            previewMarkdown,
+            mediaType,
+          }
         }
 
         default:

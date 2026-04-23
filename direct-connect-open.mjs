@@ -19184,6 +19184,26 @@ var connectResponseSchema = lazySchema(() => exports_external.object({
     configDir: exports_external.string().optional()
   }).optional()
 }));
+var attachSessionResponseSchema = lazySchema(() => exports_external.object({
+  session: exports_external.object({
+    sessionId: exports_external.string(),
+    workDir: exports_external.string(),
+    userId: exports_external.string(),
+    orgId: exports_external.string(),
+    role: exports_external.string(),
+    scopes: exports_external.array(exports_external.string()),
+    runtime: exports_external.object({
+      type: exports_external.enum(["host", "docker"]),
+      dockerImage: exports_external.string().optional(),
+      dockerMode: exports_external.enum(["session", "user"]).optional(),
+      containerName: exports_external.string().optional(),
+      configDir: exports_external.string().optional()
+    }),
+    createdAt: exports_external.number(),
+    lastActiveAt: exports_external.number()
+  }),
+  ws_url: exports_external.string()
+}));
 
 // src/server/client/authClient.ts
 async function resolveDirectConnectAccessToken(options) {
@@ -19239,6 +19259,19 @@ class DirectConnectError extends Error {
     this.name = "DirectConnectError";
   }
 }
+async function resolveDirectConnectHeaders(options) {
+  const resolvedToken = await resolveDirectConnectAccessToken(options);
+  const headers = {
+    "content-type": "application/json"
+  };
+  if (resolvedToken) {
+    headers["authorization"] = `Bearer ${resolvedToken}`;
+  }
+  return {
+    headers,
+    resolvedToken
+  };
+}
 async function createDirectConnectSession({
   serverUrl,
   authToken,
@@ -19250,19 +19283,13 @@ async function createDirectConnectSession({
   dangerouslySkipPermissions,
   runtime
 }) {
-  const resolvedToken = await resolveDirectConnectAccessToken({
+  const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
     authCenterUrl,
     apiKey,
     email: email3,
     password
   });
-  const headers = {
-    "content-type": "application/json"
-  };
-  if (resolvedToken) {
-    headers["authorization"] = `Bearer ${resolvedToken}`;
-  }
   let resp;
   try {
     resp = await fetch(`${serverUrl}/sessions`, {

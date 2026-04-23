@@ -3,7 +3,10 @@
 import { errorMessage } from '../utils/errors.js'
 import { jsonStringify } from '../utils/slowOperations.js'
 import type { DirectConnectConfig } from './directConnectManager.js'
-import { connectResponseSchema } from './types.js'
+import {
+  attachSessionResponseSchema,
+  connectResponseSchema,
+} from './types.js'
 import { resolveDirectConnectAccessToken } from './client/authClient.js'
 import type { SessionRuntimeOptions } from './sessionManager.js'
 
@@ -14,6 +17,29 @@ export class DirectConnectError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'DirectConnectError'
+  }
+}
+
+async function resolveDirectConnectHeaders(options: {
+  authToken?: string
+  authCenterUrl?: string
+  apiKey?: string
+  email?: string
+  password?: string
+}): Promise<{
+  headers: Record<string, string>
+  resolvedToken?: string
+}> {
+  const resolvedToken = await resolveDirectConnectAccessToken(options)
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (resolvedToken) {
+    headers['authorization'] = `Bearer ${resolvedToken}`
+  }
+  return {
+    headers,
+    resolvedToken,
   }
 }
 
@@ -49,19 +75,13 @@ export async function createDirectConnectSession({
   config: DirectConnectConfig
   workDir?: string
 }> {
-  const resolvedToken = await resolveDirectConnectAccessToken({
+  const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
     authCenterUrl,
     apiKey,
     email,
     password,
   })
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-  }
-  if (resolvedToken) {
-    headers['authorization'] = `Bearer ${resolvedToken}`
-  }
 
   let resp: Response
   try {
@@ -104,5 +124,70 @@ export async function createDirectConnectSession({
       authToken: resolvedToken,
     },
     workDir: data.work_dir,
+  }
+}
+
+export async function attachDirectConnectSession({
+  serverUrl,
+  sessionId,
+  authToken,
+  authCenterUrl,
+  apiKey,
+  email,
+  password,
+}: {
+  serverUrl: string
+  sessionId: string
+  authToken?: string
+  authCenterUrl?: string
+  apiKey?: string
+  email?: string
+  password?: string
+}): Promise<{
+  config: DirectConnectConfig
+  workDir?: string
+}> {
+  const { headers, resolvedToken } = await resolveDirectConnectHeaders({
+    authToken,
+    authCenterUrl,
+    apiKey,
+    email,
+    password,
+  })
+
+  let resp: Response
+  try {
+    resp = await fetch(`${serverUrl}/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'GET',
+      headers,
+    })
+  } catch (err) {
+    throw new DirectConnectError(
+      `Failed to connect to server at ${serverUrl}: ${errorMessage(err)}`,
+    )
+  }
+
+  if (!resp.ok) {
+    throw new DirectConnectError(
+      `Failed to attach session ${sessionId}: ${resp.status} ${resp.statusText}`,
+    )
+  }
+
+  const result = attachSessionResponseSchema().safeParse(await resp.json())
+  if (!result.success) {
+    throw new DirectConnectError(
+      `Invalid session attach response: ${result.error.message}`,
+    )
+  }
+
+  const data = result.data
+  return {
+    config: {
+      serverUrl,
+      sessionId: data.session.sessionId,
+      wsUrl: data.ws_url,
+      authToken: resolvedToken,
+    },
+    workDir: data.session.workDir,
   }
 }

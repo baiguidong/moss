@@ -1,5 +1,10 @@
 import http from 'http'
 import { randomUUID } from 'crypto'
+import { readFile } from 'fs/promises'
+import { fileURLToPath } from 'url'
+import { getLastSessionLog } from '../../utils/sessionStorage.js'
+import { validateUuid } from '../../utils/uuid.js'
+import { readSessionIndex } from '../sessionIndexStore.js'
 import { createServerLogger, type ServerLogger } from '../serverLog.js'
 import { hasScope, issueAccessToken, verifyAccessToken } from '../auth/token.js'
 import {
@@ -137,6 +142,17 @@ function writeHtml(
   res.end(html)
 }
 
+async function loadAuthCenterHtml(): Promise<string> {
+  try {
+    const filePath = fileURLToPath(
+      new URL('../../../public/auth-center.html', import.meta.url),
+    )
+    return await readFile(filePath, 'utf8')
+  } catch {
+    return renderAdminConsoleHtml()
+  }
+}
+
 export async function startAuthCenterServer(
   options: AuthCenterServerOptions = {},
   logger: ServerLogger = createServerLogger(),
@@ -169,7 +185,7 @@ export async function startAuthCenterServer(
       }
 
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/admin')) {
-        writeHtml(res, 200, renderAdminConsoleHtml())
+        writeHtml(res, 200, await loadAuthCenterHtml())
         return
       }
 
@@ -428,6 +444,35 @@ export async function startAuthCenterServer(
           return
         }
 
+        const userSessionsMatch = url.pathname.match(
+          /^\/v1\/admin\/users\/([^/]+)\/sessions$/,
+        )
+        if (req.method === 'GET' && userSessionsMatch) {
+          if (!requireScope('admin:users')) return
+          const userId = userSessionsMatch[1] || ''
+          const user = store.users.find(
+            record => record.id === userId && record.orgId === auth.orgId,
+          )
+          if (!user) {
+            writeJson(res, 404, { error: 'Unknown user_id' })
+            return
+          }
+
+          const index = await readSessionIndex()
+          const sessions = Object.values(index)
+            .filter(
+              session =>
+                session.userId === userId && session.orgId === auth.orgId,
+            )
+            .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+
+          writeJson(res, 200, {
+            user: sanitizeUser(user),
+            sessions,
+          })
+          return
+        }
+
         const resetPasswordMatch = url.pathname.match(
           /^\/v1\/admin\/users\/([^/]+)\/reset-password$/,
         )
@@ -523,6 +568,54 @@ export async function startAuthCenterServer(
           writeJson(res, 200, {
             api_key: sanitizeApiKey(created.apiKey),
             plain_text_key: created.plainTextKey,
+          })
+          return
+        }
+
+        const sessionContextMatch = url.pathname.match(
+          /^\/v1\/admin\/sessions\/([^/]+)\/context$/,
+        )
+        if (req.method === 'GET' && sessionContextMatch) {
+          if (!requireScope('admin:users')) return
+          const sessionId = sessionContextMatch[1] || ''
+          const index = await readSessionIndex()
+          const stored = index[sessionId]
+          if (!stored || stored.orgId !== auth.orgId) {
+            writeJson(res, 404, { error: 'Unknown session_id' })
+            return
+          }
+
+          const transcriptSessionId = validateUuid(stored.transcriptSessionId)
+          if (!transcriptSessionId) {
+            writeJson(res, 500, { error: 'Invalid transcript session id' })
+            return
+          }
+
+          const log = await getLastSessionLog(transcriptSessionId)
+          if (!log) {
+            writeJson(res, 404, { error: 'Session context not found' })
+            return
+          }
+
+          writeJson(res, 200, {
+            session: {
+              sessionId: stored.sessionId,
+              transcriptSessionId: stored.transcriptSessionId,
+              cwd: stored.cwd,
+              createdAt: stored.createdAt,
+              lastActiveAt: stored.lastActiveAt,
+              userId: stored.userId,
+              orgId: stored.orgId,
+              role: stored.role,
+              scopes: stored.scopes,
+              runtime: stored.runtime,
+            },
+            context: {
+              customTitle: log.customTitle,
+              tag: log.tag,
+              summary: log.summary,
+              messages: log.messages,
+            },
           })
           return
         }

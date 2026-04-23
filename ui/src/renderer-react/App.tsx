@@ -1676,6 +1676,15 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
+  const autoSaveImageSettings = React.useCallback(async (image: DesktopSettings['image']) => {
+    try {
+      const saved = await window.agentDesktop.updateSettings({ image });
+      applyDesktopSettings(saved);
+    } catch (error: any) {
+      setSettingsNotice(error?.message || String(error));
+    }
+  }, [applyDesktopSettings]);
+
   const renderSettingsView = () => (
     <div className="h-full overflow-auto bg-background px-8 py-8">
       <div className="mx-auto max-w-4xl space-y-6">
@@ -1918,18 +1927,63 @@ export default function App() {
                 }}
                 placeholder="claude-sonnet-4-6"
               />
-              <p className="mt-4 text-sm font-medium text-foreground">图片模型</p>
+              <p className="mt-4 text-sm font-medium text-foreground">图片设置</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                图片生成相关的地址、API Key、模型统一放在一组配置里。
+              </p>
               <Input
                 className="mt-2 bg-background text-foreground"
-                value={settingsDraft?.visionModel || ''}
+                value={settingsDraft?.image?.url || ''}
                 onChange={(event) => {
                   if (!settingsDraft) return;
                   const value = event.target.value;
+                  const image = {
+                    ...(settingsDraft.image || { url: '', apiKey: '', model: '' }),
+                    url: value,
+                  };
                   setSettingsDraft({
                     ...settingsDraft,
-                    visionModel: value,
+                    image,
                   });
-                  void autoSaveSettings('visionModel', value);
+                  void autoSaveImageSettings(image);
+                }}
+                placeholder="https://api.minimaxi.com/v1/image_generation"
+              />
+              <p className="mt-4 text-sm font-medium text-foreground">图片 API Key</p>
+              <Input
+                type="password"
+                className="mt-2 bg-background text-foreground"
+                value={settingsDraft?.image?.apiKey || ''}
+                onChange={(event) => {
+                  if (!settingsDraft) return;
+                  const value = event.target.value;
+                  const image = {
+                    ...(settingsDraft.image || { url: '', apiKey: '', model: '' }),
+                    apiKey: value,
+                  };
+                  setSettingsDraft({
+                    ...settingsDraft,
+                    image,
+                  });
+                  void autoSaveImageSettings(image);
+                }}
+              />
+              <p className="mt-4 text-sm font-medium text-foreground">图片模型</p>
+              <Input
+                className="mt-2 bg-background text-foreground"
+                value={settingsDraft?.image?.model || ''}
+                onChange={(event) => {
+                  if (!settingsDraft) return;
+                  const value = event.target.value;
+                  const image = {
+                    ...(settingsDraft.image || { url: '', apiKey: '', model: '' }),
+                    model: value,
+                  };
+                  setSettingsDraft({
+                    ...settingsDraft,
+                    image,
+                  });
+                  void autoSaveImageSettings(image);
                 }}
               />
             </div>

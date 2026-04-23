@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { WebSocket } from 'ws'
+import type { SessionIndexEntry } from './types.js'
 
 export type SessionRuntimeType = 'host' | 'docker'
 
@@ -29,6 +30,7 @@ export type SessionCreateOptions = {
 
 export type BackendSpawnOptions = {
   sessionId: string
+  resumeSessionId?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
   userId?: string
@@ -80,6 +82,7 @@ type SessionRecord = {
 
 export class SessionManager {
   readonly #sessions = new Map<string, SessionRecord>()
+  readonly #pendingResumes = new Map<string, Promise<SessionSummary>>()
   readonly #idleTimeoutMs: number
   readonly #maxSessions: number
 
@@ -107,17 +110,83 @@ export class SessionManager {
     workDir: string
     runtime: SessionRuntimeInfo
   }> {
+    const summary = await this.#spawnSession({
+      sessionId: randomUUID(),
+      cwd: options.cwd || process.cwd(),
+      dangerouslySkipPermissions: options.dangerouslySkipPermissions,
+      userId: options.userId,
+      orgId: options.orgId,
+      role: options.role,
+      scopes: options.scopes,
+      runtime: options.runtime,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+    })
+
+    return {
+      sessionId: summary.sessionId,
+      workDir: summary.workDir,
+      runtime: summary.runtime,
+    }
+  }
+
+  async resumeSession(entry: SessionIndexEntry): Promise<SessionSummary> {
+    const existing = this.getSession(entry.sessionId)
+    if (existing) {
+      return existing
+    }
+
+    const pending = this.#pendingResumes.get(entry.sessionId)
+    if (pending) {
+      return pending
+    }
+
+    const resumePromise = this.#spawnSession({
+      sessionId: entry.sessionId,
+      resumeSessionId: entry.transcriptSessionId,
+      cwd: entry.cwd,
+      userId: entry.userId,
+      orgId: entry.orgId,
+      role: entry.role,
+      scopes: entry.scopes,
+      runtime: {
+        type: entry.runtime.type,
+        dockerImage: entry.runtime.dockerImage,
+        dockerMode: entry.runtime.dockerMode,
+      },
+      createdAt: entry.createdAt,
+      lastActiveAt: entry.lastActiveAt,
+    }).finally(() => {
+      this.#pendingResumes.delete(entry.sessionId)
+    })
+
+    this.#pendingResumes.set(entry.sessionId, resumePromise)
+    return resumePromise
+  }
+
+  async #spawnSession(options: {
+    sessionId: string
+    resumeSessionId?: string
+    cwd: string
+    dangerouslySkipPermissions?: boolean
+    userId?: string
+    orgId?: string
+    role?: string
+    scopes?: string[]
+    runtime?: SessionRuntimeOptions
+    createdAt: number
+    lastActiveAt: number
+  }): Promise<SessionSummary> {
     if (this.#maxSessions > 0 && this.#sessions.size >= this.#maxSessions) {
       throw new Error(
         `Maximum concurrent sessions reached (${this.#maxSessions})`,
       )
     }
 
-    const sessionId = randomUUID()
-    const cwd = options.cwd || process.cwd()
     const handle = await this.backend.spawn({
-      sessionId,
-      cwd,
+      sessionId: options.sessionId,
+      resumeSessionId: options.resumeSessionId,
+      cwd: options.cwd,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       userId: options.userId,
       orgId: options.orgId,
@@ -127,7 +196,7 @@ export class SessionManager {
     })
 
     const record: SessionRecord = {
-      id: sessionId,
+      id: options.sessionId,
       workDir: handle.workDir,
       userId: options.userId || 'anonymous',
       orgId: options.orgId || 'default',
@@ -136,12 +205,12 @@ export class SessionManager {
       runtime: handle.runtime,
       handle,
       sockets: new Set(),
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
+      createdAt: options.createdAt,
+      lastActiveAt: options.lastActiveAt,
       timeout: null,
     }
 
-    this.#sessions.set(sessionId, record)
+    this.#sessions.set(options.sessionId, record)
     this.#emitSessionsChanged()
 
     handle.onStdoutLine((line) => {
@@ -166,11 +235,7 @@ export class SessionManager {
 
     this.#armIdleTimeout(record)
 
-    return {
-      sessionId,
-      workDir: record.workDir,
-      runtime: record.runtime,
-    }
+    return this.#toSummary(record)
   }
 
   getSession(sessionId: string): SessionSummary | null {

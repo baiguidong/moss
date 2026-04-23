@@ -18,7 +18,10 @@ import type { HookCallbackMatcher } from 'src/types/hooks.js'
 import { randomUUID } from 'src/utils/crypto.js'
 import type { ModelSetting } from 'src/utils/model/model.js'
 import type { ModelStrings } from 'src/utils/model/modelStrings.js'
-import { getSessionIdContext } from 'src/utils/sessionIdContext.js'
+import {
+  getSessionIdContext,
+  getSessionProjectDirContext,
+} from 'src/utils/sessionIdContext.js'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { resetSettingsCache } from 'src/utils/settings/settingsCache.js'
 import type { PluginHookMatcher } from 'src/utils/settings/types.js'
@@ -495,7 +498,7 @@ export const onSessionSwitch = sessionSwitched.subscribe
  * originalCwd). See `switchSession()`.
  */
 export function getSessionProjectDir(): string | null {
-  return STATE.sessionProjectDir
+  return getSessionProjectDirContext() ?? STATE.sessionProjectDir
 }
 
 export function getOriginalCwd(): string {

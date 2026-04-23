@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Moss Auth Center</title>
+    <style>
+      :root {
+        --bg: #f3efe6;
+        --panel: rgba(255, 251, 244, 0.96);
+        --line: #d7ccbb;
+        --ink: #1c1712;
+        --muted: #6d6359;
+        --accent: #165b52;
+        --accent-hover: #0d3d36;
+        --accent-2: #d48b24;
+        --accent-2-hover: #b3771f;
+        --danger: #a2362b;
+        --danger-hover: #8a2e24;
+        --warning-bg: #fef3cd;
+        --warning-text: #856404;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        color: var(--ink);
+        font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+        background: var(--bg);
+        min-height: 100vh;
+      }
+
+      /* Navigation */
+      .navbar {
+        background: var(--accent);
+        color: white;
+        padding: 0 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        height: 52px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+      .navbar-brand {
+        font-size: 18px;
+        font-weight: normal;
+      }
+      .navbar-right {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .navbar-user {
+        font-size: 14px;
+        opacity: 0.9;
+      }
+      .navbar-badge {
+        padding: 4px 10px;
+        font-size: 12px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 4px;
+      }
+      .btn-logout {
+        background: rgba(255,255,255,0.15);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        padding: 6px 14px;
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 4px;
+        font: inherit;
+      }
+      .btn-logout:hover {
+        background: rgba(255,255,255,0.25);
+      }
+
+      /* Main container */
+      .main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      /* Page header */
+      .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+      }
+      .page-title {
+        font-size: 24px;
+        font-weight: normal;
+      }
+
+      /* Card */
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 20px;
+      }
+      .card-header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255,251,244,0.5);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .card-title {
+        font-size: 15px;
+        font-weight: normal;
+        color: var(--muted);
+      }
+      .card-body {
+        padding: 18px;
+      }
+
+      /* Login */
+      .login-wrapper {
+        min-height: calc(100vh - 52px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .login-card {
+        width: 100%;
+        max-width: 380px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 36px;
+      }
+      .login-title {
+        font-size: 22px;
+        margin-bottom: 6px;
+        font-weight: normal;
+      }
+      .login-subtitle {
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 28px;
+      }
+      .form-group {
+        margin-bottom: 16px;
+      }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      input, select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        border-radius: 4px;
+      }
+      input:focus, select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(22, 91, 82, 0.1);
+      }
+      .btn {
+        padding: 10px 18px;
+        border: 0;
+        cursor: pointer;
+        font: inherit;
+        font-size: 14px;
+        border-radius: 4px;
+        transition: background 0.15s;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+        width: 100%;
+      }
+      .btn-primary:hover { background: var(--accent-hover); }
+      .btn-secondary {
+        background: var(--accent-2);
+        color: var(--ink);
+      }
+      .btn-secondary:hover { background: var(--accent-2-hover); }
+      .btn-danger {
+        background: var(--danger);
+        color: white;
+      }
+      .btn-danger:hover { background: var(--danger-hover); }
+      .btn-sm {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--accent);
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+      }
+      .btn-ghost:hover { background: rgba(22, 91, 82, 0.05); }
+
+      /* Table */
+      .table-wrapper {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th, td {
+        text-align: left;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        background: rgba(247, 243, 239, 0.5);
+        color: var(--muted);
+        font-weight: normal;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      tr:last-child td { border-bottom: 0; }
+      tr:hover td { background: rgba(22, 91, 82, 0.02); }
+      .col-actions { text-align: right; width: 200px; }
+
+      /* Badge/Tag */
+      .tag {
+        display: inline-block;
+        padding: 3px 8px;
+        font-size: 11px;
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      .tag-admin { background: rgba(22, 91, 82, 0.1); color: var(--accent); }
+      .tag-member { background: rgba(212, 139, 36, 0.1); color: var(--accent-2); }
+      .tag-viewer { background: rgba(109, 99, 89, 0.1); color: var(--muted); }
+      .tag-active { background: rgba(22, 91, 82, 0.1); color: var(--accent); }
+
+      /* Result pre */
+      pre {
+        margin-top: 12px;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+        background: #f4eee3;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        max-height: 200px;
+      }
+      .error-msg {
+        color: var(--danger);
+        font-size: 13px;
+        margin-top: 8px;
+      }
+
+      /* Form row */
+      .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+      .inline-form {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+      }
+      .inline-form > * { flex: 1; }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 20px;
+      }
+      .tab {
+        padding: 12px 20px;
+        font-size: 14px;
+        color: var(--muted);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+      }
+      .tab:hover { color: var(--ink); }
+      .tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      /* Alert */
+      .alert {
+        padding: 12px 16px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+      .alert-success {
+        background: rgba(22, 91, 82, 0.1);
+        color: var(--accent);
+        border: 1px solid rgba(22, 91, 82, 0.2);
+      }
+      .alert-error {
+        background: rgba(162, 54, 43, 0.1);
+        color: var(--danger);
+        border: 1px solid rgba(162, 54, 43, 0.2);
+      }
+
+      /* Hidden */
+      .hidden { display: none; }
+
+      /* Responsive */
+      @media (max-width: 768px) {
+        .navbar { padding: 0 16px; }
+        .main { padding: 16px; }
+        .card-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+        .inline-form { flex-direction: column; }
+        .inline-form .btn { width: 100%; }
+        .col-actions { text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar" style="display: none;">
+      <div class="navbar-brand">Moss Auth Center</div>
+      <div class="navbar-right">
+        <span class="navbar-user" id="navbarUser"></span>
+        <button class="btn-logout" id="logoutBtn">Logout</button>
+      </div>
+    </nav>
+
+    <!-- Login Page -->
+    <div class="login-wrapper" id="loginPage">
+      <div class="login-card">
+        <h1 class="login-title">Sign In</h1>
+        <p class="login-subtitle">Admin access to Auth Center</p>
+        <div id="loginAlert" class="alert alert-error hidden"></div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input id="email" type="email" placeholder="admin@example.com" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+        </div>
+        <button class="btn btn-primary" id="loginBtn">Sign In</button>
+      </div>
+    </div>
+
+    <!-- Admin Panel -->
+    <div class="main hidden" id="adminPanel">
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" data-tab="users">Users</div>
+        <div class="tab" data-tab="api-keys">API Keys</div>
+        <div class="tab" data-tab="token-test">Token Test</div>
+        <div class="tab" data-tab="session-audit">Session Audit</div>
+      </div>
+
+      <!-- Users Tab -->
+      <div id="tab-users">
+        <div class="page-header">
+          <h2 class="page-title">Users</h2>
+          <button class="btn btn-primary" id="showCreateUserBtn">+ Create User</button>
+        </div>
+
+        <div class="card" id="createUserCard" style="display: none;">
+          <div class="card-header">
+            <span class="card-title">Create New User</span>
+          </div>
+          <div class="card-body">
+            <div id="createUserAlert" class="alert alert-error hidden"></div>
+            <div class="form-row">
+              <div>
+                <label for="newEmail">Email</label>
+                <input id="newEmail" type="email" placeholder="user@example.com" />
+              </div>
+              <div>
+                <label for="newName">Name</label>
+                <input id="newName" placeholder="Jane Doe" />
+              </div>
+              <div>
+                <label for="newRole">Role</label>
+                <select id="newRole">
+                  <option value="member">member</option>
+                  <option value="viewer">viewer</option>
+                  <option value="admin">admin</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div>
+                <label for="newPassword">Password</label>
+                <input id="newPassword" type="password" placeholder="Set password" />
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 14px;">
+              <button class="btn btn-primary" id="createUserSubmitBtn">Create</button>
+              <button class="btn btn-ghost" id="cancelCreateUserBtn">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body" style="padding: 0;">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="usersTableBody">
+                  <tr><td colspan="6" style="text-align: center; color: var(--muted);">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Keys Tab -->
+      <div id="tab-api-keys" class="hidden">
+        <div class="page-header">
+          <h2 class="page-title">API Keys</h2>
+          <button class="btn btn-primary" id="showCreateKeyBtn">+ Create Key</button>
+        </div>
+
+        <div class="card" id="createKeyCard" style="display: none;">
+          <div class="card-header">
+            <span class="card-title">Create New API Key</span>
+          </div>
+          <div class="card-body">
+            <div id="createKeyAlert" class="alert alert-error hidden"></div>
+            <div class="form-row">
+              <div>
+                <label for="keyUserId">User ID</label>
+                <input id="keyUserId" placeholder="user UUID" />
+              </div>
+              <div>
+                <label for="keyName">Key Name</label>
+                <input id="keyName" placeholder="my-app-key" />
+              </div>
+              <div>
+                <label for="keyScopes">Scopes (comma separated)</label>
+                <input id="keyScopes" placeholder="sessions:create, sessions:attach" />
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 14px;">
+              <button class="btn btn-primary" id="createKeySubmitBtn">Create</button>
+              <button class="btn btn-ghost" id="cancelCreateKeyBtn">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body" style="padding: 0;">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>User ID</th>
+                    <th>Prefix</th>
+                    <th>Scopes</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="keysTableBody">
+                  <tr><td colspan="7" style="text-align: center; color: var(--muted);">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Token Test Tab -->
+      <div id="tab-token-test" class="hidden">
+        <div class="page-header">
+          <h2 class="page-title">Token Test</h2>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Request Access Token</span>
+          </div>
+          <div class="card-body">
+            <div id="tokenAlert" class="alert alert-error hidden"></div>
+            <div id="tokenSuccess" class="alert alert-success hidden"></div>
+            <div class="form-row">
+              <div>
+                <label for="tokenEmail">User Email</label>
+                <input id="tokenEmail" placeholder="user@example.com" />
+              </div>
+              <div>
+                <label for="tokenPassword">Password</label>
+                <input id="tokenPassword" type="password" placeholder="Password" />
+              </div>
+            </div>
+            <button class="btn btn-secondary" id="requestTokenBtn">Request Token</button>
+            <pre id="tokenResult" style="display: none;"></pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Request Token with API Key</span>
+          </div>
+          <div class="card-body">
+            <div id="apiTokenAlert" class="alert alert-error hidden"></div>
+            <div class="form-group">
+              <label for="apiKeyInput">API Key</label>
+              <input id="apiKeyInput" placeholder="moss_sk_..." style="font-family: ui-monospace, monospace;" />
+            </div>
+            <button class="btn btn-secondary" id="requestApiTokenBtn">Request Token</button>
+            <pre id="apiTokenResult" style="display: none;"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Session Audit Tab -->
+      <div id="tab-session-audit" class="hidden">
+        <div class="page-header">
+          <h2 class="page-title">Session Audit</h2>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Query User Sessions</span>
+          </div>
+          <div class="card-body">
+            <div id="sessionAuditUserAlert" class="alert alert-error hidden"></div>
+            <div class="inline-form">
+              <div>
+                <label for="auditUserId">User ID</label>
+                <input id="auditUserId" placeholder="user UUID" />
+              </div>
+              <button class="btn btn-secondary" id="queryUserSessionsBtn">Query Sessions</button>
+            </div>
+            <pre id="userSessionsResult" style="display: none;"></pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Query Session Context</span>
+          </div>
+          <div class="card-body">
+            <div id="sessionAuditContextAlert" class="alert alert-error hidden"></div>
+            <div class="inline-form">
+              <div>
+                <label for="auditSessionId">Session ID</label>
+                <input id="auditSessionId" placeholder="session UUID" />
+              </div>
+              <button class="btn btn-secondary" id="querySessionContextBtn">Query Context</button>
+            </div>
+            <pre id="sessionContextResult" style="display: none;"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div id="resetModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; align-items: center; justify-content: center;">
+      <div style="background: var(--panel); border: 1px solid var(--line); border-radius: 6px; width: 100%; max-width: 420px; padding: 28px;">
+        <h3 style="font-size: 18px; font-weight: normal; margin-bottom: 16px;">Reset Password</h3>
+        <p style="color: var(--muted); font-size: 13px; margin-bottom: 16px;">User: <span id="resetUserEmail"></span></p>
+        <div id="resetAlert" class="alert alert-error hidden"></div>
+        <div class="form-group">
+          <label for="resetPasswordInput">New Password</label>
+          <input id="resetPasswordInput" type="password" placeholder="New password" />
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="btn btn-ghost" id="cancelResetBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmResetBtn">Reset Password</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let accessToken = '';
+      let currentUser = null;
+      let resetTargetUserId = '';
+      let resetTargetEmail = '';
+
+      // DOM elements
+      const navbar = document.getElementById('navbar');
+      const loginPage = document.getElementById('loginPage');
+      const adminPanel = document.getElementById('adminPanel');
+      const navbarUser = document.getElementById('navbarUser');
+      const loginAlert = document.getElementById('loginAlert');
+      const tabs = document.querySelectorAll('.tab');
+
+      // Utility
+      function showAlert(elementId, message) {
+        const el = document.getElementById(elementId);
+        el.textContent = message;
+        el.classList.remove('hidden');
+      }
+      function hideAlert(elementId) {
+        document.getElementById(elementId).classList.add('hidden');
+      }
+      function hideResult(elementId) {
+        document.getElementById(elementId).style.display = 'none';
+      }
+      function showResult(elementId, value) {
+        const el = document.getElementById(elementId);
+        el.style.display = 'block';
+        el.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+      }
+      function formatDate(ts) {
+        if (!ts) return '-';
+        return new Date(ts).toLocaleDateString();
+      }
+
+      // Auth
+      async function login(email, password) {
+        const result = await request('/v1/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ grant_type: 'password', email, password }),
+        });
+        accessToken = result.access_token;
+        currentUser = result.user || null;
+        showAdminPanel();
+        return result;
+      }
+
+      function logout() {
+        accessToken = '';
+        currentUser = null;
+        showLoginPage();
+      }
+
+      function showLoginPage() {
+        loginPage.style.display = 'flex';
+        adminPanel.classList.add('hidden');
+        navbar.style.display = 'none';
+        document.getElementById('email').value = '';
+        document.getElementById('password').value = '';
+        hideAlert('loginAlert');
+      }
+
+      function showAdminPanel() {
+        loginPage.style.display = 'none';
+        adminPanel.classList.remove('hidden');
+        navbar.style.display = 'flex';
+        navbarUser.textContent = currentUser?.email || 'unknown';
+        refreshUsers();
+      }
+
+      // API helper
+      async function request(path, options = {}) {
+        const headers = {
+          'content-type': 'application/json',
+          ...options.headers,
+        };
+        if (accessToken) {
+          headers.authorization = 'Bearer ' + accessToken;
+        }
+        const response = await fetch(path, { ...options, headers });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error((data && data.error) || response.statusText);
+        }
+        return data;
+      }
+
+      // Tab navigation
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          const tabId = tab.dataset.tab;
+          document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+          document.getElementById('tab-' + tabId).classList.remove('hidden');
+        });
+      });
+
+      // Login
+      document.getElementById('loginBtn').addEventListener('click', async () => {
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        hideAlert('loginAlert');
+        try {
+          await login(email, password);
+        } catch (error) {
+          showAlert('loginAlert', String(error));
+        }
+      });
+
+      document.getElementById('password').addEventListener('keypress', e => {
+        if (e.key === 'Enter') document.getElementById('loginBtn').click();
+      });
+
+      document.getElementById('logoutBtn').addEventListener('click', logout);
+
+      // Users
+      async function refreshUsers() {
+        try {
+          const data = await request('/v1/admin/users');
+          renderUsersTable(data.users || []);
+        } catch (error) {
+          document.getElementById('usersTableBody').innerHTML =
+            `<tr><td colspan="6" style="color: var(--danger);">${error}</td></tr>`;
+        }
+      }
+
+      function renderUsersTable(users) {
+        const tbody = document.getElementById('usersTableBody');
+        if (users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--muted);">No users found</td></tr>';
+          return;
+        }
+        tbody.innerHTML = users.map(user => `
+          <tr>
+            <td>${user.email}</td>
+            <td>${user.name}</td>
+            <td><span class="tag tag-${user.role}">${user.role}</span></td>
+            <td><span class="tag tag-active">${user.status}</span></td>
+            <td>${formatDate(user.createdAt)}</td>
+            <td class="col-actions">
+              <button class="btn btn-sm btn-ghost" onclick="openResetModal('${user.id}', '${user.email}')">Reset Pwd</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      // Create user
+      document.getElementById('showCreateUserBtn').addEventListener('click', () => {
+        document.getElementById('createUserCard').style.display = 'block';
+        hideAlert('createUserAlert');
+      });
+      document.getElementById('cancelCreateUserBtn').addEventListener('click', () => {
+        document.getElementById('createUserCard').style.display = 'none';
+      });
+      document.getElementById('createUserSubmitBtn').addEventListener('click', async () => {
+        hideAlert('createUserAlert');
+        const email = document.getElementById('newEmail').value.trim();
+        const name = document.getElementById('newName').value.trim();
+        const role = document.getElementById('newRole').value;
+        const password = document.getElementById('newPassword').value;
+        try {
+          await request('/v1/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({ email, name, role, password }),
+          });
+          document.getElementById('createUserCard').style.display = 'none';
+          document.getElementById('newEmail').value = '';
+          document.getElementById('newName').value = '';
+          document.getElementById('newPassword').value = '';
+          refreshUsers();
+        } catch (error) {
+          showAlert('createUserAlert', String(error));
+        }
+      });
+
+      // Reset password
+      window.openResetModal = function(userId, email) {
+        resetTargetUserId = userId;
+        resetTargetEmail = email;
+        document.getElementById('resetUserEmail').textContent = email;
+        document.getElementById('resetPasswordInput').value = '';
+        document.getElementById('resetModal').style.display = 'flex';
+        hideAlert('resetAlert');
+      };
+      document.getElementById('cancelResetBtn').addEventListener('click', () => {
+        document.getElementById('resetModal').style.display = 'none';
+      });
+      document.getElementById('confirmResetBtn').addEventListener('click', async () => {
+        hideAlert('resetAlert');
+        const password = document.getElementById('resetPasswordInput').value;
+        try {
+          await request(`/v1/admin/users/${resetTargetUserId}/reset-password`, {
+            method: 'POST',
+            body: JSON.stringify({ password }),
+          });
+          document.getElementById('resetModal').style.display = 'none';
+        } catch (error) {
+          showAlert('resetAlert', String(error));
+        }
+      });
+
+      // API Keys
+      async function refreshKeys() {
+        try {
+          const data = await request('/v1/admin/api-keys');
+          renderKeysTable(data.api_keys || []);
+        } catch (error) {
+          document.getElementById('keysTableBody').innerHTML =
+            `<tr><td colspan="7" style="color: var(--danger);">${error}</td></tr>`;
+        }
+      }
+
+      function renderKeysTable(keys) {
+        const tbody = document.getElementById('keysTableBody');
+        if (keys.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--muted);">No API keys found</td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(key => `
+          <tr>
+            <td>${key.name}</td>
+            <td><code style="font-size: 11px;">${key.userId}</code></td>
+            <td><code style="font-size: 11px;">${key.prefix}...</code></td>
+            <td><span style="font-size: 12px; color: var(--muted);">${key.scopes.join(', ')}</span></td>
+            <td><span class="tag tag-active">${key.status}</span></td>
+            <td>${formatDate(key.createdAt)}</td>
+            <td class="col-actions"></td>
+          </tr>
+        `).join('');
+      }
+
+      // Create API key
+      document.getElementById('showCreateKeyBtn').addEventListener('click', () => {
+        document.getElementById('createKeyCard').style.display = 'block';
+        hideAlert('createKeyAlert');
+      });
+      document.getElementById('cancelCreateKeyBtn').addEventListener('click', () => {
+        document.getElementById('createKeyCard').style.display = 'none';
+      });
+      document.getElementById('createKeySubmitBtn').addEventListener('click', async () => {
+        hideAlert('createKeyAlert');
+        const user_id = document.getElementById('keyUserId').value.trim();
+        const name = document.getElementById('keyName').value.trim();
+        const scopes = document.getElementById('keyScopes').value.split(',').map(s => s.trim()).filter(Boolean);
+        try {
+          const result = await request('/v1/admin/api-keys', {
+            method: 'POST',
+            body: JSON.stringify({ user_id, name, scopes }),
+          });
+          document.getElementById('createKeyCard').style.display = 'none';
+          document.getElementById('keyUserId').value = '';
+          document.getElementById('keyName').value = '';
+          document.getElementById('keyScopes').value = '';
+          refreshKeys();
+          // Show the plain text key once
+          if (result.plain_text_key) {
+            const keyResult = document.getElementById('keyResult');
+            keyResult.style.display = 'block';
+            keyResult.textContent = `API Key Created:\n${result.plain_text_key}\n\nSave this now - it will not be shown again.`;
+          }
+        } catch (error) {
+          showAlert('createKeyAlert', String(error));
+        }
+      });
+
+      // Tab switch to load keys
+      document.querySelector('[data-tab="api-keys"]').addEventListener('click', refreshKeys);
+
+      // Token test
+      document.getElementById('requestTokenBtn').addEventListener('click', async () => {
+        hideAlert('tokenAlert');
+        document.getElementById('tokenSuccess').classList.add('hidden');
+        document.getElementById('tokenResult').style.display = 'none';
+        const email = document.getElementById('tokenEmail').value.trim();
+        const password = document.getElementById('tokenPassword').value;
+        try {
+          const result = await request('/v1/auth/token', {
+            method: 'POST',
+            body: JSON.stringify({ grant_type: 'password', email, password }),
+          });
+          document.getElementById('tokenResult').style.display = 'block';
+          document.getElementById('tokenResult').textContent = JSON.stringify(result, null, 2);
+          document.getElementById('tokenSuccess').textContent = 'Token received successfully';
+          document.getElementById('tokenSuccess').classList.remove('hidden');
+        } catch (error) {
+          showAlert('tokenAlert', String(error));
+        }
+      });
+
+      document.getElementById('requestApiTokenBtn').addEventListener('click', async () => {
+        hideAlert('apiTokenAlert');
+        document.getElementById('apiTokenResult').style.display = 'none';
+        const api_key = document.getElementById('apiKeyInput').value.trim();
+        try {
+          const result = await request('/v1/auth/token', {
+            method: 'POST',
+            body: JSON.stringify({ grant_type: 'api_key', api_key }),
+          });
+          document.getElementById('apiTokenResult').style.display = 'block';
+          document.getElementById('apiTokenResult').textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          showAlert('apiTokenAlert', String(error));
+        }
+      });
+
+      // Session audit
+      document.getElementById('queryUserSessionsBtn').addEventListener('click', async () => {
+        hideAlert('sessionAuditUserAlert');
+        hideResult('userSessionsResult');
+        const userId = document.getElementById('auditUserId').value.trim();
+        try {
+          const result = await request(`/v1/admin/users/${encodeURIComponent(userId)}/sessions`);
+          showResult('userSessionsResult', result);
+        } catch (error) {
+          showAlert('sessionAuditUserAlert', String(error));
+        }
+      });
+
+      document.getElementById('querySessionContextBtn').addEventListener('click', async () => {
+        hideAlert('sessionAuditContextAlert');
+        hideResult('sessionContextResult');
+        const sessionId = document.getElementById('auditSessionId').value.trim();
+        try {
+          const result = await request(`/v1/admin/sessions/${encodeURIComponent(sessionId)}/context`);
+          showResult('sessionContextResult', result);
+        } catch (error) {
+          showAlert('sessionAuditContextAlert', String(error));
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -113,9 +113,13 @@ export class DockerBackend implements SessionBackend {
       'stream-json',
       '--permission-prompt-tool',
       'stdio',
-      '--session-id',
-      options.sessionId,
     )
+
+    if (options.resumeSessionId) {
+      args.push('--resume', options.resumeSessionId)
+    } else {
+      args.push('--session-id', options.sessionId)
+    }
 
     if (options.dangerouslySkipPermissions) {
       args.push('--dangerously-skip-permissions')
