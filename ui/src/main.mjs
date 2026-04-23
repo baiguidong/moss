@@ -59,7 +59,11 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   url: '',
   apiKey: '',
   remoteDirectServerUrl: '',
-  remoteDirectAuthToken: '',
+  remoteDirectAuthCenterUrl: '',
+  remoteDirectCredentialMode: 'password',
+  remoteDirectUserEmail: '',
+  remoteDirectUserPassword: '',
+  remoteDirectApiKey: '',
   remoteDirectWorkspace: '',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
@@ -409,10 +413,36 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.remoteDirectServerUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
   }
 
-  if (typeof source.remoteDirectAuthToken === 'string') {
-    result.remoteDirectAuthToken = source.remoteDirectAuthToken.trim();
-  } else if (result.remoteDirectAuthToken === undefined) {
-    result.remoteDirectAuthToken = DEFAULT_DESKTOP_SETTINGS.remoteDirectAuthToken;
+  if (typeof source.remoteDirectAuthCenterUrl === 'string') {
+    result.remoteDirectAuthCenterUrl = source.remoteDirectAuthCenterUrl.trim();
+  } else if (result.remoteDirectAuthCenterUrl === undefined) {
+    result.remoteDirectAuthCenterUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectAuthCenterUrl;
+  }
+
+  if (source.remoteDirectCredentialMode === 'api-key') {
+    result.remoteDirectCredentialMode = 'api-key';
+  } else if (source.remoteDirectCredentialMode === 'password') {
+    result.remoteDirectCredentialMode = 'password';
+  } else if (result.remoteDirectCredentialMode === undefined) {
+    result.remoteDirectCredentialMode = DEFAULT_DESKTOP_SETTINGS.remoteDirectCredentialMode;
+  }
+
+  if (typeof source.remoteDirectUserEmail === 'string') {
+    result.remoteDirectUserEmail = source.remoteDirectUserEmail.trim();
+  } else if (result.remoteDirectUserEmail === undefined) {
+    result.remoteDirectUserEmail = DEFAULT_DESKTOP_SETTINGS.remoteDirectUserEmail;
+  }
+
+  if (typeof source.remoteDirectUserPassword === 'string') {
+    result.remoteDirectUserPassword = source.remoteDirectUserPassword;
+  } else if (result.remoteDirectUserPassword === undefined) {
+    result.remoteDirectUserPassword = DEFAULT_DESKTOP_SETTINGS.remoteDirectUserPassword;
+  }
+
+  if (typeof source.remoteDirectApiKey === 'string') {
+    result.remoteDirectApiKey = source.remoteDirectApiKey.trim();
+  } else if (result.remoteDirectApiKey === undefined) {
+    result.remoteDirectApiKey = DEFAULT_DESKTOP_SETTINGS.remoteDirectApiKey;
   }
 
   if (typeof source.remoteDirectWorkspace === 'string') {
@@ -595,37 +625,127 @@ function getRemoteDirectWorkspace(settings = desktopSettings) {
   return value || undefined;
 }
 
-async function resolveRemoteDirectConnection() {
-  const mod = await getClaudeRuntimeModule();
-  const raw = typeof desktopSettings.remoteDirectServerUrl === 'string'
-    ? desktopSettings.remoteDirectServerUrl.trim()
-    : '';
-  const fallbackAuthToken = typeof desktopSettings.remoteDirectAuthToken === 'string'
-    ? desktopSettings.remoteDirectAuthToken.trim() || undefined
-    : undefined;
-
-  if (!raw) {
-    throw new Error('Remote Direct server URL is required.');
+function parseRemoteDirectServerInput(raw) {
+  if (raw.startsWith('cc+unix://')) {
+    throw new Error('Unix domain socket direct-connect is not supported by the desktop client yet.');
   }
 
-  if (raw.startsWith('cc://') || raw.startsWith('cc+unix://')) {
+  if (raw.startsWith('cc://')) {
     const url = new URL(raw);
-    const authToken = url.searchParams.get('token') || fallbackAuthToken;
-    if (!authToken) {
-      throw new Error(`Missing auth token in direct-connect URL: ${raw}`);
-    }
     if (!url.hostname || !url.port) {
       throw new Error(`Invalid direct-connect URL: ${raw}`);
     }
+    if (url.searchParams.get('token')) {
+      throw new Error('The desktop client no longer supports cc://...token=... URLs. Use Auth Center instead.');
+    }
+    const authMode = url.searchParams.get('auth_mode');
+    if (authMode && authMode !== 'auth-center') {
+      throw new Error(`Unsupported direct-connect auth mode in URL: ${authMode}`);
+    }
+    const authCenterUrl = url.searchParams.get('auth_center') || undefined;
     return {
       serverUrl: `http://${url.hostname}:${url.port}`,
-      authToken,
+      authCenterUrl,
     };
   }
 
   return {
     serverUrl: raw.replace(/\/+$/, ''),
-    authToken: fallbackAuthToken,
+    authCenterUrl: undefined,
+  };
+}
+
+async function requestRemoteDirectAccessToken({
+  authCenterUrl,
+  credentialMode,
+  email,
+  password,
+  apiKey,
+}) {
+  const normalizedAuthCenterUrl = typeof authCenterUrl === 'string'
+    ? authCenterUrl.trim().replace(/\/+$/, '')
+    : '';
+  if (!normalizedAuthCenterUrl) {
+    throw new Error('Auth Center URL is required.');
+  }
+
+  let payload;
+  if (credentialMode === 'api-key') {
+    const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (!normalizedApiKey) {
+      throw new Error('API Key is required for Auth Center API-key login.');
+    }
+    payload = {
+      grant_type: 'api_key',
+      api_key: normalizedApiKey,
+    };
+  } else {
+    const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+    if (!normalizedEmail) {
+      throw new Error('User email is required for Auth Center password login.');
+    }
+    if (typeof password !== 'string' || !password) {
+      throw new Error('User password is required for Auth Center password login.');
+    }
+    payload = {
+      grant_type: 'password',
+      email: normalizedEmail,
+      password,
+    };
+  }
+
+  const response = await fetch(`${normalizedAuthCenterUrl}/v1/auth/token`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const data = await response.json();
+      if (data?.error) {
+        message = data.error;
+      }
+    } catch {}
+    throw new Error(`Failed to get access token from auth center: ${message}`);
+  }
+
+  const data = await response.json();
+  if (!data?.access_token) {
+    throw new Error('Auth center response missing access_token.');
+  }
+  return data.access_token;
+}
+
+async function resolveRemoteDirectConnection() {
+  const mod = await getClaudeRuntimeModule();
+  const raw = typeof desktopSettings.remoteDirectServerUrl === 'string'
+    ? desktopSettings.remoteDirectServerUrl.trim()
+    : '';
+
+  if (!raw) {
+    throw new Error('Remote Direct server URL is required.');
+  }
+
+  const parsed = parseRemoteDirectServerInput(raw);
+  const configuredAuthCenterUrl = typeof desktopSettings.remoteDirectAuthCenterUrl === 'string'
+    ? desktopSettings.remoteDirectAuthCenterUrl.trim() || undefined
+    : undefined;
+  const authCenterUrl = parsed.authCenterUrl || configuredAuthCenterUrl;
+  const authToken = await requestRemoteDirectAccessToken({
+    authCenterUrl,
+    credentialMode: desktopSettings.remoteDirectCredentialMode,
+    email: desktopSettings.remoteDirectUserEmail,
+    password: desktopSettings.remoteDirectUserPassword,
+    apiKey: desktopSettings.remoteDirectApiKey,
+  });
+
+  return {
+    serverUrl: parsed.serverUrl,
+    authToken,
   };
 }
 

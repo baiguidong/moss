@@ -51,16 +51,12 @@ var __callDispose = (stack, error, hasError) => {
 };
 
 // src/server/parseConnectUrl.ts
-function parseConnectUrl(ccUrl) {
+function parseConnectUrl(ccUrl, options) {
   if (ccUrl.startsWith("cc+unix://")) {
     const url2 = new URL(ccUrl);
     const socketPath = decodeURIComponent(url2.hostname + url2.pathname);
-    const authToken2 = url2.searchParams.get("token") || "";
     if (!socketPath) {
       throw new Error(`Invalid direct-connect URL: ${ccUrl}`);
-    }
-    if (!authToken2) {
-      throw new Error(`Missing auth token in direct-connect URL: ${ccUrl}`);
     }
     throw new Error(`Unix domain socket direct-connect is not supported by this build (${socketPath}). Use the HTTP listener instead.`);
   }
@@ -68,16 +64,20 @@ function parseConnectUrl(ccUrl) {
     throw new Error(`Invalid direct-connect URL: ${ccUrl}`);
   }
   const url = new URL(ccUrl);
-  const authToken = url.searchParams.get("token") || "";
+  if (url.searchParams.get("token")) {
+    throw new Error(`Static token URLs are no longer supported: ${ccUrl}. Use Auth Center instead.`);
+  }
+  const authCenterUrl = url.searchParams.get("auth_center") || "";
   if (!url.hostname || !url.port) {
     throw new Error(`Invalid direct-connect URL: ${ccUrl}`);
   }
-  if (!authToken) {
-    throw new Error(`Missing auth token in direct-connect URL: ${ccUrl}`);
+  if (!authCenterUrl && !options?.allowMissingAuthInfo) {
+    throw new Error(`Missing auth information in direct-connect URL: ${ccUrl}`);
   }
   return {
     serverUrl: `http://${url.hostname}:${url.port}`,
-    authToken
+    authCenterUrl: authCenterUrl || undefined,
+    authMode: "auth-center"
   };
 }
 
@@ -19175,8 +19175,62 @@ function lazySchema(factory) {
 var connectResponseSchema = lazySchema(() => exports_external.object({
   session_id: exports_external.string(),
   ws_url: exports_external.string(),
-  work_dir: exports_external.string().optional()
+  work_dir: exports_external.string().optional(),
+  runtime: exports_external.object({
+    type: exports_external.enum(["host", "docker"]),
+    dockerImage: exports_external.string().optional(),
+    dockerMode: exports_external.enum(["session", "user"]).optional(),
+    containerName: exports_external.string().optional(),
+    configDir: exports_external.string().optional()
+  }).optional()
 }));
+
+// src/server/client/authClient.ts
+async function resolveDirectConnectAccessToken(options) {
+  if (options.authToken) {
+    return options.authToken;
+  }
+  const envToken = process.env.MOSS_SESSION_ACCESS_TOKEN;
+  if (envToken) {
+    return envToken;
+  }
+  const authCenterUrl = options.authCenterUrl || process.env.MOSS_AUTH_CENTER_URL || "";
+  const apiKey = options.apiKey || process.env.MOSS_API_KEY || "";
+  const email3 = options.email || process.env.MOSS_USER_EMAIL || "";
+  const password = options.password || process.env.MOSS_USER_PASSWORD || "";
+  if (!authCenterUrl || !apiKey && !(email3 && password)) {
+    return;
+  }
+  const response = await fetch(`${authCenterUrl}/v1/auth/token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(apiKey ? {
+      grant_type: "api_key",
+      api_key: apiKey
+    } : {
+      grant_type: "password",
+      email: email3,
+      password
+    })
+  });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const data2 = await response.json();
+      if (data2.error) {
+        message = data2.error;
+      }
+    } catch {}
+    throw new Error(`Failed to get access token from auth center: ${message}`);
+  }
+  const data = await response.json();
+  if (!data.access_token) {
+    throw new Error("Auth center response missing access_token");
+  }
+  return data.access_token;
+}
 
 // src/server/createDirectConnectSession.ts
 class DirectConnectError extends Error {
@@ -19188,14 +19242,26 @@ class DirectConnectError extends Error {
 async function createDirectConnectSession({
   serverUrl,
   authToken,
+  authCenterUrl,
+  apiKey,
+  email: email3,
+  password,
   cwd: cwd2,
-  dangerouslySkipPermissions
+  dangerouslySkipPermissions,
+  runtime
 }) {
+  const resolvedToken = await resolveDirectConnectAccessToken({
+    authToken,
+    authCenterUrl,
+    apiKey,
+    email: email3,
+    password
+  });
   const headers = {
     "content-type": "application/json"
   };
-  if (authToken) {
-    headers["authorization"] = `Bearer ${authToken}`;
+  if (resolvedToken) {
+    headers["authorization"] = `Bearer ${resolvedToken}`;
   }
   let resp;
   try {
@@ -19206,7 +19272,8 @@ async function createDirectConnectSession({
         cwd: cwd2,
         ...dangerouslySkipPermissions && {
           dangerously_skip_permissions: true
-        }
+        },
+        ...runtime ? { runtime } : {}
       })
     });
   } catch (err) {
@@ -19225,7 +19292,7 @@ async function createDirectConnectSession({
       serverUrl,
       sessionId: data.session_id,
       wsUrl: data.ws_url,
-      authToken
+      authToken: resolvedToken
     },
     workDir: data.work_dir
   };
@@ -19239,6 +19306,13 @@ function printHelp() {
     "Options:",
     "  -p, --print <prompt>    Prompt to send immediately",
     "  --output-format <fmt>   text | stream-json (default: text)",
+    "  --auth-center-url <url> Exchange access token via auth center",
+    "  --api-key <key>         API key used with --auth-center-url",
+    "  --user-email <email>    User email used with --auth-center-url",
+    "  --user-password <pwd>   User password used with --auth-center-url",
+    "  --runtime <type>        Session runtime override: host | docker",
+    "  --docker-image <image>  Docker image when --runtime=docker",
+    "  --docker-mode <mode>    Docker mode: session | user",
     "  -h, --help              Show this help",
     ""
   ].join(`
@@ -19252,6 +19326,11 @@ function parseArgs(argv) {
   let ccUrl = "";
   let prompt = "";
   let outputFormat = "text";
+  let authCenterUrl;
+  let apiKey;
+  let userEmail;
+  let userPassword;
+  let runtime;
   for (let i = 0;i < argv.length; i += 1) {
     const arg = argv[i];
     if (!ccUrl && !arg.startsWith("-")) {
@@ -19271,6 +19350,50 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (arg === "--auth-center-url") {
+      authCenterUrl = argv[i + 1] || undefined;
+      i += 1;
+      continue;
+    }
+    if (arg === "--api-key") {
+      apiKey = argv[i + 1] || undefined;
+      i += 1;
+      continue;
+    }
+    if (arg === "--user-email") {
+      userEmail = argv[i + 1] || undefined;
+      i += 1;
+      continue;
+    }
+    if (arg === "--user-password") {
+      userPassword = argv[i + 1] || undefined;
+      i += 1;
+      continue;
+    }
+    if (arg === "--runtime") {
+      runtime = {
+        ...runtime ?? {},
+        type: argv[i + 1] === "docker" ? "docker" : argv[i + 1] === "host" ? "host" : undefined
+      };
+      i += 1;
+      continue;
+    }
+    if (arg === "--docker-image") {
+      runtime = {
+        ...runtime ?? {},
+        dockerImage: argv[i + 1] || undefined
+      };
+      i += 1;
+      continue;
+    }
+    if (arg === "--docker-mode") {
+      runtime = {
+        ...runtime ?? {},
+        dockerMode: argv[i + 1] === "user" ? "user" : argv[i + 1] === "session" ? "session" : undefined
+      };
+      i += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
   if (!ccUrl) {
@@ -19279,15 +19402,30 @@ function parseArgs(argv) {
   if (!["text", "stream-json"].includes(outputFormat)) {
     throw new Error(`Unsupported --output-format: ${outputFormat}`);
   }
-  return { ccUrl, prompt, outputFormat };
+  return {
+    ccUrl,
+    prompt,
+    outputFormat,
+    authCenterUrl,
+    apiKey,
+    userEmail,
+    userPassword,
+    runtime
+  };
 }
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const { serverUrl, authToken } = parseConnectUrl(options.ccUrl);
+  const { serverUrl, authCenterUrl } = parseConnectUrl(options.ccUrl, {
+    allowMissingAuthInfo: Boolean(options.authCenterUrl)
+  });
   const session = await createDirectConnectSession({
     serverUrl,
-    authToken,
-    cwd: process.cwd()
+    authCenterUrl: options.authCenterUrl || authCenterUrl,
+    apiKey: options.apiKey,
+    email: options.userEmail,
+    password: options.userPassword,
+    cwd: process.cwd(),
+    runtime: options.runtime
   });
   await runConnectHeadless(session.config, options.prompt, options.outputFormat, true);
 }

@@ -1,8 +1,6 @@
-import { randomBytes } from 'crypto'
 import type { ServerConfig } from './types.js'
 import { startServer } from './server.js'
 import { SessionManager } from './sessionManager.js'
-import { DangerousBackend } from './backends/dangerousBackend.js'
 import { printBanner } from './serverBanner.js'
 import { createServerLogger } from './serverLog.js'
 import {
@@ -11,11 +9,16 @@ import {
   probeRunningServer,
 } from './lockfile.js'
 import { buildConnectUrl } from './parseConnectUrl.js'
+import { RuntimeBackend } from './backends/runtimeBackend.js'
+import { writeSessionIndex } from './sessionIndexStore.js'
 
 export type StandaloneServerOptions = {
   port?: number
   host?: string
-  authToken?: string
+  authCenterUrl?: string
+  runtime?: 'host' | 'docker'
+  dockerImage?: string
+  dockerMode?: 'session' | 'user'
   unix?: string
   workspace?: string
   idleTimeoutMs?: number
@@ -27,7 +30,6 @@ export async function startStandaloneDirectConnectServer(
   options: StandaloneServerOptions = {},
 ): Promise<{
   config: ServerConfig
-  authToken: string
   port: number
   httpUrl: string
   connectUrl: string
@@ -46,22 +48,44 @@ export async function startStandaloneDirectConnectServer(
     )
   }
 
-  const authToken =
-    options.authToken ??
-    `sk-ant-cc-${randomBytes(16).toString('base64url')}`
+  if (!options.authCenterUrl) {
+    throw new Error('Missing --auth-center-url. Session server now requires Auth Center.')
+  }
+
   const config: ServerConfig = {
     port: options.port ?? 0,
     host: options.host ?? '0.0.0.0',
-    authToken,
+    authMode: 'auth-center',
+    authCenterUrl: options.authCenterUrl,
     workspace: options.workspace,
     idleTimeoutMs: options.idleTimeoutMs ?? 10 * 60 * 1000,
     maxSessions: options.maxSessions ?? 32,
+    defaultRuntime: options.runtime ?? 'host',
+    dockerImage: options.dockerImage,
+    dockerMode: options.dockerMode,
   }
 
-  const sessionManager = new SessionManager(new DangerousBackend(), {
-    idleTimeoutMs: config.idleTimeoutMs,
-    maxSessions: config.maxSessions,
-  })
+  const sessionManager = new SessionManager(
+    new RuntimeBackend({
+      defaultRuntime: {
+        type: config.defaultRuntime,
+        dockerImage: config.dockerImage,
+        dockerMode: config.dockerMode,
+      },
+      docker: {
+        image: config.dockerImage,
+        mode: config.dockerMode,
+      },
+    }),
+    {
+      idleTimeoutMs: config.idleTimeoutMs,
+      maxSessions: config.maxSessions,
+      onSessionsChanged: sessions => {
+        void writeSessionIndex(sessions)
+      },
+    },
+  )
+  await writeSessionIndex([])
   const logger = createServerLogger()
   const server = startServer(config, sessionManager, logger)
   const actualPort = (await server.ready) ?? config.port
@@ -71,11 +95,12 @@ export async function startStandaloneDirectConnectServer(
   const connectUrl = buildConnectUrl({
     host: connectHost,
     port: actualPort,
-    authToken,
+    authMode: config.authMode,
+    authCenterUrl: config.authCenterUrl,
   })
 
   if (options.printStartupBanner !== false) {
-    printBanner(config, authToken, actualPort)
+    printBanner(config, actualPort)
   }
 
   await writeServerLock({
@@ -94,12 +119,12 @@ export async function startStandaloneDirectConnectServer(
     stopped = true
     server.stop(true)
     await sessionManager.destroyAll()
+    await writeSessionIndex([])
     await removeServerLock()
   }
 
   return {
     config,
-    authToken,
     port: actualPort,
     httpUrl,
     connectUrl,

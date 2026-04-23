@@ -36,7 +36,11 @@ export type DesktopSettings = {
   url: string;
   apiKey: string;
   remoteDirectServerUrl: string;
-  remoteDirectAuthToken: string;
+  remoteDirectAuthCenterUrl: string;
+  remoteDirectCredentialMode: 'password' | 'api-key';
+  remoteDirectUserEmail: string;
+  remoteDirectUserPassword: string;
+  remoteDirectApiKey: string;
   remoteDirectWorkspace: string;
   visionModel: string;
   settingsPath: string;

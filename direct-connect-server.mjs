@@ -2884,9 +2884,6 @@ var require_websocket_server = __commonJS((exports, module) => {
   }
 });
 
-// src/server/startStandaloneServer.ts
-import { randomBytes } from "crypto";
-
 // src/server/server.ts
 import http from "http";
 
@@ -2918,6 +2915,14 @@ function createServerLogger() {
   };
 }
 
+// src/server/auth/token.ts
+function hasScope(scopes, requiredScope) {
+  if (scopes.includes("*") || scopes.includes(requiredScope) || scopes.includes(`${requiredScope.split(":")[0]}:*`)) {
+    return true;
+  }
+  return false;
+}
+
 // src/server/server.ts
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -2938,6 +2943,41 @@ function getAuthToken(req) {
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1] ?? null;
 }
+async function authenticateRequest(req, config) {
+  const token = getAuthToken(req);
+  if (!token) {
+    return null;
+  }
+  if (!config.authCenterUrl) {
+    return null;
+  }
+  try {
+    const response = await fetch(`${config.authCenterUrl}/v1/auth/introspect`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ token })
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    if (data.active !== true || typeof data.sub !== "string" || typeof data.org_id !== "string" || typeof data.role !== "string" || !Array.isArray(data.scopes) || typeof data.key_id !== "string") {
+      return null;
+    }
+    return {
+      rawToken: token,
+      userId: data.sub,
+      orgId: data.org_id,
+      role: data.role,
+      scopes: data.scopes,
+      keyId: data.key_id
+    };
+  } catch {
+    return null;
+  }
+}
 function writeJson(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -2946,27 +2986,98 @@ function writeJson(res, status, body) {
   });
   res.end(payload);
 }
+function parseRuntimeOptions(body) {
+  if (typeof body.runtime_type === "string") {
+    return {
+      type: body.runtime_type === "docker" ? "docker" : "host",
+      dockerImage: typeof body.docker_image === "string" ? body.docker_image : undefined,
+      dockerMode: body.docker_mode === "user" ? "user" : body.docker_mode === "session" ? "session" : undefined
+    };
+  }
+  if (typeof body.runtime !== "object" || body.runtime === null) {
+    return;
+  }
+  const runtime = body.runtime;
+  const type = runtime.type === "docker" ? "docker" : runtime.type === "host" ? "host" : undefined;
+  if (!type) {
+    return;
+  }
+  return {
+    type,
+    dockerImage: typeof runtime.dockerImage === "string" ? runtime.dockerImage : undefined,
+    dockerMode: runtime.dockerMode === "user" ? "user" : runtime.dockerMode === "session" ? "session" : undefined
+  };
+}
 function startServer(config, sessionManager, logger = createServerLogger()) {
   const wss = new import_websocket_server.default({ noServer: true });
   const server = http.createServer(async (req, res) => {
     try {
-      if (req.url === "/health") {
-        writeJson(res, 200, { ok: true, sessions: sessionManager.size });
+      const url = new URL(req.url || "/", "http://localhost");
+      if (url.pathname === "/health") {
+        writeJson(res, 200, {
+          ok: true,
+          sessions: sessionManager.size,
+          auth_mode: config.authMode
+        });
         return;
       }
-      const token = getAuthToken(req);
-      if (token !== config.authToken) {
+      const auth = await authenticateRequest(req, config);
+      if (!auth) {
         writeJson(res, 401, { error: "Unauthorized" });
         return;
       }
-      if (req.method === "POST" && req.url === "/sessions") {
+      if (req.method === "GET" && url.pathname === "/sessions") {
+        const sessions = hasScope(auth.scopes, "sessions:list:any") ? sessionManager.listSessions({ orgId: auth.orgId }) : sessionManager.listSessions({
+          userId: auth.userId,
+          orgId: auth.orgId
+        });
+        writeJson(res, 200, { sessions });
+        return;
+      }
+      const sessionIdMatch = url.pathname.match(/^\/sessions\/([^/]+)$/);
+      if (req.method === "GET" && sessionIdMatch) {
+        const sessionId = sessionIdMatch[1] || "";
+        const session = sessionManager.getSession(sessionId);
+        if (!session) {
+          writeJson(res, 404, { error: "Session not found" });
+          return;
+        }
+        if (session.orgId !== auth.orgId || session.userId !== auth.userId && !hasScope(auth.scopes, "sessions:attach:any")) {
+          writeJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        writeJson(res, 200, { session });
+        return;
+      }
+      if (req.method === "DELETE" && sessionIdMatch) {
+        const sessionId = sessionIdMatch[1] || "";
+        const session = sessionManager.getSession(sessionId);
+        if (!session) {
+          writeJson(res, 404, { error: "Session not found" });
+          return;
+        }
+        if (session.orgId !== auth.orgId || session.userId !== auth.userId && !hasScope(auth.scopes, "sessions:terminate:any")) {
+          writeJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sessionManager.destroySession(sessionId, true);
+        writeJson(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/sessions") {
         const rawBody = await readBody(req);
         const body = rawBody ? JSON.parse(rawBody) : {};
         const cwd = typeof body.cwd === "string" && body.cwd.trim() ? body.cwd : config.workspace || process.cwd();
         const dangerouslySkipPermissions = body.dangerously_skip_permissions === true;
+        const runtime = parseRuntimeOptions(body);
         const created = await sessionManager.createSession({
           cwd,
-          dangerouslySkipPermissions
+          dangerouslySkipPermissions,
+          userId: auth.userId,
+          orgId: auth.orgId,
+          role: auth.role,
+          scopes: auth.scopes,
+          runtime
         });
         const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;
         const address = server.address();
@@ -2974,7 +3085,8 @@ function startServer(config, sessionManager, logger = createServerLogger()) {
         writeJson(res, 200, {
           session_id: created.sessionId,
           ws_url: `ws://${host}:${actualPort}/sessions/${created.sessionId}/ws`,
-          work_dir: created.workDir
+          work_dir: created.workDir,
+          runtime: created.runtime
         });
         return;
       }
@@ -2987,38 +3099,56 @@ function startServer(config, sessionManager, logger = createServerLogger()) {
     }
   });
   server.on("upgrade", (req, socket, head) => {
-    try {
-      const token = getAuthToken(req);
-      if (token !== config.authToken) {
-        socket.write(`HTTP/1.1 401 Unauthorized\r
+    (async () => {
+      try {
+        const token = getAuthToken(req);
+        const auth = await authenticateRequest(req, config);
+        if (!auth || !token) {
+          socket.write(`HTTP/1.1 401 Unauthorized\r
 \r
 `);
-        socket.destroy();
-        return;
-      }
-      const url = new URL(req.url || "/", "http://localhost");
-      const match = url.pathname.match(/^\/sessions\/([^/]+)\/ws$/);
-      if (!match) {
-        socket.write(`HTTP/1.1 404 Not Found\r
-\r
-`);
-        socket.destroy();
-        return;
-      }
-      const sessionId = match[1] || "";
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        try {
-          sessionManager.attachSocket(sessionId, ws);
-          wss.emit("connection", ws, req);
-        } catch (error) {
-          logger.error(error instanceof Error ? error.message : String(error));
-          ws.close();
+          socket.destroy();
+          return;
         }
-      });
-    } catch (error) {
-      logger.error(error instanceof Error ? error.message : String(error));
-      socket.destroy();
-    }
+        const url = new URL(req.url || "/", "http://localhost");
+        const match = url.pathname.match(/^\/sessions\/([^/]+)\/ws$/);
+        if (!match) {
+          socket.write(`HTTP/1.1 404 Not Found\r
+\r
+`);
+          socket.destroy();
+          return;
+        }
+        const sessionId = match[1] || "";
+        const session = sessionManager.getSession(sessionId);
+        if (!session) {
+          socket.write(`HTTP/1.1 404 Not Found\r
+\r
+`);
+          socket.destroy();
+          return;
+        }
+        if (session.orgId !== auth.orgId || session.userId !== auth.userId && !hasScope(auth.scopes, "sessions:attach:any")) {
+          socket.write(`HTTP/1.1 403 Forbidden\r
+\r
+`);
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          try {
+            sessionManager.attachSocket(sessionId, ws);
+            wss.emit("connection", ws, req);
+          } catch (error) {
+            logger.error(error instanceof Error ? error.message : String(error));
+            ws.close();
+          }
+        });
+      } catch (error) {
+        logger.error(error instanceof Error ? error.message : String(error));
+        socket.destroy();
+      }
+    })();
   });
   const ready = new Promise((resolve, reject) => {
     const onError = (error) => {
@@ -3070,7 +3200,9 @@ class SessionManager {
     this.backend = backend;
     this.#idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 10 * 60 * 1000);
     this.#maxSessions = Math.max(0, options.maxSessions ?? 32);
+    this.#onSessionsChanged = options.onSessionsChanged;
   }
+  #onSessionsChanged;
   get size() {
     return this.#sessions.size;
   }
@@ -3083,11 +3215,21 @@ class SessionManager {
     const handle = await this.backend.spawn({
       sessionId,
       cwd,
-      dangerouslySkipPermissions: options.dangerouslySkipPermissions
+      dangerouslySkipPermissions: options.dangerouslySkipPermissions,
+      userId: options.userId,
+      orgId: options.orgId,
+      role: options.role,
+      scopes: options.scopes,
+      runtime: options.runtime
     });
     const record = {
       id: sessionId,
       workDir: handle.workDir,
+      userId: options.userId || "anonymous",
+      orgId: options.orgId || "default",
+      role: options.role || "member",
+      scopes: options.scopes || [],
+      runtime: handle.runtime,
       handle,
       sockets: new Set,
       createdAt: Date.now(),
@@ -3095,6 +3237,7 @@ class SessionManager {
       timeout: null
     };
     this.#sessions.set(sessionId, record);
+    this.#emitSessionsChanged();
     handle.onStdoutLine((line) => {
       record.lastActiveAt = Date.now();
       for (const socket of record.sockets) {
@@ -3111,11 +3254,13 @@ class SessionManager {
       }
       this.#clearTimeout(record);
       this.#sessions.delete(record.id);
+      this.#emitSessionsChanged();
     });
     this.#armIdleTimeout(record);
     return {
       sessionId,
-      workDir: record.workDir
+      workDir: record.workDir,
+      runtime: record.runtime
     };
   }
   getSession(sessionId) {
@@ -3123,12 +3268,18 @@ class SessionManager {
     if (!record) {
       return null;
     }
-    return {
-      sessionId: record.id,
-      workDir: record.workDir,
-      createdAt: record.createdAt,
-      lastActiveAt: record.lastActiveAt
-    };
+    return this.#toSummary(record);
+  }
+  listSessions(filter = {}) {
+    return [...this.#sessions.values()].filter((record) => {
+      if (filter.userId && record.userId !== filter.userId) {
+        return false;
+      }
+      if (filter.orgId && record.orgId !== filter.orgId) {
+        return false;
+      }
+      return true;
+    }).map((record) => this.#toSummary(record));
   }
   attachSocket(sessionId, socket) {
     const record = this.#sessions.get(sessionId);
@@ -3138,6 +3289,7 @@ class SessionManager {
     record.sockets.add(socket);
     record.lastActiveAt = Date.now();
     this.#clearTimeout(record);
+    this.#emitSessionsChanged();
     socket.on("message", (data) => {
       record.lastActiveAt = Date.now();
       const text = typeof data === "string" ? data : Buffer.from(data).toString("utf8");
@@ -3149,6 +3301,7 @@ class SessionManager {
       record.sockets.delete(socket);
       record.lastActiveAt = Date.now();
       this.#armIdleTimeout(record);
+      this.#emitSessionsChanged();
     });
   }
   destroySession(sessionId, force = false) {
@@ -3180,135 +3333,40 @@ class SessionManager {
       record.timeout = null;
     }
   }
-}
-
-// src/server/backends/dangerousBackend.ts
-import { spawn } from "child_process";
-import { createInterface } from "readline";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-var __filename2 = fileURLToPath(import.meta.url);
-var __dirname2 = path.dirname(__filename2);
-function resolveNodeCliPath() {
-  const configured = process.env.CLAUDE_CODE_CLI_PATH;
-  const candidates = [
-    configured,
-    path.join(process.cwd(), "cli-node.js"),
-    path.join(__dirname2, "cli-node.js"),
-    path.join(__dirname2, "../cli-node.js"),
-    path.join(__dirname2, "../../cli-node.js"),
-    path.join(__dirname2, "../../../cli-node.js")
-  ].filter((value) => Boolean(value));
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return candidates[0] || path.join(process.cwd(), "cli-node.js");
-}
-function ensureCliExists(nodeCliPath) {
-  if (!fs.existsSync(nodeCliPath)) {
-    throw new Error(`Missing ${nodeCliPath}. Run "bun run build:node" before starting the session server.`);
-  }
-}
-
-class DangerousBackend {
-  async spawn(options) {
-    const nodeCliPath = resolveNodeCliPath();
-    ensureCliExists(nodeCliPath);
-    const args = [
-      nodeCliPath,
-      "--print",
-      "--verbose",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
-      "--permission-prompt-tool",
-      "stdio",
-      "--session-id",
-      options.sessionId
-    ];
-    if (options.dangerouslySkipPermissions) {
-      args.push("--dangerously-skip-permissions");
-    }
-    const child = spawn(process.execPath, args, {
-      cwd: options.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
-    });
-    if (!child.stdin || !child.stdout) {
-      throw new Error("Failed to start direct-connect child process");
-    }
-    const stdoutListeners = new Set;
-    const exitListeners = new Set;
-    const stdoutRl = createInterface({ input: child.stdout });
-    stdoutRl.on("line", (line) => {
-      const payload = `${line}
-`;
-      for (const listener of stdoutListeners) {
-        listener(payload);
-      }
-    });
-    if (child.stderr) {
-      const stderrRl = createInterface({ input: child.stderr });
-      stderrRl.on("line", (line) => {
-        process.stderr.write(`[direct-connect child ${options.sessionId}] ${line}
-`);
-      });
-    }
-    child.on("close", (code, signal) => {
-      stdoutRl.close();
-      for (const listener of exitListeners) {
-        listener(code, signal);
-      }
-    });
-    child.on("error", (error) => {
-      process.stderr.write(`[direct-connect child ${options.sessionId}] spawn error: ${error.message}
-`);
-    });
+  #toSummary(record) {
     return {
-      workDir: options.cwd,
-      writeStdin(data) {
-        if (!child.stdin?.destroyed) {
-          child.stdin.write(data);
-        }
-      },
-      onStdoutLine(listener) {
-        stdoutListeners.add(listener);
-        return () => {
-          stdoutListeners.delete(listener);
-        };
-      },
-      onExit(listener) {
-        exitListeners.add(listener);
-        return () => {
-          exitListeners.delete(listener);
-        };
-      },
-      destroy(force = false) {
-        if (child.killed) {
-          return;
-        }
-        if (process.platform === "win32") {
-          child.kill();
-          return;
-        }
-        child.kill(force ? "SIGKILL" : "SIGTERM");
-      }
+      sessionId: record.id,
+      workDir: record.workDir,
+      userId: record.userId,
+      orgId: record.orgId,
+      role: record.role,
+      scopes: record.scopes,
+      runtime: record.runtime,
+      createdAt: record.createdAt,
+      lastActiveAt: record.lastActiveAt
     };
+  }
+  #emitSessionsChanged() {
+    this.#onSessionsChanged?.(this.listSessions());
   }
 }
 
 // src/server/parseConnectUrl.ts
-import path2 from "path";
+import path from "path";
 function buildConnectUrl(options) {
-  if (options.unix) {
-    return `cc+unix://${encodeURIComponent(path2.resolve(options.unix))}?token=${encodeURIComponent(options.authToken)}`;
+  const searchParams = new URLSearchParams;
+  if (options.authMode === "auth-center") {
+    searchParams.set("auth_mode", "auth-center");
+    if (options.authCenterUrl) {
+      searchParams.set("auth_center", options.authCenterUrl);
+    }
   }
-  return `cc://${options.host}:${options.port}?token=${encodeURIComponent(options.authToken)}`;
+  if (options.unix) {
+    const query2 = searchParams.toString();
+    return `cc+unix://${encodeURIComponent(path.resolve(options.unix))}${query2 ? `?${query2}` : ""}`;
+  }
+  const query = searchParams.toString();
+  return `cc://${options.host}:${options.port}${query ? `?${query}` : ""}`;
 }
 
 // src/server/serverBanner.ts
@@ -3318,11 +3376,12 @@ function displayHost(host) {
   }
   return host;
 }
-function printBanner(config, authToken, actualPort) {
+function printBanner(config, actualPort) {
   const connectUrl = buildConnectUrl({
     host: displayHost(config.host),
     port: actualPort,
-    authToken,
+    authMode: config.authMode,
+    authCenterUrl: config.authCenterUrl,
     unix: config.unix
   });
   process.stderr.write([
@@ -3336,30 +3395,735 @@ function printBanner(config, authToken, actualPort) {
 }
 
 // src/server/lockfile.ts
-import fs2 from "fs/promises";
+import fs from "fs/promises";
 import os from "os";
-import path3 from "path";
-var lockDir = path3.join(os.homedir(), ".claude");
-var lockPath = path3.join(lockDir, "direct-connect-server.json");
+import path2 from "path";
+var lockDir = path2.join(os.homedir(), ".claude");
+var lockPath = path2.join(lockDir, "direct-connect-server.json");
 async function ensureDir() {
-  await fs2.mkdir(lockDir, { recursive: true });
+  await fs.mkdir(lockDir, { recursive: true });
 }
 async function writeServerLock(lock) {
   await ensureDir();
-  await fs2.writeFile(lockPath, JSON.stringify(lock, null, 2), "utf8");
+  await fs.writeFile(lockPath, JSON.stringify(lock, null, 2), "utf8");
 }
 async function removeServerLock() {
-  await fs2.rm(lockPath, { force: true });
+  await fs.rm(lockPath, { force: true });
 }
 async function probeRunningServer() {
   try {
-    const raw = await fs2.readFile(lockPath, "utf8");
+    const raw = await fs.readFile(lockPath, "utf8");
     const parsed = JSON.parse(raw);
     process.kill(parsed.pid, 0);
     return parsed;
   } catch {
     return null;
   }
+}
+
+// src/server/backends/backendUtils.ts
+import { spawn } from "child_process";
+import { createInterface } from "readline";
+import fs2 from "fs";
+import path3 from "path";
+import { fileURLToPath } from "url";
+var __filename2 = fileURLToPath(import.meta.url);
+var __dirname2 = path3.dirname(__filename2);
+function resolveNodeCliPath() {
+  const configured = process.env.CLAUDE_CODE_CLI_PATH;
+  const candidates = [
+    configured,
+    path3.join(process.cwd(), "cli-node.js"),
+    path3.join(__dirname2, "cli-node.js"),
+    path3.join(__dirname2, "../cli-node.js"),
+    path3.join(__dirname2, "../../cli-node.js"),
+    path3.join(__dirname2, "../../../cli-node.js")
+  ].filter((value) => Boolean(value));
+  for (const candidate of candidates) {
+    if (fs2.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0] || path3.join(process.cwd(), "cli-node.js");
+}
+function ensureCliExists(nodeCliPath) {
+  if (!fs2.existsSync(nodeCliPath)) {
+    throw new Error(`Missing ${nodeCliPath}. Run "bun run build:node" before starting the session server.`);
+  }
+}
+function buildSessionEnv(options, overrides = {}) {
+  return {
+    ...process.env,
+    ...options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {},
+    ...options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {},
+    ...options.role ? { MOSS_SESSION_ROLE: options.role } : {},
+    ...options.scopes ? { MOSS_SESSION_SCOPES: options.scopes.join(",") } : {},
+    ...Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined))
+  };
+}
+function createStreamBackendHandle(child, options, runtime) {
+  if (!child.stdin || !child.stdout) {
+    throw new Error("Failed to start direct-connect child process");
+  }
+  const stdoutListeners = new Set;
+  const exitListeners = new Set;
+  const stdoutRl = createInterface({ input: child.stdout });
+  stdoutRl.on("line", (line) => {
+    const payload = `${line}
+`;
+    for (const listener of stdoutListeners) {
+      listener(payload);
+    }
+  });
+  if (child.stderr) {
+    const stderrRl = createInterface({ input: child.stderr });
+    stderrRl.on("line", (line) => {
+      process.stderr.write(`[direct-connect child ${options.sessionId}] ${line}
+`);
+    });
+  }
+  child.on("close", (code, signal) => {
+    stdoutRl.close();
+    for (const listener of exitListeners) {
+      listener(code, signal);
+    }
+  });
+  child.on("error", (error) => {
+    process.stderr.write(`[direct-connect child ${options.sessionId}] spawn error: ${error.message}
+`);
+  });
+  return {
+    workDir: options.cwd,
+    runtime,
+    writeStdin(data) {
+      if (!child.stdin?.destroyed) {
+        child.stdin.write(data);
+      }
+    },
+    onStdoutLine(listener) {
+      stdoutListeners.add(listener);
+      return () => {
+        stdoutListeners.delete(listener);
+      };
+    },
+    onExit(listener) {
+      exitListeners.add(listener);
+      return () => {
+        exitListeners.delete(listener);
+      };
+    },
+    destroy(force = false) {
+      if (child.killed) {
+        return;
+      }
+      if (process.platform === "win32") {
+        child.kill();
+        return;
+      }
+      child.kill(force ? "SIGKILL" : "SIGTERM");
+    }
+  };
+}
+function spawnLocalCliProcess(options, env) {
+  const nodeCliPath = resolveNodeCliPath();
+  ensureCliExists(nodeCliPath);
+  const args = [
+    nodeCliPath,
+    "--print",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--permission-prompt-tool",
+    "stdio",
+    "--session-id",
+    options.sessionId
+  ];
+  if (options.dangerouslySkipPermissions) {
+    args.push("--dangerously-skip-permissions");
+  }
+  return spawn(process.execPath, args, {
+    cwd: options.cwd,
+    env,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
+  });
+}
+
+// src/server/backends/dangerousBackend.ts
+class DangerousBackend {
+  async spawn(options) {
+    const child = spawnLocalCliProcess({
+      ...options,
+      runtime: {
+        ...options.runtime,
+        type: "host"
+      }
+    }, buildSessionEnv(options, {
+      MOSS_SESSION_RUNTIME_TYPE: "host"
+    }));
+    return createStreamBackendHandle(child, options, {
+      type: "host"
+    });
+  }
+}
+
+// src/server/backends/dockerBackend.ts
+import { spawn as spawn2 } from "child_process";
+import { mkdir } from "fs/promises";
+import { dirname, join as join2 } from "path";
+
+// node_modules/lodash-es/_freeGlobal.js
+var freeGlobal = typeof global == "object" && global && global.Object === Object && global;
+var _freeGlobal_default = freeGlobal;
+
+// node_modules/lodash-es/_root.js
+var freeSelf = typeof self == "object" && self && self.Object === Object && self;
+var root = _freeGlobal_default || freeSelf || Function("return this")();
+var _root_default = root;
+
+// node_modules/lodash-es/_Symbol.js
+var Symbol2 = _root_default.Symbol;
+var _Symbol_default = Symbol2;
+
+// node_modules/lodash-es/_getRawTag.js
+var objectProto = Object.prototype;
+var hasOwnProperty = objectProto.hasOwnProperty;
+var nativeObjectToString = objectProto.toString;
+var symToStringTag = _Symbol_default ? _Symbol_default.toStringTag : undefined;
+function getRawTag(value) {
+  var isOwn = hasOwnProperty.call(value, symToStringTag), tag = value[symToStringTag];
+  try {
+    value[symToStringTag] = undefined;
+    var unmasked = true;
+  } catch (e) {}
+  var result = nativeObjectToString.call(value);
+  if (unmasked) {
+    if (isOwn) {
+      value[symToStringTag] = tag;
+    } else {
+      delete value[symToStringTag];
+    }
+  }
+  return result;
+}
+var _getRawTag_default = getRawTag;
+
+// node_modules/lodash-es/_objectToString.js
+var objectProto2 = Object.prototype;
+var nativeObjectToString2 = objectProto2.toString;
+function objectToString(value) {
+  return nativeObjectToString2.call(value);
+}
+var _objectToString_default = objectToString;
+
+// node_modules/lodash-es/_baseGetTag.js
+var nullTag = "[object Null]";
+var undefinedTag = "[object Undefined]";
+var symToStringTag2 = _Symbol_default ? _Symbol_default.toStringTag : undefined;
+function baseGetTag(value) {
+  if (value == null) {
+    return value === undefined ? undefinedTag : nullTag;
+  }
+  return symToStringTag2 && symToStringTag2 in Object(value) ? _getRawTag_default(value) : _objectToString_default(value);
+}
+var _baseGetTag_default = baseGetTag;
+
+// node_modules/lodash-es/isObject.js
+function isObject(value) {
+  var type = typeof value;
+  return value != null && (type == "object" || type == "function");
+}
+var isObject_default = isObject;
+
+// node_modules/lodash-es/isFunction.js
+var asyncTag = "[object AsyncFunction]";
+var funcTag = "[object Function]";
+var genTag = "[object GeneratorFunction]";
+var proxyTag = "[object Proxy]";
+function isFunction(value) {
+  if (!isObject_default(value)) {
+    return false;
+  }
+  var tag = _baseGetTag_default(value);
+  return tag == funcTag || tag == genTag || tag == asyncTag || tag == proxyTag;
+}
+var isFunction_default = isFunction;
+
+// node_modules/lodash-es/_coreJsData.js
+var coreJsData = _root_default["__core-js_shared__"];
+var _coreJsData_default = coreJsData;
+
+// node_modules/lodash-es/_isMasked.js
+var maskSrcKey = function() {
+  var uid = /[^.]+$/.exec(_coreJsData_default && _coreJsData_default.keys && _coreJsData_default.keys.IE_PROTO || "");
+  return uid ? "Symbol(src)_1." + uid : "";
+}();
+function isMasked(func) {
+  return !!maskSrcKey && maskSrcKey in func;
+}
+var _isMasked_default = isMasked;
+
+// node_modules/lodash-es/_toSource.js
+var funcProto = Function.prototype;
+var funcToString = funcProto.toString;
+function toSource(func) {
+  if (func != null) {
+    try {
+      return funcToString.call(func);
+    } catch (e) {}
+    try {
+      return func + "";
+    } catch (e) {}
+  }
+  return "";
+}
+var _toSource_default = toSource;
+
+// node_modules/lodash-es/_baseIsNative.js
+var reRegExpChar = /[\\^$.*+?()[\]{}|]/g;
+var reIsHostCtor = /^\[object .+?Constructor\]$/;
+var funcProto2 = Function.prototype;
+var objectProto3 = Object.prototype;
+var funcToString2 = funcProto2.toString;
+var hasOwnProperty2 = objectProto3.hasOwnProperty;
+var reIsNative = RegExp("^" + funcToString2.call(hasOwnProperty2).replace(reRegExpChar, "\\$&").replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, "$1.*?") + "$");
+function baseIsNative(value) {
+  if (!isObject_default(value) || _isMasked_default(value)) {
+    return false;
+  }
+  var pattern = isFunction_default(value) ? reIsNative : reIsHostCtor;
+  return pattern.test(_toSource_default(value));
+}
+var _baseIsNative_default = baseIsNative;
+
+// node_modules/lodash-es/_getValue.js
+function getValue(object, key) {
+  return object == null ? undefined : object[key];
+}
+var _getValue_default = getValue;
+
+// node_modules/lodash-es/_getNative.js
+function getNative(object, key) {
+  var value = _getValue_default(object, key);
+  return _baseIsNative_default(value) ? value : undefined;
+}
+var _getNative_default = getNative;
+
+// node_modules/lodash-es/_nativeCreate.js
+var nativeCreate = _getNative_default(Object, "create");
+var _nativeCreate_default = nativeCreate;
+
+// node_modules/lodash-es/_hashClear.js
+function hashClear() {
+  this.__data__ = _nativeCreate_default ? _nativeCreate_default(null) : {};
+  this.size = 0;
+}
+var _hashClear_default = hashClear;
+
+// node_modules/lodash-es/_hashDelete.js
+function hashDelete(key) {
+  var result = this.has(key) && delete this.__data__[key];
+  this.size -= result ? 1 : 0;
+  return result;
+}
+var _hashDelete_default = hashDelete;
+
+// node_modules/lodash-es/_hashGet.js
+var HASH_UNDEFINED = "__lodash_hash_undefined__";
+var objectProto4 = Object.prototype;
+var hasOwnProperty3 = objectProto4.hasOwnProperty;
+function hashGet(key) {
+  var data = this.__data__;
+  if (_nativeCreate_default) {
+    var result = data[key];
+    return result === HASH_UNDEFINED ? undefined : result;
+  }
+  return hasOwnProperty3.call(data, key) ? data[key] : undefined;
+}
+var _hashGet_default = hashGet;
+
+// node_modules/lodash-es/_hashHas.js
+var objectProto5 = Object.prototype;
+var hasOwnProperty4 = objectProto5.hasOwnProperty;
+function hashHas(key) {
+  var data = this.__data__;
+  return _nativeCreate_default ? data[key] !== undefined : hasOwnProperty4.call(data, key);
+}
+var _hashHas_default = hashHas;
+
+// node_modules/lodash-es/_hashSet.js
+var HASH_UNDEFINED2 = "__lodash_hash_undefined__";
+function hashSet(key, value) {
+  var data = this.__data__;
+  this.size += this.has(key) ? 0 : 1;
+  data[key] = _nativeCreate_default && value === undefined ? HASH_UNDEFINED2 : value;
+  return this;
+}
+var _hashSet_default = hashSet;
+
+// node_modules/lodash-es/_Hash.js
+function Hash(entries) {
+  var index = -1, length = entries == null ? 0 : entries.length;
+  this.clear();
+  while (++index < length) {
+    var entry = entries[index];
+    this.set(entry[0], entry[1]);
+  }
+}
+Hash.prototype.clear = _hashClear_default;
+Hash.prototype["delete"] = _hashDelete_default;
+Hash.prototype.get = _hashGet_default;
+Hash.prototype.has = _hashHas_default;
+Hash.prototype.set = _hashSet_default;
+var _Hash_default = Hash;
+
+// node_modules/lodash-es/_listCacheClear.js
+function listCacheClear() {
+  this.__data__ = [];
+  this.size = 0;
+}
+var _listCacheClear_default = listCacheClear;
+
+// node_modules/lodash-es/eq.js
+function eq(value, other) {
+  return value === other || value !== value && other !== other;
+}
+var eq_default = eq;
+
+// node_modules/lodash-es/_assocIndexOf.js
+function assocIndexOf(array, key) {
+  var length = array.length;
+  while (length--) {
+    if (eq_default(array[length][0], key)) {
+      return length;
+    }
+  }
+  return -1;
+}
+var _assocIndexOf_default = assocIndexOf;
+
+// node_modules/lodash-es/_listCacheDelete.js
+var arrayProto = Array.prototype;
+var splice = arrayProto.splice;
+function listCacheDelete(key) {
+  var data = this.__data__, index = _assocIndexOf_default(data, key);
+  if (index < 0) {
+    return false;
+  }
+  var lastIndex = data.length - 1;
+  if (index == lastIndex) {
+    data.pop();
+  } else {
+    splice.call(data, index, 1);
+  }
+  --this.size;
+  return true;
+}
+var _listCacheDelete_default = listCacheDelete;
+
+// node_modules/lodash-es/_listCacheGet.js
+function listCacheGet(key) {
+  var data = this.__data__, index = _assocIndexOf_default(data, key);
+  return index < 0 ? undefined : data[index][1];
+}
+var _listCacheGet_default = listCacheGet;
+
+// node_modules/lodash-es/_listCacheHas.js
+function listCacheHas(key) {
+  return _assocIndexOf_default(this.__data__, key) > -1;
+}
+var _listCacheHas_default = listCacheHas;
+
+// node_modules/lodash-es/_listCacheSet.js
+function listCacheSet(key, value) {
+  var data = this.__data__, index = _assocIndexOf_default(data, key);
+  if (index < 0) {
+    ++this.size;
+    data.push([key, value]);
+  } else {
+    data[index][1] = value;
+  }
+  return this;
+}
+var _listCacheSet_default = listCacheSet;
+
+// node_modules/lodash-es/_ListCache.js
+function ListCache(entries) {
+  var index = -1, length = entries == null ? 0 : entries.length;
+  this.clear();
+  while (++index < length) {
+    var entry = entries[index];
+    this.set(entry[0], entry[1]);
+  }
+}
+ListCache.prototype.clear = _listCacheClear_default;
+ListCache.prototype["delete"] = _listCacheDelete_default;
+ListCache.prototype.get = _listCacheGet_default;
+ListCache.prototype.has = _listCacheHas_default;
+ListCache.prototype.set = _listCacheSet_default;
+var _ListCache_default = ListCache;
+
+// node_modules/lodash-es/_Map.js
+var Map2 = _getNative_default(_root_default, "Map");
+var _Map_default = Map2;
+
+// node_modules/lodash-es/_mapCacheClear.js
+function mapCacheClear() {
+  this.size = 0;
+  this.__data__ = {
+    hash: new _Hash_default,
+    map: new (_Map_default || _ListCache_default),
+    string: new _Hash_default
+  };
+}
+var _mapCacheClear_default = mapCacheClear;
+
+// node_modules/lodash-es/_isKeyable.js
+function isKeyable(value) {
+  var type = typeof value;
+  return type == "string" || type == "number" || type == "symbol" || type == "boolean" ? value !== "__proto__" : value === null;
+}
+var _isKeyable_default = isKeyable;
+
+// node_modules/lodash-es/_getMapData.js
+function getMapData(map, key) {
+  var data = map.__data__;
+  return _isKeyable_default(key) ? data[typeof key == "string" ? "string" : "hash"] : data.map;
+}
+var _getMapData_default = getMapData;
+
+// node_modules/lodash-es/_mapCacheDelete.js
+function mapCacheDelete(key) {
+  var result = _getMapData_default(this, key)["delete"](key);
+  this.size -= result ? 1 : 0;
+  return result;
+}
+var _mapCacheDelete_default = mapCacheDelete;
+
+// node_modules/lodash-es/_mapCacheGet.js
+function mapCacheGet(key) {
+  return _getMapData_default(this, key).get(key);
+}
+var _mapCacheGet_default = mapCacheGet;
+
+// node_modules/lodash-es/_mapCacheHas.js
+function mapCacheHas(key) {
+  return _getMapData_default(this, key).has(key);
+}
+var _mapCacheHas_default = mapCacheHas;
+
+// node_modules/lodash-es/_mapCacheSet.js
+function mapCacheSet(key, value) {
+  var data = _getMapData_default(this, key), size = data.size;
+  data.set(key, value);
+  this.size += data.size == size ? 0 : 1;
+  return this;
+}
+var _mapCacheSet_default = mapCacheSet;
+
+// node_modules/lodash-es/_MapCache.js
+function MapCache(entries) {
+  var index = -1, length = entries == null ? 0 : entries.length;
+  this.clear();
+  while (++index < length) {
+    var entry = entries[index];
+    this.set(entry[0], entry[1]);
+  }
+}
+MapCache.prototype.clear = _mapCacheClear_default;
+MapCache.prototype["delete"] = _mapCacheDelete_default;
+MapCache.prototype.get = _mapCacheGet_default;
+MapCache.prototype.has = _mapCacheHas_default;
+MapCache.prototype.set = _mapCacheSet_default;
+var _MapCache_default = MapCache;
+
+// node_modules/lodash-es/memoize.js
+var FUNC_ERROR_TEXT = "Expected a function";
+function memoize(func, resolver) {
+  if (typeof func != "function" || resolver != null && typeof resolver != "function") {
+    throw new TypeError(FUNC_ERROR_TEXT);
+  }
+  var memoized = function() {
+    var args = arguments, key = resolver ? resolver.apply(this, args) : args[0], cache = memoized.cache;
+    if (cache.has(key)) {
+      return cache.get(key);
+    }
+    var result = func.apply(this, args);
+    memoized.cache = cache.set(key, result) || cache;
+    return result;
+  };
+  memoized.cache = new (memoize.Cache || _MapCache_default);
+  return memoized;
+}
+memoize.Cache = _MapCache_default;
+var memoize_default = memoize;
+
+// src/utils/envUtils.ts
+import { existsSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
+var getClaudeConfigHomeDir = memoize_default(() => {
+  if (process.env.CLAUDE_CONFIG_DIR) {
+    return process.env.CLAUDE_CONFIG_DIR.normalize("NFC");
+  }
+  const mossDir = join(homedir(), ".moss").normalize("NFC");
+  const claudeDir = join(homedir(), ".claude").normalize("NFC");
+  if (existsSync(mossDir)) {
+    return mossDir;
+  }
+  return claudeDir;
+}, () => process.env.CLAUDE_CONFIG_DIR);
+
+// src/server/backends/dockerBackend.ts
+function uniqueMounts(paths) {
+  return [...new Set(paths)];
+}
+function buildConfigDir(options, mode) {
+  if (mode === "user" && options.userId) {
+    return join2(getClaudeConfigHomeDir(), "direct-connect-runtime", "users", options.userId);
+  }
+  return join2(getClaudeConfigHomeDir(), "direct-connect-runtime", "sessions", options.sessionId);
+}
+
+class DockerBackend {
+  defaults;
+  constructor(defaults = {}) {
+    this.defaults = defaults;
+  }
+  async spawn(options) {
+    if (process.platform === "win32") {
+      throw new Error("Docker runtime is not supported on Windows by this build");
+    }
+    const runtime = options.runtime;
+    const image = runtime?.dockerImage || this.defaults.image;
+    const mode = runtime?.dockerMode || this.defaults.mode || "session";
+    if (!image) {
+      throw new Error("Docker runtime requested but no docker image was configured");
+    }
+    const nodeCliPath = resolveNodeCliPath();
+    ensureCliExists(nodeCliPath);
+    const configDir = buildConfigDir(options, mode);
+    await mkdir(configDir, { recursive: true });
+    const mounts = uniqueMounts([
+      options.cwd,
+      dirname(nodeCliPath),
+      configDir
+    ]);
+    const containerName = `moss-session-${options.sessionId.slice(0, 12)}`;
+    const env = buildSessionEnv(options, {
+      CLAUDE_CONFIG_DIR: configDir,
+      CLAUDE_CODE_CLI_PATH: nodeCliPath
+    });
+    const args = ["run", "--rm", "-i", "--name", containerName];
+    for (const mount of mounts) {
+      args.push("-v", `${mount}:${mount}`);
+    }
+    args.push("-w", options.cwd);
+    const passthroughEnvKeys = [
+      "CLAUDE_CONFIG_DIR",
+      "CLAUDE_CODE_CLI_PATH",
+      "MOSS_SESSION_USER_ID",
+      "MOSS_SESSION_ORG_ID",
+      "MOSS_SESSION_ROLE",
+      "MOSS_SESSION_SCOPES",
+      "MOSS_SESSION_RUNTIME_TYPE"
+    ];
+    for (const key of passthroughEnvKeys) {
+      if (env[key]) {
+        args.push("-e", `${key}=${env[key]}`);
+      }
+    }
+    args.push(image, "node", nodeCliPath, "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json", "--permission-prompt-tool", "stdio", "--session-id", options.sessionId);
+    if (options.dangerouslySkipPermissions) {
+      args.push("--dangerously-skip-permissions");
+    }
+    const child = spawn2("docker", args, {
+      cwd: options.cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    });
+    const runtimeInfo = {
+      type: "docker",
+      dockerImage: image,
+      dockerMode: mode,
+      containerName,
+      configDir
+    };
+    const handle = createStreamBackendHandle(child, options, runtimeInfo);
+    return {
+      ...handle,
+      destroy(force = false) {
+        if (child.killed) {
+          return;
+        }
+        if (force) {
+          const cleanup = spawn2("docker", ["rm", "-f", containerName], {
+            stdio: "ignore",
+            windowsHide: true
+          });
+          cleanup.unref();
+        }
+        handle.destroy(force);
+      }
+    };
+  }
+}
+
+// src/server/backends/runtimeBackend.ts
+class RuntimeBackend {
+  #hostBackend;
+  #dockerBackend;
+  #defaultRuntime;
+  constructor(options = {}) {
+    this.#hostBackend = new DangerousBackend;
+    this.#dockerBackend = new DockerBackend(options.docker);
+    this.#defaultRuntime = options.defaultRuntime ?? { type: "host" };
+  }
+  async spawn(options) {
+    const runtimeType = options.runtime?.type || this.#defaultRuntime.type || "host";
+    const mergedOptions = {
+      ...options,
+      runtime: {
+        ...this.#defaultRuntime,
+        ...options.runtime,
+        type: runtimeType
+      }
+    };
+    if (runtimeType === "docker") {
+      return this.#dockerBackend.spawn(mergedOptions);
+    }
+    return this.#hostBackend.spawn(mergedOptions);
+  }
+}
+
+// src/server/sessionIndexStore.ts
+import { mkdir as mkdir2, writeFile } from "fs/promises";
+import { dirname as dirname2, join as join3 } from "path";
+function getSessionIndexPath() {
+  return join3(getClaudeConfigHomeDir(), "direct-connect", "sessions.json");
+}
+async function writeSessionIndex(sessions, filePath = getSessionIndexPath()) {
+  const index = Object.fromEntries(sessions.map((session) => {
+    const entry = {
+      sessionId: session.sessionId,
+      transcriptSessionId: session.sessionId,
+      cwd: session.workDir,
+      createdAt: session.createdAt,
+      lastActiveAt: session.lastActiveAt,
+      userId: session.userId,
+      orgId: session.orgId,
+      role: session.role,
+      scopes: session.scopes,
+      runtime: session.runtime
+    };
+    return [session.sessionId, entry];
+  }));
+  await mkdir2(dirname2(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(index, null, 2)}
+`, "utf8");
 }
 
 // src/server/startStandaloneServer.ts
@@ -3371,19 +4135,39 @@ async function startStandaloneDirectConnectServer(options = {}) {
   if (existing) {
     throw new Error(`A claude server is already running (pid ${existing.pid}) at ${existing.httpUrl}`);
   }
-  const authToken = options.authToken ?? `sk-ant-cc-${randomBytes(16).toString("base64url")}`;
+  if (!options.authCenterUrl) {
+    throw new Error("Missing --auth-center-url. Session server now requires Auth Center.");
+  }
   const config = {
     port: options.port ?? 0,
     host: options.host ?? "0.0.0.0",
-    authToken,
+    authMode: "auth-center",
+    authCenterUrl: options.authCenterUrl,
     workspace: options.workspace,
     idleTimeoutMs: options.idleTimeoutMs ?? 10 * 60 * 1000,
-    maxSessions: options.maxSessions ?? 32
+    maxSessions: options.maxSessions ?? 32,
+    defaultRuntime: options.runtime ?? "host",
+    dockerImage: options.dockerImage,
+    dockerMode: options.dockerMode
   };
-  const sessionManager = new SessionManager(new DangerousBackend, {
+  const sessionManager = new SessionManager(new RuntimeBackend({
+    defaultRuntime: {
+      type: config.defaultRuntime,
+      dockerImage: config.dockerImage,
+      dockerMode: config.dockerMode
+    },
+    docker: {
+      image: config.dockerImage,
+      mode: config.dockerMode
+    }
+  }), {
     idleTimeoutMs: config.idleTimeoutMs,
-    maxSessions: config.maxSessions
+    maxSessions: config.maxSessions,
+    onSessionsChanged: (sessions) => {
+      writeSessionIndex(sessions);
+    }
   });
+  await writeSessionIndex([]);
   const logger = createServerLogger();
   const server = startServer(config, sessionManager, logger);
   const actualPort = await server.ready ?? config.port;
@@ -3392,10 +4176,11 @@ async function startStandaloneDirectConnectServer(options = {}) {
   const connectUrl = buildConnectUrl({
     host: connectHost,
     port: actualPort,
-    authToken
+    authMode: config.authMode,
+    authCenterUrl: config.authCenterUrl
   });
   if (options.printStartupBanner !== false) {
-    printBanner(config, authToken, actualPort);
+    printBanner(config, actualPort);
   }
   await writeServerLock({
     pid: process.pid,
@@ -3412,11 +4197,11 @@ async function startStandaloneDirectConnectServer(options = {}) {
     stopped = true;
     server.stop(true);
     await sessionManager.destroyAll();
+    await writeSessionIndex([]);
     await removeServerLock();
   };
   return {
     config,
-    authToken,
     port: actualPort,
     httpUrl,
     connectUrl,
@@ -3432,7 +4217,10 @@ function printHelp() {
     "Options:",
     "  --port <number>         HTTP port (default: 0)",
     "  --host <host>           Bind address (default: 0.0.0.0)",
-    "  --auth-token <token>    Bearer token for auth",
+    "  --auth-center-url <url> Validate bearer tokens through auth center (required)",
+    "  --runtime <type>        Default runtime: host | docker (default: host)",
+    "  --docker-image <image>  Default docker image when runtime=docker",
+    "  --docker-mode <mode>    Docker persistence mode: session | user (default: session)",
     "  --workspace <dir>       Default working directory for new sessions",
     "  --idle-timeout <ms>     Detached session idle timeout in ms (default: 600000)",
     "  --max-sessions <n>      Maximum concurrent sessions (default: 32)",
@@ -3445,7 +4233,10 @@ function parseArgs(argv) {
   const result = {
     port: 0,
     host: "0.0.0.0",
-    authToken: undefined,
+    authCenterUrl: undefined,
+    runtime: undefined,
+    dockerImage: undefined,
+    dockerMode: undefined,
     workspace: undefined,
     idleTimeoutMs: 600000,
     maxSessions: 32
@@ -3467,8 +4258,23 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
-    if (arg === "--auth-token") {
-      result.authToken = value || "";
+    if (arg === "--auth-center-url") {
+      result.authCenterUrl = value || "";
+      i += 1;
+      continue;
+    }
+    if (arg === "--runtime") {
+      result.runtime = value === "docker" ? "docker" : value === "host" ? "host" : undefined;
+      i += 1;
+      continue;
+    }
+    if (arg === "--docker-image") {
+      result.dockerImage = value || "";
+      i += 1;
+      continue;
+    }
+    if (arg === "--docker-mode") {
+      result.dockerMode = value === "user" ? "user" : value === "session" ? "session" : undefined;
       i += 1;
       continue;
     }
@@ -3497,6 +4303,18 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(result.maxSessions) || result.maxSessions < 0) {
     throw new Error(`Invalid --max-sessions value: ${String(result.maxSessions)}`);
+  }
+  if (result.runtime !== undefined && result.runtime !== "host" && result.runtime !== "docker") {
+    throw new Error(`Invalid --runtime value: ${String(result.runtime)}`);
+  }
+  if (result.dockerMode !== undefined && result.dockerMode !== "session" && result.dockerMode !== "user") {
+    throw new Error(`Invalid --docker-mode value: ${String(result.dockerMode)}`);
+  }
+  if (result.runtime === "docker" && !result.dockerImage) {
+    throw new Error("Missing --docker-image when --runtime=docker");
+  }
+  if (!result.authCenterUrl) {
+    throw new Error("Missing --auth-center-url");
   }
   return result;
 }

@@ -4,6 +4,8 @@ import { errorMessage } from '../utils/errors.js'
 import { jsonStringify } from '../utils/slowOperations.js'
 import type { DirectConnectConfig } from './directConnectManager.js'
 import { connectResponseSchema } from './types.js'
+import { resolveDirectConnectAccessToken } from './client/authClient.js'
+import type { SessionRuntimeOptions } from './sessionManager.js'
 
 /**
  * Errors thrown by createDirectConnectSession when the connection fails.
@@ -26,22 +28,39 @@ export class DirectConnectError extends Error {
 export async function createDirectConnectSession({
   serverUrl,
   authToken,
+  authCenterUrl,
+  apiKey,
+  email,
+  password,
   cwd,
   dangerouslySkipPermissions,
+  runtime,
 }: {
   serverUrl: string
   authToken?: string
+  authCenterUrl?: string
+  apiKey?: string
+  email?: string
+  password?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
+  runtime?: SessionRuntimeOptions
 }): Promise<{
   config: DirectConnectConfig
   workDir?: string
 }> {
+  const resolvedToken = await resolveDirectConnectAccessToken({
+    authToken,
+    authCenterUrl,
+    apiKey,
+    email,
+    password,
+  })
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
-  if (authToken) {
-    headers['authorization'] = `Bearer ${authToken}`
+  if (resolvedToken) {
+    headers['authorization'] = `Bearer ${resolvedToken}`
   }
 
   let resp: Response
@@ -54,6 +73,7 @@ export async function createDirectConnectSession({
         ...(dangerouslySkipPermissions && {
           dangerously_skip_permissions: true,
         }),
+        ...(runtime ? { runtime } : {}),
       }),
     })
   } catch (err) {
@@ -81,7 +101,7 @@ export async function createDirectConnectSession({
       serverUrl,
       sessionId: data.session_id,
       wsUrl: data.ws_url,
-      authToken,
+      authToken: resolvedToken,
     },
     workDir: data.work_dir,
   }

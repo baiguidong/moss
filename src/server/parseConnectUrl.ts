@@ -3,29 +3,42 @@ import path from 'path'
 export function buildConnectUrl(options: {
   host: string
   port: number
-  authToken: string
+  authMode?: 'auth-center'
+  authCenterUrl?: string
   unix?: string
 }): string {
-  if (options.unix) {
-    return `cc+unix://${encodeURIComponent(path.resolve(options.unix))}?token=${encodeURIComponent(options.authToken)}`
+  const searchParams = new URLSearchParams()
+  if (options.authMode === 'auth-center') {
+    searchParams.set('auth_mode', 'auth-center')
+    if (options.authCenterUrl) {
+      searchParams.set('auth_center', options.authCenterUrl)
+    }
   }
 
-  return `cc://${options.host}:${options.port}?token=${encodeURIComponent(options.authToken)}`
+  if (options.unix) {
+    const query = searchParams.toString()
+    return `cc+unix://${encodeURIComponent(path.resolve(options.unix))}${query ? `?${query}` : ''}`
+  }
+
+  const query = searchParams.toString()
+  return `cc://${options.host}:${options.port}${query ? `?${query}` : ''}`
 }
 
-export function parseConnectUrl(ccUrl: string): {
+export function parseConnectUrl(
+  ccUrl: string,
+  options?: {
+    allowMissingAuthInfo?: boolean
+  },
+): {
   serverUrl: string
-  authToken: string
+  authCenterUrl?: string
+  authMode: 'auth-center'
 } {
   if (ccUrl.startsWith('cc+unix://')) {
     const url = new URL(ccUrl)
     const socketPath = decodeURIComponent(url.hostname + url.pathname)
-    const authToken = url.searchParams.get('token') || ''
     if (!socketPath) {
       throw new Error(`Invalid direct-connect URL: ${ccUrl}`)
-    }
-    if (!authToken) {
-      throw new Error(`Missing auth token in direct-connect URL: ${ccUrl}`)
     }
     throw new Error(
       `Unix domain socket direct-connect is not supported by this build (${socketPath}). Use the HTTP listener instead.`,
@@ -37,16 +50,22 @@ export function parseConnectUrl(ccUrl: string): {
   }
 
   const url = new URL(ccUrl)
-  const authToken = url.searchParams.get('token') || ''
+  if (url.searchParams.get('token')) {
+    throw new Error(
+      `Static token URLs are no longer supported: ${ccUrl}. Use Auth Center instead.`,
+    )
+  }
+  const authCenterUrl = url.searchParams.get('auth_center') || ''
   if (!url.hostname || !url.port) {
     throw new Error(`Invalid direct-connect URL: ${ccUrl}`)
   }
-  if (!authToken) {
-    throw new Error(`Missing auth token in direct-connect URL: ${ccUrl}`)
+  if (!authCenterUrl && !options?.allowMissingAuthInfo) {
+    throw new Error(`Missing auth information in direct-connect URL: ${ccUrl}`)
   }
 
   return {
     serverUrl: `http://${url.hostname}:${url.port}`,
-    authToken,
+    authCenterUrl: authCenterUrl || undefined,
+    authMode: 'auth-center',
   }
 }

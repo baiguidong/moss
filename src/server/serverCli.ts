@@ -8,7 +8,10 @@ function printHelp(): void {
       'Options:',
       '  --port <number>         HTTP port (default: 0)',
       '  --host <host>           Bind address (default: 0.0.0.0)',
-      '  --auth-token <token>    Bearer token for auth',
+      '  --auth-center-url <url> Validate bearer tokens through auth center (required)',
+      '  --runtime <type>        Default runtime: host | docker (default: host)',
+      '  --docker-image <image>  Default docker image when runtime=docker',
+      '  --docker-mode <mode>    Docker persistence mode: session | user (default: session)',
       '  --workspace <dir>       Default working directory for new sessions',
       '  --idle-timeout <ms>     Detached session idle timeout in ms (default: 600000)',
       '  --max-sessions <n>      Maximum concurrent sessions (default: 32)',
@@ -21,7 +24,10 @@ function printHelp(): void {
 function parseArgs(argv: string[]): {
   port: number
   host: string
-  authToken?: string
+  authCenterUrl?: string
+  runtime?: 'host' | 'docker'
+  dockerImage?: string
+  dockerMode?: 'session' | 'user'
   workspace?: string
   idleTimeoutMs: number
   maxSessions: number
@@ -29,7 +35,10 @@ function parseArgs(argv: string[]): {
   const result = {
     port: 0,
     host: '0.0.0.0',
-    authToken: undefined as string | undefined,
+    authCenterUrl: undefined as string | undefined,
+    runtime: undefined as 'host' | 'docker' | undefined,
+    dockerImage: undefined as string | undefined,
+    dockerMode: undefined as 'session' | 'user' | undefined,
     workspace: undefined as string | undefined,
     idleTimeoutMs: 600000,
     maxSessions: 32,
@@ -53,8 +62,25 @@ function parseArgs(argv: string[]): {
       i += 1
       continue
     }
-    if (arg === '--auth-token') {
-      result.authToken = value || ''
+    if (arg === '--auth-center-url') {
+      result.authCenterUrl = value || ''
+      i += 1
+      continue
+    }
+    if (arg === '--runtime') {
+      result.runtime =
+        value === 'docker' ? 'docker' : value === 'host' ? 'host' : undefined
+      i += 1
+      continue
+    }
+    if (arg === '--docker-image') {
+      result.dockerImage = value || ''
+      i += 1
+      continue
+    }
+    if (arg === '--docker-mode') {
+      result.dockerMode =
+        value === 'user' ? 'user' : value === 'session' ? 'session' : undefined
       i += 1
       continue
     }
@@ -89,6 +115,26 @@ function parseArgs(argv: string[]): {
     throw new Error(
       `Invalid --max-sessions value: ${String(result.maxSessions)}`,
     )
+  }
+  if (
+    result.runtime !== undefined &&
+    result.runtime !== 'host' &&
+    result.runtime !== 'docker'
+  ) {
+    throw new Error(`Invalid --runtime value: ${String(result.runtime)}`)
+  }
+  if (
+    result.dockerMode !== undefined &&
+    result.dockerMode !== 'session' &&
+    result.dockerMode !== 'user'
+  ) {
+    throw new Error(`Invalid --docker-mode value: ${String(result.dockerMode)}`)
+  }
+  if (result.runtime === 'docker' && !result.dockerImage) {
+    throw new Error('Missing --docker-image when --runtime=docker')
+  }
+  if (!result.authCenterUrl) {
+    throw new Error('Missing --auth-center-url')
   }
 
   return result

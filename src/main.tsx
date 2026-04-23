@@ -543,11 +543,25 @@ function initializeEntrypoint(isNonInteractive: boolean): void {
 type PendingConnect = {
   url: string | undefined;
   authToken: string | undefined;
+  authCenterUrl: string | undefined;
+  apiKey: string | undefined;
+  userEmail: string | undefined;
+  userPassword: string | undefined;
+  runtimeType: 'host' | 'docker' | undefined;
+  dockerImage: string | undefined;
+  dockerMode: 'session' | 'user' | undefined;
   dangerouslySkipPermissions: boolean;
 };
 const _pendingConnect: PendingConnect | undefined = feature('DIRECT_CONNECT') ? {
   url: undefined,
   authToken: undefined,
+  authCenterUrl: undefined,
+  apiKey: undefined,
+  userEmail: undefined,
+  userPassword: undefined,
+  runtimeType: undefined,
+  dockerImage: undefined,
+  dockerMode: undefined,
   dangerouslySkipPermissions: false
 } : undefined;
 
@@ -619,6 +633,36 @@ export async function main() {
       } = await import('./server/parseConnectUrl.js');
       const parsed = parseConnectUrl(ccUrl);
       _pendingConnect.dangerouslySkipPermissions = rawCliArgs.includes('--dangerously-skip-permissions');
+      const authCenterFlagIdx = rawCliArgs.indexOf('--auth-center-url');
+      if (authCenterFlagIdx !== -1) {
+        _pendingConnect.authCenterUrl = rawCliArgs[authCenterFlagIdx + 1];
+      }
+      const apiKeyFlagIdx = rawCliArgs.indexOf('--api-key');
+      if (apiKeyFlagIdx !== -1) {
+        _pendingConnect.apiKey = rawCliArgs[apiKeyFlagIdx + 1];
+      }
+      const userEmailFlagIdx = rawCliArgs.indexOf('--user-email');
+      if (userEmailFlagIdx !== -1) {
+        _pendingConnect.userEmail = rawCliArgs[userEmailFlagIdx + 1];
+      }
+      const userPasswordFlagIdx = rawCliArgs.indexOf('--user-password');
+      if (userPasswordFlagIdx !== -1) {
+        _pendingConnect.userPassword = rawCliArgs[userPasswordFlagIdx + 1];
+      }
+      const runtimeFlagIdx = rawCliArgs.indexOf('--runtime');
+      if (runtimeFlagIdx !== -1) {
+        const value = rawCliArgs[runtimeFlagIdx + 1];
+        _pendingConnect.runtimeType = value === 'docker' ? 'docker' : value === 'host' ? 'host' : undefined;
+      }
+      const dockerImageFlagIdx = rawCliArgs.indexOf('--docker-image');
+      if (dockerImageFlagIdx !== -1) {
+        _pendingConnect.dockerImage = rawCliArgs[dockerImageFlagIdx + 1];
+      }
+      const dockerModeFlagIdx = rawCliArgs.indexOf('--docker-mode');
+      if (dockerModeFlagIdx !== -1) {
+        const value = rawCliArgs[dockerModeFlagIdx + 1];
+        _pendingConnect.dockerMode = value === 'user' ? 'user' : value === 'session' ? 'session' : undefined;
+      }
       if (rawCliArgs.includes('-p') || rawCliArgs.includes('--print')) {
         // Headless: rewrite to internal `open` subcommand
         const stripped = rawCliArgs.filter((_, i) => i !== ccIdx);
@@ -631,10 +675,39 @@ export async function main() {
         // Interactive: strip cc:// URL and flags, run main command
         _pendingConnect.url = parsed.serverUrl;
         _pendingConnect.authToken = parsed.authToken;
+        _pendingConnect.authCenterUrl = _pendingConnect.authCenterUrl ?? parsed.authCenterUrl;
         const stripped = rawCliArgs.filter((_, i) => i !== ccIdx);
         const dspIdx = stripped.indexOf('--dangerously-skip-permissions');
         if (dspIdx !== -1) {
           stripped.splice(dspIdx, 1);
+        }
+        const authIdx = stripped.indexOf('--auth-center-url');
+        if (authIdx !== -1) {
+          stripped.splice(authIdx, 2);
+        }
+        const apiIdx = stripped.indexOf('--api-key');
+        if (apiIdx !== -1) {
+          stripped.splice(apiIdx, 2);
+        }
+        const emailIdx = stripped.indexOf('--user-email');
+        if (emailIdx !== -1) {
+          stripped.splice(emailIdx, 2);
+        }
+        const passwordIdx = stripped.indexOf('--user-password');
+        if (passwordIdx !== -1) {
+          stripped.splice(passwordIdx, 2);
+        }
+        const runtimeIdx = stripped.indexOf('--runtime');
+        if (runtimeIdx !== -1) {
+          stripped.splice(runtimeIdx, 2);
+        }
+        const imageIdx = stripped.indexOf('--docker-image');
+        if (imageIdx !== -1) {
+          stripped.splice(imageIdx, 2);
+        }
+        const modeIdx = stripped.indexOf('--docker-mode');
+        if (modeIdx !== -1) {
+          stripped.splice(modeIdx, 2);
         }
         process.argv = [process.argv[0]!, process.argv[1]!, ...stripped];
       }
@@ -3166,8 +3239,17 @@ async function run(): Promise<CommanderCommand> {
         const session = await createDirectConnectSession({
           serverUrl: _pendingConnect.url,
           authToken: _pendingConnect.authToken,
+          authCenterUrl: _pendingConnect.authCenterUrl,
+          apiKey: _pendingConnect.apiKey,
+          email: _pendingConnect.userEmail,
+          password: _pendingConnect.userPassword,
           cwd: getOriginalCwd(),
-          dangerouslySkipPermissions: _pendingConnect.dangerouslySkipPermissions
+          dangerouslySkipPermissions: _pendingConnect.dangerouslySkipPermissions,
+          runtime: _pendingConnect.runtimeType ? {
+            type: _pendingConnect.runtimeType,
+            dockerImage: _pendingConnect.dockerImage,
+            dockerMode: _pendingConnect.dockerMode
+          } : undefined
         });
         if (session.workDir) {
           setOriginalCwd(session.workDir);
@@ -4062,24 +4144,41 @@ async function run(): Promise<CommanderCommand> {
   // Interactive mode (without -p) is handled by early argv rewriting in main()
   // which redirects to the main command with full TUI support.
   if (feature('DIRECT_CONNECT')) {
-    program.command('open <cc-url>').description('Connect to a Claude Code server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').action(async (ccUrl: string, opts: {
+    program.command('open <cc-url>').description('Connect to a Claude Code server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--auth-center-url <url>', 'Exchange access token via auth center').option('--api-key <key>', 'API key used with --auth-center-url').option('--user-email <email>', 'User email used with --auth-center-url').option('--user-password <pwd>', 'User password used with --auth-center-url').option('--runtime <type>', 'Session runtime override: host | docker').option('--docker-image <image>', 'Docker image when --runtime=docker').option('--docker-mode <mode>', 'Docker mode: session | user').action(async (ccUrl: string, opts: {
       print?: string | boolean;
       outputFormat: string;
+      authCenterUrl?: string;
+      apiKey?: string;
+      userEmail?: string;
+      userPassword?: string;
+      runtime?: string;
+      dockerImage?: string;
+      dockerMode?: string;
     }) => {
       const {
         parseConnectUrl
       } = await import('./server/parseConnectUrl.js');
       const {
         serverUrl,
-        authToken
+        authToken,
+        authCenterUrl
       } = parseConnectUrl(ccUrl);
       let connectConfig;
       try {
         const session = await createDirectConnectSession({
           serverUrl,
           authToken,
+          authCenterUrl: opts.authCenterUrl ?? authCenterUrl,
+          apiKey: opts.apiKey,
+          email: opts.userEmail,
+          password: opts.userPassword,
           cwd: getOriginalCwd(),
-          dangerouslySkipPermissions: _pendingConnect?.dangerouslySkipPermissions
+          dangerouslySkipPermissions: _pendingConnect?.dangerouslySkipPermissions,
+          runtime: opts.runtime ? {
+            type: opts.runtime === 'docker' ? 'docker' : 'host',
+            dockerImage: opts.dockerImage,
+            dockerMode: opts.dockerMode === 'user' ? 'user' : opts.dockerMode === 'session' ? 'session' : undefined
+          } : undefined
         });
         if (session.workDir) {
           setOriginalCwd(session.workDir);

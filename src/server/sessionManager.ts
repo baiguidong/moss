@@ -1,19 +1,46 @@
 import { randomUUID } from 'crypto'
 import type { WebSocket } from 'ws'
 
+export type SessionRuntimeType = 'host' | 'docker'
+
+export type SessionRuntimeOptions = {
+  type?: SessionRuntimeType
+  dockerImage?: string
+  dockerMode?: 'session' | 'user'
+}
+
+export type SessionRuntimeInfo = {
+  type: SessionRuntimeType
+  dockerImage?: string
+  dockerMode?: 'session' | 'user'
+  containerName?: string
+  configDir?: string
+}
+
 export type SessionCreateOptions = {
   cwd?: string
   dangerouslySkipPermissions?: boolean
+  userId?: string
+  orgId?: string
+  role?: string
+  scopes?: string[]
+  runtime?: SessionRuntimeOptions
 }
 
 export type BackendSpawnOptions = {
   sessionId: string
   cwd: string
   dangerouslySkipPermissions?: boolean
+  userId?: string
+  orgId?: string
+  role?: string
+  scopes?: string[]
+  runtime?: SessionRuntimeOptions
 }
 
 export type BackendHandle = {
   workDir: string
+  runtime: SessionRuntimeInfo
   writeStdin: (data: string) => void
   onStdoutLine: (listener: (line: string) => void) => () => void
   onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => () => void
@@ -24,9 +51,26 @@ export interface SessionBackend {
   spawn(options: BackendSpawnOptions): Promise<BackendHandle>
 }
 
+export type SessionSummary = {
+  sessionId: string
+  workDir: string
+  userId: string
+  orgId: string
+  role: string
+  scopes: string[]
+  runtime: SessionRuntimeInfo
+  createdAt: number
+  lastActiveAt: number
+}
+
 type SessionRecord = {
   id: string
   workDir: string
+  userId: string
+  orgId: string
+  role: string
+  scopes: string[]
+  runtime: SessionRuntimeInfo
   handle: BackendHandle
   sockets: Set<WebSocket>
   createdAt: number
@@ -44,11 +88,15 @@ export class SessionManager {
     options: {
       idleTimeoutMs?: number
       maxSessions?: number
+      onSessionsChanged?: (sessions: SessionSummary[]) => void
     } = {},
   ) {
     this.#idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 10 * 60 * 1000)
     this.#maxSessions = Math.max(0, options.maxSessions ?? 32)
+    this.#onSessionsChanged = options.onSessionsChanged
   }
+
+  readonly #onSessionsChanged?: (sessions: SessionSummary[]) => void
 
   get size(): number {
     return this.#sessions.size
@@ -57,6 +105,7 @@ export class SessionManager {
   async createSession(options: SessionCreateOptions = {}): Promise<{
     sessionId: string
     workDir: string
+    runtime: SessionRuntimeInfo
   }> {
     if (this.#maxSessions > 0 && this.#sessions.size >= this.#maxSessions) {
       throw new Error(
@@ -70,11 +119,21 @@ export class SessionManager {
       sessionId,
       cwd,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
+      userId: options.userId,
+      orgId: options.orgId,
+      role: options.role,
+      scopes: options.scopes,
+      runtime: options.runtime,
     })
 
     const record: SessionRecord = {
       id: sessionId,
       workDir: handle.workDir,
+      userId: options.userId || 'anonymous',
+      orgId: options.orgId || 'default',
+      role: options.role || 'member',
+      scopes: options.scopes || [],
+      runtime: handle.runtime,
       handle,
       sockets: new Set(),
       createdAt: Date.now(),
@@ -83,6 +142,7 @@ export class SessionManager {
     }
 
     this.#sessions.set(sessionId, record)
+    this.#emitSessionsChanged()
 
     handle.onStdoutLine((line) => {
       record.lastActiveAt = Date.now()
@@ -101,6 +161,7 @@ export class SessionManager {
       }
       this.#clearTimeout(record)
       this.#sessions.delete(record.id)
+      this.#emitSessionsChanged()
     })
 
     this.#armIdleTimeout(record)
@@ -108,26 +169,34 @@ export class SessionManager {
     return {
       sessionId,
       workDir: record.workDir,
+      runtime: record.runtime,
     }
   }
 
-  getSession(sessionId: string): {
-    sessionId: string
-    workDir: string
-    createdAt: number
-    lastActiveAt: number
-  } | null {
+  getSession(sessionId: string): SessionSummary | null {
     const record = this.#sessions.get(sessionId)
     if (!record) {
       return null
     }
 
-    return {
-      sessionId: record.id,
-      workDir: record.workDir,
-      createdAt: record.createdAt,
-      lastActiveAt: record.lastActiveAt,
-    }
+    return this.#toSummary(record)
+  }
+
+  listSessions(filter: {
+    userId?: string
+    orgId?: string
+  } = {}): SessionSummary[] {
+    return [...this.#sessions.values()]
+      .filter(record => {
+        if (filter.userId && record.userId !== filter.userId) {
+          return false
+        }
+        if (filter.orgId && record.orgId !== filter.orgId) {
+          return false
+        }
+        return true
+      })
+      .map(record => this.#toSummary(record))
   }
 
   attachSocket(sessionId: string, socket: WebSocket): void {
@@ -139,6 +208,7 @@ export class SessionManager {
     record.sockets.add(socket)
     record.lastActiveAt = Date.now()
     this.#clearTimeout(record)
+    this.#emitSessionsChanged()
 
     socket.on('message', (data) => {
       record.lastActiveAt = Date.now()
@@ -151,6 +221,7 @@ export class SessionManager {
       record.sockets.delete(socket)
       record.lastActiveAt = Date.now()
       this.#armIdleTimeout(record)
+      this.#emitSessionsChanged()
     })
   }
 
@@ -187,5 +258,23 @@ export class SessionManager {
       clearTimeout(record.timeout)
       record.timeout = null
     }
+  }
+
+  #toSummary(record: SessionRecord): SessionSummary {
+    return {
+      sessionId: record.id,
+      workDir: record.workDir,
+      userId: record.userId,
+      orgId: record.orgId,
+      role: record.role,
+      scopes: record.scopes,
+      runtime: record.runtime,
+      createdAt: record.createdAt,
+      lastActiveAt: record.lastActiveAt,
+    }
+  }
+
+  #emitSessionsChanged(): void {
+    this.#onSessionsChanged?.(this.listSessions())
   }
 }

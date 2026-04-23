@@ -11,15 +11,17 @@ export function printBanner(
   config: {
     host: string
     port: number
+    authMode?: 'auth-center'
+    authCenterUrl?: string
     unix?: string
   },
-  authToken: string,
   actualPort: number,
 ): void {
   const connectUrl = buildConnectUrl({
     host: displayHost(config.host),
     port: actualPort,
-    authToken,
+    authMode: config.authMode,
+    authCenterUrl: config.authCenterUrl,
     unix: config.unix,
   })
 

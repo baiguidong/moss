@@ -69,23 +69,17 @@ bun run build:node
 最简单的启动方式：
 
 ```bash
-node direct-connect-server.mjs --host 0.0.0.0 --port 43127
-```
-
-也可以显式指定 token：
-
-```bash
 node direct-connect-server.mjs \
   --host 0.0.0.0 \
   --port 43127 \
-  --auth-token your-token
+  --auth-center-url http://127.0.0.1:4401
 ```
 
 支持参数：
 
 - `--host <host>`: 监听地址，默认 `0.0.0.0`
 - `--port <number>`: 监听端口，默认 `0`
-- `--auth-token <token>`: Bearer token；不传则自动生成
+- `--auth-center-url <url>`: 认证中心地址，必填
 - `--workspace <dir>`: 默认工作目录
 - `--idle-timeout <ms>`: session 空闲超时，默认 `600000`
 - `--max-sessions <n>`: 最大并发 session 数，默认 `32`
@@ -100,7 +94,7 @@ node direct-connect-server.mjs \
 ```text
 Claude Code session server started.
 HTTP: http://0.0.0.0:43127
-Connect: cc://127.0.0.1:43127?token=...
+Connect: cc://127.0.0.1:43127?auth_mode=auth-center&auth_center=http%3A%2F%2F127.0.0.1%3A4401
 ```
 
 说明：
@@ -149,7 +143,7 @@ GET /health
 
 ```http
 POST /sessions
-Authorization: Bearer your-token
+Authorization: Bearer <access-token-from-auth-center>
 Content-Type: application/json
 ```
 
@@ -272,14 +266,20 @@ ws://host:port/sessions/<session_id>/ws
 ### 8.1 启动服务
 
 ```bash
-node direct-connect-server.mjs --host 0.0.0.0 --port 43127
+node direct-connect-server.mjs \
+  --host 0.0.0.0 \
+  --port 43127 \
+  --auth-center-url http://127.0.0.1:4401
 ```
 
 ### 8.2 headless 调用远端
 
 ```bash
 node direct-connect-open.mjs \
-  'cc://server-host:43127?token=your-token' \
+  --auth-center-url http://127.0.0.1:4401 \
+  --user-email alice@example.com \
+  --user-password 'alice-pass' \
+  'cc://server-host:43127' \
   -p 'hello'
 ```
 
@@ -287,7 +287,10 @@ node direct-connect-open.mjs \
 
 ```bash
 node direct-connect-open.mjs \
-  'cc://server-host:43127?token=your-token' \
+  --auth-center-url http://127.0.0.1:4401 \
+  --user-email alice@example.com \
+  --user-password 'alice-pass' \
+  'cc://server-host:43127' \
   -p 'hello' \
   --output-format stream-json
 ```
@@ -317,7 +320,7 @@ import { startStandaloneDirectConnectServer } from './electron-direct.mjs'
 const server = await startStandaloneDirectConnectServer({
   host: '0.0.0.0',
   port: 43127,
-  authToken: 'your-token',
+  authCenterUrl: 'http://127.0.0.1:4401',
   workspace: '/srv/workspace',
 })
 
@@ -331,7 +334,9 @@ import { createDirectConnectSession } from './electron-direct.mjs'
 
 const session = await createDirectConnectSession({
   serverUrl: 'http://server-host:43127',
-  authToken: 'your-token',
+  authCenterUrl: 'http://127.0.0.1:4401',
+  email: 'alice@example.com',
+  password: 'alice-pass',
   cwd: '/tmp/project',
 })
 ```
@@ -375,7 +380,10 @@ manager.connect()
 {
   "agentMode": "remote-direct",
   "remoteDirectServerUrl": "http://server-host:43127",
-  "remoteDirectAuthToken": "your-token",
+  "remoteDirectAuthCenterUrl": "http://127.0.0.1:4401",
+  "remoteDirectCredentialMode": "password",
+  "remoteDirectUserEmail": "alice@example.com",
+  "remoteDirectUserPassword": "alice-pass",
   "remoteDirectWorkspace": "/srv/moss/workspaces/default"
 }
 ```
@@ -387,9 +395,13 @@ manager.connect()
   - `remote-direct`: 通过 Direct Connect 连接远端
 - `remoteDirectServerUrl`
   - 可以填 `http://host:port`
-  - 也可以直接填 `cc://host:port?token=...`
-- `remoteDirectAuthToken`
-  - 当 `remoteDirectServerUrl` 不是 `cc://...token=...` 时，单独填写 token
+  - 也可以直接填 `cc://host:port?auth_mode=auth-center&auth_center=...`
+- `remoteDirectAuthCenterUrl`
+  - 当 `remoteDirectServerUrl` 没有携带 `auth_center=...` 时，在本地单独填写认证中心地址
+- `remoteDirectCredentialMode`
+  - `password` 或 `api-key`
+- `remoteDirectUserEmail` / `remoteDirectUserPassword`
+  - 用户密码模式下用于换取 access token
 - `remoteDirectWorkspace`
   - 可选
   - 留空时，由远端 server 自己决定默认工作目录
@@ -468,13 +480,17 @@ server 本身不运行 Claude agent 逻辑。
 2. 开机或容器启动时执行：
 
 ```bash
-node direct-connect-server.mjs --host 0.0.0.0 --port 43127 --auth-token <固定token>
+node direct-connect-server.mjs \
+  --host 0.0.0.0 \
+  --port 43127 \
+  --auth-center-url https://auth-center.example.com
 ```
 
 3. 用 Nginx / Caddy / Traefik 反向代理这个端口。
 4. 客户端 UI 保存：
    - server base URL
-   - auth token
+   - auth center URL
+   - 用户邮箱/密码或 API Key
 5. 每次用户新开会话时：
    - `POST /sessions`
    - 连接 `ws_url`

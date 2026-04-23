@@ -89,3 +89,13 @@ build('direct-connect-open.mjs', [
   ...aliases,
   ...defines,
 ])
+
+// auth-center.mjs（认证中心与管理端入口）
+build('auth-center.mjs', [
+  'build', 'src/server/authCenter/authCenterCli.ts',
+  '--outfile=auth-center.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])

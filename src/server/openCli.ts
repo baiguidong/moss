@@ -1,6 +1,7 @@
 import { parseConnectUrl } from './parseConnectUrl.js'
 import { runConnectHeadless } from './connectHeadless.js'
 import { createDirectConnectSession } from './createDirectConnectSession.js'
+import type { SessionRuntimeOptions } from './sessionManager.js'
 
 function printHelp(): void {
   process.stdout.write(
@@ -10,6 +11,13 @@ function printHelp(): void {
       'Options:',
       '  -p, --print <prompt>    Prompt to send immediately',
       '  --output-format <fmt>   text | stream-json (default: text)',
+      '  --auth-center-url <url> Exchange access token via auth center',
+      '  --api-key <key>         API key used with --auth-center-url',
+      '  --user-email <email>    User email used with --auth-center-url',
+      '  --user-password <pwd>   User password used with --auth-center-url',
+      '  --runtime <type>        Session runtime override: host | docker',
+      '  --docker-image <image>  Docker image when --runtime=docker',
+      '  --docker-mode <mode>    Docker mode: session | user',
       '  -h, --help              Show this help',
       '',
     ].join('\n'),
@@ -20,6 +28,11 @@ function parseArgs(argv: string[]): {
   ccUrl: string
   prompt: string
   outputFormat: string
+  authCenterUrl?: string
+  apiKey?: string
+  userEmail?: string
+  userPassword?: string
+  runtime?: SessionRuntimeOptions
 } {
   if (argv.includes('-h') || argv.includes('--help')) {
     printHelp()
@@ -29,6 +42,11 @@ function parseArgs(argv: string[]): {
   let ccUrl = ''
   let prompt = ''
   let outputFormat = 'text'
+  let authCenterUrl: string | undefined
+  let apiKey: string | undefined
+  let userEmail: string | undefined
+  let userPassword: string | undefined
+  let runtime: SessionRuntimeOptions | undefined
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -49,6 +67,60 @@ function parseArgs(argv: string[]): {
       i += 1
       continue
     }
+    if (arg === '--auth-center-url') {
+      authCenterUrl = argv[i + 1] || undefined
+      i += 1
+      continue
+    }
+    if (arg === '--api-key') {
+      apiKey = argv[i + 1] || undefined
+      i += 1
+      continue
+    }
+    if (arg === '--user-email') {
+      userEmail = argv[i + 1] || undefined
+      i += 1
+      continue
+    }
+    if (arg === '--user-password') {
+      userPassword = argv[i + 1] || undefined
+      i += 1
+      continue
+    }
+    if (arg === '--runtime') {
+      runtime = {
+        ...(runtime ?? {}),
+        type:
+          argv[i + 1] === 'docker'
+            ? 'docker'
+            : argv[i + 1] === 'host'
+              ? 'host'
+              : undefined,
+      }
+      i += 1
+      continue
+    }
+    if (arg === '--docker-image') {
+      runtime = {
+        ...(runtime ?? {}),
+        dockerImage: argv[i + 1] || undefined,
+      }
+      i += 1
+      continue
+    }
+    if (arg === '--docker-mode') {
+      runtime = {
+        ...(runtime ?? {}),
+        dockerMode:
+          argv[i + 1] === 'user'
+            ? 'user'
+            : argv[i + 1] === 'session'
+              ? 'session'
+              : undefined,
+      }
+      i += 1
+      continue
+    }
     throw new Error(`Unknown argument: ${arg}`)
   }
 
@@ -59,16 +131,34 @@ function parseArgs(argv: string[]): {
     throw new Error(`Unsupported --output-format: ${outputFormat}`)
   }
 
-  return { ccUrl, prompt, outputFormat }
+  return {
+    ccUrl,
+    prompt,
+    outputFormat,
+    authCenterUrl,
+    apiKey,
+    userEmail,
+    userPassword,
+    runtime,
+  }
 }
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
-  const { serverUrl, authToken } = parseConnectUrl(options.ccUrl)
+  const { serverUrl, authCenterUrl } = parseConnectUrl(
+    options.ccUrl,
+    {
+      allowMissingAuthInfo: Boolean(options.authCenterUrl),
+    },
+  )
   const session = await createDirectConnectSession({
     serverUrl,
-    authToken,
+    authCenterUrl: options.authCenterUrl || authCenterUrl,
+    apiKey: options.apiKey,
+    email: options.userEmail,
+    password: options.userPassword,
     cwd: process.cwd(),
+    runtime: options.runtime,
   })
 
   await runConnectHeadless(

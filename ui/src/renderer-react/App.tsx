@@ -1706,7 +1706,8 @@ export default function App() {
                 <div>
                   <p className="text-sm font-medium text-foreground">Remote Server URL</p>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                    支持 `http://host:port`，也支持直接填 `cc://host:port?token=...`。
+                    支持 `http://host:port`，也支持直接填 `cc://host:port?...`。如果 server 使用 Auth Center，可以填
+                    `cc://host:port?auth_mode=auth-center&auth_center=...`。
                   </p>
                   <Input
                     className="mt-2 bg-background text-foreground"
@@ -1720,29 +1721,128 @@ export default function App() {
                       });
                       void autoSaveSettings('remoteDirectServerUrl', value);
                     }}
-                    placeholder="http://127.0.0.1:43127 或 cc://server:43127?token=..."
+                    placeholder="http://127.0.0.1:43127 或 cc://server:43127?auth_mode=auth-center&auth_center=..."
                   />
                 </div>
 
                 <div>
-                  <p className="text-sm font-medium text-foreground">Remote Token</p>
+                  <p className="text-sm font-medium text-foreground">Authentication</p>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                    当上面的地址不是 `cc://...token=...` 时，在这里单独填写 Bearer token。
+                    `remote-direct` 在桌面端只支持 Auth Center。客户端会先向认证中心换取 access token，再带着 Bearer token 请求 session server。
+                  </p>
+                  <div className="mt-2 rounded-xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                    Auth Center
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-foreground">Auth Center URL</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    当 `cc://...` 已经带了 `auth_center=...` 时可留空；否则这里填写认证中心地址，例如 `http://127.0.0.1:4401`。
                   </p>
                   <Input
-                    className="mt-2 bg-background text-foreground font-mono text-xs"
-                    value={settingsDraft?.remoteDirectAuthToken || ''}
+                    className="mt-2 bg-background text-foreground"
+                    value={settingsDraft?.remoteDirectAuthCenterUrl || ''}
                     onChange={(event) => {
                       if (!settingsDraft) return;
                       const value = event.target.value;
                       setSettingsDraft({
                         ...settingsDraft,
-                        remoteDirectAuthToken: value,
+                        remoteDirectAuthCenterUrl: value,
                       });
-                      void autoSaveSettings('remoteDirectAuthToken', value);
+                      void autoSaveSettings('remoteDirectAuthCenterUrl', value);
                     }}
-                    placeholder="smoke-token"
+                    placeholder="http://127.0.0.1:4401"
                   />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-foreground">Credential Type</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                    密码模式由用户邮箱和密码换取 token。API Key 模式用于企业下发的长期凭据。
+                  </p>
+                  <select
+                    className="mt-2 h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
+                    value={settingsDraft?.remoteDirectCredentialMode || 'password'}
+                    onChange={(event) => {
+                      if (!settingsDraft) return;
+                      const value = event.target.value as DesktopSettings['remoteDirectCredentialMode'];
+                      setSettingsDraft({
+                        ...settingsDraft,
+                        remoteDirectCredentialMode: value,
+                      });
+                      void autoSaveSettings('remoteDirectCredentialMode', value);
+                    }}
+                  >
+                    <option value="password">Password</option>
+                    <option value="api-key">API Key</option>
+                  </select>
+                </div>
+
+                {settingsDraft?.remoteDirectCredentialMode === 'api-key' ? (
+                  <div>
+                    <p className="text-sm font-medium text-foreground">API Key</p>
+                    <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                      由管理员在 Auth Center / Admin Console 中为当前用户或服务账号分配。
+                    </p>
+                    <Input
+                      className="mt-2 bg-background text-foreground font-mono text-xs"
+                      value={settingsDraft?.remoteDirectApiKey || ''}
+                      onChange={(event) => {
+                        if (!settingsDraft) return;
+                        const value = event.target.value;
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          remoteDirectApiKey: value,
+                        });
+                        void autoSaveSettings('remoteDirectApiKey', value);
+                      }}
+                      placeholder="moss_live_..."
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">User Email</p>
+                      <Input
+                        className="mt-2 bg-background text-foreground"
+                        value={settingsDraft?.remoteDirectUserEmail || ''}
+                        onChange={(event) => {
+                          if (!settingsDraft) return;
+                          const value = event.target.value;
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            remoteDirectUserEmail: value,
+                          });
+                          void autoSaveSettings('remoteDirectUserEmail', value);
+                        }}
+                        placeholder="alice@example.com"
+                      />
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-medium text-foreground">User Password</p>
+                      <Input
+                        type="password"
+                        className="mt-2 bg-background text-foreground"
+                        value={settingsDraft?.remoteDirectUserPassword || ''}
+                        onChange={(event) => {
+                          if (!settingsDraft) return;
+                          const value = event.target.value;
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            remoteDirectUserPassword: value,
+                          });
+                          void autoSaveSettings('remoteDirectUserPassword', value);
+                        }}
+                        placeholder="user password"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="rounded-xl border border-amber-200/70 bg-amber-50/80 px-4 py-3 text-xs leading-6 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  当前版本会把 Auth Center 凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在 `ui/plan.md`。
                 </div>
 
                 <div>
