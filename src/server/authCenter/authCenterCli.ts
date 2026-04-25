@@ -1,98 +1,32 @@
-import { startAuthCenterServer } from './server.js'
-
 function printHelp(): void {
   process.stdout.write(
     [
-      'Usage: moss-auth-center [options]',
+      'moss-auth-center 已废弃。',
       '',
-      'Options:',
-      '  --port <number>         HTTP port (default: 4401)',
-      '  --host <host>           Bind address (default: 127.0.0.1)',
-      '  --store <path>          Auth center JSON store path',
-      '  --token-ttl <sec>       Access token TTL in seconds (default: 3600)',
-      '  -h, --help              Show this help',
+      '请改用统一后的 moss-server / direct-connect-server 入口：',
+      '  node moss-server.mjs',
+      '  或 node direct-connect-server.mjs',
+      '',
+      'Admin UI 由同一个 server 挂载在 /admin，认证接口也统一到同一个 base URL。',
       '',
     ].join('\n'),
   )
-}
-
-function parseArgs(argv: string[]): {
-  port?: number
-  host?: string
-  storePath?: string
-  tokenTtlSec?: number
-} {
-  const result = {
-    port: undefined as number | undefined,
-    host: undefined as string | undefined,
-    storePath: undefined as string | undefined,
-    tokenTtlSec: undefined as number | undefined,
-  }
-
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]
-    if (arg === '-h' || arg === '--help') {
-      printHelp()
-      process.exit(0)
-    }
-
-    const value = argv[i + 1]
-    if (arg === '--port') {
-      result.port = Number.parseInt(value || '', 10)
-      i += 1
-      continue
-    }
-    if (arg === '--host') {
-      result.host = value || undefined
-      i += 1
-      continue
-    }
-    if (arg === '--store') {
-      result.storePath = value || undefined
-      i += 1
-      continue
-    }
-    if (arg === '--token-ttl') {
-      result.tokenTtlSec = Number.parseInt(value || '', 10)
-      i += 1
-      continue
-    }
-    throw new Error(`Unknown argument: ${arg}`)
-  }
-
-  return result
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2))
-  const running = await startAuthCenterServer(options)
-  const port = (await running.ready) ?? options.port ?? 4401
+  if (process.argv.includes('-h') || process.argv.includes('--help')) {
+    printHelp()
+    process.exit(0)
+  }
 
   process.stderr.write(
     [
-      '',
-      'Moss auth center started.',
-      `HTTP: http://${options.host ?? '127.0.0.1'}:${port}`,
-      `Store: ${running.storePath}`,
-      running.bootstrapAdminEmail
-        ? `Bootstrap admin email: ${running.bootstrapAdminEmail}`
-        : 'Bootstrap admin email: (existing store, unchanged)',
-      running.bootstrapAdminPassword
-        ? `Bootstrap admin password: ${running.bootstrapAdminPassword}`
-        : 'Bootstrap admin password: (existing store, unchanged)',
-      running.bootstrapAdminApiKey
-        ? `Bootstrap admin API key: ${running.bootstrapAdminApiKey}`
-        : 'Bootstrap admin API key: (existing store, unchanged)',
+      'moss-auth-center 已废弃，请改用统一后的 moss-server。',
+      '新的入口会同时提供 auth、admin、sessions 和 /admin SPA。',
       '',
     ].join('\n'),
   )
-
-  const shutdown = () => {
-    running.stop()
-    process.exit(0)
-  }
-  process.once('SIGINT', shutdown)
-  process.once('SIGTERM', shutdown)
+  process.exit(1)
 }
 
 main().catch((error: unknown) => {

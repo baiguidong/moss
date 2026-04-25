@@ -543,7 +543,6 @@ function initializeEntrypoint(isNonInteractive: boolean): void {
 type PendingConnect = {
   url: string | undefined;
   authToken: string | undefined;
-  authCenterUrl: string | undefined;
   apiKey: string | undefined;
   userEmail: string | undefined;
   userPassword: string | undefined;
@@ -555,7 +554,6 @@ type PendingConnect = {
 const _pendingConnect: PendingConnect | undefined = feature('DIRECT_CONNECT') ? {
   url: undefined,
   authToken: undefined,
-  authCenterUrl: undefined,
   apiKey: undefined,
   userEmail: undefined,
   userPassword: undefined,
@@ -633,10 +631,6 @@ export async function main() {
       } = await import('./server/parseConnectUrl.js');
       const parsed = parseConnectUrl(ccUrl);
       _pendingConnect.dangerouslySkipPermissions = rawCliArgs.includes('--dangerously-skip-permissions');
-      const authCenterFlagIdx = rawCliArgs.indexOf('--auth-center-url');
-      if (authCenterFlagIdx !== -1) {
-        _pendingConnect.authCenterUrl = rawCliArgs[authCenterFlagIdx + 1];
-      }
       const apiKeyFlagIdx = rawCliArgs.indexOf('--api-key');
       if (apiKeyFlagIdx !== -1) {
         _pendingConnect.apiKey = rawCliArgs[apiKeyFlagIdx + 1];
@@ -675,15 +669,10 @@ export async function main() {
         // Interactive: strip cc:// URL and flags, run main command
         _pendingConnect.url = parsed.serverUrl;
         _pendingConnect.authToken = parsed.authToken;
-        _pendingConnect.authCenterUrl = _pendingConnect.authCenterUrl ?? parsed.authCenterUrl;
         const stripped = rawCliArgs.filter((_, i) => i !== ccIdx);
         const dspIdx = stripped.indexOf('--dangerously-skip-permissions');
         if (dspIdx !== -1) {
           stripped.splice(dspIdx, 1);
-        }
-        const authIdx = stripped.indexOf('--auth-center-url');
-        if (authIdx !== -1) {
-          stripped.splice(authIdx, 2);
         }
         const apiIdx = stripped.indexOf('--api-key');
         if (apiIdx !== -1) {
@@ -3239,7 +3228,6 @@ async function run(): Promise<CommanderCommand> {
         const session = await createDirectConnectSession({
           serverUrl: _pendingConnect.url,
           authToken: _pendingConnect.authToken,
-          authCenterUrl: _pendingConnect.authCenterUrl,
           apiKey: _pendingConnect.apiKey,
           email: _pendingConnect.userEmail,
           password: _pendingConnect.userPassword,
@@ -4144,10 +4132,9 @@ async function run(): Promise<CommanderCommand> {
   // Interactive mode (without -p) is handled by early argv rewriting in main()
   // which redirects to the main command with full TUI support.
   if (feature('DIRECT_CONNECT')) {
-    program.command('open <cc-url>').description('Connect to a Claude Code server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--auth-center-url <url>', 'Exchange access token via auth center').option('--api-key <key>', 'API key used with --auth-center-url').option('--user-email <email>', 'User email used with --auth-center-url').option('--user-password <pwd>', 'User password used with --auth-center-url').option('--runtime <type>', 'Session runtime override: host | docker').option('--docker-image <image>', 'Docker image when --runtime=docker').option('--docker-mode <mode>', 'Docker mode: session | user').action(async (ccUrl: string, opts: {
+    program.command('open <cc-url>').description('Connect to a Claude Code server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--api-key <key>', 'API key used to get an access token').option('--user-email <email>', 'User email used to get an access token').option('--user-password <pwd>', 'User password used to get an access token').option('--runtime <type>', 'Session runtime override: host | docker').option('--docker-image <image>', 'Docker image when --runtime=docker').option('--docker-mode <mode>', 'Docker mode: session | user').action(async (ccUrl: string, opts: {
       print?: string | boolean;
       outputFormat: string;
-      authCenterUrl?: string;
       apiKey?: string;
       userEmail?: string;
       userPassword?: string;
@@ -4160,15 +4147,13 @@ async function run(): Promise<CommanderCommand> {
       } = await import('./server/parseConnectUrl.js');
       const {
         serverUrl,
-        authToken,
-        authCenterUrl
+        authToken
       } = parseConnectUrl(ccUrl);
       let connectConfig;
       try {
         const session = await createDirectConnectSession({
           serverUrl,
           authToken,
-          authCenterUrl: opts.authCenterUrl ?? authCenterUrl,
           apiKey: opts.apiKey,
           email: opts.userEmail,
           password: opts.userPassword,

@@ -11,21 +11,59 @@ const MOSS_LOG_FILE = 'moss.log';
 const MOSS_LOG_PATH = path.join(MOSS_LOGS_DIR, MOSS_LOG_FILE);
 const DEFAULT_LOG_ROTATION_MAX_SIZE = 10 * 1024 * 1024; // 10MB
 const DEFAULT_LOG_ROTATION_MAX_FILES = 5;
+let desktopSettingsProvider = null;
 
 export function getMossLogPath() {
   return MOSS_LOG_PATH;
 }
 
 function getLogRotationSettings(desktopSettings) {
+  const maxSize = Number(desktopSettings?.logRotationMaxSize);
+  const maxFiles = Number(desktopSettings?.logRotationMaxFiles);
   return {
-    maxSize: desktopSettings?.logRotationMaxSize || DEFAULT_LOG_ROTATION_MAX_SIZE,
-    maxFiles: desktopSettings?.logRotationMaxFiles || DEFAULT_LOG_ROTATION_MAX_FILES,
+    maxSize: Number.isFinite(maxSize) && maxSize > 0 ? maxSize : DEFAULT_LOG_ROTATION_MAX_SIZE,
+    maxFiles: Number.isFinite(maxFiles) && maxFiles >= 1 ? Math.floor(maxFiles) : DEFAULT_LOG_ROTATION_MAX_FILES,
   };
 }
 
 function initLogSystem() {
   try {
     fs.mkdirSync(MOSS_LOGS_DIR, { recursive: true });
+  } catch {}
+}
+
+function getActiveLogRotationSettings() {
+  const desktopSettings = typeof desktopSettingsProvider === 'function'
+    ? desktopSettingsProvider()
+    : null;
+  return getLogRotationSettings(desktopSettings);
+}
+
+function getArchivedLogPath(index) {
+  return path.join(MOSS_LOGS_DIR, `${MOSS_LOG_FILE}.${index}`);
+}
+
+function rotateLogsIfNeededSync(nextEntryBytes = 0) {
+  try {
+    if (!fs.existsSync(MOSS_LOG_PATH)) return;
+
+    const { maxSize, maxFiles } = getActiveLogRotationSettings();
+    const currentSize = fs.statSync(MOSS_LOG_PATH).size;
+    if (currentSize + nextEntryBytes <= maxSize) return;
+
+    const archiveCount = Math.max(0, maxFiles - 1);
+    if (archiveCount === 0) {
+      fs.rmSync(MOSS_LOG_PATH, { force: true });
+      return;
+    }
+
+    fs.rmSync(getArchivedLogPath(archiveCount), { force: true });
+    for (let index = archiveCount - 1; index >= 1; index -= 1) {
+      const archivedPath = getArchivedLogPath(index);
+      if (!fs.existsSync(archivedPath)) continue;
+      fs.renameSync(archivedPath, getArchivedLogPath(index + 1));
+    }
+    fs.renameSync(MOSS_LOG_PATH, getArchivedLogPath(1));
   } catch {}
 }
 
@@ -64,11 +102,15 @@ export function mossLog(level, category, message, data) {
   // Write to file synchronously
   try {
     fs.mkdirSync(MOSS_LOGS_DIR, { recursive: true });
+    rotateLogsIfNeededSync(Buffer.byteLength(line + '\n', 'utf8'));
     fs.appendFileSync(MOSS_LOG_PATH, line + '\n', 'utf8');
   } catch {}
 }
 
-export function registerLogIpcHandlers() {
+export function registerLogIpcHandlers(options = {}) {
+  desktopSettingsProvider = typeof options.getDesktopSettings === 'function'
+    ? options.getDesktopSettings
+    : null;
   initLogSystem();
 
   ipcMain.handle('log:get-path', () => MOSS_LOG_PATH);

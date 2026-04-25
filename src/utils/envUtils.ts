@@ -1,5 +1,4 @@
 import memoize from 'lodash-es/memoize.js'
-import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -10,13 +9,7 @@ export const getClaudeConfigHomeDir = memoize(
     if (process.env.CLAUDE_CONFIG_DIR) {
       return process.env.CLAUDE_CONFIG_DIR.normalize('NFC')
     }
-    // Priority: ~/.moss -> ~/.claude (for backward compatibility)
-    const mossDir = join(homedir(), '.moss').normalize('NFC')
-    const claudeDir = join(homedir(), '.claude').normalize('NFC')
-    if (existsSync(mossDir)) {
-      return mossDir
-    }
-    return claudeDir
+    return join(homedir(), '.moss').normalize('NFC')
   },
   () => process.env.CLAUDE_CONFIG_DIR,
 )

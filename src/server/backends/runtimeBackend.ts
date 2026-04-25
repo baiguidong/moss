@@ -12,6 +12,8 @@ type RuntimeBackendOptions = {
   docker?: {
     image?: string
     mode?: 'session' | 'user'
+    network?: string
+    labels?: Record<string, string>
   }
 }
 

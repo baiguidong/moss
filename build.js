@@ -70,32 +70,49 @@ build('electron-direct.mjs', [
   ...defines,
 ])
 
-// direct-connect-server.mjs（独立服务端入口）
-build('direct-connect-server.mjs', [
+// admin/dist（由 moss server 直接挂载到 /admin）
+build('admin/dist', [
+  'run',
+  '--cwd', 'admin',
+  'build',
+])
+
+// moss-server.mjs（统一服务端入口）
+build('moss-server.mjs', [
   'build', 'src/server/serverCli.ts',
-  '--outfile=direct-connect-server.mjs',
+  '--outfile=moss-server.mjs',
   '--target=node',
   '--format=esm',
   ...aliases,
   ...defines,
 ])
+
+// direct-connect-server.mjs（兼容旧入口名）
+// build('direct-connect-server.mjs', [
+//   'build', 'src/server/serverCli.ts',
+//   '--outfile=direct-connect-server.mjs',
+//   '--target=node',
+//   '--format=esm',
+//   ...aliases,
+//   ...defines,
+// ])
+
+// direct-connect-session-runner.mjs（session detached runner）
+// build('direct-connect-session-runner.mjs', [
+//   'build', 'src/server/sessionRunnerCli.ts',
+//   '--outfile=direct-connect-session-runner.mjs',
+//   '--target=node',
+//   '--format=esm',
+//   ...aliases,
+//   ...defines,
+// ])
 
 // direct-connect-open.mjs（独立 headless 客户端入口）
-build('direct-connect-open.mjs', [
-  'build', 'src/server/openCli.ts',
-  '--outfile=direct-connect-open.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])
-
-// auth-center.mjs（认证中心与管理端入口）
-build('auth-center.mjs', [
-  'build', 'src/server/authCenter/authCenterCli.ts',
-  '--outfile=auth-center.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])
+// build('direct-connect-open.mjs', [
+//   'build', 'src/server/openCli.ts',
+//   '--outfile=direct-connect-open.mjs',
+//   '--target=node',
+//   '--format=esm',
+//   ...aliases,
+//   ...defines,
+// ])

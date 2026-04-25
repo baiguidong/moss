@@ -8,6 +8,8 @@ export type SessionRuntimeOptions = {
   type?: SessionRuntimeType
   dockerImage?: string
   dockerMode?: 'session' | 'user'
+  configDir?: string
+  containerName?: string
 }
 
 export type SessionRuntimeInfo = {
@@ -45,6 +47,7 @@ export type BackendHandle = {
   runtime: SessionRuntimeInfo
   writeStdin: (data: string) => void
   onStdoutLine: (listener: (line: string) => void) => () => void
+  onStderrLine: (listener: (line: string) => void) => () => void
   onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => () => void
   destroy: (force?: boolean) => void
 }

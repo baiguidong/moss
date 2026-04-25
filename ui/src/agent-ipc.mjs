@@ -1,65 +1,35 @@
 import electron from 'electron';
-const { ipcMain, dialog } = electron;
+const { ipcMain } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import https from 'node:https';
-import http from 'node:http';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
+import {
+  ASSISTANT_META_FILE,
+  buildInstalledSkillLookup,
+  findAssistantDirByName,
+  readAssistantContext,
+  resolveAssistantRuleFile,
+  resolveInstalledSkillInfos,
+} from './assistant-context-utils.mjs';
+import { downloadFileBuffer } from './download-utils.mjs';
+import {
+  ASSISTANT_HUB_BASE_URL,
+  ASSISTANT_HUB_CURSOR_URL,
+  HUB_AUTHORIZATION,
+  HUB_CATEGORIES_URL,
+  SKILL_HUB_BASE_URL,
+} from './hub-config.mjs';
+import { getInstalledSkills, installSkillFromZip } from './skill-store-ipc.mjs';
 
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
 const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');
 const ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_my-custom-assistant');
-const ASSISTANT_HUB_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api/assistants';
-const ASSISTANT_HUB_CURSOR_URL = 'https://sudoclawhub.sudoprivacy.com/api/assistants/cursor';
-const ASSISTANT_CATEGORY_URL = 'https://sudoclawhub.sudoprivacy.com/api/categories';
-const ASSISTANT_HUB_AUTHORIZATION = 'sud0@sudo';
-const ASSISTANT_META_FILE = '_moss_meta.json';
-
-async function downloadFile(url) {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
-    const client = parsedUrl.protocol === 'https:' ? https : http;
-
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-      path: parsedUrl.pathname + parsedUrl.search,
-      method: 'GET',
-      headers: { 'User-Agent': 'Moss-AssistantHub/1.0' },
-    };
-
-    const request = client.request(options, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        const redirectUrl = response.headers.location;
-        if (redirectUrl) {
-          downloadFile(redirectUrl).then(resolve).catch(reject);
-          return;
-        }
-      }
-
-      if (response.statusCode && response.statusCode >= 400) {
-        reject(new Error(`HTTP ${response.statusCode}`));
-        return;
-      }
-
-      const chunks = [];
-      response.on('data', (chunk) => chunks.push(chunk));
-      response.on('end', () => resolve(Buffer.concat(chunks)));
-      response.on('error', reject);
-    });
-
-    request.setTimeout(60000, () => {
-      request.destroy(new Error('Download timeout'));
-    });
-    request.on('error', reject);
-    request.end();
-  });
-}
+const ASSISTANT_SEARCH_DIRS = [ASSISTANT_CUSTOM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_SYSTEM_DIR];
 
 async function verifyChecksum(buffer, expectedChecksum) {
   const actualChecksum = crypto.createHash('sha256').update(buffer).digest('hex');
@@ -131,22 +101,6 @@ async function extractAssistantZip(buffer, targetDir) {
 
     const content = await zipEntry.async('nodebuffer');
     await fsp.writeFile(fullPath, content);
-  }
-}
-
-async function selectRuleFile(assistantDir, assistantName) {
-  try {
-    const files = await fsp.readdir(assistantDir);
-    const mdFiles = files.filter((f) => f.endsWith('.md'));
-
-    if (mdFiles.length === 0) return undefined;
-
-    const primaryRuleFile = mdFiles.find((f) => f === `${assistantName}.md`);
-    if (primaryRuleFile) return primaryRuleFile;
-
-    return mdFiles[0];
-  } catch {
-    return undefined;
   }
 }
 
@@ -290,7 +244,7 @@ export function registerAgentIpcHandlers() {
       const url = `${ASSISTANT_HUB_CURSOR_URL}?${params}`;
 
       const response = await fetch(url, {
-        headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
+        headers: { Authorization: HUB_AUTHORIZATION },
       });
 
       if (!response.ok) {
@@ -332,8 +286,8 @@ export function registerAgentIpcHandlers() {
   // Fetch categories
   ipcMain.handle('agent:fetchCategories', async () => {
     try {
-      const response = await fetch(`${ASSISTANT_CATEGORY_URL}?type=1`, {
-        headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
+      const response = await fetch(`${HUB_CATEGORIES_URL}?type=1`, {
+        headers: { Authorization: HUB_AUTHORIZATION },
       });
       const result = await response.json();
       return { success: true, data: result.data || [] };
@@ -346,7 +300,7 @@ export function registerAgentIpcHandlers() {
   ipcMain.handle('agent:fetchAssistantDetail', async (_event, { assistantId }) => {
     try {
       const response = await fetch(`${ASSISTANT_HUB_BASE_URL}/${assistantId}`, {
-        headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
+        headers: { Authorization: HUB_AUTHORIZATION },
       });
       const result = await response.json();
       // Handle different response structures
@@ -379,7 +333,7 @@ export function registerAgentIpcHandlers() {
         return { success: false, error: `sourceUrl is undefined for assistant ${assistantName}` };
       }
 
-      const zipBuffer = await downloadFile(sourceUrl);
+      const zipBuffer = await downloadFileBuffer(sourceUrl, { userAgent: 'Moss-AssistantHub/1.0' });
       console.log('[AgentStore IPC] Downloaded bytes:', zipBuffer.length);
 
       if (checksum) {
@@ -397,34 +351,39 @@ export function registerAgentIpcHandlers() {
 
       await extractAssistantZip(zipBuffer, assistantDir);
 
-      const ruleFile = await selectRuleFile(assistantDir, assistantName);
+      const ruleFile = await resolveAssistantRuleFile(assistantDir, assistantName);
 
       // Install associated skills
       const installedSkillNames = [];
       const failedSkillIds = [];
       const allAssociatedSkillIds = [];
+      const enabledSkillNames = new Set();
 
       if (selectedSkillIds && selectedSkillIds.length > 0) {
         // Get current installed skills
         const installedSkills = await getInstalledSkills();
-        const installedSkillNamesSet = new Set(installedSkills.map(s => s.name));
+        const installedSkillLookup = buildInstalledSkillLookup(installedSkills);
 
         for (const skillId of selectedSkillIds) {
           allAssociatedSkillIds.push(skillId);
 
-          // Check if skill is already installed (by name)
-          // Try to find skill in installed list
-          const skillDetailRes = await fetch(`https://sudoclawhub.sudoprivacy.com/api/skills/${skillId}`, {
-            headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
+          const skillDetailRes = await fetch(`${SKILL_HUB_BASE_URL}/${skillId}`, {
+            headers: { Authorization: HUB_AUTHORIZATION },
           });
+          if (!skillDetailRes.ok) {
+            failedSkillIds.push(skillId);
+            continue;
+          }
           const skillDetailData = await skillDetailRes.json();
 
           if (skillDetailData.success && skillDetailData.data?.skill) {
             const skillInfo = skillDetailData.data.skill;
             const skillName = skillInfo.name;
+            const existingSkill = installedSkillLookup.get(String(skillId)) || installedSkillLookup.get(skillName);
 
-            if (installedSkillNamesSet.has(skillName)) {
-              continue; // Already installed
+            if (existingSkill) {
+              enabledSkillNames.add(existingSkill.name || skillName);
+              continue;
             }
 
             // Install the skill
@@ -443,7 +402,7 @@ export function registerAgentIpcHandlers() {
             }
 
             try {
-              const skillZipBuffer = await downloadFile(latestVersion.source_url);
+              const skillZipBuffer = await downloadFileBuffer(latestVersion.source_url, { userAgent: 'Moss-AssistantHub/1.0' });
               if (latestVersion.checksum) {
                 const isValid = await verifyChecksum(skillZipBuffer, latestVersion.checksum);
                 if (!isValid) {
@@ -451,45 +410,13 @@ export function registerAgentIpcHandlers() {
                 }
               }
 
-              const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills', 'hub');
-              const skillDir = path.join(MOSS_SKILLS_DIR, skillName);
-              await fsp.mkdir(skillDir, { recursive: true });
-
-              // Extract skill - use simplified extraction
-              const skillZip = await JSZip.loadAsync(skillZipBuffer);
-              for (const zipEntry of Object.values(skillZip.files)) {
-                if (zipEntry.dir) continue;
-                const normalizedPath = normalizeZipEntryPath(zipEntry.name);
-                let targetPath = normalizedPath;
-                if (normalizedPath.includes('/')) {
-                  targetPath = normalizedPath.split('/').slice(1).join('/');
-                }
-                if (!targetPath) continue;
-                const fullPath = path.join(skillDir, targetPath);
-                await fsp.mkdir(path.dirname(fullPath), { recursive: true });
-                const content = await zipEntry.async('nodebuffer');
-                await fsp.writeFile(fullPath, content);
-              }
-
-              // Write skill meta
-              const skillMeta = {
-                id: skillInfo.id,
-                name: skillName,
-                display_name: skillInfo.display_name,
-                description: skillInfo.description,
-                icon: skillInfo.icon,
-                emoji: skillInfo.emoji,
-                category: skillInfo.category,
-                categories: skillInfo.categories,
-                source_type: 'hub',
-                is_builtin: false,
-                enabled: true,
-                installed_version: latestVersion.version,
-                installed_at: new Date().toISOString(),
-              };
-              await fsp.writeFile(path.join(skillDir, '_moss_meta.json'), JSON.stringify(skillMeta, null, 2), 'utf-8');
+              await installSkillFromZip(skillZipBuffer, skillName, skillInfo, latestVersion.version);
               installedSkillNames.push(skillName);
-              installedSkillNamesSet.add(skillName);
+              enabledSkillNames.add(skillName);
+              installedSkillLookup.set(skillName, { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', 'hub', skillName) });
+              if (skillInfo.id !== undefined && skillInfo.id !== null) {
+                installedSkillLookup.set(String(skillInfo.id), { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', 'hub', skillName) });
+              }
             } catch (skillErr) {
               console.warn('[AgentStore IPC] Failed to install skill:', skillId, skillErr);
               failedSkillIds.push(skillId);
@@ -517,7 +444,7 @@ export function registerAgentIpcHandlers() {
         installed_at: new Date().toISOString(),
         ruleFile: ruleFile,
         skills: allAssociatedSkillIds,
-        enabledSkills: allAssociatedSkillIds,
+        enabledSkills: Array.from(enabledSkillNames),
       };
 
       await fsp.writeFile(path.join(assistantDir, ASSISTANT_META_FILE), JSON.stringify(meta, null, 2), 'utf-8');
@@ -600,8 +527,8 @@ export function registerAgentIpcHandlers() {
       const results = await Promise.all(
         skillIds.map(async (id) => {
           try {
-            const response = await fetch(`https://sudoclawhub.sudoprivacy.com/api/skills/${id}`, {
-              headers: { Authorization: ASSISTANT_HUB_AUTHORIZATION },
+            const response = await fetch(`${SKILL_HUB_BASE_URL}/${id}`, {
+              headers: { Authorization: HUB_AUTHORIZATION },
             });
             const data = await response.json();
             if (data.success && data.data?.skill) {
@@ -623,47 +550,17 @@ export function registerAgentIpcHandlers() {
   // Read assistant rule file content
   ipcMain.handle('agent:getAssistantContext', async (_event, { assistantName }) => {
     try {
-      const result = findAssistantDir(assistantName);
-      if (!result) {
+      const assistantDir = await findAssistantDirByName(assistantName, ASSISTANT_SEARCH_DIRS);
+      if (!assistantDir) {
         return { success: false, error: 'Assistant not found' };
       }
 
-      const metaPath = path.join(result.dir, ASSISTANT_META_FILE);
-      let ruleFile;
-      try {
-        const metaContent = await fsp.readFile(metaPath, 'utf-8');
-        const meta = JSON.parse(metaContent);
-        ruleFile = meta.ruleFile;
-      } catch {
-        // No meta
-      }
-
-      let content = '';
-      if (ruleFile) {
-        try {
-          content = await fsp.readFile(path.join(result.dir, ruleFile), 'utf-8');
-        } catch {
-          // Try common rule file names
-        }
-      }
-      if (!content) {
-        const files = await fsp.readdir(result.dir);
-        const mdFile = files.find(f => f.endsWith('.md') && f !== ASSISTANT_META_FILE);
-        if (mdFile) {
-          content = await fsp.readFile(path.join(result.dir, mdFile), 'utf-8');
-        }
-      }
-      return { success: true, data: content };
+      const assistantContext = await readAssistantContext(assistantDir, assistantName);
+      return { success: true, data: assistantContext.rules };
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
-
-  // Get skill info (name + path) by skill IDs
-  const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
-  const MOSS_SKILLS_HUB_DIR = path.join(MOSS_HOME, 'skills', 'hub');
-  const MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_HOME, 'skills', 'system');
-  const MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_HOME, 'skills', 'custom');
 
   ipcMain.handle('agent:getSkillInfosByIds', async (_event, { skillIds }) => {
     try {
@@ -671,31 +568,8 @@ export function registerAgentIpcHandlers() {
         return { success: true, data: [] };
       }
 
-      const results = [];
-      const searchDirs = [
-        USER_SKILLS_DIR,
-        MOSS_SKILLS_HUB_DIR,
-        MOSS_SKILLS_SYSTEM_DIR,
-        MOSS_SKILLS_CUSTOM_DIR,
-      ];
-
-      for (const skillId of skillIds) {
-        let foundPath = null;
-        for (const dir of searchDirs) {
-          const skillDir = path.join(dir, skillId);
-          try {
-            await fsp.access(skillDir);
-            foundPath = skillDir;
-            break;
-          } catch {
-            // Not found in this directory
-          }
-        }
-        if (foundPath) {
-          results.push({ name: skillId, path: foundPath });
-        }
-      }
-
+      const installedSkills = await getInstalledSkills();
+      const results = resolveInstalledSkillInfos(skillIds, installedSkills);
       return { success: true, data: results };
     } catch (err) {
       return { success: false, error: err.message };
@@ -709,58 +583,17 @@ export function registerAgentIpcHandlers() {
         return { success: true, data: { rules: '', skillsInfo: [] } };
       }
 
-      // Get assistant rules
-      const result = findAssistantDir(assistantName);
       let rules = '';
-      if (result) {
-        const metaPath = path.join(result.dir, ASSISTANT_META_FILE);
-        let ruleFile;
-        try {
-          const metaContent = await fsp.readFile(metaPath, 'utf-8');
-          const meta = JSON.parse(metaContent);
-          ruleFile = meta.ruleFile;
-        } catch {
-          // No meta
-        }
-
-        if (ruleFile) {
-          try {
-            rules = await fsp.readFile(path.join(result.dir, ruleFile), 'utf-8');
-          } catch {
-            // Try common rule file names
-          }
-        }
-        if (!rules) {
-          const files = await fsp.readdir(result.dir);
-          const mdFile = files.find(f => f.endsWith('.md') && f !== ASSISTANT_META_FILE);
-          if (mdFile) {
-            rules = await fsp.readFile(path.join(result.dir, mdFile), 'utf-8');
-          }
-        }
+      let enabledSkills = [];
+      const assistantDir = await findAssistantDirByName(assistantName, ASSISTANT_SEARCH_DIRS);
+      if (assistantDir) {
+        const assistantContext = await readAssistantContext(assistantDir, assistantName);
+        rules = assistantContext.rules;
+        enabledSkills = assistantContext.enabledSkillIdentifiers;
       }
 
-      // Get enabled skills and their paths
-      const assistants = await getInstalledAssistants();
-      const assistant = assistants.find(a => a.name === assistantName);
-      const enabledSkills = assistant?.enabledSkills || [];
-
-      const skillsInfo = [];
-      for (const skillId of enabledSkills) {
-        let foundPath = null;
-        for (const dir of [USER_SKILLS_DIR, MOSS_SKILLS_HUB_DIR, path.join(MOSS_HOME, 'skills', 'system'), path.join(MOSS_HOME, 'skills', 'custom')]) {
-          const skillDir = path.join(dir, skillId);
-          try {
-            await fsp.access(skillDir);
-            foundPath = skillDir;
-            break;
-          } catch {
-            // Not found in this directory
-          }
-        }
-        if (foundPath) {
-          skillsInfo.push({ name: skillId, path: foundPath });
-        }
-      }
+      const installedSkills = await getInstalledSkills();
+      const skillsInfo = resolveInstalledSkillInfos(enabledSkills, installedSkills);
 
       return { success: true, data: { rules, skillsInfo } };
     } catch (err) {

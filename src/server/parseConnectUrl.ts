@@ -3,36 +3,21 @@ import path from 'path'
 export function buildConnectUrl(options: {
   host: string
   port: number
-  authMode?: 'auth-center'
-  authCenterUrl?: string
   unix?: string
 }): string {
-  const searchParams = new URLSearchParams()
-  if (options.authMode === 'auth-center') {
-    searchParams.set('auth_mode', 'auth-center')
-    if (options.authCenterUrl) {
-      searchParams.set('auth_center', options.authCenterUrl)
-    }
-  }
-
   if (options.unix) {
-    const query = searchParams.toString()
-    return `cc+unix://${encodeURIComponent(path.resolve(options.unix))}${query ? `?${query}` : ''}`
+    return `cc+unix://${encodeURIComponent(path.resolve(options.unix))}`
   }
 
-  const query = searchParams.toString()
-  return `cc://${options.host}:${options.port}${query ? `?${query}` : ''}`
+  return `cc://${options.host}:${options.port}`
 }
 
 export function parseConnectUrl(
   ccUrl: string,
-  options?: {
-    allowMissingAuthInfo?: boolean
-  },
 ): {
   serverUrl: string
-  authCenterUrl?: string
-  authMode: 'auth-center'
+  authMode: 'local'
+  authToken?: string
 } {
   if (ccUrl.startsWith('cc+unix://')) {
     const url = new URL(ccUrl)
@@ -52,20 +37,20 @@ export function parseConnectUrl(
   const url = new URL(ccUrl)
   if (url.searchParams.get('token')) {
     throw new Error(
-      `Static token URLs are no longer supported: ${ccUrl}. Use Auth Center instead.`,
+      `Static token URLs are no longer supported: ${ccUrl}. Use bearer auth instead.`,
     )
   }
-  const authCenterUrl = url.searchParams.get('auth_center') || ''
+  const authMode = url.searchParams.get('auth_mode')
+  if (authMode && authMode !== 'auth-center' && authMode !== 'local') {
+    throw new Error(`Unsupported direct-connect auth mode in URL: ${authMode}`)
+  }
   if (!url.hostname || !url.port) {
     throw new Error(`Invalid direct-connect URL: ${ccUrl}`)
   }
-  if (!authCenterUrl && !options?.allowMissingAuthInfo) {
-    throw new Error(`Missing auth information in direct-connect URL: ${ccUrl}`)
-  }
+  const serverUrl = `http://${url.hostname}:${url.port}`
 
   return {
-    serverUrl: `http://${url.hostname}:${url.port}`,
-    authCenterUrl: authCenterUrl || undefined,
-    authMode: 'auth-center',
+    serverUrl,
+    authMode: 'local',
   }
 }

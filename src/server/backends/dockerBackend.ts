@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { existsSync } from 'fs'
 import { mkdir } from 'fs/promises'
 import { dirname, join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
@@ -19,10 +20,19 @@ import {
 type DockerBackendDefaults = {
   image?: string
   mode?: 'session' | 'user'
+  network?: string
+  labels?: Record<string, string>
 }
 
 function uniqueMounts(paths: string[]): string[] {
   return [...new Set(paths)]
+}
+
+function resolveDockerUser(): string | null {
+  if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function') {
+    return null
+  }
+  return `${process.getuid()}:${process.getgid()}`
 }
 
 function buildConfigDir(
@@ -45,6 +55,10 @@ function buildConfigDir(
   )
 }
 
+function getHostSettingsPath(): string {
+  return join(getClaudeConfigHomeDir(), 'settings.json')
+}
+
 export class DockerBackend implements SessionBackend {
   constructor(private readonly defaults: DockerBackendDefaults = {}) {}
 
@@ -65,8 +79,9 @@ export class DockerBackend implements SessionBackend {
     const nodeCliPath = resolveNodeCliPath()
     ensureCliExists(nodeCliPath)
 
-    const configDir = buildConfigDir(options, mode)
+    const configDir = runtime?.configDir || buildConfigDir(options, mode)
     await mkdir(configDir, { recursive: true })
+    const hostSettingsPath = getHostSettingsPath()
 
     const mounts = uniqueMounts([
       options.cwd,
@@ -74,15 +89,29 @@ export class DockerBackend implements SessionBackend {
       configDir,
     ])
 
-    const containerName = `moss-session-${options.sessionId.slice(0, 12)}`
+    const containerName =
+      runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
     const env = buildSessionEnv(options, {
       CLAUDE_CONFIG_DIR: configDir,
       CLAUDE_CODE_CLI_PATH: nodeCliPath,
     })
 
     const args = ['run', '--rm', '-i', '--name', containerName]
+    const dockerUser = resolveDockerUser()
+    if (dockerUser) {
+      args.push('--user', dockerUser)
+    }
+    if (this.defaults.network) {
+      args.push('--network', this.defaults.network)
+    }
+    for (const [key, value] of Object.entries(this.defaults.labels || {})) {
+      args.push('--label', `${key}=${value}`)
+    }
     for (const mount of mounts) {
       args.push('-v', `${mount}:${mount}`)
+    }
+    if (existsSync(hostSettingsPath)) {
+      args.push('-v', `${hostSettingsPath}:${join(configDir, 'settings.json')}:ro`)
     }
 
     args.push('-w', options.cwd)
@@ -100,6 +129,7 @@ export class DockerBackend implements SessionBackend {
         args.push('-e', `${key}=${env[key]}`)
       }
     }
+    args.push('-e', `HOME=${configDir}`)
 
     args.push(
       image,

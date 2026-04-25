@@ -17,6 +17,73 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto'
 
 // ============================================================================
+// Image generation by provider
+// ============================================================================
+
+async function generateImageWithProvider({
+  provider,
+  prompt,
+  aspect_ratio,
+  subject_reference,
+  apiKey,
+  url,
+  model,
+}) {
+  const normalizedProvider = typeof provider === 'string' ? provider.trim().toLowerCase() : 'minimax'
+  const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : ''
+  const normalizedUrl = typeof url === 'string' ? url.trim() : ''
+  const normalizedModel = typeof model === 'string' ? model.trim() : ''
+
+  if (normalizedProvider === 'minimax') {
+    return generateMinimaxImage({ prompt, aspect_ratio, subject_reference, apiKey: normalizedApiKey, url: normalizedUrl, model: normalizedModel })
+  }
+
+  throw new Error(`Unsupported image provider: ${provider}`)
+}
+
+async function generateMinimaxImage({ prompt, aspect_ratio, subject_reference, apiKey, url, model }) {
+  if (!model) {
+    throw new Error('Image model is not configured in desktop settings (image.model)')
+  }
+  if (!apiKey) {
+    throw new Error('Image API key is not configured in desktop settings (image.apiKey)')
+  }
+  if (!url) {
+    throw new Error('Image URL is not configured in desktop settings (image.url)')
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      aspect_ratio: aspect_ratio || '1:1',
+      subject_reference,
+      response_format: 'base64',
+    }),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`Image generation failed: ${response.status} ${detail}`)
+  }
+
+  const payload = await response.json()
+  const images = Array.isArray(payload?.data?.image_base64)
+    ? payload.data.image_base64
+    : []
+  if (images.length === 0) {
+    throw new Error('Image generation returned no images')
+  }
+
+  return images
+}
+
+// ============================================================================
 // Generic JSON file CRUD IPC
 // ============================================================================
 
@@ -27,7 +94,9 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
     idPrefix = '',
   } = options;
 
-  const resolvedPath = filePath.replace(/^~\//, os.homedir() + '/');
+  const resolvedPath = filePath.startsWith('~/')
+    ? path.join(os.homedir(), filePath.slice(2))
+    : filePath;
 
   async function readData() {
     try {
@@ -98,7 +167,7 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
 // Constants
 // ============================================================================
 
-const MOSS_HOME = path.join(process.env.HOME ?? '', '.moss')
+const MOSS_HOME = path.join(os.homedir(), '.moss')
 const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps')
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'generated-app-data')
 const APP_FILES_SUBDIR = 'files'
@@ -626,13 +695,15 @@ export function getStoredApp(name) {
   return appEntry
 }
 
-export function deleteStoredApp(name) {
+export async function deleteStoredApp(name) {
   const appEntry = listStoredApps().find(entry => entry.name === name)
   if (!appEntry) {
     throw new Error(`Unknown app: ${name}`)
   }
-  fs.rmSync(appEntry.filePath, { force: true })
-  fs.rmSync(path.join(ensureAppDataRootDir(), name), { recursive: true, force: true })
+  await Promise.all([
+    fsp.rm(appEntry.filePath, { force: true }),
+    fsp.rm(path.join(ensureAppDataRootDir(), name), { recursive: true, force: true }),
+  ])
   clearVersionSnapshotCache(name)
 }
 
@@ -667,20 +738,25 @@ export function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
   let metadata
   try {
     metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
-  } catch {
-    throw new Error(`Failed to parse app metadata: ${metadataPath}`)
+  } catch (error) {
+    throw new Error(
+      `Failed to parse generated app metadata JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 
-  const html = fs.readFileSync(htmlPath, 'utf8')
+  const html = fs.readFileSync(htmlPath, 'utf8').trim()
+  if (!html.toLowerCase().includes('<html')) {
+    throw new Error(`Generated HTML file did not contain a full HTML document: ${htmlPath}`)
+  }
 
   return {
-    name: String(metadata.name || ''),
-    title: String(metadata.title || metadata.name || ''),
-    description: String(metadata.description || ''),
-    icon: String(metadata.icon || ''),
+    name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
+    title: String(metadata?.title || metadata?.name || '').trim(),
+    description: String(metadata?.description || '').trim(),
+    icon: String(metadata?.icon || '').trim(),
     width: Number(metadata.width) || 900,
     height: Number(metadata.height) || 700,
-    resizable: metadata.resizable !== false,
+    resizable: metadata?.resizable !== false,
     html,
   }
 }
@@ -858,7 +934,7 @@ export function registerAppIpcHandlers(ipcMain, windows, events) {
       existingWindow.close()
     }
     windows.closeAppWindow(name)
-    deleteStoredApp(name)
+    await deleteStoredApp(name)
     events.emitAppsChanged({ action: 'deleted', name })
     return { ok: true }
   })
@@ -1035,58 +1111,21 @@ export function createMossAppEventHandler(windows, events, options = {}) {
             settings.image && typeof settings.image === 'object'
               ? settings.image
               : {}
-          const model =
-            typeof imageSettings.model === 'string'
-              ? imageSettings.model.trim()
-              : ''
-          if (!model) {
-            throw new Error('Image model is not configured in desktop settings (image.model)')
-          }
 
-          const apiKey =
-            typeof imageSettings.apiKey === 'string'
-              ? imageSettings.apiKey.trim()
-              : ''
-          if (!apiKey) {
-            throw new Error('Image API key is not configured in desktop settings (image.apiKey)')
-          }
-          const imageUrl =
-            typeof imageSettings.url === 'string'
-              ? imageSettings.url.trim()
-              : ''
-          if (!imageUrl) {
-            throw new Error('Image URL is not configured in desktop settings (image.url)')
-          }
+          const imageProvider =
+            typeof imageSettings.provider === 'string'
+              ? imageSettings.provider.trim()
+              : 'minimax'
 
-          const response = await fetch(imageUrl, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model,
-              prompt,
-              aspect_ratio: aspect_ratio || '1:1',
-              subject_reference,
-              response_format: 'base64',
-            }),
+          const images = await generateImageWithProvider({
+            provider: imageProvider,
+            prompt,
+            aspect_ratio,
+            subject_reference,
+            apiKey: imageSettings.apiKey,
+            url: imageSettings.url,
+            model: imageSettings.model,
           })
-
-          if (!response.ok) {
-            const detail = await response.text()
-            throw new Error(
-              `Image generation failed: ${response.status} ${detail}`,
-            )
-          }
-
-          const payload = await response.json()
-          const images = Array.isArray(payload?.data?.image_base64)
-            ? payload.data.image_base64
-            : []
-          if (images.length === 0) {
-            throw new Error('Image generation returned no images')
-          }
 
           await fsp.mkdir(path.dirname(out_filepath), { recursive: true })
 

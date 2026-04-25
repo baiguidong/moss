@@ -8,9 +8,24 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
+import { getInstalledSkills, registerSkillStoreIpcHandlers, SKILL_SEARCH_DIRS } from './skill-store-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
-import { createMossAppEventHandler } from './app-ipc.mjs';
+import {
+  createMossAppEventHandler,
+  deleteStoredApp,
+  getStoredApp,
+  listAppVersionSnapshots,
+  listStoredApps,
+  loadStoredAppContent,
+  readGeneratedAppPayloadFromWorkspace,
+  rollbackAppToVersion,
+  saveStoredApp,
+} from './app-ipc.mjs';
+import {
+  findAssistantDirByName,
+  readAssistantContext,
+  resolveInstalledSkillInfos,
+} from './assistant-context-utils.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
@@ -59,12 +74,12 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   url: '',
   apiKey: '',
   image: {
+    provider: 'minimax',
     url: 'https://api.minimaxi.com/v1/image_generation',
     apiKey: '',
     model: '',
   },
   remoteDirectServerUrl: '',
-  remoteDirectAuthCenterUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserEmail: '',
   remoteDirectUserPassword: '',
@@ -77,13 +92,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
-const APP_CURRENT_VERSION_FILENAME = 'current-version.json';
-const SESSION_APP_BUILD_SUBDIR = '.moss-app-build';
-const APP_METADATA_SCRIPT_TYPE = 'application/ld+json';
-const APP_PRD_SCRIPT_TYPE = 'application/x-goose-prd';
-const APP_SCHEMA_CONTEXT = 'urn:goose.ai:schema';
-const APP_SCHEMA_TYPE = 'GooseApp';
-const APP_CSP_CONTENT = "default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:;";
 const EVENT_TRACE_ENABLED = process.env.MOSS_EVENT_TRACE !== '0';
 const MAX_SANITIZED_PATH_LENGTH = 200;
 
@@ -146,6 +154,16 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'local'`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN remote_workspace TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -155,6 +173,8 @@ const persistSessionStmt = (() => {
       updated_at INTEGER NOT NULL,
       message_count INTEGER NOT NULL,
       preview TEXT NOT NULL,
+      agent_mode TEXT NOT NULL DEFAULT 'local',
+      remote_workspace TEXT,
       underlying_session_id TEXT,
       history_json TEXT NOT NULL,
       is_sub_agent INTEGER NOT NULL DEFAULT 0,
@@ -163,9 +183,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, underlying_session_id, history_json, is_sub_agent, worker_summaries_json
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -174,6 +194,8 @@ const persistSessionStmt = (() => {
       updated_at = excluded.updated_at,
       message_count = excluded.message_count,
       preview = excluded.preview,
+      agent_mode = excluded.agent_mode,
+      remote_workspace = excluded.remote_workspace,
       underlying_session_id = excluded.underlying_session_id,
       history_json = excluded.history_json,
       is_sub_agent = excluded.is_sub_agent,
@@ -190,6 +212,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     updated_at,
     message_count,
     preview,
+    agent_mode,
+    remote_workspace,
     underlying_session_id,
     history_json,
     is_sub_agent,
@@ -207,6 +231,8 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     updated_at,
     message_count,
     preview,
+    agent_mode,
+    remote_workspace,
     underlying_session_id,
     history_json,
     is_sub_agent,
@@ -225,6 +251,8 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     updated_at,
     message_count,
     preview,
+    agent_mode,
+    remote_workspace,
     underlying_session_id,
     history_json,
     is_sub_agent,
@@ -442,6 +470,12 @@ function normalizeDesktopSettings(input, existing = {}) {
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : {};
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
   result.image = {
+    provider:
+      typeof sourceImage.provider === 'string'
+        ? sourceImage.provider.trim()
+        : typeof existingImage.provider === 'string'
+          ? existingImage.provider
+          : DEFAULT_DESKTOP_SETTINGS.image.provider,
     url:
       typeof sourceImage.url === 'string'
         ? sourceImage.url.trim()
@@ -466,12 +500,6 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
   } else if (result.remoteDirectServerUrl === undefined) {
     result.remoteDirectServerUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
-  }
-
-  if (typeof source.remoteDirectAuthCenterUrl === 'string') {
-    result.remoteDirectAuthCenterUrl = source.remoteDirectAuthCenterUrl.trim();
-  } else if (result.remoteDirectAuthCenterUrl === undefined) {
-    result.remoteDirectAuthCenterUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectAuthCenterUrl;
   }
 
   if (source.remoteDirectCredentialMode === 'api-key') {
@@ -684,22 +712,24 @@ function parseRemoteDirectServerInput(raw) {
       throw new Error(`Invalid direct-connect URL: ${raw}`);
     }
     if (url.searchParams.get('token')) {
-      throw new Error('The desktop client no longer supports cc://...token=... URLs. Use Auth Center instead.');
+      throw new Error('The desktop client no longer supports cc://...token=... URLs. Use bearer auth instead.');
     }
     const authMode = url.searchParams.get('auth_mode');
-    if (authMode && authMode !== 'auth-center') {
+    if (authMode && authMode !== 'auth-center' && authMode !== 'local') {
       throw new Error(`Unsupported direct-connect auth mode in URL: ${authMode}`);
     }
-    const authCenterUrl = url.searchParams.get('auth_center') || undefined;
+    const serverUrl = `http://${url.hostname}:${url.port}`;
+    const authCenterUrl = url.searchParams.get('auth_center') || serverUrl;
     return {
-      serverUrl: `http://${url.hostname}:${url.port}`,
+      serverUrl,
       authCenterUrl,
     };
   }
 
+  const serverUrl = raw.replace(/\/+$/, '');
   return {
-    serverUrl: raw.replace(/\/+$/, ''),
-    authCenterUrl: undefined,
+    serverUrl,
+    authCenterUrl: serverUrl,
   };
 }
 
@@ -714,14 +744,14 @@ async function requestRemoteDirectAccessToken({
     ? authCenterUrl.trim().replace(/\/+$/, '')
     : '';
   if (!normalizedAuthCenterUrl) {
-    throw new Error('Auth Center URL is required.');
+    throw new Error('Moss server URL is required.');
   }
 
   let payload;
   if (credentialMode === 'api-key') {
     const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
     if (!normalizedApiKey) {
-      throw new Error('API Key is required for Auth Center API-key login.');
+      throw new Error('API Key is required for moss server API-key login.');
     }
     payload = {
       grant_type: 'api_key',
@@ -730,10 +760,10 @@ async function requestRemoteDirectAccessToken({
   } else {
     const normalizedEmail = typeof email === 'string' ? email.trim() : '';
     if (!normalizedEmail) {
-      throw new Error('User email is required for Auth Center password login.');
+      throw new Error('User email is required for moss server password login.');
     }
     if (typeof password !== 'string' || !password) {
-      throw new Error('User password is required for Auth Center password login.');
+      throw new Error('User password is required for moss server password login.');
     }
     payload = {
       grant_type: 'password',
@@ -742,7 +772,7 @@ async function requestRemoteDirectAccessToken({
     };
   }
 
-  const response = await fetch(`${normalizedAuthCenterUrl}/v1/auth/token`, {
+  const response = await fetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -758,18 +788,17 @@ async function requestRemoteDirectAccessToken({
         message = data.error;
       }
     } catch {}
-    throw new Error(`Failed to get access token from auth center: ${message}`);
+    throw new Error(`Failed to get access token from moss server: ${message}`);
   }
 
   const data = await response.json();
   if (!data?.access_token) {
-    throw new Error('Auth center response missing access_token.');
+    throw new Error('Moss server response missing access_token.');
   }
   return data.access_token;
 }
 
 async function resolveRemoteDirectConnection() {
-  const mod = await getClaudeRuntimeModule();
   const raw = typeof desktopSettings.remoteDirectServerUrl === 'string'
     ? desktopSettings.remoteDirectServerUrl.trim()
     : '';
@@ -779,12 +808,8 @@ async function resolveRemoteDirectConnection() {
   }
 
   const parsed = parseRemoteDirectServerInput(raw);
-  const configuredAuthCenterUrl = typeof desktopSettings.remoteDirectAuthCenterUrl === 'string'
-    ? desktopSettings.remoteDirectAuthCenterUrl.trim() || undefined
-    : undefined;
-  const authCenterUrl = parsed.authCenterUrl || configuredAuthCenterUrl;
   const authToken = await requestRemoteDirectAccessToken({
-    authCenterUrl,
+    authCenterUrl: parsed.serverUrl,
     credentialMode: desktopSettings.remoteDirectCredentialMode,
     email: desktopSettings.remoteDirectUserEmail,
     password: desktopSettings.remoteDirectUserPassword,
@@ -797,12 +822,109 @@ async function resolveRemoteDirectConnection() {
   };
 }
 
+async function parseRemoteDirectError(prefix, response) {
+  let detail = '';
+  try {
+    const text = await response.text();
+    if (text.trim()) {
+      try {
+        const parsed = JSON.parse(text);
+        if (typeof parsed?.error === 'string' && parsed.error.trim()) {
+          detail = parsed.error.trim();
+        } else {
+          detail = text.trim();
+        }
+      } catch {
+        detail = text.trim();
+      }
+    }
+  } catch {}
+
+  return detail
+    ? `${prefix}: ${response.status} ${response.statusText}: ${detail}`
+    : `${prefix}: ${response.status} ${response.statusText}`;
+}
+
+async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessionId }) {
+  let response;
+  try {
+    response = await fetch(
+      `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${authToken}`,
+        },
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError(`Failed to query remote session ${sessionId}`, response),
+    );
+  }
+
+  return response.json();
+}
+
+async function resumeRemoteDirectSession({ serverUrl, authToken, sessionId }) {
+  let response;
+  try {
+    response = await fetch(
+      `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/resume`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${authToken}`,
+        },
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError(`Failed to resume remote session ${sessionId}`, response),
+    );
+  }
+
+  const data = await response.json();
+  const wsUrl = typeof data?.ws_url === 'string' ? data.ws_url : '';
+  const resumedSessionId = typeof data?.session?.sessionId === 'string'
+    ? data.session.sessionId
+    : sessionId;
+  if (!wsUrl) {
+    throw new Error(`Remote session ${sessionId} resume response missing ws_url.`);
+  }
+
+  return {
+    config: {
+      serverUrl,
+      sessionId: resumedSessionId,
+      wsUrl,
+      authToken,
+    },
+    workDir: typeof data?.session?.workDir === 'string' ? data.session.workDir : undefined,
+  };
+}
+
 function createRemoteDirectRuntime({
-  cwd,
+  sessionRecord,
   onPermissionRequest,
   onSessionCreated,
   coordinatorMode = false,
 }) {
+  const shouldPersistSessionRecord = Boolean(
+    sessionRecord &&
+    typeof sessionRecord.id === 'string' &&
+    Array.isArray(sessionRecord.history),
+  );
   let disposed = false;
   let activeManager = null;
   let managerConnectPromise = null;
@@ -826,13 +948,51 @@ function createRemoteDirectRuntime({
       }
 
       const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      const created = await mod.createDirectConnectSession({
-        serverUrl,
-        authToken,
-        cwd: cwd || getRemoteDirectWorkspace() || undefined,
-        dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
-      });
+      let created;
 
+      if (sessionRecord.underlyingSessionId) {
+        const remoteSession = await fetchRemoteDirectSessionInfo({
+          serverUrl,
+          authToken,
+          sessionId: sessionRecord.underlyingSessionId,
+        });
+        const desiredState = typeof remoteSession?.session?.desiredState === 'string'
+          ? remoteSession.session.desiredState
+          : 'active';
+
+        created = desiredState === 'active'
+          ? await mod.attachDirectConnectSession({
+              serverUrl,
+              authToken,
+              sessionId: sessionRecord.underlyingSessionId,
+            })
+          : await resumeRemoteDirectSession({
+              serverUrl,
+              authToken,
+              sessionId: sessionRecord.underlyingSessionId,
+            });
+      } else {
+        created = await mod.createDirectConnectSession({
+          serverUrl,
+          authToken,
+          cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || undefined,
+          dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+        });
+      }
+
+      sessionRecord.agentMode = 'remote-direct';
+      sessionRecord.resumeReadOnlyReason = null;
+      if (created?.config?.sessionId) {
+        sessionRecord.underlyingSessionId = created.config.sessionId;
+      }
+      if (created?.workDir) {
+        sessionRecord.remoteWorkspace = created.workDir;
+      }
+      if (shouldPersistSessionRecord) {
+        sessionRecord.updatedAt = Date.now();
+        schedulePersistSession(sessionRecord, true);
+        emitSessionMeta(sessionRecord);
+      }
       onSessionCreated?.(created);
       return {
         mod,
@@ -1072,6 +1232,8 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.updatedAt,
     sessionRecord.messageCount,
     sessionRecord.preview || '',
+    sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    sessionRecord.remoteWorkspace || null,
     sessionRecord.underlyingSessionId,
     JSON.stringify(sessionRecord.history || []),
     isSubAgent ? 1 : 0,
@@ -1107,14 +1269,44 @@ function deletePersistedSession(sessionId) {
   deleteSessionStmt.run(sessionId);
 }
 
+function inferPersistedSessionAgentMode(row) {
+  if (row?.agent_mode === 'remote-direct') {
+    return 'remote-direct';
+  }
+  if (row?.agent_mode === 'local') {
+    return 'local';
+  }
+  if (getDesktopAgentMode() !== 'remote-direct') {
+    return 'local';
+  }
+
+  const workspace = typeof row?.workspace === 'string' ? row.workspace.trim() : '';
+  const sessionId = typeof row?.underlying_session_id === 'string'
+    ? row.underlying_session_id.trim()
+    : '';
+  if (!workspace || !sessionId) {
+    return 'local';
+  }
+
+  const transcriptPath = getTranscriptPathForWorkspace(workspace, sessionId);
+  return transcriptPath && hasFile(transcriptPath) ? 'local' : 'remote-direct';
+}
+
 function hydratePersistedSessions() {
   const rows = loadSessionsStmt.all();
   for (const row of rows) {
     const history = parseStoredHistory(row.history_json);
+    const agentMode = inferPersistedSessionAgentMode(row);
     const sessionRecord = {
       id: row.id,
       title: row.title,
       workspace: row.workspace,
+      remoteWorkspace: agentMode === 'remote-direct'
+        ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
+          ? row.remote_workspace.trim()
+          : getRemoteDirectWorkspace() || null)
+        : null,
+      agentMode,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
@@ -1138,10 +1330,17 @@ function hydratePersistedSessions() {
   const subAgentRows = loadSubAgentSessionsStmt.all();
   for (const row of subAgentRows) {
     const history = parseStoredHistory(row.history_json);
+    const agentMode = inferPersistedSessionAgentMode(row);
     const sessionRecord = {
       id: row.id,
       title: row.title,
       workspace: row.workspace,
+      remoteWorkspace: agentMode === 'remote-direct'
+        ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
+          ? row.remote_workspace.trim()
+          : getRemoteDirectWorkspace() || null)
+        : null,
+      agentMode,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
@@ -1291,6 +1490,24 @@ function hasFile(filePath) {
   }
 }
 
+function getSessionModeMismatchReason(sessionRecord, targetAgentMode = getDesktopAgentMode()) {
+  if (!sessionRecord || sessionRecord.messageCount <= 0) {
+    return null;
+  }
+  const sessionAgentMode = sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
+  const currentAgentMode = targetAgentMode === 'remote-direct' ? 'remote-direct' : 'local';
+  if (sessionAgentMode === currentAgentMode) {
+    return null;
+  }
+  return `当前会话创建于 ${sessionAgentMode} 模式，但全局已切换到 ${currentAgentMode}。请新建一个 ${currentAgentMode} 会话后再继续。`;
+}
+
+function getSessionReadOnlyReason(sessionRecord, targetAgentMode = getDesktopAgentMode()) {
+  return getSessionModeMismatchReason(sessionRecord, targetAgentMode)
+    || sessionRecord.resumeReadOnlyReason
+    || null;
+}
+
 function getSessionSummary(sessionRecord) {
   const workspace = sessionRecord.agentMode === 'remote-direct'
     ? sessionRecord.remoteWorkspace || sessionRecord.workspace
@@ -1298,6 +1515,7 @@ function getSessionSummary(sessionRecord) {
   return {
     id: sessionRecord.id,
     title: sessionRecord.title,
+    agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
     workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
@@ -1306,7 +1524,7 @@ function getSessionSummary(sessionRecord) {
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
-    resumeReadOnlyReason: sessionRecord.resumeReadOnlyReason || null,
+    resumeReadOnlyReason: getSessionReadOnlyReason(sessionRecord),
   };
 }
 
@@ -1610,15 +1828,6 @@ function buildSessionTitle(prompt) {
   return line.length > 36 ? `${line.slice(0, 36)}...` : line;
 }
 
-function slugifyAppName(input) {
-  return String(input || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-}
-
 function ensureAppsDir() {
   fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
   return MOSS_APPS_DIR;
@@ -1730,476 +1939,6 @@ function ensureAppVersionsDir(name) {
 
 function getAppStoragePath(name) {
   return path.join(ensureAppDataDir(name), APP_STORAGE_FILENAME);
-}
-
-function getAppCurrentVersionPath(name) {
-  return path.join(ensureAppDataDir(name), APP_CURRENT_VERSION_FILENAME);
-}
-
-function getAppFilePath(name) {
-  return path.join(ensureAppsDir(), `${name}.html`);
-}
-
-function parseAppVersionIndex(value) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : null;
-  }
-
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-
-  const semverMatch = raw.match(/^0\.0\.(\d+)$/);
-  if (!semverMatch) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(semverMatch[1], 10);
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
-}
-
-function formatAppVersionNumber(value) {
-  const parsed = parseAppVersionIndex(value);
-  if (!parsed) {
-    return null;
-  }
-  return `0.0.${parsed}`;
-}
-
-function readAppCurrentVersion(name) {
-  const currentVersionPath = getAppCurrentVersionPath(name);
-  if (!fs.existsSync(currentVersionPath)) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(currentVersionPath, 'utf8'));
-    const id = String(parsed.id || '').trim();
-    const version = formatAppVersionNumber(parsed.version);
-    if (!id && !version) {
-      return null;
-    }
-    return {
-      id: id || null,
-      version,
-    };
-  } catch (error) {
-    console.warn(`Failed to load current app version from ${currentVersionPath}:`, error);
-    return null;
-  }
-}
-
-function writeAppCurrentVersion(name, versionSelection) {
-  const payload = {
-    id: String(versionSelection?.id || '').trim(),
-    version: formatAppVersionNumber(versionSelection?.version),
-  };
-  fs.writeFileSync(getAppCurrentVersionPath(name), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-}
-
-function loadAppVersionSnapshots(name) {
-  const versionsDir = ensureAppVersionsDir(name);
-  const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
-  const snapshots = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const filePath = path.join(versionsDir, entry.name);
-    try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      snapshots.push({
-        id: String(parsed.id || path.basename(entry.name, '.json')),
-        version: formatAppVersionNumber(parsed.version),
-        createdAt: Number(parsed.createdAt) || Date.now(),
-        reason: String(parsed.reason || 'updated'),
-        note: String(parsed.note || ''),
-        description: String(parsed.description || ''),
-        width: Number(parsed.width) || 900,
-        height: Number(parsed.height) || 700,
-        resizable: parsed.resizable !== false,
-        prd: String(parsed.prd || ''),
-        html: String(parsed.html || ''),
-      });
-    } catch (error) {
-      console.warn(`Failed to load app version snapshot from ${filePath}:`, error);
-    }
-  }
-
-  snapshots.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-  let assignedVersion = 0;
-  for (const snapshot of snapshots) {
-    if (snapshot.version) {
-      assignedVersion = Math.max(assignedVersion, parseAppVersionIndex(snapshot.version) || 0);
-      continue;
-    }
-    assignedVersion += 1;
-    snapshot.version = formatAppVersionNumber(assignedVersion);
-  }
-
-  return snapshots;
-}
-
-function getLatestAppVersionSnapshot(name, snapshots = loadAppVersionSnapshots(name)) {
-  return snapshots[snapshots.length - 1] || null;
-}
-
-function getCurrentAppVersionSnapshot(name, snapshots = loadAppVersionSnapshots(name)) {
-  const currentSelection = readAppCurrentVersion(name);
-  let currentSnapshot = null;
-
-  if (currentSelection?.id) {
-    currentSnapshot = snapshots.find((snapshot) => snapshot.id === currentSelection.id) || null;
-  }
-  if (!currentSnapshot && currentSelection?.version) {
-    currentSnapshot =
-      snapshots.find((snapshot) => snapshot.version === currentSelection.version) || null;
-  }
-  if (!currentSnapshot) {
-    currentSnapshot = getLatestAppVersionSnapshot(name, snapshots);
-  }
-
-  if (
-    currentSnapshot &&
-    (
-      currentSelection?.id !== currentSnapshot.id ||
-      currentSelection?.version !== currentSnapshot.version
-    )
-  ) {
-    writeAppCurrentVersion(name, currentSnapshot);
-  }
-
-  return currentSnapshot;
-}
-
-function buildStoredAppHtml(appRecord) {
-  const metadata = {
-    '@context': APP_SCHEMA_CONTEXT,
-    '@type': APP_SCHEMA_TYPE,
-    name: appRecord.name,
-    title: appRecord.title || appRecord.name,
-    icon: appRecord.icon || '',
-    description: appRecord.description,
-    width: appRecord.width,
-    height: appRecord.height,
-    resizable: appRecord.resizable,
-    mcpServers: ['apps'],
-    runtime: {
-      hostApi: 'window.mossApp',
-      capabilities: ['storage', 'files', 'agent', 'resources'],
-    },
-  };
-  const cspMeta = `  <meta http-equiv="Content-Security-Policy" content="${APP_CSP_CONTENT}">`;
-
-  const metadataScript = `  <script type="${APP_METADATA_SCRIPT_TYPE}">\n${JSON.stringify(
-    metadata,
-    null,
-    2
-  )}\n  </script>`;
-  const prdScript = appRecord.prd
-    ? `  <script type="${APP_PRD_SCRIPT_TYPE}">\n${appRecord.prd}\n  </script>`
-    : '';
-  const scripts = prdScript ? `${cspMeta}\n${metadataScript}\n${prdScript}\n` : `${cspMeta}\n${metadataScript}\n`;
-  const html = String(appRecord.html || '').trim();
-
-  if (html.includes('</head>')) {
-    return html.replace('</head>', `${scripts}</head>`);
-  }
-
-  if (html.includes('<html')) {
-    const htmlTagEnd = html.indexOf('>');
-    if (htmlTagEnd !== -1) {
-      return `${html.slice(0, htmlTagEnd + 1)}\n<head>\n${scripts}</head>\n${html.slice(htmlTagEnd + 1)}`;
-    }
-  }
-
-  return `<html>\n<head>\n${scripts}</head>\n<body>\n${html}\n</body>\n</html>`;
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function parseStoredAppHtml(fileContent, filePath = '') {
-  const metadataScriptType = escapeRegExp(APP_METADATA_SCRIPT_TYPE);
-  const prdScriptType = escapeRegExp(APP_PRD_SCRIPT_TYPE);
-  const metadataMatch = fileContent.match(
-    new RegExp(`<script type="${metadataScriptType}"[^>]*>\\s*([\\s\\S]*?)\\s*<\\/script>`, 'i')
-  );
-  if (!metadataMatch) {
-    throw new Error(`Missing app metadata in ${filePath || 'HTML content'}`);
-  }
-
-  const metadata = JSON.parse(metadataMatch[1]);
-  const prdMatch = fileContent.match(
-    new RegExp(`<script type="${prdScriptType}"[^>]*>\\s*([\\s\\S]*?)\\s*<\\/script>`, 'i')
-  );
-
-  // Extract <title> tag content for display name
-  const titleMatch = fileContent.match(/<title[^>]*>([^<]+)<\/title>/i);
-  const title = titleMatch?.[1]?.trim() || metadata.description?.split(' - ')[0] || metadata.name || '';
-
-  const cleanHtml = fileContent
-    .replace(
-      new RegExp(`<script type="${metadataScriptType}"[^>]*>[\\s\\S]*?<\\/script>`, 'ig'),
-      ''
-    )
-    .replace(
-      new RegExp(`<script type="${prdScriptType}"[^>]*>[\\s\\S]*?<\\/script>`, 'ig'),
-      ''
-    )
-    .trim();
-
-  return {
-    name: String(metadata.name || ''),
-    title: String(title),
-    description: String(metadata.description || ''),
-    icon: String(metadata.icon || ''),
-    width: Number(metadata.width) || 900,
-    height: Number(metadata.height) || 700,
-    resizable: metadata.resizable !== false,
-    html: cleanHtml,
-    prd: prdMatch?.[1]?.trim() || '',
-    filePath,
-  };
-}
-
-function listStoredApps() {
-  const entries = fs.readdirSync(ensureAppsDir(), { withFileTypes: true });
-  const apps = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.html')) continue;
-    const filePath = path.join(ensureAppsDir(), entry.name);
-    try {
-      const fileContent = fs.readFileSync(filePath, 'utf8');
-      const parsed = parseStoredAppHtml(fileContent, filePath);
-      const stat = fs.statSync(filePath);
-      const versions = loadAppVersionSnapshots(parsed.name);
-      const latestVersion = getLatestAppVersionSnapshot(parsed.name, versions);
-      const currentVersion = getCurrentAppVersionSnapshot(parsed.name, versions);
-      apps.push({
-        name: parsed.name,
-        title: parsed.title,
-        description: parsed.description,
-        icon: parsed.icon,
-        width: parsed.width,
-        height: parsed.height,
-        resizable: parsed.resizable,
-        filePath,
-        createdAt: stat.birthtimeMs || stat.ctimeMs || Date.now(),
-        updatedAt: stat.mtimeMs || Date.now(),
-        versionCount: versions.length,
-        latestVersionId: latestVersion?.id || null,
-        latestVersion: latestVersion?.version || null,
-        currentVersionId: currentVersion?.id || latestVersion?.id || null,
-        currentVersion: currentVersion?.version || latestVersion?.version || null,
-      });
-    } catch (error) {
-      console.warn(`Failed to load stored app from ${filePath}:`, error);
-    }
-  }
-
-  return apps.sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-function saveStoredApp(appRecord) {
-  ensureAppsDir();
-  const existingNames = new Set(listStoredApps().map((entry) => entry.name));
-  const baseName = slugifyAppName(appRecord.name) || `generated-app-${Date.now()}`;
-  let name = baseName;
-  let counter = 1;
-
-  while (existingNames.has(name)) {
-    name = `${baseName}-${counter}`;
-    counter += 1;
-  }
-
-  const nextRecord = { ...appRecord, name };
-  const filePath = getAppFilePath(name);
-  fs.writeFileSync(filePath, buildStoredAppHtml(nextRecord), 'utf8');
-  const snapshot = saveAppVersionSnapshot(nextRecord, { reason: 'created' });
-  const stat = fs.statSync(filePath);
-
-  return {
-    name,
-    description: nextRecord.description,
-    width: nextRecord.width,
-    height: nextRecord.height,
-    resizable: nextRecord.resizable,
-    filePath,
-    createdAt: stat.birthtimeMs || stat.ctimeMs || Date.now(),
-    updatedAt: stat.mtimeMs || Date.now(),
-    versionCount: 1,
-    latestVersionId: snapshot.id,
-    latestVersion: snapshot.version,
-    currentVersionId: snapshot.id,
-    currentVersion: snapshot.version,
-  };
-}
-
-function updateStoredApp(name, appRecord, options = {}) {
-  const existing = getStoredApp(name);
-  const nextRecord = {
-    ...existing,
-    ...appRecord,
-    name,
-  };
-  fs.writeFileSync(existing.filePath, buildStoredAppHtml(nextRecord), 'utf8');
-  const snapshot = options.saveVersion === false
-    ? null
-    : saveAppVersionSnapshot(nextRecord, { reason: options.reason || 'updated' });
-  if (
-    options.saveVersion === false &&
-    (options.currentVersionId || options.currentVersion)
-  ) {
-    writeAppCurrentVersion(name, {
-      id: options.currentVersionId,
-      version: options.currentVersion,
-    });
-  }
-  const stat = fs.statSync(existing.filePath);
-  const versions = loadAppVersionSnapshots(name);
-  const latestVersion = getLatestAppVersionSnapshot(name, versions);
-  const currentVersion = getCurrentAppVersionSnapshot(name, versions);
-
-  return {
-    name,
-    description: nextRecord.description,
-    width: nextRecord.width,
-    height: nextRecord.height,
-    resizable: nextRecord.resizable,
-    filePath: existing.filePath,
-    createdAt: stat.birthtimeMs || stat.ctimeMs || Date.now(),
-    updatedAt: stat.mtimeMs || Date.now(),
-    versionCount: versions.length,
-    latestVersionId: latestVersion?.id || snapshot?.id || null,
-    latestVersion: latestVersion?.version || snapshot?.version || null,
-    currentVersionId: currentVersion?.id || snapshot?.id || null,
-    currentVersion: currentVersion?.version || snapshot?.version || null,
-    publishedVersion: snapshot?.version || null,
-  };
-}
-
-function toAppVersionSnapshotRecord(appRecord, extra = {}) {
-  const existingSnapshots = Array.isArray(extra.existingSnapshots) ? extra.existingSnapshots : [];
-  const nextVersionNumber =
-    existingSnapshots.reduce((max, snapshot) => {
-      const versionNumber = parseAppVersionIndex(snapshot.version);
-      return versionNumber ? Math.max(max, versionNumber) : max;
-    }, 0) + 1;
-
-  return {
-    id: extra.id || `${Date.now()}-${randomUUID().slice(0, 8)}`,
-    version: formatAppVersionNumber(extra.version) || formatAppVersionNumber(nextVersionNumber),
-    appName: appRecord.name,
-    createdAt: extra.createdAt || Date.now(),
-    reason: extra.reason || 'updated',
-    note: extra.note || '',
-    description: appRecord.description || '',
-    width: appRecord.width || 900,
-    height: appRecord.height || 700,
-    resizable: appRecord.resizable !== false,
-    prd: appRecord.prd || '',
-    html: appRecord.html || '',
-  };
-}
-
-function saveAppVersionSnapshot(appRecord, extra = {}) {
-  clearVersionSnapshotCache(appRecord.name);
-  const existingSnapshots = loadAppVersionSnapshots(appRecord.name);
-  const snapshot = toAppVersionSnapshotRecord(appRecord, {
-    ...extra,
-    existingSnapshots,
-  });
-  const filePath = path.join(ensureAppVersionsDir(appRecord.name), `${snapshot.id}.json`);
-  fs.writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
-  // Invalidate again so the next read includes the snapshot we just wrote.
-  clearVersionSnapshotCache(appRecord.name);
-  writeAppCurrentVersion(appRecord.name, snapshot);
-  return snapshot;
-}
-
-function listAppVersionSnapshots(name) {
-  const snapshots = loadAppVersionSnapshots(name);
-  const currentSnapshot = getCurrentAppVersionSnapshot(name, snapshots);
-  const latestSnapshot = getLatestAppVersionSnapshot(name, snapshots);
-  return [...snapshots]
-    .sort((a, b) => {
-      const versionDiff = (parseAppVersionIndex(b.version) || 0) - (parseAppVersionIndex(a.version) || 0);
-      return versionDiff || b.createdAt - a.createdAt;
-    })
-    .map(({ id, version, createdAt, reason, note, description, width, height, resizable }) => ({
-      id,
-      version,
-      createdAt,
-      reason,
-      note,
-      description,
-      width,
-      height,
-      resizable,
-      isCurrent: id === currentSnapshot?.id,
-      isLatest: id === latestSnapshot?.id,
-    }));
-}
-
-function getAppVersionSnapshot(name, versionId) {
-  const normalizedVersion = formatAppVersionNumber(versionId);
-  const snapshot = loadAppVersionSnapshots(name).find(
-    (entry) => entry.id === versionId || (normalizedVersion && entry.version === normalizedVersion)
-  );
-  if (!snapshot) {
-    throw new Error(`Unknown app version: ${versionId}`);
-  }
-  return {
-    ...snapshot,
-    appName: name,
-  };
-}
-
-function rollbackAppToVersion(name, versionId) {
-  const snapshot = getAppVersionSnapshot(name, versionId);
-  const rolledBackApp = updateStoredApp(name, {
-    name,
-    description: snapshot.description,
-    width: snapshot.width,
-    height: snapshot.height,
-    resizable: snapshot.resizable,
-    prd: snapshot.prd,
-    html: snapshot.html,
-  }, {
-    saveVersion: false,
-    currentVersionId: snapshot.id,
-    currentVersion: snapshot.version,
-  });
-
-  return rolledBackApp;
-}
-
-function deleteStoredApp(name) {
-  const appEntry = listStoredApps().find((entry) => entry.name === name);
-  if (!appEntry) {
-    throw new Error(`Unknown app: ${name}`);
-  }
-
-  fs.rmSync(appEntry.filePath, { force: true });
-  fs.rmSync(path.join(ensureAppDataRootDir(), name), { recursive: true, force: true });
-}
-
-function getStoredApp(name) {
-  const appEntry = listStoredApps().find((entry) => entry.name === name);
-  if (!appEntry) {
-    throw new Error(`Unknown app: ${name}`);
-  }
-  return appEntry;
-}
-
-function loadStoredAppContent(name) {
-  const appEntry = getStoredApp(name);
-  const fileContent = fs.readFileSync(appEntry.filePath, 'utf8');
-  return {
-    ...appEntry,
-    ...parseStoredAppHtml(fileContent, appEntry.filePath),
-  };
 }
 
 function createAppWindowState(appEntry, appWindow) {
@@ -2497,7 +2236,7 @@ async function ensureAppAgentRuntime(appState) {
 
   if (appState.agentMode === 'remote-direct') {
     appState.runtime = createRemoteDirectRuntime({
-      cwd: getRemoteDirectWorkspace() || undefined,
+      sessionRecord: appState,
       onPermissionRequest,
       onSessionCreated: (created) => {
         if (created?.workDir) {
@@ -2796,51 +2535,6 @@ async function callAppTool(appState, name, args = {}) {
     default:
       throw new Error(`Unknown app tool: ${name}`);
   }
-}
-
-function getSessionAppBuildPaths(sessionRecord) {
-  const buildDir = path.join(sessionRecord.workspace, SESSION_APP_BUILD_SUBDIR);
-  return {
-    buildDir,
-    metadataPath: path.join(buildDir, 'app-meta.json'),
-    htmlPath: path.join(buildDir, 'index.html'),
-  };
-}
-
-function readGeneratedAppPayloadFromWorkspace(sessionRecord) {
-  const { metadataPath, htmlPath } = getSessionAppBuildPaths(sessionRecord);
-
-  if (!fs.existsSync(metadataPath)) {
-    throw new Error(`App metadata file was not created: ${metadataPath}`);
-  }
-  if (!fs.existsSync(htmlPath)) {
-    throw new Error(`App html file was not created: ${htmlPath}`);
-  }
-
-  let metadata;
-  try {
-    metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-  } catch (error) {
-    throw new Error(
-      `Failed to parse generated app metadata JSON: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const html = fs.readFileSync(htmlPath, 'utf8').trim();
-  if (!html.toLowerCase().includes('<html')) {
-    throw new Error(`Generated HTML file did not contain a full HTML document: ${htmlPath}`);
-  }
-
-  return {
-    name: slugifyAppName(metadata?.name) || `generated-app-${Date.now()}`,
-    title: String(metadata?.title || metadata?.name || '').trim(),
-    icon: String(metadata?.icon || '').trim(),
-    description: String(metadata?.description || '').trim(),
-    width: Number(metadata?.width) || 900,
-    height: Number(metadata?.height) || 700,
-    resizable: metadata?.resizable !== false,
-    html,
-  };
 }
 
 function refreshOpenAppWindow(name) {
@@ -3412,7 +3106,7 @@ async function ensureRuntime(sessionRecord) {
 
   if (sessionRecord.agentMode === 'remote-direct') {
     sessionRecord.runtime = createRemoteDirectRuntime({
-      cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || undefined,
+      sessionRecord,
       coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
       onPermissionRequest,
       onSessionCreated: (created) => {
@@ -3440,6 +3134,10 @@ async function ensureRuntime(sessionRecord) {
 }
 
 async function resumeSessionRecord(sessionRecord) {
+  const modeMismatchReason = getSessionModeMismatchReason(sessionRecord);
+  if (modeMismatchReason) {
+    return null;
+  }
   if (sessionRecord.agentMode === 'remote-direct' || sessionRecord.isSubAgent) {
     return null;
   }
@@ -3900,7 +3598,7 @@ app.whenReady().then(() => {
   initializeBundledAssistants();
 
   // Register app IPC handlers
-  registerLogIpcHandlers();
+  registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerSkillStoreIpcHandlers();
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
@@ -3973,12 +3671,13 @@ ipcMain.handle('agent:get-session', (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   return resumeSessionRecord(sessionRecord).then((resumed) => {
     const history = resumed?.history ?? sessionRecord.history;
-    const readOnlyHistory = sessionRecord.resumeReadOnlyReason
+    const readOnlyReason = getSessionReadOnlyReason(sessionRecord);
+    const readOnlyHistory = readOnlyReason
       ? [
           ...history,
           {
             type: 'error',
-            message: `无法恢复 Claude 会话，当前仅显示本地缓存历史：${sessionRecord.resumeReadOnlyReason}`,
+            message: `当前会话为只读：${readOnlyReason}`,
             timestamp: Date.now(),
             readOnly: true,
           },
@@ -4178,7 +3877,7 @@ ipcMain.handle('app:delete', async (_event, { name }) => {
   if (existingWindow && !existingWindow.isDestroyed()) {
     existingWindow.close();
   }
-  deleteStoredApp(name);
+  await deleteStoredApp(name);
   emitAppsChanged({ action: 'deleted', name });
   return { ok: true };
 });
@@ -4501,6 +4200,10 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
   }
+  const readOnlyReason = getSessionReadOnlyReason(sessionRecord);
+  if (readOnlyReason) {
+    throw new Error(readOnlyReason);
+  }
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
     await resumeSessionRecord(sessionRecord);
   }
@@ -4533,123 +4236,30 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   let assistantEnabledSkills = [];
   if (assistantName) {
     try {
-      // Find assistant directory
-      const searchDirs = [
-        { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
-        { dir: ASSISTANT_HUB_DIR, category: 'hub' },
-        { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
-      ];
-      let assistantDir = null;
-      for (const { dir } of searchDirs) {
-        const candidate = path.join(dir, assistantName);
-        try {
-          await fsp.access(candidate);
-          assistantDir = candidate;
-          break;
-        } catch {
-          // Not found in this directory
-        }
-      }
-
-      // Fallback: resolve by logical meta.name when directory name differs.
-      if (!assistantDir) {
-        for (const { dir } of searchDirs) {
-          try {
-            const entries = await fsp.readdir(dir, { withFileTypes: true });
-            for (const entry of entries) {
-              if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
-              const candidate = path.join(dir, entry.name);
-              const metaPath = path.join(candidate, '_moss_meta.json');
-              try {
-                const metaContent = await fsp.readFile(metaPath, 'utf-8');
-                const meta = JSON.parse(metaContent);
-                if (meta?.name === assistantName) {
-                  assistantDir = candidate;
-                  break;
-                }
-              } catch {
-                // Ignore invalid meta and continue scanning.
-              }
-            }
-            if (assistantDir) break;
-          } catch {
-            // Ignore missing directory and continue scanning.
-          }
-        }
-      }
-
-      let assistantRules = '';
-      if (assistantDir) {
-        // Read assistant meta to get rule file
-        const metaPath = path.join(assistantDir, '_moss_meta.json');
-        let ruleFile;
-        try {
-          const metaContent = await fsp.readFile(metaPath, 'utf-8');
-          const meta = JSON.parse(metaContent);
-          ruleFile = meta.ruleFile;
-          // Also get enabled skills (support both enabledSkills and skills field)
-          if (meta.enabledSkills && Array.isArray(meta.enabledSkills)) {
-            assistantEnabledSkills = meta.enabledSkills;
-          } else if (meta.skills && Array.isArray(meta.skills)) {
-            assistantEnabledSkills = meta.skills;
-          }
-        } catch {
-          // No meta
-        }
-
-        // Read rule file
-        if (ruleFile) {
-          try {
-            assistantRules = await fsp.readFile(path.join(assistantDir, ruleFile), 'utf-8');
-          } catch {
-            // Try common rule file names
-          }
-        }
-        if (!assistantRules) {
-          const files = await fsp.readdir(assistantDir);
-          const mdFile = files.find(f => f.endsWith('.md') && f !== '_moss_meta.json');
-          if (mdFile) {
-            assistantRules = await fsp.readFile(path.join(assistantDir, mdFile), 'utf-8');
-          }
-        }
-      }
+      const assistantDir = await findAssistantDirByName(assistantName, [
+        ASSISTANT_CUSTOM_DIR,
+        ASSISTANT_HUB_DIR,
+        ASSISTANT_SYSTEM_DIR,
+      ]);
+      const assistantContext = assistantDir
+        ? await readAssistantContext(assistantDir, assistantName)
+        : null;
+      const assistantRules = assistantContext?.rules || '';
+      assistantEnabledSkills = assistantContext?.enabledSkillIdentifiers || [];
 
       // Get skill info for enabled skills
       let skillsInfo = '';
-      let skillDirsInfo = '';
-      const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
-      const MOSS_SKILLS_HUB_DIR = path.join(MOSS_HOME, 'skills', 'hub');
-      const MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_HOME, 'skills', 'system');
-      const MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_HOME, 'skills', 'custom');
+      const skillDirsInfo = `\n\n## Skill Search Directories\nWhen looking for skills, search in:\n- ${SKILL_SEARCH_DIRS.join('\n- ')}`;
 
       if (assistantEnabledSkills && assistantEnabledSkills.length > 0) {
-        const skillInfos = [];
-
-        for (const skillId of assistantEnabledSkills) {
-          let foundPath = null;
-          for (const dir of [USER_SKILLS_DIR, MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_SYSTEM_DIR, MOSS_SKILLS_CUSTOM_DIR]) {
-            const skillDir = path.join(dir, skillId);
-            try {
-              await fsp.access(skillDir);
-              foundPath = skillDir;
-              break;
-            } catch {
-              // Not found in this directory
-            }
-          }
-          if (foundPath) {
-            skillInfos.push({ name: skillId, path: foundPath });
-          }
-        }
+        const installedSkills = await getInstalledSkills();
+        const skillInfos = resolveInstalledSkillInfos(assistantEnabledSkills, installedSkills);
 
         if (skillInfos.length > 0) {
           skillsInfo = '\n\n## Skills Available\n' +
             skillInfos.map(s => `- ${s.name}: ${s.path}`).join('\n');
         }
       }
-
-      // Always include skill search directories
-      skillDirsInfo = `\n\n## Skill Search Directories\nWhen looking for skills, search in:\n- ${MOSS_SKILLS_HUB_DIR}\n- ${MOSS_SKILLS_SYSTEM_DIR}\n- ${MOSS_SKILLS_CUSTOM_DIR}\n- ${USER_SKILLS_DIR}`;
 
       if (assistantRules || skillsInfo || skillDirsInfo) {
         assistantContextPrefix = `

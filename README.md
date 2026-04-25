@@ -4,7 +4,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 ## 文档
 
-- [Direct Connect 使用说明](/Users/bgd/repo/moss/DIRECT_CONNECT.md)
+- [Moss Server API](src/server/API.md)
 
 ## 快速启动
 

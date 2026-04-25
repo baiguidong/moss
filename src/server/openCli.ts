@@ -11,10 +11,9 @@ function printHelp(): void {
       'Options:',
       '  -p, --print <prompt>    Prompt to send immediately',
       '  --output-format <fmt>   text | stream-json (default: text)',
-      '  --auth-center-url <url> Exchange access token via auth center',
-      '  --api-key <key>         API key used with --auth-center-url',
-      '  --user-email <email>    User email used with --auth-center-url',
-      '  --user-password <pwd>   User password used with --auth-center-url',
+      '  --api-key <key>         API key used to get an access token',
+      '  --user-email <email>    User email used to get an access token',
+      '  --user-password <pwd>   User password used to get an access token',
       '  --runtime <type>        Session runtime override: host | docker',
       '  --docker-image <image>  Docker image when --runtime=docker',
       '  --docker-mode <mode>    Docker mode: session | user',
@@ -28,7 +27,6 @@ function parseArgs(argv: string[]): {
   ccUrl: string
   prompt: string
   outputFormat: string
-  authCenterUrl?: string
   apiKey?: string
   userEmail?: string
   userPassword?: string
@@ -42,7 +40,6 @@ function parseArgs(argv: string[]): {
   let ccUrl = ''
   let prompt = ''
   let outputFormat = 'text'
-  let authCenterUrl: string | undefined
   let apiKey: string | undefined
   let userEmail: string | undefined
   let userPassword: string | undefined
@@ -64,11 +61,6 @@ function parseArgs(argv: string[]): {
     }
     if (arg === '--output-format') {
       outputFormat = argv[i + 1] || outputFormat
-      i += 1
-      continue
-    }
-    if (arg === '--auth-center-url') {
-      authCenterUrl = argv[i + 1] || undefined
       i += 1
       continue
     }
@@ -135,7 +127,6 @@ function parseArgs(argv: string[]): {
     ccUrl,
     prompt,
     outputFormat,
-    authCenterUrl,
     apiKey,
     userEmail,
     userPassword,
@@ -145,15 +136,9 @@ function parseArgs(argv: string[]): {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
-  const { serverUrl, authCenterUrl } = parseConnectUrl(
-    options.ccUrl,
-    {
-      allowMissingAuthInfo: Boolean(options.authCenterUrl),
-    },
-  )
+  const { serverUrl } = parseConnectUrl(options.ccUrl)
   const session = await createDirectConnectSession({
     serverUrl,
-    authCenterUrl: options.authCenterUrl || authCenterUrl,
     apiKey: options.apiKey,
     email: options.userEmail,
     password: options.userPassword,

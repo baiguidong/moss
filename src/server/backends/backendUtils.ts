@@ -68,6 +68,7 @@ export function createStreamBackendHandle(
   }
 
   const stdoutListeners = new Set<(line: string) => void>()
+  const stderrListeners = new Set<(line: string) => void>()
   const exitListeners = new Set<
     (code: number | null, signal: NodeJS.Signals | null) => void
   >()
@@ -83,6 +84,10 @@ export function createStreamBackendHandle(
   if (child.stderr) {
     const stderrRl = createInterface({ input: child.stderr })
     stderrRl.on('line', line => {
+      const payload = `${line}\n`
+      for (const listener of stderrListeners) {
+        listener(payload)
+      }
       process.stderr.write(
         `[direct-connect child ${options.sessionId}] ${line}\n`,
       )
@@ -114,6 +119,12 @@ export function createStreamBackendHandle(
       stdoutListeners.add(listener)
       return () => {
         stdoutListeners.delete(listener)
+      }
+    },
+    onStderrLine(listener) {
+      stderrListeners.add(listener)
+      return () => {
+        stderrListeners.delete(listener)
       }
     },
     onExit(listener) {

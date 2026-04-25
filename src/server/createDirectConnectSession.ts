@@ -20,10 +20,36 @@ export class DirectConnectError extends Error {
   }
 }
 
+async function formatErrorResponse(
+  prefix: string,
+  resp: Response,
+): Promise<string> {
+  let detail = ''
+  try {
+    const text = await resp.text()
+    if (text.trim()) {
+      try {
+        const parsed = JSON.parse(text) as { error?: unknown }
+        if (typeof parsed.error === 'string' && parsed.error.trim()) {
+          detail = parsed.error.trim()
+        } else {
+          detail = text.trim()
+        }
+      } catch {
+        detail = text.trim()
+      }
+    }
+  } catch {}
+  return detail
+    ? `${prefix}: ${resp.status} ${resp.statusText}: ${detail}`
+    : `${prefix}: ${resp.status} ${resp.statusText}`
+}
+
 async function resolveDirectConnectHeaders(options: {
   authToken?: string
-  authCenterUrl?: string
+  serverUrl: string
   apiKey?: string
+  username?: string
   email?: string
   password?: string
 }): Promise<{
@@ -46,7 +72,7 @@ async function resolveDirectConnectHeaders(options: {
 /**
  * Create a session on a direct-connect server.
  *
- * Posts to `${serverUrl}/sessions`, validates the response, and returns
+ * Posts to `${serverUrl}/api/v1/sessions`, validates the response, and returns
  * a DirectConnectConfig ready for use by the REPL or headless runner.
  *
  * Throws DirectConnectError on network, HTTP, or response-parsing failures.
@@ -54,8 +80,8 @@ async function resolveDirectConnectHeaders(options: {
 export async function createDirectConnectSession({
   serverUrl,
   authToken,
-  authCenterUrl,
   apiKey,
+  username,
   email,
   password,
   cwd,
@@ -64,8 +90,8 @@ export async function createDirectConnectSession({
 }: {
   serverUrl: string
   authToken?: string
-  authCenterUrl?: string
   apiKey?: string
+  username?: string
   email?: string
   password?: string
   cwd: string
@@ -77,15 +103,16 @@ export async function createDirectConnectSession({
 }> {
   const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
-    authCenterUrl,
+    serverUrl,
     apiKey,
+    username,
     email,
     password,
   })
 
   let resp: Response
   try {
-    resp = await fetch(`${serverUrl}/sessions`, {
+    resp = await fetch(`${serverUrl}/api/v1/sessions`, {
       method: 'POST',
       headers,
       body: jsonStringify({
@@ -104,7 +131,7 @@ export async function createDirectConnectSession({
 
   if (!resp.ok) {
     throw new DirectConnectError(
-      `Failed to create session: ${resp.status} ${resp.statusText}`,
+      await formatErrorResponse('Failed to create session', resp),
     )
   }
 
@@ -131,16 +158,16 @@ export async function attachDirectConnectSession({
   serverUrl,
   sessionId,
   authToken,
-  authCenterUrl,
   apiKey,
+  username,
   email,
   password,
 }: {
   serverUrl: string
   sessionId: string
   authToken?: string
-  authCenterUrl?: string
   apiKey?: string
+  username?: string
   email?: string
   password?: string
 }): Promise<{
@@ -149,18 +176,22 @@ export async function attachDirectConnectSession({
 }> {
   const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
-    authCenterUrl,
+    serverUrl,
     apiKey,
+    username,
     email,
     password,
   })
 
   let resp: Response
   try {
-    resp = await fetch(`${serverUrl}/sessions/${encodeURIComponent(sessionId)}`, {
-      method: 'GET',
-      headers,
-    })
+    resp = await fetch(
+      `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'GET',
+        headers,
+      },
+    )
   } catch (err) {
     throw new DirectConnectError(
       `Failed to connect to server at ${serverUrl}: ${errorMessage(err)}`,
@@ -169,7 +200,10 @@ export async function attachDirectConnectSession({
 
   if (!resp.ok) {
     throw new DirectConnectError(
-      `Failed to attach session ${sessionId}: ${resp.status} ${resp.statusText}`,
+      await formatErrorResponse(
+        `Failed to attach session ${sessionId}`,
+        resp,
+      ),
     )
   }
 

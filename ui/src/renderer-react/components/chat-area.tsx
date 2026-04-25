@@ -121,43 +121,63 @@ function SessionTabBar({
   );
 }
 
-function renderTextSegments(content: string, streaming = false) {
-  const normalized = content.trim();
-  if (!normalized) return null;
+type ContentSegment = {
+  type: "text" | "code";
+  value: string;
+  language?: string;
+  incomplete?: boolean;
+};
 
-  const fenceRegex = /```([\w-]*)\n?([\s\S]*?)```/gi;
-  const segments: Array<{ type: "text" | "code"; value: string; language?: string; incomplete?: boolean }> = [];
-  let lastIndex = 0;
+function parseContentSegments(content: string): ContentSegment[] {
+  const normalized = content.trim();
+  if (!normalized) return [];
+
+  const fenceStartRegex = /```([\w-]*)\n?/gi;
+  const segments: ContentSegment[] = [];
+  let cursor = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = fenceRegex.exec(normalized))) {
-    const textBefore = normalized.slice(lastIndex, match.index).trim();
+  while (cursor < normalized.length) {
+    fenceStartRegex.lastIndex = cursor;
+    match = fenceStartRegex.exec(normalized);
+    if (!match) {
+      const trailingText = normalized.slice(cursor).trim();
+      if (trailingText) {
+        segments.push({ type: "text", value: trailingText });
+      }
+      break;
+    }
+
+    const textBefore = normalized.slice(cursor, match.index).trim();
     if (textBefore) {
       segments.push({ type: "text", value: textBefore });
+    }
+
+    const codeStart = fenceStartRegex.lastIndex;
+    const fenceEnd = normalized.indexOf("```", codeStart);
+    if (fenceEnd === -1) {
+      segments.push({
+        type: "code",
+        language: match[1] || "",
+        value: normalized.slice(codeStart).trimEnd(),
+        incomplete: true,
+      });
+      break;
     }
 
     segments.push({
       type: "code",
       language: match[1] || "",
-      value: match[2].trimEnd(),
+      value: normalized.slice(codeStart, fenceEnd).trimEnd(),
     });
-    lastIndex = match.index + match[0].length;
+    cursor = fenceEnd + 3;
   }
 
-  const trailing = normalized.slice(lastIndex).trim();
-  if (trailing) {
-    const incompleteFenceMatch = trailing.match(/^```([\w-]*)\n?([\s\S]*)$/i);
-    if (incompleteFenceMatch) {
-      segments.push({
-        type: "code",
-        language: incompleteFenceMatch[1] || "",
-        value: incompleteFenceMatch[2].trimEnd(),
-        incomplete: true,
-      });
-    } else {
-      segments.push({ type: "text", value: trailing });
-    }
-  }
+  return segments;
+}
+
+function renderTextSegments(content: string, streaming = false) {
+  const segments = parseContentSegments(content);
 
   if (segments.length === 0) return null;
 
@@ -331,6 +351,7 @@ function ComposerPanel({
   value,
   selectedAppName,
   loading,
+  readOnlyReason,
   composerIntent,
   hasActiveSession,
   sessionId,
@@ -349,6 +370,7 @@ function ComposerPanel({
   value: string;
   selectedAppName: string;
   loading: boolean;
+  readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
   sessionId?: string;
@@ -385,7 +407,7 @@ function ComposerPanel({
     ? null
     : intentOptions.find((option) => option.id === composerIntent) ?? null;
   const submitDisabled =
-    (!value.trim() && attachments.length === 0) || loading;
+    (!value.trim() && attachments.length === 0) || loading || Boolean(readOnlyReason);
 
   React.useEffect(() => {
     pasteService.init();
@@ -536,6 +558,9 @@ function ComposerPanel({
       <div className="relative">
         <Textarea
           placeholder={
+            readOnlyReason
+              ? readOnlyReason
+              : (
             isHomeComposer
               ? selectedAssistant?.name === "app-builder-assistant" && selectedAppName
                 ? `描述你想如何修改 ${selectedAppName}...`
@@ -544,12 +569,14 @@ function ComposerPanel({
                   : composerIntent === "coordinator"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : composerIntent === "plan"
-                      ? "描述需求，我会先给出计划..."
+                    ? "描述需求，我会先给出计划..."
                       : "输入任务、问题或想法..."
               : "继续输入消息..."
+              )
           }
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          disabled={Boolean(readOnlyReason)}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
             isHomeComposer ? "min-h-[160px] pb-4" : "min-h-[92px] pb-36 pr-26",
@@ -566,6 +593,12 @@ function ComposerPanel({
           }}
           onPaste={handlePaste}
         />
+
+        {readOnlyReason && (
+          <div className="px-4 pb-2 text-xs text-amber-600">
+            当前会话不可继续输入：{readOnlyReason}
+          </div>
+        )}
 
         {!isHomeComposer && attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-4 pb-2">
@@ -869,6 +902,7 @@ export function ChatArea({
   value,
   selectedAppName,
   loading,
+  readOnlyReason,
   sessionBusy,
   hasActiveSession,
   sessionTitle,
@@ -900,6 +934,7 @@ export function ChatArea({
   value: string;
   selectedAppName: string;
   loading: boolean;
+  readOnlyReason?: string | null;
   sessionBusy?: boolean;
   hasActiveSession: boolean;
   sessionTitle: string;
@@ -1011,6 +1046,7 @@ export function ChatArea({
             value={value}
             selectedAppName={selectedAppName}
             loading={loading}
+            readOnlyReason={readOnlyReason}
             composerIntent={composerIntent}
             hasActiveSession
             showModeButtons

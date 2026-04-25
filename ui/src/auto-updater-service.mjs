@@ -9,21 +9,12 @@ import log from 'electron-log';
 import { EventEmitter } from 'events';
 
 /**
- * Returns the appropriate update channel name based on the current platform and architecture.
- * Returns undefined for the default channel (x64 on all platforms).
+ * Returns an explicit update channel override when configured.
+ * Architecture-specific channels are opt-in to avoid breaking the default latest.yml flow.
  */
-export function getUpdateChannel() {
-  const { platform, arch } = process;
-  if (platform === 'win32' && arch === 'arm64') {
-    return 'win-arm64';
-  }
-  if (platform === 'darwin' && arch === 'arm64') {
-    return 'arm64';
-  }
-  if (platform === 'linux' && arch === 'arm64') {
-    return 'arm64';
-  }
-  return undefined;
+export function getUpdateChannel(env = process.env) {
+  const configuredChannel = String(env.MOSS_UPDATE_CHANNEL || '').trim();
+  return configuredChannel || undefined;
 }
 
 // AutoUpdateStatus and StatusBroadcastCallback types removed - using JSDoc or inline types below

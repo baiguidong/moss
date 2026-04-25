@@ -11,8 +11,6 @@ export function printBanner(
   config: {
     host: string
     port: number
-    authMode?: 'auth-center'
-    authCenterUrl?: string
     unix?: string
   },
   actualPort: number,
@@ -20,20 +18,22 @@ export function printBanner(
   const connectUrl = buildConnectUrl({
     host: displayHost(config.host),
     port: actualPort,
-    authMode: config.authMode,
-    authCenterUrl: config.authCenterUrl,
     unix: config.unix,
   })
+  const adminUrl = config.unix
+    ? null
+    : `http://${displayHost(config.host)}:${actualPort}/admin`
 
   process.stderr.write(
     [
       '',
-      'Claude Code session server started.',
+      'Moss server started.',
       config.unix
         ? `Socket: ${config.unix}`
-        : `HTTP: http://${config.host}:${actualPort}`,
+        : `HTTP: http://${displayHost(config.host)}:${actualPort}`,
+      adminUrl ? `Admin: ${adminUrl}` : null,
       `Connect: ${connectUrl}`,
       '',
-    ].join('\n'),
+    ].filter(Boolean).join('\n'),
   )
 }

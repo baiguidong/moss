@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import semver from 'semver';
 import { autoUpdaterService } from './auto-updater-service.mjs';
+import { MAX_DOWNLOAD_REDIRECTS } from './download-utils.mjs';
 import { mossLog } from './log-ipc.mjs';
 
 const DEFAULT_REPO = 'moss-ai/moss';
@@ -20,7 +21,7 @@ const ALLOWED_DOWNLOAD_HOSTS = new Set([
   'github-releases.githubusercontent.com',
   'release-assets.githubusercontent.com',
 ]);
-const MAX_REDIRECTS = 8;
+const MAX_REDIRECTS = MAX_DOWNLOAD_REDIRECTS;
 
 const isAllowedAssetName = (name) => {
   const ext = path.extname(name);

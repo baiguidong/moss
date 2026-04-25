@@ -8,6 +8,7 @@ export type PendingPlanApproval = {
 export type SessionSummary = {
   id: string;
   title: string;
+  agentMode?: 'local' | 'remote-direct';
   workspace: string;
   createdAt: number;
   updatedAt: number;
@@ -37,12 +38,12 @@ export type DesktopSettings = {
   url: string;
   apiKey: string;
   image: {
+    provider: string;
     url: string;
     apiKey: string;
     model: string;
   };
   remoteDirectServerUrl: string;
-  remoteDirectAuthCenterUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
   remoteDirectUserEmail: string;
   remoteDirectUserPassword: string;
