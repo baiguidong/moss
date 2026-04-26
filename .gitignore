@@ -10,3 +10,4 @@ ui/node_modules/
 cli-node.js
 cli.js
 electron-direct.mjs
+moss-server.mjs
