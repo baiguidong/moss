@@ -163,6 +163,11 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -177,14 +182,15 @@ const persistSessionStmt = (() => {
       underlying_session_id TEXT,
       history_json TEXT NOT NULL DEFAULT '[]',
       is_sub_agent INTEGER NOT NULL DEFAULT 0,
-      worker_summaries_json TEXT
+      worker_summaries_json TEXT,
+      assistant_name TEXT
     )
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -198,7 +204,8 @@ const persistSessionStmt = (() => {
       underlying_session_id = excluded.underlying_session_id,
       history_json = excluded.history_json,
       is_sub_agent = excluded.is_sub_agent,
-      worker_summaries_json = excluded.worker_summaries_json
+      worker_summaries_json = excluded.worker_summaries_json,
+      assistant_name = excluded.assistant_name
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -215,7 +222,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     remote_workspace,
     underlying_session_id,
     is_sub_agent,
-    worker_summaries_json
+    worker_summaries_json,
+    assistant_name
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -911,6 +919,7 @@ function createRemoteDirectRuntime({
           authToken,
           cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || undefined,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+          assistantName: sessionRecord.assistantName,
         });
       }
 
@@ -1162,6 +1171,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     '[]',
     isSubAgent ? 1 : 0,
     sessionRecord.workerSummariesJson || null,
+    sessionRecord.assistantName || null,
   ];
 }
 
@@ -1246,6 +1256,7 @@ function hydratePersistedSessions() {
       workspaceWatcherSyncTimer: null,
       persistTimer: null,
       isSubAgent: false,
+      assistantName: row.assistant_name || null,
     };
     sessions.set(sessionRecord.id, sessionRecord);
   }
@@ -1439,6 +1450,7 @@ function getSessionSummary(sessionRecord) {
     preview: sessionRecord.preview,
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
     resumeReadOnlyReason: null,
+    assistantName: sessionRecord.assistantName || null,
   };
 }
 
@@ -2840,7 +2852,7 @@ function ensureInsideRoot(rootPath, targetPath) {
   return resolvedTarget;
 }
 
-function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
+function createSessionRecord({ workspace, isSubAgent = false, title, assistantName } = {}) {
   const now = Date.now();
   const normalizedWorkspace = normalizeWorkspace(workspace);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
@@ -2875,6 +2887,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
     workspaceWatcherSyncTimer: null,
     persistTimer: null,
     isSubAgent,
+    assistantName: assistantName || null,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -3697,7 +3710,11 @@ ipcMain.handle('agent:list-sessions', () => {
 });
 
 ipcMain.handle('agent:create-session', (_event, payload = {}) => {
-  const sessionRecord = createSessionRecord({ workspace: payload.workspace, title: payload.title });
+  const sessionRecord = createSessionRecord({
+    workspace: payload.workspace,
+    title: payload.title,
+    assistantName: payload.assistant_name,
+  });
   return {
     summary: getSessionSummary(sessionRecord),
     detail: {

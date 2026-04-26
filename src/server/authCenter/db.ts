@@ -15,6 +15,7 @@ export type AuthCenterDepartment = {
   orgId: string
   parentId: string | null
   name: string
+  tokenLimit: number | null
   createdAt: number
   updatedAt: number
 }
@@ -27,6 +28,7 @@ export type AuthCenterUser = {
   departmentId: string | null
   role: string
   status: 'active' | 'disabled'
+  tokenLimit: number | null
   createdAt: number
   passwordHash: string | null
   passwordUpdatedAt: number | null
@@ -115,6 +117,7 @@ function mapDepartment(row: SqlRow): AuthCenterDepartment {
     orgId: String(row.org_id),
     parentId: row.parent_id == null ? null : String(row.parent_id),
     name: String(row.name),
+    tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   }
@@ -129,6 +132,7 @@ function mapUser(row: SqlRow): AuthCenterUser {
     departmentId: row.department_id == null ? null : String(row.department_id),
     role: String(row.role),
     status: String(row.status) as 'active' | 'disabled',
+    tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     passwordHash: row.password_hash == null ? null : String(row.password_hash),
     passwordUpdatedAt: row.password_updated_at == null ? null : Number(row.password_updated_at),
@@ -250,6 +254,16 @@ export class AuthCenterDb {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS users_department_idx ON users (department_id);
     `)
+    this.ensureColumn(
+      'users',
+      'token_limit',
+      'ALTER TABLE users ADD COLUMN token_limit INTEGER',
+    )
+    this.ensureColumn(
+      'departments',
+      'token_limit',
+      'ALTER TABLE departments ADD COLUMN token_limit INTEGER',
+    )
     this.db.exec(`
       UPDATE users
       SET role = 'user'
@@ -485,6 +499,18 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE users SET last_login_at = ? WHERE id = ?
     `).run(now(), id)
+  }
+
+  setUserTokenLimit(id: string, tokenLimit: number | null): void {
+    this.db.prepare(`
+      UPDATE users SET token_limit = ? WHERE id = ?
+    `).run(tokenLimit, id)
+  }
+
+  setDepartmentTokenLimit(id: string, tokenLimit: number | null): void {
+    this.db.prepare(`
+      UPDATE departments SET token_limit = ? WHERE id = ?
+    `).run(tokenLimit, id)
   }
 
   // API Key operations

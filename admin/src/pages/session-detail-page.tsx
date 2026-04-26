@@ -7,10 +7,212 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getSessionContext, resumeSession, terminateSession } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
-import type { GetSessionContextResponse, AuthUser } from '@/lib/api/types'
+import type { GetSessionContextResponse, AuthUser, SessionMessage, ContentBlock } from '@/lib/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Loader2, Play, Power, Clock, Server, Container } from 'lucide-react'
+import { Loader2, Play, Power, Clock, Server, Container, Wrench, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { toast } from 'sonner'
+
+// Helper function to extract text content from message
+// Transcript messages have format: { type, message: { content } }
+// We need to handle both formats for compatibility
+function extractMessageText(message: SessionMessage): string {
+  if (!message) return ''
+
+  const msg = message as Record<string, unknown>
+  const innerMessage = msg.message as Record<string, unknown> | undefined
+
+  // Handle transcript format: message.message.content
+  if (innerMessage && 'content' in innerMessage) {
+    const content = innerMessage.content
+
+    // String content
+    if (typeof content === 'string') {
+      return content
+    }
+
+    // Array content blocks - extract ALL content types
+    if (Array.isArray(content)) {
+      const parts: string[] = []
+
+      for (const block of content as ContentBlock[]) {
+        if (block.type === 'text' && typeof block.text === 'string') {
+          parts.push(block.text)
+        } else if (block.type === 'tool_use') {
+          const toolBlock = block as Record<string, unknown>
+          const name = toolBlock.name || 'unknown'
+          const input = toolBlock.input
+          const inputStr = input
+            ? JSON.stringify(input, null, 2)
+            : ''
+          parts.push(`🔧 工具调用: ${name}\n${inputStr}`)
+        } else if (block.type === 'tool_result') {
+          const resultBlock = block as Record<string, unknown>
+          const toolContent = resultBlock.content
+          const isError = resultBlock.is_error === true
+          const header = isError ? '❌ 工具结果 (错误)' : '✅ 工具结果'
+          if (typeof toolContent === 'string') {
+            const displayContent = toolContent.length > 2000
+              ? toolContent.slice(0, 2000) + '...(已截断)'
+              : toolContent
+            parts.push(`${header}\n${displayContent}`)
+          } else if (Array.isArray(toolContent)) {
+            // Handle array content in tool_result
+            const arrStr = JSON.stringify(toolContent, null, 2)
+            const displayContent = arrStr.length > 2000
+              ? arrStr.slice(0, 2000) + '...(已截断)'
+              : arrStr
+            parts.push(`${header}\n${displayContent}`)
+          } else {
+            parts.push(header)
+          }
+        } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+          const thinkingBlock = block as Record<string, unknown>
+          if (typeof thinkingBlock.thinking === 'string') {
+            parts.push(`💭 思考过程:\n${thinkingBlock.thinking}`)
+          }
+        }
+      }
+
+      return parts.join('\n\n---\n\n').trim()
+    }
+  }
+
+  // Handle direct content format: message.content
+  if (typeof message.content === 'string') {
+    return message.content
+  }
+
+  // Handle array content blocks
+  if (Array.isArray(message.content)) {
+    const parts: string[] = []
+    for (const block of message.content as ContentBlock[]) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        parts.push(block.text)
+      }
+    }
+    return parts.join('\n\n').trim()
+  }
+
+  // Handle legacy tool_use messages
+  if (message.type === 'tool_use') {
+    const inputStr = message.input
+      ? JSON.stringify(message.input, null, 2)
+      : ''
+    return `🔧 工具调用: ${message.tool_name || 'unknown'}\n${inputStr}`
+  }
+
+  // Handle legacy tool_result messages
+  if (message.type === 'tool_result') {
+    const content = message.content
+    const header = message.is_error ? '❌ 工具结果 (错误)' : '✅ 工具结果'
+    if (typeof content === 'string') {
+      const displayContent = content.length > 2000
+        ? content.slice(0, 2000) + '...(已截断)'
+        : content
+      return `${header}\n${displayContent}`
+    }
+    return header
+  }
+
+  return ''
+}
+
+// Get role label for message
+// Transcript messages use message.type for 'user'/'assistant', not separate role field
+// A message may contain both text and tool blocks - show primary role
+function getRoleLabel(message: SessionMessage): string {
+  const msg = message as Record<string, unknown>
+  const type = msg.type as string
+
+  // Check content types to determine primary role
+  const innerMessage = msg.message as Record<string, unknown> | undefined
+  if (innerMessage?.content && Array.isArray(innerMessage.content)) {
+    const blocks = innerMessage.content as ContentBlock[]
+    const hasText = blocks.some(b => b.type === 'text')
+    const hasToolUse = blocks.some(b => b.type === 'tool_use')
+    const hasToolResult = blocks.some(b => b.type === 'tool_result')
+
+    // If only tool blocks, show tool role
+    if (!hasText && hasToolUse) return '工具调用'
+    if (!hasText && hasToolResult) return '工具结果'
+    // If has text plus tools, show user/assistant role
+  }
+
+  // Legacy format
+  if (message.type === 'tool_use') return '工具调用'
+  if (message.type === 'tool_result') return '工具结果'
+
+  // Transcript format: type indicates role
+  if (type === 'user') return '用户'
+  if (type === 'assistant') return '助手'
+
+  // Direct role field (fallback)
+  if (message.role === 'user') return '用户'
+  if (message.role === 'assistant') return '助手'
+
+  return '系统'
+}
+
+// Check if message contains tool-related blocks
+function isToolMessage(message: SessionMessage): boolean {
+  const msg = message as Record<string, unknown>
+
+  // Legacy format
+  if (message.type === 'tool_use' || message.type === 'tool_result') {
+    return true
+  }
+
+  // Transcript format: check for tool blocks in content
+  const innerMessage = msg.message as Record<string, unknown> | undefined
+  if (innerMessage?.content && Array.isArray(innerMessage.content)) {
+    for (const block of innerMessage.content as ContentBlock[]) {
+      if (block.type === 'tool_use' || block.type === 'tool_result') {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+// Check if tool result has error
+function isToolError(message: SessionMessage): boolean {
+  const msg = message as Record<string, unknown>
+
+  // Legacy format
+  if (message.type === 'tool_result' && message.is_error === true) {
+    return true
+  }
+
+  // Transcript format: check for tool_result with is_error
+  const innerMessage = msg.message as Record<string, unknown> | undefined
+  if (innerMessage?.content && Array.isArray(innerMessage.content)) {
+    for (const block of innerMessage.content as ContentBlock[]) {
+      if (block.type === 'tool_result') {
+        const isError = (block as Record<string, unknown>).is_error as boolean | undefined
+        return isError === true
+      }
+    }
+  }
+
+  return false
+}
+
+// Check if message is from user (for layout positioning)
+function isUserMessage(message: SessionMessage): boolean {
+  const msg = message as Record<string, unknown>
+  const type = msg.type as string
+
+  // Transcript format: type indicates role
+  if (type === 'user') return true
+  if (type === 'assistant') return false
+
+  // Legacy format with role field
+  if (message.role === 'user') return true
+  if (message.role === 'assistant') return false
+
+  return false
+}
 
 const statusConfig: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
   active: { label: '进行中', variant: 'default' },
@@ -356,56 +558,60 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
                 {context.messages.length === 0 ? (
                   <p className="text-center py-8 text-muted-foreground">暂无消息记录</p>
                 ) : (
-                  context.messages.map((message, index: number) => (
-                    <div
-                      key={index}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
+                  context.messages.map((message, index: number) => {
+                    const text = extractMessageText(message)
+                    if (!text && !isToolMessage(message)) return null
+
+                    const roleLabel = getRoleLabel(message)
+                    const isTool = isToolMessage(message)
+                    const isError = isToolError(message)
+                    const isUser = isUserMessage(message)
+
+                    return (
                       <div
-                        className={`max-w-[80%] rounded-lg p-4 ${
-                          message.role === 'user'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted'
-                        }`}
+                        key={`msg-${index}`}
+                        className={`flex ${isUser && !isTool ? 'justify-end' : 'justify-start'}`}
                       >
-                        <div className="flex items-center gap-2 mb-2">
-                          <Badge
-                            variant={message.role === 'user' ? 'secondary' : 'outline'}
-                            className={
-                              message.role === 'user'
-                                ? 'bg-primary-foreground/20 text-primary-foreground border-transparent'
-                                : ''
-                            }
-                          >
-                            {message.role === 'user' ? '用户' : '助手'}
-                          </Badge>
-                          {message.tokens && (
-                            <span
-                              className={`text-xs ${
-                                message.role === 'user'
-                                  ? 'text-primary-foreground/70'
-                                  : 'text-muted-foreground'
-                              }`}
+                        <div
+                          className={`max-w-[80%] rounded-lg p-4 ${
+                            isTool
+                              ? isError
+                                ? 'bg-destructive/10 border border-destructive/30'
+                                : 'bg-green-500/10 border border-green-500/30'
+                              : isUser
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            {isTool && (
+                              isError ? (
+                                <AlertCircle className="size-4 text-destructive" />
+                              ) : (
+                                <CheckCircle2 className="size-4 text-green-600" />
+                              )
+                            )}
+                            <Badge
+                              variant={isTool ? 'outline' : isUser ? 'secondary' : 'outline'}
+                              className={
+                                isUser && !isTool
+                                  ? 'bg-primary-foreground/20 text-primary-foreground border-transparent'
+                                  : isTool
+                                    ? isError
+                                      ? 'border-destructive/50 text-destructive'
+                                      : 'border-green-500/50 text-green-600'
+                                    : ''
+                              }
                             >
-                              {message.tokens} tokens
-                            </span>
-                          )}
+                              {isTool && <Wrench className="size-3 mr-1" />}
+                              {roleLabel}
+                            </Badge>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
                         </div>
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        {message.timestamp && (
-                          <p
-                            className={`text-xs mt-2 ${
-                              message.role === 'user'
-                                ? 'text-primary-foreground/70'
-                                : 'text-muted-foreground'
-                            }`}
-                          >
-                            {message.timestamp}
-                          </p>
-                        )}
                       </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             </CardContent>

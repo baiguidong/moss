@@ -171750,7 +171750,7 @@ var init_metadata = __esm(() => {
       isClaudeAiAuth: isClaudeAISubscriber(),
       version: "2.1.88",
       versionBase: getVersionBase(),
-      buildTime: "2026-04-26T06:05:45.297Z",
+      buildTime: "2026-04-26T09:37:41.112Z",
       deploymentEnvironment: env3.detectDeploymentEnvironment(),
       ...isEnvTruthy(process.env.GITHUB_ACTIONS) && {
         githubEventName: process.env.GITHUB_EVENT_NAME,
@@ -454273,7 +454273,7 @@ function getAnthropicEnvMetadata() {
 function getBuildAgeMinutes() {
   if (false)
     ;
-  const buildTime = new Date("2026-04-26T06:05:45.297Z").getTime();
+  const buildTime = new Date("2026-04-26T09:37:41.112Z").getTime();
   if (isNaN(buildTime))
     return;
   return Math.floor((Date.now() - buildTime) / 60000);
@@ -518654,7 +518654,7 @@ var init_bridge_kick = __esm(() => {
 var call55 = async () => {
   return {
     type: "text",
-    value: `${"2.1.88"} (built ${"2026-04-26T06:05:45.297Z"})`
+    value: `${"2.1.88"} (built ${"2026-04-26T09:37:41.112Z"})`
   };
 }, version6, version_default;
 var init_version = __esm(() => {
@@ -545068,6 +545068,7 @@ function mapDepartment(row) {
     orgId: String(row.org_id),
     parentId: row.parent_id == null ? null : String(row.parent_id),
     name: String(row.name),
+    tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
@@ -545081,6 +545082,7 @@ function mapUser(row) {
     departmentId: row.department_id == null ? null : String(row.department_id),
     role: String(row.role),
     status: String(row.status),
+    tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     passwordHash: row.password_hash == null ? null : String(row.password_hash),
     passwordUpdatedAt: row.password_updated_at == null ? null : Number(row.password_updated_at),
@@ -545184,6 +545186,8 @@ class AuthCenterDb {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS users_department_idx ON users (department_id);
     `);
+    this.ensureColumn("users", "token_limit", "ALTER TABLE users ADD COLUMN token_limit INTEGER");
+    this.ensureColumn("departments", "token_limit", "ALTER TABLE departments ADD COLUMN token_limit INTEGER");
     this.db.exec(`
       UPDATE users
       SET role = 'user'
@@ -545340,6 +545344,16 @@ class AuthCenterDb {
     this.db.prepare(`
       UPDATE users SET last_login_at = ? WHERE id = ?
     `).run(now(), id);
+  }
+  setUserTokenLimit(id, tokenLimit) {
+    this.db.prepare(`
+      UPDATE users SET token_limit = ? WHERE id = ?
+    `).run(tokenLimit, id);
+  }
+  setDepartmentTokenLimit(id, tokenLimit) {
+    this.db.prepare(`
+      UPDATE departments SET token_limit = ? WHERE id = ?
+    `).run(tokenLimit, id);
   }
   createApiKey(apiKey) {
     this.db.prepare(`
@@ -545894,6 +545908,23 @@ class AuthService {
     return {
       user: sanitizeUser(this.db.getUserByIdAndOrg(user.id, input.orgId) ?? user)
     };
+  }
+  setUserTokenLimit(input, auth) {
+    const user = this.db.getUserByIdAndOrg(input.userId, input.orgId);
+    if (!user) {
+      throw new AuthServiceError(404, "Unknown user_id");
+    }
+    this.assertCanManageExistingUser(user, auth);
+    this.db.setUserTokenLimit(input.userId, input.tokenLimit);
+    return { ok: true };
+  }
+  setDepartmentTokenLimit(input, auth) {
+    const department = this.db.getDepartmentByIdAndOrg(input.departmentId, input.orgId);
+    if (!department) {
+      throw new AuthServiceError(404, "Unknown department_id");
+    }
+    this.db.setDepartmentTokenLimit(input.departmentId, input.tokenLimit);
+    return { ok: true };
   }
   setUserPassword(input, auth) {
     const user = this.db.getUserByIdAndOrg(input.userId, input.orgId);
@@ -548032,6 +548063,7 @@ function createEmptyBudgetStats() {
       lastActivityAt: null
     },
     users: [],
+    agents: [],
     trends: {
       day: [],
       week: [],
@@ -548043,13 +548075,21 @@ async function loadBudgetStats(sessions) {
   const stats2 = createEmptyBudgetStats();
   const windows2 = createTrendWindows(Date.now());
   const users = new Map;
+  const agents2 = new Map;
   const trendUsers = {
     day: new Map,
     week: new Map,
     month: new Map
   };
+  const trendAgents = {
+    day: new Map,
+    week: new Map,
+    month: new Map
+  };
   const sessionStats = await pMap(sessions, (session2) => loadSingleSessionBudgetStats(session2, windows2), { concurrency: 4 });
-  for (const sessionStat of sessionStats) {
+  for (let i4 = 0;i4 < sessionStats.length; i4++) {
+    const sessionStat = sessionStats[i4];
+    const session2 = sessions[i4];
     let userStats = users.get(sessionStat.userId);
     if (!userStats) {
       userStats = {
@@ -548063,6 +548103,37 @@ async function loadBudgetStats(sessions) {
     userStats.sessionCount += sessionStat.sessionCount;
     userStats.lastActiveAt = Math.max(userStats.lastActiveAt, sessionStat.lastActiveAt);
     addUsageTotals(userStats, sessionStat.usage);
+    const assistantName = session2.assistantName ?? null;
+    if (assistantName !== null) {
+      let agentStats = agents2.get(assistantName);
+      if (!agentStats) {
+        agentStats = {
+          assistantName,
+          sessionCount: 0,
+          lastActiveAt: 0,
+          ...createEmptyUsageTotals()
+        };
+        agents2.set(assistantName, agentStats);
+      }
+      agentStats.sessionCount += sessionStat.sessionCount;
+      agentStats.lastActiveAt = Math.max(agentStats.lastActiveAt, sessionStat.lastActiveAt);
+      addUsageTotals(agentStats, sessionStat.usage);
+      for (const granularity of GRANULARITIES) {
+        for (const [bucketStart, bucketUsage] of sessionStat.trends[granularity]) {
+          let bucketAgentMap = trendAgents[granularity].get(bucketStart);
+          if (!bucketAgentMap) {
+            bucketAgentMap = new Map;
+            trendAgents[granularity].set(bucketStart, bucketAgentMap);
+          }
+          let agentBucketUsage = bucketAgentMap.get(assistantName);
+          if (!agentBucketUsage) {
+            agentBucketUsage = createEmptyUsageTotals();
+            bucketAgentMap.set(assistantName, agentBucketUsage);
+          }
+          addUsageTotals(agentBucketUsage, bucketUsage);
+        }
+      }
+    }
     stats2.summary.sessionCount += sessionStat.sessionCount;
     stats2.summary.lastActivityAt = Math.max(stats2.summary.lastActivityAt ?? 0, sessionStat.lastActiveAt);
     addUsageTotals(stats2.summary, sessionStat.usage);
@@ -548083,14 +548154,14 @@ async function loadBudgetStats(sessions) {
     }
   }
   stats2.summary.userCount = users.size;
+  stats2.agents = Array.from(agents2.values()).sort((left, right) => right.totalTokens - left.totalTokens || right.lastActiveAt - left.lastActiveAt);
   stats2.users = Array.from(users.values()).sort((left, right) => right.totalTokens - left.totalTokens || right.lastActiveAt - left.lastActiveAt);
   for (const granularity of GRANULARITIES) {
     stats2.trends[granularity] = windows2[granularity].starts.map((start) => {
       const bucketUsers = trendUsers[granularity].get(start);
-      const usersInBucket = bucketUsers ? Array.from(bucketUsers.entries()).map(([userId, usage]) => ({
-        userId,
-        ...usage
-      })).sort((left, right) => right.totalTokens - left.totalTokens) : [];
+      const usersInBucket = bucketUsers ? Array.from(bucketUsers.entries()).map(([userId, usage]) => ({ userId, ...usage })).sort((left, right) => right.totalTokens - left.totalTokens) : [];
+      const bucketAgentMap = trendAgents[granularity].get(start);
+      const agentsInBucket = bucketAgentMap ? Array.from(bucketAgentMap.entries()).map(([assistantName, usage]) => ({ assistantName, ...usage })).sort((left, right) => right.totalTokens - left.totalTokens) : [];
       const bucketTotals = createEmptyUsageTotals();
       for (const userUsage of usersInBucket) {
         addUsageTotals(bucketTotals, userUsage);
@@ -548099,6 +548170,7 @@ async function loadBudgetStats(sessions) {
         start,
         end: windows2[granularity].endByStart.get(start) ?? start,
         users: usersInBucket,
+        agents: agentsInBucket,
         ...bucketTotals
       };
     });
@@ -548264,6 +548336,7 @@ function createEmptyDashboardStats() {
       total: 0,
       active: 0
     },
+    assistants: [],
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -548327,10 +548400,13 @@ async function loadDashboardStats(sessions) {
   const totalAgentKeys = new Set;
   const activeAgentKeys = new Set;
   stats2.sessions.total = sessions.length;
+  const assistantStats = new Map;
   const sessionStats = await pMap(sessions, loadSingleSessionStats, {
     concurrency: 4
   });
-  for (const sessionStat of sessionStats) {
+  for (let i4 = 0;i4 < sessions.length; i4++) {
+    const session2 = sessions[i4];
+    const sessionStat = sessionStats[i4];
     totalAgentKeys.add(sessionStat.agentKey);
     if (sessionStat.isActive) {
       stats2.sessions.active += 1;
@@ -548341,9 +548417,26 @@ async function loadDashboardStats(sessions) {
     stats2.usage.cacheReadInputTokens += sessionStat.usage.cacheReadInputTokens;
     stats2.usage.cacheCreationInputTokens += sessionStat.usage.cacheCreationInputTokens;
     stats2.usage.totalTokens += sessionStat.usage.totalTokens;
+    const assistantName = session2.assistantName;
+    if (assistantName) {
+      if (!assistantStats.has(assistantName)) {
+        assistantStats.set(assistantName, { total: 0, active: 0 });
+      }
+      const assistantCount = assistantStats.get(assistantName);
+      assistantCount.total++;
+      if (sessionStat.isActive) {
+        assistantCount.active++;
+      }
+    }
   }
   stats2.agents.total = totalAgentKeys.size;
   stats2.agents.active = activeAgentKeys.size;
+  stats2.assistants = Array.from(assistantStats.entries()).filter(([name3]) => name3 !== null).map(([name3, counts]) => ({
+    name: name3,
+    displayName: name3,
+    totalSessions: counts.total,
+    activeSessions: counts.active
+  })).sort((a2, b3) => b3.totalSessions - a2.totalSessions);
   return stats2;
 }
 
@@ -548487,6 +548580,7 @@ function serializeSession(session2) {
     runtime: session2.runtime,
     status: session2.status,
     desiredState: session2.desiredState,
+    assistantName: session2.assistantName,
     createdAt: session2.createdAt,
     lastActiveAt: session2.lastActiveAt,
     endedAt: session2.endedAt
@@ -548831,6 +548925,32 @@ function startServer(config4, runtime, authService, logger27 = createServerLogge
           orgId: auth2.orgId,
           userId,
           password: typeof body.password === "string" ? body.password : ""
+        }, auth2));
+        return;
+      }
+      const userTokenLimitMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/token-limit$/);
+      if (req.method === "PATCH" && userTokenLimitMatch) {
+        authService.requireScope(auth2, "admin:users");
+        const userId = userTokenLimitMatch[1] || "";
+        const body = await readJsonBody(req);
+        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit);
+        writeJson(res, 200, authService.setUserTokenLimit({
+          orgId: auth2.orgId,
+          userId,
+          tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null
+        }, auth2));
+        return;
+      }
+      const departmentTokenLimitMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)\/token-limit$/);
+      if (req.method === "PATCH" && departmentTokenLimitMatch) {
+        authService.requireScope(auth2, "admin:users");
+        const departmentId = departmentTokenLimitMatch[1] || "";
+        const body = await readJsonBody(req);
+        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit);
+        writeJson(res, 200, authService.setDepartmentTokenLimit({
+          orgId: auth2.orgId,
+          departmentId,
+          tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null
         }, auth2));
         return;
       }
@@ -549271,6 +549391,7 @@ function startServer(config4, runtime, authService, logger27 = createServerLogge
         const cwd2 = typeof body.cwd === "string" && body.cwd.trim() ? body.cwd : config4.workspace || process.cwd();
         const dangerouslySkipPermissions = body.dangerously_skip_permissions === true;
         const runtimeOptions = parseRuntimeOptions(body);
+        const assistantName = typeof body.assistant_name === "string" && body.assistant_name.trim() ? body.assistant_name.trim() : undefined;
         const created = await runtime.createSession({
           cwd: cwd2,
           dangerouslySkipPermissions,
@@ -549278,7 +549399,8 @@ function startServer(config4, runtime, authService, logger27 = createServerLogge
           orgId: auth2.orgId,
           role: auth2.role,
           scopes: auth2.scopes,
-          runtime: runtimeOptions
+          runtime: runtimeOptions,
+          assistantName
         });
         writeJson(res, 200, {
           session_id: created.sessionId,
@@ -549515,6 +549637,7 @@ function mapSession(row) {
     transcriptPath: String(row.transcript_path),
     title: typeof row.title === "string" ? row.title : null,
     summary: typeof row.summary === "string" ? row.summary : null,
+    assistantName: typeof row.assistant_name === "string" ? row.assistant_name : null,
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -549575,6 +549698,7 @@ class DirectConnectStore {
         transcript_path TEXT NOT NULL,
         title TEXT,
         summary TEXT,
+        assistant_name TEXT,
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         ended_at INTEGER,
@@ -549628,6 +549752,9 @@ class DirectConnectStore {
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
     `);
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`);
+    } catch {}
   }
   close() {
     this.db.close();
@@ -549671,13 +549798,14 @@ class DirectConnectStore {
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
         cwd, runtime_type, docker_image, docker_mode, config_dir, container_name,
-        status, desired_state, current_attempt_id, transcript_path,
+        status, desired_state, current_attempt_id, transcript_path, assistant_name,
         created_at, last_active_at, ended_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)
-    `).run(input.sessionId, input.transcriptSessionId, input.orgId, input.userId, input.role, JSON.stringify(input.scopes), input.cwd, input.runtime.type, input.runtime.dockerImage ?? null, input.runtime.dockerMode ?? null, input.runtime.configDir ?? null, input.runtime.containerName ?? null, input.status, input.desiredState, input.transcriptPath, ts, ts);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+    `).run(input.sessionId, input.transcriptSessionId, input.orgId, input.userId, input.role, JSON.stringify(input.scopes), input.cwd, input.runtime.type, input.runtime.dockerImage ?? null, input.runtime.dockerMode ?? null, input.runtime.configDir ?? null, input.runtime.containerName ?? null, input.status, input.desiredState, input.transcriptPath, input.assistantName ?? null, ts, ts);
     this.addEvent(input.sessionId, null, "session_created", {
       runtime: input.runtime,
-      cwd: input.cwd
+      cwd: input.cwd,
+      assistantName: input.assistantName
     });
     return this.getSession(input.sessionId);
   }
@@ -549925,6 +550053,7 @@ function toSessionSummary(session2) {
     runtime: session2.runtime,
     status: session2.status,
     desiredState: session2.desiredState,
+    assistantName: session2.assistantName,
     createdAt: session2.createdAt,
     lastActiveAt: session2.lastActiveAt,
     endedAt: session2.endedAt
@@ -550123,11 +550252,13 @@ class RuntimeService {
       cwd: input.cwd,
       runtime,
       status: "creating",
-      desiredState: "active"
+      desiredState: "active",
+      assistantName: input.assistantName
     });
     try {
       await this.spawnAttempt(created, {
-        dangerouslySkipPermissions: input.dangerouslySkipPermissions
+        dangerouslySkipPermissions: input.dangerouslySkipPermissions,
+        assistantName: input.assistantName
       });
     } catch (error49) {
       this.store.markSessionEnded(created.sessionId, "failed", "active");
@@ -550243,6 +550374,7 @@ class RuntimeService {
         role: session2.role,
         scopes: session2.scopes,
         dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
+        assistantName: options.assistantName,
         runtime: {
           ...session2.runtime,
           containerName: session2.runtime.type === "docker" ? `moss-session-${session2.sessionId.slice(0, 12)}-g${generation}` : session2.runtime.containerName

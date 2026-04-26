@@ -221,11 +221,13 @@ export class RuntimeService {
       runtime,
       status: 'creating',
       desiredState: 'active',
+      assistantName: input.assistantName,
     })
 
     try {
       await this.spawnAttempt(created, {
         dangerouslySkipPermissions: input.dangerouslySkipPermissions,
+        assistantName: input.assistantName,
       })
     } catch (error) {
       this.store.markSessionEnded(created.sessionId, 'failed', 'active')
@@ -336,6 +338,7 @@ export class RuntimeService {
     options: {
       dangerouslySkipPermissions?: boolean
       resumeTranscriptSessionId?: string
+      assistantName?: string
     } = {},
   ): Promise<AttemptRecord> {
     const generation = this.store.getNextGeneration(session.sessionId)
@@ -387,6 +390,7 @@ export class RuntimeService {
         scopes: session.scopes,
         dangerouslySkipPermissions:
           options.dangerouslySkipPermissions === true,
+        assistantName: options.assistantName,
         runtime: {
           ...session.runtime,
           containerName:

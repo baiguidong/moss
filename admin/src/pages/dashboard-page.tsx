@@ -7,11 +7,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChartContainer, ChartTooltipContent } from '@/components/ui/chart'
-import { getDashboardStats, getSessions, getHealth } from '@/lib/api/sessions'
-import { getUsers } from '@/lib/api/auth'
+import { getDashboardStats, getSessions } from '@/lib/api/sessions'
+import { getUsers, getDepartments } from '@/lib/api/auth'
 import { ApiRequestError, hasAnyScope, hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
-import { Users, MessageSquare, Coins, Activity, RefreshCw, Calendar, TrendingUp, Bot } from 'lucide-react'
+import { Users, MessageSquare, Coins, RefreshCw, Calendar, TrendingUp, Bot, Building2 } from 'lucide-react'
 import {
   LineChart,
   Line,
@@ -23,10 +23,11 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts'
+import ReactECharts from 'echarts-for-react'
 import type {
   Session,
-  HealthResponse,
   AuthUser,
+  AuthDepartment,
   DashboardStatsResponse,
 } from '@/lib/api/types'
 import { Link } from 'react-router-dom'
@@ -115,7 +116,7 @@ export default function DashboardPage() {
   const { scopes } = useAuth()
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
-  const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [dashboardStats, setDashboardStats] = useState<DashboardStatsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -137,15 +138,15 @@ export default function DashboardPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, healthRes, usersRes, statsRes] = await Promise.all([
+      const [sessionsRes, usersRes, departmentsRes, statsRes] = await Promise.all([
         canListSessions ? getSessions() : Promise.resolve(null),
-        getHealth(),
         canListUsers ? getUsers() : Promise.resolve(null),
+        canListUsers ? getDepartments() : Promise.resolve(null),
         canListSessions ? getDashboardStats(getStatsQuery(dateRange)) : Promise.resolve(null),
       ])
       setSessions(sessionsRes?.sessions ?? [])
-      setHealth(healthRes)
       setUsers(usersRes?.users ?? [])
+      setDepartments(departmentsRes?.departments ?? [])
       setDashboardStats(statsRes)
     } catch (error) {
       if (!(error instanceof ApiRequestError && error.status === 401)) {
@@ -189,8 +190,12 @@ export default function DashboardPage() {
   const activeSessions = filteredSessions.filter((s) =>
     ['creating', 'active', 'detached'].includes(s.status)
   ).length
-  const activeAgents = dashboardStats?.agents.active ?? activeSessions
-  const totalAgents = dashboardStats?.agents.total ?? totalSessions
+  const assistantStats = dashboardStats?.assistants ?? []
+  // Count total sessions with assistantName and active sessions among them
+  const totalAssistantSessions = assistantStats.reduce((sum, a) => sum + a.totalSessions, 0)
+  const activeAssistantSessions = assistantStats.reduce((sum, a) => sum + a.activeSessions, 0)
+  const totalUsers = users.length
+  const activeUsers = new Set(filteredSessions.filter(s => ['creating', 'active', 'detached'].includes(s.status)).map(s => s.userId)).size
   const tokenUsage = dashboardStats?.usage ?? {
     inputTokens: 0,
     outputTokens: 0,
@@ -243,6 +248,28 @@ export default function DashboardPage() {
     .sort((a, b) => b.sessions - a.sessions)
     .slice(0, 5)
 
+  // Department ranking
+  const departmentStats = Array.from(
+    filteredSessions.reduce((acc, session) => {
+      const user = users.find((u) => u.id === session.userId)
+      const deptId = user?.departmentId || 'unknown'
+      if (!acc.has(deptId)) {
+        acc.set(deptId, { departmentId: deptId, sessions: 0, users: new Set() })
+      }
+      const stats = acc.get(deptId)!
+      stats.sessions++
+      stats.users.add(session.userId)
+      return acc
+    }, new Map<string, { departmentId: string; sessions: number; users: Set<string> }>())
+  )
+    .map(([, stats]) => ({
+      name: departments.find((d) => d.id === stats.departmentId)?.name || (stats.departmentId === 'unknown' ? '未分配部门' : stats.departmentId.slice(0, 8)),
+      sessions: stats.sessions,
+      userCount: stats.users.size,
+    }))
+    .sort((a, b) => b.sessions - a.sessions)
+    .slice(0, 10)
+
   const getUserName = (userId: string) => {
     const u = users.find((us) => us.id === userId)
     return u?.name || userId.slice(0, 8)
@@ -293,9 +320,9 @@ export default function DashboardPage() {
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <StatCard
-            title="Agent"
-            value={`${activeAgents}/${totalAgents}`}
-            icon={Bot}
+            title="用户分身"
+            value={`${activeUsers}/${totalUsers}`}
+            icon={Users}
             description="活跃 / 总数"
           />
           <StatCard
@@ -312,12 +339,7 @@ export default function DashboardPage() {
             }
           />
           <StatCard title="总会话数" value={totalSessions} icon={MessageSquare} description={`活跃 ${activeSessions}`} />
-          <StatCard
-            title="服务状态"
-            value={health?.ok ? '正常' : '异常'}
-            icon={Activity}
-            description={health?.auth_mode || ''}
-          />
+          <StatCard title="智能体会话" value={`${activeAssistantSessions}/${totalAssistantSessions}`} icon={Bot} description="活跃 / 总数" />
         </div>
 
         {/* Charts */}
@@ -395,42 +417,189 @@ export default function DashboardPage() {
         </div>
 
         {/* User Ranking */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="size-4" />
+                用户排行
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {userStats.length > 0 ? (
+                <div className="space-y-4">
+                  {userStats.map((stat, index) => (
+                    <div key={stat.userId} className="flex items-center gap-4">
+                      <div className="flex items-center justify-center size-8 rounded-full bg-primary/10 text-primary font-medium">
+                        {index + 1}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{stat.name}</span>
+                          <div className="flex gap-4 text-sm text-muted-foreground">
+                            <span>{stat.sessions} 会话</span>
+                            <span className="text-green-500">{stat.active} 活跃</span>
+                          </div>
+                        </div>
+                        <div className="mt-1 h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary rounded-full transition-all"
+                            style={{ width: `${(stat.sessions / userStats[0].sessions) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  暂无用户数据
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Department Ranking */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="size-4" />
+                各部门用量排行
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {departmentStats.length > 0 ? (
+                <ReactECharts
+                  style={{ height: 300 }}
+                  option={{
+                    tooltip: {
+                      trigger: 'axis',
+                      axisPointer: { type: 'shadow' }
+                    },
+                    grid: {
+                      left: 40,
+                      right: 20,
+                      top: 20,
+                      bottom: 60
+                    },
+                    xAxis: {
+                      type: 'category',
+                      data: departmentStats.map(d => d.name),
+                      axisLine: { show: false },
+                      axisTick: { show: false },
+                      axisLabel: { interval: 0, rotate: 30 }
+                    },
+                    yAxis: {
+                      type: 'value',
+                      axisLine: { show: false },
+                      axisTick: { show: false },
+                      splitLine: { lineStyle: { type: 'dashed' } }
+                    },
+                    series: [{
+                      type: 'bar',
+                      data: departmentStats.map(d => d.sessions),
+                      barMaxWidth: 40,
+                      itemStyle: {
+                        borderRadius: [4, 4, 0, 0],
+                        color: {
+                          type: 'linear',
+                          x: 0, y: 0, x2: 0, y2: 1,
+                          colorStops: [
+                            { offset: 0, color: '#83bff6' },
+                            { offset: 0.5, color: '#188df0' },
+                            { offset: 1, color: '#188df0' }
+                          ]
+                        }
+                      },
+                      label: {
+                        show: true,
+                        position: 'top',
+                        formatter: '{c}',
+                        color: '#666'
+                      }
+                    }]
+                  }}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <Building2 className="size-8 mx-auto mb-2 opacity-50" />
+                    <p>暂无部门数据</p>
+                    <p className="text-xs mt-1">请先创建部门并分配用户</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Assistant Stats */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="size-4" />
-              用户排行
+              <Bot className="size-4" />
+              智能体会话统计
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {userStats.length > 0 ? (
-              <div className="space-y-4">
-                {userStats.map((stat, index) => (
-                  <div key={stat.userId} className="flex items-center gap-4">
-                    <div className="flex items-center justify-center size-8 rounded-full bg-primary/10 text-primary font-medium">
-                      {index + 1}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{stat.name}</span>
-                        <div className="flex gap-4 text-sm text-muted-foreground">
-                          <span>{stat.sessions} 会话</span>
-                          <span className="text-green-500">{stat.active} 活跃</span>
-                        </div>
-                      </div>
-                      <div className="mt-1 h-2 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary rounded-full transition-all"
-                          style={{ width: `${(stat.sessions / userStats[0].sessions) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {assistantStats.length > 0 ? (
+              <ReactECharts
+                style={{ height: 300 }}
+                option={{
+                  tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' }
+                  },
+                  grid: {
+                    left: 40,
+                    right: 20,
+                    top: 20,
+                    bottom: 60
+                  },
+                  xAxis: {
+                    type: 'category',
+                    data: assistantStats.map(a => a.displayName),
+                    axisLine: { show: false },
+                    axisTick: { show: false },
+                    axisLabel: { interval: 0, rotate: 30 }
+                  },
+                  yAxis: {
+                    type: 'value',
+                    axisLine: { show: false },
+                    axisTick: { show: false },
+                    splitLine: { lineStyle: { type: 'dashed' } }
+                  },
+                  series: [{
+                    type: 'bar',
+                    data: assistantStats.map(a => a.totalSessions),
+                    barMaxWidth: 40,
+                    itemStyle: {
+                      borderRadius: [4, 4, 0, 0],
+                      color: {
+                        type: 'linear',
+                        x: 0, y: 0, x2: 0, y2: 1,
+                        colorStops: [
+                          { offset: 0, color: '#83bff6' },
+                          { offset: 0.5, color: '#188df0' },
+                          { offset: 1, color: '#188df0' }
+                        ]
+                      }
+                    },
+                    label: {
+                      show: true,
+                      position: 'top',
+                      formatter: '{c}',
+                      color: '#666'
+                    }
+                  }]
+                }}
+              />
             ) : (
-              <div className="py-8 text-center text-muted-foreground">
-                暂无用户数据
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                <div className="text-center">
+                  <Bot className="size-8 mx-auto mb-2 opacity-50" />
+                  <p>暂无智能体会话数据</p>
+                </div>
               </div>
             )}
           </CardContent>
@@ -447,7 +616,10 @@ export default function DashboardPage() {
           <CardContent>
             {filteredSessions.length > 0 ? (
               <div className="space-y-4">
-                {filteredSessions.slice(0, 5).map((session) => (
+                {filteredSessions
+                  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  .slice(0, 5)
+                  .map((session) => (
                   <div
                     key={session.sessionId}
                     className="flex items-center justify-between py-2 border-b last:border-0"

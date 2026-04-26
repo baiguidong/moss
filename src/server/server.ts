@@ -83,6 +83,7 @@ function serializeSession(session: {
   runtime: SessionRecord['runtime']
   status: string
   desiredState: string
+  assistantName?: string | null
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -98,6 +99,7 @@ function serializeSession(session: {
     runtime: session.runtime,
     status: session.status,
     desiredState: session.desiredState,
+    assistantName: session.assistantName,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
@@ -652,6 +654,42 @@ export function startServer(
             orgId: auth.orgId,
             userId,
             password: typeof body.password === 'string' ? body.password : '',
+          }, auth),
+        )
+        return
+      }
+
+      const userTokenLimitMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/token-limit$/)
+      if (req.method === 'PATCH' && userTokenLimitMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const userId = userTokenLimitMatch[1] || ''
+        const body = await readJsonBody(req)
+        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit)
+        writeJson(
+          res,
+          200,
+          authService.setUserTokenLimit({
+            orgId: auth.orgId,
+            userId,
+            tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null,
+          }, auth),
+        )
+        return
+      }
+
+      const departmentTokenLimitMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)\/token-limit$/)
+      if (req.method === 'PATCH' && departmentTokenLimitMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const departmentId = departmentTokenLimitMatch[1] || ''
+        const body = await readJsonBody(req)
+        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit)
+        writeJson(
+          res,
+          200,
+          authService.setDepartmentTokenLimit({
+            orgId: auth.orgId,
+            departmentId,
+            tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null,
           }, auth),
         )
         return
@@ -1276,6 +1314,10 @@ export function startServer(
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const runtimeOptions = parseRuntimeOptions(body)
+        const assistantName =
+          typeof body.assistant_name === 'string' && body.assistant_name.trim()
+            ? body.assistant_name.trim()
+            : undefined
         const created = await runtime.createSession({
           cwd,
           dangerouslySkipPermissions,
@@ -1284,6 +1326,7 @@ export function startServer(
           role: auth.role,
           scopes: auth.scopes,
           runtime: runtimeOptions,
+          assistantName,
         })
         writeJson(res, 200, {
           session_id: created.sessionId,

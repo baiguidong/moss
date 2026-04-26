@@ -57,9 +57,6 @@ const menuItems: NavItem[] = [
     icon: MessageSquare,
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
   },
-]
-
-const systemItems: NavItem[] = [
   {
     title: 'IM 接入',
     url: '/settings/adapters',
@@ -77,6 +74,9 @@ const systemItems: NavItem[] = [
     icon: Sparkles,
     requiredScope: 'admin:settings',
   },
+]
+
+const systemItems: NavItem[] = [
   {
     title: '系统设置',
     url: '/settings',
@@ -123,8 +123,7 @@ export function AppSidebar() {
           <Shield className="size-5" />
         </div>
         <div className="flex flex-col">
-          <span className="text-sm font-semibold">企业中控平台</span>
-          <span className="text-xs text-muted-foreground">AI 管理系统</span>
+          <span className="text-sm font-semibold">moss 中控平台</span>
         </div>
       </div>
 
@@ -195,9 +194,6 @@ export function AppSidebar() {
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
-            <p className="text-xs text-muted-foreground truncate">
-              {user?.email || (user?.role ? roleLabels[user.role] || user.role : '')}
-            </p>
           </div>
           <Button
             variant="ghost"

@@ -32,6 +32,7 @@ import type {
   UpdateSystemSettingsRequest,
 } from '@/lib/api/types'
 import {
+  Building2,
   Copy,
   Image as ImageIcon,
   Loader2,
@@ -51,8 +52,8 @@ type EditableSystemSettings = Omit<
 type SettingsSectionProps = {
   icon: ComponentType<{ className?: string }>
   title: string
-  description: string
-  children: ReactNode
+  description?: string
+  children?: ReactNode
 }
 
 type SettingsFieldProps = {
@@ -173,9 +174,9 @@ function SettingSection({
           <Icon className="size-4 text-muted-foreground" />
           <span>{title}</span>
         </CardTitle>
-        <CardDescription>{description}</CardDescription>
+        {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
-      <CardContent className="space-y-5 pt-6">{children}</CardContent>
+      {children ? <CardContent className="space-y-5 pt-6">{children}</CardContent> : null}
     </Card>
   )
 }
@@ -690,14 +691,10 @@ export default function SystemSettingsPage() {
         </SettingSection>
 
         <SettingSection
-          icon={Package}
-          title="技能商店"
-          description="配置 admin 技能商店页所需的专属技能租户信息。"
+          icon={Building2}
+          title="专属资产"
         >
-          <SettingField
-            label="专属技能租户 ID"
-            description="当技能商店切换到“专属技能”标签时，会把这里的值作为 tenant_id 透传给 Hub。留空则不加载专属技能。"
-          >
+          <SettingField label="租户 ID">
             <Input
               value={draft.skillStore.tenantId}
               onChange={(event) =>

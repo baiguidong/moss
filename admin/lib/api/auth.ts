@@ -118,6 +118,20 @@ export async function getRoles(): Promise<RolesListResponse> {
   return authClient.get<RolesListResponse>('/api/v1/roles')
 }
 
+export async function setUserTokenLimit(
+  userId: string,
+  tokenLimit: number | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>(`/api/v1/users/${userId}/token-limit`, { tokenLimit })
+}
+
+export async function setDepartmentTokenLimit(
+  departmentId: string,
+  tokenLimit: number | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>(`/api/v1/departments/${departmentId}/token-limit`, { tokenLimit })
+}
+
 export function isAuthenticated(): boolean {
   return !!getToken()
 }

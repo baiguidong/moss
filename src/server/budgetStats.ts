@@ -37,14 +37,25 @@ export type BudgetUserStats = BudgetUsageTotals & {
   lastActiveAt: number
 }
 
+export type BudgetAgentStats = BudgetUsageTotals & {
+  assistantName: string
+  sessionCount: number
+  lastActiveAt: number
+}
+
 export type BudgetTrendBucketUser = BudgetUsageTotals & {
   userId: string
+}
+
+export type BudgetTrendBucketAgent = BudgetUsageTotals & {
+  assistantName: string
 }
 
 export type BudgetTrendBucket = BudgetUsageTotals & {
   start: number
   end: number
   users: BudgetTrendBucketUser[]
+  agents: BudgetTrendBucketAgent[]
 }
 
 export type BudgetStats = {
@@ -54,6 +65,7 @@ export type BudgetStats = {
     lastActivityAt: number | null
   }
   users: BudgetUserStats[]
+  agents: BudgetAgentStats[]
   trends: Record<BudgetGranularity, BudgetTrendBucket[]>
 }
 
@@ -340,6 +352,7 @@ function createEmptyBudgetStats(): BudgetStats {
       lastActivityAt: null,
     },
     users: [],
+    agents: [],
     trends: {
       day: [],
       week: [],
@@ -354,7 +367,16 @@ export async function loadBudgetStats(
   const stats = createEmptyBudgetStats()
   const windows = createTrendWindows(Date.now())
   const users = new Map<string, BudgetUserStats>()
+  const agents = new Map<string, BudgetAgentStats>()
   const trendUsers: Record<
+    BudgetGranularity,
+    Map<number, Map<string, BudgetUsageTotals>>
+  > = {
+    day: new Map<number, Map<string, BudgetUsageTotals>>(),
+    week: new Map<number, Map<string, BudgetUsageTotals>>(),
+    month: new Map<number, Map<string, BudgetUsageTotals>>(),
+  }
+  const trendAgents: Record<
     BudgetGranularity,
     Map<number, Map<string, BudgetUsageTotals>>
   > = {
@@ -369,7 +391,10 @@ export async function loadBudgetStats(
     { concurrency: 4 },
   )
 
-  for (const sessionStat of sessionStats) {
+  for (let i = 0; i < sessionStats.length; i++) {
+    const sessionStat = sessionStats[i]
+    const session = sessions[i]
+
     let userStats = users.get(sessionStat.userId)
     if (!userStats) {
       userStats = {
@@ -384,6 +409,39 @@ export async function loadBudgetStats(
     userStats.sessionCount += sessionStat.sessionCount
     userStats.lastActiveAt = Math.max(userStats.lastActiveAt, sessionStat.lastActiveAt)
     addUsageTotals(userStats, sessionStat.usage)
+
+    const assistantName = session.assistantName ?? null
+    if (assistantName !== null) {
+      let agentStats = agents.get(assistantName)
+      if (!agentStats) {
+        agentStats = {
+          assistantName,
+          sessionCount: 0,
+          lastActiveAt: 0,
+          ...createEmptyUsageTotals(),
+        }
+        agents.set(assistantName, agentStats)
+      }
+      agentStats.sessionCount += sessionStat.sessionCount
+      agentStats.lastActiveAt = Math.max(agentStats.lastActiveAt, sessionStat.lastActiveAt)
+      addUsageTotals(agentStats, sessionStat.usage)
+
+      for (const granularity of GRANULARITIES) {
+        for (const [bucketStart, bucketUsage] of sessionStat.trends[granularity]) {
+          let bucketAgentMap = trendAgents[granularity].get(bucketStart)
+          if (!bucketAgentMap) {
+            bucketAgentMap = new Map<string, BudgetUsageTotals>()
+            trendAgents[granularity].set(bucketStart, bucketAgentMap)
+          }
+          let agentBucketUsage = bucketAgentMap.get(assistantName)
+          if (!agentBucketUsage) {
+            agentBucketUsage = createEmptyUsageTotals()
+            bucketAgentMap.set(assistantName, agentBucketUsage)
+          }
+          addUsageTotals(agentBucketUsage, bucketUsage)
+        }
+      }
+    }
 
     stats.summary.sessionCount += sessionStat.sessionCount
     stats.summary.lastActivityAt = Math.max(
@@ -412,6 +470,12 @@ export async function loadBudgetStats(
 
   stats.summary.userCount = users.size
 
+  stats.agents = Array.from(agents.values()).sort(
+    (left, right) =>
+      right.totalTokens - left.totalTokens ||
+      right.lastActiveAt - left.lastActiveAt,
+  )
+
   stats.users = Array.from(users.values()).sort(
     (left, right) =>
       right.totalTokens - left.totalTokens ||
@@ -423,10 +487,14 @@ export async function loadBudgetStats(
       const bucketUsers = trendUsers[granularity].get(start)
       const usersInBucket = bucketUsers
         ? Array.from(bucketUsers.entries())
-            .map(([userId, usage]) => ({
-              userId,
-              ...usage,
-            }))
+            .map(([userId, usage]) => ({ userId, ...usage }))
+            .sort((left, right) => right.totalTokens - left.totalTokens)
+        : []
+
+      const bucketAgentMap = trendAgents[granularity].get(start)
+      const agentsInBucket = bucketAgentMap
+        ? Array.from(bucketAgentMap.entries())
+            .map(([assistantName, usage]) => ({ assistantName, ...usage }))
             .sort((left, right) => right.totalTokens - left.totalTokens)
         : []
 
@@ -439,6 +507,7 @@ export async function loadBudgetStats(
         start,
         end: windows[granularity].endByStart.get(start) ?? start,
         users: usersInBucket,
+        agents: agentsInBucket,
         ...bucketTotals,
       }
     })

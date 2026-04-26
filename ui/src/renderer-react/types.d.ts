@@ -18,6 +18,7 @@ export type SessionSummary = {
   preview: string;
   pendingPlanApproval?: PendingPlanApproval | null;
   resumeReadOnlyReason?: string | null;
+  assistantName?: string | null;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -194,7 +195,7 @@ declare global {
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
       listSessions: () => Promise<SessionSummary[]>;
-      createSession: (payload?: { workspace?: string; title?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;

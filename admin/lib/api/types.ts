@@ -9,6 +9,7 @@ export interface AuthUser {
   departmentId: string | null
   role: UserRole
   status: 'active' | 'disabled'
+  tokenLimit: number | null
   createdAt: number
   passwordUpdatedAt: number | null
   lastLoginAt: number | null
@@ -25,6 +26,7 @@ export interface AuthDepartment {
   orgId: string
   parentId: string | null
   name: string
+  tokenLimit: number | null
   createdAt: number
   updatedAt: number
   userCount: number
@@ -207,6 +209,7 @@ export interface Session {
   runtime: SessionRuntime
   status: SessionStatus
   desiredState: DesiredState
+  assistantName?: string | null
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -237,12 +240,75 @@ export interface SessionUsage {
   modelUsage: Record<string, number>
 }
 
-export interface SessionMessage {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp?: string
-  tokens?: number
+// Content block types from Anthropic SDK
+export interface TextContentBlock {
+  type: 'text'
+  text: string
 }
+
+export interface ToolUseContentBlock {
+  type: 'tool_use'
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export interface ToolResultContentBlock {
+  type: 'tool_result'
+  tool_use_id: string
+  content: string | unknown[]
+  is_error?: boolean
+}
+
+export interface ThinkingContentBlock {
+  type: 'thinking' | 'redacted_thinking'
+  thinking?: string
+}
+
+export type ContentBlock = TextContentBlock | ToolUseContentBlock | ToolResultContentBlock | ThinkingContentBlock | Record<string, unknown>
+
+// Message types matching server-side Message structure
+export interface UserMessage {
+  type: 'user'
+  role: 'user'
+  content: string | ContentBlock[]
+  timestamp?: string
+  uuid?: string
+  images?: string[]
+  files?: string[]
+}
+
+export interface AssistantMessage {
+  type: 'assistant'
+  role: 'assistant'
+  content: string | ContentBlock[]
+  timestamp?: string
+  uuid?: string
+}
+
+export interface ToolUseMessage {
+  type: 'tool_use'
+  role: 'assistant'
+  tool_use_id: string
+  tool_name: string
+  content?: string
+  input?: Record<string, unknown>
+  timestamp?: string
+  uuid?: string
+}
+
+export interface ToolResultMessage {
+  type: 'tool_result'
+  role: 'user'
+  tool_use_id: string
+  tool_name?: string
+  content: string | unknown
+  is_error?: boolean
+  timestamp?: string
+  uuid?: string
+}
+
+export type SessionMessage = UserMessage | AssistantMessage | ToolUseMessage | ToolResultMessage | Record<string, unknown>
 
 export interface SessionContext {
   customTitle?: string
@@ -271,6 +337,12 @@ export interface DashboardStatsResponse {
     total: number
     active: number
   }
+  assistants: {
+    name: string | null
+    displayName: string
+    totalSessions: number
+    activeSessions: number
+  }[]
   usage: {
     inputTokens: number
     outputTokens: number
@@ -295,6 +367,16 @@ export interface BudgetUserStats extends BudgetUsageTotals {
   lastActiveAt: number
 }
 
+export interface BudgetAgentStats extends BudgetUsageTotals {
+  assistantName: string
+  sessionCount: number
+  lastActiveAt: number
+}
+
+export interface BudgetTrendBucketAgent extends BudgetUsageTotals {
+  assistantName: string
+}
+
 export interface BudgetTrendBucketUser extends BudgetUsageTotals {
   userId: string
 }
@@ -303,6 +385,7 @@ export interface BudgetTrendBucket extends BudgetUsageTotals {
   start: number
   end: number
   users: BudgetTrendBucketUser[]
+  agents: BudgetTrendBucketAgent[]
 }
 
 export interface BudgetStatsResponse {
@@ -312,6 +395,7 @@ export interface BudgetStatsResponse {
     lastActivityAt: number | null
   }
   users: BudgetUserStats[]
+  agents: BudgetAgentStats[]
   trends: {
     day: BudgetTrendBucket[]
     week: BudgetTrendBucket[]

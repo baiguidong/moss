@@ -450,6 +450,33 @@ export class AuthService {
     }
   }
 
+  setUserTokenLimit(input: {
+    orgId: string
+    userId: string
+    tokenLimit: number | null
+  }, auth?: AuthContext): { ok: true } {
+    const user = this.db.getUserByIdAndOrg(input.userId, input.orgId)
+    if (!user) {
+      throw new AuthServiceError(404, 'Unknown user_id')
+    }
+    this.assertCanManageExistingUser(user, auth)
+    this.db.setUserTokenLimit(input.userId, input.tokenLimit)
+    return { ok: true }
+  }
+
+  setDepartmentTokenLimit(input: {
+    orgId: string
+    departmentId: string
+    tokenLimit: number | null
+  }, auth?: AuthContext): { ok: true } {
+    const department = this.db.getDepartmentByIdAndOrg(input.departmentId, input.orgId)
+    if (!department) {
+      throw new AuthServiceError(404, 'Unknown department_id')
+    }
+    this.db.setDepartmentTokenLimit(input.departmentId, input.tokenLimit)
+    return { ok: true }
+  }
+
   setUserPassword(input: {
     orgId: string
     userId: string

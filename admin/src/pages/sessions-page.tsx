@@ -23,6 +23,8 @@ import {
 } from '@/components/ui/select'
 import { getSessions, terminateSession } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
+import { getInstalledAgents } from '@/lib/api/agent-hub'
+import type { InstalledAgentInfo } from '@/lib/api/agent-hub'
 import type { Session, AuthUser } from '@/lib/api/types'
 import { Search, ArrowRight, Loader2, Power, RefreshCw, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -67,9 +69,11 @@ function SessionsSkeleton() {
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
+  const [installedAgents, setInstalledAgents] = useState<InstalledAgentInfo[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [userFilter, setUserFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [agentFilter, setAgentFilter] = useState<string>('all')
   const [dateRange, setDateRange] = useState(7)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -77,9 +81,10 @@ export default function SessionsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, usersRes] = await Promise.all([getSessions(), getUsers()])
+      const [sessionsRes, usersRes, agentsRes] = await Promise.all([getSessions(), getUsers(), getInstalledAgents()])
       setSessions(sessionsRes.sessions)
       setUsers(usersRes.users)
+      setInstalledAgents(agentsRes)
     } catch (error) {
       console.error('Failed to fetch data:', error)
       toast.error('获取会话列表失败')
@@ -98,20 +103,28 @@ export default function SessionsPage() {
     fetchData()
   }
 
-  const filteredSessions = sessions.filter((session) => {
-    const matchesSearch =
-      session.sessionId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      session.userId.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesUser = userFilter === 'all' || session.userId === userFilter
-    const matchesStatus = statusFilter === 'all' || session.status === statusFilter
+  const agentNames = Array.from(new Set([
+    ...installedAgents.map((a) => a.name),
+    ...sessions.map((s) => s.assistantName ?? null).filter((n): n is string => n !== null),
+  ]))
 
-    const sessionDate = new Date(session.createdAt)
-    const now = new Date()
-    const start = subDays(startOfDay(now), dateRange)
-    const matchesDate = dateRange === -1 || isWithinInterval(sessionDate, { start, end: endOfDay(now) })
+  const filteredSessions = sessions
+    .filter((session) => {
+      const matchesSearch =
+        session.sessionId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        session.userId.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesUser = userFilter === 'all' || session.userId === userFilter
+      const matchesStatus = statusFilter === 'all' || session.status === statusFilter
+      const matchesAgent = agentFilter === 'all' || session.assistantName === agentFilter
 
-    return matchesSearch && matchesUser && matchesStatus && matchesDate
-  })
+      const sessionDate = new Date(session.createdAt)
+      const now = new Date()
+      const start = subDays(startOfDay(now), dateRange)
+      const matchesDate = dateRange === -1 || isWithinInterval(sessionDate, { start, end: endOfDay(now) })
+
+      return matchesSearch && matchesUser && matchesStatus && matchesDate && matchesAgent
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
   const handleTerminate = async (sessionId: string) => {
     if (!confirm('确定要终止这个会话吗？')) return
@@ -185,6 +198,22 @@ export default function SessionsPage() {
                     {config.label}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+            <Select value={agentFilter} onValueChange={setAgentFilter}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="筛选智能体" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部智能体</SelectItem>
+                {agentNames.map((name) => {
+                  const agent = installedAgents.find((a) => a.name === name)
+                  return (
+                    <SelectItem key={name} value={name}>
+                      {agent?.displayName || name}
+                    </SelectItem>
+                  )
+                })}
               </SelectContent>
             </Select>
           </div>

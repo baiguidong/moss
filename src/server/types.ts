@@ -167,6 +167,7 @@ export type SessionRecord = {
   transcriptPath: string
   title: string | null
   summary: string | null
+  assistantName: string | null
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -230,6 +231,7 @@ export type SessionSummary = {
   runtime: SessionRuntimeInfo
   status: SessionStatus
   desiredState: DesiredSessionState
+  assistantName: string | null
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -243,6 +245,7 @@ export type SessionCreateInput = {
   role: string
   scopes: string[]
   runtime?: SessionRuntimeOptions
+  assistantName?: string
 }
 
 export type RunnerManifest = {
@@ -259,6 +262,7 @@ export type RunnerManifest = {
     scopes: string[]
     dangerouslySkipPermissions: boolean
     runtime: SessionRuntimeInfo
+    assistantName?: string
   }
   attempt: {
     attemptId: string

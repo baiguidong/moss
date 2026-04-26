@@ -395,8 +395,12 @@ export default function App() {
     return true;
   }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
-  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string) => {
-    const created = await window.agentDesktop.createSession(workspace ? { title, workspace } : title ? { title } : {});
+  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string, assistantName?: string) => {
+    const payload: { title?: string; workspace?: string; assistant_name?: string } = {};
+    if (workspace) payload.workspace = workspace;
+    if (title) payload.title = title;
+    if (assistantName) payload.assistant_name = assistantName;
+    const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
     await openSession(created.summary.id);
     return created.summary.id;
@@ -1267,7 +1271,7 @@ export default function App() {
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
     if (!sessionId) {
-      sessionId = await createAndOpenSession(undefined, workspace);
+      sessionId = await createAndOpenSession(undefined, workspace, selectedAssistant?.name);
       sessionJustCreated = true;
     }
     if (!sessionId) return;
@@ -1420,7 +1424,7 @@ export default function App() {
 
     const ok = navigateToHome({ preserveIntent: true });
     if (!ok) return;
-    await createAndOpenSession(`迭代 ${name}`);
+    await createAndOpenSession(`迭代 ${name}`, undefined, appBuilderAssistant?.name);
 
     setSelectedAppName(name);
     setComposerIntent('chat');

@@ -24,6 +24,12 @@ export type DashboardStats = {
     total: number
     active: number
   }
+  assistants: {
+    name: string | null
+    displayName: string
+    totalSessions: number
+    activeSessions: number
+  }[]
   usage: {
     inputTokens: number
     outputTokens: number
@@ -48,6 +54,7 @@ function createEmptyDashboardStats(): DashboardStats {
       total: 0,
       active: 0,
     },
+    assistants: [],
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -134,11 +141,17 @@ export async function loadDashboardStats(
 
   stats.sessions.total = sessions.length
 
+  // Group sessions by assistantName
+  const assistantStats = new Map<string | null, { total: number; active: number }>()
+
   const sessionStats = await pMap(sessions, loadSingleSessionStats, {
     concurrency: 4,
   })
 
-  for (const sessionStat of sessionStats) {
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i]
+    const sessionStat = sessionStats[i]
+
     totalAgentKeys.add(sessionStat.agentKey)
     if (sessionStat.isActive) {
       stats.sessions.active += 1
@@ -151,10 +164,34 @@ export async function loadDashboardStats(
     stats.usage.cacheCreationInputTokens +=
       sessionStat.usage.cacheCreationInputTokens
     stats.usage.totalTokens += sessionStat.usage.totalTokens
+
+    // Count by assistantName - only count sessions with explicit assistantName
+    const assistantName = session.assistantName
+    if (assistantName) {
+      if (!assistantStats.has(assistantName)) {
+        assistantStats.set(assistantName, { total: 0, active: 0 })
+      }
+      const assistantCount = assistantStats.get(assistantName)!
+      assistantCount.total++
+      if (sessionStat.isActive) {
+        assistantCount.active++
+      }
+    }
   }
 
   stats.agents.total = totalAgentKeys.size
   stats.agents.active = activeAgentKeys.size
+
+  // Convert assistantStats to array - only includes sessions with explicit assistantName
+  stats.assistants = Array.from(assistantStats.entries())
+    .filter(([name]) => name !== null)
+    .map(([name, counts]) => ({
+      name: name as string,
+      displayName: name as string,
+      totalSessions: counts.total,
+      activeSessions: counts.active,
+    }))
+    .sort((a, b) => b.totalSessions - a.totalSessions)
 
   return stats
 }

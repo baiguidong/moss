@@ -52,6 +52,9 @@ export function buildSessionEnv(
     ...(options.scopes
       ? { MOSS_SESSION_SCOPES: options.scopes.join(',') }
       : {}),
+    ...(options.assistantName
+      ? { MOSS_ASSISTANT_NAME: options.assistantName }
+      : {}),
     ...Object.fromEntries(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
     ),

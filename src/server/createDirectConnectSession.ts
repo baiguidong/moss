@@ -95,6 +95,7 @@ export async function createDirectConnectSession({
   cwd,
   dangerouslySkipPermissions,
   runtime,
+  assistantName,
 }: {
   serverUrl: string
   authToken?: string
@@ -105,6 +106,7 @@ export async function createDirectConnectSession({
   cwd: string
   dangerouslySkipPermissions?: boolean
   runtime?: SessionRuntimeOptions
+  assistantName?: string
 }): Promise<{
   config: DirectConnectConfig
   workDir?: string
@@ -129,6 +131,7 @@ export async function createDirectConnectSession({
           dangerously_skip_permissions: true,
         }),
         ...(runtime ? { runtime } : {}),
+        ...(assistantName && { assistant_name: assistantName }),
       }),
     })
   } catch (err) {

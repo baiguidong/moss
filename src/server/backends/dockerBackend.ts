@@ -123,6 +123,7 @@ export class DockerBackend implements SessionBackend {
       'MOSS_SESSION_ROLE',
       'MOSS_SESSION_SCOPES',
       'MOSS_SESSION_RUNTIME_TYPE',
+      'MOSS_ASSISTANT_NAME',
     ]
     for (const key of passthroughEnvKeys) {
       if (env[key]) {

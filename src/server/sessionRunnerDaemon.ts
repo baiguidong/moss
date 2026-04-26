@@ -121,6 +121,7 @@ export class SessionRunnerDaemon {
         role: this.manifest.session.role,
         scopes: this.manifest.session.scopes,
         runtime: this.manifest.session.runtime,
+        assistantName: this.manifest.session.assistantName,
       })
 
       this.#handle = handle

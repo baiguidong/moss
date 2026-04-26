@@ -28,6 +28,7 @@ export type SessionCreateOptions = {
   role?: string
   scopes?: string[]
   runtime?: SessionRuntimeOptions
+  assistantName?: string
 }
 
 export type BackendSpawnOptions = {
@@ -40,6 +41,7 @@ export type BackendSpawnOptions = {
   role?: string
   scopes?: string[]
   runtime?: SessionRuntimeOptions
+  assistantName?: string
 }
 
 export type BackendHandle = {
@@ -122,6 +124,7 @@ export class SessionManager {
       role: options.role,
       scopes: options.scopes,
       runtime: options.runtime,
+      assistantName: options.assistantName,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
     })
@@ -177,6 +180,7 @@ export class SessionManager {
     role?: string
     scopes?: string[]
     runtime?: SessionRuntimeOptions
+    assistantName?: string
     createdAt: number
     lastActiveAt: number
   }): Promise<SessionSummary> {
@@ -196,6 +200,7 @@ export class SessionManager {
       role: options.role,
       scopes: options.scopes,
       runtime: options.runtime,
+      assistantName: options.assistantName,
     })
 
     const record: SessionRecord = {

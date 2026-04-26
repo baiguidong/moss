@@ -81,6 +81,7 @@ function buildSessionEnv(options, overrides = {}) {
     ...options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {},
     ...options.role ? { MOSS_SESSION_ROLE: options.role } : {},
     ...options.scopes ? { MOSS_SESSION_SCOPES: options.scopes.join(",") } : {},
+    ...options.assistantName ? { MOSS_ASSISTANT_NAME: options.assistantName } : {},
     ...Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined))
   };
 }
@@ -694,7 +695,8 @@ class DockerBackend {
       "MOSS_SESSION_ORG_ID",
       "MOSS_SESSION_ROLE",
       "MOSS_SESSION_SCOPES",
-      "MOSS_SESSION_RUNTIME_TYPE"
+      "MOSS_SESSION_RUNTIME_TYPE",
+      "MOSS_ASSISTANT_NAME"
     ];
     for (const key of passthroughEnvKeys) {
       if (env[key]) {
@@ -815,6 +817,7 @@ function mapSession(row) {
     transcriptPath: String(row.transcript_path),
     title: typeof row.title === "string" ? row.title : null,
     summary: typeof row.summary === "string" ? row.summary : null,
+    assistantName: typeof row.assistant_name === "string" ? row.assistant_name : null,
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -875,6 +878,7 @@ class DirectConnectStore {
         transcript_path TEXT NOT NULL,
         title TEXT,
         summary TEXT,
+        assistant_name TEXT,
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         ended_at INTEGER,
@@ -928,6 +932,9 @@ class DirectConnectStore {
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
     `);
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`);
+    } catch {}
   }
   close() {
     this.db.close();
@@ -971,13 +978,14 @@ class DirectConnectStore {
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
         cwd, runtime_type, docker_image, docker_mode, config_dir, container_name,
-        status, desired_state, current_attempt_id, transcript_path,
+        status, desired_state, current_attempt_id, transcript_path, assistant_name,
         created_at, last_active_at, ended_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)
-    `).run(input.sessionId, input.transcriptSessionId, input.orgId, input.userId, input.role, JSON.stringify(input.scopes), input.cwd, input.runtime.type, input.runtime.dockerImage ?? null, input.runtime.dockerMode ?? null, input.runtime.configDir ?? null, input.runtime.containerName ?? null, input.status, input.desiredState, input.transcriptPath, ts, ts);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+    `).run(input.sessionId, input.transcriptSessionId, input.orgId, input.userId, input.role, JSON.stringify(input.scopes), input.cwd, input.runtime.type, input.runtime.dockerImage ?? null, input.runtime.dockerMode ?? null, input.runtime.configDir ?? null, input.runtime.containerName ?? null, input.status, input.desiredState, input.transcriptPath, input.assistantName ?? null, ts, ts);
     this.addEvent(input.sessionId, null, "session_created", {
       runtime: input.runtime,
-      cwd: input.cwd
+      cwd: input.cwd,
+      assistantName: input.assistantName
     });
     return this.getSession(input.sessionId);
   }
@@ -1222,6 +1230,7 @@ function toSessionSummary(session) {
     runtime: session.runtime,
     status: session.status,
     desiredState: session.desiredState,
+    assistantName: session.assistantName,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt
@@ -5753,7 +5762,8 @@ class SessionRunnerDaemon {
         orgId: this.manifest.session.orgId,
         role: this.manifest.session.role,
         scopes: this.manifest.session.scopes,
-        runtime: this.manifest.session.runtime
+        runtime: this.manifest.session.runtime,
+        assistantName: this.manifest.session.assistantName
       });
       this.#handle = handle;
       this.manifest.session.runtime.containerName = handle.runtime.containerName;
