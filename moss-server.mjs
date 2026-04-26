@@ -88182,7 +88182,7 @@ var require_eventsource = __commonJS((exports, module) => {
 
 // node_modules/undici/index.js
 var require_undici = __commonJS((exports, module) => {
-  var __filename = "/Users/bgd/repo/moss/node_modules/undici/index.js";
+  var __filename = "./node_modules/undici/index.js";
   var Client = require_client();
   var Dispatcher = require_dispatcher();
   var Pool = require_pool();
@@ -99690,7 +99690,7 @@ var require_package = __commonJS((exports, module) => {
 
 // node_modules/@aws-sdk/util-user-agent-node/dist-cjs/index.js
 var require_dist_cjs41 = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/moss/node_modules/@aws-sdk/util-user-agent-node/dist-cjs";
+  var __dirname = "./node_modules/@aws-sdk/util-user-agent-node/dist-cjs";
   var node_os = __require("node:os");
   var node_process = __require("node:process");
   var utilConfigProvider = require_dist_cjs35();
@@ -102682,9 +102682,9 @@ var require_dist_cjs46 = __commonJS((exports) => {
       }
       return node;
     }
-    constructor(name, children2 = []) {
+    constructor(name, children = []) {
       this.name = name;
-      this.children = children2;
+      this.children = children;
     }
     withName(name) {
       this.name = name;
@@ -171750,7 +171750,7 @@ var init_metadata = __esm(() => {
       isClaudeAiAuth: isClaudeAISubscriber(),
       version: "2.1.88",
       versionBase: getVersionBase(),
-      buildTime: "2026-04-26T03:50:45.266Z",
+      buildTime: "2026-04-26T06:05:45.297Z",
       deploymentEnvironment: env3.detectDeploymentEnvironment(),
       ...isEnvTruthy(process.env.GITHUB_ACTIONS) && {
         githubEventName: process.env.GITHUB_EVENT_NAME,
@@ -180923,12 +180923,12 @@ var require_react_development = __commonJS((exports, module) => {
       }
       throw thenable;
     }
-    function mapIntoArray(children2, array2, escapedPrefix, nameSoFar, callback) {
-      var type = typeof children2;
+    function mapIntoArray(children, array2, escapedPrefix, nameSoFar, callback) {
+      var type = typeof children;
       if (type === "undefined" || type === "boolean")
-        children2 = null;
+        children = null;
       var invokeCallback = false;
-      if (children2 === null)
+      if (children === null)
         invokeCallback = true;
       else
         switch (type) {
@@ -180938,17 +180938,17 @@ var require_react_development = __commonJS((exports, module) => {
             invokeCallback = true;
             break;
           case "object":
-            switch (children2.$$typeof) {
+            switch (children.$$typeof) {
               case REACT_ELEMENT_TYPE:
               case REACT_PORTAL_TYPE:
                 invokeCallback = true;
                 break;
               case REACT_LAZY_TYPE:
-                return invokeCallback = children2._init, mapIntoArray(invokeCallback(children2._payload), array2, escapedPrefix, nameSoFar, callback);
+                return invokeCallback = children._init, mapIntoArray(invokeCallback(children._payload), array2, escapedPrefix, nameSoFar, callback);
             }
         }
       if (invokeCallback) {
-        invokeCallback = children2;
+        invokeCallback = children;
         callback = callback(invokeCallback);
         var childKey = nameSoFar === "" ? "." + getElementKey(invokeCallback, 0) : nameSoFar;
         isArrayImpl(callback) ? (escapedPrefix = "", childKey != null && (escapedPrefix = childKey.replace(userProvidedKeyEscapeRegex, "$&/") + "/"), mapIntoArray(callback, array2, escapedPrefix, "", function(c4) {
@@ -180958,25 +180958,25 @@ var require_react_development = __commonJS((exports, module) => {
       }
       invokeCallback = 0;
       childKey = nameSoFar === "" ? "." : nameSoFar + ":";
-      if (isArrayImpl(children2))
-        for (var i4 = 0;i4 < children2.length; i4++)
-          nameSoFar = children2[i4], type = childKey + getElementKey(nameSoFar, i4), invokeCallback += mapIntoArray(nameSoFar, array2, escapedPrefix, type, callback);
-      else if (i4 = getIteratorFn(children2), typeof i4 === "function")
-        for (i4 === children2.entries && (didWarnAboutMaps || console.warn("Using Maps as children is not supported. Use an array of keyed ReactElements instead."), didWarnAboutMaps = true), children2 = i4.call(children2), i4 = 0;!(nameSoFar = children2.next()).done; )
+      if (isArrayImpl(children))
+        for (var i4 = 0;i4 < children.length; i4++)
+          nameSoFar = children[i4], type = childKey + getElementKey(nameSoFar, i4), invokeCallback += mapIntoArray(nameSoFar, array2, escapedPrefix, type, callback);
+      else if (i4 = getIteratorFn(children), typeof i4 === "function")
+        for (i4 === children.entries && (didWarnAboutMaps || console.warn("Using Maps as children is not supported. Use an array of keyed ReactElements instead."), didWarnAboutMaps = true), children = i4.call(children), i4 = 0;!(nameSoFar = children.next()).done; )
           nameSoFar = nameSoFar.value, type = childKey + getElementKey(nameSoFar, i4++), invokeCallback += mapIntoArray(nameSoFar, array2, escapedPrefix, type, callback);
       else if (type === "object") {
-        if (typeof children2.then === "function")
-          return mapIntoArray(resolveThenable(children2), array2, escapedPrefix, nameSoFar, callback);
-        array2 = String(children2);
-        throw Error("Objects are not valid as a React child (found: " + (array2 === "[object Object]" ? "object with keys {" + Object.keys(children2).join(", ") + "}" : array2) + "). If you meant to render a collection of children, use an array instead.");
+        if (typeof children.then === "function")
+          return mapIntoArray(resolveThenable(children), array2, escapedPrefix, nameSoFar, callback);
+        array2 = String(children);
+        throw Error("Objects are not valid as a React child (found: " + (array2 === "[object Object]" ? "object with keys {" + Object.keys(children).join(", ") + "}" : array2) + "). If you meant to render a collection of children, use an array instead.");
       }
       return invokeCallback;
     }
-    function mapChildren(children2, func, context3) {
-      if (children2 == null)
-        return children2;
+    function mapChildren(children, func, context3) {
+      if (children == null)
+        return children;
       var result = [], count3 = 0;
-      mapIntoArray(children2, result, "", "", function(child) {
+      mapIntoArray(children, result, "", "", function(child) {
         return func.call(context3, child, count3++);
       });
       return result;
@@ -181199,27 +181199,27 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
     });
     var fnName = {
       map: mapChildren,
-      forEach: function(children2, forEachFunc, forEachContext) {
-        mapChildren(children2, function() {
+      forEach: function(children, forEachFunc, forEachContext) {
+        mapChildren(children, function() {
           forEachFunc.apply(this, arguments);
         }, forEachContext);
       },
-      count: function(children2) {
+      count: function(children) {
         var n2 = 0;
-        mapChildren(children2, function() {
+        mapChildren(children, function() {
           n2++;
         });
         return n2;
       },
-      toArray: function(children2) {
-        return mapChildren(children2, function(child) {
+      toArray: function(children) {
+        return mapChildren(children, function(child) {
           return child;
         }) || [];
       },
-      only: function(children2) {
-        if (!isValidElement(children2))
+      only: function(children) {
+        if (!isValidElement(children))
           throw Error("React.Children.only expected to receive a single React element child.");
-        return children2;
+        return children;
       }
     };
     exports.Activity = REACT_ACTIVITY_TYPE;
@@ -181303,7 +181303,7 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
       var getCurrentStack = ReactSharedInternals.getCurrentStack;
       return getCurrentStack === null ? null : getCurrentStack();
     };
-    exports.cloneElement = function(element, config2, children2) {
+    exports.cloneElement = function(element, config2, children) {
       if (element === null || element === undefined)
         throw Error("The argument must be a React element, but you passed " + element + ".");
       var props = assign({}, element.props), key = element.key, owner = element._owner;
@@ -181323,7 +181323,7 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
       }
       var propName = arguments.length - 2;
       if (propName === 1)
-        props.children = children2;
+        props.children = children;
       else if (1 < propName) {
         JSCompiler_inline_result = Array(propName);
         for (var i4 = 0;i4 < propName; i4++)
@@ -181353,7 +181353,7 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
       defaultValue._currentRenderer2 = null;
       return defaultValue;
     };
-    exports.createElement = function(type, config2, children2) {
+    exports.createElement = function(type, config2, children) {
       for (var i4 = 2;i4 < arguments.length; i4++)
         validateChildKeys(arguments[i4]);
       i4 = {};
@@ -181363,7 +181363,7 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
           hasOwnProperty14.call(config2, propName) && propName !== "key" && propName !== "__self" && propName !== "__source" && (i4[propName] = config2[propName]);
       var childrenLength = arguments.length - 2;
       if (childrenLength === 1)
-        i4.children = children2;
+        i4.children = children;
       else if (1 < childrenLength) {
         for (var childArray = Array(childrenLength), _i = 0;_i < childrenLength; _i++)
           childArray[_i] = arguments[_i + 2];
@@ -181661,7 +181661,7 @@ function defaultSaveTheme(setting) {
   }));
 }
 function ThemeProvider({
-  children: children2,
+  children,
   initialState,
   onThemeSave = defaultSaveTheme
 }) {
@@ -181708,7 +181708,7 @@ function ThemeProvider({
   }), [themeSetting, previewTheme, currentTheme, onThemeSave]);
   return /* @__PURE__ */ import_react3.default.createElement(ThemeContext.Provider, {
     value
-  }, children2);
+  }, children);
 }
 function useTheme() {
   const $3 = import_compiler_runtime.c(3);
@@ -183390,12 +183390,12 @@ function hasMeasureFuncInSubtree(node) {
   }
   return false;
 }
-function resolveFlexibleLengths(children2, availableInnerMain, totalFlexBasis, isMainRow, ownerW, ownerH) {
-  const n2 = children2.length;
+function resolveFlexibleLengths(children, availableInnerMain, totalFlexBasis, isMainRow, ownerW, ownerH) {
+  const n2 = children.length;
   const frozen = new Array(n2).fill(false);
   const initialFree = isDefined(availableInnerMain) ? availableInnerMain - totalFlexBasis : 0;
   for (let i4 = 0;i4 < n2; i4++) {
-    const c4 = children2[i4];
+    const c4 = children[i4];
     const clamped = boundAxis(c4.style, isMainRow, c4._flexBasis, ownerW, ownerH);
     const inflexible = !isDefined(availableInnerMain) || (initialFree >= 0 ? c4.style.flexGrow === 0 : c4.style.flexShrink === 0);
     if (inflexible) {
@@ -183412,7 +183412,7 @@ function resolveFlexibleLengths(children2, availableInnerMain, totalFlexBasis, i
     let totalShrinkScaled = 0;
     let unfrozenCount = 0;
     for (let i4 = 0;i4 < n2; i4++) {
-      const c4 = children2[i4];
+      const c4 = children[i4];
       if (frozen[i4]) {
         frozenDelta += c4._mainSize - c4._flexBasis;
       } else {
@@ -183432,7 +183432,7 @@ function resolveFlexibleLengths(children2, availableInnerMain, totalFlexBasis, i
       let totalShrink = 0;
       for (let i4 = 0;i4 < n2; i4++) {
         if (!frozen[i4])
-          totalShrink += children2[i4].style.flexShrink;
+          totalShrink += children[i4].style.flexShrink;
       }
       if (totalShrink < 1) {
         const scaled = initialFree * totalShrink;
@@ -183444,7 +183444,7 @@ function resolveFlexibleLengths(children2, availableInnerMain, totalFlexBasis, i
     for (let i4 = 0;i4 < n2; i4++) {
       if (frozen[i4])
         continue;
-      const c4 = children2[i4];
+      const c4 = children[i4];
       let t2 = c4._flexBasis;
       if (remaining > 0 && totalGrow > 0) {
         t2 += remaining * c4.style.flexGrow / totalGrow;
@@ -183462,7 +183462,7 @@ function resolveFlexibleLengths(children2, availableInnerMain, totalFlexBasis, i
     for (let i4 = 0;i4 < n2; i4++) {
       if (frozen[i4])
         continue;
-      const v = children2[i4]._mainSize - unclamped[i4];
+      const v = children[i4]._mainSize - unclamped[i4];
       if (totalViolation > 0 && v > 0 || totalViolation < 0 && v < 0) {
         frozen[i4] = true;
         anyFrozen = true;
@@ -188315,19 +188315,19 @@ Incoming: %s`, currentHookNameInDev, "[" + prevDeps.join(", ") + "]", "[" + next
       workInProgress2.lanes = 0;
       ReactSharedInternals.H = current2 !== null && current2.memoizedState !== null ? HooksDispatcherOnUpdateInDEV : hookTypesDev !== null ? HooksDispatcherOnMountWithHookTypesInDEV : HooksDispatcherOnMountInDEV;
       shouldDoubleInvokeUserFnsInHooksDEV = nextRenderLanes = (workInProgress2.mode & 8) !== NoMode;
-      var children2 = callComponentInDEV(Component, props, secondArg);
+      var children = callComponentInDEV(Component, props, secondArg);
       shouldDoubleInvokeUserFnsInHooksDEV = false;
-      didScheduleRenderPhaseUpdateDuringThisPass && (children2 = renderWithHooksAgain(workInProgress2, Component, props, secondArg));
+      didScheduleRenderPhaseUpdateDuringThisPass && (children = renderWithHooksAgain(workInProgress2, Component, props, secondArg));
       if (nextRenderLanes) {
         setIsStrictModeForDevtools(true);
         try {
-          children2 = renderWithHooksAgain(workInProgress2, Component, props, secondArg);
+          children = renderWithHooksAgain(workInProgress2, Component, props, secondArg);
         } finally {
           setIsStrictModeForDevtools(false);
         }
       }
       finishRenderingHooks(current2, workInProgress2);
-      return children2;
+      return children;
     }
     function finishRenderingHooks(current2, workInProgress2) {
       workInProgress2._debugHookTypes = hookTypesDev;
@@ -188364,17 +188364,17 @@ Incoming: %s`, currentHookNameInDev, "[" + prevDeps.join(", ") + "]", "[" + next
         ignorePreviousDependencies = false;
         workInProgressHook = currentHook = null;
         if (workInProgress2.updateQueue != null) {
-          var children2 = workInProgress2.updateQueue;
-          children2.lastEffect = null;
-          children2.events = null;
-          children2.stores = null;
-          children2.memoCache != null && (children2.memoCache.index = 0);
+          var children = workInProgress2.updateQueue;
+          children.lastEffect = null;
+          children.events = null;
+          children.stores = null;
+          children.memoCache != null && (children.memoCache.index = 0);
         }
         hookTypesUpdateIndexDev = -1;
         ReactSharedInternals.H = HooksDispatcherOnRerenderInDEV;
-        children2 = callComponentInDEV(Component, props, secondArg);
+        children = callComponentInDEV(Component, props, secondArg);
       } while (didScheduleRenderPhaseUpdateDuringThisPass);
-      return children2;
+      return children;
     }
     function TransitionAwareHostComponent() {
       var dispatcher = ReactSharedInternals.H, maybeThenable = dispatcher.useState()[0];
@@ -195312,7 +195312,7 @@ Check the top-level render call using <` + componentName2 + ">.");
       ensureRootIsScheduled(initialChildren);
       return initialChildren;
     };
-    exports2.createPortal = function(children2, containerInfo, implementation) {
+    exports2.createPortal = function(children, containerInfo, implementation) {
       var key = 3 < arguments.length && arguments[3] !== undefined ? arguments[3] : null;
       try {
         testStringCoercion(key);
@@ -195324,7 +195324,7 @@ Check the top-level render call using <` + componentName2 + ">.");
       return {
         $$typeof: REACT_PORTAL_TYPE,
         key: key == null ? null : "" + key,
-        children: children2,
+        children,
         containerInfo,
         implementation
       };
@@ -200102,7 +200102,7 @@ var FRAME_INTERVAL_MS = 16;
 function TerminalFocusProvider(t0) {
   const $3 = import_compiler_runtime2.c(6);
   const {
-    children: children2
+    children
   } = t0;
   const isTerminalFocused = import_react5.useSyncExternalStore(subscribeTerminalFocus, getTerminalFocused);
   const terminalFocusState = import_react5.useSyncExternalStore(subscribeTerminalFocus, getTerminalFocusState);
@@ -200120,11 +200120,11 @@ function TerminalFocusProvider(t0) {
   }
   const value = t1;
   let t2;
-  if ($3[3] !== children2 || $3[4] !== value) {
+  if ($3[3] !== children || $3[4] !== value) {
     t2 = /* @__PURE__ */ import_react5.default.createElement(TerminalFocusContext.Provider, {
       value
-    }, children2);
-    $3[3] = children2;
+    }, children);
+    $3[3] = children;
     $3[4] = value;
     $3[5] = t2;
   } else {
@@ -200214,7 +200214,7 @@ function createClock(tickIntervalMs) {
 function ClockProvider(t0) {
   const $3 = import_compiler_runtime3.c(7);
   const {
-    children: children2
+    children
   } = t0;
   const [clock] = import_react7.useState(_temp);
   const focused = useTerminalFocus();
@@ -200235,11 +200235,11 @@ function ClockProvider(t0) {
   }
   import_react7.useEffect(t1, t2);
   let t3;
-  if ($3[4] !== children2 || $3[5] !== clock) {
+  if ($3[4] !== children || $3[5] !== clock) {
     t3 = /* @__PURE__ */ import_react7.default.createElement(ClockContext.Provider, {
       value: clock
-    }, children2);
-    $3[4] = children2;
+    }, children);
+    $3[4] = children;
     $3[5] = clock;
     $3[6] = t3;
   } else {
@@ -200555,7 +200555,7 @@ var require_stack_utils = __commonJS((exports, module) => {
 function Box(t0) {
   const $3 = import_compiler_runtime4.c(42);
   let autoFocus;
-  let children2;
+  let children;
   let flexDirection;
   let flexGrow;
   let flexShrink;
@@ -200593,7 +200593,7 @@ function Box(t0) {
       onKeyDownCapture: t17,
       ...t18
     } = t0;
-    children2 = t12;
+    children = t12;
     ref = t6;
     tabIndex = t7;
     autoFocus = t8;
@@ -200630,7 +200630,7 @@ function Box(t0) {
     ifNotInteger(style.rowGap, "rowGap");
     $3[0] = t0;
     $3[1] = autoFocus;
-    $3[2] = children2;
+    $3[2] = children;
     $3[3] = flexDirection;
     $3[4] = flexGrow;
     $3[5] = flexShrink;
@@ -200649,7 +200649,7 @@ function Box(t0) {
     $3[18] = tabIndex;
   } else {
     autoFocus = $3[1];
-    children2 = $3[2];
+    children = $3[2];
     flexDirection = $3[3];
     flexGrow = $3[4];
     flexShrink = $3[5];
@@ -200692,7 +200692,7 @@ function Box(t0) {
     t3 = $3[26];
   }
   let t4;
-  if ($3[27] !== autoFocus || $3[28] !== children2 || $3[29] !== onBlur || $3[30] !== onBlurCapture || $3[31] !== onClick || $3[32] !== onFocus || $3[33] !== onFocusCapture || $3[34] !== onKeyDown || $3[35] !== onKeyDownCapture || $3[36] !== onMouseEnter || $3[37] !== onMouseLeave || $3[38] !== ref || $3[39] !== t3 || $3[40] !== tabIndex) {
+  if ($3[27] !== autoFocus || $3[28] !== children || $3[29] !== onBlur || $3[30] !== onBlurCapture || $3[31] !== onClick || $3[32] !== onFocus || $3[33] !== onFocusCapture || $3[34] !== onKeyDown || $3[35] !== onKeyDownCapture || $3[36] !== onMouseEnter || $3[37] !== onMouseLeave || $3[38] !== ref || $3[39] !== t3 || $3[40] !== tabIndex) {
     t4 = /* @__PURE__ */ import_react9.default.createElement("ink-box", {
       ref,
       tabIndex,
@@ -200707,9 +200707,9 @@ function Box(t0) {
       onKeyDown,
       onKeyDownCapture,
       style: t3
-    }, children2);
+    }, children);
     $3[27] = autoFocus;
-    $3[28] = children2;
+    $3[28] = children;
     $3[29] = onBlur;
     $3[30] = onBlurCapture;
     $3[31] = onClick;
@@ -200749,14 +200749,14 @@ function Text(t0) {
     strikethrough: t3,
     inverse: t4,
     wrap: t5,
-    children: children2
+    children
   } = t0;
   const italic2 = t1 === undefined ? false : t1;
   const underline2 = t2 === undefined ? false : t2;
   const strikethrough2 = t3 === undefined ? false : t3;
   const inverse2 = t4 === undefined ? false : t4;
   const wrap = t5 === undefined ? "wrap" : t5;
-  if (children2 === undefined || children2 === null) {
+  if (children === undefined || children === null) {
     return null;
   }
   let t6;
@@ -200866,12 +200866,12 @@ function Text(t0) {
   const textStyles = t14;
   const t15 = memoizedStylesForWrap[wrap];
   let t16;
-  if ($3[25] !== children2 || $3[26] !== t15 || $3[27] !== textStyles) {
+  if ($3[25] !== children || $3[26] !== t15 || $3[27] !== textStyles) {
     t16 = /* @__PURE__ */ import_react10.default.createElement("ink-text", {
       style: t15,
       textStyles
-    }, children2);
-    $3[25] = children2;
+    }, children);
+    $3[25] = children;
     $3[26] = t15;
     $3[27] = textStyles;
     $3[28] = t16;
@@ -205995,7 +205995,7 @@ function ThemedBox(t0) {
   let borderLeftColor;
   let borderRightColor;
   let borderTopColor;
-  let children2;
+  let children;
   let ref;
   let rest;
   if ($3[0] !== t0) {
@@ -206006,7 +206006,7 @@ function ThemedBox(t0) {
       borderLeftColor,
       borderRightColor,
       backgroundColor,
-      children: children2,
+      children,
       ref,
       ...rest
     } = t0);
@@ -206017,7 +206017,7 @@ function ThemedBox(t0) {
     $3[4] = borderLeftColor;
     $3[5] = borderRightColor;
     $3[6] = borderTopColor;
-    $3[7] = children2;
+    $3[7] = children;
     $3[8] = ref;
     $3[9] = rest;
   } else {
@@ -206027,7 +206027,7 @@ function ThemedBox(t0) {
     borderLeftColor = $3[4];
     borderRightColor = $3[5];
     borderTopColor = $3[6];
-    children2 = $3[7];
+    children = $3[7];
     ref = $3[8];
     rest = $3[9];
   }
@@ -206069,7 +206069,7 @@ function ThemedBox(t0) {
   }
   const resolvedBackgroundColor = t1;
   let t2;
-  if ($3[23] !== children2 || $3[24] !== ref || $3[25] !== resolvedBackgroundColor || $3[26] !== resolvedBorderBottomColor || $3[27] !== resolvedBorderColor || $3[28] !== resolvedBorderLeftColor || $3[29] !== resolvedBorderRightColor || $3[30] !== resolvedBorderTopColor || $3[31] !== rest) {
+  if ($3[23] !== children || $3[24] !== ref || $3[25] !== resolvedBackgroundColor || $3[26] !== resolvedBorderBottomColor || $3[27] !== resolvedBorderColor || $3[28] !== resolvedBorderLeftColor || $3[29] !== resolvedBorderRightColor || $3[30] !== resolvedBorderTopColor || $3[31] !== rest) {
     t2 = /* @__PURE__ */ import_react16.default.createElement(Box_default, {
       ref,
       borderColor: resolvedBorderColor,
@@ -206079,8 +206079,8 @@ function ThemedBox(t0) {
       borderRightColor: resolvedBorderRightColor,
       backgroundColor: resolvedBackgroundColor,
       ...rest
-    }, children2);
-    $3[23] = children2;
+    }, children);
+    $3[23] = children;
     $3[24] = ref;
     $3[25] = resolvedBackgroundColor;
     $3[26] = resolvedBorderBottomColor;
@@ -206126,7 +206126,7 @@ function ThemedText(t0) {
     strikethrough: t5,
     inverse: t6,
     wrap: t7,
-    children: children2
+    children
   } = t0;
   const dimColor = t1 === undefined ? false : t1;
   const bold2 = t2 === undefined ? false : t2;
@@ -206141,7 +206141,7 @@ function ThemedText(t0) {
   const resolvedColor = !color2 && hoverColor ? resolveColor2(hoverColor, theme) : dimColor ? theme.inactive : resolveColor2(color2, theme);
   const resolvedBackgroundColor = backgroundColor ? theme[backgroundColor] : undefined;
   let t8;
-  if ($3[0] !== bold2 || $3[1] !== children2 || $3[2] !== inverse2 || $3[3] !== italic2 || $3[4] !== resolvedBackgroundColor || $3[5] !== resolvedColor || $3[6] !== strikethrough2 || $3[7] !== underline2 || $3[8] !== wrap) {
+  if ($3[0] !== bold2 || $3[1] !== children || $3[2] !== inverse2 || $3[3] !== italic2 || $3[4] !== resolvedBackgroundColor || $3[5] !== resolvedColor || $3[6] !== strikethrough2 || $3[7] !== underline2 || $3[8] !== wrap) {
     t8 = /* @__PURE__ */ import_react17.default.createElement(Text, {
       color: resolvedColor,
       backgroundColor: resolvedBackgroundColor,
@@ -206151,9 +206151,9 @@ function ThemedText(t0) {
       strikethrough: strikethrough2,
       inverse: inverse2,
       wrap
-    }, children2);
+    }, children);
     $3[0] = bold2;
-    $3[1] = children2;
+    $3[1] = children;
     $3[2] = inverse2;
     $3[3] = italic2;
     $3[4] = resolvedBackgroundColor;
@@ -206343,11 +206343,11 @@ var init_supports_hyperlinks2 = __esm(() => {
 function Link(t0) {
   const $3 = import_compiler_runtime8.c(5);
   const {
-    children: children2,
+    children,
     url: url3,
     fallback
   } = t0;
-  const content = children2 ?? url3;
+  const content = children ?? url3;
   if (supportsHyperlinks2()) {
     let t12;
     if ($3[0] !== content || $3[1] !== url3) {
@@ -207087,35 +207087,35 @@ function hasAnyTextProps(props) {
 function StyledText(t0) {
   const $3 = import_compiler_runtime9.c(14);
   let bold2;
-  let children2;
+  let children;
   let dim2;
   let rest;
   if ($3[0] !== t0) {
     ({
       bold: bold2,
       dim: dim2,
-      children: children2,
+      children,
       ...rest
     } = t0);
     $3[0] = t0;
     $3[1] = bold2;
-    $3[2] = children2;
+    $3[2] = children;
     $3[3] = dim2;
     $3[4] = rest;
   } else {
     bold2 = $3[1];
-    children2 = $3[2];
+    children = $3[2];
     dim2 = $3[3];
     rest = $3[4];
   }
   if (dim2) {
     let t12;
-    if ($3[5] !== children2 || $3[6] !== rest) {
+    if ($3[5] !== children || $3[6] !== rest) {
       t12 = /* @__PURE__ */ import_react19.default.createElement(Text, {
         ...rest,
         dim: true
-      }, children2);
-      $3[5] = children2;
+      }, children);
+      $3[5] = children;
       $3[6] = rest;
       $3[7] = t12;
     } else {
@@ -207125,12 +207125,12 @@ function StyledText(t0) {
   }
   if (bold2) {
     let t12;
-    if ($3[8] !== children2 || $3[9] !== rest) {
+    if ($3[8] !== children || $3[9] !== rest) {
       t12 = /* @__PURE__ */ import_react19.default.createElement(Text, {
         ...rest,
         bold: true
-      }, children2);
-      $3[8] = children2;
+      }, children);
+      $3[8] = children;
       $3[9] = rest;
       $3[10] = t12;
     } else {
@@ -207139,11 +207139,11 @@ function StyledText(t0) {
     return t12;
   }
   let t1;
-  if ($3[11] !== children2 || $3[12] !== rest) {
+  if ($3[11] !== children || $3[12] !== rest) {
     t1 = /* @__PURE__ */ import_react19.default.createElement(Text, {
       ...rest
-    }, children2);
-    $3[11] = children2;
+    }, children);
+    $3[11] = children;
     $3[12] = rest;
     $3[13] = t1;
   } else {
@@ -207161,16 +207161,16 @@ var init_Ansi = __esm(() => {
   Ansi = import_react19.default.memo(function Ansi2(t0) {
     const $3 = import_compiler_runtime9.c(12);
     const {
-      children: children2,
+      children,
       dimColor
     } = t0;
-    if (typeof children2 !== "string") {
+    if (typeof children !== "string") {
       let t12;
-      if ($3[0] !== children2 || $3[1] !== dimColor) {
+      if ($3[0] !== children || $3[1] !== dimColor) {
         t12 = dimColor ? /* @__PURE__ */ import_react19.default.createElement(Text, {
           dim: true
-        }, String(children2)) : /* @__PURE__ */ import_react19.default.createElement(Text, null, String(children2));
-        $3[0] = children2;
+        }, String(children)) : /* @__PURE__ */ import_react19.default.createElement(Text, null, String(children));
+        $3[0] = children;
         $3[1] = dimColor;
         $3[2] = t12;
       } else {
@@ -207178,15 +207178,15 @@ var init_Ansi = __esm(() => {
       }
       return t12;
     }
-    if (children2 === "") {
+    if (children === "") {
       return null;
     }
     let t1;
     let t2;
-    if ($3[3] !== children2 || $3[4] !== dimColor) {
+    if ($3[3] !== children || $3[4] !== dimColor) {
       t2 = Symbol.for("react.early_return_sentinel");
       bb0: {
-        const spans = parseToSpans(children2);
+        const spans = parseToSpans(children);
         if (spans.length === 0) {
           t2 = null;
           break bb0;
@@ -207242,7 +207242,7 @@ var init_Ansi = __esm(() => {
         }
         t1 = spans.map(t32);
       }
-      $3[3] = children2;
+      $3[3] = children;
       $3[4] = dimColor;
       $3[5] = t1;
       $3[6] = t2;
@@ -207331,32 +207331,32 @@ var init_Newline = __esm(() => {
 function NoSelect(t0) {
   const $3 = import_compiler_runtime12.c(8);
   let boxProps;
-  let children2;
+  let children;
   let fromLeftEdge;
   if ($3[0] !== t0) {
     ({
-      children: children2,
+      children,
       fromLeftEdge,
       ...boxProps
     } = t0);
     $3[0] = t0;
     $3[1] = boxProps;
-    $3[2] = children2;
+    $3[2] = children;
     $3[3] = fromLeftEdge;
   } else {
     boxProps = $3[1];
-    children2 = $3[2];
+    children = $3[2];
     fromLeftEdge = $3[3];
   }
   const t1 = fromLeftEdge ? "from-left-edge" : true;
   let t2;
-  if ($3[4] !== boxProps || $3[5] !== children2 || $3[6] !== t1) {
+  if ($3[4] !== boxProps || $3[5] !== children || $3[6] !== t1) {
     t2 = /* @__PURE__ */ import_react22.default.createElement(Box_default, {
       ...boxProps,
       noSelect: t1
-    }, children2);
+    }, children);
     $3[4] = boxProps;
-    $3[5] = children2;
+    $3[5] = children;
     $3[6] = t1;
     $3[7] = t2;
   } else {
@@ -207865,7 +207865,7 @@ var init_useTerminalSize = __esm(() => {
 function Ratchet(t0) {
   const $3 = import_compiler_runtime15.c(10);
   const {
-    children: children2,
+    children,
     lock: t1
   } = t0;
   const lock2 = t1 === undefined ? "always" : t1;
@@ -207913,12 +207913,12 @@ function Ratchet(t0) {
   import_react36.useLayoutEffect(t4);
   const t5 = engaged ? minHeight : undefined;
   let t6;
-  if ($3[4] !== children2) {
+  if ($3[4] !== children) {
     t6 = /* @__PURE__ */ import_react36.default.createElement(ThemedBox_default, {
       ref: innerRef,
       flexDirection: "column"
-    }, children2);
-    $3[4] = children2;
+    }, children);
+    $3[4] = children;
     $3[5] = t6;
   } else {
     t6 = $3[5];
@@ -207951,12 +207951,12 @@ var init_Ratchet = __esm(() => {
 function MessageResponse(t0) {
   const $3 = import_compiler_runtime16.c(8);
   const {
-    children: children2,
+    children,
     height
   } = t0;
   const isMessageResponse = import_react37.useContext(MessageResponseContext);
   if (isMessageResponse) {
-    return children2;
+    return children;
   }
   let t1;
   if ($3[0] === Symbol.for("react.memo_cache_sentinel")) {
@@ -207971,12 +207971,12 @@ function MessageResponse(t0) {
     t1 = $3[0];
   }
   let t2;
-  if ($3[1] !== children2) {
+  if ($3[1] !== children) {
     t2 = /* @__PURE__ */ React19.createElement(ThemedBox_default, {
       flexShrink: 1,
       flexGrow: 1
-    }, children2);
-    $3[1] = children2;
+    }, children);
+    $3[1] = children;
     $3[2] = t2;
   } else {
     t2 = $3[2];
@@ -208013,14 +208013,14 @@ function MessageResponse(t0) {
 function MessageResponseProvider(t0) {
   const $3 = import_compiler_runtime16.c(2);
   const {
-    children: children2
+    children
   } = t0;
   let t1;
-  if ($3[0] !== children2) {
+  if ($3[0] !== children) {
     t1 = /* @__PURE__ */ React19.createElement(MessageResponseContext.Provider, {
       value: true
-    }, children2);
-    $3[0] = children2;
+    }, children);
+    $3[0] = children;
     $3[1] = t1;
   } else {
     t1 = $3[1];
@@ -208192,7 +208192,7 @@ var init_mailbox = () => {};
 function MailboxProvider(t0) {
   const $3 = import_compiler_runtime18.c(3);
   const {
-    children: children2
+    children
   } = t0;
   let t1;
   if ($3[0] === Symbol.for("react.memo_cache_sentinel")) {
@@ -208203,11 +208203,11 @@ function MailboxProvider(t0) {
   }
   const mailbox = t1;
   let t2;
-  if ($3[1] !== children2) {
+  if ($3[1] !== children) {
     t2 = /* @__PURE__ */ import_react39.default.createElement(MailboxContext.Provider, {
       value: mailbox
-    }, children2);
-    $3[1] = children2;
+    }, children);
+    $3[1] = children;
     $3[2] = t2;
   } else {
     t2 = $3[2];
@@ -233699,9 +233699,9 @@ function extractRedirectionNodes(rootNode) {
   const redirections = [];
   visitNodes(rootNode, (node) => {
     if (node.type === "file_redirect") {
-      const children2 = node.children;
-      const op = children2.find((c4) => c4.type === ">" || c4.type === ">>");
-      const target = children2.find((c4) => c4.type === "word");
+      const children = node.children;
+      const op = children.find((c4) => c4.type === ">" || c4.type === ">>");
+      const target = children.find((c4) => c4.type === "word");
       if (op && target) {
         redirections.push({
           startIndex: node.startIndex,
@@ -260388,7 +260388,7 @@ var require_java = __commonJS((exports, module) => {
       return recurRegex(re2, substitution, depth - 1);
     });
   }
-  function java2(hljs) {
+  function java(hljs) {
     const regex2 = hljs.regex;
     const JAVA_IDENT_RE = "[À-ʸa-zA-Z_$][À-ʸa-zA-Z_$0-9]*";
     const GENERIC_IDENT_RE = JAVA_IDENT_RE + recurRegex("(?:<" + JAVA_IDENT_RE + "~~~(?:\\s*,\\s*" + JAVA_IDENT_RE + "~~~)*>)?", /~~~/g, 2);
@@ -260598,7 +260598,7 @@ var require_java = __commonJS((exports, module) => {
       ]
     };
   }
-  module.exports = java2;
+  module.exports = java;
 });
 
 // node_modules/highlight.js/lib/languages/javascript.js
@@ -303751,7 +303751,7 @@ function KeybindingProvider(t0) {
     registerActiveContext,
     unregisterActiveContext,
     handlerRegistryRef,
-    children: children2
+    children
   } = t0;
   let t1;
   if ($4[0] !== bindings) {
@@ -303854,11 +303854,11 @@ function KeybindingProvider(t0) {
   }
   const value = t5;
   let t6;
-  if ($4[21] !== children2 || $4[22] !== value) {
+  if ($4[21] !== children || $4[22] !== value) {
     t6 = /* @__PURE__ */ import_react41.default.createElement(KeybindingContext.Provider, {
       value
-    }, children2);
-    $4[21] = children2;
+    }, children);
+    $4[21] = children;
     $4[22] = value;
     $4[23] = t6;
   } else {
@@ -304317,14 +304317,14 @@ var init_messageActions = __esm(() => {
 function SubAgentProvider(t0) {
   const $4 = import_compiler_runtime22.c(2);
   const {
-    children: children2
+    children
   } = t0;
   let t1;
-  if ($4[0] !== children2) {
+  if ($4[0] !== children) {
     t1 = /* @__PURE__ */ import_react46.default.createElement(SubAgentContext.Provider, {
       value: true
-    }, children2);
-    $4[0] = children2;
+    }, children);
+    $4[0] = children;
     $4[1] = t1;
   } else {
     t1 = $4[1];
@@ -304478,14 +304478,14 @@ var init_hyperlink = __esm(() => {
 function ExpandShellOutputProvider(t0) {
   const $4 = import_compiler_runtime23.c(2);
   const {
-    children: children2
+    children
   } = t0;
   let t1;
-  if ($4[0] !== children2) {
+  if ($4[0] !== children) {
     t1 = /* @__PURE__ */ React26.createElement(ExpandShellOutputContext.Provider, {
       value: true
-    }, children2);
-    $4[0] = children2;
+    }, children);
+    $4[0] = children;
     $4[1] = t1;
   } else {
     t1 = $4[1];
@@ -313308,7 +313308,7 @@ function FilePathLink(t0) {
   const $4 = import_compiler_runtime28.c(5);
   const {
     filePath,
-    children: children2
+    children
   } = t0;
   let t1;
   if ($4[0] !== filePath) {
@@ -313318,7 +313318,7 @@ function FilePathLink(t0) {
   } else {
     t1 = $4[1];
   }
-  const t2 = children2 ?? filePath;
+  const t2 = children ?? filePath;
   let t3;
   if ($4[2] !== t1.href || $4[3] !== t2) {
     t3 = /* @__PURE__ */ import_react49.default.createElement(Link, {
@@ -346507,21 +346507,21 @@ var init_ConfigurableShortcutHint = __esm(() => {
 function Byline(t0) {
   const $4 = import_compiler_runtime40.c(5);
   const {
-    children: children2
+    children
   } = t0;
   let t1;
   let t2;
-  if ($4[0] !== children2) {
+  if ($4[0] !== children) {
     t2 = Symbol.for("react.early_return_sentinel");
     bb0: {
-      const validChildren = import_react57.Children.toArray(children2);
+      const validChildren = import_react57.Children.toArray(children);
       if (validChildren.length === 0) {
         t2 = null;
         break bb0;
       }
       t1 = validChildren.map(_temp7);
     }
-    $4[0] = children2;
+    $4[0] = children;
     $4[1] = t1;
     $4[2] = t2;
   } else {
@@ -347266,15 +347266,15 @@ function MarkdownWithHighlight(props) {
 function MarkdownBody(t0) {
   const $4 = import_compiler_runtime44.c(7);
   const {
-    children: children2,
+    children,
     dimColor,
     highlight
   } = t0;
   const [theme] = useTheme();
   configureMarked();
   let elements;
-  if ($4[0] !== children2 || $4[1] !== dimColor || $4[2] !== highlight || $4[3] !== theme) {
-    const tokens = cachedLexer(stripPromptXMLTags(children2));
+  if ($4[0] !== children || $4[1] !== dimColor || $4[2] !== highlight || $4[3] !== theme) {
+    const tokens = cachedLexer(stripPromptXMLTags(children));
     elements = [];
     let nonTableContent = "";
     const flushNonTableContent = function flushNonTableContent2() {
@@ -347299,7 +347299,7 @@ function MarkdownBody(t0) {
       }
     }
     flushNonTableContent();
-    $4[0] = children2;
+    $4[0] = children;
     $4[1] = dimColor;
     $4[2] = highlight;
     $4[3] = theme;
@@ -347322,11 +347322,11 @@ function MarkdownBody(t0) {
   return t1;
 }
 function StreamingMarkdown({
-  children: children2
+  children
 }) {
   "use no memo";
   configureMarked();
-  const stripped = stripPromptXMLTags(children2);
+  const stripped = stripPromptXMLTags(children);
   const stablePrefixRef = import_react59.useRef("");
   if (!stripped.startsWith(stablePrefixRef.current)) {
     stablePrefixRef.current = "";
@@ -349153,7 +349153,7 @@ function ListItem(t0) {
   const {
     isFocused,
     isSelected: t1,
-    children: children2,
+    children,
     description,
     showScrollDown,
     showScrollUp,
@@ -349245,12 +349245,12 @@ function ListItem(t0) {
     t8 = $4[13];
   }
   let t9;
-  if ($4[14] !== children2 || $4[15] !== disabled || $4[16] !== styled || $4[17] !== textColor) {
+  if ($4[14] !== children || $4[15] !== disabled || $4[16] !== styled || $4[17] !== textColor) {
     t9 = styled ? /* @__PURE__ */ import_react66.default.createElement(ThemedText, {
       color: textColor,
       dimColor: disabled
-    }, children2) : children2;
-    $4[14] = children2;
+    }, children) : children;
+    $4[14] = children;
     $4[15] = disabled;
     $4[16] = styled;
     $4[17] = textColor;
@@ -349324,14 +349324,14 @@ function SelectOption(t0) {
   const {
     isFocused,
     isSelected,
-    children: children2,
+    children,
     description,
     shouldShowDownArrow,
     shouldShowUpArrow,
     declareCursor
   } = t0;
   let t1;
-  if ($4[0] !== children2 || $4[1] !== declareCursor || $4[2] !== description || $4[3] !== isFocused || $4[4] !== isSelected || $4[5] !== shouldShowDownArrow || $4[6] !== shouldShowUpArrow) {
+  if ($4[0] !== children || $4[1] !== declareCursor || $4[2] !== description || $4[3] !== isFocused || $4[4] !== isSelected || $4[5] !== shouldShowDownArrow || $4[6] !== shouldShowUpArrow) {
     t1 = /* @__PURE__ */ import_react67.default.createElement(ListItem, {
       isFocused,
       isSelected,
@@ -349340,8 +349340,8 @@ function SelectOption(t0) {
       showScrollUp: shouldShowUpArrow,
       styled: false,
       declareCursor
-    }, children2);
-    $4[0] = children2;
+    }, children);
+    $4[0] = children;
     $4[1] = declareCursor;
     $4[2] = description;
     $4[3] = isFocused;
@@ -349377,7 +349377,7 @@ function SelectInputOption(t0) {
     onSubmit,
     onExit: onExit2,
     layout,
-    children: children2,
+    children,
     showLabel: t1,
     onOpenEditor,
     resetCursorOnUpdate: t2,
@@ -349738,12 +349738,12 @@ function SelectInputOption(t0) {
     t32 = $4[69];
   }
   let t33;
-  if ($4[70] !== children2 || $4[71] !== t28 || $4[72] !== t31 || $4[73] !== t32) {
+  if ($4[70] !== children || $4[71] !== t28 || $4[72] !== t31 || $4[73] !== t32) {
     t33 = /* @__PURE__ */ import_react68.default.createElement(ThemedBox_default, {
       flexDirection: "row",
       flexShrink: t28
-    }, t31, children2, t32);
-    $4[70] = children2;
+    }, t31, children, t32);
+    $4[70] = children;
     $4[71] = t28;
     $4[72] = t31;
     $4[73] = t32;
@@ -351569,7 +351569,7 @@ function TwoColumnRow(t0) {
   const $4 = import_compiler_runtime55.c(5);
   const {
     isFocused,
-    children: children2
+    children
   } = t0;
   let t1;
   if ($4[0] !== isFocused) {
@@ -351585,12 +351585,12 @@ function TwoColumnRow(t0) {
   }
   const cursorRef = useDeclaredCursor(t1);
   let t2;
-  if ($4[2] !== children2 || $4[3] !== cursorRef) {
+  if ($4[2] !== children || $4[3] !== cursorRef) {
     t2 = /* @__PURE__ */ import_react75.default.createElement(ThemedBox_default, {
       ref: cursorRef,
       flexDirection: "row"
-    }, children2);
-    $4[2] = children2;
+    }, children);
+    $4[2] = children;
     $4[3] = cursorRef;
     $4[4] = t2;
   } else {
@@ -351704,7 +351704,7 @@ function PermissionDialog(t0) {
     innerPaddingX: t2,
     workerBadge,
     titleRight,
-    children: children2
+    children
   } = t0;
   const color2 = t1 === undefined ? "permission" : t1;
   const innerPaddingX = t2 === undefined ? 1 : t2;
@@ -351739,12 +351739,12 @@ function PermissionDialog(t0) {
     t4 = $4[7];
   }
   let t5;
-  if ($4[8] !== children2 || $4[9] !== innerPaddingX) {
+  if ($4[8] !== children || $4[9] !== innerPaddingX) {
     t5 = /* @__PURE__ */ React67.createElement(ThemedBox_default, {
       flexDirection: "column",
       paddingX: innerPaddingX
-    }, children2);
-    $4[8] = children2;
+    }, children);
+    $4[8] = children;
     $4[9] = innerPaddingX;
     $4[10] = t5;
   } else {
@@ -352220,7 +352220,7 @@ function _temp13(w2) {
   return w2.severity === "error";
 }
 function KeybindingSetup({
-  children: children2
+  children
 }) {
   const [{
     bindings,
@@ -352288,7 +352288,7 @@ function KeybindingSetup({
     setPendingChord,
     activeContexts: activeContextsRef.current,
     handlerRegistryRef
-  }), children2);
+  }), children);
 }
 function ChordInterceptor(t0) {
   const $4 = import_compiler_runtime59.c(6);
@@ -380536,7 +380536,7 @@ var require_src18 = __commonJS((exports) => {
 
 // node_modules/@grpc/grpc-js/build/src/channelz.js
 var require_channelz = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/moss/node_modules/@grpc/grpc-js/build/src";
+  var __dirname = "./node_modules/@grpc/grpc-js/build/src";
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.registerChannelzSocket = exports.registerChannelzServer = exports.registerChannelzSubchannel = exports.registerChannelzChannel = exports.ChannelzCallTrackerStub = exports.ChannelzCallTracker = exports.ChannelzChildrenTrackerStub = exports.ChannelzChildrenTracker = exports.ChannelzTrace = exports.ChannelzTraceStub = undefined;
   exports.unregisterChannelzRef = unregisterChannelzRef;
@@ -385939,7 +385939,7 @@ var require_duration = __commonJS((exports) => {
 
 // node_modules/@grpc/grpc-js/build/src/orca.js
 var require_orca = __commonJS((exports) => {
-  var __dirname = "/Users/bgd/repo/moss/node_modules/@grpc/grpc-js/build/src";
+  var __dirname = "./node_modules/@grpc/grpc-js/build/src";
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.OrcaOobMetricsSubchannelWrapper = exports.GRPC_METRICS_HEADER = exports.ServerMetricRecorder = exports.PerRequestMetricRecorder = undefined;
   exports.createOrcaClient = createOrcaClient;
@@ -389199,8 +389199,8 @@ var require_load_balancer_round_robin = __commonJS((exports) => {
   }
 
   class RoundRobinPicker {
-    constructor(children2, nextIndex = 0) {
-      this.children = children2;
+    constructor(children, nextIndex = 0) {
+      this.children = children;
       this.nextIndex = nextIndex;
     }
     pick(pickArgs) {
@@ -390003,10 +390003,10 @@ var require_load_balancer_weighted_round_robin = __commonJS((exports) => {
   exports.WeightedRoundRobinLoadBalancingConfig = WeightedRoundRobinLoadBalancingConfig;
 
   class WeightedRoundRobinPicker {
-    constructor(children2, metricsHandler) {
+    constructor(children, metricsHandler) {
       this.metricsHandler = metricsHandler;
       this.queue = new priority_queue_1.PriorityQueue((a2, b3) => a2.deadline < b3.deadline);
-      const positiveWeight = children2.filter((picker) => picker.weight > 0);
+      const positiveWeight = children.filter((picker) => picker.weight > 0);
       let averageWeight;
       if (positiveWeight.length < 2) {
         averageWeight = 1;
@@ -390017,7 +390017,7 @@ var require_load_balancer_weighted_round_robin = __commonJS((exports) => {
         }
         averageWeight = weightSum / positiveWeight.length;
       }
-      for (const child of children2) {
+      for (const child of children) {
         const period = child.weight > 0 ? 1 / child.weight : averageWeight;
         this.queue.push({
           endpointName: child.endpointName,
@@ -392359,7 +392359,7 @@ function getLocalInstallDir() {
 }
 function isRunningFromLocalInstallation() {
   const execPath2 = process.argv[1] || "";
-  return execPath2.includes("/.claude/local/node_modules/");
+  return execPath2.includes("./node_modules/");
 }
 async function localInstallationExists() {
   try {
@@ -393897,9036 +393897,6 @@ var init_auth6 = __esm(() => {
   init_status();
 });
 
-// node_modules/@xmldom/xmldom/lib/conventions.js
-var require_conventions = __commonJS((exports) => {
-  function find(list, predicate, ac) {
-    if (ac === undefined) {
-      ac = Array.prototype;
-    }
-    if (list && typeof ac.find === "function") {
-      return ac.find.call(list, predicate);
-    }
-    for (var i4 = 0;i4 < list.length; i4++) {
-      if (hasOwn2(list, i4)) {
-        var item = list[i4];
-        if (predicate.call(undefined, item, i4, list)) {
-          return item;
-        }
-      }
-    }
-  }
-  function freeze(object4, oc) {
-    if (oc === undefined) {
-      oc = Object;
-    }
-    if (oc && typeof oc.getOwnPropertyDescriptors === "function") {
-      object4 = oc.create(null, oc.getOwnPropertyDescriptors(object4));
-    }
-    return oc && typeof oc.freeze === "function" ? oc.freeze(object4) : object4;
-  }
-  function hasOwn2(object4, key) {
-    return Object.prototype.hasOwnProperty.call(object4, key);
-  }
-  function assign(target, source) {
-    if (target === null || typeof target !== "object") {
-      throw new TypeError("target is not an object");
-    }
-    for (var key in source) {
-      if (hasOwn2(source, key)) {
-        target[key] = source[key];
-      }
-    }
-    return target;
-  }
-  var HTML_BOOLEAN_ATTRIBUTES = freeze({
-    allowfullscreen: true,
-    async: true,
-    autofocus: true,
-    autoplay: true,
-    checked: true,
-    controls: true,
-    default: true,
-    defer: true,
-    disabled: true,
-    formnovalidate: true,
-    hidden: true,
-    ismap: true,
-    itemscope: true,
-    loop: true,
-    multiple: true,
-    muted: true,
-    nomodule: true,
-    novalidate: true,
-    open: true,
-    playsinline: true,
-    readonly: true,
-    required: true,
-    reversed: true,
-    selected: true
-  });
-  function isHTMLBooleanAttribute(name3) {
-    return hasOwn2(HTML_BOOLEAN_ATTRIBUTES, name3.toLowerCase());
-  }
-  var HTML_VOID_ELEMENTS = freeze({
-    area: true,
-    base: true,
-    br: true,
-    col: true,
-    embed: true,
-    hr: true,
-    img: true,
-    input: true,
-    link: true,
-    meta: true,
-    param: true,
-    source: true,
-    track: true,
-    wbr: true
-  });
-  function isHTMLVoidElement(tagName) {
-    return hasOwn2(HTML_VOID_ELEMENTS, tagName.toLowerCase());
-  }
-  var HTML_RAW_TEXT_ELEMENTS = freeze({
-    script: false,
-    style: false,
-    textarea: true,
-    title: true
-  });
-  function isHTMLRawTextElement(tagName) {
-    var key = tagName.toLowerCase();
-    return hasOwn2(HTML_RAW_TEXT_ELEMENTS, key) && !HTML_RAW_TEXT_ELEMENTS[key];
-  }
-  function isHTMLEscapableRawTextElement(tagName) {
-    var key = tagName.toLowerCase();
-    return hasOwn2(HTML_RAW_TEXT_ELEMENTS, key) && HTML_RAW_TEXT_ELEMENTS[key];
-  }
-  function isHTMLMimeType(mimeType) {
-    return mimeType === MIME_TYPE.HTML;
-  }
-  function hasDefaultHTMLNamespace(mimeType) {
-    return isHTMLMimeType(mimeType) || mimeType === MIME_TYPE.XML_XHTML_APPLICATION;
-  }
-  var MIME_TYPE = freeze({
-    HTML: "text/html",
-    XML_APPLICATION: "application/xml",
-    XML_TEXT: "text/xml",
-    XML_XHTML_APPLICATION: "application/xhtml+xml",
-    XML_SVG_IMAGE: "image/svg+xml"
-  });
-  var _MIME_TYPES = Object.keys(MIME_TYPE).map(function(key) {
-    return MIME_TYPE[key];
-  });
-  function isValidMimeType(mimeType) {
-    return _MIME_TYPES.indexOf(mimeType) > -1;
-  }
-  var NAMESPACE = freeze({
-    HTML: "http://www.w3.org/1999/xhtml",
-    SVG: "http://www.w3.org/2000/svg",
-    XML: "http://www.w3.org/XML/1998/namespace",
-    XMLNS: "http://www.w3.org/2000/xmlns/"
-  });
-  exports.assign = assign;
-  exports.find = find;
-  exports.freeze = freeze;
-  exports.HTML_BOOLEAN_ATTRIBUTES = HTML_BOOLEAN_ATTRIBUTES;
-  exports.HTML_RAW_TEXT_ELEMENTS = HTML_RAW_TEXT_ELEMENTS;
-  exports.HTML_VOID_ELEMENTS = HTML_VOID_ELEMENTS;
-  exports.hasDefaultHTMLNamespace = hasDefaultHTMLNamespace;
-  exports.hasOwn = hasOwn2;
-  exports.isHTMLBooleanAttribute = isHTMLBooleanAttribute;
-  exports.isHTMLRawTextElement = isHTMLRawTextElement;
-  exports.isHTMLEscapableRawTextElement = isHTMLEscapableRawTextElement;
-  exports.isHTMLMimeType = isHTMLMimeType;
-  exports.isHTMLVoidElement = isHTMLVoidElement;
-  exports.isValidMimeType = isValidMimeType;
-  exports.MIME_TYPE = MIME_TYPE;
-  exports.NAMESPACE = NAMESPACE;
-});
-
-// node_modules/@xmldom/xmldom/lib/errors.js
-var require_errors11 = __commonJS((exports) => {
-  var conventions = require_conventions();
-  function extendError(constructor, writableName) {
-    constructor.prototype = Object.create(Error.prototype, {
-      constructor: { value: constructor },
-      name: { value: constructor.name, enumerable: true, writable: writableName }
-    });
-  }
-  var DOMExceptionName = conventions.freeze({
-    Error: "Error",
-    IndexSizeError: "IndexSizeError",
-    DomstringSizeError: "DomstringSizeError",
-    HierarchyRequestError: "HierarchyRequestError",
-    WrongDocumentError: "WrongDocumentError",
-    InvalidCharacterError: "InvalidCharacterError",
-    NoDataAllowedError: "NoDataAllowedError",
-    NoModificationAllowedError: "NoModificationAllowedError",
-    NotFoundError: "NotFoundError",
-    NotSupportedError: "NotSupportedError",
-    InUseAttributeError: "InUseAttributeError",
-    InvalidStateError: "InvalidStateError",
-    SyntaxError: "SyntaxError",
-    InvalidModificationError: "InvalidModificationError",
-    NamespaceError: "NamespaceError",
-    InvalidAccessError: "InvalidAccessError",
-    ValidationError: "ValidationError",
-    TypeMismatchError: "TypeMismatchError",
-    SecurityError: "SecurityError",
-    NetworkError: "NetworkError",
-    AbortError: "AbortError",
-    URLMismatchError: "URLMismatchError",
-    QuotaExceededError: "QuotaExceededError",
-    TimeoutError: "TimeoutError",
-    InvalidNodeTypeError: "InvalidNodeTypeError",
-    DataCloneError: "DataCloneError",
-    EncodingError: "EncodingError",
-    NotReadableError: "NotReadableError",
-    UnknownError: "UnknownError",
-    ConstraintError: "ConstraintError",
-    DataError: "DataError",
-    TransactionInactiveError: "TransactionInactiveError",
-    ReadOnlyError: "ReadOnlyError",
-    VersionError: "VersionError",
-    OperationError: "OperationError",
-    NotAllowedError: "NotAllowedError",
-    OptOutError: "OptOutError"
-  });
-  var DOMExceptionNames = Object.keys(DOMExceptionName);
-  function isValidDomExceptionCode(value) {
-    return typeof value === "number" && value >= 1 && value <= 25;
-  }
-  function endsWithError(value) {
-    return typeof value === "string" && value.substring(value.length - DOMExceptionName.Error.length) === DOMExceptionName.Error;
-  }
-  function DOMException3(messageOrCode, nameOrMessage) {
-    if (isValidDomExceptionCode(messageOrCode)) {
-      this.name = DOMExceptionNames[messageOrCode];
-      this.message = nameOrMessage || "";
-    } else {
-      this.message = messageOrCode;
-      this.name = endsWithError(nameOrMessage) ? nameOrMessage : DOMExceptionName.Error;
-    }
-    if (Error.captureStackTrace)
-      Error.captureStackTrace(this, DOMException3);
-  }
-  extendError(DOMException3, true);
-  Object.defineProperties(DOMException3.prototype, {
-    code: {
-      enumerable: true,
-      get: function() {
-        var code = DOMExceptionNames.indexOf(this.name);
-        if (isValidDomExceptionCode(code))
-          return code;
-        return 0;
-      }
-    }
-  });
-  var ExceptionCode = {
-    INDEX_SIZE_ERR: 1,
-    DOMSTRING_SIZE_ERR: 2,
-    HIERARCHY_REQUEST_ERR: 3,
-    WRONG_DOCUMENT_ERR: 4,
-    INVALID_CHARACTER_ERR: 5,
-    NO_DATA_ALLOWED_ERR: 6,
-    NO_MODIFICATION_ALLOWED_ERR: 7,
-    NOT_FOUND_ERR: 8,
-    NOT_SUPPORTED_ERR: 9,
-    INUSE_ATTRIBUTE_ERR: 10,
-    INVALID_STATE_ERR: 11,
-    SYNTAX_ERR: 12,
-    INVALID_MODIFICATION_ERR: 13,
-    NAMESPACE_ERR: 14,
-    INVALID_ACCESS_ERR: 15,
-    VALIDATION_ERR: 16,
-    TYPE_MISMATCH_ERR: 17,
-    SECURITY_ERR: 18,
-    NETWORK_ERR: 19,
-    ABORT_ERR: 20,
-    URL_MISMATCH_ERR: 21,
-    QUOTA_EXCEEDED_ERR: 22,
-    TIMEOUT_ERR: 23,
-    INVALID_NODE_TYPE_ERR: 24,
-    DATA_CLONE_ERR: 25
-  };
-  var entries = Object.entries(ExceptionCode);
-  for (i4 = 0;i4 < entries.length; i4++) {
-    key = entries[i4][0];
-    DOMException3[key] = entries[i4][1];
-  }
-  var key;
-  var i4;
-  function ParseError2(message, locator) {
-    this.message = message;
-    this.locator = locator;
-    if (Error.captureStackTrace)
-      Error.captureStackTrace(this, ParseError2);
-  }
-  extendError(ParseError2);
-  exports.DOMException = DOMException3;
-  exports.DOMExceptionName = DOMExceptionName;
-  exports.ExceptionCode = ExceptionCode;
-  exports.ParseError = ParseError2;
-});
-
-// node_modules/@xmldom/xmldom/lib/grammar.js
-var require_grammar = __commonJS((exports) => {
-  function detectUnicodeSupport(RegExpImpl) {
-    try {
-      if (typeof RegExpImpl !== "function") {
-        RegExpImpl = RegExp;
-      }
-      var match = new RegExpImpl("\uD834\uDF06", "u").exec("\uD834\uDF06");
-      return !!match && match[0].length === 2;
-    } catch (error49) {}
-    return false;
-  }
-  var UNICODE_SUPPORT = detectUnicodeSupport();
-  function chars(regexp) {
-    if (regexp.source[0] !== "[") {
-      throw new Error(regexp + " can not be used with chars");
-    }
-    return regexp.source.slice(1, regexp.source.lastIndexOf("]"));
-  }
-  function chars_without(regexp, search) {
-    if (regexp.source[0] !== "[") {
-      throw new Error("/" + regexp.source + "/ can not be used with chars_without");
-    }
-    if (!search || typeof search !== "string") {
-      throw new Error(JSON.stringify(search) + " is not a valid search");
-    }
-    if (regexp.source.indexOf(search) === -1) {
-      throw new Error('"' + search + '" is not is /' + regexp.source + "/");
-    }
-    if (search === "-" && regexp.source.indexOf(search) !== 1) {
-      throw new Error('"' + search + '" is not at the first postion of /' + regexp.source + "/");
-    }
-    return new RegExp(regexp.source.replace(search, ""), UNICODE_SUPPORT ? "u" : "");
-  }
-  function reg(args) {
-    var self2 = this;
-    return new RegExp(Array.prototype.slice.call(arguments).map(function(part) {
-      var isStr = typeof part === "string";
-      if (isStr && self2 === undefined && part === "|") {
-        throw new Error("use regg instead of reg to wrap expressions with `|`!");
-      }
-      return isStr ? part : part.source;
-    }).join(""), UNICODE_SUPPORT ? "mu" : "m");
-  }
-  function regg(args) {
-    if (arguments.length === 0) {
-      throw new Error("no parameters provided");
-    }
-    return reg.apply(regg, ["(?:"].concat(Array.prototype.slice.call(arguments), [")"]));
-  }
-  var UNICODE_REPLACEMENT_CHARACTER = "�";
-  var Char = /[-\x09\x0A\x0D\x20-\x2C\x2E-\uD7FF\uE000-\uFFFD]/;
-  if (UNICODE_SUPPORT) {
-    Char = reg("[", chars(Char), "\\u{10000}-\\u{10FFFF}", "]");
-  }
-  var _SChar = /[\x20\x09\x0D\x0A]/;
-  var SChar_s = chars(_SChar);
-  var S3 = reg(_SChar, "+");
-  var S_OPT = reg(_SChar, "*");
-  var NameStartChar = /[:_a-zA-Z\xC0-\xD6\xD8-\xF6\xF8-\u02FF\u0370-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
-  if (UNICODE_SUPPORT) {
-    NameStartChar = reg("[", chars(NameStartChar), "\\u{10000}-\\u{10FFFF}", "]");
-  }
-  var NameStartChar_s = chars(NameStartChar);
-  var NameChar = reg("[", NameStartChar_s, chars(/[-.0-9\xB7]/), chars(/[\u0300-\u036F\u203F-\u2040]/), "]");
-  var Name = reg(NameStartChar, NameChar, "*");
-  var Nmtoken = reg(NameChar, "+");
-  var EntityRef = reg("&", Name, ";");
-  var CharRef = regg(/&#[0-9]+;|&#x[0-9a-fA-F]+;/);
-  var Reference = regg(EntityRef, "|", CharRef);
-  var PEReference = reg("%", Name, ";");
-  var EntityValue = regg(reg('"', regg(/[^%&"]/, "|", PEReference, "|", Reference), "*", '"'), "|", reg("'", regg(/[^%&']/, "|", PEReference, "|", Reference), "*", "'"));
-  var AttValue = regg('"', regg(/[^<&"]/, "|", Reference), "*", '"', "|", "'", regg(/[^<&']/, "|", Reference), "*", "'");
-  var NCNameStartChar = chars_without(NameStartChar, ":");
-  var NCNameChar = chars_without(NameChar, ":");
-  var NCName = reg(NCNameStartChar, NCNameChar, "*");
-  var QName = reg(NCName, regg(":", NCName), "?");
-  var QName_exact = reg("^", QName, "$");
-  var QName_group = reg("(", QName, ")");
-  var SystemLiteral = regg(/"[^"]*"|'[^']*'/);
-  var PI = reg(/^<\?/, "(", Name, ")", regg(S3, "(", Char, "*?)"), "?", /\?>/);
-  var PubidChar = /[\x20\x0D\x0Aa-zA-Z0-9-'()+,./:=?;!*#@$_%]/;
-  var PubidLiteral = regg('"', PubidChar, '*"', "|", "'", chars_without(PubidChar, "'"), "*'");
-  var COMMENT_START = "<!--";
-  var COMMENT_END = "-->";
-  var Comment = reg(COMMENT_START, regg(chars_without(Char, "-"), "|", reg("-", chars_without(Char, "-"))), "*", COMMENT_END);
-  var PCDATA = "#PCDATA";
-  var Mixed = regg(reg(/\(/, S_OPT, PCDATA, regg(S_OPT, /\|/, S_OPT, QName), "*", S_OPT, /\)\*/), "|", reg(/\(/, S_OPT, PCDATA, S_OPT, /\)/));
-  var _children_quantity = /[?*+]?/;
-  var children2 = reg(/\([^>]+\)/, _children_quantity);
-  var contentspec = regg("EMPTY", "|", "ANY", "|", Mixed, "|", children2);
-  var ELEMENTDECL_START = "<!ELEMENT";
-  var elementdecl = reg(ELEMENTDECL_START, S3, regg(QName, "|", PEReference), S3, regg(contentspec, "|", PEReference), S_OPT, ">");
-  var NotationType = reg("NOTATION", S3, /\(/, S_OPT, Name, regg(S_OPT, /\|/, S_OPT, Name), "*", S_OPT, /\)/);
-  var Enumeration = reg(/\(/, S_OPT, Nmtoken, regg(S_OPT, /\|/, S_OPT, Nmtoken), "*", S_OPT, /\)/);
-  var EnumeratedType = regg(NotationType, "|", Enumeration);
-  var AttType = regg(/CDATA|ID|IDREF|IDREFS|ENTITY|ENTITIES|NMTOKEN|NMTOKENS/, "|", EnumeratedType);
-  var DefaultDecl = regg(/#REQUIRED|#IMPLIED/, "|", regg(regg("#FIXED", S3), "?", AttValue));
-  var AttDef = regg(S3, Name, S3, AttType, S3, DefaultDecl);
-  var ATTLIST_DECL_START = "<!ATTLIST";
-  var AttlistDecl = reg(ATTLIST_DECL_START, S3, Name, AttDef, "*", S_OPT, ">");
-  var ABOUT_LEGACY_COMPAT = "about:legacy-compat";
-  var ABOUT_LEGACY_COMPAT_SystemLiteral = regg('"' + ABOUT_LEGACY_COMPAT + '"', "|", "'" + ABOUT_LEGACY_COMPAT + "'");
-  var SYSTEM = "SYSTEM";
-  var PUBLIC = "PUBLIC";
-  var ExternalID = regg(regg(SYSTEM, S3, SystemLiteral), "|", regg(PUBLIC, S3, PubidLiteral, S3, SystemLiteral));
-  var ExternalID_match = reg("^", regg(regg(SYSTEM, S3, "(?<SystemLiteralOnly>", SystemLiteral, ")"), "|", regg(PUBLIC, S3, "(?<PubidLiteral>", PubidLiteral, ")", S3, "(?<SystemLiteral>", SystemLiteral, ")")));
-  var NDataDecl = regg(S3, "NDATA", S3, Name);
-  var EntityDef = regg(EntityValue, "|", regg(ExternalID, NDataDecl, "?"));
-  var ENTITY_DECL_START = "<!ENTITY";
-  var GEDecl = reg(ENTITY_DECL_START, S3, Name, S3, EntityDef, S_OPT, ">");
-  var PEDef = regg(EntityValue, "|", ExternalID);
-  var PEDecl = reg(ENTITY_DECL_START, S3, "%", S3, Name, S3, PEDef, S_OPT, ">");
-  var EntityDecl = regg(GEDecl, "|", PEDecl);
-  var PublicID = reg(PUBLIC, S3, PubidLiteral);
-  var NotationDecl = reg("<!NOTATION", S3, Name, S3, regg(ExternalID, "|", PublicID), S_OPT, ">");
-  var Eq = reg(S_OPT, "=", S_OPT);
-  var VersionNum = /1[.]\d+/;
-  var VersionInfo = reg(S3, "version", Eq, regg("'", VersionNum, "'", "|", '"', VersionNum, '"'));
-  var EncName = /[A-Za-z][-A-Za-z0-9._]*/;
-  var EncodingDecl = regg(S3, "encoding", Eq, regg('"', EncName, '"', "|", "'", EncName, "'"));
-  var SDDecl = regg(S3, "standalone", Eq, regg("'", regg("yes", "|", "no"), "'", "|", '"', regg("yes", "|", "no"), '"'));
-  var XMLDecl = reg(/^<\?xml/, VersionInfo, EncodingDecl, "?", SDDecl, "?", S_OPT, /\?>/);
-  var DOCTYPE_DECL_START = "<!DOCTYPE";
-  var CDATA_START = "<![CDATA[";
-  var CDATA_END = "]]>";
-  var CDStart = /<!\[CDATA\[/;
-  var CDEnd = /\]\]>/;
-  var CData = reg(Char, "*?", CDEnd);
-  var CDSect = reg(CDStart, CData);
-  exports.chars = chars;
-  exports.chars_without = chars_without;
-  exports.detectUnicodeSupport = detectUnicodeSupport;
-  exports.reg = reg;
-  exports.regg = regg;
-  exports.ABOUT_LEGACY_COMPAT = ABOUT_LEGACY_COMPAT;
-  exports.ABOUT_LEGACY_COMPAT_SystemLiteral = ABOUT_LEGACY_COMPAT_SystemLiteral;
-  exports.AttlistDecl = AttlistDecl;
-  exports.CDATA_START = CDATA_START;
-  exports.CDATA_END = CDATA_END;
-  exports.CDSect = CDSect;
-  exports.Char = Char;
-  exports.Comment = Comment;
-  exports.COMMENT_START = COMMENT_START;
-  exports.COMMENT_END = COMMENT_END;
-  exports.DOCTYPE_DECL_START = DOCTYPE_DECL_START;
-  exports.elementdecl = elementdecl;
-  exports.EntityDecl = EntityDecl;
-  exports.EntityValue = EntityValue;
-  exports.ExternalID = ExternalID;
-  exports.ExternalID_match = ExternalID_match;
-  exports.Name = Name;
-  exports.NotationDecl = NotationDecl;
-  exports.Reference = Reference;
-  exports.PEReference = PEReference;
-  exports.PI = PI;
-  exports.PUBLIC = PUBLIC;
-  exports.PubidLiteral = PubidLiteral;
-  exports.QName = QName;
-  exports.QName_exact = QName_exact;
-  exports.QName_group = QName_group;
-  exports.S = S3;
-  exports.SChar_s = SChar_s;
-  exports.S_OPT = S_OPT;
-  exports.SYSTEM = SYSTEM;
-  exports.SystemLiteral = SystemLiteral;
-  exports.UNICODE_REPLACEMENT_CHARACTER = UNICODE_REPLACEMENT_CHARACTER;
-  exports.UNICODE_SUPPORT = UNICODE_SUPPORT;
-  exports.XMLDecl = XMLDecl;
-});
-
-// node_modules/@xmldom/xmldom/lib/dom.js
-var require_dom = __commonJS((exports) => {
-  var conventions = require_conventions();
-  var find = conventions.find;
-  var hasDefaultHTMLNamespace = conventions.hasDefaultHTMLNamespace;
-  var hasOwn2 = conventions.hasOwn;
-  var isHTMLMimeType = conventions.isHTMLMimeType;
-  var isHTMLRawTextElement = conventions.isHTMLRawTextElement;
-  var isHTMLVoidElement = conventions.isHTMLVoidElement;
-  var MIME_TYPE = conventions.MIME_TYPE;
-  var NAMESPACE = conventions.NAMESPACE;
-  var PDC = Symbol();
-  var errors4 = require_errors11();
-  var DOMException3 = errors4.DOMException;
-  var DOMExceptionName = errors4.DOMExceptionName;
-  var g2 = require_grammar();
-  function checkSymbol(symbol2) {
-    if (symbol2 !== PDC) {
-      throw new TypeError("Illegal constructor");
-    }
-  }
-  function notEmptyString(input) {
-    return input !== "";
-  }
-  function splitOnASCIIWhitespace(input) {
-    return input ? input.split(/[\t\n\f\r ]+/).filter(notEmptyString) : [];
-  }
-  function orderedSetReducer(current, element) {
-    if (!hasOwn2(current, element)) {
-      current[element] = true;
-    }
-    return current;
-  }
-  function toOrderedSet(input) {
-    if (!input)
-      return [];
-    var list = splitOnASCIIWhitespace(input);
-    return Object.keys(list.reduce(orderedSetReducer, {}));
-  }
-  function arrayIncludes2(list) {
-    return function(element) {
-      return list && list.indexOf(element) !== -1;
-    };
-  }
-  function validateQualifiedName(qualifiedName) {
-    if (!g2.QName_exact.test(qualifiedName)) {
-      throw new DOMException3(DOMException3.INVALID_CHARACTER_ERR, 'invalid character in qualified name "' + qualifiedName + '"');
-    }
-  }
-  function validateAndExtract(namespace, qualifiedName) {
-    validateQualifiedName(qualifiedName);
-    namespace = namespace || null;
-    var prefix = null;
-    var localName = qualifiedName;
-    if (qualifiedName.indexOf(":") >= 0) {
-      var splitResult = qualifiedName.split(":");
-      prefix = splitResult[0];
-      localName = splitResult[1];
-    }
-    if (prefix !== null && namespace === null) {
-      throw new DOMException3(DOMException3.NAMESPACE_ERR, "prefix is non-null and namespace is null");
-    }
-    if (prefix === "xml" && namespace !== conventions.NAMESPACE.XML) {
-      throw new DOMException3(DOMException3.NAMESPACE_ERR, 'prefix is "xml" and namespace is not the XML namespace');
-    }
-    if ((prefix === "xmlns" || qualifiedName === "xmlns") && namespace !== conventions.NAMESPACE.XMLNS) {
-      throw new DOMException3(DOMException3.NAMESPACE_ERR, 'either qualifiedName or prefix is "xmlns" and namespace is not the XMLNS namespace');
-    }
-    if (namespace === conventions.NAMESPACE.XMLNS && prefix !== "xmlns" && qualifiedName !== "xmlns") {
-      throw new DOMException3(DOMException3.NAMESPACE_ERR, 'namespace is the XMLNS namespace and neither qualifiedName nor prefix is "xmlns"');
-    }
-    return [namespace, prefix, localName];
-  }
-  function copy(src, dest) {
-    for (var p in src) {
-      if (hasOwn2(src, p)) {
-        dest[p] = src[p];
-      }
-    }
-  }
-  function _extends(Class2, Super) {
-    var pt = Class2.prototype;
-    if (!(pt instanceof Super)) {
-      let t2 = function() {};
-      t2.prototype = Super.prototype;
-      t2 = new t2;
-      copy(pt, t2);
-      Class2.prototype = pt = t2;
-    }
-    if (pt.constructor != Class2) {
-      if (typeof Class2 != "function") {
-        console.error("unknown Class:" + Class2);
-      }
-      pt.constructor = Class2;
-    }
-  }
-  var NodeType = {};
-  var ELEMENT_NODE = NodeType.ELEMENT_NODE = 1;
-  var ATTRIBUTE_NODE = NodeType.ATTRIBUTE_NODE = 2;
-  var TEXT_NODE = NodeType.TEXT_NODE = 3;
-  var CDATA_SECTION_NODE = NodeType.CDATA_SECTION_NODE = 4;
-  var ENTITY_REFERENCE_NODE = NodeType.ENTITY_REFERENCE_NODE = 5;
-  var ENTITY_NODE = NodeType.ENTITY_NODE = 6;
-  var PROCESSING_INSTRUCTION_NODE = NodeType.PROCESSING_INSTRUCTION_NODE = 7;
-  var COMMENT_NODE = NodeType.COMMENT_NODE = 8;
-  var DOCUMENT_NODE = NodeType.DOCUMENT_NODE = 9;
-  var DOCUMENT_TYPE_NODE = NodeType.DOCUMENT_TYPE_NODE = 10;
-  var DOCUMENT_FRAGMENT_NODE = NodeType.DOCUMENT_FRAGMENT_NODE = 11;
-  var NOTATION_NODE = NodeType.NOTATION_NODE = 12;
-  var DocumentPosition = conventions.freeze({
-    DOCUMENT_POSITION_DISCONNECTED: 1,
-    DOCUMENT_POSITION_PRECEDING: 2,
-    DOCUMENT_POSITION_FOLLOWING: 4,
-    DOCUMENT_POSITION_CONTAINS: 8,
-    DOCUMENT_POSITION_CONTAINED_BY: 16,
-    DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32
-  });
-  function commonAncestor(a2, b3) {
-    if (b3.length < a2.length)
-      return commonAncestor(b3, a2);
-    var c4 = null;
-    for (var n2 in a2) {
-      if (a2[n2] !== b3[n2])
-        return c4;
-      c4 = a2[n2];
-    }
-    return c4;
-  }
-  function docGUID(doc2) {
-    if (!doc2.guid)
-      doc2.guid = Math.random();
-    return doc2.guid;
-  }
-  function NodeList() {}
-  NodeList.prototype = {
-    length: 0,
-    item: function(index) {
-      return index >= 0 && index < this.length ? this[index] : null;
-    },
-    toString: function(nodeFilter) {
-      for (var buf = [], i4 = 0;i4 < this.length; i4++) {
-        serializeToString(this[i4], buf, nodeFilter);
-      }
-      return buf.join("");
-    },
-    filter: function(predicate) {
-      return Array.prototype.filter.call(this, predicate);
-    },
-    indexOf: function(item) {
-      return Array.prototype.indexOf.call(this, item);
-    }
-  };
-  NodeList.prototype[Symbol.iterator] = function() {
-    var me2 = this;
-    var index = 0;
-    return {
-      next: function() {
-        if (index < me2.length) {
-          return {
-            value: me2[index++],
-            done: false
-          };
-        } else {
-          return {
-            done: true
-          };
-        }
-      },
-      return: function() {
-        return {
-          done: true
-        };
-      }
-    };
-  };
-  function LiveNodeList(node, refresh) {
-    this._node = node;
-    this._refresh = refresh;
-    _updateLiveList(this);
-  }
-  function _updateLiveList(list) {
-    var inc = list._node._inc || list._node.ownerDocument._inc;
-    if (list._inc !== inc) {
-      var ls = list._refresh(list._node);
-      __set__(list, "length", ls.length);
-      if (!list.$$length || ls.length < list.$$length) {
-        for (var i4 = ls.length;i4 in list; i4++) {
-          if (hasOwn2(list, i4)) {
-            delete list[i4];
-          }
-        }
-      }
-      copy(ls, list);
-      list._inc = inc;
-    }
-  }
-  LiveNodeList.prototype.item = function(i4) {
-    _updateLiveList(this);
-    return this[i4] || null;
-  };
-  _extends(LiveNodeList, NodeList);
-  function NamedNodeMap() {}
-  function _findNodeIndex(list, node) {
-    var i4 = 0;
-    while (i4 < list.length) {
-      if (list[i4] === node) {
-        return i4;
-      }
-      i4++;
-    }
-  }
-  function _addNamedNode(el, list, newAttr, oldAttr) {
-    if (oldAttr) {
-      list[_findNodeIndex(list, oldAttr)] = newAttr;
-    } else {
-      list[list.length] = newAttr;
-      list.length++;
-    }
-    if (el) {
-      newAttr.ownerElement = el;
-      var doc2 = el.ownerDocument;
-      if (doc2) {
-        oldAttr && _onRemoveAttribute(doc2, el, oldAttr);
-        _onAddAttribute(doc2, el, newAttr);
-      }
-    }
-  }
-  function _removeNamedNode(el, list, attr) {
-    var i4 = _findNodeIndex(list, attr);
-    if (i4 >= 0) {
-      var lastIndex = list.length - 1;
-      while (i4 <= lastIndex) {
-        list[i4] = list[++i4];
-      }
-      list.length = lastIndex;
-      if (el) {
-        var doc2 = el.ownerDocument;
-        if (doc2) {
-          _onRemoveAttribute(doc2, el, attr);
-        }
-        attr.ownerElement = null;
-      }
-    }
-  }
-  NamedNodeMap.prototype = {
-    length: 0,
-    item: NodeList.prototype.item,
-    getNamedItem: function(localName) {
-      if (this._ownerElement && this._ownerElement._isInHTMLDocumentAndNamespace()) {
-        localName = localName.toLowerCase();
-      }
-      var i4 = 0;
-      while (i4 < this.length) {
-        var attr = this[i4];
-        if (attr.nodeName === localName) {
-          return attr;
-        }
-        i4++;
-      }
-      return null;
-    },
-    setNamedItem: function(attr) {
-      var el = attr.ownerElement;
-      if (el && el !== this._ownerElement) {
-        throw new DOMException3(DOMException3.INUSE_ATTRIBUTE_ERR);
-      }
-      var oldAttr = this.getNamedItemNS(attr.namespaceURI, attr.localName);
-      if (oldAttr === attr) {
-        return attr;
-      }
-      _addNamedNode(this._ownerElement, this, attr, oldAttr);
-      return oldAttr;
-    },
-    setNamedItemNS: function(attr) {
-      return this.setNamedItem(attr);
-    },
-    removeNamedItem: function(localName) {
-      var attr = this.getNamedItem(localName);
-      if (!attr) {
-        throw new DOMException3(DOMException3.NOT_FOUND_ERR, localName);
-      }
-      _removeNamedNode(this._ownerElement, this, attr);
-      return attr;
-    },
-    removeNamedItemNS: function(namespaceURI, localName) {
-      var attr = this.getNamedItemNS(namespaceURI, localName);
-      if (!attr) {
-        throw new DOMException3(DOMException3.NOT_FOUND_ERR, namespaceURI ? namespaceURI + " : " + localName : localName);
-      }
-      _removeNamedNode(this._ownerElement, this, attr);
-      return attr;
-    },
-    getNamedItemNS: function(namespaceURI, localName) {
-      if (!namespaceURI) {
-        namespaceURI = null;
-      }
-      var i4 = 0;
-      while (i4 < this.length) {
-        var node = this[i4];
-        if (node.localName === localName && node.namespaceURI === namespaceURI) {
-          return node;
-        }
-        i4++;
-      }
-      return null;
-    }
-  };
-  NamedNodeMap.prototype[Symbol.iterator] = function() {
-    var me2 = this;
-    var index = 0;
-    return {
-      next: function() {
-        if (index < me2.length) {
-          return {
-            value: me2[index++],
-            done: false
-          };
-        } else {
-          return {
-            done: true
-          };
-        }
-      },
-      return: function() {
-        return {
-          done: true
-        };
-      }
-    };
-  };
-  function DOMImplementation() {}
-  DOMImplementation.prototype = {
-    hasFeature: function(feature, version6) {
-      return true;
-    },
-    createDocument: function(namespaceURI, qualifiedName, doctype) {
-      var contentType = MIME_TYPE.XML_APPLICATION;
-      if (namespaceURI === NAMESPACE.HTML) {
-        contentType = MIME_TYPE.XML_XHTML_APPLICATION;
-      } else if (namespaceURI === NAMESPACE.SVG) {
-        contentType = MIME_TYPE.XML_SVG_IMAGE;
-      }
-      var doc2 = new Document(PDC, { contentType });
-      doc2.implementation = this;
-      doc2.childNodes = new NodeList;
-      doc2.doctype = doctype || null;
-      if (doctype) {
-        doc2.appendChild(doctype);
-      }
-      if (qualifiedName) {
-        var root2 = doc2.createElementNS(namespaceURI, qualifiedName);
-        doc2.appendChild(root2);
-      }
-      return doc2;
-    },
-    createDocumentType: function(qualifiedName, publicId, systemId, internalSubset) {
-      validateQualifiedName(qualifiedName);
-      var node = new DocumentType(PDC);
-      node.name = qualifiedName;
-      node.nodeName = qualifiedName;
-      node.publicId = publicId || "";
-      node.systemId = systemId || "";
-      node.internalSubset = internalSubset || "";
-      node.childNodes = new NodeList;
-      return node;
-    },
-    createHTMLDocument: function(title) {
-      var doc2 = new Document(PDC, { contentType: MIME_TYPE.HTML });
-      doc2.implementation = this;
-      doc2.childNodes = new NodeList;
-      if (title !== false) {
-        doc2.doctype = this.createDocumentType("html");
-        doc2.doctype.ownerDocument = doc2;
-        doc2.appendChild(doc2.doctype);
-        var htmlNode = doc2.createElement("html");
-        doc2.appendChild(htmlNode);
-        var headNode = doc2.createElement("head");
-        htmlNode.appendChild(headNode);
-        if (typeof title === "string") {
-          var titleNode = doc2.createElement("title");
-          titleNode.appendChild(doc2.createTextNode(title));
-          headNode.appendChild(titleNode);
-        }
-        htmlNode.appendChild(doc2.createElement("body"));
-      }
-      return doc2;
-    }
-  };
-  function Node2(symbol2) {
-    checkSymbol(symbol2);
-  }
-  Node2.prototype = {
-    firstChild: null,
-    lastChild: null,
-    previousSibling: null,
-    nextSibling: null,
-    parentNode: null,
-    get parentElement() {
-      return this.parentNode && this.parentNode.nodeType === this.ELEMENT_NODE ? this.parentNode : null;
-    },
-    childNodes: null,
-    ownerDocument: null,
-    nodeValue: null,
-    namespaceURI: null,
-    prefix: null,
-    localName: null,
-    baseURI: "about:blank",
-    get isConnected() {
-      var rootNode = this.getRootNode();
-      return rootNode && rootNode.nodeType === rootNode.DOCUMENT_NODE;
-    },
-    contains: function(other) {
-      if (!other)
-        return false;
-      var parent = other;
-      do {
-        if (this === parent)
-          return true;
-        parent = parent.parentNode;
-      } while (parent);
-      return false;
-    },
-    getRootNode: function(options) {
-      var parent = this;
-      do {
-        if (!parent.parentNode) {
-          return parent;
-        }
-        parent = parent.parentNode;
-      } while (parent);
-    },
-    isEqualNode: function(otherNode) {
-      if (!otherNode)
-        return false;
-      if (this.nodeType !== otherNode.nodeType)
-        return false;
-      switch (this.nodeType) {
-        case this.DOCUMENT_TYPE_NODE:
-          if (this.name !== otherNode.name)
-            return false;
-          if (this.publicId !== otherNode.publicId)
-            return false;
-          if (this.systemId !== otherNode.systemId)
-            return false;
-          break;
-        case this.ELEMENT_NODE:
-          if (this.namespaceURI !== otherNode.namespaceURI)
-            return false;
-          if (this.prefix !== otherNode.prefix)
-            return false;
-          if (this.localName !== otherNode.localName)
-            return false;
-          if (this.attributes.length !== otherNode.attributes.length)
-            return false;
-          for (var i4 = 0;i4 < this.attributes.length; i4++) {
-            var attr = this.attributes.item(i4);
-            if (!attr.isEqualNode(otherNode.getAttributeNodeNS(attr.namespaceURI, attr.localName))) {
-              return false;
-            }
-          }
-          break;
-        case this.ATTRIBUTE_NODE:
-          if (this.namespaceURI !== otherNode.namespaceURI)
-            return false;
-          if (this.localName !== otherNode.localName)
-            return false;
-          if (this.value !== otherNode.value)
-            return false;
-          break;
-        case this.PROCESSING_INSTRUCTION_NODE:
-          if (this.target !== otherNode.target || this.data !== otherNode.data) {
-            return false;
-          }
-          break;
-        case this.TEXT_NODE:
-        case this.COMMENT_NODE:
-          if (this.data !== otherNode.data)
-            return false;
-          break;
-      }
-      if (this.childNodes.length !== otherNode.childNodes.length) {
-        return false;
-      }
-      for (var i4 = 0;i4 < this.childNodes.length; i4++) {
-        if (!this.childNodes[i4].isEqualNode(otherNode.childNodes[i4])) {
-          return false;
-        }
-      }
-      return true;
-    },
-    isSameNode: function(otherNode) {
-      return this === otherNode;
-    },
-    insertBefore: function(newChild, refChild) {
-      return _insertBefore(this, newChild, refChild);
-    },
-    replaceChild: function(newChild, oldChild) {
-      _insertBefore(this, newChild, oldChild, assertPreReplacementValidityInDocument);
-      if (oldChild) {
-        this.removeChild(oldChild);
-      }
-    },
-    removeChild: function(oldChild) {
-      return _removeChild(this, oldChild);
-    },
-    appendChild: function(newChild) {
-      return this.insertBefore(newChild, null);
-    },
-    hasChildNodes: function() {
-      return this.firstChild != null;
-    },
-    cloneNode: function(deep) {
-      return cloneNode(this.ownerDocument || this, this, deep);
-    },
-    normalize: function() {
-      var child = this.firstChild;
-      while (child) {
-        var next = child.nextSibling;
-        if (next && next.nodeType == TEXT_NODE && child.nodeType == TEXT_NODE) {
-          this.removeChild(next);
-          child.appendData(next.data);
-        } else {
-          child.normalize();
-          child = next;
-        }
-      }
-    },
-    isSupported: function(feature, version6) {
-      return this.ownerDocument.implementation.hasFeature(feature, version6);
-    },
-    lookupPrefix: function(namespaceURI) {
-      var el = this;
-      while (el) {
-        var map3 = el._nsMap;
-        if (map3) {
-          for (var n2 in map3) {
-            if (hasOwn2(map3, n2) && map3[n2] === namespaceURI) {
-              return n2;
-            }
-          }
-        }
-        el = el.nodeType == ATTRIBUTE_NODE ? el.ownerDocument : el.parentNode;
-      }
-      return null;
-    },
-    lookupNamespaceURI: function(prefix) {
-      var el = this;
-      while (el) {
-        var map3 = el._nsMap;
-        if (map3) {
-          if (hasOwn2(map3, prefix)) {
-            return map3[prefix];
-          }
-        }
-        el = el.nodeType == ATTRIBUTE_NODE ? el.ownerDocument : el.parentNode;
-      }
-      return null;
-    },
-    isDefaultNamespace: function(namespaceURI) {
-      var prefix = this.lookupPrefix(namespaceURI);
-      return prefix == null;
-    },
-    compareDocumentPosition: function(other) {
-      if (this === other)
-        return 0;
-      var node1 = other;
-      var node2 = this;
-      var attr1 = null;
-      var attr2 = null;
-      if (node1 instanceof Attr) {
-        attr1 = node1;
-        node1 = attr1.ownerElement;
-      }
-      if (node2 instanceof Attr) {
-        attr2 = node2;
-        node2 = attr2.ownerElement;
-        if (attr1 && node1 && node2 === node1) {
-          for (var i4 = 0, attr;attr = node2.attributes[i4]; i4++) {
-            if (attr === attr1)
-              return DocumentPosition.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC + DocumentPosition.DOCUMENT_POSITION_PRECEDING;
-            if (attr === attr2)
-              return DocumentPosition.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC + DocumentPosition.DOCUMENT_POSITION_FOLLOWING;
-          }
-        }
-      }
-      if (!node1 || !node2 || node2.ownerDocument !== node1.ownerDocument) {
-        return DocumentPosition.DOCUMENT_POSITION_DISCONNECTED + DocumentPosition.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC + (docGUID(node2.ownerDocument) > docGUID(node1.ownerDocument) ? DocumentPosition.DOCUMENT_POSITION_FOLLOWING : DocumentPosition.DOCUMENT_POSITION_PRECEDING);
-      }
-      if (attr2 && node1 === node2) {
-        return DocumentPosition.DOCUMENT_POSITION_CONTAINS + DocumentPosition.DOCUMENT_POSITION_PRECEDING;
-      }
-      if (attr1 && node1 === node2) {
-        return DocumentPosition.DOCUMENT_POSITION_CONTAINED_BY + DocumentPosition.DOCUMENT_POSITION_FOLLOWING;
-      }
-      var chain1 = [];
-      var ancestor1 = node1.parentNode;
-      while (ancestor1) {
-        if (!attr2 && ancestor1 === node2) {
-          return DocumentPosition.DOCUMENT_POSITION_CONTAINED_BY + DocumentPosition.DOCUMENT_POSITION_FOLLOWING;
-        }
-        chain1.push(ancestor1);
-        ancestor1 = ancestor1.parentNode;
-      }
-      chain1.reverse();
-      var chain2 = [];
-      var ancestor2 = node2.parentNode;
-      while (ancestor2) {
-        if (!attr1 && ancestor2 === node1) {
-          return DocumentPosition.DOCUMENT_POSITION_CONTAINS + DocumentPosition.DOCUMENT_POSITION_PRECEDING;
-        }
-        chain2.push(ancestor2);
-        ancestor2 = ancestor2.parentNode;
-      }
-      chain2.reverse();
-      var ca = commonAncestor(chain1, chain2);
-      for (var n2 in ca.childNodes) {
-        var child = ca.childNodes[n2];
-        if (child === node2)
-          return DocumentPosition.DOCUMENT_POSITION_FOLLOWING;
-        if (child === node1)
-          return DocumentPosition.DOCUMENT_POSITION_PRECEDING;
-        if (chain2.indexOf(child) >= 0)
-          return DocumentPosition.DOCUMENT_POSITION_FOLLOWING;
-        if (chain1.indexOf(child) >= 0)
-          return DocumentPosition.DOCUMENT_POSITION_PRECEDING;
-      }
-      return 0;
-    }
-  };
-  function _xmlEncoder(c4) {
-    return c4 == "<" && "&lt;" || c4 == ">" && "&gt;" || c4 == "&" && "&amp;" || c4 == '"' && "&quot;" || "&#" + c4.charCodeAt() + ";";
-  }
-  copy(NodeType, Node2);
-  copy(NodeType, Node2.prototype);
-  copy(DocumentPosition, Node2);
-  copy(DocumentPosition, Node2.prototype);
-  function _visitNode(node, callback) {
-    if (callback(node)) {
-      return true;
-    }
-    if (node = node.firstChild) {
-      do {
-        if (_visitNode(node, callback)) {
-          return true;
-        }
-      } while (node = node.nextSibling);
-    }
-  }
-  function Document(symbol2, options) {
-    checkSymbol(symbol2);
-    var opt = options || {};
-    this.ownerDocument = this;
-    this.contentType = opt.contentType || MIME_TYPE.XML_APPLICATION;
-    this.type = isHTMLMimeType(this.contentType) ? "html" : "xml";
-  }
-  function _onAddAttribute(doc2, el, newAttr) {
-    doc2 && doc2._inc++;
-    var ns = newAttr.namespaceURI;
-    if (ns === NAMESPACE.XMLNS) {
-      el._nsMap[newAttr.prefix ? newAttr.localName : ""] = newAttr.value;
-    }
-  }
-  function _onRemoveAttribute(doc2, el, newAttr, remove2) {
-    doc2 && doc2._inc++;
-    var ns = newAttr.namespaceURI;
-    if (ns === NAMESPACE.XMLNS) {
-      delete el._nsMap[newAttr.prefix ? newAttr.localName : ""];
-    }
-  }
-  function _onUpdateChild(doc2, parent, newChild) {
-    if (doc2 && doc2._inc) {
-      doc2._inc++;
-      var childNodes = parent.childNodes;
-      if (newChild && !newChild.nextSibling) {
-        childNodes[childNodes.length++] = newChild;
-      } else {
-        var child = parent.firstChild;
-        var i4 = 0;
-        while (child) {
-          childNodes[i4++] = child;
-          child = child.nextSibling;
-        }
-        childNodes.length = i4;
-        delete childNodes[childNodes.length];
-      }
-    }
-  }
-  function _removeChild(parentNode, child) {
-    if (parentNode !== child.parentNode) {
-      throw new DOMException3(DOMException3.NOT_FOUND_ERR, "child's parent is not parent");
-    }
-    var oldPreviousSibling = child.previousSibling;
-    var oldNextSibling = child.nextSibling;
-    if (oldPreviousSibling) {
-      oldPreviousSibling.nextSibling = oldNextSibling;
-    } else {
-      parentNode.firstChild = oldNextSibling;
-    }
-    if (oldNextSibling) {
-      oldNextSibling.previousSibling = oldPreviousSibling;
-    } else {
-      parentNode.lastChild = oldPreviousSibling;
-    }
-    _onUpdateChild(parentNode.ownerDocument, parentNode);
-    child.parentNode = null;
-    child.previousSibling = null;
-    child.nextSibling = null;
-    return child;
-  }
-  function hasValidParentNodeType(node) {
-    return node && (node.nodeType === Node2.DOCUMENT_NODE || node.nodeType === Node2.DOCUMENT_FRAGMENT_NODE || node.nodeType === Node2.ELEMENT_NODE);
-  }
-  function hasInsertableNodeType(node) {
-    return node && (node.nodeType === Node2.CDATA_SECTION_NODE || node.nodeType === Node2.COMMENT_NODE || node.nodeType === Node2.DOCUMENT_FRAGMENT_NODE || node.nodeType === Node2.DOCUMENT_TYPE_NODE || node.nodeType === Node2.ELEMENT_NODE || node.nodeType === Node2.PROCESSING_INSTRUCTION_NODE || node.nodeType === Node2.TEXT_NODE);
-  }
-  function isDocTypeNode(node) {
-    return node && node.nodeType === Node2.DOCUMENT_TYPE_NODE;
-  }
-  function isElementNode(node) {
-    return node && node.nodeType === Node2.ELEMENT_NODE;
-  }
-  function isTextNode(node) {
-    return node && node.nodeType === Node2.TEXT_NODE;
-  }
-  function isElementInsertionPossible(doc2, child) {
-    var parentChildNodes = doc2.childNodes || [];
-    if (find(parentChildNodes, isElementNode) || isDocTypeNode(child)) {
-      return false;
-    }
-    var docTypeNode = find(parentChildNodes, isDocTypeNode);
-    return !(child && docTypeNode && parentChildNodes.indexOf(docTypeNode) > parentChildNodes.indexOf(child));
-  }
-  function isElementReplacementPossible(doc2, child) {
-    var parentChildNodes = doc2.childNodes || [];
-    function hasElementChildThatIsNotChild(node) {
-      return isElementNode(node) && node !== child;
-    }
-    if (find(parentChildNodes, hasElementChildThatIsNotChild)) {
-      return false;
-    }
-    var docTypeNode = find(parentChildNodes, isDocTypeNode);
-    return !(child && docTypeNode && parentChildNodes.indexOf(docTypeNode) > parentChildNodes.indexOf(child));
-  }
-  function assertPreInsertionValidity1to5(parent, node, child) {
-    if (!hasValidParentNodeType(parent)) {
-      throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Unexpected parent node type " + parent.nodeType);
-    }
-    if (child && child.parentNode !== parent) {
-      throw new DOMException3(DOMException3.NOT_FOUND_ERR, "child not in parent");
-    }
-    if (!hasInsertableNodeType(node) || isDocTypeNode(node) && parent.nodeType !== Node2.DOCUMENT_NODE) {
-      throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Unexpected node type " + node.nodeType + " for parent node type " + parent.nodeType);
-    }
-  }
-  function assertPreInsertionValidityInDocument(parent, node, child) {
-    var parentChildNodes = parent.childNodes || [];
-    var nodeChildNodes = node.childNodes || [];
-    if (node.nodeType === Node2.DOCUMENT_FRAGMENT_NODE) {
-      var nodeChildElements = nodeChildNodes.filter(isElementNode);
-      if (nodeChildElements.length > 1 || find(nodeChildNodes, isTextNode)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "More than one element or text in fragment");
-      }
-      if (nodeChildElements.length === 1 && !isElementInsertionPossible(parent, child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Element in fragment can not be inserted before doctype");
-      }
-    }
-    if (isElementNode(node)) {
-      if (!isElementInsertionPossible(parent, child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Only one element can be added and only after doctype");
-      }
-    }
-    if (isDocTypeNode(node)) {
-      if (find(parentChildNodes, isDocTypeNode)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Only one doctype is allowed");
-      }
-      var parentElementChild = find(parentChildNodes, isElementNode);
-      if (child && parentChildNodes.indexOf(parentElementChild) < parentChildNodes.indexOf(child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Doctype can only be inserted before an element");
-      }
-      if (!child && parentElementChild) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Doctype can not be appended since element is present");
-      }
-    }
-  }
-  function assertPreReplacementValidityInDocument(parent, node, child) {
-    var parentChildNodes = parent.childNodes || [];
-    var nodeChildNodes = node.childNodes || [];
-    if (node.nodeType === Node2.DOCUMENT_FRAGMENT_NODE) {
-      var nodeChildElements = nodeChildNodes.filter(isElementNode);
-      if (nodeChildElements.length > 1 || find(nodeChildNodes, isTextNode)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "More than one element or text in fragment");
-      }
-      if (nodeChildElements.length === 1 && !isElementReplacementPossible(parent, child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Element in fragment can not be inserted before doctype");
-      }
-    }
-    if (isElementNode(node)) {
-      if (!isElementReplacementPossible(parent, child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Only one element can be added and only after doctype");
-      }
-    }
-    if (isDocTypeNode(node)) {
-      let hasDoctypeChildThatIsNotChild = function(node2) {
-        return isDocTypeNode(node2) && node2 !== child;
-      };
-      if (find(parentChildNodes, hasDoctypeChildThatIsNotChild)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Only one doctype is allowed");
-      }
-      var parentElementChild = find(parentChildNodes, isElementNode);
-      if (child && parentChildNodes.indexOf(parentElementChild) < parentChildNodes.indexOf(child)) {
-        throw new DOMException3(DOMException3.HIERARCHY_REQUEST_ERR, "Doctype can only be inserted before an element");
-      }
-    }
-  }
-  function _insertBefore(parent, node, child, _inDocumentAssertion) {
-    assertPreInsertionValidity1to5(parent, node, child);
-    if (parent.nodeType === Node2.DOCUMENT_NODE) {
-      (_inDocumentAssertion || assertPreInsertionValidityInDocument)(parent, node, child);
-    }
-    var cp = node.parentNode;
-    if (cp) {
-      cp.removeChild(node);
-    }
-    if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
-      var newFirst = node.firstChild;
-      if (newFirst == null) {
-        return node;
-      }
-      var newLast = node.lastChild;
-    } else {
-      newFirst = newLast = node;
-    }
-    var pre = child ? child.previousSibling : parent.lastChild;
-    newFirst.previousSibling = pre;
-    newLast.nextSibling = child;
-    if (pre) {
-      pre.nextSibling = newFirst;
-    } else {
-      parent.firstChild = newFirst;
-    }
-    if (child == null) {
-      parent.lastChild = newLast;
-    } else {
-      child.previousSibling = newLast;
-    }
-    do {
-      newFirst.parentNode = parent;
-    } while (newFirst !== newLast && (newFirst = newFirst.nextSibling));
-    _onUpdateChild(parent.ownerDocument || parent, parent, node);
-    if (node.nodeType == DOCUMENT_FRAGMENT_NODE) {
-      node.firstChild = node.lastChild = null;
-    }
-    return node;
-  }
-  Document.prototype = {
-    implementation: null,
-    nodeName: "#document",
-    nodeType: DOCUMENT_NODE,
-    doctype: null,
-    documentElement: null,
-    _inc: 1,
-    insertBefore: function(newChild, refChild) {
-      if (newChild.nodeType === DOCUMENT_FRAGMENT_NODE) {
-        var child = newChild.firstChild;
-        while (child) {
-          var next = child.nextSibling;
-          this.insertBefore(child, refChild);
-          child = next;
-        }
-        return newChild;
-      }
-      _insertBefore(this, newChild, refChild);
-      newChild.ownerDocument = this;
-      if (this.documentElement === null && newChild.nodeType === ELEMENT_NODE) {
-        this.documentElement = newChild;
-      }
-      return newChild;
-    },
-    removeChild: function(oldChild) {
-      var removed = _removeChild(this, oldChild);
-      if (removed === this.documentElement) {
-        this.documentElement = null;
-      }
-      return removed;
-    },
-    replaceChild: function(newChild, oldChild) {
-      _insertBefore(this, newChild, oldChild, assertPreReplacementValidityInDocument);
-      newChild.ownerDocument = this;
-      if (oldChild) {
-        this.removeChild(oldChild);
-      }
-      if (isElementNode(newChild)) {
-        this.documentElement = newChild;
-      }
-    },
-    importNode: function(importedNode, deep) {
-      return importNode(this, importedNode, deep);
-    },
-    getElementById: function(id) {
-      var rtv = null;
-      _visitNode(this.documentElement, function(node) {
-        if (node.nodeType == ELEMENT_NODE) {
-          if (node.getAttribute("id") == id) {
-            rtv = node;
-            return true;
-          }
-        }
-      });
-      return rtv;
-    },
-    createElement: function(tagName) {
-      var node = new Element(PDC);
-      node.ownerDocument = this;
-      if (this.type === "html") {
-        tagName = tagName.toLowerCase();
-      }
-      if (hasDefaultHTMLNamespace(this.contentType)) {
-        node.namespaceURI = NAMESPACE.HTML;
-      }
-      node.nodeName = tagName;
-      node.tagName = tagName;
-      node.localName = tagName;
-      node.childNodes = new NodeList;
-      var attrs = node.attributes = new NamedNodeMap;
-      attrs._ownerElement = node;
-      return node;
-    },
-    createDocumentFragment: function() {
-      var node = new DocumentFragment(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      return node;
-    },
-    createTextNode: function(data) {
-      var node = new Text2(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.appendData(data);
-      return node;
-    },
-    createComment: function(data) {
-      var node = new Comment(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.appendData(data);
-      return node;
-    },
-    createCDATASection: function(data) {
-      if (data.indexOf("]]>") !== -1) {
-        throw new DOMException3(DOMException3.INVALID_CHARACTER_ERR, 'data contains "]]>"');
-      }
-      var node = new CDATASection(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.appendData(data);
-      return node;
-    },
-    createProcessingInstruction: function(target, data) {
-      var node = new ProcessingInstruction(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.nodeName = node.target = target;
-      node.nodeValue = node.data = data;
-      return node;
-    },
-    createAttribute: function(name3) {
-      if (!g2.QName_exact.test(name3)) {
-        throw new DOMException3(DOMException3.INVALID_CHARACTER_ERR, 'invalid character in name "' + name3 + '"');
-      }
-      if (this.type === "html") {
-        name3 = name3.toLowerCase();
-      }
-      return this._createAttribute(name3);
-    },
-    _createAttribute: function(name3) {
-      var node = new Attr(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.name = name3;
-      node.nodeName = name3;
-      node.localName = name3;
-      node.specified = true;
-      return node;
-    },
-    createEntityReference: function(name3) {
-      if (!g2.Name.test(name3)) {
-        throw new DOMException3(DOMException3.INVALID_CHARACTER_ERR, 'not a valid xml name "' + name3 + '"');
-      }
-      if (this.type === "html") {
-        throw new DOMException3("document is an html document", DOMExceptionName.NotSupportedError);
-      }
-      var node = new EntityReference(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.nodeName = name3;
-      return node;
-    },
-    createElementNS: function(namespaceURI, qualifiedName) {
-      var validated = validateAndExtract(namespaceURI, qualifiedName);
-      var node = new Element(PDC);
-      var attrs = node.attributes = new NamedNodeMap;
-      node.childNodes = new NodeList;
-      node.ownerDocument = this;
-      node.nodeName = qualifiedName;
-      node.tagName = qualifiedName;
-      node.namespaceURI = validated[0];
-      node.prefix = validated[1];
-      node.localName = validated[2];
-      attrs._ownerElement = node;
-      return node;
-    },
-    createAttributeNS: function(namespaceURI, qualifiedName) {
-      var validated = validateAndExtract(namespaceURI, qualifiedName);
-      var node = new Attr(PDC);
-      node.ownerDocument = this;
-      node.childNodes = new NodeList;
-      node.nodeName = qualifiedName;
-      node.name = qualifiedName;
-      node.specified = true;
-      node.namespaceURI = validated[0];
-      node.prefix = validated[1];
-      node.localName = validated[2];
-      return node;
-    }
-  };
-  _extends(Document, Node2);
-  function Element(symbol2) {
-    checkSymbol(symbol2);
-    this._nsMap = Object.create(null);
-  }
-  Element.prototype = {
-    nodeType: ELEMENT_NODE,
-    attributes: null,
-    getQualifiedName: function() {
-      return this.prefix ? this.prefix + ":" + this.localName : this.localName;
-    },
-    _isInHTMLDocumentAndNamespace: function() {
-      return this.ownerDocument.type === "html" && this.namespaceURI === NAMESPACE.HTML;
-    },
-    hasAttributes: function() {
-      return !!(this.attributes && this.attributes.length);
-    },
-    hasAttribute: function(name3) {
-      return !!this.getAttributeNode(name3);
-    },
-    getAttribute: function(name3) {
-      var attr = this.getAttributeNode(name3);
-      return attr ? attr.value : null;
-    },
-    getAttributeNode: function(name3) {
-      if (this._isInHTMLDocumentAndNamespace()) {
-        name3 = name3.toLowerCase();
-      }
-      return this.attributes.getNamedItem(name3);
-    },
-    setAttribute: function(name3, value) {
-      if (this._isInHTMLDocumentAndNamespace()) {
-        name3 = name3.toLowerCase();
-      }
-      var attr = this.getAttributeNode(name3);
-      if (attr) {
-        attr.value = attr.nodeValue = "" + value;
-      } else {
-        attr = this.ownerDocument._createAttribute(name3);
-        attr.value = attr.nodeValue = "" + value;
-        this.setAttributeNode(attr);
-      }
-    },
-    removeAttribute: function(name3) {
-      var attr = this.getAttributeNode(name3);
-      attr && this.removeAttributeNode(attr);
-    },
-    setAttributeNode: function(newAttr) {
-      return this.attributes.setNamedItem(newAttr);
-    },
-    setAttributeNodeNS: function(newAttr) {
-      return this.attributes.setNamedItemNS(newAttr);
-    },
-    removeAttributeNode: function(oldAttr) {
-      return this.attributes.removeNamedItem(oldAttr.nodeName);
-    },
-    removeAttributeNS: function(namespaceURI, localName) {
-      var old = this.getAttributeNodeNS(namespaceURI, localName);
-      old && this.removeAttributeNode(old);
-    },
-    hasAttributeNS: function(namespaceURI, localName) {
-      return this.getAttributeNodeNS(namespaceURI, localName) != null;
-    },
-    getAttributeNS: function(namespaceURI, localName) {
-      var attr = this.getAttributeNodeNS(namespaceURI, localName);
-      return attr ? attr.value : null;
-    },
-    setAttributeNS: function(namespaceURI, qualifiedName, value) {
-      var validated = validateAndExtract(namespaceURI, qualifiedName);
-      var localName = validated[2];
-      var attr = this.getAttributeNodeNS(namespaceURI, localName);
-      if (attr) {
-        attr.value = attr.nodeValue = "" + value;
-      } else {
-        attr = this.ownerDocument.createAttributeNS(namespaceURI, qualifiedName);
-        attr.value = attr.nodeValue = "" + value;
-        this.setAttributeNode(attr);
-      }
-    },
-    getAttributeNodeNS: function(namespaceURI, localName) {
-      return this.attributes.getNamedItemNS(namespaceURI, localName);
-    },
-    getElementsByClassName: function(classNames) {
-      var classNamesSet = toOrderedSet(classNames);
-      return new LiveNodeList(this, function(base2) {
-        var ls = [];
-        if (classNamesSet.length > 0) {
-          _visitNode(base2, function(node) {
-            if (node !== base2 && node.nodeType === ELEMENT_NODE) {
-              var nodeClassNames = node.getAttribute("class");
-              if (nodeClassNames) {
-                var matches = classNames === nodeClassNames;
-                if (!matches) {
-                  var nodeClassNamesSet = toOrderedSet(nodeClassNames);
-                  matches = classNamesSet.every(arrayIncludes2(nodeClassNamesSet));
-                }
-                if (matches) {
-                  ls.push(node);
-                }
-              }
-            }
-          });
-        }
-        return ls;
-      });
-    },
-    getElementsByTagName: function(qualifiedName) {
-      var isHTMLDocument = (this.nodeType === DOCUMENT_NODE ? this : this.ownerDocument).type === "html";
-      var lowerQualifiedName = qualifiedName.toLowerCase();
-      return new LiveNodeList(this, function(base2) {
-        var ls = [];
-        _visitNode(base2, function(node) {
-          if (node === base2 || node.nodeType !== ELEMENT_NODE) {
-            return;
-          }
-          if (qualifiedName === "*") {
-            ls.push(node);
-          } else {
-            var nodeQualifiedName = node.getQualifiedName();
-            var matchingQName = isHTMLDocument && node.namespaceURI === NAMESPACE.HTML ? lowerQualifiedName : qualifiedName;
-            if (nodeQualifiedName === matchingQName) {
-              ls.push(node);
-            }
-          }
-        });
-        return ls;
-      });
-    },
-    getElementsByTagNameNS: function(namespaceURI, localName) {
-      return new LiveNodeList(this, function(base2) {
-        var ls = [];
-        _visitNode(base2, function(node) {
-          if (node !== base2 && node.nodeType === ELEMENT_NODE && (namespaceURI === "*" || node.namespaceURI === namespaceURI) && (localName === "*" || node.localName == localName)) {
-            ls.push(node);
-          }
-        });
-        return ls;
-      });
-    }
-  };
-  Document.prototype.getElementsByClassName = Element.prototype.getElementsByClassName;
-  Document.prototype.getElementsByTagName = Element.prototype.getElementsByTagName;
-  Document.prototype.getElementsByTagNameNS = Element.prototype.getElementsByTagNameNS;
-  _extends(Element, Node2);
-  function Attr(symbol2) {
-    checkSymbol(symbol2);
-    this.namespaceURI = null;
-    this.prefix = null;
-    this.ownerElement = null;
-  }
-  Attr.prototype.nodeType = ATTRIBUTE_NODE;
-  _extends(Attr, Node2);
-  function CharacterData(symbol2) {
-    checkSymbol(symbol2);
-  }
-  CharacterData.prototype = {
-    data: "",
-    substringData: function(offset, count4) {
-      return this.data.substring(offset, offset + count4);
-    },
-    appendData: function(text2) {
-      text2 = this.data + text2;
-      this.nodeValue = this.data = text2;
-      this.length = text2.length;
-    },
-    insertData: function(offset, text2) {
-      this.replaceData(offset, 0, text2);
-    },
-    deleteData: function(offset, count4) {
-      this.replaceData(offset, count4, "");
-    },
-    replaceData: function(offset, count4, text2) {
-      var start = this.data.substring(0, offset);
-      var end = this.data.substring(offset + count4);
-      text2 = start + text2 + end;
-      this.nodeValue = this.data = text2;
-      this.length = text2.length;
-    }
-  };
-  _extends(CharacterData, Node2);
-  function Text2(symbol2) {
-    checkSymbol(symbol2);
-  }
-  Text2.prototype = {
-    nodeName: "#text",
-    nodeType: TEXT_NODE,
-    splitText: function(offset) {
-      var text2 = this.data;
-      var newText = text2.substring(offset);
-      text2 = text2.substring(0, offset);
-      this.data = this.nodeValue = text2;
-      this.length = text2.length;
-      var newNode = this.ownerDocument.createTextNode(newText);
-      if (this.parentNode) {
-        this.parentNode.insertBefore(newNode, this.nextSibling);
-      }
-      return newNode;
-    }
-  };
-  _extends(Text2, CharacterData);
-  function Comment(symbol2) {
-    checkSymbol(symbol2);
-  }
-  Comment.prototype = {
-    nodeName: "#comment",
-    nodeType: COMMENT_NODE
-  };
-  _extends(Comment, CharacterData);
-  function CDATASection(symbol2) {
-    checkSymbol(symbol2);
-  }
-  CDATASection.prototype = {
-    nodeName: "#cdata-section",
-    nodeType: CDATA_SECTION_NODE
-  };
-  _extends(CDATASection, Text2);
-  function DocumentType(symbol2) {
-    checkSymbol(symbol2);
-  }
-  DocumentType.prototype.nodeType = DOCUMENT_TYPE_NODE;
-  _extends(DocumentType, Node2);
-  function Notation(symbol2) {
-    checkSymbol(symbol2);
-  }
-  Notation.prototype.nodeType = NOTATION_NODE;
-  _extends(Notation, Node2);
-  function Entity(symbol2) {
-    checkSymbol(symbol2);
-  }
-  Entity.prototype.nodeType = ENTITY_NODE;
-  _extends(Entity, Node2);
-  function EntityReference(symbol2) {
-    checkSymbol(symbol2);
-  }
-  EntityReference.prototype.nodeType = ENTITY_REFERENCE_NODE;
-  _extends(EntityReference, Node2);
-  function DocumentFragment(symbol2) {
-    checkSymbol(symbol2);
-  }
-  DocumentFragment.prototype.nodeName = "#document-fragment";
-  DocumentFragment.prototype.nodeType = DOCUMENT_FRAGMENT_NODE;
-  _extends(DocumentFragment, Node2);
-  function ProcessingInstruction(symbol2) {
-    checkSymbol(symbol2);
-  }
-  ProcessingInstruction.prototype.nodeType = PROCESSING_INSTRUCTION_NODE;
-  _extends(ProcessingInstruction, CharacterData);
-  function XMLSerializer() {}
-  XMLSerializer.prototype.serializeToString = function(node, nodeFilter) {
-    return nodeSerializeToString.call(node, nodeFilter);
-  };
-  Node2.prototype.toString = nodeSerializeToString;
-  function nodeSerializeToString(nodeFilter) {
-    var buf = [];
-    var refNode = this.nodeType === DOCUMENT_NODE && this.documentElement || this;
-    var prefix = refNode.prefix;
-    var uri = refNode.namespaceURI;
-    if (uri && prefix == null) {
-      var prefix = refNode.lookupPrefix(uri);
-      if (prefix == null) {
-        var visibleNamespaces = [
-          { namespace: uri, prefix: null }
-        ];
-      }
-    }
-    serializeToString(this, buf, nodeFilter, visibleNamespaces);
-    return buf.join("");
-  }
-  function needNamespaceDefine(node, isHTML, visibleNamespaces) {
-    var prefix = node.prefix || "";
-    var uri = node.namespaceURI;
-    if (!uri) {
-      return false;
-    }
-    if (prefix === "xml" && uri === NAMESPACE.XML || uri === NAMESPACE.XMLNS) {
-      return false;
-    }
-    var i4 = visibleNamespaces.length;
-    while (i4--) {
-      var ns = visibleNamespaces[i4];
-      if (ns.prefix === prefix) {
-        return ns.namespace !== uri;
-      }
-    }
-    return true;
-  }
-  function addSerializedAttribute(buf, qualifiedName, value) {
-    buf.push(" ", qualifiedName, '="', value.replace(/[<>&"\t\n\r]/g, _xmlEncoder), '"');
-  }
-  function serializeToString(node, buf, nodeFilter, visibleNamespaces) {
-    if (!visibleNamespaces) {
-      visibleNamespaces = [];
-    }
-    var doc2 = node.nodeType === DOCUMENT_NODE ? node : node.ownerDocument;
-    var isHTML = doc2.type === "html";
-    if (nodeFilter) {
-      node = nodeFilter(node);
-      if (node) {
-        if (typeof node == "string") {
-          buf.push(node);
-          return;
-        }
-      } else {
-        return;
-      }
-    }
-    switch (node.nodeType) {
-      case ELEMENT_NODE:
-        var attrs = node.attributes;
-        var len = attrs.length;
-        var child = node.firstChild;
-        var nodeName = node.tagName;
-        var prefixedNodeName = nodeName;
-        if (!isHTML && !node.prefix && node.namespaceURI) {
-          var defaultNS;
-          for (var ai = 0;ai < attrs.length; ai++) {
-            if (attrs.item(ai).name === "xmlns") {
-              defaultNS = attrs.item(ai).value;
-              break;
-            }
-          }
-          if (!defaultNS) {
-            for (var nsi = visibleNamespaces.length - 1;nsi >= 0; nsi--) {
-              var namespace = visibleNamespaces[nsi];
-              if (namespace.prefix === "" && namespace.namespace === node.namespaceURI) {
-                defaultNS = namespace.namespace;
-                break;
-              }
-            }
-          }
-          if (defaultNS !== node.namespaceURI) {
-            for (var nsi = visibleNamespaces.length - 1;nsi >= 0; nsi--) {
-              var namespace = visibleNamespaces[nsi];
-              if (namespace.namespace === node.namespaceURI) {
-                if (namespace.prefix) {
-                  prefixedNodeName = namespace.prefix + ":" + nodeName;
-                }
-                break;
-              }
-            }
-          }
-        }
-        buf.push("<", prefixedNodeName);
-        for (var i4 = 0;i4 < len; i4++) {
-          var attr = attrs.item(i4);
-          if (attr.prefix == "xmlns") {
-            visibleNamespaces.push({
-              prefix: attr.localName,
-              namespace: attr.value
-            });
-          } else if (attr.nodeName == "xmlns") {
-            visibleNamespaces.push({ prefix: "", namespace: attr.value });
-          }
-        }
-        for (var i4 = 0;i4 < len; i4++) {
-          var attr = attrs.item(i4);
-          if (needNamespaceDefine(attr, isHTML, visibleNamespaces)) {
-            var prefix = attr.prefix || "";
-            var uri = attr.namespaceURI;
-            addSerializedAttribute(buf, prefix ? "xmlns:" + prefix : "xmlns", uri);
-            visibleNamespaces.push({ prefix, namespace: uri });
-          }
-          serializeToString(attr, buf, nodeFilter, visibleNamespaces);
-        }
-        if (nodeName === prefixedNodeName && needNamespaceDefine(node, isHTML, visibleNamespaces)) {
-          var prefix = node.prefix || "";
-          var uri = node.namespaceURI;
-          addSerializedAttribute(buf, prefix ? "xmlns:" + prefix : "xmlns", uri);
-          visibleNamespaces.push({ prefix, namespace: uri });
-        }
-        var canCloseTag = !child;
-        if (canCloseTag && (isHTML || node.namespaceURI === NAMESPACE.HTML)) {
-          canCloseTag = isHTMLVoidElement(nodeName);
-        }
-        if (canCloseTag) {
-          buf.push("/>");
-        } else {
-          buf.push(">");
-          if (isHTML && isHTMLRawTextElement(nodeName)) {
-            while (child) {
-              if (child.data) {
-                buf.push(child.data);
-              } else {
-                serializeToString(child, buf, nodeFilter, visibleNamespaces.slice());
-              }
-              child = child.nextSibling;
-            }
-          } else {
-            while (child) {
-              serializeToString(child, buf, nodeFilter, visibleNamespaces.slice());
-              child = child.nextSibling;
-            }
-          }
-          buf.push("</", prefixedNodeName, ">");
-        }
-        return;
-      case DOCUMENT_NODE:
-      case DOCUMENT_FRAGMENT_NODE:
-        var child = node.firstChild;
-        while (child) {
-          serializeToString(child, buf, nodeFilter, visibleNamespaces.slice());
-          child = child.nextSibling;
-        }
-        return;
-      case ATTRIBUTE_NODE:
-        return addSerializedAttribute(buf, node.name, node.value);
-      case TEXT_NODE:
-        return buf.push(node.data.replace(/[<&>]/g, _xmlEncoder));
-      case CDATA_SECTION_NODE:
-        return buf.push(g2.CDATA_START, node.data.replace(/]]>/g, "]]]]><![CDATA[>"), g2.CDATA_END);
-      case COMMENT_NODE:
-        return buf.push(g2.COMMENT_START, node.data, g2.COMMENT_END);
-      case DOCUMENT_TYPE_NODE:
-        var pubid = node.publicId;
-        var sysid = node.systemId;
-        buf.push(g2.DOCTYPE_DECL_START, " ", node.name);
-        if (pubid) {
-          buf.push(" ", g2.PUBLIC, " ", pubid);
-          if (sysid && sysid !== ".") {
-            buf.push(" ", sysid);
-          }
-        } else if (sysid && sysid !== ".") {
-          buf.push(" ", g2.SYSTEM, " ", sysid);
-        }
-        if (node.internalSubset) {
-          buf.push(" [", node.internalSubset, "]");
-        }
-        buf.push(">");
-        return;
-      case PROCESSING_INSTRUCTION_NODE:
-        return buf.push("<?", node.target, " ", node.data, "?>");
-      case ENTITY_REFERENCE_NODE:
-        return buf.push("&", node.nodeName, ";");
-      default:
-        buf.push("??", node.nodeName);
-    }
-  }
-  function importNode(doc2, node, deep) {
-    var node2;
-    switch (node.nodeType) {
-      case ELEMENT_NODE:
-        node2 = node.cloneNode(false);
-        node2.ownerDocument = doc2;
-      case DOCUMENT_FRAGMENT_NODE:
-        break;
-      case ATTRIBUTE_NODE:
-        deep = true;
-        break;
-    }
-    if (!node2) {
-      node2 = node.cloneNode(false);
-    }
-    node2.ownerDocument = doc2;
-    node2.parentNode = null;
-    if (deep) {
-      var child = node.firstChild;
-      while (child) {
-        node2.appendChild(importNode(doc2, child, deep));
-        child = child.nextSibling;
-      }
-    }
-    return node2;
-  }
-  function cloneNode(doc2, node, deep) {
-    var node2 = new node.constructor(PDC);
-    for (var n2 in node) {
-      if (hasOwn2(node, n2)) {
-        var v2 = node[n2];
-        if (typeof v2 != "object") {
-          if (v2 != node2[n2]) {
-            node2[n2] = v2;
-          }
-        }
-      }
-    }
-    if (node.childNodes) {
-      node2.childNodes = new NodeList;
-    }
-    node2.ownerDocument = doc2;
-    switch (node2.nodeType) {
-      case ELEMENT_NODE:
-        var attrs = node.attributes;
-        var attrs2 = node2.attributes = new NamedNodeMap;
-        var len = attrs.length;
-        attrs2._ownerElement = node2;
-        for (var i4 = 0;i4 < len; i4++) {
-          node2.setAttributeNode(cloneNode(doc2, attrs.item(i4), true));
-        }
-        break;
-      case ATTRIBUTE_NODE:
-        deep = true;
-    }
-    if (deep) {
-      var child = node.firstChild;
-      while (child) {
-        node2.appendChild(cloneNode(doc2, child, deep));
-        child = child.nextSibling;
-      }
-    }
-    return node2;
-  }
-  function __set__(object4, key, value) {
-    object4[key] = value;
-  }
-  function childrenRefresh(node) {
-    var ls = [];
-    var child = node.firstChild;
-    while (child) {
-      if (child.nodeType === ELEMENT_NODE) {
-        ls.push(child);
-      }
-      child = child.nextSibling;
-    }
-    return ls;
-  }
-  try {
-    if (Object.defineProperty) {
-      let getTextContent2 = function(node) {
-        switch (node.nodeType) {
-          case ELEMENT_NODE:
-          case DOCUMENT_FRAGMENT_NODE:
-            var buf = [];
-            node = node.firstChild;
-            while (node) {
-              if (node.nodeType !== 7 && node.nodeType !== 8) {
-                buf.push(getTextContent2(node));
-              }
-              node = node.nextSibling;
-            }
-            return buf.join("");
-          default:
-            return node.nodeValue;
-        }
-      };
-      Object.defineProperty(LiveNodeList.prototype, "length", {
-        get: function() {
-          _updateLiveList(this);
-          return this.$$length;
-        }
-      });
-      Object.defineProperty(Node2.prototype, "textContent", {
-        get: function() {
-          return getTextContent2(this);
-        },
-        set: function(data) {
-          switch (this.nodeType) {
-            case ELEMENT_NODE:
-            case DOCUMENT_FRAGMENT_NODE:
-              while (this.firstChild) {
-                this.removeChild(this.firstChild);
-              }
-              if (data || String(data)) {
-                this.appendChild(this.ownerDocument.createTextNode(data));
-              }
-              break;
-            default:
-              this.data = data;
-              this.value = data;
-              this.nodeValue = data;
-          }
-        }
-      });
-      Object.defineProperty(Element.prototype, "children", {
-        get: function() {
-          return new LiveNodeList(this, childrenRefresh);
-        }
-      });
-      Object.defineProperty(Document.prototype, "children", {
-        get: function() {
-          return new LiveNodeList(this, childrenRefresh);
-        }
-      });
-      Object.defineProperty(DocumentFragment.prototype, "children", {
-        get: function() {
-          return new LiveNodeList(this, childrenRefresh);
-        }
-      });
-      __set__ = function(object4, key, value) {
-        object4["$$" + key] = value;
-      };
-    }
-  } catch (e2) {}
-  exports._updateLiveList = _updateLiveList;
-  exports.Attr = Attr;
-  exports.CDATASection = CDATASection;
-  exports.CharacterData = CharacterData;
-  exports.Comment = Comment;
-  exports.Document = Document;
-  exports.DocumentFragment = DocumentFragment;
-  exports.DocumentType = DocumentType;
-  exports.DOMImplementation = DOMImplementation;
-  exports.Element = Element;
-  exports.Entity = Entity;
-  exports.EntityReference = EntityReference;
-  exports.LiveNodeList = LiveNodeList;
-  exports.NamedNodeMap = NamedNodeMap;
-  exports.Node = Node2;
-  exports.NodeList = NodeList;
-  exports.Notation = Notation;
-  exports.Text = Text2;
-  exports.ProcessingInstruction = ProcessingInstruction;
-  exports.XMLSerializer = XMLSerializer;
-});
-
-// node_modules/@xmldom/xmldom/lib/entities.js
-var require_entities = __commonJS((exports) => {
-  var freeze = require_conventions().freeze;
-  exports.XML_ENTITIES = freeze({
-    amp: "&",
-    apos: "'",
-    gt: ">",
-    lt: "<",
-    quot: '"'
-  });
-  exports.HTML_ENTITIES = freeze({
-    Aacute: "Á",
-    aacute: "á",
-    Abreve: "Ă",
-    abreve: "ă",
-    ac: "∾",
-    acd: "∿",
-    acE: "∾̳",
-    Acirc: "Â",
-    acirc: "â",
-    acute: "´",
-    Acy: "А",
-    acy: "а",
-    AElig: "Æ",
-    aelig: "æ",
-    af: "⁡",
-    Afr: "\uD835\uDD04",
-    afr: "\uD835\uDD1E",
-    Agrave: "À",
-    agrave: "à",
-    alefsym: "ℵ",
-    aleph: "ℵ",
-    Alpha: "Α",
-    alpha: "α",
-    Amacr: "Ā",
-    amacr: "ā",
-    amalg: "⨿",
-    AMP: "&",
-    amp: "&",
-    And: "⩓",
-    and: "∧",
-    andand: "⩕",
-    andd: "⩜",
-    andslope: "⩘",
-    andv: "⩚",
-    ang: "∠",
-    ange: "⦤",
-    angle: "∠",
-    angmsd: "∡",
-    angmsdaa: "⦨",
-    angmsdab: "⦩",
-    angmsdac: "⦪",
-    angmsdad: "⦫",
-    angmsdae: "⦬",
-    angmsdaf: "⦭",
-    angmsdag: "⦮",
-    angmsdah: "⦯",
-    angrt: "∟",
-    angrtvb: "⊾",
-    angrtvbd: "⦝",
-    angsph: "∢",
-    angst: "Å",
-    angzarr: "⍼",
-    Aogon: "Ą",
-    aogon: "ą",
-    Aopf: "\uD835\uDD38",
-    aopf: "\uD835\uDD52",
-    ap: "≈",
-    apacir: "⩯",
-    apE: "⩰",
-    ape: "≊",
-    apid: "≋",
-    apos: "'",
-    ApplyFunction: "⁡",
-    approx: "≈",
-    approxeq: "≊",
-    Aring: "Å",
-    aring: "å",
-    Ascr: "\uD835\uDC9C",
-    ascr: "\uD835\uDCB6",
-    Assign: "≔",
-    ast: "*",
-    asymp: "≈",
-    asympeq: "≍",
-    Atilde: "Ã",
-    atilde: "ã",
-    Auml: "Ä",
-    auml: "ä",
-    awconint: "∳",
-    awint: "⨑",
-    backcong: "≌",
-    backepsilon: "϶",
-    backprime: "‵",
-    backsim: "∽",
-    backsimeq: "⋍",
-    Backslash: "∖",
-    Barv: "⫧",
-    barvee: "⊽",
-    Barwed: "⌆",
-    barwed: "⌅",
-    barwedge: "⌅",
-    bbrk: "⎵",
-    bbrktbrk: "⎶",
-    bcong: "≌",
-    Bcy: "Б",
-    bcy: "б",
-    bdquo: "„",
-    becaus: "∵",
-    Because: "∵",
-    because: "∵",
-    bemptyv: "⦰",
-    bepsi: "϶",
-    bernou: "ℬ",
-    Bernoullis: "ℬ",
-    Beta: "Β",
-    beta: "β",
-    beth: "ℶ",
-    between: "≬",
-    Bfr: "\uD835\uDD05",
-    bfr: "\uD835\uDD1F",
-    bigcap: "⋂",
-    bigcirc: "◯",
-    bigcup: "⋃",
-    bigodot: "⨀",
-    bigoplus: "⨁",
-    bigotimes: "⨂",
-    bigsqcup: "⨆",
-    bigstar: "★",
-    bigtriangledown: "▽",
-    bigtriangleup: "△",
-    biguplus: "⨄",
-    bigvee: "⋁",
-    bigwedge: "⋀",
-    bkarow: "⤍",
-    blacklozenge: "⧫",
-    blacksquare: "▪",
-    blacktriangle: "▴",
-    blacktriangledown: "▾",
-    blacktriangleleft: "◂",
-    blacktriangleright: "▸",
-    blank: "␣",
-    blk12: "▒",
-    blk14: "░",
-    blk34: "▓",
-    block: "█",
-    bne: "=⃥",
-    bnequiv: "≡⃥",
-    bNot: "⫭",
-    bnot: "⌐",
-    Bopf: "\uD835\uDD39",
-    bopf: "\uD835\uDD53",
-    bot: "⊥",
-    bottom: "⊥",
-    bowtie: "⋈",
-    boxbox: "⧉",
-    boxDL: "╗",
-    boxDl: "╖",
-    boxdL: "╕",
-    boxdl: "┐",
-    boxDR: "╔",
-    boxDr: "╓",
-    boxdR: "╒",
-    boxdr: "┌",
-    boxH: "═",
-    boxh: "─",
-    boxHD: "╦",
-    boxHd: "╤",
-    boxhD: "╥",
-    boxhd: "┬",
-    boxHU: "╩",
-    boxHu: "╧",
-    boxhU: "╨",
-    boxhu: "┴",
-    boxminus: "⊟",
-    boxplus: "⊞",
-    boxtimes: "⊠",
-    boxUL: "╝",
-    boxUl: "╜",
-    boxuL: "╛",
-    boxul: "┘",
-    boxUR: "╚",
-    boxUr: "╙",
-    boxuR: "╘",
-    boxur: "└",
-    boxV: "║",
-    boxv: "│",
-    boxVH: "╬",
-    boxVh: "╫",
-    boxvH: "╪",
-    boxvh: "┼",
-    boxVL: "╣",
-    boxVl: "╢",
-    boxvL: "╡",
-    boxvl: "┤",
-    boxVR: "╠",
-    boxVr: "╟",
-    boxvR: "╞",
-    boxvr: "├",
-    bprime: "‵",
-    Breve: "˘",
-    breve: "˘",
-    brvbar: "¦",
-    Bscr: "ℬ",
-    bscr: "\uD835\uDCB7",
-    bsemi: "⁏",
-    bsim: "∽",
-    bsime: "⋍",
-    bsol: "\\",
-    bsolb: "⧅",
-    bsolhsub: "⟈",
-    bull: "•",
-    bullet: "•",
-    bump: "≎",
-    bumpE: "⪮",
-    bumpe: "≏",
-    Bumpeq: "≎",
-    bumpeq: "≏",
-    Cacute: "Ć",
-    cacute: "ć",
-    Cap: "⋒",
-    cap: "∩",
-    capand: "⩄",
-    capbrcup: "⩉",
-    capcap: "⩋",
-    capcup: "⩇",
-    capdot: "⩀",
-    CapitalDifferentialD: "ⅅ",
-    caps: "∩︀",
-    caret: "⁁",
-    caron: "ˇ",
-    Cayleys: "ℭ",
-    ccaps: "⩍",
-    Ccaron: "Č",
-    ccaron: "č",
-    Ccedil: "Ç",
-    ccedil: "ç",
-    Ccirc: "Ĉ",
-    ccirc: "ĉ",
-    Cconint: "∰",
-    ccups: "⩌",
-    ccupssm: "⩐",
-    Cdot: "Ċ",
-    cdot: "ċ",
-    cedil: "¸",
-    Cedilla: "¸",
-    cemptyv: "⦲",
-    cent: "¢",
-    CenterDot: "·",
-    centerdot: "·",
-    Cfr: "ℭ",
-    cfr: "\uD835\uDD20",
-    CHcy: "Ч",
-    chcy: "ч",
-    check: "✓",
-    checkmark: "✓",
-    Chi: "Χ",
-    chi: "χ",
-    cir: "○",
-    circ: "ˆ",
-    circeq: "≗",
-    circlearrowleft: "↺",
-    circlearrowright: "↻",
-    circledast: "⊛",
-    circledcirc: "⊚",
-    circleddash: "⊝",
-    CircleDot: "⊙",
-    circledR: "®",
-    circledS: "Ⓢ",
-    CircleMinus: "⊖",
-    CirclePlus: "⊕",
-    CircleTimes: "⊗",
-    cirE: "⧃",
-    cire: "≗",
-    cirfnint: "⨐",
-    cirmid: "⫯",
-    cirscir: "⧂",
-    ClockwiseContourIntegral: "∲",
-    CloseCurlyDoubleQuote: "”",
-    CloseCurlyQuote: "’",
-    clubs: "♣",
-    clubsuit: "♣",
-    Colon: "∷",
-    colon: ":",
-    Colone: "⩴",
-    colone: "≔",
-    coloneq: "≔",
-    comma: ",",
-    commat: "@",
-    comp: "∁",
-    compfn: "∘",
-    complement: "∁",
-    complexes: "ℂ",
-    cong: "≅",
-    congdot: "⩭",
-    Congruent: "≡",
-    Conint: "∯",
-    conint: "∮",
-    ContourIntegral: "∮",
-    Copf: "ℂ",
-    copf: "\uD835\uDD54",
-    coprod: "∐",
-    Coproduct: "∐",
-    COPY: "©",
-    copy: "©",
-    copysr: "℗",
-    CounterClockwiseContourIntegral: "∳",
-    crarr: "↵",
-    Cross: "⨯",
-    cross: "✗",
-    Cscr: "\uD835\uDC9E",
-    cscr: "\uD835\uDCB8",
-    csub: "⫏",
-    csube: "⫑",
-    csup: "⫐",
-    csupe: "⫒",
-    ctdot: "⋯",
-    cudarrl: "⤸",
-    cudarrr: "⤵",
-    cuepr: "⋞",
-    cuesc: "⋟",
-    cularr: "↶",
-    cularrp: "⤽",
-    Cup: "⋓",
-    cup: "∪",
-    cupbrcap: "⩈",
-    CupCap: "≍",
-    cupcap: "⩆",
-    cupcup: "⩊",
-    cupdot: "⊍",
-    cupor: "⩅",
-    cups: "∪︀",
-    curarr: "↷",
-    curarrm: "⤼",
-    curlyeqprec: "⋞",
-    curlyeqsucc: "⋟",
-    curlyvee: "⋎",
-    curlywedge: "⋏",
-    curren: "¤",
-    curvearrowleft: "↶",
-    curvearrowright: "↷",
-    cuvee: "⋎",
-    cuwed: "⋏",
-    cwconint: "∲",
-    cwint: "∱",
-    cylcty: "⌭",
-    Dagger: "‡",
-    dagger: "†",
-    daleth: "ℸ",
-    Darr: "↡",
-    dArr: "⇓",
-    darr: "↓",
-    dash: "‐",
-    Dashv: "⫤",
-    dashv: "⊣",
-    dbkarow: "⤏",
-    dblac: "˝",
-    Dcaron: "Ď",
-    dcaron: "ď",
-    Dcy: "Д",
-    dcy: "д",
-    DD: "ⅅ",
-    dd: "ⅆ",
-    ddagger: "‡",
-    ddarr: "⇊",
-    DDotrahd: "⤑",
-    ddotseq: "⩷",
-    deg: "°",
-    Del: "∇",
-    Delta: "Δ",
-    delta: "δ",
-    demptyv: "⦱",
-    dfisht: "⥿",
-    Dfr: "\uD835\uDD07",
-    dfr: "\uD835\uDD21",
-    dHar: "⥥",
-    dharl: "⇃",
-    dharr: "⇂",
-    DiacriticalAcute: "´",
-    DiacriticalDot: "˙",
-    DiacriticalDoubleAcute: "˝",
-    DiacriticalGrave: "`",
-    DiacriticalTilde: "˜",
-    diam: "⋄",
-    Diamond: "⋄",
-    diamond: "⋄",
-    diamondsuit: "♦",
-    diams: "♦",
-    die: "¨",
-    DifferentialD: "ⅆ",
-    digamma: "ϝ",
-    disin: "⋲",
-    div: "÷",
-    divide: "÷",
-    divideontimes: "⋇",
-    divonx: "⋇",
-    DJcy: "Ђ",
-    djcy: "ђ",
-    dlcorn: "⌞",
-    dlcrop: "⌍",
-    dollar: "$",
-    Dopf: "\uD835\uDD3B",
-    dopf: "\uD835\uDD55",
-    Dot: "¨",
-    dot: "˙",
-    DotDot: "⃜",
-    doteq: "≐",
-    doteqdot: "≑",
-    DotEqual: "≐",
-    dotminus: "∸",
-    dotplus: "∔",
-    dotsquare: "⊡",
-    doublebarwedge: "⌆",
-    DoubleContourIntegral: "∯",
-    DoubleDot: "¨",
-    DoubleDownArrow: "⇓",
-    DoubleLeftArrow: "⇐",
-    DoubleLeftRightArrow: "⇔",
-    DoubleLeftTee: "⫤",
-    DoubleLongLeftArrow: "⟸",
-    DoubleLongLeftRightArrow: "⟺",
-    DoubleLongRightArrow: "⟹",
-    DoubleRightArrow: "⇒",
-    DoubleRightTee: "⊨",
-    DoubleUpArrow: "⇑",
-    DoubleUpDownArrow: "⇕",
-    DoubleVerticalBar: "∥",
-    DownArrow: "↓",
-    Downarrow: "⇓",
-    downarrow: "↓",
-    DownArrowBar: "⤓",
-    DownArrowUpArrow: "⇵",
-    DownBreve: "̑",
-    downdownarrows: "⇊",
-    downharpoonleft: "⇃",
-    downharpoonright: "⇂",
-    DownLeftRightVector: "⥐",
-    DownLeftTeeVector: "⥞",
-    DownLeftVector: "↽",
-    DownLeftVectorBar: "⥖",
-    DownRightTeeVector: "⥟",
-    DownRightVector: "⇁",
-    DownRightVectorBar: "⥗",
-    DownTee: "⊤",
-    DownTeeArrow: "↧",
-    drbkarow: "⤐",
-    drcorn: "⌟",
-    drcrop: "⌌",
-    Dscr: "\uD835\uDC9F",
-    dscr: "\uD835\uDCB9",
-    DScy: "Ѕ",
-    dscy: "ѕ",
-    dsol: "⧶",
-    Dstrok: "Đ",
-    dstrok: "đ",
-    dtdot: "⋱",
-    dtri: "▿",
-    dtrif: "▾",
-    duarr: "⇵",
-    duhar: "⥯",
-    dwangle: "⦦",
-    DZcy: "Џ",
-    dzcy: "џ",
-    dzigrarr: "⟿",
-    Eacute: "É",
-    eacute: "é",
-    easter: "⩮",
-    Ecaron: "Ě",
-    ecaron: "ě",
-    ecir: "≖",
-    Ecirc: "Ê",
-    ecirc: "ê",
-    ecolon: "≕",
-    Ecy: "Э",
-    ecy: "э",
-    eDDot: "⩷",
-    Edot: "Ė",
-    eDot: "≑",
-    edot: "ė",
-    ee: "ⅇ",
-    efDot: "≒",
-    Efr: "\uD835\uDD08",
-    efr: "\uD835\uDD22",
-    eg: "⪚",
-    Egrave: "È",
-    egrave: "è",
-    egs: "⪖",
-    egsdot: "⪘",
-    el: "⪙",
-    Element: "∈",
-    elinters: "⏧",
-    ell: "ℓ",
-    els: "⪕",
-    elsdot: "⪗",
-    Emacr: "Ē",
-    emacr: "ē",
-    empty: "∅",
-    emptyset: "∅",
-    EmptySmallSquare: "◻",
-    emptyv: "∅",
-    EmptyVerySmallSquare: "▫",
-    emsp: " ",
-    emsp13: " ",
-    emsp14: " ",
-    ENG: "Ŋ",
-    eng: "ŋ",
-    ensp: " ",
-    Eogon: "Ę",
-    eogon: "ę",
-    Eopf: "\uD835\uDD3C",
-    eopf: "\uD835\uDD56",
-    epar: "⋕",
-    eparsl: "⧣",
-    eplus: "⩱",
-    epsi: "ε",
-    Epsilon: "Ε",
-    epsilon: "ε",
-    epsiv: "ϵ",
-    eqcirc: "≖",
-    eqcolon: "≕",
-    eqsim: "≂",
-    eqslantgtr: "⪖",
-    eqslantless: "⪕",
-    Equal: "⩵",
-    equals: "=",
-    EqualTilde: "≂",
-    equest: "≟",
-    Equilibrium: "⇌",
-    equiv: "≡",
-    equivDD: "⩸",
-    eqvparsl: "⧥",
-    erarr: "⥱",
-    erDot: "≓",
-    Escr: "ℰ",
-    escr: "ℯ",
-    esdot: "≐",
-    Esim: "⩳",
-    esim: "≂",
-    Eta: "Η",
-    eta: "η",
-    ETH: "Ð",
-    eth: "ð",
-    Euml: "Ë",
-    euml: "ë",
-    euro: "€",
-    excl: "!",
-    exist: "∃",
-    Exists: "∃",
-    expectation: "ℰ",
-    ExponentialE: "ⅇ",
-    exponentiale: "ⅇ",
-    fallingdotseq: "≒",
-    Fcy: "Ф",
-    fcy: "ф",
-    female: "♀",
-    ffilig: "ﬃ",
-    fflig: "ﬀ",
-    ffllig: "ﬄ",
-    Ffr: "\uD835\uDD09",
-    ffr: "\uD835\uDD23",
-    filig: "ﬁ",
-    FilledSmallSquare: "◼",
-    FilledVerySmallSquare: "▪",
-    fjlig: "fj",
-    flat: "♭",
-    fllig: "ﬂ",
-    fltns: "▱",
-    fnof: "ƒ",
-    Fopf: "\uD835\uDD3D",
-    fopf: "\uD835\uDD57",
-    ForAll: "∀",
-    forall: "∀",
-    fork: "⋔",
-    forkv: "⫙",
-    Fouriertrf: "ℱ",
-    fpartint: "⨍",
-    frac12: "½",
-    frac13: "⅓",
-    frac14: "¼",
-    frac15: "⅕",
-    frac16: "⅙",
-    frac18: "⅛",
-    frac23: "⅔",
-    frac25: "⅖",
-    frac34: "¾",
-    frac35: "⅗",
-    frac38: "⅜",
-    frac45: "⅘",
-    frac56: "⅚",
-    frac58: "⅝",
-    frac78: "⅞",
-    frasl: "⁄",
-    frown: "⌢",
-    Fscr: "ℱ",
-    fscr: "\uD835\uDCBB",
-    gacute: "ǵ",
-    Gamma: "Γ",
-    gamma: "γ",
-    Gammad: "Ϝ",
-    gammad: "ϝ",
-    gap: "⪆",
-    Gbreve: "Ğ",
-    gbreve: "ğ",
-    Gcedil: "Ģ",
-    Gcirc: "Ĝ",
-    gcirc: "ĝ",
-    Gcy: "Г",
-    gcy: "г",
-    Gdot: "Ġ",
-    gdot: "ġ",
-    gE: "≧",
-    ge: "≥",
-    gEl: "⪌",
-    gel: "⋛",
-    geq: "≥",
-    geqq: "≧",
-    geqslant: "⩾",
-    ges: "⩾",
-    gescc: "⪩",
-    gesdot: "⪀",
-    gesdoto: "⪂",
-    gesdotol: "⪄",
-    gesl: "⋛︀",
-    gesles: "⪔",
-    Gfr: "\uD835\uDD0A",
-    gfr: "\uD835\uDD24",
-    Gg: "⋙",
-    gg: "≫",
-    ggg: "⋙",
-    gimel: "ℷ",
-    GJcy: "Ѓ",
-    gjcy: "ѓ",
-    gl: "≷",
-    gla: "⪥",
-    glE: "⪒",
-    glj: "⪤",
-    gnap: "⪊",
-    gnapprox: "⪊",
-    gnE: "≩",
-    gne: "⪈",
-    gneq: "⪈",
-    gneqq: "≩",
-    gnsim: "⋧",
-    Gopf: "\uD835\uDD3E",
-    gopf: "\uD835\uDD58",
-    grave: "`",
-    GreaterEqual: "≥",
-    GreaterEqualLess: "⋛",
-    GreaterFullEqual: "≧",
-    GreaterGreater: "⪢",
-    GreaterLess: "≷",
-    GreaterSlantEqual: "⩾",
-    GreaterTilde: "≳",
-    Gscr: "\uD835\uDCA2",
-    gscr: "ℊ",
-    gsim: "≳",
-    gsime: "⪎",
-    gsiml: "⪐",
-    Gt: "≫",
-    GT: ">",
-    gt: ">",
-    gtcc: "⪧",
-    gtcir: "⩺",
-    gtdot: "⋗",
-    gtlPar: "⦕",
-    gtquest: "⩼",
-    gtrapprox: "⪆",
-    gtrarr: "⥸",
-    gtrdot: "⋗",
-    gtreqless: "⋛",
-    gtreqqless: "⪌",
-    gtrless: "≷",
-    gtrsim: "≳",
-    gvertneqq: "≩︀",
-    gvnE: "≩︀",
-    Hacek: "ˇ",
-    hairsp: " ",
-    half: "½",
-    hamilt: "ℋ",
-    HARDcy: "Ъ",
-    hardcy: "ъ",
-    hArr: "⇔",
-    harr: "↔",
-    harrcir: "⥈",
-    harrw: "↭",
-    Hat: "^",
-    hbar: "ℏ",
-    Hcirc: "Ĥ",
-    hcirc: "ĥ",
-    hearts: "♥",
-    heartsuit: "♥",
-    hellip: "…",
-    hercon: "⊹",
-    Hfr: "ℌ",
-    hfr: "\uD835\uDD25",
-    HilbertSpace: "ℋ",
-    hksearow: "⤥",
-    hkswarow: "⤦",
-    hoarr: "⇿",
-    homtht: "∻",
-    hookleftarrow: "↩",
-    hookrightarrow: "↪",
-    Hopf: "ℍ",
-    hopf: "\uD835\uDD59",
-    horbar: "―",
-    HorizontalLine: "─",
-    Hscr: "ℋ",
-    hscr: "\uD835\uDCBD",
-    hslash: "ℏ",
-    Hstrok: "Ħ",
-    hstrok: "ħ",
-    HumpDownHump: "≎",
-    HumpEqual: "≏",
-    hybull: "⁃",
-    hyphen: "‐",
-    Iacute: "Í",
-    iacute: "í",
-    ic: "⁣",
-    Icirc: "Î",
-    icirc: "î",
-    Icy: "И",
-    icy: "и",
-    Idot: "İ",
-    IEcy: "Е",
-    iecy: "е",
-    iexcl: "¡",
-    iff: "⇔",
-    Ifr: "ℑ",
-    ifr: "\uD835\uDD26",
-    Igrave: "Ì",
-    igrave: "ì",
-    ii: "ⅈ",
-    iiiint: "⨌",
-    iiint: "∭",
-    iinfin: "⧜",
-    iiota: "℩",
-    IJlig: "Ĳ",
-    ijlig: "ĳ",
-    Im: "ℑ",
-    Imacr: "Ī",
-    imacr: "ī",
-    image: "ℑ",
-    ImaginaryI: "ⅈ",
-    imagline: "ℐ",
-    imagpart: "ℑ",
-    imath: "ı",
-    imof: "⊷",
-    imped: "Ƶ",
-    Implies: "⇒",
-    in: "∈",
-    incare: "℅",
-    infin: "∞",
-    infintie: "⧝",
-    inodot: "ı",
-    Int: "∬",
-    int: "∫",
-    intcal: "⊺",
-    integers: "ℤ",
-    Integral: "∫",
-    intercal: "⊺",
-    Intersection: "⋂",
-    intlarhk: "⨗",
-    intprod: "⨼",
-    InvisibleComma: "⁣",
-    InvisibleTimes: "⁢",
-    IOcy: "Ё",
-    iocy: "ё",
-    Iogon: "Į",
-    iogon: "į",
-    Iopf: "\uD835\uDD40",
-    iopf: "\uD835\uDD5A",
-    Iota: "Ι",
-    iota: "ι",
-    iprod: "⨼",
-    iquest: "¿",
-    Iscr: "ℐ",
-    iscr: "\uD835\uDCBE",
-    isin: "∈",
-    isindot: "⋵",
-    isinE: "⋹",
-    isins: "⋴",
-    isinsv: "⋳",
-    isinv: "∈",
-    it: "⁢",
-    Itilde: "Ĩ",
-    itilde: "ĩ",
-    Iukcy: "І",
-    iukcy: "і",
-    Iuml: "Ï",
-    iuml: "ï",
-    Jcirc: "Ĵ",
-    jcirc: "ĵ",
-    Jcy: "Й",
-    jcy: "й",
-    Jfr: "\uD835\uDD0D",
-    jfr: "\uD835\uDD27",
-    jmath: "ȷ",
-    Jopf: "\uD835\uDD41",
-    jopf: "\uD835\uDD5B",
-    Jscr: "\uD835\uDCA5",
-    jscr: "\uD835\uDCBF",
-    Jsercy: "Ј",
-    jsercy: "ј",
-    Jukcy: "Є",
-    jukcy: "є",
-    Kappa: "Κ",
-    kappa: "κ",
-    kappav: "ϰ",
-    Kcedil: "Ķ",
-    kcedil: "ķ",
-    Kcy: "К",
-    kcy: "к",
-    Kfr: "\uD835\uDD0E",
-    kfr: "\uD835\uDD28",
-    kgreen: "ĸ",
-    KHcy: "Х",
-    khcy: "х",
-    KJcy: "Ќ",
-    kjcy: "ќ",
-    Kopf: "\uD835\uDD42",
-    kopf: "\uD835\uDD5C",
-    Kscr: "\uD835\uDCA6",
-    kscr: "\uD835\uDCC0",
-    lAarr: "⇚",
-    Lacute: "Ĺ",
-    lacute: "ĺ",
-    laemptyv: "⦴",
-    lagran: "ℒ",
-    Lambda: "Λ",
-    lambda: "λ",
-    Lang: "⟪",
-    lang: "⟨",
-    langd: "⦑",
-    langle: "⟨",
-    lap: "⪅",
-    Laplacetrf: "ℒ",
-    laquo: "«",
-    Larr: "↞",
-    lArr: "⇐",
-    larr: "←",
-    larrb: "⇤",
-    larrbfs: "⤟",
-    larrfs: "⤝",
-    larrhk: "↩",
-    larrlp: "↫",
-    larrpl: "⤹",
-    larrsim: "⥳",
-    larrtl: "↢",
-    lat: "⪫",
-    lAtail: "⤛",
-    latail: "⤙",
-    late: "⪭",
-    lates: "⪭︀",
-    lBarr: "⤎",
-    lbarr: "⤌",
-    lbbrk: "❲",
-    lbrace: "{",
-    lbrack: "[",
-    lbrke: "⦋",
-    lbrksld: "⦏",
-    lbrkslu: "⦍",
-    Lcaron: "Ľ",
-    lcaron: "ľ",
-    Lcedil: "Ļ",
-    lcedil: "ļ",
-    lceil: "⌈",
-    lcub: "{",
-    Lcy: "Л",
-    lcy: "л",
-    ldca: "⤶",
-    ldquo: "“",
-    ldquor: "„",
-    ldrdhar: "⥧",
-    ldrushar: "⥋",
-    ldsh: "↲",
-    lE: "≦",
-    le: "≤",
-    LeftAngleBracket: "⟨",
-    LeftArrow: "←",
-    Leftarrow: "⇐",
-    leftarrow: "←",
-    LeftArrowBar: "⇤",
-    LeftArrowRightArrow: "⇆",
-    leftarrowtail: "↢",
-    LeftCeiling: "⌈",
-    LeftDoubleBracket: "⟦",
-    LeftDownTeeVector: "⥡",
-    LeftDownVector: "⇃",
-    LeftDownVectorBar: "⥙",
-    LeftFloor: "⌊",
-    leftharpoondown: "↽",
-    leftharpoonup: "↼",
-    leftleftarrows: "⇇",
-    LeftRightArrow: "↔",
-    Leftrightarrow: "⇔",
-    leftrightarrow: "↔",
-    leftrightarrows: "⇆",
-    leftrightharpoons: "⇋",
-    leftrightsquigarrow: "↭",
-    LeftRightVector: "⥎",
-    LeftTee: "⊣",
-    LeftTeeArrow: "↤",
-    LeftTeeVector: "⥚",
-    leftthreetimes: "⋋",
-    LeftTriangle: "⊲",
-    LeftTriangleBar: "⧏",
-    LeftTriangleEqual: "⊴",
-    LeftUpDownVector: "⥑",
-    LeftUpTeeVector: "⥠",
-    LeftUpVector: "↿",
-    LeftUpVectorBar: "⥘",
-    LeftVector: "↼",
-    LeftVectorBar: "⥒",
-    lEg: "⪋",
-    leg: "⋚",
-    leq: "≤",
-    leqq: "≦",
-    leqslant: "⩽",
-    les: "⩽",
-    lescc: "⪨",
-    lesdot: "⩿",
-    lesdoto: "⪁",
-    lesdotor: "⪃",
-    lesg: "⋚︀",
-    lesges: "⪓",
-    lessapprox: "⪅",
-    lessdot: "⋖",
-    lesseqgtr: "⋚",
-    lesseqqgtr: "⪋",
-    LessEqualGreater: "⋚",
-    LessFullEqual: "≦",
-    LessGreater: "≶",
-    lessgtr: "≶",
-    LessLess: "⪡",
-    lesssim: "≲",
-    LessSlantEqual: "⩽",
-    LessTilde: "≲",
-    lfisht: "⥼",
-    lfloor: "⌊",
-    Lfr: "\uD835\uDD0F",
-    lfr: "\uD835\uDD29",
-    lg: "≶",
-    lgE: "⪑",
-    lHar: "⥢",
-    lhard: "↽",
-    lharu: "↼",
-    lharul: "⥪",
-    lhblk: "▄",
-    LJcy: "Љ",
-    ljcy: "љ",
-    Ll: "⋘",
-    ll: "≪",
-    llarr: "⇇",
-    llcorner: "⌞",
-    Lleftarrow: "⇚",
-    llhard: "⥫",
-    lltri: "◺",
-    Lmidot: "Ŀ",
-    lmidot: "ŀ",
-    lmoust: "⎰",
-    lmoustache: "⎰",
-    lnap: "⪉",
-    lnapprox: "⪉",
-    lnE: "≨",
-    lne: "⪇",
-    lneq: "⪇",
-    lneqq: "≨",
-    lnsim: "⋦",
-    loang: "⟬",
-    loarr: "⇽",
-    lobrk: "⟦",
-    LongLeftArrow: "⟵",
-    Longleftarrow: "⟸",
-    longleftarrow: "⟵",
-    LongLeftRightArrow: "⟷",
-    Longleftrightarrow: "⟺",
-    longleftrightarrow: "⟷",
-    longmapsto: "⟼",
-    LongRightArrow: "⟶",
-    Longrightarrow: "⟹",
-    longrightarrow: "⟶",
-    looparrowleft: "↫",
-    looparrowright: "↬",
-    lopar: "⦅",
-    Lopf: "\uD835\uDD43",
-    lopf: "\uD835\uDD5D",
-    loplus: "⨭",
-    lotimes: "⨴",
-    lowast: "∗",
-    lowbar: "_",
-    LowerLeftArrow: "↙",
-    LowerRightArrow: "↘",
-    loz: "◊",
-    lozenge: "◊",
-    lozf: "⧫",
-    lpar: "(",
-    lparlt: "⦓",
-    lrarr: "⇆",
-    lrcorner: "⌟",
-    lrhar: "⇋",
-    lrhard: "⥭",
-    lrm: "‎",
-    lrtri: "⊿",
-    lsaquo: "‹",
-    Lscr: "ℒ",
-    lscr: "\uD835\uDCC1",
-    Lsh: "↰",
-    lsh: "↰",
-    lsim: "≲",
-    lsime: "⪍",
-    lsimg: "⪏",
-    lsqb: "[",
-    lsquo: "‘",
-    lsquor: "‚",
-    Lstrok: "Ł",
-    lstrok: "ł",
-    Lt: "≪",
-    LT: "<",
-    lt: "<",
-    ltcc: "⪦",
-    ltcir: "⩹",
-    ltdot: "⋖",
-    lthree: "⋋",
-    ltimes: "⋉",
-    ltlarr: "⥶",
-    ltquest: "⩻",
-    ltri: "◃",
-    ltrie: "⊴",
-    ltrif: "◂",
-    ltrPar: "⦖",
-    lurdshar: "⥊",
-    luruhar: "⥦",
-    lvertneqq: "≨︀",
-    lvnE: "≨︀",
-    macr: "¯",
-    male: "♂",
-    malt: "✠",
-    maltese: "✠",
-    Map: "⤅",
-    map: "↦",
-    mapsto: "↦",
-    mapstodown: "↧",
-    mapstoleft: "↤",
-    mapstoup: "↥",
-    marker: "▮",
-    mcomma: "⨩",
-    Mcy: "М",
-    mcy: "м",
-    mdash: "—",
-    mDDot: "∺",
-    measuredangle: "∡",
-    MediumSpace: " ",
-    Mellintrf: "ℳ",
-    Mfr: "\uD835\uDD10",
-    mfr: "\uD835\uDD2A",
-    mho: "℧",
-    micro: "µ",
-    mid: "∣",
-    midast: "*",
-    midcir: "⫰",
-    middot: "·",
-    minus: "−",
-    minusb: "⊟",
-    minusd: "∸",
-    minusdu: "⨪",
-    MinusPlus: "∓",
-    mlcp: "⫛",
-    mldr: "…",
-    mnplus: "∓",
-    models: "⊧",
-    Mopf: "\uD835\uDD44",
-    mopf: "\uD835\uDD5E",
-    mp: "∓",
-    Mscr: "ℳ",
-    mscr: "\uD835\uDCC2",
-    mstpos: "∾",
-    Mu: "Μ",
-    mu: "μ",
-    multimap: "⊸",
-    mumap: "⊸",
-    nabla: "∇",
-    Nacute: "Ń",
-    nacute: "ń",
-    nang: "∠⃒",
-    nap: "≉",
-    napE: "⩰̸",
-    napid: "≋̸",
-    napos: "ŉ",
-    napprox: "≉",
-    natur: "♮",
-    natural: "♮",
-    naturals: "ℕ",
-    nbsp: " ",
-    nbump: "≎̸",
-    nbumpe: "≏̸",
-    ncap: "⩃",
-    Ncaron: "Ň",
-    ncaron: "ň",
-    Ncedil: "Ņ",
-    ncedil: "ņ",
-    ncong: "≇",
-    ncongdot: "⩭̸",
-    ncup: "⩂",
-    Ncy: "Н",
-    ncy: "н",
-    ndash: "–",
-    ne: "≠",
-    nearhk: "⤤",
-    neArr: "⇗",
-    nearr: "↗",
-    nearrow: "↗",
-    nedot: "≐̸",
-    NegativeMediumSpace: "​",
-    NegativeThickSpace: "​",
-    NegativeThinSpace: "​",
-    NegativeVeryThinSpace: "​",
-    nequiv: "≢",
-    nesear: "⤨",
-    nesim: "≂̸",
-    NestedGreaterGreater: "≫",
-    NestedLessLess: "≪",
-    NewLine: `
-`,
-    nexist: "∄",
-    nexists: "∄",
-    Nfr: "\uD835\uDD11",
-    nfr: "\uD835\uDD2B",
-    ngE: "≧̸",
-    nge: "≱",
-    ngeq: "≱",
-    ngeqq: "≧̸",
-    ngeqslant: "⩾̸",
-    nges: "⩾̸",
-    nGg: "⋙̸",
-    ngsim: "≵",
-    nGt: "≫⃒",
-    ngt: "≯",
-    ngtr: "≯",
-    nGtv: "≫̸",
-    nhArr: "⇎",
-    nharr: "↮",
-    nhpar: "⫲",
-    ni: "∋",
-    nis: "⋼",
-    nisd: "⋺",
-    niv: "∋",
-    NJcy: "Њ",
-    njcy: "њ",
-    nlArr: "⇍",
-    nlarr: "↚",
-    nldr: "‥",
-    nlE: "≦̸",
-    nle: "≰",
-    nLeftarrow: "⇍",
-    nleftarrow: "↚",
-    nLeftrightarrow: "⇎",
-    nleftrightarrow: "↮",
-    nleq: "≰",
-    nleqq: "≦̸",
-    nleqslant: "⩽̸",
-    nles: "⩽̸",
-    nless: "≮",
-    nLl: "⋘̸",
-    nlsim: "≴",
-    nLt: "≪⃒",
-    nlt: "≮",
-    nltri: "⋪",
-    nltrie: "⋬",
-    nLtv: "≪̸",
-    nmid: "∤",
-    NoBreak: "⁠",
-    NonBreakingSpace: " ",
-    Nopf: "ℕ",
-    nopf: "\uD835\uDD5F",
-    Not: "⫬",
-    not: "¬",
-    NotCongruent: "≢",
-    NotCupCap: "≭",
-    NotDoubleVerticalBar: "∦",
-    NotElement: "∉",
-    NotEqual: "≠",
-    NotEqualTilde: "≂̸",
-    NotExists: "∄",
-    NotGreater: "≯",
-    NotGreaterEqual: "≱",
-    NotGreaterFullEqual: "≧̸",
-    NotGreaterGreater: "≫̸",
-    NotGreaterLess: "≹",
-    NotGreaterSlantEqual: "⩾̸",
-    NotGreaterTilde: "≵",
-    NotHumpDownHump: "≎̸",
-    NotHumpEqual: "≏̸",
-    notin: "∉",
-    notindot: "⋵̸",
-    notinE: "⋹̸",
-    notinva: "∉",
-    notinvb: "⋷",
-    notinvc: "⋶",
-    NotLeftTriangle: "⋪",
-    NotLeftTriangleBar: "⧏̸",
-    NotLeftTriangleEqual: "⋬",
-    NotLess: "≮",
-    NotLessEqual: "≰",
-    NotLessGreater: "≸",
-    NotLessLess: "≪̸",
-    NotLessSlantEqual: "⩽̸",
-    NotLessTilde: "≴",
-    NotNestedGreaterGreater: "⪢̸",
-    NotNestedLessLess: "⪡̸",
-    notni: "∌",
-    notniva: "∌",
-    notnivb: "⋾",
-    notnivc: "⋽",
-    NotPrecedes: "⊀",
-    NotPrecedesEqual: "⪯̸",
-    NotPrecedesSlantEqual: "⋠",
-    NotReverseElement: "∌",
-    NotRightTriangle: "⋫",
-    NotRightTriangleBar: "⧐̸",
-    NotRightTriangleEqual: "⋭",
-    NotSquareSubset: "⊏̸",
-    NotSquareSubsetEqual: "⋢",
-    NotSquareSuperset: "⊐̸",
-    NotSquareSupersetEqual: "⋣",
-    NotSubset: "⊂⃒",
-    NotSubsetEqual: "⊈",
-    NotSucceeds: "⊁",
-    NotSucceedsEqual: "⪰̸",
-    NotSucceedsSlantEqual: "⋡",
-    NotSucceedsTilde: "≿̸",
-    NotSuperset: "⊃⃒",
-    NotSupersetEqual: "⊉",
-    NotTilde: "≁",
-    NotTildeEqual: "≄",
-    NotTildeFullEqual: "≇",
-    NotTildeTilde: "≉",
-    NotVerticalBar: "∤",
-    npar: "∦",
-    nparallel: "∦",
-    nparsl: "⫽⃥",
-    npart: "∂̸",
-    npolint: "⨔",
-    npr: "⊀",
-    nprcue: "⋠",
-    npre: "⪯̸",
-    nprec: "⊀",
-    npreceq: "⪯̸",
-    nrArr: "⇏",
-    nrarr: "↛",
-    nrarrc: "⤳̸",
-    nrarrw: "↝̸",
-    nRightarrow: "⇏",
-    nrightarrow: "↛",
-    nrtri: "⋫",
-    nrtrie: "⋭",
-    nsc: "⊁",
-    nsccue: "⋡",
-    nsce: "⪰̸",
-    Nscr: "\uD835\uDCA9",
-    nscr: "\uD835\uDCC3",
-    nshortmid: "∤",
-    nshortparallel: "∦",
-    nsim: "≁",
-    nsime: "≄",
-    nsimeq: "≄",
-    nsmid: "∤",
-    nspar: "∦",
-    nsqsube: "⋢",
-    nsqsupe: "⋣",
-    nsub: "⊄",
-    nsubE: "⫅̸",
-    nsube: "⊈",
-    nsubset: "⊂⃒",
-    nsubseteq: "⊈",
-    nsubseteqq: "⫅̸",
-    nsucc: "⊁",
-    nsucceq: "⪰̸",
-    nsup: "⊅",
-    nsupE: "⫆̸",
-    nsupe: "⊉",
-    nsupset: "⊃⃒",
-    nsupseteq: "⊉",
-    nsupseteqq: "⫆̸",
-    ntgl: "≹",
-    Ntilde: "Ñ",
-    ntilde: "ñ",
-    ntlg: "≸",
-    ntriangleleft: "⋪",
-    ntrianglelefteq: "⋬",
-    ntriangleright: "⋫",
-    ntrianglerighteq: "⋭",
-    Nu: "Ν",
-    nu: "ν",
-    num: "#",
-    numero: "№",
-    numsp: " ",
-    nvap: "≍⃒",
-    nVDash: "⊯",
-    nVdash: "⊮",
-    nvDash: "⊭",
-    nvdash: "⊬",
-    nvge: "≥⃒",
-    nvgt: ">⃒",
-    nvHarr: "⤄",
-    nvinfin: "⧞",
-    nvlArr: "⤂",
-    nvle: "≤⃒",
-    nvlt: "<⃒",
-    nvltrie: "⊴⃒",
-    nvrArr: "⤃",
-    nvrtrie: "⊵⃒",
-    nvsim: "∼⃒",
-    nwarhk: "⤣",
-    nwArr: "⇖",
-    nwarr: "↖",
-    nwarrow: "↖",
-    nwnear: "⤧",
-    Oacute: "Ó",
-    oacute: "ó",
-    oast: "⊛",
-    ocir: "⊚",
-    Ocirc: "Ô",
-    ocirc: "ô",
-    Ocy: "О",
-    ocy: "о",
-    odash: "⊝",
-    Odblac: "Ő",
-    odblac: "ő",
-    odiv: "⨸",
-    odot: "⊙",
-    odsold: "⦼",
-    OElig: "Œ",
-    oelig: "œ",
-    ofcir: "⦿",
-    Ofr: "\uD835\uDD12",
-    ofr: "\uD835\uDD2C",
-    ogon: "˛",
-    Ograve: "Ò",
-    ograve: "ò",
-    ogt: "⧁",
-    ohbar: "⦵",
-    ohm: "Ω",
-    oint: "∮",
-    olarr: "↺",
-    olcir: "⦾",
-    olcross: "⦻",
-    oline: "‾",
-    olt: "⧀",
-    Omacr: "Ō",
-    omacr: "ō",
-    Omega: "Ω",
-    omega: "ω",
-    Omicron: "Ο",
-    omicron: "ο",
-    omid: "⦶",
-    ominus: "⊖",
-    Oopf: "\uD835\uDD46",
-    oopf: "\uD835\uDD60",
-    opar: "⦷",
-    OpenCurlyDoubleQuote: "“",
-    OpenCurlyQuote: "‘",
-    operp: "⦹",
-    oplus: "⊕",
-    Or: "⩔",
-    or: "∨",
-    orarr: "↻",
-    ord: "⩝",
-    order: "ℴ",
-    orderof: "ℴ",
-    ordf: "ª",
-    ordm: "º",
-    origof: "⊶",
-    oror: "⩖",
-    orslope: "⩗",
-    orv: "⩛",
-    oS: "Ⓢ",
-    Oscr: "\uD835\uDCAA",
-    oscr: "ℴ",
-    Oslash: "Ø",
-    oslash: "ø",
-    osol: "⊘",
-    Otilde: "Õ",
-    otilde: "õ",
-    Otimes: "⨷",
-    otimes: "⊗",
-    otimesas: "⨶",
-    Ouml: "Ö",
-    ouml: "ö",
-    ovbar: "⌽",
-    OverBar: "‾",
-    OverBrace: "⏞",
-    OverBracket: "⎴",
-    OverParenthesis: "⏜",
-    par: "∥",
-    para: "¶",
-    parallel: "∥",
-    parsim: "⫳",
-    parsl: "⫽",
-    part: "∂",
-    PartialD: "∂",
-    Pcy: "П",
-    pcy: "п",
-    percnt: "%",
-    period: ".",
-    permil: "‰",
-    perp: "⊥",
-    pertenk: "‱",
-    Pfr: "\uD835\uDD13",
-    pfr: "\uD835\uDD2D",
-    Phi: "Φ",
-    phi: "φ",
-    phiv: "ϕ",
-    phmmat: "ℳ",
-    phone: "☎",
-    Pi: "Π",
-    pi: "π",
-    pitchfork: "⋔",
-    piv: "ϖ",
-    planck: "ℏ",
-    planckh: "ℎ",
-    plankv: "ℏ",
-    plus: "+",
-    plusacir: "⨣",
-    plusb: "⊞",
-    pluscir: "⨢",
-    plusdo: "∔",
-    plusdu: "⨥",
-    pluse: "⩲",
-    PlusMinus: "±",
-    plusmn: "±",
-    plussim: "⨦",
-    plustwo: "⨧",
-    pm: "±",
-    Poincareplane: "ℌ",
-    pointint: "⨕",
-    Popf: "ℙ",
-    popf: "\uD835\uDD61",
-    pound: "£",
-    Pr: "⪻",
-    pr: "≺",
-    prap: "⪷",
-    prcue: "≼",
-    prE: "⪳",
-    pre: "⪯",
-    prec: "≺",
-    precapprox: "⪷",
-    preccurlyeq: "≼",
-    Precedes: "≺",
-    PrecedesEqual: "⪯",
-    PrecedesSlantEqual: "≼",
-    PrecedesTilde: "≾",
-    preceq: "⪯",
-    precnapprox: "⪹",
-    precneqq: "⪵",
-    precnsim: "⋨",
-    precsim: "≾",
-    Prime: "″",
-    prime: "′",
-    primes: "ℙ",
-    prnap: "⪹",
-    prnE: "⪵",
-    prnsim: "⋨",
-    prod: "∏",
-    Product: "∏",
-    profalar: "⌮",
-    profline: "⌒",
-    profsurf: "⌓",
-    prop: "∝",
-    Proportion: "∷",
-    Proportional: "∝",
-    propto: "∝",
-    prsim: "≾",
-    prurel: "⊰",
-    Pscr: "\uD835\uDCAB",
-    pscr: "\uD835\uDCC5",
-    Psi: "Ψ",
-    psi: "ψ",
-    puncsp: " ",
-    Qfr: "\uD835\uDD14",
-    qfr: "\uD835\uDD2E",
-    qint: "⨌",
-    Qopf: "ℚ",
-    qopf: "\uD835\uDD62",
-    qprime: "⁗",
-    Qscr: "\uD835\uDCAC",
-    qscr: "\uD835\uDCC6",
-    quaternions: "ℍ",
-    quatint: "⨖",
-    quest: "?",
-    questeq: "≟",
-    QUOT: '"',
-    quot: '"',
-    rAarr: "⇛",
-    race: "∽̱",
-    Racute: "Ŕ",
-    racute: "ŕ",
-    radic: "√",
-    raemptyv: "⦳",
-    Rang: "⟫",
-    rang: "⟩",
-    rangd: "⦒",
-    range: "⦥",
-    rangle: "⟩",
-    raquo: "»",
-    Rarr: "↠",
-    rArr: "⇒",
-    rarr: "→",
-    rarrap: "⥵",
-    rarrb: "⇥",
-    rarrbfs: "⤠",
-    rarrc: "⤳",
-    rarrfs: "⤞",
-    rarrhk: "↪",
-    rarrlp: "↬",
-    rarrpl: "⥅",
-    rarrsim: "⥴",
-    Rarrtl: "⤖",
-    rarrtl: "↣",
-    rarrw: "↝",
-    rAtail: "⤜",
-    ratail: "⤚",
-    ratio: "∶",
-    rationals: "ℚ",
-    RBarr: "⤐",
-    rBarr: "⤏",
-    rbarr: "⤍",
-    rbbrk: "❳",
-    rbrace: "}",
-    rbrack: "]",
-    rbrke: "⦌",
-    rbrksld: "⦎",
-    rbrkslu: "⦐",
-    Rcaron: "Ř",
-    rcaron: "ř",
-    Rcedil: "Ŗ",
-    rcedil: "ŗ",
-    rceil: "⌉",
-    rcub: "}",
-    Rcy: "Р",
-    rcy: "р",
-    rdca: "⤷",
-    rdldhar: "⥩",
-    rdquo: "”",
-    rdquor: "”",
-    rdsh: "↳",
-    Re: "ℜ",
-    real: "ℜ",
-    realine: "ℛ",
-    realpart: "ℜ",
-    reals: "ℝ",
-    rect: "▭",
-    REG: "®",
-    reg: "®",
-    ReverseElement: "∋",
-    ReverseEquilibrium: "⇋",
-    ReverseUpEquilibrium: "⥯",
-    rfisht: "⥽",
-    rfloor: "⌋",
-    Rfr: "ℜ",
-    rfr: "\uD835\uDD2F",
-    rHar: "⥤",
-    rhard: "⇁",
-    rharu: "⇀",
-    rharul: "⥬",
-    Rho: "Ρ",
-    rho: "ρ",
-    rhov: "ϱ",
-    RightAngleBracket: "⟩",
-    RightArrow: "→",
-    Rightarrow: "⇒",
-    rightarrow: "→",
-    RightArrowBar: "⇥",
-    RightArrowLeftArrow: "⇄",
-    rightarrowtail: "↣",
-    RightCeiling: "⌉",
-    RightDoubleBracket: "⟧",
-    RightDownTeeVector: "⥝",
-    RightDownVector: "⇂",
-    RightDownVectorBar: "⥕",
-    RightFloor: "⌋",
-    rightharpoondown: "⇁",
-    rightharpoonup: "⇀",
-    rightleftarrows: "⇄",
-    rightleftharpoons: "⇌",
-    rightrightarrows: "⇉",
-    rightsquigarrow: "↝",
-    RightTee: "⊢",
-    RightTeeArrow: "↦",
-    RightTeeVector: "⥛",
-    rightthreetimes: "⋌",
-    RightTriangle: "⊳",
-    RightTriangleBar: "⧐",
-    RightTriangleEqual: "⊵",
-    RightUpDownVector: "⥏",
-    RightUpTeeVector: "⥜",
-    RightUpVector: "↾",
-    RightUpVectorBar: "⥔",
-    RightVector: "⇀",
-    RightVectorBar: "⥓",
-    ring: "˚",
-    risingdotseq: "≓",
-    rlarr: "⇄",
-    rlhar: "⇌",
-    rlm: "‏",
-    rmoust: "⎱",
-    rmoustache: "⎱",
-    rnmid: "⫮",
-    roang: "⟭",
-    roarr: "⇾",
-    robrk: "⟧",
-    ropar: "⦆",
-    Ropf: "ℝ",
-    ropf: "\uD835\uDD63",
-    roplus: "⨮",
-    rotimes: "⨵",
-    RoundImplies: "⥰",
-    rpar: ")",
-    rpargt: "⦔",
-    rppolint: "⨒",
-    rrarr: "⇉",
-    Rrightarrow: "⇛",
-    rsaquo: "›",
-    Rscr: "ℛ",
-    rscr: "\uD835\uDCC7",
-    Rsh: "↱",
-    rsh: "↱",
-    rsqb: "]",
-    rsquo: "’",
-    rsquor: "’",
-    rthree: "⋌",
-    rtimes: "⋊",
-    rtri: "▹",
-    rtrie: "⊵",
-    rtrif: "▸",
-    rtriltri: "⧎",
-    RuleDelayed: "⧴",
-    ruluhar: "⥨",
-    rx: "℞",
-    Sacute: "Ś",
-    sacute: "ś",
-    sbquo: "‚",
-    Sc: "⪼",
-    sc: "≻",
-    scap: "⪸",
-    Scaron: "Š",
-    scaron: "š",
-    sccue: "≽",
-    scE: "⪴",
-    sce: "⪰",
-    Scedil: "Ş",
-    scedil: "ş",
-    Scirc: "Ŝ",
-    scirc: "ŝ",
-    scnap: "⪺",
-    scnE: "⪶",
-    scnsim: "⋩",
-    scpolint: "⨓",
-    scsim: "≿",
-    Scy: "С",
-    scy: "с",
-    sdot: "⋅",
-    sdotb: "⊡",
-    sdote: "⩦",
-    searhk: "⤥",
-    seArr: "⇘",
-    searr: "↘",
-    searrow: "↘",
-    sect: "§",
-    semi: ";",
-    seswar: "⤩",
-    setminus: "∖",
-    setmn: "∖",
-    sext: "✶",
-    Sfr: "\uD835\uDD16",
-    sfr: "\uD835\uDD30",
-    sfrown: "⌢",
-    sharp: "♯",
-    SHCHcy: "Щ",
-    shchcy: "щ",
-    SHcy: "Ш",
-    shcy: "ш",
-    ShortDownArrow: "↓",
-    ShortLeftArrow: "←",
-    shortmid: "∣",
-    shortparallel: "∥",
-    ShortRightArrow: "→",
-    ShortUpArrow: "↑",
-    shy: "­",
-    Sigma: "Σ",
-    sigma: "σ",
-    sigmaf: "ς",
-    sigmav: "ς",
-    sim: "∼",
-    simdot: "⩪",
-    sime: "≃",
-    simeq: "≃",
-    simg: "⪞",
-    simgE: "⪠",
-    siml: "⪝",
-    simlE: "⪟",
-    simne: "≆",
-    simplus: "⨤",
-    simrarr: "⥲",
-    slarr: "←",
-    SmallCircle: "∘",
-    smallsetminus: "∖",
-    smashp: "⨳",
-    smeparsl: "⧤",
-    smid: "∣",
-    smile: "⌣",
-    smt: "⪪",
-    smte: "⪬",
-    smtes: "⪬︀",
-    SOFTcy: "Ь",
-    softcy: "ь",
-    sol: "/",
-    solb: "⧄",
-    solbar: "⌿",
-    Sopf: "\uD835\uDD4A",
-    sopf: "\uD835\uDD64",
-    spades: "♠",
-    spadesuit: "♠",
-    spar: "∥",
-    sqcap: "⊓",
-    sqcaps: "⊓︀",
-    sqcup: "⊔",
-    sqcups: "⊔︀",
-    Sqrt: "√",
-    sqsub: "⊏",
-    sqsube: "⊑",
-    sqsubset: "⊏",
-    sqsubseteq: "⊑",
-    sqsup: "⊐",
-    sqsupe: "⊒",
-    sqsupset: "⊐",
-    sqsupseteq: "⊒",
-    squ: "□",
-    Square: "□",
-    square: "□",
-    SquareIntersection: "⊓",
-    SquareSubset: "⊏",
-    SquareSubsetEqual: "⊑",
-    SquareSuperset: "⊐",
-    SquareSupersetEqual: "⊒",
-    SquareUnion: "⊔",
-    squarf: "▪",
-    squf: "▪",
-    srarr: "→",
-    Sscr: "\uD835\uDCAE",
-    sscr: "\uD835\uDCC8",
-    ssetmn: "∖",
-    ssmile: "⌣",
-    sstarf: "⋆",
-    Star: "⋆",
-    star: "☆",
-    starf: "★",
-    straightepsilon: "ϵ",
-    straightphi: "ϕ",
-    strns: "¯",
-    Sub: "⋐",
-    sub: "⊂",
-    subdot: "⪽",
-    subE: "⫅",
-    sube: "⊆",
-    subedot: "⫃",
-    submult: "⫁",
-    subnE: "⫋",
-    subne: "⊊",
-    subplus: "⪿",
-    subrarr: "⥹",
-    Subset: "⋐",
-    subset: "⊂",
-    subseteq: "⊆",
-    subseteqq: "⫅",
-    SubsetEqual: "⊆",
-    subsetneq: "⊊",
-    subsetneqq: "⫋",
-    subsim: "⫇",
-    subsub: "⫕",
-    subsup: "⫓",
-    succ: "≻",
-    succapprox: "⪸",
-    succcurlyeq: "≽",
-    Succeeds: "≻",
-    SucceedsEqual: "⪰",
-    SucceedsSlantEqual: "≽",
-    SucceedsTilde: "≿",
-    succeq: "⪰",
-    succnapprox: "⪺",
-    succneqq: "⪶",
-    succnsim: "⋩",
-    succsim: "≿",
-    SuchThat: "∋",
-    Sum: "∑",
-    sum: "∑",
-    sung: "♪",
-    Sup: "⋑",
-    sup: "⊃",
-    sup1: "¹",
-    sup2: "²",
-    sup3: "³",
-    supdot: "⪾",
-    supdsub: "⫘",
-    supE: "⫆",
-    supe: "⊇",
-    supedot: "⫄",
-    Superset: "⊃",
-    SupersetEqual: "⊇",
-    suphsol: "⟉",
-    suphsub: "⫗",
-    suplarr: "⥻",
-    supmult: "⫂",
-    supnE: "⫌",
-    supne: "⊋",
-    supplus: "⫀",
-    Supset: "⋑",
-    supset: "⊃",
-    supseteq: "⊇",
-    supseteqq: "⫆",
-    supsetneq: "⊋",
-    supsetneqq: "⫌",
-    supsim: "⫈",
-    supsub: "⫔",
-    supsup: "⫖",
-    swarhk: "⤦",
-    swArr: "⇙",
-    swarr: "↙",
-    swarrow: "↙",
-    swnwar: "⤪",
-    szlig: "ß",
-    Tab: "\t",
-    target: "⌖",
-    Tau: "Τ",
-    tau: "τ",
-    tbrk: "⎴",
-    Tcaron: "Ť",
-    tcaron: "ť",
-    Tcedil: "Ţ",
-    tcedil: "ţ",
-    Tcy: "Т",
-    tcy: "т",
-    tdot: "⃛",
-    telrec: "⌕",
-    Tfr: "\uD835\uDD17",
-    tfr: "\uD835\uDD31",
-    there4: "∴",
-    Therefore: "∴",
-    therefore: "∴",
-    Theta: "Θ",
-    theta: "θ",
-    thetasym: "ϑ",
-    thetav: "ϑ",
-    thickapprox: "≈",
-    thicksim: "∼",
-    ThickSpace: "  ",
-    thinsp: " ",
-    ThinSpace: " ",
-    thkap: "≈",
-    thksim: "∼",
-    THORN: "Þ",
-    thorn: "þ",
-    Tilde: "∼",
-    tilde: "˜",
-    TildeEqual: "≃",
-    TildeFullEqual: "≅",
-    TildeTilde: "≈",
-    times: "×",
-    timesb: "⊠",
-    timesbar: "⨱",
-    timesd: "⨰",
-    tint: "∭",
-    toea: "⤨",
-    top: "⊤",
-    topbot: "⌶",
-    topcir: "⫱",
-    Topf: "\uD835\uDD4B",
-    topf: "\uD835\uDD65",
-    topfork: "⫚",
-    tosa: "⤩",
-    tprime: "‴",
-    TRADE: "™",
-    trade: "™",
-    triangle: "▵",
-    triangledown: "▿",
-    triangleleft: "◃",
-    trianglelefteq: "⊴",
-    triangleq: "≜",
-    triangleright: "▹",
-    trianglerighteq: "⊵",
-    tridot: "◬",
-    trie: "≜",
-    triminus: "⨺",
-    TripleDot: "⃛",
-    triplus: "⨹",
-    trisb: "⧍",
-    tritime: "⨻",
-    trpezium: "⏢",
-    Tscr: "\uD835\uDCAF",
-    tscr: "\uD835\uDCC9",
-    TScy: "Ц",
-    tscy: "ц",
-    TSHcy: "Ћ",
-    tshcy: "ћ",
-    Tstrok: "Ŧ",
-    tstrok: "ŧ",
-    twixt: "≬",
-    twoheadleftarrow: "↞",
-    twoheadrightarrow: "↠",
-    Uacute: "Ú",
-    uacute: "ú",
-    Uarr: "↟",
-    uArr: "⇑",
-    uarr: "↑",
-    Uarrocir: "⥉",
-    Ubrcy: "Ў",
-    ubrcy: "ў",
-    Ubreve: "Ŭ",
-    ubreve: "ŭ",
-    Ucirc: "Û",
-    ucirc: "û",
-    Ucy: "У",
-    ucy: "у",
-    udarr: "⇅",
-    Udblac: "Ű",
-    udblac: "ű",
-    udhar: "⥮",
-    ufisht: "⥾",
-    Ufr: "\uD835\uDD18",
-    ufr: "\uD835\uDD32",
-    Ugrave: "Ù",
-    ugrave: "ù",
-    uHar: "⥣",
-    uharl: "↿",
-    uharr: "↾",
-    uhblk: "▀",
-    ulcorn: "⌜",
-    ulcorner: "⌜",
-    ulcrop: "⌏",
-    ultri: "◸",
-    Umacr: "Ū",
-    umacr: "ū",
-    uml: "¨",
-    UnderBar: "_",
-    UnderBrace: "⏟",
-    UnderBracket: "⎵",
-    UnderParenthesis: "⏝",
-    Union: "⋃",
-    UnionPlus: "⊎",
-    Uogon: "Ų",
-    uogon: "ų",
-    Uopf: "\uD835\uDD4C",
-    uopf: "\uD835\uDD66",
-    UpArrow: "↑",
-    Uparrow: "⇑",
-    uparrow: "↑",
-    UpArrowBar: "⤒",
-    UpArrowDownArrow: "⇅",
-    UpDownArrow: "↕",
-    Updownarrow: "⇕",
-    updownarrow: "↕",
-    UpEquilibrium: "⥮",
-    upharpoonleft: "↿",
-    upharpoonright: "↾",
-    uplus: "⊎",
-    UpperLeftArrow: "↖",
-    UpperRightArrow: "↗",
-    Upsi: "ϒ",
-    upsi: "υ",
-    upsih: "ϒ",
-    Upsilon: "Υ",
-    upsilon: "υ",
-    UpTee: "⊥",
-    UpTeeArrow: "↥",
-    upuparrows: "⇈",
-    urcorn: "⌝",
-    urcorner: "⌝",
-    urcrop: "⌎",
-    Uring: "Ů",
-    uring: "ů",
-    urtri: "◹",
-    Uscr: "\uD835\uDCB0",
-    uscr: "\uD835\uDCCA",
-    utdot: "⋰",
-    Utilde: "Ũ",
-    utilde: "ũ",
-    utri: "▵",
-    utrif: "▴",
-    uuarr: "⇈",
-    Uuml: "Ü",
-    uuml: "ü",
-    uwangle: "⦧",
-    vangrt: "⦜",
-    varepsilon: "ϵ",
-    varkappa: "ϰ",
-    varnothing: "∅",
-    varphi: "ϕ",
-    varpi: "ϖ",
-    varpropto: "∝",
-    vArr: "⇕",
-    varr: "↕",
-    varrho: "ϱ",
-    varsigma: "ς",
-    varsubsetneq: "⊊︀",
-    varsubsetneqq: "⫋︀",
-    varsupsetneq: "⊋︀",
-    varsupsetneqq: "⫌︀",
-    vartheta: "ϑ",
-    vartriangleleft: "⊲",
-    vartriangleright: "⊳",
-    Vbar: "⫫",
-    vBar: "⫨",
-    vBarv: "⫩",
-    Vcy: "В",
-    vcy: "в",
-    VDash: "⊫",
-    Vdash: "⊩",
-    vDash: "⊨",
-    vdash: "⊢",
-    Vdashl: "⫦",
-    Vee: "⋁",
-    vee: "∨",
-    veebar: "⊻",
-    veeeq: "≚",
-    vellip: "⋮",
-    Verbar: "‖",
-    verbar: "|",
-    Vert: "‖",
-    vert: "|",
-    VerticalBar: "∣",
-    VerticalLine: "|",
-    VerticalSeparator: "❘",
-    VerticalTilde: "≀",
-    VeryThinSpace: " ",
-    Vfr: "\uD835\uDD19",
-    vfr: "\uD835\uDD33",
-    vltri: "⊲",
-    vnsub: "⊂⃒",
-    vnsup: "⊃⃒",
-    Vopf: "\uD835\uDD4D",
-    vopf: "\uD835\uDD67",
-    vprop: "∝",
-    vrtri: "⊳",
-    Vscr: "\uD835\uDCB1",
-    vscr: "\uD835\uDCCB",
-    vsubnE: "⫋︀",
-    vsubne: "⊊︀",
-    vsupnE: "⫌︀",
-    vsupne: "⊋︀",
-    Vvdash: "⊪",
-    vzigzag: "⦚",
-    Wcirc: "Ŵ",
-    wcirc: "ŵ",
-    wedbar: "⩟",
-    Wedge: "⋀",
-    wedge: "∧",
-    wedgeq: "≙",
-    weierp: "℘",
-    Wfr: "\uD835\uDD1A",
-    wfr: "\uD835\uDD34",
-    Wopf: "\uD835\uDD4E",
-    wopf: "\uD835\uDD68",
-    wp: "℘",
-    wr: "≀",
-    wreath: "≀",
-    Wscr: "\uD835\uDCB2",
-    wscr: "\uD835\uDCCC",
-    xcap: "⋂",
-    xcirc: "◯",
-    xcup: "⋃",
-    xdtri: "▽",
-    Xfr: "\uD835\uDD1B",
-    xfr: "\uD835\uDD35",
-    xhArr: "⟺",
-    xharr: "⟷",
-    Xi: "Ξ",
-    xi: "ξ",
-    xlArr: "⟸",
-    xlarr: "⟵",
-    xmap: "⟼",
-    xnis: "⋻",
-    xodot: "⨀",
-    Xopf: "\uD835\uDD4F",
-    xopf: "\uD835\uDD69",
-    xoplus: "⨁",
-    xotime: "⨂",
-    xrArr: "⟹",
-    xrarr: "⟶",
-    Xscr: "\uD835\uDCB3",
-    xscr: "\uD835\uDCCD",
-    xsqcup: "⨆",
-    xuplus: "⨄",
-    xutri: "△",
-    xvee: "⋁",
-    xwedge: "⋀",
-    Yacute: "Ý",
-    yacute: "ý",
-    YAcy: "Я",
-    yacy: "я",
-    Ycirc: "Ŷ",
-    ycirc: "ŷ",
-    Ycy: "Ы",
-    ycy: "ы",
-    yen: "¥",
-    Yfr: "\uD835\uDD1C",
-    yfr: "\uD835\uDD36",
-    YIcy: "Ї",
-    yicy: "ї",
-    Yopf: "\uD835\uDD50",
-    yopf: "\uD835\uDD6A",
-    Yscr: "\uD835\uDCB4",
-    yscr: "\uD835\uDCCE",
-    YUcy: "Ю",
-    yucy: "ю",
-    Yuml: "Ÿ",
-    yuml: "ÿ",
-    Zacute: "Ź",
-    zacute: "ź",
-    Zcaron: "Ž",
-    zcaron: "ž",
-    Zcy: "З",
-    zcy: "з",
-    Zdot: "Ż",
-    zdot: "ż",
-    zeetrf: "ℨ",
-    ZeroWidthSpace: "​",
-    Zeta: "Ζ",
-    zeta: "ζ",
-    Zfr: "ℨ",
-    zfr: "\uD835\uDD37",
-    ZHcy: "Ж",
-    zhcy: "ж",
-    zigrarr: "⇝",
-    Zopf: "ℤ",
-    zopf: "\uD835\uDD6B",
-    Zscr: "\uD835\uDCB5",
-    zscr: "\uD835\uDCCF",
-    zwj: "‍",
-    zwnj: "‌"
-  });
-  exports.entityMap = exports.HTML_ENTITIES;
-});
-
-// node_modules/@xmldom/xmldom/lib/sax.js
-var require_sax = __commonJS((exports) => {
-  var conventions = require_conventions();
-  var g2 = require_grammar();
-  var errors4 = require_errors11();
-  var isHTMLEscapableRawTextElement = conventions.isHTMLEscapableRawTextElement;
-  var isHTMLMimeType = conventions.isHTMLMimeType;
-  var isHTMLRawTextElement = conventions.isHTMLRawTextElement;
-  var hasOwn2 = conventions.hasOwn;
-  var NAMESPACE = conventions.NAMESPACE;
-  var ParseError2 = errors4.ParseError;
-  var DOMException3 = errors4.DOMException;
-  var S_TAG = 0;
-  var S_ATTR = 1;
-  var S_ATTR_SPACE = 2;
-  var S_EQ = 3;
-  var S_ATTR_NOQUOT_VALUE = 4;
-  var S_ATTR_END = 5;
-  var S_TAG_SPACE = 6;
-  var S_TAG_CLOSE = 7;
-  function XMLReader() {}
-  XMLReader.prototype = {
-    parse: function(source, defaultNSMap, entityMap) {
-      var domBuilder = this.domBuilder;
-      domBuilder.startDocument();
-      _copy(defaultNSMap, defaultNSMap = Object.create(null));
-      parse15(source, defaultNSMap, entityMap, domBuilder, this.errorHandler);
-      domBuilder.endDocument();
-    }
-  };
-  var ENTITY_REG = /&#?\w+;?/g;
-  function parse15(source, defaultNSMapCopy, entityMap, domBuilder, errorHandler) {
-    var isHTML = isHTMLMimeType(domBuilder.mimeType);
-    if (source.indexOf(g2.UNICODE_REPLACEMENT_CHARACTER) >= 0) {
-      errorHandler.warning("Unicode replacement character detected, source encoding issues?");
-    }
-    function fixedFromCharCode(code) {
-      if (code > 65535) {
-        code -= 65536;
-        var surrogate1 = 55296 + (code >> 10), surrogate2 = 56320 + (code & 1023);
-        return String.fromCharCode(surrogate1, surrogate2);
-      } else {
-        return String.fromCharCode(code);
-      }
-    }
-    function entityReplacer(a3) {
-      var complete = a3[a3.length - 1] === ";" ? a3 : a3 + ";";
-      if (!isHTML && complete !== a3) {
-        errorHandler.error("EntityRef: expecting ;");
-        return a3;
-      }
-      var match = g2.Reference.exec(complete);
-      if (!match || match[0].length !== complete.length) {
-        errorHandler.error("entity not matching Reference production: " + a3);
-        return a3;
-      }
-      var k2 = complete.slice(1, -1);
-      if (hasOwn2(entityMap, k2)) {
-        return entityMap[k2];
-      } else if (k2.charAt(0) === "#") {
-        return fixedFromCharCode(parseInt(k2.substring(1).replace("x", "0x")));
-      } else {
-        errorHandler.error("entity not found:" + a3);
-        return a3;
-      }
-    }
-    function appendText(end2) {
-      if (end2 > start) {
-        var xt = source.substring(start, end2).replace(ENTITY_REG, entityReplacer);
-        locator && position(start);
-        domBuilder.characters(xt, 0, end2 - start);
-        start = end2;
-      }
-    }
-    var lineStart = 0;
-    var lineEnd = 0;
-    var linePattern = /\r\n?|\n|$/g;
-    var locator = domBuilder.locator;
-    function position(p, m3) {
-      while (p >= lineEnd && (m3 = linePattern.exec(source))) {
-        lineStart = lineEnd;
-        lineEnd = m3.index + m3[0].length;
-        locator.lineNumber++;
-      }
-      locator.columnNumber = p - lineStart + 1;
-    }
-    var parseStack = [{ currentNSMap: defaultNSMapCopy }];
-    var unclosedTags = [];
-    var start = 0;
-    while (true) {
-      try {
-        var tagStart = source.indexOf("<", start);
-        if (tagStart < 0) {
-          if (!isHTML && unclosedTags.length > 0) {
-            return errorHandler.fatalError("unclosed xml tag(s): " + unclosedTags.join(", "));
-          }
-          if (!source.substring(start).match(/^\s*$/)) {
-            var doc2 = domBuilder.doc;
-            var text2 = doc2.createTextNode(source.substring(start));
-            if (doc2.documentElement) {
-              return errorHandler.error("Extra content at the end of the document");
-            }
-            doc2.appendChild(text2);
-            domBuilder.currentElement = text2;
-          }
-          return;
-        }
-        if (tagStart > start) {
-          var fromSource = source.substring(start, tagStart);
-          if (!isHTML && unclosedTags.length === 0) {
-            fromSource = fromSource.replace(new RegExp(g2.S_OPT.source, "g"), "");
-            fromSource && errorHandler.error("Unexpected content outside root element: '" + fromSource + "'");
-          }
-          appendText(tagStart);
-        }
-        switch (source.charAt(tagStart + 1)) {
-          case "/":
-            var end = source.indexOf(">", tagStart + 2);
-            var tagNameRaw = source.substring(tagStart + 2, end > 0 ? end : undefined);
-            if (!tagNameRaw) {
-              return errorHandler.fatalError("end tag name missing");
-            }
-            var tagNameMatch = end > 0 && g2.reg("^", g2.QName_group, g2.S_OPT, "$").exec(tagNameRaw);
-            if (!tagNameMatch) {
-              return errorHandler.fatalError('end tag name contains invalid characters: "' + tagNameRaw + '"');
-            }
-            if (!domBuilder.currentElement && !domBuilder.doc.documentElement) {
-              return;
-            }
-            var currentTagName = unclosedTags[unclosedTags.length - 1] || domBuilder.currentElement.tagName || domBuilder.doc.documentElement.tagName || "";
-            if (currentTagName !== tagNameMatch[1]) {
-              var tagNameLower = tagNameMatch[1].toLowerCase();
-              if (!isHTML || currentTagName.toLowerCase() !== tagNameLower) {
-                return errorHandler.fatalError('Opening and ending tag mismatch: "' + currentTagName + '" != "' + tagNameRaw + '"');
-              }
-            }
-            var config3 = parseStack.pop();
-            unclosedTags.pop();
-            var localNSMap = config3.localNSMap;
-            domBuilder.endElement(config3.uri, config3.localName, currentTagName);
-            if (localNSMap) {
-              for (var prefix in localNSMap) {
-                if (hasOwn2(localNSMap, prefix)) {
-                  domBuilder.endPrefixMapping(prefix);
-                }
-              }
-            }
-            end++;
-            break;
-          case "?":
-            locator && position(tagStart);
-            end = parseProcessingInstruction(source, tagStart, domBuilder, errorHandler);
-            break;
-          case "!":
-            locator && position(tagStart);
-            end = parseDoctypeCommentOrCData(source, tagStart, domBuilder, errorHandler, isHTML);
-            break;
-          default:
-            locator && position(tagStart);
-            var el = new ElementAttributes;
-            var currentNSMap = parseStack[parseStack.length - 1].currentNSMap;
-            var end = parseElementStartPart(source, tagStart, el, currentNSMap, entityReplacer, errorHandler, isHTML);
-            var len = el.length;
-            if (!el.closed) {
-              if (isHTML && conventions.isHTMLVoidElement(el.tagName)) {
-                el.closed = true;
-              } else {
-                unclosedTags.push(el.tagName);
-              }
-            }
-            if (locator && len) {
-              var locator2 = copyLocator(locator, {});
-              for (var i4 = 0;i4 < len; i4++) {
-                var a2 = el[i4];
-                position(a2.offset);
-                a2.locator = copyLocator(locator, {});
-              }
-              domBuilder.locator = locator2;
-              if (appendElement(el, domBuilder, currentNSMap)) {
-                parseStack.push(el);
-              }
-              domBuilder.locator = locator;
-            } else {
-              if (appendElement(el, domBuilder, currentNSMap)) {
-                parseStack.push(el);
-              }
-            }
-            if (isHTML && !el.closed) {
-              end = parseHtmlSpecialContent(source, end, el.tagName, entityReplacer, domBuilder);
-            } else {
-              end++;
-            }
-        }
-      } catch (e2) {
-        if (e2 instanceof ParseError2) {
-          throw e2;
-        } else if (e2 instanceof DOMException3) {
-          throw new ParseError2(e2.name + ": " + e2.message, domBuilder.locator, e2);
-        }
-        errorHandler.error("element parse error: " + e2);
-        end = -1;
-      }
-      if (end > start) {
-        start = end;
-      } else {
-        appendText(Math.max(tagStart, start) + 1);
-      }
-    }
-  }
-  function copyLocator(f3, t2) {
-    t2.lineNumber = f3.lineNumber;
-    t2.columnNumber = f3.columnNumber;
-    return t2;
-  }
-  function parseElementStartPart(source, start, el, currentNSMap, entityReplacer, errorHandler, isHTML) {
-    function addAttribute(qname, value2, startIndex) {
-      if (hasOwn2(el.attributeNames, qname)) {
-        return errorHandler.fatalError("Attribute " + qname + " redefined");
-      }
-      if (!isHTML && value2.indexOf("<") >= 0) {
-        return errorHandler.fatalError("Unescaped '<' not allowed in attributes values");
-      }
-      el.addValue(qname, value2.replace(/[\t\n\r]/g, " ").replace(ENTITY_REG, entityReplacer), startIndex);
-    }
-    var attrName;
-    var value;
-    var p = ++start;
-    var s2 = S_TAG;
-    while (true) {
-      var c4 = source.charAt(p);
-      switch (c4) {
-        case "=":
-          if (s2 === S_ATTR) {
-            attrName = source.slice(start, p);
-            s2 = S_EQ;
-          } else if (s2 === S_ATTR_SPACE) {
-            s2 = S_EQ;
-          } else {
-            throw new Error("attribute equal must after attrName");
-          }
-          break;
-        case "'":
-        case '"':
-          if (s2 === S_EQ || s2 === S_ATTR) {
-            if (s2 === S_ATTR) {
-              errorHandler.warning('attribute value must after "="');
-              attrName = source.slice(start, p);
-            }
-            start = p + 1;
-            p = source.indexOf(c4, start);
-            if (p > 0) {
-              value = source.slice(start, p);
-              addAttribute(attrName, value, start - 1);
-              s2 = S_ATTR_END;
-            } else {
-              throw new Error("attribute value no end '" + c4 + "' match");
-            }
-          } else if (s2 == S_ATTR_NOQUOT_VALUE) {
-            value = source.slice(start, p);
-            addAttribute(attrName, value, start);
-            errorHandler.warning('attribute "' + attrName + '" missed start quot(' + c4 + ")!!");
-            start = p + 1;
-            s2 = S_ATTR_END;
-          } else {
-            throw new Error('attribute value must after "="');
-          }
-          break;
-        case "/":
-          switch (s2) {
-            case S_TAG:
-              el.setTagName(source.slice(start, p));
-            case S_ATTR_END:
-            case S_TAG_SPACE:
-            case S_TAG_CLOSE:
-              s2 = S_TAG_CLOSE;
-              el.closed = true;
-            case S_ATTR_NOQUOT_VALUE:
-            case S_ATTR:
-              break;
-            case S_ATTR_SPACE:
-              el.closed = true;
-              break;
-            default:
-              throw new Error("attribute invalid close char('/')");
-          }
-          break;
-        case "":
-          errorHandler.error("unexpected end of input");
-          if (s2 == S_TAG) {
-            el.setTagName(source.slice(start, p));
-          }
-          return p;
-        case ">":
-          switch (s2) {
-            case S_TAG:
-              el.setTagName(source.slice(start, p));
-            case S_ATTR_END:
-            case S_TAG_SPACE:
-            case S_TAG_CLOSE:
-              break;
-            case S_ATTR_NOQUOT_VALUE:
-            case S_ATTR:
-              value = source.slice(start, p);
-              if (value.slice(-1) === "/") {
-                el.closed = true;
-                value = value.slice(0, -1);
-              }
-            case S_ATTR_SPACE:
-              if (s2 === S_ATTR_SPACE) {
-                value = attrName;
-              }
-              if (s2 == S_ATTR_NOQUOT_VALUE) {
-                errorHandler.warning('attribute "' + value + '" missed quot(")!');
-                addAttribute(attrName, value, start);
-              } else {
-                if (!isHTML) {
-                  errorHandler.warning('attribute "' + value + '" missed value!! "' + value + '" instead!!');
-                }
-                addAttribute(value, value, start);
-              }
-              break;
-            case S_EQ:
-              if (!isHTML) {
-                return errorHandler.fatalError(`AttValue: ' or " expected`);
-              }
-          }
-          return p;
-        case "":
-          c4 = " ";
-        default:
-          if (c4 <= " ") {
-            switch (s2) {
-              case S_TAG:
-                el.setTagName(source.slice(start, p));
-                s2 = S_TAG_SPACE;
-                break;
-              case S_ATTR:
-                attrName = source.slice(start, p);
-                s2 = S_ATTR_SPACE;
-                break;
-              case S_ATTR_NOQUOT_VALUE:
-                var value = source.slice(start, p);
-                errorHandler.warning('attribute "' + value + '" missed quot(")!!');
-                addAttribute(attrName, value, start);
-              case S_ATTR_END:
-                s2 = S_TAG_SPACE;
-                break;
-            }
-          } else {
-            switch (s2) {
-              case S_ATTR_SPACE:
-                if (!isHTML) {
-                  errorHandler.warning('attribute "' + attrName + '" missed value!! "' + attrName + '" instead2!!');
-                }
-                addAttribute(attrName, attrName, start);
-                start = p;
-                s2 = S_ATTR;
-                break;
-              case S_ATTR_END:
-                errorHandler.warning('attribute space is required"' + attrName + '"!!');
-              case S_TAG_SPACE:
-                s2 = S_ATTR;
-                start = p;
-                break;
-              case S_EQ:
-                s2 = S_ATTR_NOQUOT_VALUE;
-                start = p;
-                break;
-              case S_TAG_CLOSE:
-                throw new Error("elements closed character '/' and '>' must be connected to");
-            }
-          }
-      }
-      p++;
-    }
-  }
-  function appendElement(el, domBuilder, currentNSMap) {
-    var tagName = el.tagName;
-    var localNSMap = null;
-    var i4 = el.length;
-    while (i4--) {
-      var a2 = el[i4];
-      var qName = a2.qName;
-      var value = a2.value;
-      var nsp = qName.indexOf(":");
-      if (nsp > 0) {
-        var prefix = a2.prefix = qName.slice(0, nsp);
-        var localName = qName.slice(nsp + 1);
-        var nsPrefix = prefix === "xmlns" && localName;
-      } else {
-        localName = qName;
-        prefix = null;
-        nsPrefix = qName === "xmlns" && "";
-      }
-      a2.localName = localName;
-      if (nsPrefix !== false) {
-        if (localNSMap == null) {
-          localNSMap = Object.create(null);
-          _copy(currentNSMap, currentNSMap = Object.create(null));
-        }
-        currentNSMap[nsPrefix] = localNSMap[nsPrefix] = value;
-        a2.uri = NAMESPACE.XMLNS;
-        domBuilder.startPrefixMapping(nsPrefix, value);
-      }
-    }
-    var i4 = el.length;
-    while (i4--) {
-      a2 = el[i4];
-      if (a2.prefix) {
-        if (a2.prefix === "xml") {
-          a2.uri = NAMESPACE.XML;
-        }
-        if (a2.prefix !== "xmlns") {
-          a2.uri = currentNSMap[a2.prefix];
-        }
-      }
-    }
-    var nsp = tagName.indexOf(":");
-    if (nsp > 0) {
-      prefix = el.prefix = tagName.slice(0, nsp);
-      localName = el.localName = tagName.slice(nsp + 1);
-    } else {
-      prefix = null;
-      localName = el.localName = tagName;
-    }
-    var ns = el.uri = currentNSMap[prefix || ""];
-    domBuilder.startElement(ns, localName, tagName, el);
-    if (el.closed) {
-      domBuilder.endElement(ns, localName, tagName);
-      if (localNSMap) {
-        for (prefix in localNSMap) {
-          if (hasOwn2(localNSMap, prefix)) {
-            domBuilder.endPrefixMapping(prefix);
-          }
-        }
-      }
-    } else {
-      el.currentNSMap = currentNSMap;
-      el.localNSMap = localNSMap;
-      return true;
-    }
-  }
-  function parseHtmlSpecialContent(source, elStartEnd, tagName, entityReplacer, domBuilder) {
-    var isEscapableRaw = isHTMLEscapableRawTextElement(tagName);
-    if (isEscapableRaw || isHTMLRawTextElement(tagName)) {
-      var elEndStart = source.indexOf("</" + tagName + ">", elStartEnd);
-      var text2 = source.substring(elStartEnd + 1, elEndStart);
-      if (isEscapableRaw) {
-        text2 = text2.replace(ENTITY_REG, entityReplacer);
-      }
-      domBuilder.characters(text2, 0, text2.length);
-      return elEndStart;
-    }
-    return elStartEnd + 1;
-  }
-  function _copy(source, target) {
-    for (var n2 in source) {
-      if (hasOwn2(source, n2)) {
-        target[n2] = source[n2];
-      }
-    }
-  }
-  function parseUtils(source, start) {
-    var index = start;
-    function char(n2) {
-      n2 = n2 || 0;
-      return source.charAt(index + n2);
-    }
-    function skip(n2) {
-      n2 = n2 || 1;
-      index += n2;
-    }
-    function skipBlanks() {
-      var blanks = 0;
-      while (index < source.length) {
-        var c4 = char();
-        if (c4 !== " " && c4 !== `
-` && c4 !== "\t" && c4 !== "\r") {
-          return blanks;
-        }
-        blanks++;
-        skip();
-      }
-      return -1;
-    }
-    function substringFromIndex() {
-      return source.substring(index);
-    }
-    function substringStartsWith(text2) {
-      return source.substring(index, index + text2.length) === text2;
-    }
-    function substringStartsWithCaseInsensitive(text2) {
-      return source.substring(index, index + text2.length).toUpperCase() === text2.toUpperCase();
-    }
-    function getMatch(args) {
-      var expr = g2.reg("^", args);
-      var match = expr.exec(substringFromIndex());
-      if (match) {
-        skip(match[0].length);
-        return match[0];
-      }
-      return null;
-    }
-    return {
-      char,
-      getIndex: function() {
-        return index;
-      },
-      getMatch,
-      getSource: function() {
-        return source;
-      },
-      skip,
-      skipBlanks,
-      substringFromIndex,
-      substringStartsWith,
-      substringStartsWithCaseInsensitive
-    };
-  }
-  function parseDoctypeInternalSubset(p, errorHandler) {
-    function parsePI(p2, errorHandler2) {
-      var match = g2.PI.exec(p2.substringFromIndex());
-      if (!match) {
-        return errorHandler2.fatalError("processing instruction is not well-formed at position " + p2.getIndex());
-      }
-      if (match[1].toLowerCase() === "xml") {
-        return errorHandler2.fatalError("xml declaration is only allowed at the start of the document, but found at position " + p2.getIndex());
-      }
-      p2.skip(match[0].length);
-      return match[0];
-    }
-    var source = p.getSource();
-    if (p.char() === "[") {
-      p.skip(1);
-      var intSubsetStart = p.getIndex();
-      while (p.getIndex() < source.length) {
-        p.skipBlanks();
-        if (p.char() === "]") {
-          var internalSubset = source.substring(intSubsetStart, p.getIndex());
-          p.skip(1);
-          return internalSubset;
-        }
-        var current = null;
-        if (p.char() === "<" && p.char(1) === "!") {
-          switch (p.char(2)) {
-            case "E":
-              if (p.char(3) === "L") {
-                current = p.getMatch(g2.elementdecl);
-              } else if (p.char(3) === "N") {
-                current = p.getMatch(g2.EntityDecl);
-              }
-              break;
-            case "A":
-              current = p.getMatch(g2.AttlistDecl);
-              break;
-            case "N":
-              current = p.getMatch(g2.NotationDecl);
-              break;
-            case "-":
-              current = p.getMatch(g2.Comment);
-              break;
-          }
-        } else if (p.char() === "<" && p.char(1) === "?") {
-          current = parsePI(p, errorHandler);
-        } else if (p.char() === "%") {
-          current = p.getMatch(g2.PEReference);
-        } else {
-          return errorHandler.fatalError("Error detected in Markup declaration");
-        }
-        if (!current) {
-          return errorHandler.fatalError("Error in internal subset at position " + p.getIndex());
-        }
-      }
-      return errorHandler.fatalError("doctype internal subset is not well-formed, missing ]");
-    }
-  }
-  function parseDoctypeCommentOrCData(source, start, domBuilder, errorHandler, isHTML) {
-    var p = parseUtils(source, start);
-    switch (isHTML ? p.char(2).toUpperCase() : p.char(2)) {
-      case "-":
-        var comment = p.getMatch(g2.Comment);
-        if (comment) {
-          domBuilder.comment(comment, g2.COMMENT_START.length, comment.length - g2.COMMENT_START.length - g2.COMMENT_END.length);
-          return p.getIndex();
-        } else {
-          return errorHandler.fatalError("comment is not well-formed at position " + p.getIndex());
-        }
-      case "[":
-        var cdata = p.getMatch(g2.CDSect);
-        if (cdata) {
-          if (!isHTML && !domBuilder.currentElement) {
-            return errorHandler.fatalError("CDATA outside of element");
-          }
-          domBuilder.startCDATA();
-          domBuilder.characters(cdata, g2.CDATA_START.length, cdata.length - g2.CDATA_START.length - g2.CDATA_END.length);
-          domBuilder.endCDATA();
-          return p.getIndex();
-        } else {
-          return errorHandler.fatalError("Invalid CDATA starting at position " + start);
-        }
-      case "D": {
-        if (domBuilder.doc && domBuilder.doc.documentElement) {
-          return errorHandler.fatalError("Doctype not allowed inside or after documentElement at position " + p.getIndex());
-        }
-        if (isHTML ? !p.substringStartsWithCaseInsensitive(g2.DOCTYPE_DECL_START) : !p.substringStartsWith(g2.DOCTYPE_DECL_START)) {
-          return errorHandler.fatalError("Expected " + g2.DOCTYPE_DECL_START + " at position " + p.getIndex());
-        }
-        p.skip(g2.DOCTYPE_DECL_START.length);
-        if (p.skipBlanks() < 1) {
-          return errorHandler.fatalError("Expected whitespace after " + g2.DOCTYPE_DECL_START + " at position " + p.getIndex());
-        }
-        var doctype = {
-          name: undefined,
-          publicId: undefined,
-          systemId: undefined,
-          internalSubset: undefined
-        };
-        doctype.name = p.getMatch(g2.Name);
-        if (!doctype.name)
-          return errorHandler.fatalError("doctype name missing or contains unexpected characters at position " + p.getIndex());
-        if (isHTML && doctype.name.toLowerCase() !== "html") {
-          errorHandler.warning("Unexpected DOCTYPE in HTML document at position " + p.getIndex());
-        }
-        p.skipBlanks();
-        if (p.substringStartsWith(g2.PUBLIC) || p.substringStartsWith(g2.SYSTEM)) {
-          var match = g2.ExternalID_match.exec(p.substringFromIndex());
-          if (!match) {
-            return errorHandler.fatalError("doctype external id is not well-formed at position " + p.getIndex());
-          }
-          if (match.groups.SystemLiteralOnly !== undefined) {
-            doctype.systemId = match.groups.SystemLiteralOnly;
-          } else {
-            doctype.systemId = match.groups.SystemLiteral;
-            doctype.publicId = match.groups.PubidLiteral;
-          }
-          p.skip(match[0].length);
-        } else if (isHTML && p.substringStartsWithCaseInsensitive(g2.SYSTEM)) {
-          p.skip(g2.SYSTEM.length);
-          if (p.skipBlanks() < 1) {
-            return errorHandler.fatalError("Expected whitespace after " + g2.SYSTEM + " at position " + p.getIndex());
-          }
-          doctype.systemId = p.getMatch(g2.ABOUT_LEGACY_COMPAT_SystemLiteral);
-          if (!doctype.systemId) {
-            return errorHandler.fatalError("Expected " + g2.ABOUT_LEGACY_COMPAT + " in single or double quotes after " + g2.SYSTEM + " at position " + p.getIndex());
-          }
-        }
-        if (isHTML && doctype.systemId && !g2.ABOUT_LEGACY_COMPAT_SystemLiteral.test(doctype.systemId)) {
-          errorHandler.warning("Unexpected doctype.systemId in HTML document at position " + p.getIndex());
-        }
-        if (!isHTML) {
-          p.skipBlanks();
-          doctype.internalSubset = parseDoctypeInternalSubset(p, errorHandler);
-        }
-        p.skipBlanks();
-        if (p.char() !== ">") {
-          return errorHandler.fatalError("doctype not terminated with > at position " + p.getIndex());
-        }
-        p.skip(1);
-        domBuilder.startDTD(doctype.name, doctype.publicId, doctype.systemId, doctype.internalSubset);
-        domBuilder.endDTD();
-        return p.getIndex();
-      }
-      default:
-        return errorHandler.fatalError('Not well-formed XML starting with "<!" at position ' + start);
-    }
-  }
-  function parseProcessingInstruction(source, start, domBuilder, errorHandler) {
-    var match = source.substring(start).match(g2.PI);
-    if (!match) {
-      return errorHandler.fatalError("Invalid processing instruction starting at position " + start);
-    }
-    if (match[1].toLowerCase() === "xml") {
-      if (start > 0) {
-        return errorHandler.fatalError("processing instruction at position " + start + " is an xml declaration which is only at the start of the document");
-      }
-      if (!g2.XMLDecl.test(source.substring(start))) {
-        return errorHandler.fatalError("xml declaration is not well-formed");
-      }
-    }
-    domBuilder.processingInstruction(match[1], match[2]);
-    return start + match[0].length;
-  }
-  function ElementAttributes() {
-    this.attributeNames = Object.create(null);
-  }
-  ElementAttributes.prototype = {
-    setTagName: function(tagName) {
-      if (!g2.QName_exact.test(tagName)) {
-        throw new Error("invalid tagName:" + tagName);
-      }
-      this.tagName = tagName;
-    },
-    addValue: function(qName, value, offset) {
-      if (!g2.QName_exact.test(qName)) {
-        throw new Error("invalid attribute:" + qName);
-      }
-      this.attributeNames[qName] = this.length;
-      this[this.length++] = { qName, value, offset };
-    },
-    length: 0,
-    getLocalName: function(i4) {
-      return this[i4].localName;
-    },
-    getLocator: function(i4) {
-      return this[i4].locator;
-    },
-    getQName: function(i4) {
-      return this[i4].qName;
-    },
-    getURI: function(i4) {
-      return this[i4].uri;
-    },
-    getValue: function(i4) {
-      return this[i4].value;
-    }
-  };
-  exports.XMLReader = XMLReader;
-  exports.parseUtils = parseUtils;
-  exports.parseDoctypeCommentOrCData = parseDoctypeCommentOrCData;
-});
-
-// node_modules/@xmldom/xmldom/lib/dom-parser.js
-var require_dom_parser = __commonJS((exports) => {
-  var conventions = require_conventions();
-  var dom = require_dom();
-  var errors4 = require_errors11();
-  var entities = require_entities();
-  var sax = require_sax();
-  var DOMImplementation = dom.DOMImplementation;
-  var hasDefaultHTMLNamespace = conventions.hasDefaultHTMLNamespace;
-  var isHTMLMimeType = conventions.isHTMLMimeType;
-  var isValidMimeType = conventions.isValidMimeType;
-  var MIME_TYPE = conventions.MIME_TYPE;
-  var NAMESPACE = conventions.NAMESPACE;
-  var ParseError2 = errors4.ParseError;
-  var XMLReader = sax.XMLReader;
-  function normalizeLineEndings(input) {
-    return input.replace(/\r[\n\u0085]/g, `
-`).replace(/[\r\u0085\u2028\u2029]/g, `
-`);
-  }
-  function DOMParser(options) {
-    options = options || {};
-    if (options.locator === undefined) {
-      options.locator = true;
-    }
-    this.assign = options.assign || conventions.assign;
-    this.domHandler = options.domHandler || DOMHandler;
-    this.onError = options.onError || options.errorHandler;
-    if (options.errorHandler && typeof options.errorHandler !== "function") {
-      throw new TypeError("errorHandler object is no longer supported, switch to onError!");
-    } else if (options.errorHandler) {
-      options.errorHandler("warning", "The `errorHandler` option has been deprecated, use `onError` instead!", this);
-    }
-    this.normalizeLineEndings = options.normalizeLineEndings || normalizeLineEndings;
-    this.locator = !!options.locator;
-    this.xmlns = this.assign(Object.create(null), options.xmlns);
-  }
-  DOMParser.prototype.parseFromString = function(source, mimeType) {
-    if (!isValidMimeType(mimeType)) {
-      throw new TypeError('DOMParser.parseFromString: the provided mimeType "' + mimeType + '" is not valid.');
-    }
-    var defaultNSMap = this.assign(Object.create(null), this.xmlns);
-    var entityMap = entities.XML_ENTITIES;
-    var defaultNamespace = defaultNSMap[""] || null;
-    if (hasDefaultHTMLNamespace(mimeType)) {
-      entityMap = entities.HTML_ENTITIES;
-      defaultNamespace = NAMESPACE.HTML;
-    } else if (mimeType === MIME_TYPE.XML_SVG_IMAGE) {
-      defaultNamespace = NAMESPACE.SVG;
-    }
-    defaultNSMap[""] = defaultNamespace;
-    defaultNSMap.xml = defaultNSMap.xml || NAMESPACE.XML;
-    var domBuilder = new this.domHandler({
-      mimeType,
-      defaultNamespace,
-      onError: this.onError
-    });
-    var locator = this.locator ? {} : undefined;
-    if (this.locator) {
-      domBuilder.setDocumentLocator(locator);
-    }
-    var sax2 = new XMLReader;
-    sax2.errorHandler = domBuilder;
-    sax2.domBuilder = domBuilder;
-    var isXml = !conventions.isHTMLMimeType(mimeType);
-    if (isXml && typeof source !== "string") {
-      sax2.errorHandler.fatalError("source is not a string");
-    }
-    sax2.parse(this.normalizeLineEndings(String(source)), defaultNSMap, entityMap);
-    if (!domBuilder.doc.documentElement) {
-      sax2.errorHandler.fatalError("missing root element");
-    }
-    return domBuilder.doc;
-  };
-  function DOMHandler(options) {
-    var opt = options || {};
-    this.mimeType = opt.mimeType || MIME_TYPE.XML_APPLICATION;
-    this.defaultNamespace = opt.defaultNamespace || null;
-    this.cdata = false;
-    this.currentElement = undefined;
-    this.doc = undefined;
-    this.locator = undefined;
-    this.onError = opt.onError;
-  }
-  function position(locator, node) {
-    node.lineNumber = locator.lineNumber;
-    node.columnNumber = locator.columnNumber;
-  }
-  DOMHandler.prototype = {
-    startDocument: function() {
-      var impl = new DOMImplementation;
-      this.doc = isHTMLMimeType(this.mimeType) ? impl.createHTMLDocument(false) : impl.createDocument(this.defaultNamespace, "");
-    },
-    startElement: function(namespaceURI, localName, qName, attrs) {
-      var doc2 = this.doc;
-      var el = doc2.createElementNS(namespaceURI, qName || localName);
-      var len = attrs.length;
-      appendElement(this, el);
-      this.currentElement = el;
-      this.locator && position(this.locator, el);
-      for (var i4 = 0;i4 < len; i4++) {
-        var namespaceURI = attrs.getURI(i4);
-        var value = attrs.getValue(i4);
-        var qName = attrs.getQName(i4);
-        var attr = doc2.createAttributeNS(namespaceURI, qName);
-        this.locator && position(attrs.getLocator(i4), attr);
-        attr.value = attr.nodeValue = value;
-        el.setAttributeNode(attr);
-      }
-    },
-    endElement: function(namespaceURI, localName, qName) {
-      this.currentElement = this.currentElement.parentNode;
-    },
-    startPrefixMapping: function(prefix, uri) {},
-    endPrefixMapping: function(prefix) {},
-    processingInstruction: function(target, data) {
-      var ins = this.doc.createProcessingInstruction(target, data);
-      this.locator && position(this.locator, ins);
-      appendElement(this, ins);
-    },
-    ignorableWhitespace: function(ch2, start, length) {},
-    characters: function(chars, start, length) {
-      chars = _toString.apply(this, arguments);
-      if (chars) {
-        if (this.cdata) {
-          var charNode = this.doc.createCDATASection(chars);
-        } else {
-          var charNode = this.doc.createTextNode(chars);
-        }
-        if (this.currentElement) {
-          this.currentElement.appendChild(charNode);
-        } else if (/^\s*$/.test(chars)) {
-          this.doc.appendChild(charNode);
-        }
-        this.locator && position(this.locator, charNode);
-      }
-    },
-    skippedEntity: function(name3) {},
-    endDocument: function() {
-      this.doc.normalize();
-    },
-    setDocumentLocator: function(locator) {
-      if (locator) {
-        locator.lineNumber = 0;
-      }
-      this.locator = locator;
-    },
-    comment: function(chars, start, length) {
-      chars = _toString.apply(this, arguments);
-      var comm = this.doc.createComment(chars);
-      this.locator && position(this.locator, comm);
-      appendElement(this, comm);
-    },
-    startCDATA: function() {
-      this.cdata = true;
-    },
-    endCDATA: function() {
-      this.cdata = false;
-    },
-    startDTD: function(name3, publicId, systemId, internalSubset) {
-      var impl = this.doc.implementation;
-      if (impl && impl.createDocumentType) {
-        var dt = impl.createDocumentType(name3, publicId, systemId, internalSubset);
-        this.locator && position(this.locator, dt);
-        appendElement(this, dt);
-        this.doc.doctype = dt;
-      }
-    },
-    reportError: function(level, message) {
-      if (typeof this.onError === "function") {
-        try {
-          this.onError(level, message, this);
-        } catch (e2) {
-          throw new ParseError2("Reporting " + level + ' "' + message + '" caused ' + e2, this.locator);
-        }
-      } else {
-        console.error("[xmldom " + level + "]\t" + message, _locator(this.locator));
-      }
-    },
-    warning: function(message) {
-      this.reportError("warning", message);
-    },
-    error: function(message) {
-      this.reportError("error", message);
-    },
-    fatalError: function(message) {
-      this.reportError("fatalError", message);
-      throw new ParseError2(message, this.locator);
-    }
-  };
-  function _locator(l) {
-    if (l) {
-      return `
-@#[line:` + l.lineNumber + ",col:" + l.columnNumber + "]";
-    }
-  }
-  function _toString(chars, start, length) {
-    if (typeof chars == "string") {
-      return chars.substr(start, length);
-    } else {
-      if (chars.length >= start + length || start) {
-        return new java.lang.String(chars, start, length) + "";
-      }
-      return chars;
-    }
-  }
-  "endDTD,startEntity,endEntity,attributeDecl,elementDecl,externalEntityDecl,internalEntityDecl,resolveEntity,getExternalSubset,notationDecl,unparsedEntityDecl".replace(/\w+/g, function(key) {
-    DOMHandler.prototype[key] = function() {
-      return null;
-    };
-  });
-  function appendElement(handler, node) {
-    if (!handler.currentElement) {
-      handler.doc.appendChild(node);
-    } else {
-      handler.currentElement.appendChild(node);
-    }
-  }
-  function onErrorStopParsing(level) {
-    if (level === "error")
-      throw "onErrorStopParsing";
-  }
-  function onWarningStopParsing() {
-    throw "onWarningStopParsing";
-  }
-  exports.__DOMHandler = DOMHandler;
-  exports.DOMParser = DOMParser;
-  exports.normalizeLineEndings = normalizeLineEndings;
-  exports.onErrorStopParsing = onErrorStopParsing;
-  exports.onWarningStopParsing = onWarningStopParsing;
-});
-
-// node_modules/@xmldom/xmldom/lib/index.js
-var require_lib5 = __commonJS((exports) => {
-  var conventions = require_conventions();
-  exports.assign = conventions.assign;
-  exports.hasDefaultHTMLNamespace = conventions.hasDefaultHTMLNamespace;
-  exports.isHTMLMimeType = conventions.isHTMLMimeType;
-  exports.isValidMimeType = conventions.isValidMimeType;
-  exports.MIME_TYPE = conventions.MIME_TYPE;
-  exports.NAMESPACE = conventions.NAMESPACE;
-  var errors4 = require_errors11();
-  exports.DOMException = errors4.DOMException;
-  exports.DOMExceptionName = errors4.DOMExceptionName;
-  exports.ExceptionCode = errors4.ExceptionCode;
-  exports.ParseError = errors4.ParseError;
-  var dom = require_dom();
-  exports.Attr = dom.Attr;
-  exports.CDATASection = dom.CDATASection;
-  exports.CharacterData = dom.CharacterData;
-  exports.Comment = dom.Comment;
-  exports.Document = dom.Document;
-  exports.DocumentFragment = dom.DocumentFragment;
-  exports.DocumentType = dom.DocumentType;
-  exports.DOMImplementation = dom.DOMImplementation;
-  exports.Element = dom.Element;
-  exports.Entity = dom.Entity;
-  exports.EntityReference = dom.EntityReference;
-  exports.LiveNodeList = dom.LiveNodeList;
-  exports.NamedNodeMap = dom.NamedNodeMap;
-  exports.Node = dom.Node;
-  exports.NodeList = dom.NodeList;
-  exports.Notation = dom.Notation;
-  exports.ProcessingInstruction = dom.ProcessingInstruction;
-  exports.Text = dom.Text;
-  exports.XMLSerializer = dom.XMLSerializer;
-  var domParser = require_dom_parser();
-  exports.DOMParser = domParser.DOMParser;
-  exports.normalizeLineEndings = domParser.normalizeLineEndings;
-  exports.onErrorStopParsing = domParser.onErrorStopParsing;
-  exports.onWarningStopParsing = domParser.onWarningStopParsing;
-});
-
-// node_modules/plist/lib/parse.js
-var require_parse9 = __commonJS((exports) => {
-  var { DOMParser } = require_lib5();
-  exports.parse = parse15;
-  var TEXT_NODE = 3;
-  var CDATA_NODE = 4;
-  var COMMENT_NODE = 8;
-  function shouldIgnoreNode(node) {
-    return node.nodeType === TEXT_NODE || node.nodeType === COMMENT_NODE || node.nodeType === CDATA_NODE;
-  }
-  function isEmptyNode(node) {
-    if (!node.childNodes || node.childNodes.length === 0) {
-      return true;
-    } else {
-      return false;
-    }
-  }
-  function invariant(test2, message) {
-    if (!test2) {
-      throw new Error(message);
-    }
-  }
-  function parse15(xml) {
-    var doc2 = new DOMParser().parseFromString(xml);
-    invariant(doc2.documentElement.nodeName === "plist", "malformed document. First element should be <plist>");
-    var plist = parsePlistXML(doc2.documentElement);
-    if (plist.length == 1)
-      plist = plist[0];
-    return plist;
-  }
-  function parsePlistXML(node) {
-    var i4, new_obj, key, val, new_arr, res, counter, type;
-    if (!node)
-      return null;
-    if (node.nodeName === "plist") {
-      new_arr = [];
-      if (isEmptyNode(node)) {
-        return new_arr;
-      }
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        if (!shouldIgnoreNode(node.childNodes[i4])) {
-          new_arr.push(parsePlistXML(node.childNodes[i4]));
-        }
-      }
-      return new_arr;
-    } else if (node.nodeName === "dict") {
-      new_obj = {};
-      key = null;
-      counter = 0;
-      if (isEmptyNode(node)) {
-        return new_obj;
-      }
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        if (shouldIgnoreNode(node.childNodes[i4]))
-          continue;
-        if (counter % 2 === 0) {
-          invariant(node.childNodes[i4].nodeName === "key", "Missing key while parsing <dict/>.");
-          key = parsePlistXML(node.childNodes[i4]);
-        } else {
-          invariant(node.childNodes[i4].nodeName !== "key", 'Unexpected key "' + parsePlistXML(node.childNodes[i4]) + '" while parsing <dict/>.');
-          new_obj[key] = parsePlistXML(node.childNodes[i4]);
-        }
-        counter += 1;
-      }
-      if (counter % 2 === 1) {
-        new_obj[key] = "";
-      }
-      return new_obj;
-    } else if (node.nodeName === "array") {
-      new_arr = [];
-      if (isEmptyNode(node)) {
-        return new_arr;
-      }
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        if (!shouldIgnoreNode(node.childNodes[i4])) {
-          res = parsePlistXML(node.childNodes[i4]);
-          if (res != null)
-            new_arr.push(res);
-        }
-      }
-      return new_arr;
-    } else if (node.nodeName === "#text") {} else if (node.nodeName === "key") {
-      if (isEmptyNode(node)) {
-        return "";
-      }
-      invariant(node.childNodes[0].nodeValue !== "__proto__", "__proto__ keys can lead to prototype pollution. More details on CVE-2022-22912");
-      return node.childNodes[0].nodeValue;
-    } else if (node.nodeName === "string") {
-      res = "";
-      if (isEmptyNode(node)) {
-        return res;
-      }
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        var type = node.childNodes[i4].nodeType;
-        if (type === TEXT_NODE || type === CDATA_NODE) {
-          res += node.childNodes[i4].nodeValue;
-        }
-      }
-      return res;
-    } else if (node.nodeName === "integer") {
-      invariant(!isEmptyNode(node), 'Cannot parse "" as integer.');
-      return parseInt(node.childNodes[0].nodeValue, 10);
-    } else if (node.nodeName === "real") {
-      invariant(!isEmptyNode(node), 'Cannot parse "" as real.');
-      res = "";
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        if (node.childNodes[i4].nodeType === TEXT_NODE) {
-          res += node.childNodes[i4].nodeValue;
-        }
-      }
-      return parseFloat(res);
-    } else if (node.nodeName === "data") {
-      res = "";
-      if (isEmptyNode(node)) {
-        return Buffer.from(res, "base64");
-      }
-      for (i4 = 0;i4 < node.childNodes.length; i4++) {
-        if (node.childNodes[i4].nodeType === TEXT_NODE) {
-          res += node.childNodes[i4].nodeValue.replace(/\s+/g, "");
-        }
-      }
-      return Buffer.from(res, "base64");
-    } else if (node.nodeName === "date") {
-      invariant(!isEmptyNode(node), 'Cannot parse "" as Date.');
-      return new Date(node.childNodes[0].nodeValue);
-    } else if (node.nodeName === "null") {
-      return null;
-    } else if (node.nodeName === "true") {
-      return true;
-    } else if (node.nodeName === "false") {
-      return false;
-    } else {
-      throw new Error("Invalid PLIST tag " + node.nodeName);
-    }
-  }
-});
-
-// node_modules/xmlbuilder/lib/Utility.js
-var require_Utility = __commonJS((exports, module) => {
-  (function() {
-    var assign, getValue2, isArray4, isEmpty, isFunction4, isObject6, isPlainObject6, hasProp = {}.hasOwnProperty;
-    assign = function(target, ...sources) {
-      var i4, key, len, source;
-      if (isFunction4(Object.assign)) {
-        Object.assign.apply(null, arguments);
-      } else {
-        for (i4 = 0, len = sources.length;i4 < len; i4++) {
-          source = sources[i4];
-          if (source != null) {
-            for (key in source) {
-              if (!hasProp.call(source, key))
-                continue;
-              target[key] = source[key];
-            }
-          }
-        }
-      }
-      return target;
-    };
-    isFunction4 = function(val) {
-      return !!val && Object.prototype.toString.call(val) === "[object Function]";
-    };
-    isObject6 = function(val) {
-      var ref;
-      return !!val && ((ref = typeof val) === "function" || ref === "object");
-    };
-    isArray4 = function(val) {
-      if (isFunction4(Array.isArray)) {
-        return Array.isArray(val);
-      } else {
-        return Object.prototype.toString.call(val) === "[object Array]";
-      }
-    };
-    isEmpty = function(val) {
-      var key;
-      if (isArray4(val)) {
-        return !val.length;
-      } else {
-        for (key in val) {
-          if (!hasProp.call(val, key))
-            continue;
-          return false;
-        }
-        return true;
-      }
-    };
-    isPlainObject6 = function(val) {
-      var ctor, proto2;
-      return isObject6(val) && (proto2 = Object.getPrototypeOf(val)) && (ctor = proto2.constructor) && typeof ctor === "function" && ctor instanceof ctor && Function.prototype.toString.call(ctor) === Function.prototype.toString.call(Object);
-    };
-    getValue2 = function(obj) {
-      if (isFunction4(obj.valueOf)) {
-        return obj.valueOf();
-      } else {
-        return obj;
-      }
-    };
-    exports.assign = assign;
-    exports.isFunction = isFunction4;
-    exports.isObject = isObject6;
-    exports.isArray = isArray4;
-    exports.isEmpty = isEmpty;
-    exports.isPlainObject = isPlainObject6;
-    exports.getValue = getValue2;
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDOMImplementation.js
-var require_XMLDOMImplementation = __commonJS((exports, module) => {
-  (function() {
-    var XMLDOMImplementation;
-    module.exports = XMLDOMImplementation = class XMLDOMImplementation2 {
-      hasFeature(feature, version6) {
-        return true;
-      }
-      createDocumentType(qualifiedName, publicId, systemId) {
-        throw new Error("This DOM method is not implemented.");
-      }
-      createDocument(namespaceURI, qualifiedName, doctype) {
-        throw new Error("This DOM method is not implemented.");
-      }
-      createHTMLDocument(title) {
-        throw new Error("This DOM method is not implemented.");
-      }
-      getFeature(feature, version6) {
-        throw new Error("This DOM method is not implemented.");
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDOMErrorHandler.js
-var require_XMLDOMErrorHandler = __commonJS((exports, module) => {
-  (function() {
-    var XMLDOMErrorHandler;
-    module.exports = XMLDOMErrorHandler = class XMLDOMErrorHandler2 {
-      constructor() {}
-      handleError(error49) {
-        throw new Error(error49);
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDOMStringList.js
-var require_XMLDOMStringList = __commonJS((exports, module) => {
-  (function() {
-    var XMLDOMStringList;
-    module.exports = XMLDOMStringList = function() {
-
-      class XMLDOMStringList2 {
-        constructor(arr) {
-          this.arr = arr || [];
-        }
-        item(index) {
-          return this.arr[index] || null;
-        }
-        contains(str2) {
-          return this.arr.indexOf(str2) !== -1;
-        }
-      }
-      Object.defineProperty(XMLDOMStringList2.prototype, "length", {
-        get: function() {
-          return this.arr.length;
-        }
-      });
-      return XMLDOMStringList2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDOMConfiguration.js
-var require_XMLDOMConfiguration = __commonJS((exports, module) => {
-  (function() {
-    var XMLDOMConfiguration, XMLDOMErrorHandler, XMLDOMStringList;
-    XMLDOMErrorHandler = require_XMLDOMErrorHandler();
-    XMLDOMStringList = require_XMLDOMStringList();
-    module.exports = XMLDOMConfiguration = function() {
-
-      class XMLDOMConfiguration2 {
-        constructor() {
-          var clonedSelf;
-          this.defaultParams = {
-            "canonical-form": false,
-            "cdata-sections": false,
-            comments: false,
-            "datatype-normalization": false,
-            "element-content-whitespace": true,
-            entities: true,
-            "error-handler": new XMLDOMErrorHandler,
-            infoset: true,
-            "validate-if-schema": false,
-            namespaces: true,
-            "namespace-declarations": true,
-            "normalize-characters": false,
-            "schema-location": "",
-            "schema-type": "",
-            "split-cdata-sections": true,
-            validate: false,
-            "well-formed": true
-          };
-          this.params = clonedSelf = Object.create(this.defaultParams);
-        }
-        getParameter(name3) {
-          if (this.params.hasOwnProperty(name3)) {
-            return this.params[name3];
-          } else {
-            return null;
-          }
-        }
-        canSetParameter(name3, value) {
-          return true;
-        }
-        setParameter(name3, value) {
-          if (value != null) {
-            return this.params[name3] = value;
-          } else {
-            return delete this.params[name3];
-          }
-        }
-      }
-      Object.defineProperty(XMLDOMConfiguration2.prototype, "parameterNames", {
-        get: function() {
-          return new XMLDOMStringList(Object.keys(this.defaultParams));
-        }
-      });
-      return XMLDOMConfiguration2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/NodeType.js
-var require_NodeType = __commonJS((exports, module) => {
-  (function() {
-    module.exports = {
-      Element: 1,
-      Attribute: 2,
-      Text: 3,
-      CData: 4,
-      EntityReference: 5,
-      EntityDeclaration: 6,
-      ProcessingInstruction: 7,
-      Comment: 8,
-      Document: 9,
-      DocType: 10,
-      DocumentFragment: 11,
-      NotationDeclaration: 12,
-      Declaration: 201,
-      Raw: 202,
-      AttributeDeclaration: 203,
-      ElementDeclaration: 204,
-      Dummy: 205
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLAttribute.js
-var require_XMLAttribute = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLAttribute, XMLNode;
-    NodeType = require_NodeType();
-    XMLNode = require_XMLNode();
-    module.exports = XMLAttribute = function() {
-
-      class XMLAttribute2 {
-        constructor(parent, name3, value) {
-          this.parent = parent;
-          if (this.parent) {
-            this.options = this.parent.options;
-            this.stringify = this.parent.stringify;
-          }
-          if (name3 == null) {
-            throw new Error("Missing attribute name. " + this.debugInfo(name3));
-          }
-          this.name = this.stringify.name(name3);
-          this.value = this.stringify.attValue(value);
-          this.type = NodeType.Attribute;
-          this.isId = false;
-          this.schemaTypeInfo = null;
-        }
-        clone() {
-          return Object.create(this);
-        }
-        toString(options) {
-          return this.options.writer.attribute(this, this.options.writer.filterOptions(options));
-        }
-        debugInfo(name3) {
-          name3 = name3 || this.name;
-          if (name3 == null) {
-            return "parent: <" + this.parent.name + ">";
-          } else {
-            return "attribute: {" + name3 + "}, parent: <" + this.parent.name + ">";
-          }
-        }
-        isEqualNode(node) {
-          if (node.namespaceURI !== this.namespaceURI) {
-            return false;
-          }
-          if (node.prefix !== this.prefix) {
-            return false;
-          }
-          if (node.localName !== this.localName) {
-            return false;
-          }
-          if (node.value !== this.value) {
-            return false;
-          }
-          return true;
-        }
-      }
-      Object.defineProperty(XMLAttribute2.prototype, "nodeType", {
-        get: function() {
-          return this.type;
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "ownerElement", {
-        get: function() {
-          return this.parent;
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "textContent", {
-        get: function() {
-          return this.value;
-        },
-        set: function(value) {
-          return this.value = value || "";
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "namespaceURI", {
-        get: function() {
-          return "";
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "prefix", {
-        get: function() {
-          return "";
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "localName", {
-        get: function() {
-          return this.name;
-        }
-      });
-      Object.defineProperty(XMLAttribute2.prototype, "specified", {
-        get: function() {
-          return true;
-        }
-      });
-      return XMLAttribute2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLNamedNodeMap.js
-var require_XMLNamedNodeMap = __commonJS((exports, module) => {
-  (function() {
-    var XMLNamedNodeMap;
-    module.exports = XMLNamedNodeMap = function() {
-
-      class XMLNamedNodeMap2 {
-        constructor(nodes) {
-          this.nodes = nodes;
-        }
-        clone() {
-          return this.nodes = null;
-        }
-        getNamedItem(name3) {
-          return this.nodes[name3];
-        }
-        setNamedItem(node) {
-          var oldNode;
-          oldNode = this.nodes[node.nodeName];
-          this.nodes[node.nodeName] = node;
-          return oldNode || null;
-        }
-        removeNamedItem(name3) {
-          var oldNode;
-          oldNode = this.nodes[name3];
-          delete this.nodes[name3];
-          return oldNode || null;
-        }
-        item(index) {
-          return this.nodes[Object.keys(this.nodes)[index]] || null;
-        }
-        getNamedItemNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented.");
-        }
-        setNamedItemNS(node) {
-          throw new Error("This DOM method is not implemented.");
-        }
-        removeNamedItemNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented.");
-        }
-      }
-      Object.defineProperty(XMLNamedNodeMap2.prototype, "length", {
-        get: function() {
-          return Object.keys(this.nodes).length || 0;
-        }
-      });
-      return XMLNamedNodeMap2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLElement.js
-var require_XMLElement = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLAttribute, XMLElement, XMLNamedNodeMap, XMLNode, getValue2, isFunction4, isObject6, hasProp = {}.hasOwnProperty;
-    ({ isObject: isObject6, isFunction: isFunction4, getValue: getValue2 } = require_Utility());
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    XMLAttribute = require_XMLAttribute();
-    XMLNamedNodeMap = require_XMLNamedNodeMap();
-    module.exports = XMLElement = function() {
-
-      class XMLElement2 extends XMLNode {
-        constructor(parent, name3, attributes) {
-          var child, j3, len, ref;
-          super(parent);
-          if (name3 == null) {
-            throw new Error("Missing element name. " + this.debugInfo());
-          }
-          this.name = this.stringify.name(name3);
-          this.type = NodeType.Element;
-          this.attribs = {};
-          this.schemaTypeInfo = null;
-          if (attributes != null) {
-            this.attribute(attributes);
-          }
-          if (parent.type === NodeType.Document) {
-            this.isRoot = true;
-            this.documentObject = parent;
-            parent.rootObject = this;
-            if (parent.children) {
-              ref = parent.children;
-              for (j3 = 0, len = ref.length;j3 < len; j3++) {
-                child = ref[j3];
-                if (child.type === NodeType.DocType) {
-                  child.name = this.name;
-                  break;
-                }
-              }
-            }
-          }
-        }
-        clone() {
-          var att, attName, clonedSelf, ref;
-          clonedSelf = Object.create(this);
-          if (clonedSelf.isRoot) {
-            clonedSelf.documentObject = null;
-          }
-          clonedSelf.attribs = {};
-          ref = this.attribs;
-          for (attName in ref) {
-            if (!hasProp.call(ref, attName))
-              continue;
-            att = ref[attName];
-            clonedSelf.attribs[attName] = att.clone();
-          }
-          clonedSelf.children = [];
-          this.children.forEach(function(child) {
-            var clonedChild;
-            clonedChild = child.clone();
-            clonedChild.parent = clonedSelf;
-            return clonedSelf.children.push(clonedChild);
-          });
-          return clonedSelf;
-        }
-        attribute(name3, value) {
-          var attName, attValue;
-          if (name3 != null) {
-            name3 = getValue2(name3);
-          }
-          if (isObject6(name3)) {
-            for (attName in name3) {
-              if (!hasProp.call(name3, attName))
-                continue;
-              attValue = name3[attName];
-              this.attribute(attName, attValue);
-            }
-          } else {
-            if (isFunction4(value)) {
-              value = value.apply();
-            }
-            if (this.options.keepNullAttributes && value == null) {
-              this.attribs[name3] = new XMLAttribute(this, name3, "");
-            } else if (value != null) {
-              this.attribs[name3] = new XMLAttribute(this, name3, value);
-            }
-          }
-          return this;
-        }
-        removeAttribute(name3) {
-          var attName, j3, len;
-          if (name3 == null) {
-            throw new Error("Missing attribute name. " + this.debugInfo());
-          }
-          name3 = getValue2(name3);
-          if (Array.isArray(name3)) {
-            for (j3 = 0, len = name3.length;j3 < len; j3++) {
-              attName = name3[j3];
-              delete this.attribs[attName];
-            }
-          } else {
-            delete this.attribs[name3];
-          }
-          return this;
-        }
-        toString(options) {
-          return this.options.writer.element(this, this.options.writer.filterOptions(options));
-        }
-        att(name3, value) {
-          return this.attribute(name3, value);
-        }
-        a(name3, value) {
-          return this.attribute(name3, value);
-        }
-        getAttribute(name3) {
-          if (this.attribs.hasOwnProperty(name3)) {
-            return this.attribs[name3].value;
-          } else {
-            return null;
-          }
-        }
-        setAttribute(name3, value) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getAttributeNode(name3) {
-          if (this.attribs.hasOwnProperty(name3)) {
-            return this.attribs[name3];
-          } else {
-            return null;
-          }
-        }
-        setAttributeNode(newAttr) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        removeAttributeNode(oldAttr) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagName(name3) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getAttributeNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        setAttributeNS(namespaceURI, qualifiedName, value) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        removeAttributeNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getAttributeNodeNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        setAttributeNodeNS(newAttr) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagNameNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        hasAttribute(name3) {
-          return this.attribs.hasOwnProperty(name3);
-        }
-        hasAttributeNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        setIdAttribute(name3, isId) {
-          if (this.attribs.hasOwnProperty(name3)) {
-            return this.attribs[name3].isId;
-          } else {
-            return isId;
-          }
-        }
-        setIdAttributeNS(namespaceURI, localName, isId) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        setIdAttributeNode(idAttr, isId) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagName(tagname) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagNameNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByClassName(classNames) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        isEqualNode(node) {
-          var i4, j3, ref;
-          if (!super.isEqualNode(node)) {
-            return false;
-          }
-          if (node.namespaceURI !== this.namespaceURI) {
-            return false;
-          }
-          if (node.prefix !== this.prefix) {
-            return false;
-          }
-          if (node.localName !== this.localName) {
-            return false;
-          }
-          if (node.attribs.length !== this.attribs.length) {
-            return false;
-          }
-          for (i4 = j3 = 0, ref = this.attribs.length - 1;0 <= ref ? j3 <= ref : j3 >= ref; i4 = 0 <= ref ? ++j3 : --j3) {
-            if (!this.attribs[i4].isEqualNode(node.attribs[i4])) {
-              return false;
-            }
-          }
-          return true;
-        }
-      }
-      Object.defineProperty(XMLElement2.prototype, "tagName", {
-        get: function() {
-          return this.name;
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "namespaceURI", {
-        get: function() {
-          return "";
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "prefix", {
-        get: function() {
-          return "";
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "localName", {
-        get: function() {
-          return this.name;
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "id", {
-        get: function() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "className", {
-        get: function() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "classList", {
-        get: function() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      Object.defineProperty(XMLElement2.prototype, "attributes", {
-        get: function() {
-          if (!this.attributeMap || !this.attributeMap.nodes) {
-            this.attributeMap = new XMLNamedNodeMap(this.attribs);
-          }
-          return this.attributeMap;
-        }
-      });
-      return XMLElement2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLCharacterData.js
-var require_XMLCharacterData = __commonJS((exports, module) => {
-  (function() {
-    var XMLCharacterData, XMLNode;
-    XMLNode = require_XMLNode();
-    module.exports = XMLCharacterData = function() {
-
-      class XMLCharacterData2 extends XMLNode {
-        constructor(parent) {
-          super(parent);
-          this.value = "";
-        }
-        clone() {
-          return Object.create(this);
-        }
-        substringData(offset, count4) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        appendData(arg) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        insertData(offset, arg) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        deleteData(offset, count4) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        replaceData(offset, count4, arg) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        isEqualNode(node) {
-          if (!super.isEqualNode(node)) {
-            return false;
-          }
-          if (node.data !== this.data) {
-            return false;
-          }
-          return true;
-        }
-      }
-      Object.defineProperty(XMLCharacterData2.prototype, "data", {
-        get: function() {
-          return this.value;
-        },
-        set: function(value) {
-          return this.value = value || "";
-        }
-      });
-      Object.defineProperty(XMLCharacterData2.prototype, "length", {
-        get: function() {
-          return this.value.length;
-        }
-      });
-      Object.defineProperty(XMLCharacterData2.prototype, "textContent", {
-        get: function() {
-          return this.value;
-        },
-        set: function(value) {
-          return this.value = value || "";
-        }
-      });
-      return XMLCharacterData2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLCData.js
-var require_XMLCData = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLCData, XMLCharacterData;
-    NodeType = require_NodeType();
-    XMLCharacterData = require_XMLCharacterData();
-    module.exports = XMLCData = class XMLCData2 extends XMLCharacterData {
-      constructor(parent, text2) {
-        super(parent);
-        if (text2 == null) {
-          throw new Error("Missing CDATA text. " + this.debugInfo());
-        }
-        this.name = "#cdata-section";
-        this.type = NodeType.CData;
-        this.value = this.stringify.cdata(text2);
-      }
-      clone() {
-        return Object.create(this);
-      }
-      toString(options) {
-        return this.options.writer.cdata(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLComment.js
-var require_XMLComment = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLCharacterData, XMLComment;
-    NodeType = require_NodeType();
-    XMLCharacterData = require_XMLCharacterData();
-    module.exports = XMLComment = class XMLComment2 extends XMLCharacterData {
-      constructor(parent, text2) {
-        super(parent);
-        if (text2 == null) {
-          throw new Error("Missing comment text. " + this.debugInfo());
-        }
-        this.name = "#comment";
-        this.type = NodeType.Comment;
-        this.value = this.stringify.comment(text2);
-      }
-      clone() {
-        return Object.create(this);
-      }
-      toString(options) {
-        return this.options.writer.comment(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDeclaration.js
-var require_XMLDeclaration = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDeclaration, XMLNode, isObject6;
-    ({ isObject: isObject6 } = require_Utility());
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDeclaration = class XMLDeclaration2 extends XMLNode {
-      constructor(parent, version6, encoding, standalone) {
-        super(parent);
-        if (isObject6(version6)) {
-          ({ version: version6, encoding, standalone } = version6);
-        }
-        if (!version6) {
-          version6 = "1.0";
-        }
-        this.type = NodeType.Declaration;
-        this.version = this.stringify.xmlVersion(version6);
-        if (encoding != null) {
-          this.encoding = this.stringify.xmlEncoding(encoding);
-        }
-        if (standalone != null) {
-          this.standalone = this.stringify.xmlStandalone(standalone);
-        }
-      }
-      toString(options) {
-        return this.options.writer.declaration(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDTDAttList.js
-var require_XMLDTDAttList = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDTDAttList, XMLNode;
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDTDAttList = class XMLDTDAttList2 extends XMLNode {
-      constructor(parent, elementName, attributeName, attributeType, defaultValueType, defaultValue) {
-        super(parent);
-        if (elementName == null) {
-          throw new Error("Missing DTD element name. " + this.debugInfo());
-        }
-        if (attributeName == null) {
-          throw new Error("Missing DTD attribute name. " + this.debugInfo(elementName));
-        }
-        if (!attributeType) {
-          throw new Error("Missing DTD attribute type. " + this.debugInfo(elementName));
-        }
-        if (!defaultValueType) {
-          throw new Error("Missing DTD attribute default. " + this.debugInfo(elementName));
-        }
-        if (defaultValueType.indexOf("#") !== 0) {
-          defaultValueType = "#" + defaultValueType;
-        }
-        if (!defaultValueType.match(/^(#REQUIRED|#IMPLIED|#FIXED|#DEFAULT)$/)) {
-          throw new Error("Invalid default value type; expected: #REQUIRED, #IMPLIED, #FIXED or #DEFAULT. " + this.debugInfo(elementName));
-        }
-        if (defaultValue && !defaultValueType.match(/^(#FIXED|#DEFAULT)$/)) {
-          throw new Error("Default value only applies to #FIXED or #DEFAULT. " + this.debugInfo(elementName));
-        }
-        this.elementName = this.stringify.name(elementName);
-        this.type = NodeType.AttributeDeclaration;
-        this.attributeName = this.stringify.name(attributeName);
-        this.attributeType = this.stringify.dtdAttType(attributeType);
-        if (defaultValue) {
-          this.defaultValue = this.stringify.dtdAttDefault(defaultValue);
-        }
-        this.defaultValueType = defaultValueType;
-      }
-      toString(options) {
-        return this.options.writer.dtdAttList(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDTDEntity.js
-var require_XMLDTDEntity = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDTDEntity, XMLNode, isObject6;
-    ({ isObject: isObject6 } = require_Utility());
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDTDEntity = function() {
-
-      class XMLDTDEntity2 extends XMLNode {
-        constructor(parent, pe2, name3, value) {
-          super(parent);
-          if (name3 == null) {
-            throw new Error("Missing DTD entity name. " + this.debugInfo(name3));
-          }
-          if (value == null) {
-            throw new Error("Missing DTD entity value. " + this.debugInfo(name3));
-          }
-          this.pe = !!pe2;
-          this.name = this.stringify.name(name3);
-          this.type = NodeType.EntityDeclaration;
-          if (!isObject6(value)) {
-            this.value = this.stringify.dtdEntityValue(value);
-            this.internal = true;
-          } else {
-            if (!value.pubID && !value.sysID) {
-              throw new Error("Public and/or system identifiers are required for an external entity. " + this.debugInfo(name3));
-            }
-            if (value.pubID && !value.sysID) {
-              throw new Error("System identifier is required for a public external entity. " + this.debugInfo(name3));
-            }
-            this.internal = false;
-            if (value.pubID != null) {
-              this.pubID = this.stringify.dtdPubID(value.pubID);
-            }
-            if (value.sysID != null) {
-              this.sysID = this.stringify.dtdSysID(value.sysID);
-            }
-            if (value.nData != null) {
-              this.nData = this.stringify.dtdNData(value.nData);
-            }
-            if (this.pe && this.nData) {
-              throw new Error("Notation declaration is not allowed in a parameter entity. " + this.debugInfo(name3));
-            }
-          }
-        }
-        toString(options) {
-          return this.options.writer.dtdEntity(this, this.options.writer.filterOptions(options));
-        }
-      }
-      Object.defineProperty(XMLDTDEntity2.prototype, "publicId", {
-        get: function() {
-          return this.pubID;
-        }
-      });
-      Object.defineProperty(XMLDTDEntity2.prototype, "systemId", {
-        get: function() {
-          return this.sysID;
-        }
-      });
-      Object.defineProperty(XMLDTDEntity2.prototype, "notationName", {
-        get: function() {
-          return this.nData || null;
-        }
-      });
-      Object.defineProperty(XMLDTDEntity2.prototype, "inputEncoding", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDTDEntity2.prototype, "xmlEncoding", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDTDEntity2.prototype, "xmlVersion", {
-        get: function() {
-          return null;
-        }
-      });
-      return XMLDTDEntity2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDTDElement.js
-var require_XMLDTDElement = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDTDElement, XMLNode;
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDTDElement = class XMLDTDElement2 extends XMLNode {
-      constructor(parent, name3, value) {
-        super(parent);
-        if (name3 == null) {
-          throw new Error("Missing DTD element name. " + this.debugInfo());
-        }
-        if (!value) {
-          value = "(#PCDATA)";
-        }
-        if (Array.isArray(value)) {
-          value = "(" + value.join(",") + ")";
-        }
-        this.name = this.stringify.name(name3);
-        this.type = NodeType.ElementDeclaration;
-        this.value = this.stringify.dtdElementValue(value);
-      }
-      toString(options) {
-        return this.options.writer.dtdElement(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDTDNotation.js
-var require_XMLDTDNotation = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDTDNotation, XMLNode;
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDTDNotation = function() {
-
-      class XMLDTDNotation2 extends XMLNode {
-        constructor(parent, name3, value) {
-          super(parent);
-          if (name3 == null) {
-            throw new Error("Missing DTD notation name. " + this.debugInfo(name3));
-          }
-          if (!value.pubID && !value.sysID) {
-            throw new Error("Public or system identifiers are required for an external entity. " + this.debugInfo(name3));
-          }
-          this.name = this.stringify.name(name3);
-          this.type = NodeType.NotationDeclaration;
-          if (value.pubID != null) {
-            this.pubID = this.stringify.dtdPubID(value.pubID);
-          }
-          if (value.sysID != null) {
-            this.sysID = this.stringify.dtdSysID(value.sysID);
-          }
-        }
-        toString(options) {
-          return this.options.writer.dtdNotation(this, this.options.writer.filterOptions(options));
-        }
-      }
-      Object.defineProperty(XMLDTDNotation2.prototype, "publicId", {
-        get: function() {
-          return this.pubID;
-        }
-      });
-      Object.defineProperty(XMLDTDNotation2.prototype, "systemId", {
-        get: function() {
-          return this.sysID;
-        }
-      });
-      return XMLDTDNotation2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDocType.js
-var require_XMLDocType = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDTDAttList, XMLDTDElement, XMLDTDEntity, XMLDTDNotation, XMLDocType, XMLNamedNodeMap, XMLNode, isObject6;
-    ({ isObject: isObject6 } = require_Utility());
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    XMLDTDAttList = require_XMLDTDAttList();
-    XMLDTDEntity = require_XMLDTDEntity();
-    XMLDTDElement = require_XMLDTDElement();
-    XMLDTDNotation = require_XMLDTDNotation();
-    XMLNamedNodeMap = require_XMLNamedNodeMap();
-    module.exports = XMLDocType = function() {
-
-      class XMLDocType2 extends XMLNode {
-        constructor(parent, pubID, sysID) {
-          var child, i4, len, ref;
-          super(parent);
-          this.type = NodeType.DocType;
-          if (parent.children) {
-            ref = parent.children;
-            for (i4 = 0, len = ref.length;i4 < len; i4++) {
-              child = ref[i4];
-              if (child.type === NodeType.Element) {
-                this.name = child.name;
-                break;
-              }
-            }
-          }
-          this.documentObject = parent;
-          if (isObject6(pubID)) {
-            ({ pubID, sysID } = pubID);
-          }
-          if (sysID == null) {
-            [sysID, pubID] = [pubID, sysID];
-          }
-          if (pubID != null) {
-            this.pubID = this.stringify.dtdPubID(pubID);
-          }
-          if (sysID != null) {
-            this.sysID = this.stringify.dtdSysID(sysID);
-          }
-        }
-        element(name3, value) {
-          var child;
-          child = new XMLDTDElement(this, name3, value);
-          this.children.push(child);
-          return this;
-        }
-        attList(elementName, attributeName, attributeType, defaultValueType, defaultValue) {
-          var child;
-          child = new XMLDTDAttList(this, elementName, attributeName, attributeType, defaultValueType, defaultValue);
-          this.children.push(child);
-          return this;
-        }
-        entity(name3, value) {
-          var child;
-          child = new XMLDTDEntity(this, false, name3, value);
-          this.children.push(child);
-          return this;
-        }
-        pEntity(name3, value) {
-          var child;
-          child = new XMLDTDEntity(this, true, name3, value);
-          this.children.push(child);
-          return this;
-        }
-        notation(name3, value) {
-          var child;
-          child = new XMLDTDNotation(this, name3, value);
-          this.children.push(child);
-          return this;
-        }
-        toString(options) {
-          return this.options.writer.docType(this, this.options.writer.filterOptions(options));
-        }
-        ele(name3, value) {
-          return this.element(name3, value);
-        }
-        att(elementName, attributeName, attributeType, defaultValueType, defaultValue) {
-          return this.attList(elementName, attributeName, attributeType, defaultValueType, defaultValue);
-        }
-        ent(name3, value) {
-          return this.entity(name3, value);
-        }
-        pent(name3, value) {
-          return this.pEntity(name3, value);
-        }
-        not(name3, value) {
-          return this.notation(name3, value);
-        }
-        up() {
-          return this.root() || this.documentObject;
-        }
-        isEqualNode(node) {
-          if (!super.isEqualNode(node)) {
-            return false;
-          }
-          if (node.name !== this.name) {
-            return false;
-          }
-          if (node.publicId !== this.publicId) {
-            return false;
-          }
-          if (node.systemId !== this.systemId) {
-            return false;
-          }
-          return true;
-        }
-      }
-      Object.defineProperty(XMLDocType2.prototype, "entities", {
-        get: function() {
-          var child, i4, len, nodes, ref;
-          nodes = {};
-          ref = this.children;
-          for (i4 = 0, len = ref.length;i4 < len; i4++) {
-            child = ref[i4];
-            if (child.type === NodeType.EntityDeclaration && !child.pe) {
-              nodes[child.name] = child;
-            }
-          }
-          return new XMLNamedNodeMap(nodes);
-        }
-      });
-      Object.defineProperty(XMLDocType2.prototype, "notations", {
-        get: function() {
-          var child, i4, len, nodes, ref;
-          nodes = {};
-          ref = this.children;
-          for (i4 = 0, len = ref.length;i4 < len; i4++) {
-            child = ref[i4];
-            if (child.type === NodeType.NotationDeclaration) {
-              nodes[child.name] = child;
-            }
-          }
-          return new XMLNamedNodeMap(nodes);
-        }
-      });
-      Object.defineProperty(XMLDocType2.prototype, "publicId", {
-        get: function() {
-          return this.pubID;
-        }
-      });
-      Object.defineProperty(XMLDocType2.prototype, "systemId", {
-        get: function() {
-          return this.sysID;
-        }
-      });
-      Object.defineProperty(XMLDocType2.prototype, "internalSubset", {
-        get: function() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      return XMLDocType2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLRaw.js
-var require_XMLRaw = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLNode, XMLRaw;
-    NodeType = require_NodeType();
-    XMLNode = require_XMLNode();
-    module.exports = XMLRaw = class XMLRaw2 extends XMLNode {
-      constructor(parent, text2) {
-        super(parent);
-        if (text2 == null) {
-          throw new Error("Missing raw text. " + this.debugInfo());
-        }
-        this.type = NodeType.Raw;
-        this.value = this.stringify.raw(text2);
-      }
-      clone() {
-        return Object.create(this);
-      }
-      toString(options) {
-        return this.options.writer.raw(this, this.options.writer.filterOptions(options));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLText.js
-var require_XMLText = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLCharacterData, XMLText;
-    NodeType = require_NodeType();
-    XMLCharacterData = require_XMLCharacterData();
-    module.exports = XMLText = function() {
-
-      class XMLText2 extends XMLCharacterData {
-        constructor(parent, text2) {
-          super(parent);
-          if (text2 == null) {
-            throw new Error("Missing element text. " + this.debugInfo());
-          }
-          this.name = "#text";
-          this.type = NodeType.Text;
-          this.value = this.stringify.text(text2);
-        }
-        clone() {
-          return Object.create(this);
-        }
-        toString(options) {
-          return this.options.writer.text(this, this.options.writer.filterOptions(options));
-        }
-        splitText(offset) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        replaceWholeText(content) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      }
-      Object.defineProperty(XMLText2.prototype, "isElementContentWhitespace", {
-        get: function() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      Object.defineProperty(XMLText2.prototype, "wholeText", {
-        get: function() {
-          var next, prev, str2;
-          str2 = "";
-          prev = this.previousSibling;
-          while (prev) {
-            str2 = prev.data + str2;
-            prev = prev.previousSibling;
-          }
-          str2 += this.data;
-          next = this.nextSibling;
-          while (next) {
-            str2 = str2 + next.data;
-            next = next.nextSibling;
-          }
-          return str2;
-        }
-      });
-      return XMLText2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLProcessingInstruction.js
-var require_XMLProcessingInstruction = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLCharacterData, XMLProcessingInstruction;
-    NodeType = require_NodeType();
-    XMLCharacterData = require_XMLCharacterData();
-    module.exports = XMLProcessingInstruction = class XMLProcessingInstruction2 extends XMLCharacterData {
-      constructor(parent, target, value) {
-        super(parent);
-        if (target == null) {
-          throw new Error("Missing instruction target. " + this.debugInfo());
-        }
-        this.type = NodeType.ProcessingInstruction;
-        this.target = this.stringify.insTarget(target);
-        this.name = this.target;
-        if (value) {
-          this.value = this.stringify.insValue(value);
-        }
-      }
-      clone() {
-        return Object.create(this);
-      }
-      toString(options) {
-        return this.options.writer.processingInstruction(this, this.options.writer.filterOptions(options));
-      }
-      isEqualNode(node) {
-        if (!super.isEqualNode(node)) {
-          return false;
-        }
-        if (node.target !== this.target) {
-          return false;
-        }
-        return true;
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDummy.js
-var require_XMLDummy = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDummy, XMLNode;
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    module.exports = XMLDummy = class XMLDummy2 extends XMLNode {
-      constructor(parent) {
-        super(parent);
-        this.type = NodeType.Dummy;
-      }
-      clone() {
-        return Object.create(this);
-      }
-      toString(options) {
-        return "";
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLNodeList.js
-var require_XMLNodeList = __commonJS((exports, module) => {
-  (function() {
-    var XMLNodeList;
-    module.exports = XMLNodeList = function() {
-
-      class XMLNodeList2 {
-        constructor(nodes) {
-          this.nodes = nodes;
-        }
-        clone() {
-          return this.nodes = null;
-        }
-        item(index) {
-          return this.nodes[index] || null;
-        }
-      }
-      Object.defineProperty(XMLNodeList2.prototype, "length", {
-        get: function() {
-          return this.nodes.length || 0;
-        }
-      });
-      return XMLNodeList2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/DocumentPosition.js
-var require_DocumentPosition = __commonJS((exports, module) => {
-  (function() {
-    module.exports = {
-      Disconnected: 1,
-      Preceding: 2,
-      Following: 4,
-      Contains: 8,
-      ContainedBy: 16,
-      ImplementationSpecific: 32
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLNode.js
-var require_XMLNode = __commonJS((exports, module) => {
-  (function() {
-    var DocumentPosition, NodeType, XMLCData, XMLComment, XMLDeclaration, XMLDocType, XMLDummy, XMLElement, XMLNamedNodeMap, XMLNode, XMLNodeList, XMLProcessingInstruction, XMLRaw, XMLText, getValue2, isEmpty, isFunction4, isObject6, hasProp = {}.hasOwnProperty, splice2 = [].splice;
-    ({ isObject: isObject6, isFunction: isFunction4, isEmpty, getValue: getValue2 } = require_Utility());
-    XMLElement = null;
-    XMLCData = null;
-    XMLComment = null;
-    XMLDeclaration = null;
-    XMLDocType = null;
-    XMLRaw = null;
-    XMLText = null;
-    XMLProcessingInstruction = null;
-    XMLDummy = null;
-    NodeType = null;
-    XMLNodeList = null;
-    XMLNamedNodeMap = null;
-    DocumentPosition = null;
-    module.exports = XMLNode = function() {
-
-      class XMLNode2 {
-        constructor(parent1) {
-          this.parent = parent1;
-          if (this.parent) {
-            this.options = this.parent.options;
-            this.stringify = this.parent.stringify;
-          }
-          this.value = null;
-          this.children = [];
-          this.baseURI = null;
-          if (!XMLElement) {
-            XMLElement = require_XMLElement();
-            XMLCData = require_XMLCData();
-            XMLComment = require_XMLComment();
-            XMLDeclaration = require_XMLDeclaration();
-            XMLDocType = require_XMLDocType();
-            XMLRaw = require_XMLRaw();
-            XMLText = require_XMLText();
-            XMLProcessingInstruction = require_XMLProcessingInstruction();
-            XMLDummy = require_XMLDummy();
-            NodeType = require_NodeType();
-            XMLNodeList = require_XMLNodeList();
-            XMLNamedNodeMap = require_XMLNamedNodeMap();
-            DocumentPosition = require_DocumentPosition();
-          }
-        }
-        setParent(parent) {
-          var child, j3, len, ref1, results;
-          this.parent = parent;
-          if (parent) {
-            this.options = parent.options;
-            this.stringify = parent.stringify;
-          }
-          ref1 = this.children;
-          results = [];
-          for (j3 = 0, len = ref1.length;j3 < len; j3++) {
-            child = ref1[j3];
-            results.push(child.setParent(this));
-          }
-          return results;
-        }
-        element(name3, attributes, text2) {
-          var childNode, item, j3, k2, key, lastChild, len, len1, val;
-          lastChild = null;
-          if (attributes === null && text2 == null) {
-            [attributes, text2] = [{}, null];
-          }
-          if (attributes == null) {
-            attributes = {};
-          }
-          attributes = getValue2(attributes);
-          if (!isObject6(attributes)) {
-            [text2, attributes] = [attributes, text2];
-          }
-          if (name3 != null) {
-            name3 = getValue2(name3);
-          }
-          if (Array.isArray(name3)) {
-            for (j3 = 0, len = name3.length;j3 < len; j3++) {
-              item = name3[j3];
-              lastChild = this.element(item);
-            }
-          } else if (isFunction4(name3)) {
-            lastChild = this.element(name3.apply());
-          } else if (isObject6(name3)) {
-            for (key in name3) {
-              if (!hasProp.call(name3, key))
-                continue;
-              val = name3[key];
-              if (isFunction4(val)) {
-                val = val.apply();
-              }
-              if (!this.options.ignoreDecorators && this.stringify.convertAttKey && key.indexOf(this.stringify.convertAttKey) === 0) {
-                lastChild = this.attribute(key.substr(this.stringify.convertAttKey.length), val);
-              } else if (!this.options.separateArrayItems && Array.isArray(val) && isEmpty(val)) {
-                lastChild = this.dummy();
-              } else if (isObject6(val) && isEmpty(val)) {
-                lastChild = this.element(key);
-              } else if (!this.options.keepNullNodes && val == null) {
-                lastChild = this.dummy();
-              } else if (!this.options.separateArrayItems && Array.isArray(val)) {
-                for (k2 = 0, len1 = val.length;k2 < len1; k2++) {
-                  item = val[k2];
-                  childNode = {};
-                  childNode[key] = item;
-                  lastChild = this.element(childNode);
-                }
-              } else if (isObject6(val)) {
-                if (!this.options.ignoreDecorators && this.stringify.convertTextKey && key.indexOf(this.stringify.convertTextKey) === 0) {
-                  lastChild = this.element(val);
-                } else {
-                  lastChild = this.element(key);
-                  lastChild.element(val);
-                }
-              } else {
-                lastChild = this.element(key, val);
-              }
-            }
-          } else if (!this.options.keepNullNodes && text2 === null) {
-            lastChild = this.dummy();
-          } else {
-            if (!this.options.ignoreDecorators && this.stringify.convertTextKey && name3.indexOf(this.stringify.convertTextKey) === 0) {
-              lastChild = this.text(text2);
-            } else if (!this.options.ignoreDecorators && this.stringify.convertCDataKey && name3.indexOf(this.stringify.convertCDataKey) === 0) {
-              lastChild = this.cdata(text2);
-            } else if (!this.options.ignoreDecorators && this.stringify.convertCommentKey && name3.indexOf(this.stringify.convertCommentKey) === 0) {
-              lastChild = this.comment(text2);
-            } else if (!this.options.ignoreDecorators && this.stringify.convertRawKey && name3.indexOf(this.stringify.convertRawKey) === 0) {
-              lastChild = this.raw(text2);
-            } else if (!this.options.ignoreDecorators && this.stringify.convertPIKey && name3.indexOf(this.stringify.convertPIKey) === 0) {
-              lastChild = this.instruction(name3.substr(this.stringify.convertPIKey.length), text2);
-            } else {
-              lastChild = this.node(name3, attributes, text2);
-            }
-          }
-          if (lastChild == null) {
-            throw new Error("Could not create any elements with: " + name3 + ". " + this.debugInfo());
-          }
-          return lastChild;
-        }
-        insertBefore(name3, attributes, text2) {
-          var child, i4, newChild, refChild, removed;
-          if (name3 != null ? name3.type : undefined) {
-            newChild = name3;
-            refChild = attributes;
-            newChild.setParent(this);
-            if (refChild) {
-              i4 = children.indexOf(refChild);
-              removed = children.splice(i4);
-              children.push(newChild);
-              Array.prototype.push.apply(children, removed);
-            } else {
-              children.push(newChild);
-            }
-            return newChild;
-          } else {
-            if (this.isRoot) {
-              throw new Error("Cannot insert elements at root level. " + this.debugInfo(name3));
-            }
-            i4 = this.parent.children.indexOf(this);
-            removed = this.parent.children.splice(i4);
-            child = this.parent.element(name3, attributes, text2);
-            Array.prototype.push.apply(this.parent.children, removed);
-            return child;
-          }
-        }
-        insertAfter(name3, attributes, text2) {
-          var child, i4, removed;
-          if (this.isRoot) {
-            throw new Error("Cannot insert elements at root level. " + this.debugInfo(name3));
-          }
-          i4 = this.parent.children.indexOf(this);
-          removed = this.parent.children.splice(i4 + 1);
-          child = this.parent.element(name3, attributes, text2);
-          Array.prototype.push.apply(this.parent.children, removed);
-          return child;
-        }
-        remove() {
-          var i4, ref1;
-          if (this.isRoot) {
-            throw new Error("Cannot remove the root element. " + this.debugInfo());
-          }
-          i4 = this.parent.children.indexOf(this);
-          splice2.apply(this.parent.children, [i4, i4 - i4 + 1].concat(ref1 = []));
-          return this.parent;
-        }
-        node(name3, attributes, text2) {
-          var child;
-          if (name3 != null) {
-            name3 = getValue2(name3);
-          }
-          attributes || (attributes = {});
-          attributes = getValue2(attributes);
-          if (!isObject6(attributes)) {
-            [text2, attributes] = [attributes, text2];
-          }
-          child = new XMLElement(this, name3, attributes);
-          if (text2 != null) {
-            child.text(text2);
-          }
-          this.children.push(child);
-          return child;
-        }
-        text(value) {
-          var child;
-          if (isObject6(value)) {
-            this.element(value);
-          }
-          child = new XMLText(this, value);
-          this.children.push(child);
-          return this;
-        }
-        cdata(value) {
-          var child;
-          child = new XMLCData(this, value);
-          this.children.push(child);
-          return this;
-        }
-        comment(value) {
-          var child;
-          child = new XMLComment(this, value);
-          this.children.push(child);
-          return this;
-        }
-        commentBefore(value) {
-          var child, i4, removed;
-          i4 = this.parent.children.indexOf(this);
-          removed = this.parent.children.splice(i4);
-          child = this.parent.comment(value);
-          Array.prototype.push.apply(this.parent.children, removed);
-          return this;
-        }
-        commentAfter(value) {
-          var child, i4, removed;
-          i4 = this.parent.children.indexOf(this);
-          removed = this.parent.children.splice(i4 + 1);
-          child = this.parent.comment(value);
-          Array.prototype.push.apply(this.parent.children, removed);
-          return this;
-        }
-        raw(value) {
-          var child;
-          child = new XMLRaw(this, value);
-          this.children.push(child);
-          return this;
-        }
-        dummy() {
-          var child;
-          child = new XMLDummy(this);
-          return child;
-        }
-        instruction(target, value) {
-          var insTarget, insValue, instruction, j3, len;
-          if (target != null) {
-            target = getValue2(target);
-          }
-          if (value != null) {
-            value = getValue2(value);
-          }
-          if (Array.isArray(target)) {
-            for (j3 = 0, len = target.length;j3 < len; j3++) {
-              insTarget = target[j3];
-              this.instruction(insTarget);
-            }
-          } else if (isObject6(target)) {
-            for (insTarget in target) {
-              if (!hasProp.call(target, insTarget))
-                continue;
-              insValue = target[insTarget];
-              this.instruction(insTarget, insValue);
-            }
-          } else {
-            if (isFunction4(value)) {
-              value = value.apply();
-            }
-            instruction = new XMLProcessingInstruction(this, target, value);
-            this.children.push(instruction);
-          }
-          return this;
-        }
-        instructionBefore(target, value) {
-          var child, i4, removed;
-          i4 = this.parent.children.indexOf(this);
-          removed = this.parent.children.splice(i4);
-          child = this.parent.instruction(target, value);
-          Array.prototype.push.apply(this.parent.children, removed);
-          return this;
-        }
-        instructionAfter(target, value) {
-          var child, i4, removed;
-          i4 = this.parent.children.indexOf(this);
-          removed = this.parent.children.splice(i4 + 1);
-          child = this.parent.instruction(target, value);
-          Array.prototype.push.apply(this.parent.children, removed);
-          return this;
-        }
-        declaration(version6, encoding, standalone) {
-          var doc2, xmldec;
-          doc2 = this.document();
-          xmldec = new XMLDeclaration(doc2, version6, encoding, standalone);
-          if (doc2.children.length === 0) {
-            doc2.children.unshift(xmldec);
-          } else if (doc2.children[0].type === NodeType.Declaration) {
-            doc2.children[0] = xmldec;
-          } else {
-            doc2.children.unshift(xmldec);
-          }
-          return doc2.root() || doc2;
-        }
-        dtd(pubID, sysID) {
-          var child, doc2, doctype, i4, j3, k2, len, len1, ref1, ref2;
-          doc2 = this.document();
-          doctype = new XMLDocType(doc2, pubID, sysID);
-          ref1 = doc2.children;
-          for (i4 = j3 = 0, len = ref1.length;j3 < len; i4 = ++j3) {
-            child = ref1[i4];
-            if (child.type === NodeType.DocType) {
-              doc2.children[i4] = doctype;
-              return doctype;
-            }
-          }
-          ref2 = doc2.children;
-          for (i4 = k2 = 0, len1 = ref2.length;k2 < len1; i4 = ++k2) {
-            child = ref2[i4];
-            if (child.isRoot) {
-              doc2.children.splice(i4, 0, doctype);
-              return doctype;
-            }
-          }
-          doc2.children.push(doctype);
-          return doctype;
-        }
-        up() {
-          if (this.isRoot) {
-            throw new Error("The root node has no parent. Use doc() if you need to get the document object.");
-          }
-          return this.parent;
-        }
-        root() {
-          var node;
-          node = this;
-          while (node) {
-            if (node.type === NodeType.Document) {
-              return node.rootObject;
-            } else if (node.isRoot) {
-              return node;
-            } else {
-              node = node.parent;
-            }
-          }
-        }
-        document() {
-          var node;
-          node = this;
-          while (node) {
-            if (node.type === NodeType.Document) {
-              return node;
-            } else {
-              node = node.parent;
-            }
-          }
-        }
-        end(options) {
-          return this.document().end(options);
-        }
-        prev() {
-          var i4;
-          i4 = this.parent.children.indexOf(this);
-          if (i4 < 1) {
-            throw new Error("Already at the first node. " + this.debugInfo());
-          }
-          return this.parent.children[i4 - 1];
-        }
-        next() {
-          var i4;
-          i4 = this.parent.children.indexOf(this);
-          if (i4 === -1 || i4 === this.parent.children.length - 1) {
-            throw new Error("Already at the last node. " + this.debugInfo());
-          }
-          return this.parent.children[i4 + 1];
-        }
-        importDocument(doc2) {
-          var child, clonedRoot, j3, len, ref1;
-          clonedRoot = doc2.root().clone();
-          clonedRoot.parent = this;
-          clonedRoot.isRoot = false;
-          this.children.push(clonedRoot);
-          if (this.type === NodeType.Document) {
-            clonedRoot.isRoot = true;
-            clonedRoot.documentObject = this;
-            this.rootObject = clonedRoot;
-            if (this.children) {
-              ref1 = this.children;
-              for (j3 = 0, len = ref1.length;j3 < len; j3++) {
-                child = ref1[j3];
-                if (child.type === NodeType.DocType) {
-                  child.name = clonedRoot.name;
-                  break;
-                }
-              }
-            }
-          }
-          return this;
-        }
-        debugInfo(name3) {
-          var ref1, ref2;
-          name3 = name3 || this.name;
-          if (name3 == null && !((ref1 = this.parent) != null ? ref1.name : undefined)) {
-            return "";
-          } else if (name3 == null) {
-            return "parent: <" + this.parent.name + ">";
-          } else if (!((ref2 = this.parent) != null ? ref2.name : undefined)) {
-            return "node: <" + name3 + ">";
-          } else {
-            return "node: <" + name3 + ">, parent: <" + this.parent.name + ">";
-          }
-        }
-        ele(name3, attributes, text2) {
-          return this.element(name3, attributes, text2);
-        }
-        nod(name3, attributes, text2) {
-          return this.node(name3, attributes, text2);
-        }
-        txt(value) {
-          return this.text(value);
-        }
-        dat(value) {
-          return this.cdata(value);
-        }
-        com(value) {
-          return this.comment(value);
-        }
-        ins(target, value) {
-          return this.instruction(target, value);
-        }
-        doc() {
-          return this.document();
-        }
-        dec(version6, encoding, standalone) {
-          return this.declaration(version6, encoding, standalone);
-        }
-        e(name3, attributes, text2) {
-          return this.element(name3, attributes, text2);
-        }
-        n(name3, attributes, text2) {
-          return this.node(name3, attributes, text2);
-        }
-        t(value) {
-          return this.text(value);
-        }
-        d(value) {
-          return this.cdata(value);
-        }
-        c(value) {
-          return this.comment(value);
-        }
-        r(value) {
-          return this.raw(value);
-        }
-        i(target, value) {
-          return this.instruction(target, value);
-        }
-        u() {
-          return this.up();
-        }
-        importXMLBuilder(doc2) {
-          return this.importDocument(doc2);
-        }
-        attribute(name3, value) {
-          throw new Error("attribute() applies to element nodes only.");
-        }
-        att(name3, value) {
-          return this.attribute(name3, value);
-        }
-        a(name3, value) {
-          return this.attribute(name3, value);
-        }
-        removeAttribute(name3) {
-          throw new Error("attribute() applies to element nodes only.");
-        }
-        replaceChild(newChild, oldChild) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        removeChild(oldChild) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        appendChild(newChild) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        hasChildNodes() {
-          return this.children.length !== 0;
-        }
-        cloneNode(deep) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        normalize() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        isSupported(feature, version6) {
-          return true;
-        }
-        hasAttributes() {
-          return this.attribs.length !== 0;
-        }
-        compareDocumentPosition(other) {
-          var ref, res;
-          ref = this;
-          if (ref === other) {
-            return 0;
-          } else if (this.document() !== other.document()) {
-            res = DocumentPosition.Disconnected | DocumentPosition.ImplementationSpecific;
-            if (Math.random() < 0.5) {
-              res |= DocumentPosition.Preceding;
-            } else {
-              res |= DocumentPosition.Following;
-            }
-            return res;
-          } else if (ref.isAncestor(other)) {
-            return DocumentPosition.Contains | DocumentPosition.Preceding;
-          } else if (ref.isDescendant(other)) {
-            return DocumentPosition.Contains | DocumentPosition.Following;
-          } else if (ref.isPreceding(other)) {
-            return DocumentPosition.Preceding;
-          } else {
-            return DocumentPosition.Following;
-          }
-        }
-        isSameNode(other) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        lookupPrefix(namespaceURI) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        isDefaultNamespace(namespaceURI) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        lookupNamespaceURI(prefix) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        isEqualNode(node) {
-          var i4, j3, ref1;
-          if (node.nodeType !== this.nodeType) {
-            return false;
-          }
-          if (node.children.length !== this.children.length) {
-            return false;
-          }
-          for (i4 = j3 = 0, ref1 = this.children.length - 1;0 <= ref1 ? j3 <= ref1 : j3 >= ref1; i4 = 0 <= ref1 ? ++j3 : --j3) {
-            if (!this.children[i4].isEqualNode(node.children[i4])) {
-              return false;
-            }
-          }
-          return true;
-        }
-        getFeature(feature, version6) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        setUserData(key, data, handler) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getUserData(key) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        contains(other) {
-          if (!other) {
-            return false;
-          }
-          return other === this || this.isDescendant(other);
-        }
-        isDescendant(node) {
-          var child, isDescendantChild, j3, len, ref1;
-          ref1 = this.children;
-          for (j3 = 0, len = ref1.length;j3 < len; j3++) {
-            child = ref1[j3];
-            if (node === child) {
-              return true;
-            }
-            isDescendantChild = child.isDescendant(node);
-            if (isDescendantChild) {
-              return true;
-            }
-          }
-          return false;
-        }
-        isAncestor(node) {
-          return node.isDescendant(this);
-        }
-        isPreceding(node) {
-          var nodePos, thisPos;
-          nodePos = this.treePosition(node);
-          thisPos = this.treePosition(this);
-          if (nodePos === -1 || thisPos === -1) {
-            return false;
-          } else {
-            return nodePos < thisPos;
-          }
-        }
-        isFollowing(node) {
-          var nodePos, thisPos;
-          nodePos = this.treePosition(node);
-          thisPos = this.treePosition(this);
-          if (nodePos === -1 || thisPos === -1) {
-            return false;
-          } else {
-            return nodePos > thisPos;
-          }
-        }
-        treePosition(node) {
-          var found, pos;
-          pos = 0;
-          found = false;
-          this.foreachTreeNode(this.document(), function(childNode) {
-            pos++;
-            if (!found && childNode === node) {
-              return found = true;
-            }
-          });
-          if (found) {
-            return pos;
-          } else {
-            return -1;
-          }
-        }
-        foreachTreeNode(node, func) {
-          var child, j3, len, ref1, res;
-          node || (node = this.document());
-          ref1 = node.children;
-          for (j3 = 0, len = ref1.length;j3 < len; j3++) {
-            child = ref1[j3];
-            if (res = func(child)) {
-              return res;
-            } else {
-              res = this.foreachTreeNode(child, func);
-              if (res) {
-                return res;
-              }
-            }
-          }
-        }
-      }
-      Object.defineProperty(XMLNode2.prototype, "nodeName", {
-        get: function() {
-          return this.name;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "nodeType", {
-        get: function() {
-          return this.type;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "nodeValue", {
-        get: function() {
-          return this.value;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "parentNode", {
-        get: function() {
-          return this.parent;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "childNodes", {
-        get: function() {
-          if (!this.childNodeList || !this.childNodeList.nodes) {
-            this.childNodeList = new XMLNodeList(this.children);
-          }
-          return this.childNodeList;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "firstChild", {
-        get: function() {
-          return this.children[0] || null;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "lastChild", {
-        get: function() {
-          return this.children[this.children.length - 1] || null;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "previousSibling", {
-        get: function() {
-          var i4;
-          i4 = this.parent.children.indexOf(this);
-          return this.parent.children[i4 - 1] || null;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "nextSibling", {
-        get: function() {
-          var i4;
-          i4 = this.parent.children.indexOf(this);
-          return this.parent.children[i4 + 1] || null;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "ownerDocument", {
-        get: function() {
-          return this.document() || null;
-        }
-      });
-      Object.defineProperty(XMLNode2.prototype, "textContent", {
-        get: function() {
-          var child, j3, len, ref1, str2;
-          if (this.nodeType === NodeType.Element || this.nodeType === NodeType.DocumentFragment) {
-            str2 = "";
-            ref1 = this.children;
-            for (j3 = 0, len = ref1.length;j3 < len; j3++) {
-              child = ref1[j3];
-              if (child.textContent) {
-                str2 += child.textContent;
-              }
-            }
-            return str2;
-          } else {
-            return null;
-          }
-        },
-        set: function(value) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      });
-      return XMLNode2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLStringifier.js
-var require_XMLStringifier = __commonJS((exports, module) => {
-  (function() {
-    var XMLStringifier, hasProp = {}.hasOwnProperty;
-    module.exports = XMLStringifier = function() {
-
-      class XMLStringifier2 {
-        constructor(options) {
-          var key, ref, value;
-          this.assertLegalChar = this.assertLegalChar.bind(this);
-          this.assertLegalName = this.assertLegalName.bind(this);
-          options || (options = {});
-          this.options = options;
-          if (!this.options.version) {
-            this.options.version = "1.0";
-          }
-          ref = options.stringify || {};
-          for (key in ref) {
-            if (!hasProp.call(ref, key))
-              continue;
-            value = ref[key];
-            this[key] = value;
-          }
-        }
-        name(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalName("" + val || "");
-        }
-        text(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar(this.textEscape("" + val || ""));
-        }
-        cdata(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          val = "" + val || "";
-          val = val.replace("]]>", "]]]]><![CDATA[>");
-          return this.assertLegalChar(val);
-        }
-        comment(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          val = "" + val || "";
-          if (val.match(/--/)) {
-            throw new Error("Comment text cannot contain double-hypen: " + val);
-          }
-          return this.assertLegalChar(val);
-        }
-        raw(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return "" + val || "";
-        }
-        attValue(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar(this.attEscape(val = "" + val || ""));
-        }
-        insTarget(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        insValue(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          val = "" + val || "";
-          if (val.match(/\?>/)) {
-            throw new Error("Invalid processing instruction value: " + val);
-          }
-          return this.assertLegalChar(val);
-        }
-        xmlVersion(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          val = "" + val || "";
-          if (!val.match(/1\.[0-9]+/)) {
-            throw new Error("Invalid version number: " + val);
-          }
-          return val;
-        }
-        xmlEncoding(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          val = "" + val || "";
-          if (!val.match(/^[A-Za-z](?:[A-Za-z0-9._-])*$/)) {
-            throw new Error("Invalid encoding: " + val);
-          }
-          return this.assertLegalChar(val);
-        }
-        xmlStandalone(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          if (val) {
-            return "yes";
-          } else {
-            return "no";
-          }
-        }
-        dtdPubID(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdSysID(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdElementValue(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdAttType(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdAttDefault(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdEntityValue(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        dtdNData(val) {
-          if (this.options.noValidation) {
-            return val;
-          }
-          return this.assertLegalChar("" + val || "");
-        }
-        assertLegalChar(str2) {
-          var regex2, res;
-          if (this.options.noValidation) {
-            return str2;
-          }
-          if (this.options.version === "1.0") {
-            regex2 = /[\0-\x08\x0B\f\x0E-\x1F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g;
-            if (this.options.invalidCharReplacement !== undefined) {
-              str2 = str2.replace(regex2, this.options.invalidCharReplacement);
-            } else if (res = str2.match(regex2)) {
-              throw new Error(`Invalid character in string: ${str2} at index ${res.index}`);
-            }
-          } else if (this.options.version === "1.1") {
-            regex2 = /[\0\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g;
-            if (this.options.invalidCharReplacement !== undefined) {
-              str2 = str2.replace(regex2, this.options.invalidCharReplacement);
-            } else if (res = str2.match(regex2)) {
-              throw new Error(`Invalid character in string: ${str2} at index ${res.index}`);
-            }
-          }
-          return str2;
-        }
-        assertLegalName(str2) {
-          var regex2;
-          if (this.options.noValidation) {
-            return str2;
-          }
-          str2 = this.assertLegalChar(str2);
-          regex2 = /^([:A-Z_a-z\xC0-\xD6\xD8-\xF6\xF8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])([\x2D\.0-:A-Z_a-z\xB7\xC0-\xD6\xD8-\xF6\xF8-\u037D\u037F-\u1FFF\u200C\u200D\u203F\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\uD800-\uDB7F][\uDC00-\uDFFF])*$/;
-          if (!str2.match(regex2)) {
-            throw new Error(`Invalid character in name: ${str2}`);
-          }
-          return str2;
-        }
-        textEscape(str2) {
-          var ampregex;
-          if (this.options.noValidation) {
-            return str2;
-          }
-          ampregex = this.options.noDoubleEncoding ? /(?!&(lt|gt|amp|apos|quot);)&/g : /&/g;
-          return str2.replace(ampregex, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r/g, "&#xD;");
-        }
-        attEscape(str2) {
-          var ampregex;
-          if (this.options.noValidation) {
-            return str2;
-          }
-          ampregex = this.options.noDoubleEncoding ? /(?!&(lt|gt|amp|apos|quot);)&/g : /&/g;
-          return str2.replace(ampregex, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;").replace(/\t/g, "&#x9;").replace(/\n/g, "&#xA;").replace(/\r/g, "&#xD;");
-        }
-      }
-      XMLStringifier2.prototype.convertAttKey = "@";
-      XMLStringifier2.prototype.convertPIKey = "?";
-      XMLStringifier2.prototype.convertTextKey = "#text";
-      XMLStringifier2.prototype.convertCDataKey = "#cdata";
-      XMLStringifier2.prototype.convertCommentKey = "#comment";
-      XMLStringifier2.prototype.convertRawKey = "#raw";
-      return XMLStringifier2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/WriterState.js
-var require_WriterState = __commonJS((exports, module) => {
-  (function() {
-    module.exports = {
-      None: 0,
-      OpenTag: 1,
-      InsideTag: 2,
-      CloseTag: 3
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLWriterBase.js
-var require_XMLWriterBase = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, WriterState, XMLCData, XMLComment, XMLDTDAttList, XMLDTDElement, XMLDTDEntity, XMLDTDNotation, XMLDeclaration, XMLDocType, XMLDummy, XMLElement, XMLProcessingInstruction, XMLRaw, XMLText, XMLWriterBase, assign, hasProp = {}.hasOwnProperty;
-    ({ assign } = require_Utility());
-    NodeType = require_NodeType();
-    XMLDeclaration = require_XMLDeclaration();
-    XMLDocType = require_XMLDocType();
-    XMLCData = require_XMLCData();
-    XMLComment = require_XMLComment();
-    XMLElement = require_XMLElement();
-    XMLRaw = require_XMLRaw();
-    XMLText = require_XMLText();
-    XMLProcessingInstruction = require_XMLProcessingInstruction();
-    XMLDummy = require_XMLDummy();
-    XMLDTDAttList = require_XMLDTDAttList();
-    XMLDTDElement = require_XMLDTDElement();
-    XMLDTDEntity = require_XMLDTDEntity();
-    XMLDTDNotation = require_XMLDTDNotation();
-    WriterState = require_WriterState();
-    module.exports = XMLWriterBase = class XMLWriterBase2 {
-      constructor(options) {
-        var key, ref, value;
-        options || (options = {});
-        this.options = options;
-        ref = options.writer || {};
-        for (key in ref) {
-          if (!hasProp.call(ref, key))
-            continue;
-          value = ref[key];
-          this["_" + key] = this[key];
-          this[key] = value;
-        }
-      }
-      filterOptions(options) {
-        var filteredOptions, ref, ref1, ref2, ref3, ref4, ref5, ref6, ref7;
-        options || (options = {});
-        options = assign({}, this.options, options);
-        filteredOptions = {
-          writer: this
-        };
-        filteredOptions.pretty = options.pretty || false;
-        filteredOptions.allowEmpty = options.allowEmpty || false;
-        filteredOptions.indent = (ref = options.indent) != null ? ref : "  ";
-        filteredOptions.newline = (ref1 = options.newline) != null ? ref1 : `
-`;
-        filteredOptions.offset = (ref2 = options.offset) != null ? ref2 : 0;
-        filteredOptions.width = (ref3 = options.width) != null ? ref3 : 0;
-        filteredOptions.dontPrettyTextNodes = (ref4 = (ref5 = options.dontPrettyTextNodes) != null ? ref5 : options.dontprettytextnodes) != null ? ref4 : 0;
-        filteredOptions.spaceBeforeSlash = (ref6 = (ref7 = options.spaceBeforeSlash) != null ? ref7 : options.spacebeforeslash) != null ? ref6 : "";
-        if (filteredOptions.spaceBeforeSlash === true) {
-          filteredOptions.spaceBeforeSlash = " ";
-        }
-        filteredOptions.suppressPrettyCount = 0;
-        filteredOptions.user = {};
-        filteredOptions.state = WriterState.None;
-        return filteredOptions;
-      }
-      indent(node, options, level) {
-        var indentLevel;
-        if (!options.pretty || options.suppressPrettyCount) {
-          return "";
-        } else if (options.pretty) {
-          indentLevel = (level || 0) + options.offset + 1;
-          if (indentLevel > 0) {
-            return new Array(indentLevel).join(options.indent);
-          }
-        }
-        return "";
-      }
-      endline(node, options, level) {
-        if (!options.pretty || options.suppressPrettyCount) {
-          return "";
-        } else {
-          return options.newline;
-        }
-      }
-      attribute(att, options, level) {
-        var r2;
-        this.openAttribute(att, options, level);
-        if (options.pretty && options.width > 0) {
-          r2 = att.name + '="' + att.value + '"';
-        } else {
-          r2 = " " + att.name + '="' + att.value + '"';
-        }
-        this.closeAttribute(att, options, level);
-        return r2;
-      }
-      cdata(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<![CDATA[";
-        options.state = WriterState.InsideTag;
-        r2 += node.value;
-        options.state = WriterState.CloseTag;
-        r2 += "]]>" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      comment(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<!-- ";
-        options.state = WriterState.InsideTag;
-        r2 += node.value;
-        options.state = WriterState.CloseTag;
-        r2 += " -->" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      declaration(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<?xml";
-        options.state = WriterState.InsideTag;
-        r2 += ' version="' + node.version + '"';
-        if (node.encoding != null) {
-          r2 += ' encoding="' + node.encoding + '"';
-        }
-        if (node.standalone != null) {
-          r2 += ' standalone="' + node.standalone + '"';
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + "?>";
-        r2 += this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      docType(node, options, level) {
-        var child, i4, len1, r2, ref;
-        level || (level = 0);
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level);
-        r2 += "<!DOCTYPE " + node.root().name;
-        if (node.pubID && node.sysID) {
-          r2 += ' PUBLIC "' + node.pubID + '" "' + node.sysID + '"';
-        } else if (node.sysID) {
-          r2 += ' SYSTEM "' + node.sysID + '"';
-        }
-        if (node.children.length > 0) {
-          r2 += " [";
-          r2 += this.endline(node, options, level);
-          options.state = WriterState.InsideTag;
-          ref = node.children;
-          for (i4 = 0, len1 = ref.length;i4 < len1; i4++) {
-            child = ref[i4];
-            r2 += this.writeChildNode(child, options, level + 1);
-          }
-          options.state = WriterState.CloseTag;
-          r2 += "]";
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + ">";
-        r2 += this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      element(node, options, level) {
-        var att, attLen, child, childNodeCount, firstChildNode, i4, j3, len, len1, len2, name3, prettySuppressed, r2, ratt, ref, ref1, ref2, ref3, rline;
-        level || (level = 0);
-        prettySuppressed = false;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<" + node.name;
-        if (options.pretty && options.width > 0) {
-          len = r2.length;
-          ref = node.attribs;
-          for (name3 in ref) {
-            if (!hasProp.call(ref, name3))
-              continue;
-            att = ref[name3];
-            ratt = this.attribute(att, options, level);
-            attLen = ratt.length;
-            if (len + attLen > options.width) {
-              rline = this.indent(node, options, level + 1) + ratt;
-              r2 += this.endline(node, options, level) + rline;
-              len = rline.length;
-            } else {
-              rline = " " + ratt;
-              r2 += rline;
-              len += rline.length;
-            }
-          }
-        } else {
-          ref1 = node.attribs;
-          for (name3 in ref1) {
-            if (!hasProp.call(ref1, name3))
-              continue;
-            att = ref1[name3];
-            r2 += this.attribute(att, options, level);
-          }
-        }
-        childNodeCount = node.children.length;
-        firstChildNode = childNodeCount === 0 ? null : node.children[0];
-        if (childNodeCount === 0 || node.children.every(function(e2) {
-          return (e2.type === NodeType.Text || e2.type === NodeType.Raw || e2.type === NodeType.CData) && e2.value === "";
-        })) {
-          if (options.allowEmpty) {
-            r2 += ">";
-            options.state = WriterState.CloseTag;
-            r2 += "</" + node.name + ">" + this.endline(node, options, level);
-          } else {
-            options.state = WriterState.CloseTag;
-            r2 += options.spaceBeforeSlash + "/>" + this.endline(node, options, level);
-          }
-        } else if (options.pretty && childNodeCount === 1 && (firstChildNode.type === NodeType.Text || firstChildNode.type === NodeType.Raw || firstChildNode.type === NodeType.CData) && firstChildNode.value != null) {
-          r2 += ">";
-          options.state = WriterState.InsideTag;
-          options.suppressPrettyCount++;
-          prettySuppressed = true;
-          r2 += this.writeChildNode(firstChildNode, options, level + 1);
-          options.suppressPrettyCount--;
-          prettySuppressed = false;
-          options.state = WriterState.CloseTag;
-          r2 += "</" + node.name + ">" + this.endline(node, options, level);
-        } else {
-          if (options.dontPrettyTextNodes) {
-            ref2 = node.children;
-            for (i4 = 0, len1 = ref2.length;i4 < len1; i4++) {
-              child = ref2[i4];
-              if ((child.type === NodeType.Text || child.type === NodeType.Raw || child.type === NodeType.CData) && child.value != null) {
-                options.suppressPrettyCount++;
-                prettySuppressed = true;
-                break;
-              }
-            }
-          }
-          r2 += ">" + this.endline(node, options, level);
-          options.state = WriterState.InsideTag;
-          ref3 = node.children;
-          for (j3 = 0, len2 = ref3.length;j3 < len2; j3++) {
-            child = ref3[j3];
-            r2 += this.writeChildNode(child, options, level + 1);
-          }
-          options.state = WriterState.CloseTag;
-          r2 += this.indent(node, options, level) + "</" + node.name + ">";
-          if (prettySuppressed) {
-            options.suppressPrettyCount--;
-          }
-          r2 += this.endline(node, options, level);
-          options.state = WriterState.None;
-        }
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      writeChildNode(node, options, level) {
-        switch (node.type) {
-          case NodeType.CData:
-            return this.cdata(node, options, level);
-          case NodeType.Comment:
-            return this.comment(node, options, level);
-          case NodeType.Element:
-            return this.element(node, options, level);
-          case NodeType.Raw:
-            return this.raw(node, options, level);
-          case NodeType.Text:
-            return this.text(node, options, level);
-          case NodeType.ProcessingInstruction:
-            return this.processingInstruction(node, options, level);
-          case NodeType.Dummy:
-            return "";
-          case NodeType.Declaration:
-            return this.declaration(node, options, level);
-          case NodeType.DocType:
-            return this.docType(node, options, level);
-          case NodeType.AttributeDeclaration:
-            return this.dtdAttList(node, options, level);
-          case NodeType.ElementDeclaration:
-            return this.dtdElement(node, options, level);
-          case NodeType.EntityDeclaration:
-            return this.dtdEntity(node, options, level);
-          case NodeType.NotationDeclaration:
-            return this.dtdNotation(node, options, level);
-          default:
-            throw new Error("Unknown XML node type: " + node.constructor.name);
-        }
-      }
-      processingInstruction(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<?";
-        options.state = WriterState.InsideTag;
-        r2 += node.target;
-        if (node.value) {
-          r2 += " " + node.value;
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + "?>";
-        r2 += this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      raw(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level);
-        options.state = WriterState.InsideTag;
-        r2 += node.value;
-        options.state = WriterState.CloseTag;
-        r2 += this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      text(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level);
-        options.state = WriterState.InsideTag;
-        r2 += node.value;
-        options.state = WriterState.CloseTag;
-        r2 += this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      dtdAttList(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<!ATTLIST";
-        options.state = WriterState.InsideTag;
-        r2 += " " + node.elementName + " " + node.attributeName + " " + node.attributeType;
-        if (node.defaultValueType !== "#DEFAULT") {
-          r2 += " " + node.defaultValueType;
-        }
-        if (node.defaultValue) {
-          r2 += ' "' + node.defaultValue + '"';
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + ">" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      dtdElement(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<!ELEMENT";
-        options.state = WriterState.InsideTag;
-        r2 += " " + node.name + " " + node.value;
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + ">" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      dtdEntity(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<!ENTITY";
-        options.state = WriterState.InsideTag;
-        if (node.pe) {
-          r2 += " %";
-        }
-        r2 += " " + node.name;
-        if (node.value) {
-          r2 += ' "' + node.value + '"';
-        } else {
-          if (node.pubID && node.sysID) {
-            r2 += ' PUBLIC "' + node.pubID + '" "' + node.sysID + '"';
-          } else if (node.sysID) {
-            r2 += ' SYSTEM "' + node.sysID + '"';
-          }
-          if (node.nData) {
-            r2 += " NDATA " + node.nData;
-          }
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + ">" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      dtdNotation(node, options, level) {
-        var r2;
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<!NOTATION";
-        options.state = WriterState.InsideTag;
-        r2 += " " + node.name;
-        if (node.pubID && node.sysID) {
-          r2 += ' PUBLIC "' + node.pubID + '" "' + node.sysID + '"';
-        } else if (node.pubID) {
-          r2 += ' PUBLIC "' + node.pubID + '"';
-        } else if (node.sysID) {
-          r2 += ' SYSTEM "' + node.sysID + '"';
-        }
-        options.state = WriterState.CloseTag;
-        r2 += options.spaceBeforeSlash + ">" + this.endline(node, options, level);
-        options.state = WriterState.None;
-        this.closeNode(node, options, level);
-        return r2;
-      }
-      openNode(node, options, level) {}
-      closeNode(node, options, level) {}
-      openAttribute(att, options, level) {}
-      closeAttribute(att, options, level) {}
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLStringWriter.js
-var require_XMLStringWriter = __commonJS((exports, module) => {
-  (function() {
-    var XMLStringWriter, XMLWriterBase;
-    XMLWriterBase = require_XMLWriterBase();
-    module.exports = XMLStringWriter = class XMLStringWriter2 extends XMLWriterBase {
-      constructor(options) {
-        super(options);
-      }
-      document(doc2, options) {
-        var child, i4, len, r2, ref;
-        options = this.filterOptions(options);
-        r2 = "";
-        ref = doc2.children;
-        for (i4 = 0, len = ref.length;i4 < len; i4++) {
-          child = ref[i4];
-          r2 += this.writeChildNode(child, options, 0);
-        }
-        if (options.pretty && r2.slice(-options.newline.length) === options.newline) {
-          r2 = r2.slice(0, -options.newline.length);
-        }
-        return r2;
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDocument.js
-var require_XMLDocument = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, XMLDOMConfiguration, XMLDOMImplementation, XMLDocument, XMLNode, XMLStringWriter, XMLStringifier, isPlainObject6;
-    ({ isPlainObject: isPlainObject6 } = require_Utility());
-    XMLDOMImplementation = require_XMLDOMImplementation();
-    XMLDOMConfiguration = require_XMLDOMConfiguration();
-    XMLNode = require_XMLNode();
-    NodeType = require_NodeType();
-    XMLStringifier = require_XMLStringifier();
-    XMLStringWriter = require_XMLStringWriter();
-    module.exports = XMLDocument = function() {
-
-      class XMLDocument2 extends XMLNode {
-        constructor(options) {
-          super(null);
-          this.name = "#document";
-          this.type = NodeType.Document;
-          this.documentURI = null;
-          this.domConfig = new XMLDOMConfiguration;
-          options || (options = {});
-          if (!options.writer) {
-            options.writer = new XMLStringWriter;
-          }
-          this.options = options;
-          this.stringify = new XMLStringifier(options);
-        }
-        end(writer) {
-          var writerOptions;
-          writerOptions = {};
-          if (!writer) {
-            writer = this.options.writer;
-          } else if (isPlainObject6(writer)) {
-            writerOptions = writer;
-            writer = this.options.writer;
-          }
-          return writer.document(this, writer.filterOptions(writerOptions));
-        }
-        toString(options) {
-          return this.options.writer.document(this, this.options.writer.filterOptions(options));
-        }
-        createElement(tagName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createDocumentFragment() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createTextNode(data) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createComment(data) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createCDATASection(data) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createProcessingInstruction(target, data) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createAttribute(name3) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createEntityReference(name3) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagName(tagname) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        importNode(importedNode, deep) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createElementNS(namespaceURI, qualifiedName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createAttributeNS(namespaceURI, qualifiedName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByTagNameNS(namespaceURI, localName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementById(elementId) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        adoptNode(source) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        normalizeDocument() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        renameNode(node, namespaceURI, qualifiedName) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        getElementsByClassName(classNames) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createEvent(eventInterface) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createRange() {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createNodeIterator(root2, whatToShow, filter2) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-        createTreeWalker(root2, whatToShow, filter2) {
-          throw new Error("This DOM method is not implemented." + this.debugInfo());
-        }
-      }
-      Object.defineProperty(XMLDocument2.prototype, "implementation", {
-        value: new XMLDOMImplementation
-      });
-      Object.defineProperty(XMLDocument2.prototype, "doctype", {
-        get: function() {
-          var child, i4, len, ref;
-          ref = this.children;
-          for (i4 = 0, len = ref.length;i4 < len; i4++) {
-            child = ref[i4];
-            if (child.type === NodeType.DocType) {
-              return child;
-            }
-          }
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "documentElement", {
-        get: function() {
-          return this.rootObject || null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "inputEncoding", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "strictErrorChecking", {
-        get: function() {
-          return false;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "xmlEncoding", {
-        get: function() {
-          if (this.children.length !== 0 && this.children[0].type === NodeType.Declaration) {
-            return this.children[0].encoding;
-          } else {
-            return null;
-          }
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "xmlStandalone", {
-        get: function() {
-          if (this.children.length !== 0 && this.children[0].type === NodeType.Declaration) {
-            return this.children[0].standalone === "yes";
-          } else {
-            return false;
-          }
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "xmlVersion", {
-        get: function() {
-          if (this.children.length !== 0 && this.children[0].type === NodeType.Declaration) {
-            return this.children[0].version;
-          } else {
-            return "1.0";
-          }
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "URL", {
-        get: function() {
-          return this.documentURI;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "origin", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "compatMode", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "characterSet", {
-        get: function() {
-          return null;
-        }
-      });
-      Object.defineProperty(XMLDocument2.prototype, "contentType", {
-        get: function() {
-          return null;
-        }
-      });
-      return XMLDocument2;
-    }.call(this);
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLDocumentCB.js
-var require_XMLDocumentCB = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, WriterState, XMLAttribute, XMLCData, XMLComment, XMLDTDAttList, XMLDTDElement, XMLDTDEntity, XMLDTDNotation, XMLDeclaration, XMLDocType, XMLDocument, XMLDocumentCB, XMLElement, XMLProcessingInstruction, XMLRaw, XMLStringWriter, XMLStringifier, XMLText, getValue2, isFunction4, isObject6, isPlainObject6, hasProp = {}.hasOwnProperty;
-    ({ isObject: isObject6, isFunction: isFunction4, isPlainObject: isPlainObject6, getValue: getValue2 } = require_Utility());
-    NodeType = require_NodeType();
-    XMLDocument = require_XMLDocument();
-    XMLElement = require_XMLElement();
-    XMLCData = require_XMLCData();
-    XMLComment = require_XMLComment();
-    XMLRaw = require_XMLRaw();
-    XMLText = require_XMLText();
-    XMLProcessingInstruction = require_XMLProcessingInstruction();
-    XMLDeclaration = require_XMLDeclaration();
-    XMLDocType = require_XMLDocType();
-    XMLDTDAttList = require_XMLDTDAttList();
-    XMLDTDEntity = require_XMLDTDEntity();
-    XMLDTDElement = require_XMLDTDElement();
-    XMLDTDNotation = require_XMLDTDNotation();
-    XMLAttribute = require_XMLAttribute();
-    XMLStringifier = require_XMLStringifier();
-    XMLStringWriter = require_XMLStringWriter();
-    WriterState = require_WriterState();
-    module.exports = XMLDocumentCB = class XMLDocumentCB2 {
-      constructor(options, onData, onEnd) {
-        var writerOptions;
-        this.name = "?xml";
-        this.type = NodeType.Document;
-        options || (options = {});
-        writerOptions = {};
-        if (!options.writer) {
-          options.writer = new XMLStringWriter;
-        } else if (isPlainObject6(options.writer)) {
-          writerOptions = options.writer;
-          options.writer = new XMLStringWriter;
-        }
-        this.options = options;
-        this.writer = options.writer;
-        this.writerOptions = this.writer.filterOptions(writerOptions);
-        this.stringify = new XMLStringifier(options);
-        this.onDataCallback = onData || function() {};
-        this.onEndCallback = onEnd || function() {};
-        this.currentNode = null;
-        this.currentLevel = -1;
-        this.openTags = {};
-        this.documentStarted = false;
-        this.documentCompleted = false;
-        this.root = null;
-      }
-      createChildNode(node) {
-        var att, attName, attributes, child, i4, len, ref, ref1;
-        switch (node.type) {
-          case NodeType.CData:
-            this.cdata(node.value);
-            break;
-          case NodeType.Comment:
-            this.comment(node.value);
-            break;
-          case NodeType.Element:
-            attributes = {};
-            ref = node.attribs;
-            for (attName in ref) {
-              if (!hasProp.call(ref, attName))
-                continue;
-              att = ref[attName];
-              attributes[attName] = att.value;
-            }
-            this.node(node.name, attributes);
-            break;
-          case NodeType.Dummy:
-            this.dummy();
-            break;
-          case NodeType.Raw:
-            this.raw(node.value);
-            break;
-          case NodeType.Text:
-            this.text(node.value);
-            break;
-          case NodeType.ProcessingInstruction:
-            this.instruction(node.target, node.value);
-            break;
-          default:
-            throw new Error("This XML node type is not supported in a JS object: " + node.constructor.name);
-        }
-        ref1 = node.children;
-        for (i4 = 0, len = ref1.length;i4 < len; i4++) {
-          child = ref1[i4];
-          this.createChildNode(child);
-          if (child.type === NodeType.Element) {
-            this.up();
-          }
-        }
-        return this;
-      }
-      dummy() {
-        return this;
-      }
-      node(name3, attributes, text2) {
-        if (name3 == null) {
-          throw new Error("Missing node name.");
-        }
-        if (this.root && this.currentLevel === -1) {
-          throw new Error("Document can only have one root node. " + this.debugInfo(name3));
-        }
-        this.openCurrent();
-        name3 = getValue2(name3);
-        if (attributes == null) {
-          attributes = {};
-        }
-        attributes = getValue2(attributes);
-        if (!isObject6(attributes)) {
-          [text2, attributes] = [attributes, text2];
-        }
-        this.currentNode = new XMLElement(this, name3, attributes);
-        this.currentNode.children = false;
-        this.currentLevel++;
-        this.openTags[this.currentLevel] = this.currentNode;
-        if (text2 != null) {
-          this.text(text2);
-        }
-        return this;
-      }
-      element(name3, attributes, text2) {
-        var child, i4, len, oldValidationFlag, ref, root2;
-        if (this.currentNode && this.currentNode.type === NodeType.DocType) {
-          this.dtdElement(...arguments);
-        } else {
-          if (Array.isArray(name3) || isObject6(name3) || isFunction4(name3)) {
-            oldValidationFlag = this.options.noValidation;
-            this.options.noValidation = true;
-            root2 = new XMLDocument(this.options).element("TEMP_ROOT");
-            root2.element(name3);
-            this.options.noValidation = oldValidationFlag;
-            ref = root2.children;
-            for (i4 = 0, len = ref.length;i4 < len; i4++) {
-              child = ref[i4];
-              this.createChildNode(child);
-              if (child.type === NodeType.Element) {
-                this.up();
-              }
-            }
-          } else {
-            this.node(name3, attributes, text2);
-          }
-        }
-        return this;
-      }
-      attribute(name3, value) {
-        var attName, attValue;
-        if (!this.currentNode || this.currentNode.children) {
-          throw new Error("att() can only be used immediately after an ele() call in callback mode. " + this.debugInfo(name3));
-        }
-        if (name3 != null) {
-          name3 = getValue2(name3);
-        }
-        if (isObject6(name3)) {
-          for (attName in name3) {
-            if (!hasProp.call(name3, attName))
-              continue;
-            attValue = name3[attName];
-            this.attribute(attName, attValue);
-          }
-        } else {
-          if (isFunction4(value)) {
-            value = value.apply();
-          }
-          if (this.options.keepNullAttributes && value == null) {
-            this.currentNode.attribs[name3] = new XMLAttribute(this, name3, "");
-          } else if (value != null) {
-            this.currentNode.attribs[name3] = new XMLAttribute(this, name3, value);
-          }
-        }
-        return this;
-      }
-      text(value) {
-        var node;
-        this.openCurrent();
-        node = new XMLText(this, value);
-        this.onData(this.writer.text(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      cdata(value) {
-        var node;
-        this.openCurrent();
-        node = new XMLCData(this, value);
-        this.onData(this.writer.cdata(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      comment(value) {
-        var node;
-        this.openCurrent();
-        node = new XMLComment(this, value);
-        this.onData(this.writer.comment(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      raw(value) {
-        var node;
-        this.openCurrent();
-        node = new XMLRaw(this, value);
-        this.onData(this.writer.raw(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      instruction(target, value) {
-        var i4, insTarget, insValue, len, node;
-        this.openCurrent();
-        if (target != null) {
-          target = getValue2(target);
-        }
-        if (value != null) {
-          value = getValue2(value);
-        }
-        if (Array.isArray(target)) {
-          for (i4 = 0, len = target.length;i4 < len; i4++) {
-            insTarget = target[i4];
-            this.instruction(insTarget);
-          }
-        } else if (isObject6(target)) {
-          for (insTarget in target) {
-            if (!hasProp.call(target, insTarget))
-              continue;
-            insValue = target[insTarget];
-            this.instruction(insTarget, insValue);
-          }
-        } else {
-          if (isFunction4(value)) {
-            value = value.apply();
-          }
-          node = new XMLProcessingInstruction(this, target, value);
-          this.onData(this.writer.processingInstruction(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        }
-        return this;
-      }
-      declaration(version6, encoding, standalone) {
-        var node;
-        this.openCurrent();
-        if (this.documentStarted) {
-          throw new Error("declaration() must be the first node.");
-        }
-        node = new XMLDeclaration(this, version6, encoding, standalone);
-        this.onData(this.writer.declaration(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      doctype(root2, pubID, sysID) {
-        this.openCurrent();
-        if (root2 == null) {
-          throw new Error("Missing root node name.");
-        }
-        if (this.root) {
-          throw new Error("dtd() must come before the root node.");
-        }
-        this.currentNode = new XMLDocType(this, pubID, sysID);
-        this.currentNode.rootNodeName = root2;
-        this.currentNode.children = false;
-        this.currentLevel++;
-        this.openTags[this.currentLevel] = this.currentNode;
-        return this;
-      }
-      dtdElement(name3, value) {
-        var node;
-        this.openCurrent();
-        node = new XMLDTDElement(this, name3, value);
-        this.onData(this.writer.dtdElement(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      attList(elementName, attributeName, attributeType, defaultValueType, defaultValue) {
-        var node;
-        this.openCurrent();
-        node = new XMLDTDAttList(this, elementName, attributeName, attributeType, defaultValueType, defaultValue);
-        this.onData(this.writer.dtdAttList(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      entity(name3, value) {
-        var node;
-        this.openCurrent();
-        node = new XMLDTDEntity(this, false, name3, value);
-        this.onData(this.writer.dtdEntity(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      pEntity(name3, value) {
-        var node;
-        this.openCurrent();
-        node = new XMLDTDEntity(this, true, name3, value);
-        this.onData(this.writer.dtdEntity(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      notation(name3, value) {
-        var node;
-        this.openCurrent();
-        node = new XMLDTDNotation(this, name3, value);
-        this.onData(this.writer.dtdNotation(node, this.writerOptions, this.currentLevel + 1), this.currentLevel + 1);
-        return this;
-      }
-      up() {
-        if (this.currentLevel < 0) {
-          throw new Error("The document node has no parent.");
-        }
-        if (this.currentNode) {
-          if (this.currentNode.children) {
-            this.closeNode(this.currentNode);
-          } else {
-            this.openNode(this.currentNode);
-          }
-          this.currentNode = null;
-        } else {
-          this.closeNode(this.openTags[this.currentLevel]);
-        }
-        delete this.openTags[this.currentLevel];
-        this.currentLevel--;
-        return this;
-      }
-      end() {
-        while (this.currentLevel >= 0) {
-          this.up();
-        }
-        return this.onEnd();
-      }
-      openCurrent() {
-        if (this.currentNode) {
-          this.currentNode.children = true;
-          return this.openNode(this.currentNode);
-        }
-      }
-      openNode(node) {
-        var att, chunk, name3, ref;
-        if (!node.isOpen) {
-          if (!this.root && this.currentLevel === 0 && node.type === NodeType.Element) {
-            this.root = node;
-          }
-          chunk = "";
-          if (node.type === NodeType.Element) {
-            this.writerOptions.state = WriterState.OpenTag;
-            chunk = this.writer.indent(node, this.writerOptions, this.currentLevel) + "<" + node.name;
-            ref = node.attribs;
-            for (name3 in ref) {
-              if (!hasProp.call(ref, name3))
-                continue;
-              att = ref[name3];
-              chunk += this.writer.attribute(att, this.writerOptions, this.currentLevel);
-            }
-            chunk += (node.children ? ">" : "/>") + this.writer.endline(node, this.writerOptions, this.currentLevel);
-            this.writerOptions.state = WriterState.InsideTag;
-          } else {
-            this.writerOptions.state = WriterState.OpenTag;
-            chunk = this.writer.indent(node, this.writerOptions, this.currentLevel) + "<!DOCTYPE " + node.rootNodeName;
-            if (node.pubID && node.sysID) {
-              chunk += ' PUBLIC "' + node.pubID + '" "' + node.sysID + '"';
-            } else if (node.sysID) {
-              chunk += ' SYSTEM "' + node.sysID + '"';
-            }
-            if (node.children) {
-              chunk += " [";
-              this.writerOptions.state = WriterState.InsideTag;
-            } else {
-              this.writerOptions.state = WriterState.CloseTag;
-              chunk += ">";
-            }
-            chunk += this.writer.endline(node, this.writerOptions, this.currentLevel);
-          }
-          this.onData(chunk, this.currentLevel);
-          return node.isOpen = true;
-        }
-      }
-      closeNode(node) {
-        var chunk;
-        if (!node.isClosed) {
-          chunk = "";
-          this.writerOptions.state = WriterState.CloseTag;
-          if (node.type === NodeType.Element) {
-            chunk = this.writer.indent(node, this.writerOptions, this.currentLevel) + "</" + node.name + ">" + this.writer.endline(node, this.writerOptions, this.currentLevel);
-          } else {
-            chunk = this.writer.indent(node, this.writerOptions, this.currentLevel) + "]>" + this.writer.endline(node, this.writerOptions, this.currentLevel);
-          }
-          this.writerOptions.state = WriterState.None;
-          this.onData(chunk, this.currentLevel);
-          return node.isClosed = true;
-        }
-      }
-      onData(chunk, level) {
-        this.documentStarted = true;
-        return this.onDataCallback(chunk, level + 1);
-      }
-      onEnd() {
-        this.documentCompleted = true;
-        return this.onEndCallback();
-      }
-      debugInfo(name3) {
-        if (name3 == null) {
-          return "";
-        } else {
-          return "node: <" + name3 + ">";
-        }
-      }
-      ele() {
-        return this.element(...arguments);
-      }
-      nod(name3, attributes, text2) {
-        return this.node(name3, attributes, text2);
-      }
-      txt(value) {
-        return this.text(value);
-      }
-      dat(value) {
-        return this.cdata(value);
-      }
-      com(value) {
-        return this.comment(value);
-      }
-      ins(target, value) {
-        return this.instruction(target, value);
-      }
-      dec(version6, encoding, standalone) {
-        return this.declaration(version6, encoding, standalone);
-      }
-      dtd(root2, pubID, sysID) {
-        return this.doctype(root2, pubID, sysID);
-      }
-      e(name3, attributes, text2) {
-        return this.element(name3, attributes, text2);
-      }
-      n(name3, attributes, text2) {
-        return this.node(name3, attributes, text2);
-      }
-      t(value) {
-        return this.text(value);
-      }
-      d(value) {
-        return this.cdata(value);
-      }
-      c(value) {
-        return this.comment(value);
-      }
-      r(value) {
-        return this.raw(value);
-      }
-      i(target, value) {
-        return this.instruction(target, value);
-      }
-      att() {
-        if (this.currentNode && this.currentNode.type === NodeType.DocType) {
-          return this.attList(...arguments);
-        } else {
-          return this.attribute(...arguments);
-        }
-      }
-      a() {
-        if (this.currentNode && this.currentNode.type === NodeType.DocType) {
-          return this.attList(...arguments);
-        } else {
-          return this.attribute(...arguments);
-        }
-      }
-      ent(name3, value) {
-        return this.entity(name3, value);
-      }
-      pent(name3, value) {
-        return this.pEntity(name3, value);
-      }
-      not(name3, value) {
-        return this.notation(name3, value);
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/XMLStreamWriter.js
-var require_XMLStreamWriter = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, WriterState, XMLStreamWriter, XMLWriterBase, hasProp = {}.hasOwnProperty;
-    NodeType = require_NodeType();
-    XMLWriterBase = require_XMLWriterBase();
-    WriterState = require_WriterState();
-    module.exports = XMLStreamWriter = class XMLStreamWriter2 extends XMLWriterBase {
-      constructor(stream4, options) {
-        super(options);
-        this.stream = stream4;
-      }
-      endline(node, options, level) {
-        if (node.isLastRootNode && options.state === WriterState.CloseTag) {
-          return "";
-        } else {
-          return super.endline(node, options, level);
-        }
-      }
-      document(doc2, options) {
-        var child, i4, j3, k2, len1, len2, ref, ref1, results;
-        ref = doc2.children;
-        for (i4 = j3 = 0, len1 = ref.length;j3 < len1; i4 = ++j3) {
-          child = ref[i4];
-          child.isLastRootNode = i4 === doc2.children.length - 1;
-        }
-        options = this.filterOptions(options);
-        ref1 = doc2.children;
-        results = [];
-        for (k2 = 0, len2 = ref1.length;k2 < len2; k2++) {
-          child = ref1[k2];
-          results.push(this.writeChildNode(child, options, 0));
-        }
-        return results;
-      }
-      cdata(node, options, level) {
-        return this.stream.write(super.cdata(node, options, level));
-      }
-      comment(node, options, level) {
-        return this.stream.write(super.comment(node, options, level));
-      }
-      declaration(node, options, level) {
-        return this.stream.write(super.declaration(node, options, level));
-      }
-      docType(node, options, level) {
-        var child, j3, len1, ref;
-        level || (level = 0);
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        this.stream.write(this.indent(node, options, level));
-        this.stream.write("<!DOCTYPE " + node.root().name);
-        if (node.pubID && node.sysID) {
-          this.stream.write(' PUBLIC "' + node.pubID + '" "' + node.sysID + '"');
-        } else if (node.sysID) {
-          this.stream.write(' SYSTEM "' + node.sysID + '"');
-        }
-        if (node.children.length > 0) {
-          this.stream.write(" [");
-          this.stream.write(this.endline(node, options, level));
-          options.state = WriterState.InsideTag;
-          ref = node.children;
-          for (j3 = 0, len1 = ref.length;j3 < len1; j3++) {
-            child = ref[j3];
-            this.writeChildNode(child, options, level + 1);
-          }
-          options.state = WriterState.CloseTag;
-          this.stream.write("]");
-        }
-        options.state = WriterState.CloseTag;
-        this.stream.write(options.spaceBeforeSlash + ">");
-        this.stream.write(this.endline(node, options, level));
-        options.state = WriterState.None;
-        return this.closeNode(node, options, level);
-      }
-      element(node, options, level) {
-        var att, attLen, child, childNodeCount, firstChildNode, j3, len, len1, name3, prettySuppressed, r2, ratt, ref, ref1, ref2, rline;
-        level || (level = 0);
-        this.openNode(node, options, level);
-        options.state = WriterState.OpenTag;
-        r2 = this.indent(node, options, level) + "<" + node.name;
-        if (options.pretty && options.width > 0) {
-          len = r2.length;
-          ref = node.attribs;
-          for (name3 in ref) {
-            if (!hasProp.call(ref, name3))
-              continue;
-            att = ref[name3];
-            ratt = this.attribute(att, options, level);
-            attLen = ratt.length;
-            if (len + attLen > options.width) {
-              rline = this.indent(node, options, level + 1) + ratt;
-              r2 += this.endline(node, options, level) + rline;
-              len = rline.length;
-            } else {
-              rline = " " + ratt;
-              r2 += rline;
-              len += rline.length;
-            }
-          }
-        } else {
-          ref1 = node.attribs;
-          for (name3 in ref1) {
-            if (!hasProp.call(ref1, name3))
-              continue;
-            att = ref1[name3];
-            r2 += this.attribute(att, options, level);
-          }
-        }
-        this.stream.write(r2);
-        childNodeCount = node.children.length;
-        firstChildNode = childNodeCount === 0 ? null : node.children[0];
-        if (childNodeCount === 0 || node.children.every(function(e2) {
-          return (e2.type === NodeType.Text || e2.type === NodeType.Raw || e2.type === NodeType.CData) && e2.value === "";
-        })) {
-          if (options.allowEmpty) {
-            this.stream.write(">");
-            options.state = WriterState.CloseTag;
-            this.stream.write("</" + node.name + ">");
-          } else {
-            options.state = WriterState.CloseTag;
-            this.stream.write(options.spaceBeforeSlash + "/>");
-          }
-        } else if (options.pretty && childNodeCount === 1 && (firstChildNode.type === NodeType.Text || firstChildNode.type === NodeType.Raw || firstChildNode.type === NodeType.CData) && firstChildNode.value != null) {
-          this.stream.write(">");
-          options.state = WriterState.InsideTag;
-          options.suppressPrettyCount++;
-          prettySuppressed = true;
-          this.writeChildNode(firstChildNode, options, level + 1);
-          options.suppressPrettyCount--;
-          prettySuppressed = false;
-          options.state = WriterState.CloseTag;
-          this.stream.write("</" + node.name + ">");
-        } else {
-          this.stream.write(">" + this.endline(node, options, level));
-          options.state = WriterState.InsideTag;
-          ref2 = node.children;
-          for (j3 = 0, len1 = ref2.length;j3 < len1; j3++) {
-            child = ref2[j3];
-            this.writeChildNode(child, options, level + 1);
-          }
-          options.state = WriterState.CloseTag;
-          this.stream.write(this.indent(node, options, level) + "</" + node.name + ">");
-        }
-        this.stream.write(this.endline(node, options, level));
-        options.state = WriterState.None;
-        return this.closeNode(node, options, level);
-      }
-      processingInstruction(node, options, level) {
-        return this.stream.write(super.processingInstruction(node, options, level));
-      }
-      raw(node, options, level) {
-        return this.stream.write(super.raw(node, options, level));
-      }
-      text(node, options, level) {
-        return this.stream.write(super.text(node, options, level));
-      }
-      dtdAttList(node, options, level) {
-        return this.stream.write(super.dtdAttList(node, options, level));
-      }
-      dtdElement(node, options, level) {
-        return this.stream.write(super.dtdElement(node, options, level));
-      }
-      dtdEntity(node, options, level) {
-        return this.stream.write(super.dtdEntity(node, options, level));
-      }
-      dtdNotation(node, options, level) {
-        return this.stream.write(super.dtdNotation(node, options, level));
-      }
-    };
-  }).call(exports);
-});
-
-// node_modules/xmlbuilder/lib/index.js
-var require_lib6 = __commonJS((exports, module) => {
-  (function() {
-    var NodeType, WriterState, XMLDOMImplementation, XMLDocument, XMLDocumentCB, XMLStreamWriter, XMLStringWriter, assign, isFunction4;
-    ({ assign, isFunction: isFunction4 } = require_Utility());
-    XMLDOMImplementation = require_XMLDOMImplementation();
-    XMLDocument = require_XMLDocument();
-    XMLDocumentCB = require_XMLDocumentCB();
-    XMLStringWriter = require_XMLStringWriter();
-    XMLStreamWriter = require_XMLStreamWriter();
-    NodeType = require_NodeType();
-    WriterState = require_WriterState();
-    exports.create = function(name3, xmldec, doctype, options) {
-      var doc2, root2;
-      if (name3 == null) {
-        throw new Error("Root element needs a name.");
-      }
-      options = assign({}, xmldec, doctype, options);
-      doc2 = new XMLDocument(options);
-      root2 = doc2.element(name3);
-      if (!options.headless) {
-        doc2.declaration(options);
-        if (options.pubID != null || options.sysID != null) {
-          doc2.dtd(options);
-        }
-      }
-      return root2;
-    };
-    exports.begin = function(options, onData, onEnd) {
-      if (isFunction4(options)) {
-        [onData, onEnd] = [options, onData];
-        options = {};
-      }
-      if (onData) {
-        return new XMLDocumentCB(options, onData, onEnd);
-      } else {
-        return new XMLDocument(options);
-      }
-    };
-    exports.stringWriter = function(options) {
-      return new XMLStringWriter(options);
-    };
-    exports.streamWriter = function(stream4, options) {
-      return new XMLStreamWriter(stream4, options);
-    };
-    exports.implementation = new XMLDOMImplementation;
-    exports.nodeType = NodeType;
-    exports.writerState = WriterState;
-  }).call(exports);
-});
-
-// node_modules/plist/lib/build.js
-var require_build = __commonJS((exports) => {
-  var base643 = require_base64_js();
-  var xmlbuilder = require_lib6();
-  exports.build = build;
-  function ISODateString(d) {
-    function pad(n2) {
-      return n2 < 10 ? "0" + n2 : n2;
-    }
-    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) + "T" + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) + "Z";
-  }
-  var toString6 = Object.prototype.toString;
-  function type(obj) {
-    var m3 = toString6.call(obj).match(/\[object (.*)\]/);
-    return m3 ? m3[1] : m3;
-  }
-  function build(obj, opts) {
-    var XMLHDR = {
-      version: "1.0",
-      encoding: "UTF-8"
-    };
-    var XMLDTD = {
-      pubid: "-//Apple//DTD PLIST 1.0//EN",
-      sysid: "http://www.apple.com/DTDs/PropertyList-1.0.dtd"
-    };
-    var doc2 = xmlbuilder.create("plist");
-    doc2.dec(XMLHDR.version, XMLHDR.encoding, XMLHDR.standalone);
-    doc2.dtd(XMLDTD.pubid, XMLDTD.sysid);
-    doc2.att("version", "1.0");
-    walk_obj(obj, doc2);
-    if (!opts)
-      opts = {};
-    opts.pretty = opts.pretty !== false;
-    return doc2.end(opts);
-  }
-  function walk_obj(next, next_child) {
-    var tag_type, i4, prop;
-    var name3 = type(next);
-    if (name3 == "Undefined") {
-      return;
-    } else if (Array.isArray(next)) {
-      next_child = next_child.ele("array");
-      for (i4 = 0;i4 < next.length; i4++) {
-        walk_obj(next[i4], next_child);
-      }
-    } else if (Buffer.isBuffer(next)) {
-      next_child.ele("data").raw(next.toString("base64"));
-    } else if (name3 == "Object") {
-      next_child = next_child.ele("dict");
-      for (prop in next) {
-        if (next.hasOwnProperty(prop)) {
-          next_child.ele("key").txt(prop);
-          walk_obj(next[prop], next_child);
-        }
-      }
-    } else if (name3 == "Number") {
-      tag_type = next % 1 === 0 ? "integer" : "real";
-      next_child.ele(tag_type).txt(next.toString());
-    } else if (name3 == "BigInt") {
-      next_child.ele("integer").txt(next);
-    } else if (name3 == "Date") {
-      next_child.ele("date").txt(ISODateString(new Date(next)));
-    } else if (name3 == "Boolean") {
-      next_child.ele(next ? "true" : "false");
-    } else if (name3 == "String") {
-      next_child.ele("string").txt(next);
-    } else if (name3 == "ArrayBuffer") {
-      next_child.ele("data").raw(base643.fromByteArray(next));
-    } else if (next && next.buffer && type(next.buffer) == "ArrayBuffer") {
-      next_child.ele("data").raw(base643.fromByteArray(new Uint8Array(next.buffer), next_child));
-    } else if (name3 === "Null") {
-      next_child.ele("null").txt("");
-    }
-  }
-});
-
-// node_modules/plist/index.js
-var require_plist = __commonJS((exports) => {
-  var parserFunctions = require_parse9();
-  Object.keys(parserFunctions).forEach(function(k2) {
-    exports[k2] = parserFunctions[k2];
-  });
-  var builderFunctions = require_build();
-  Object.keys(builderFunctions).forEach(function(k2) {
-    exports[k2] = builderFunctions[k2];
-  });
-});
-
 // src/services/notifier.ts
 async function sendNotification(notif, terminal) {
   const config3 = getGlobalConfig();
@@ -403018,7 +393988,7 @@ async function isAppleTerminalBellDisabled() {
     if (defaultsOutput.code !== 0) {
       return false;
     }
-    const plist = await Promise.resolve().then(() => __toESM(require_plist(), 1));
+    const plist = await import("plist");
     const parsed = plist.parse(defaultsOutput.stdout);
     const windowSettings = parsed?.["Window Settings"];
     const profileSettings = windowSettings?.[currentProfile];
@@ -405005,18 +395975,18 @@ var init_Divider = __esm(() => {
 function Pane(t0) {
   const $4 = import_compiler_runtime71.c(9);
   const {
-    children: children2,
+    children,
     color: color2
   } = t0;
   if (useIsInsideModal()) {
     let t12;
-    if ($4[0] !== children2) {
+    if ($4[0] !== children) {
       t12 = /* @__PURE__ */ import_react89.default.createElement(ThemedBox_default, {
         flexDirection: "column",
         paddingX: 1,
         flexShrink: 0
-      }, children2);
-      $4[0] = children2;
+      }, children);
+      $4[0] = children;
       $4[1] = t12;
     } else {
       t12 = $4[1];
@@ -405034,12 +396004,12 @@ function Pane(t0) {
     t1 = $4[3];
   }
   let t2;
-  if ($4[4] !== children2) {
+  if ($4[4] !== children) {
     t2 = /* @__PURE__ */ import_react89.default.createElement(ThemedBox_default, {
       flexDirection: "column",
       paddingX: 2
-    }, children2);
-    $4[4] = children2;
+    }, children);
+    $4[4] = children;
     $4[5] = t2;
   } else {
     t2 = $4[5];
@@ -405073,7 +396043,7 @@ function Dialog(t0) {
   const {
     title,
     subtitle,
-    children: children2,
+    children,
     onCancel,
     color: t1,
     hideInputGuide,
@@ -405148,12 +396118,12 @@ function Dialog(t0) {
     t7 = $4[12];
   }
   let t8;
-  if ($4[13] !== children2 || $4[14] !== t7) {
+  if ($4[13] !== children || $4[14] !== t7) {
     t8 = /* @__PURE__ */ import_react90.default.createElement(ThemedBox_default, {
       flexDirection: "column",
       gap: 1
-    }, t7, children2);
-    $4[13] = children2;
+    }, t7, children);
+    $4[13] = children;
     $4[14] = t7;
     $4[15] = t8;
   } else {
@@ -407777,13 +398747,13 @@ function UserLocalCommandOutputMessage(t0) {
 function IndentedContent(t0) {
   const $4 = import_compiler_runtime85.c(5);
   const {
-    children: children2
+    children
   } = t0;
-  if (children2.startsWith(`${DIAMOND_OPEN} `) || children2.startsWith(`${DIAMOND_FILLED} `)) {
+  if (children.startsWith(`${DIAMOND_OPEN} `) || children.startsWith(`${DIAMOND_FILLED} `)) {
     let t12;
-    if ($4[0] !== children2) {
-      t12 = /* @__PURE__ */ React100.createElement(CloudLaunchContent, null, children2);
-      $4[0] = children2;
+    if ($4[0] !== children) {
+      t12 = /* @__PURE__ */ React100.createElement(CloudLaunchContent, null, children);
+      $4[0] = children;
       $4[1] = t12;
     } else {
       t12 = $4[1];
@@ -407800,14 +398770,14 @@ function IndentedContent(t0) {
     t1 = $4[2];
   }
   let t2;
-  if ($4[3] !== children2) {
+  if ($4[3] !== children) {
     t2 = /* @__PURE__ */ React100.createElement(ThemedBox_default, {
       flexDirection: "row"
     }, t1, /* @__PURE__ */ React100.createElement(ThemedBox_default, {
       flexDirection: "column",
       flexGrow: 1
-    }, /* @__PURE__ */ React100.createElement(Markdown, null, children2)));
-    $4[3] = children2;
+    }, /* @__PURE__ */ React100.createElement(Markdown, null, children)));
+    $4[3] = children;
     $4[4] = t2;
   } else {
     t2 = $4[4];
@@ -407817,21 +398787,21 @@ function IndentedContent(t0) {
 function CloudLaunchContent(t0) {
   const $4 = import_compiler_runtime85.c(19);
   const {
-    children: children2
+    children
   } = t0;
-  const diamond = children2[0];
+  const diamond = children[0];
   let label;
   let rest;
   let t1;
-  if ($4[0] !== children2) {
-    const nl = children2.indexOf(`
+  if ($4[0] !== children) {
+    const nl = children.indexOf(`
 `);
-    const header = nl === -1 ? children2.slice(2) : children2.slice(2, nl);
-    rest = nl === -1 ? "" : children2.slice(nl + 1).trim();
+    const header = nl === -1 ? children.slice(2) : children.slice(2, nl);
+    rest = nl === -1 ? "" : children.slice(nl + 1).trim();
     const sep18 = header.indexOf(" · ");
     label = sep18 === -1 ? header : header.slice(0, sep18);
     t1 = sep18 === -1 ? "" : header.slice(sep18);
-    $4[0] = children2;
+    $4[0] = children;
     $4[1] = label;
     $4[2] = rest;
     $4[3] = t1;
@@ -409952,19 +400922,19 @@ function Line(t0) {
   const $4 = import_compiler_runtime98.c(7);
   const {
     dimColor: t1,
-    children: children2,
+    children,
     color: color2
   } = t0;
   const dimColor = t1 === undefined ? true : t1;
   const bg = useSelectedMessageBg();
   let t2;
-  if ($4[0] !== children2 || $4[1] !== color2 || $4[2] !== dimColor) {
+  if ($4[0] !== children || $4[1] !== color2 || $4[2] !== dimColor) {
     t2 = /* @__PURE__ */ import_react105.default.createElement(MessageResponse, null, /* @__PURE__ */ import_react105.default.createElement(ThemedText, {
       color: color2,
       dimColor,
       wrap: "wrap"
-    }, children2));
-    $4[0] = children2;
+    }, children));
+    $4[0] = children;
     $4[1] = color2;
     $4[2] = dimColor;
     $4[3] = t2;
@@ -412329,16 +403299,16 @@ var init_UserToolResultMessage = __esm(() => {
 
 // src/components/OffscreenFreeze.tsx
 function OffscreenFreeze({
-  children: children2
+  children
 }) {
   "use no memo";
   const inVirtualList = import_react111.useContext(InVirtualListContext);
   const [ref, {
     isVisible
   }] = useTerminalViewport();
-  const cached3 = import_react111.useRef(children2);
+  const cached3 = import_react111.useRef(children);
   if (isVisible || inVirtualList) {
-    cached3.current = children2;
+    cached3.current = children;
   }
   return /* @__PURE__ */ import_react111.default.createElement(ThemedBox_default, {
     ref
@@ -438704,7 +429674,7 @@ var require_Window = __commonJS((exports, module) => {
 });
 
 // node_modules/@mixmark-io/domino/lib/index.js
-var require_lib7 = __commonJS((exports) => {
+var require_lib5 = __commonJS((exports) => {
   var DOMImplementation = require_DOMImplementation();
   var HTMLParser = require_HTMLParser();
   var Window = require_Window();
@@ -439208,7 +430178,7 @@ var require_turndown_cjs = __commonJS((exports, module) => {
   function createHTMLParser() {
     var Parser2 = function() {};
     {
-      var domino = require_lib7();
+      var domino = require_lib5();
       Parser2.prototype.parseFromString = function(string5) {
         return domino.createDocument(string5);
       };
@@ -448208,7 +439178,7 @@ function transformCommandAst(raw) {
   let name3 = "";
   const args = [];
   const elementTypes = [];
-  const children2 = [];
+  const children = [];
   let hasChildren = false;
   let nameType = "unknown";
   if (cmdElements.length > 0) {
@@ -448231,12 +439201,12 @@ function transformCommandAst(raw) {
       const rawChildren = ensureArray(ce2.children);
       if (rawChildren.length > 0) {
         hasChildren = true;
-        children2.push(rawChildren.map((c4) => ({
+        children.push(rawChildren.map((c4) => ({
           type: mapElementType(c4.type),
           text: c4.text
         })));
       } else {
-        children2.push(undefined);
+        children.push(undefined);
       }
     }
   }
@@ -448247,7 +439217,7 @@ function transformCommandAst(raw) {
     args,
     text: raw.text,
     elementTypes,
-    ...hasChildren ? { children: children2 } : {}
+    ...hasChildren ? { children } : {}
   };
   const rawRedirs = ensureArray(raw.redirections);
   if (rawRedirs.length > 0) {
@@ -449126,7 +440096,7 @@ var init_commonParameters = __esm(() => {
 function argLeaksValue(_cmd, element) {
   const argTypes = (element?.elementTypes ?? []).slice(1);
   const args = element?.args ?? [];
-  const children2 = element?.children;
+  const children = element?.children;
   for (let i4 = 0;i4 < argTypes.length; i4++) {
     if (argTypes[i4] !== "StringConstant" && argTypes[i4] !== "Parameter") {
       if (!/[$(@{[]/.test(args[i4] ?? "")) {
@@ -449135,7 +440105,7 @@ function argLeaksValue(_cmd, element) {
       return true;
     }
     if (argTypes[i4] === "Parameter") {
-      const paramChildren = children2?.[i4];
+      const paramChildren = children?.[i4];
       if (paramChildren) {
         if (paramChildren.some((c4) => c4.type !== "StringConstant")) {
           return true;
@@ -463303,7 +454273,7 @@ function getAnthropicEnvMetadata() {
 function getBuildAgeMinutes() {
   if (false)
     ;
-  const buildTime = new Date("2026-04-26T03:50:45.266Z").getTime();
+  const buildTime = new Date("2026-04-26T06:05:45.297Z").getTime();
   if (isNaN(buildTime))
     return;
   return Math.floor((Date.now() - buildTime) / 60000);
@@ -464414,7 +455384,7 @@ var init_AppStateStore = __esm(() => {
 function AppStateProvider(t0) {
   const $4 = import_compiler_runtime121.c(13);
   const {
-    children: children2,
+    children,
     initialState,
     onChangeAppState
   } = t0;
@@ -464467,9 +455437,9 @@ function AppStateProvider(t0) {
   const onSettingsChange = import_react128.useEffectEvent(t4);
   useSettingsChange(onSettingsChange);
   let t5;
-  if ($4[8] !== children2) {
-    t5 = /* @__PURE__ */ import_react128.default.createElement(MailboxProvider, null, /* @__PURE__ */ import_react128.default.createElement(VoiceProvider, null, children2));
-    $4[8] = children2;
+  if ($4[8] !== children) {
+    t5 = /* @__PURE__ */ import_react128.default.createElement(MailboxProvider, null, /* @__PURE__ */ import_react128.default.createElement(VoiceProvider, null, children));
+    $4[8] = children;
     $4[9] = t5;
   } else {
     t5 = $4[9];
@@ -464543,8 +455513,8 @@ function useAppStateMaybeOutsideOfProvider(selector) {
   return import_react128.useSyncExternalStore(store ? store.subscribe : NOOP_SUBSCRIBE, t0);
 }
 var import_compiler_runtime121, import_react128, VoiceProvider = ({
-  children: children2
-}) => children2, AppStoreContext, HasAppStateContext, NOOP_SUBSCRIBE = () => () => {};
+  children
+}) => children, AppStoreContext, HasAppStateContext, NOOP_SUBSCRIBE = () => () => {};
 var init_AppState = __esm(() => {
   init_mailbox2();
   init_useSettingsChange();
@@ -467357,7 +458327,7 @@ function BaseTextInput(t0) {
   const $4 = import_compiler_runtime123.c(14);
   const {
     inputState,
-    children: children2,
+    children,
     terminalFocus,
     invert,
     hidePlaceholderText,
@@ -467443,7 +458413,7 @@ function BaseTextInput(t0) {
       highlights: filteredHighlights
     }), showArgumentHint && /* @__PURE__ */ import_react132.default.createElement(ThemedText, {
       dimColor: true
-    }, props.value?.endsWith(" ") ? "" : " ", props.argumentHint), children2);
+    }, props.value?.endsWith(" ") ? "" : " ", props.argumentHint), children);
   }
   const T0 = ThemedBox_default;
   const T1 = ThemedText;
@@ -467453,13 +458423,13 @@ function BaseTextInput(t0) {
     dimColor: true
   }, props.value?.endsWith(" ") ? "" : " ", props.argumentHint);
   let t7;
-  if ($4[4] !== T1 || $4[5] !== children2 || $4[6] !== props || $4[7] !== t5 || $4[8] !== t6) {
+  if ($4[4] !== T1 || $4[5] !== children || $4[6] !== props || $4[7] !== t5 || $4[8] !== t6) {
     t7 = /* @__PURE__ */ import_react132.default.createElement(T1, {
       wrap: t4,
       dimColor: props.dimColor
-    }, t5, t6, children2);
+    }, t5, t6, children);
     $4[4] = T1;
-    $4[5] = children2;
+    $4[5] = children;
     $4[6] = props;
     $4[7] = t5;
     $4[8] = t6;
@@ -468508,7 +459478,7 @@ var init_backfill_sessions = __esm(() => {
 
 // src/ink/components/ScrollBox.tsx
 function ScrollBox({
-  children: children2,
+  children,
   ref,
   stickyScroll,
   ...style
@@ -468636,7 +459606,7 @@ function ScrollBox({
     flexGrow: 1,
     flexShrink: 0,
     width: "100%"
-  }, children2));
+  }, children));
 }
 var import_react137, ScrollBox_default;
 var init_ScrollBox = __esm(() => {
@@ -471590,7 +462560,7 @@ function Tabs(t0) {
     title,
     color: color3,
     defaultTab,
-    children: children2,
+    children,
     hidden: hidden2,
     useFullWidth,
     selectedTab: controlledSelectedTab,
@@ -471606,7 +462576,7 @@ function Tabs(t0) {
   const {
     columns: terminalWidth
   } = useTerminalSize();
-  const tabs = children2.map(_temp51);
+  const tabs = children.map(_temp51);
   const defaultTabIndex = defaultTab ? tabs.findIndex((tab) => defaultTab === tab[0]) : 0;
   const isControlled = controlledSelectedTab !== undefined;
   const [internalSelectedTab, setInternalSelectedTab] = import_react144.useState(defaultTabIndex !== -1 ? defaultTabIndex : 0);
@@ -471740,7 +462710,7 @@ function Tabs(t0) {
     }, " ", title_0, " ");
   }), spacerWidth > 0 && /* @__PURE__ */ import_react144.default.createElement(ThemedText, null, " ".repeat(spacerWidth)));
   let t17;
-  if ($4[11] !== children2 || $4[12] !== contentHeight || $4[13] !== contentWidth || $4[14] !== hidden2 || $4[15] !== modalScrollRef || $4[16] !== selectedTabIndex) {
+  if ($4[11] !== children || $4[12] !== contentHeight || $4[13] !== contentWidth || $4[14] !== hidden2 || $4[15] !== modalScrollRef || $4[16] !== selectedTabIndex) {
     t17 = modalScrollRef ? /* @__PURE__ */ import_react144.default.createElement(ThemedBox_default, {
       width: contentWidth,
       marginTop: hidden2 ? 0 : 1,
@@ -471750,13 +462720,13 @@ function Tabs(t0) {
       ref: modalScrollRef,
       flexDirection: "column",
       flexShrink: 0
-    }, children2)) : /* @__PURE__ */ import_react144.default.createElement(ThemedBox_default, {
+    }, children)) : /* @__PURE__ */ import_react144.default.createElement(ThemedBox_default, {
       width: contentWidth,
       marginTop: hidden2 ? 0 : 1,
       height: contentHeight,
       overflowY: contentHeight !== undefined ? "hidden" : undefined
-    }, children2);
-    $4[11] = children2;
+    }, children);
+    $4[11] = children;
     $4[12] = contentHeight;
     $4[13] = contentWidth;
     $4[14] = hidden2;
@@ -471814,7 +462784,7 @@ function Tab(t0) {
   const {
     title,
     id,
-    children: children2
+    children
   } = t0;
   const {
     selectedTab,
@@ -471826,12 +462796,12 @@ function Tab(t0) {
   }
   const t1 = insideModal ? 0 : undefined;
   let t2;
-  if ($4[0] !== children2 || $4[1] !== t1 || $4[2] !== width) {
+  if ($4[0] !== children || $4[1] !== t1 || $4[2] !== width) {
     t2 = /* @__PURE__ */ import_react144.default.createElement(ThemedBox_default, {
       width,
       flexShrink: t1
-    }, children2);
-    $4[0] = children2;
+    }, children);
+    $4[0] = children;
     $4[1] = t1;
     $4[2] = width;
     $4[3] = t2;
@@ -477116,7 +468086,7 @@ import { PassThrough as PassThrough5 } from "stream";
 function RenderOnceAndExit(t0) {
   const $4 = import_compiler_runtime147.c(5);
   const {
-    children: children2
+    children
   } = t0;
   const {
     exit
@@ -477138,9 +468108,9 @@ function RenderOnceAndExit(t0) {
   }
   import_react158.useLayoutEffect(t1, t2);
   let t3;
-  if ($4[3] !== children2) {
-    t3 = /* @__PURE__ */ React189.createElement(React189.Fragment, null, children2);
-    $4[3] = children2;
+  if ($4[3] !== children) {
+    t3 = /* @__PURE__ */ React189.createElement(React189.Fragment, null, children);
+    $4[3] = children;
     $4[4] = t3;
   } else {
     t3 = $4[4];
@@ -508030,7 +499000,7 @@ function LogSelector(t0) {
           };
         }
         const forkCount = groupLogs.length - 1;
-        const children2 = groupLogs.slice(1).map((log_8, index) => {
+        const children = groupLogs.slice(1).map((log_8, index) => {
           const childIndexInFiltered = displayedLogs.indexOf(log_8);
           const childSnippet = snippets.get(log_8);
           const childSnippetStr = childSnippet ? formatSnippet(childSnippet, highlightColor) : null;
@@ -508068,7 +499038,7 @@ function LogSelector(t0) {
           description: snippetStr ? `${parentMetadata}
   ${snippetStr}` : parentMetadata,
           dimDescription: true,
-          children: children2
+          children
         };
       });
       $4[66] = displayedLogs;
@@ -523777,7 +514747,7 @@ function WizardProvider(t0) {
     initialData: t1,
     onComplete,
     onCancel,
-    children: children2,
+    children,
     title,
     showStepCounter: t2
   } = t0;
@@ -523946,10 +514916,10 @@ function WizardProvider(t0) {
     return null;
   }
   let t13;
-  if ($4[32] !== CurrentStepComponent || $4[33] !== children2) {
-    t13 = children2 || /* @__PURE__ */ import_react252.default.createElement(CurrentStepComponent, null);
+  if ($4[32] !== CurrentStepComponent || $4[33] !== children) {
+    t13 = children || /* @__PURE__ */ import_react252.default.createElement(CurrentStepComponent, null);
     $4[32] = CurrentStepComponent;
-    $4[33] = children2;
+    $4[33] = children;
     $4[34] = t13;
   } else {
     t13 = $4[34];
@@ -524037,7 +515007,7 @@ function WizardDialogLayout(t0) {
   const {
     title: titleOverride,
     color: t1,
-    children: children2,
+    children,
     subtitle,
     footerText
   } = t0;
@@ -524053,7 +515023,7 @@ function WizardDialogLayout(t0) {
   const stepSuffix = showStepCounter !== false ? ` (${currentStepIndex + 1}/${totalSteps})` : "";
   const t2 = `${title}${stepSuffix}`;
   let t3;
-  if ($4[0] !== children2 || $4[1] !== color3 || $4[2] !== goBack || $4[3] !== subtitle || $4[4] !== t2) {
+  if ($4[0] !== children || $4[1] !== color3 || $4[2] !== goBack || $4[3] !== subtitle || $4[4] !== t2) {
     t3 = /* @__PURE__ */ import_react255.default.createElement(Dialog, {
       title: t2,
       subtitle,
@@ -524061,8 +515031,8 @@ function WizardDialogLayout(t0) {
       color: color3,
       hideInputGuide: true,
       isCancelActive: false
-    }, children2);
-    $4[0] = children2;
+    }, children);
+    $4[0] = children;
     $4[1] = color3;
     $4[2] = goBack;
     $4[3] = subtitle;
@@ -527684,7 +518654,7 @@ var init_bridge_kick = __esm(() => {
 var call55 = async () => {
   return {
     type: "text",
-    value: `${"2.1.88"} (built ${"2026-04-26T03:50:45.266Z"})`
+    value: `${"2.1.88"} (built ${"2026-04-26T06:05:45.297Z"})`
   };
 }, version6, version_default;
 var init_version = __esm(() => {
@@ -529727,7 +520697,7 @@ var init_ExportDialog = __esm(() => {
 
 // src/utils/exportRenderer.tsx
 function StaticKeybindingProvider({
-  children: children2
+  children
 }) {
   const {
     bindings
@@ -529744,7 +520714,7 @@ function StaticKeybindingProvider({
     registerActiveContext: () => {},
     unregisterActiveContext: () => {},
     handlerRegistryRef
-  }, children2);
+  }, children);
 }
 function normalizedUpperBound(m3) {
   if (!("message" in m3))
@@ -555159,8 +546129,8 @@ class AuthService {
         continue;
       }
       visibleIds.add(currentId);
-      const children2 = childrenByParent.get(currentId) ?? [];
-      for (const child of children2) {
+      const children = childrenByParent.get(currentId) ?? [];
+      for (const child of children) {
         stack.push(child.id);
       }
     }

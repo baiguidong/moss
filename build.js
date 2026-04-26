@@ -5,6 +5,26 @@
  */
 import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
+import { readFileSync, writeFileSync } from 'fs'
+import { resolve } from 'path'
+
+/**
+ * 清理打包产物中由 bun build 内联的绝对路径。
+ * 第三方 CJS 库（undici, aws-sdk, grpc-js）的 __filename/__dirname
+ * 会被 bun 替换为编译机器的绝对路径，导致跨机器不可用。
+ */
+function sanitizePaths(outfile) {
+  const fullPath = resolve(outfile)
+  const content = readFileSync(fullPath, 'utf8')
+  const replaced = content.replace(
+    /(["'])\/[^"']*?\/node_modules\//g,
+    (match, quote) => quote + './node_modules/'
+  )
+  if (replaced !== content) {
+    writeFileSync(fullPath, replaced, 'utf8')
+    console.log(`  Sanitized absolute paths in ${outfile}`)
+  }
+}
 
 const onlyNode = process.argv.includes('--target=node')
 
@@ -59,6 +79,7 @@ build('cli-node.js', [
   ...aliases,
   ...defines,
 ])
+sanitizePaths('cli-node.js')
 
 // electron-direct.mjs（供 Electron 主进程直接 import，无子进程）
 build('electron-direct.mjs', [
@@ -69,6 +90,7 @@ build('electron-direct.mjs', [
   ...aliases,
   ...defines,
 ])
+sanitizePaths('electron-direct.mjs')
 
 // admin/dist（由 moss server 直接挂载到 /admin）
 build('admin/dist', [
@@ -86,6 +108,7 @@ build('moss-server.mjs', [
   ...aliases,
   ...defines,
 ])
+sanitizePaths('moss-server.mjs')
 
 //direct-connect-session-runner.mjs（session detached runner）
 build('direct-connect-session-runner.mjs', [
