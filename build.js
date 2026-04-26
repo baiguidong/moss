@@ -59,8 +59,12 @@ function build(label, args) {
 }
 
 function ensureAdminBuildDependencies() {
-  const viteBin = resolve('admin', 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
-  if (!existsSync(viteBin)) {
+  const requiredPaths = [
+    resolve('admin', 'node_modules', 'vite', 'package.json'),
+    resolve('admin', 'node_modules', '.bin', 'vite'),
+    resolve('admin', 'node_modules', '.bin', 'vite.cmd'),
+  ]
+  if (!requiredPaths.some((path) => existsSync(path))) {
     console.error('Missing admin build dependencies. Run "bun install" in the admin directory before "bun run build:node".')
     process.exit(1)
   }

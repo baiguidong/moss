@@ -12,8 +12,10 @@
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
     "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && node --check scripts/dev.mjs && tsc --noEmit",
-    "dist:win": "vite build && electron-builder --win",
-    "dist:mac": "vite build && electron-builder --mac",
+    "dist:win": "vite build && electron-builder --win --publish never",
+    "dist:mac": "vite build && electron-builder --mac --publish never",
+    "release:win": "vite build && electron-builder --win",
+    "release:mac": "vite build && electron-builder --mac",
     "install-app": "node -e \"const fs=require('fs');const os=require('os');const path=require('path');const s=process.argv[2];if(!s){console.log('Usage: npm run install-app <app-name>');process.exit(1);}const src='src/apps/'+s+'.html';const dst=path.join(os.homedir(),'.moss','generated-apps',s+'.html');fs.mkdirSync(path.dirname(dst),{recursive:true});fs.copyFileSync(src,dst);console.log('Installed:',dst);\""
   },
   "build": {

@@ -47,16 +47,8 @@ jobs:
         run: 'node -e "require(''node:fs'').mkdirSync(''ui/build'', { recursive: true })"'
 
       - name: Build ${{ matrix.os == 'macos-latest' && 'macOS' || 'Windows' }} installer
-        run: bun run ${{ matrix.os == 'macos-latest' && 'dist:mac' || 'dist:win' }}
+        run: bun run ${{ matrix.os == 'macos-latest' && 'release:mac' || 'release:win' }}
         working-directory: ui
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      - name: Create Release
-        if: matrix.os == 'macos-latest'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ui/dist/installers/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
