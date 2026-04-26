@@ -953,4 +953,36 @@ export async function getAssistantContextSummary(
   }
 }
 
+/**
+ * Get assistant system prompt content for MOSS_ASSISTANT_NAME env var handling.
+ * Reads the rule file content from the assistant directory.
+ */
+export async function getAssistantSystemPrompt(
+  assistantName: string,
+): Promise<string | null> {
+  const result = await findAssistantDir(assistantName)
+  if (!result) {
+    return null
+  }
+
+  const meta = await readAssistantMeta(result.dir)
+  const ruleFile = await resolveAssistantRuleFile(
+    result.dir,
+    assistantName,
+    meta?.ruleFile,
+  )
+
+  if (!ruleFile) {
+    return null
+  }
+
+  const fullPath = path.resolve(result.dir, ruleFile)
+  try {
+    const content = await readFile(fullPath, 'utf-8')
+    return content.trim() || null
+  } catch {
+    return null
+  }
+}
+
 export { ASSISTANT_HUB_DIR, ASSISTANT_SEARCH_DIRS }

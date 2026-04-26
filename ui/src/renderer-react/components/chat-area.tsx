@@ -3,15 +3,11 @@
 import * as React from "react";
 import {
   Bot,
-  Copy,
-  Check,
   FileText,
   FolderOpen,
-  Loader,
   Plus,
   Send,
   Square,
-  User,
   X,
   PanelLeftClose,
   PanelLeftOpen,
@@ -114,59 +110,6 @@ function SessionTabBar({
   );
 }
 
-function IntentChip({
-  option,
-  active,
-  disabled,
-  onClick,
-  onRemove,
-}: {
-  option: IntentOption;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  onRemove?: () => void;
-}) {
-  const hasDescription = !!option.description;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs transition-colors sm:px-4 sm:text-sm",
-        active && hasDescription
-          ? "border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-600 dark:text-purple-400"
-          : active
-            ? "border-primary/35 bg-primary/10 text-primary"
-            : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-45",
-      )}
-      title={option.description}
-    >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        className="flex items-center gap-1.5"
-      >
-        <span>{option.title}</span>
-        {active && option.description && (
-          <span className="hidden text-[10px] opacity-70 sm:inline">
-            {option.description}
-          </span>
-        )}
-      </button>
-      {active && onRemove && (
-        <button
-          type="button"
-          onClick={onRemove}
-          className="ml-1 rounded-full p-0.5 hover:bg-primary/20"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </span>
-  );
-}
-
 function PlanApprovalCard({
   pendingPlanApproval,
   busy,
@@ -229,7 +172,6 @@ function ComposerPanel({
   composerIntent,
   hasActiveSession,
   sessionId,
-  showModeButtons,
   attachments: externalAttachments,
   onAttachmentsChange,
   workspace,
@@ -240,6 +182,7 @@ function ComposerPanel({
   onStop,
   selectedAssistant,
   onClearAssistant,
+  className,
 }: {
   value: string;
   selectedAppName: string;
@@ -248,7 +191,6 @@ function ComposerPanel({
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
   sessionId?: string;
-  showModeButtons?: boolean;
   attachments?: Array<{ name: string; path: string }>;
   onAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
   workspace?: string;
@@ -259,6 +201,7 @@ function ComposerPanel({
   onClearAssistant?: () => void;
   onSend: (files?: Array<{ name: string; path: string }>) => void;
   onStop?: () => void;
+  className?: string;
 }) {
   const [internalAttachments, setInternalAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const attachments = externalAttachments ?? internalAttachments;
@@ -277,9 +220,6 @@ function ComposerPanel({
   }, [onAttachmentsChange, externalAttachments, internalAttachments]);
   const composerId = React.useRef<string>('composer-' + Math.random().toString(36).slice(2));
   const isHomeComposer = !hasActiveSession;
-  const activeIntentOption = composerIntent === "chat"
-    ? null
-    : intentOptions.find((option) => option.id === composerIntent) ?? null;
   const submitDisabled =
     (!value.trim() && attachments.length === 0) || loading || Boolean(readOnlyReason);
 
@@ -425,6 +365,7 @@ function ComposerPanel({
         isHomeComposer
           ? "shadow-[0_24px_80px_-44px_rgba(0,0,0,0.55)]"
           : "shadow-[0_16px_54px_-38px_rgba(0,0,0,0.45)]",
+        className,
       )}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
@@ -452,10 +393,10 @@ function ComposerPanel({
           onChange={(event) => onChange(event.target.value)}
           disabled={Boolean(readOnlyReason)}
           className={cn(
-            "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
+            "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-6 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
             isHomeComposer
               ? "min-h-[160px] pb-4"
-              : "min-h-[56px] max-h-[132px] overflow-y-auto pb-3 [field-sizing:fixed]",
+              : "min-h-[64px] max-h-[120px] overflow-y-auto pb-3 [field-sizing:fixed]",
           )}
           rows={isHomeComposer ? 5 : 2}
           onKeyDown={(event) => {
@@ -479,7 +420,7 @@ function ComposerPanel({
       </div>
 
       {!isHomeComposer && (
-        <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+        <div className="px-4 py-2 sm:px-5">
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {attachments.map((file, index) => (
@@ -494,8 +435,19 @@ function ComposerPanel({
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectFile}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                title="选择文件"
+              >
+                <Plus className="h-3 w-3" />
+                <FileText className="h-3.5 w-3.5" />
+                <span>文件</span>
+              </button>
+
               {selectedAssistant && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
                   <Bot className="h-3 w-3" />
                   <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
                   <button
@@ -508,26 +460,25 @@ function ComposerPanel({
                 </span>
               )}
 
-              {showModeButtons && intentOptions
-                .filter((o) => o.id !== "chat")
-                .map((option) => (
-                  <Button
+              <span className="text-xs text-muted-foreground">模式：</span>
+              {[chatIntentOption, ...intentOptions].map((option) => {
+                const isSelected = composerIntent === option.id;
+                return (
+                  <button
                     key={option.id}
-                    variant={composerIntent === option.id ? "default" : "outline"}
-                    size="sm"
+                    type="button"
+                    onClick={() => onComposerIntentChange(option.id)}
                     className={cn(
-                      "h-7 rounded-full px-2.5 text-xs",
-                      composerIntent === option.id && "border-green-500 bg-green-500 hover:bg-green-600"
+                      "inline-flex items-center rounded-full border px-2 py-1 text-xs transition-colors",
+                      isSelected
+                        ? "border-green-500/50 bg-green-500/15 text-green-600"
+                        : "border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                     )}
-                    onClick={() =>
-                      onComposerIntentChange(
-                        composerIntent === option.id ? "chat" : (option.id as ComposerIntent)
-                      )
-                    }
                   >
                     {option.title}
-                  </Button>
-                ))}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="flex items-center justify-end gap-2">
@@ -579,6 +530,26 @@ function ComposerPanel({
                 <FolderOpen className="h-3.5 w-3.5" />
                 <span>目录</span>
               </button>
+
+              <span className="ml-2 text-xs text-muted-foreground">模式：</span>
+              {[chatIntentOption, ...intentOptions].map((option) => {
+                const isSelected = composerIntent === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => onComposerIntentChange(option.id)}
+                    className={cn(
+                      "inline-flex items-center rounded-full border px-2.5 py-1.5 text-xs transition-colors",
+                      isSelected
+                        ? "border-green-500/50 bg-green-500/15 text-green-600"
+                        : "border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    )}
+                  >
+                    {option.title}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -595,30 +566,10 @@ function ComposerPanel({
                   </button>
                 </span>
               )}
-              <span className="text-xs text-muted-foreground">模式：</span>
-              {selectedAssistant && (
-                <span className="rounded-full border border-blue-500/40 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-2.5 py-1 text-xs text-blue-600 dark:text-blue-400 mr-2">
-                  {selectedAssistant.displayName || selectedAssistant.name}
-                </span>
-              )}
 
               {selectedAssistant?.name === "app-builder-assistant" && selectedAppName && (
-                <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground mr-2">
+                <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
                   更新 {selectedAppName}
-                </span>
-              )}
-
-              {activeIntentOption ? (
-                <IntentChip
-                  key={composerIntent}
-                  option={activeIntentOption}
-                  active={true}
-                  onClick={() => onComposerIntentChange("chat")}
-                  onRemove={() => onComposerIntentChange("chat")}
-                />
-              ) : (
-                <span className="rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500/10 to-blue-500/10 px-2.5 py-1 text-xs text-purple-600 dark:text-purple-400">
-                  chat
                 </span>
               )}
 
@@ -693,6 +644,9 @@ function HomeLanding({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
+  remoteEnabled,
+  newSessionMode,
+  onNewSessionModeChange,
 }: {
   value: string;
   selectedAppName: string;
@@ -710,11 +664,14 @@ function HomeLanding({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
+  remoteEnabled?: boolean;
+  newSessionMode?: 'local' | 'remote-direct';
+  onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
 }) {
   return (
-      <div className="mx-auto flex h-[60%] w-full max-w-[80%] min-w-0 flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
-      <div className="mb-8 text-center sm:mb-10">
-        <h1 className="mt-36 text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
+      <div className="flex h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto mb-8 text-center sm:mb-10 w-full max-w-[720px]">
+        <h1 className="text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
           Hi，今天有什么安排？
         </h1>
         <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
@@ -722,27 +679,34 @@ function HomeLanding({
         </p>
       </div>
 
-      <div className="mb-6 flex flex-wrap justify-center gap-4">
-        {[chatIntentOption, ...intentOptions]
-          .map((option) => {
-          const isSelected = composerIntent === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onComposerIntentChange(option.id)}
-              className={cn(
-                "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
-                isSelected
-                  ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-                  : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-              )}
-            >
-              {option.title}
-            </button>
-          );
-        })}
-      </div>
+      {remoteEnabled && (
+        <div className="mx-auto mb-4 w-full max-w-[720px] flex flex-wrap justify-center gap-4">
+          <button
+            type="button"
+            onClick={() => onNewSessionModeChange?.('local')}
+            className={cn(
+              "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
+              newSessionMode !== 'remote-direct'
+                ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+                : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+            )}
+          >
+            本地
+          </button>
+          <button
+            type="button"
+            onClick={() => onNewSessionModeChange?.('remote-direct')}
+            className={cn(
+              "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
+              newSessionMode === 'remote-direct'
+                ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+                : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
+            )}
+          >
+            远程
+          </button>
+        </div>
+      )}
 
       <ComposerPanel
         value={value}
@@ -760,9 +724,10 @@ function HomeLanding({
         onSend={onSend}
         selectedAssistant={selectedAssistant ?? null}
         onClearAssistant={onClearAssistant}
+        className="w-full max-w-[720px]"
       />
       {installedAssistants && onSelectAssistant && (
-      <div className="mt-8 min-w-0">
+      <div className="mx-auto mt-8 w-full max-w-[720px] min-w-0">
           <AssistantSelectionArea
             assistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
@@ -806,6 +771,9 @@ export function ChatArea({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
+  remoteEnabled,
+  newSessionMode,
+  onNewSessionModeChange,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -838,6 +806,9 @@ export function ChatArea({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
+  remoteEnabled?: boolean;
+  newSessionMode?: 'local' | 'remote-direct';
+  onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
@@ -874,6 +845,9 @@ export function ChatArea({
           selectedAssistant={selectedAssistant ?? null}
           onSelectAssistant={onSelectAssistant}
           onClearAssistant={onClearAssistant ?? (() => {})}
+          remoteEnabled={remoteEnabled}
+          newSessionMode={newSessionMode}
+          onNewSessionModeChange={onNewSessionModeChange}
         />
         <div className="shrink-0 px-3 pb-4 sm:px-4" />
       </div>
@@ -907,7 +881,7 @@ export function ChatArea({
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 min-w-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
+      <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto max-w-[980px] min-w-0">
           <WorkerThreadPanel
             threads={workerThreads}
@@ -922,7 +896,6 @@ export function ChatArea({
             readOnlyReason={readOnlyReason}
             composerIntent={composerIntent}
             hasActiveSession
-            showModeButtons
             sessionId={sessionId}
             onChange={onChange}
             onComposerIntentChange={onComposerIntentChange}

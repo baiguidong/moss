@@ -186,6 +186,7 @@ import { createRemoteSessionConfig } from './remote/RemoteSessionManager.js';
 /* eslint-enable @typescript-eslint/no-require-imports */
 // teleportWithProgress dynamically imported at call site
 import { createDirectConnectSession, DirectConnectError } from './server/createDirectConnectSession.js';
+import { getAssistantSystemPrompt } from './server/agentStore.js';
 import { initializeLspServerManager } from './services/lsp/manager.js';
 import { shouldEnablePromptSuggestion } from './services/PromptSuggestion/promptSuggestion.js';
 import { type AppState, getDefaultAppState, IDLE_SPECULATION_STATE } from './state/AppStateStore.js';
@@ -1419,6 +1420,22 @@ async function run(): Promise<CommanderCommand> {
         }
         process.stderr.write(chalk.red(`Error reading system prompt file: ${errorMessage(error)}\n`));
         process.exit(1);
+      }
+    }
+
+    // Handle MOSS_ASSISTANT_NAME environment variable (set by server for remote-direct mode)
+    const mossAssistantName = process.env.MOSS_ASSISTANT_NAME;
+    if (mossAssistantName) {
+      try {
+        const assistantPrompt = await getAssistantSystemPrompt(mossAssistantName);
+        if (assistantPrompt) {
+          // Append assistant rules to existing systemPrompt or set as systemPrompt
+          systemPrompt = systemPrompt
+            ? `${systemPrompt}\n\n${assistantPrompt}`
+            : assistantPrompt;
+        }
+      } catch (error) {
+        logForDebugging(`Failed to load assistant system prompt for ${mossAssistantName}: ${errorMessage(error)}`);
       }
     }
 

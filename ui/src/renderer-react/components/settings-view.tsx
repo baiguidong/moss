@@ -435,7 +435,7 @@ export function SettingsView({
   }, [
     firstVisibleSectionId,
     visibleSectionKey,
-    settingsDraft?.agentMode,
+    settingsDraft?.remoteEnabled,
     settingsDraft?.remoteDirectCredentialMode,
     settingsDraft?.thinkingMode,
     buddyEnabled,
@@ -473,23 +473,20 @@ export function SettingsView({
 
   if (!settingsDraft) {
     return (
-      <div className="h-full overflow-auto px-6 py-6">
-        <div className="mx-auto max-w-[960px]">
-          <Surface className="p-8">
-            <p className="text-sm font-medium text-foreground">正在读取设置…</p>
-            <p className="mt-2 text-sm leading-7 text-muted-foreground">
-              设置文件和当前主题配置加载后会显示完整的设置界面。
-            </p>
-          </Surface>
-        </div>
+      <div className="h-full overflow-auto p-6">
+        <Surface className="p-8">
+          <p className="text-sm font-medium text-foreground">正在读取设置…</p>
+          <p className="mt-2 text-sm leading-7 text-muted-foreground">
+            设置文件和当前主题配置加载后会显示完整的设置界面。
+          </p>
+        </Surface>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-hidden bg-[linear-gradient(180deg,rgba(248,248,250,0.88),rgba(243,243,246,0.98))] px-3 py-3 dark:bg-[linear-gradient(180deg,rgba(12,16,22,0.72),rgba(9,12,17,0.96))] sm:px-4 sm:py-4">
-      <div className="mx-auto h-full max-w-[1180px] overflow-hidden rounded-[28px] border border-sidebar-border bg-sidebar/96 text-sidebar-foreground shadow-[0_24px_70px_-46px_rgba(15,23,42,0.42)] backdrop-blur-2xl">
-        <div className="flex h-full">
+    <div className="h-full overflow-hidden bg-sidebar/96 text-sidebar-foreground">
+      <div className="flex h-full">
           <aside className="hidden w-[232px] shrink-0 border-r border-sidebar-border bg-sidebar/96 lg:block">
             <div className="sticky top-0 p-4">
               <div className="mb-4">
@@ -600,118 +597,150 @@ export function SettingsView({
                       sectionRefs.current.connection = element;
                     }}
                   >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="Agent 运行方式"
-                        controlClassName="sm:w-[180px]"
-                      >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={settingsDraft.agentMode ?? 'local'}
-                          onChange={(event) => {
-                            updateSetting('agentMode', event.target.value as DesktopSettings['agentMode']);
-                          }}
+                    <div className="space-y-3">
+                      {/* 本地模式 */}
+                      <SettingsGroup>
+                        <SettingsRow
+                          title="本地模式"
+                          description="在本机运行 Agent，直接使用本地文本模型配置。"
+                          controlClassName="sm:w-[56px]"
                         >
-                          <option value="local">local</option>
-                          <option value="remote-direct">remote-direct</option>
-                        </select>
-                      </SettingsRow>
-
-                      {settingsDraft.agentMode === 'remote-direct' ? (
-                        <>
-                          <SettingsRow
-                            title="服务器地址"
-                            controlClassName="sm:w-[360px]"
-                          >
-                            <Input
-                              className={FIELD_CLASS_NAME}
-                              value={settingsDraft.remoteDirectServerUrl || ''}
-                              onChange={(event) => updateSetting('remoteDirectServerUrl', event.target.value)}
-                              placeholder="http://127.0.0.1:43127 或 cc://server:43127"
-                            />
-                          </SettingsRow>
-
-                          <SettingsRow
-                            title="凭据类型"
-                            controlClassName="sm:w-[180px]"
-                          >
-                            <select
-                              className={SELECT_CLASS_NAME}
-                              value={settingsDraft.remoteDirectCredentialMode ?? 'password'}
-                              onChange={(event) => {
-                                updateSetting(
-                                  'remoteDirectCredentialMode',
-                                  event.target.value as DesktopSettings['remoteDirectCredentialMode'],
-                                );
+                          <div className="flex justify-start sm:justify-end">
+                            <Toggle
+                              checked={settingsDraft.localEnabled ?? true}
+                              onCheckedChange={(checked) => {
+                                updateSetting('localEnabled', checked);
+                                if (!checked) {
+                                  updateSetting('agentMode', 'remote-direct');
+                                } else if (!(settingsDraft.remoteEnabled ?? false)) {
+                                  updateSetting('agentMode', 'local');
+                                }
                               }}
-                            >
-                              <option value="password">密码</option>
-                              <option value="api-key">API Key</option>
-                            </select>
-                          </SettingsRow>
+                              label="本地模式"
+                            />
+                          </div>
+                        </SettingsRow>
+                      </SettingsGroup>
 
-                          {settingsDraft.remoteDirectCredentialMode === 'api-key' ? (
+                      {/* 远程模式 */}
+                      <SettingsGroup>
+                        <SettingsRow
+                          title="远程模式"
+                          description="连接到远端 Moss 服务器运行 Agent。"
+                          controlClassName="sm:w-[56px]"
+                        >
+                          <div className="flex justify-start sm:justify-end">
+                            <Toggle
+                              checked={settingsDraft.remoteEnabled ?? false}
+                              onCheckedChange={(checked) => {
+                                updateSetting('remoteEnabled', checked);
+                                if (!checked) {
+                                  updateSetting('agentMode', 'local');
+                                } else if (!(settingsDraft.localEnabled ?? true)) {
+                                  updateSetting('agentMode', 'remote-direct');
+                                }
+                              }}
+                              label="远程模式"
+                            />
+                          </div>
+                        </SettingsRow>
+
+                        {(settingsDraft.remoteEnabled ?? false) ? (
+                          <>
                             <SettingsRow
-                              title="API Key"
+                              title="服务器地址"
                               controlClassName="sm:w-[360px]"
                             >
                               <Input
-                                className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
-                                value={settingsDraft.remoteDirectApiKey || ''}
-                                onChange={(event) => updateSetting('remoteDirectApiKey', event.target.value)}
-                                placeholder="moss_live_..."
+                                className={FIELD_CLASS_NAME}
+                                value={settingsDraft.remoteDirectServerUrl || ''}
+                                onChange={(event) => updateSetting('remoteDirectServerUrl', event.target.value)}
+                                placeholder="http://127.0.0.1:43127 或 cc://server:43127"
                               />
                             </SettingsRow>
-                          ) : (
-                            <>
+
+                            <SettingsRow
+                              title="凭据类型"
+                              controlClassName="sm:w-[180px]"
+                            >
+                              <select
+                                className={SELECT_CLASS_NAME}
+                                value={settingsDraft.remoteDirectCredentialMode ?? 'password'}
+                                onChange={(event) => {
+                                  updateSetting(
+                                    'remoteDirectCredentialMode',
+                                    event.target.value as DesktopSettings['remoteDirectCredentialMode'],
+                                  );
+                                }}
+                              >
+                                <option value="password">密码</option>
+                                <option value="api-key">API Key</option>
+                              </select>
+                            </SettingsRow>
+
+                            {settingsDraft.remoteDirectCredentialMode === 'api-key' ? (
                               <SettingsRow
-                                title="用户名或邮箱"
-                                controlClassName="sm:w-[280px]"
+                                title="API Key"
+                                controlClassName="sm:w-[360px]"
                               >
                                 <Input
-                                  className={FIELD_CLASS_NAME}
-                                  value={settingsDraft.remoteDirectUserEmail || ''}
-                                  onChange={(event) => updateSetting('remoteDirectUserEmail', event.target.value)}
-                                  placeholder="请输入用户名或邮箱"
+                                  className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
+                                  value={settingsDraft.remoteDirectApiKey || ''}
+                                  onChange={(event) => updateSetting('remoteDirectApiKey', event.target.value)}
+                                  placeholder="moss_live_..."
                                 />
                               </SettingsRow>
+                            ) : (
+                              <>
+                                <SettingsRow
+                                  title="用户名或邮箱"
+                                  controlClassName="sm:w-[280px]"
+                                >
+                                  <Input
+                                    className={FIELD_CLASS_NAME}
+                                    value={settingsDraft.remoteDirectUserEmail || ''}
+                                    onChange={(event) => updateSetting('remoteDirectUserEmail', event.target.value)}
+                                    placeholder="请输入用户名或邮箱"
+                                  />
+                                </SettingsRow>
 
-                              <SettingsRow
-                                title="密码"
-                                controlClassName="sm:w-[280px]"
-                              >
-                                <Input
-                                  type="password"
-                                  className={FIELD_CLASS_NAME}
-                                  value={settingsDraft.remoteDirectUserPassword || ''}
-                                  onChange={(event) => updateSetting('remoteDirectUserPassword', event.target.value)}
-                                  placeholder="请输入密码"
-                                />
-                              </SettingsRow>
-                            </>
-                          )}
+                                <SettingsRow
+                                  title="密码"
+                                  controlClassName="sm:w-[280px]"
+                                >
+                                  <Input
+                                    type="password"
+                                    className={FIELD_CLASS_NAME}
+                                    value={settingsDraft.remoteDirectUserPassword || ''}
+                                    onChange={(event) => updateSetting('remoteDirectUserPassword', event.target.value)}
+                                    placeholder="请输入密码"
+                                  />
+                                </SettingsRow>
+                              </>
+                            )}
 
-                          <SettingsRow
-                            title="工作空间"
-                            controlClassName="sm:w-[320px]"
-                          >
-                            <Input
-                              className={FIELD_CLASS_NAME}
-                              value={settingsDraft.remoteDirectWorkspace || ''}
-                              onChange={(event) => updateSetting('remoteDirectWorkspace', event.target.value)}
-                              placeholder="/srv/moss/workspaces/default"
-                            />
-                          </SettingsRow>
+                            <SettingsRow
+                              title="工作空间"
+                              controlClassName="sm:w-[320px]"
+                            >
+                              <Input
+                                className={FIELD_CLASS_NAME}
+                                value={settingsDraft.remoteDirectWorkspace || ''}
+                                onChange={(event) => updateSetting('remoteDirectWorkspace', event.target.value)}
+                                placeholder="/srv/moss/workspaces/default"
+                              />
+                            </SettingsRow>
 
-                          <div className="px-4 py-4">
-                            <div className="rounded-[18px] border border-amber-200/80 bg-amber-50/[0.85] px-4 py-3 text-xs leading-6 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
-                              当前版本会把 remote-direct 登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在
-                              `ui/plan.md`。
+                            <div className="px-4 py-4">
+                              <div className="rounded-[18px] border border-amber-200/80 bg-amber-50/[0.85] px-4 py-3 text-xs leading-6 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
+                                当前版本会把远程登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在
+                                `ui/plan.md`。
+                              </div>
                             </div>
-                          </div>
-                        </>
-                      ) : null}
-                    </SettingsGroup>
+                          </>
+                        ) : null}
+                      </SettingsGroup>
+                    </div>
                   </SettingsSection>
                 ) : null}
 
@@ -1074,7 +1103,6 @@ export function SettingsView({
              </div>
            </div>
          </div>
-       </div>
      </div>
    );
 }

@@ -84,13 +84,18 @@ function loadPanelLayout(): LayoutState {
 }
 
 
-function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) {
+function toSidebarSessions(
+  summaries: SessionSummary[],
+  pinnedIds: Set<string>
+) {
   return summaries.map((session) => ({
     ...session,
     preview: formatSidebarPreview(session.preview),
     time: formatRelativeTime(session.updatedAt),
     workspaceLabel: basename(session.workspace),
     isPinned: pinnedIds.has(session.id),
+    // 使用后端返回的 agentMode，如果没有则默认为 local
+    agentMode: session.agentMode || 'local',
   }));
 }
 
@@ -262,6 +267,24 @@ export default function App() {
       return new Set();
     }
   });
+
+  // Map sessionId -> agentMode ('local' | 'remote-direct')
+  const [sessionAgentModes, setSessionAgentModes] = React.useState<Map<string, 'local' | 'remote-direct'>>(() => {
+    try {
+      const raw = localStorage.getItem('ui.sessionAgentModes');
+      if (!raw) return new Map();
+      const obj = JSON.parse(raw);
+      return new Map(Object.entries(obj));
+    } catch {
+      return new Map();
+    }
+  });
+
+  const persistSessionAgentModes = React.useCallback((map: Map<string, 'local' | 'remote-direct'>) => {
+    setSessionAgentModes(map);
+    const obj = Object.fromEntries(map.entries());
+    localStorage.setItem('ui.sessionAgentModes', JSON.stringify(obj));
+  }, []);
   const [workspaceQuery, setWorkspaceQuery] = React.useState('');
   const [expandedDirs, setExpandedDirs] = React.useState<Set<string>>(new Set());
   const [directoryCache, setDirectoryCache] = React.useState<Map<string, any>>(new Map());
@@ -353,8 +376,8 @@ export default function App() {
   }, []);
 
   const applyDesktopSettings = React.useCallback((next: DesktopSettings) => {
-    setDesktopSettings(next);
-    setSettingsDraft(next);
+    setDesktopSettings((prev) => (prev ? { ...prev, ...next } : next));
+    setSettingsDraft((prev) => (prev ? { ...prev, ...next } : next));
   }, []);
 
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
@@ -402,9 +425,12 @@ export default function App() {
     if (assistantName) payload.assistant_name = assistantName;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
+    // Record session agentMode based on current settings
+    const mode = desktopSettings?.agentMode ?? 'local';
+    persistSessionAgentModes(new Map(sessionAgentModes).set(created.summary.id, mode));
     await openSession(created.summary.id);
     return created.summary.id;
-  }, [openSession]);
+  }, [openSession, desktopSettings?.agentMode, sessionAgentModes, persistSessionAgentModes]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     const data = await window.agentDesktop.listWorkspaceDir({ sessionId, dirPath: workspace });
@@ -876,7 +902,7 @@ export default function App() {
 
   const sidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
-    [summaries, pinnedIds]
+    [summaries, pinnedIds, sessionAgentModes]
   );
 
   // Worker threads are built directly from coordinatorTasks (authoritative for
@@ -1225,8 +1251,12 @@ export default function App() {
     if (activeSessionId === sessionId) {
       navigateToHome({ forceDiscardDirty: true });
     }
+    // Remove from sessionAgentModes map
+    const nextModes = new Map(sessionAgentModes);
+    nextModes.delete(sessionId);
+    persistSessionAgentModes(nextModes);
     await refreshSummaries();
-  }, [activeSessionId, navigateToHome, refreshSummaries]);
+  }, [activeSessionId, navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes]);
 
   const handleRenameSession = React.useCallback(async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
@@ -1469,6 +1499,10 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
+  const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
+    await autoSaveSettings('agentMode', mode);
+  }, [autoSaveSettings]);
+
   const renderSettingsView = () => (
     <SettingsView
       settingsDraft={settingsDraft}
@@ -1510,10 +1544,14 @@ export default function App() {
             themeMode={themeMode}
             collapsed={layout.leftCollapsed}
             searchQuery={sessionSearchQuery}
+            localEnabled={desktopSettings?.localEnabled ?? true}
+            remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+            newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
             onChangeView={setActiveView}
             onChangeTheme={setThemeMode}
             onSelectSession={handleSelectSession}
             onNewSession={handleNewSession}
+            onNewSessionModeChange={handleNewSessionModeChange}
             onDeleteSession={handleDeleteSession}
             onRenameSession={handleRenameSession}
             onTogglePin={handleTogglePin}
@@ -1574,6 +1612,9 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
+                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
+                onNewSessionModeChange={handleNewSessionModeChange}
               />
             ) : (
               <ChatArea
@@ -1606,6 +1647,9 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
+                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
+                onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
           ) : activeView === 'apps' ? (

@@ -64,6 +64,8 @@ export type AdapterFileConfig = {
 
 export type DesktopSettings = {
   agentMode: 'local' | 'remote-direct';
+  localEnabled: boolean;
+  remoteEnabled: boolean;
   bypassPermissions: boolean;
   model: string;
   maxTurns: number;

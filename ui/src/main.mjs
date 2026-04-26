@@ -65,6 +65,8 @@ const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
+  localEnabled: true,
+  remoteEnabled: false,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
   maxTurns: 100,
@@ -315,6 +317,18 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
   } else if (result.agentMode === undefined) {
     result.agentMode = DEFAULT_DESKTOP_SETTINGS.agentMode;
+  }
+
+  if (source.localEnabled !== undefined) {
+    result.localEnabled = Boolean(source.localEnabled);
+  } else if (result.localEnabled === undefined) {
+    result.localEnabled = DEFAULT_DESKTOP_SETTINGS.localEnabled;
+  }
+
+  if (source.remoteEnabled !== undefined) {
+    result.remoteEnabled = Boolean(source.remoteEnabled);
+  } else if (result.remoteEnabled === undefined) {
+    result.remoteEnabled = DEFAULT_DESKTOP_SETTINGS.remoteEnabled;
   }
 
   if (typeof source.model === 'string' && source.model.trim()) {
@@ -3254,8 +3268,8 @@ async function resumeSessionRecord(sessionRecord) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1680,
-    height: 980,
+    width: 1280,
+    height: 800,
     minWidth: 1220,
     minHeight: 780,
     title: 'Moss',
@@ -3703,8 +3717,12 @@ ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => {
 
 ipcMain.handle('agent:list-sessions', () => {
   const currentMode = getDesktopAgentMode();
+  const localEnabled = desktopSettings.localEnabled ?? true;
+  const remoteEnabled = desktopSettings.remoteEnabled ?? false;
+  // 当两种模式都开启时，返回所有会话；否则只返回当前模式的会话
+  const showAll = localEnabled && remoteEnabled;
   return Array.from(sessions.values())
-    .filter(s => (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
+    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 });
@@ -4314,9 +4332,11 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
     ? `Current bound app context:\n- appName: ${appName}\n- This session is attached to an existing app. If you need editable source, first use moss(action: "app_extract_to_workspace", name: appName).\n\n`
     : ''
 
+  // For remote-direct mode, assistant rules are injected via MOSS_ASSISTANT_NAME env var
+  // in CLI process, so don't concatenate them to the user prompt here
   const runtimePrompt = isPlanOnly
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-    : assistantContextPrefix + appContextPrefix + trimmedPrompt;
+    : (sessionRecord.agentMode === 'remote-direct' ? '' : assistantContextPrefix) + appContextPrefix + trimmedPrompt;
 
   const visibleUserPrompt = trimmedPrompt;
 

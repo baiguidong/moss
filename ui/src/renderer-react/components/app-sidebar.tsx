@@ -34,6 +34,7 @@ export interface SidebarSession {
   messageCount: number;
   busy: boolean;
   isPinned?: boolean;
+  agentMode?: 'local' | 'remote-direct';
 }
 
 interface AppSidebarProps {
@@ -44,10 +45,14 @@ interface AppSidebarProps {
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
   searchQuery: string;
+  localEnabled?: boolean;
+  remoteEnabled?: boolean;
+  newSessionMode?: 'local' | 'remote-direct';
   onChangeView: (view: "chat" | "apps" | "settings") => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
+  onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onTogglePin: (sessionId: string) => void;
@@ -218,21 +223,38 @@ export function AppSidebar({
   themeMode,
   collapsed,
   searchQuery,
+  localEnabled = true,
+  remoteEnabled = false,
+  newSessionMode = 'local',
   onChangeView,
   onChangeTheme,
   onSelectSession,
   onNewSession,
+  onNewSessionModeChange,
   onDeleteSession,
   onRenameSession,
   onTogglePin,
   onToggleCollapse,
   onSearchChange,
 }: AppSidebarProps) {
+  const showModePicker = remoteEnabled;
+
   const filteredSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const pinnedSessions = filteredSessions.filter((session) => session.isPinned);
-  const recentSessions = filteredSessions.filter((session) => !session.isPinned);
+
+  // 根据当前选择的模式过滤会话
+  const localSessions = filteredSessions.filter((s) => !s.agentMode || s.agentMode === 'local');
+  const remoteSessions = filteredSessions.filter((s) => s.agentMode === 'remote-direct');
+
+  // 当有切换器时，根据选择的模式显示对应会话
+  // 无切换器时（只有本地），显示所有会话
+  const displaySessions = showModePicker
+    ? (newSessionMode === 'remote-direct' ? remoteSessions : localSessions)
+    : filteredSessions;
+
+  const pinnedSessions = displaySessions.filter((session) => session.isPinned);
+  const recentSessions = displaySessions.filter((session) => !session.isPinned);
   const orderedSessions = [...pinnedSessions, ...recentSessions];
 
   return (
@@ -264,6 +286,35 @@ export function AppSidebar({
           <PenSquare className="h-4 w-4" />
           {!collapsed && "新会话"}
         </Button>
+
+        {!collapsed && showModePicker && (
+          <div className="mt-2 flex rounded-xl bg-sidebar-accent/50 p-0.5 gap-0.5">
+            <button
+              type="button"
+              onClick={() => onNewSessionModeChange?.('local')}
+              className={cn(
+                "flex-1 rounded-[10px] py-1 text-[12px] font-medium transition-colors",
+                newSessionMode !== 'remote-direct'
+                  ? "bg-sidebar text-sidebar-foreground shadow-sm"
+                  : "text-sidebar-foreground/55 hover:text-sidebar-foreground",
+              )}
+            >
+              本地
+            </button>
+            <button
+              type="button"
+              onClick={() => onNewSessionModeChange?.('remote-direct')}
+              className={cn(
+                "flex-1 rounded-[10px] py-1 text-[12px] font-medium transition-colors",
+                newSessionMode === 'remote-direct'
+                  ? "bg-sidebar text-sidebar-foreground shadow-sm"
+                  : "text-sidebar-foreground/55 hover:text-sidebar-foreground",
+              )}
+            >
+              远程
+            </button>
+          </div>
+        )}
       </div>
 
       {collapsed ? (
@@ -291,7 +342,7 @@ export function AppSidebar({
           <div className="border-b border-sidebar-border px-3 py-2">
             <div className="flex min-w-0 items-center justify-between text-[11px] uppercase tracking-[0.2em] text-sidebar-foreground/40">
               <span className="truncate">会话</span>
-              <span>{filteredSessions.length}</span>
+              <span>{orderedSessions.length}</span>
             </div>
             <div className="relative mt-2">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -330,7 +381,7 @@ export function AppSidebar({
                 ))
               ) : (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
-                  还没有历史会话。
+                  {showModePicker && newSessionMode === 'remote-direct' ? '暂无远程会话' : '还没有历史会话'}
                 </div>
               )}
             </div>
