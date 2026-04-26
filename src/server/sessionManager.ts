@@ -203,7 +203,7 @@ export class SessionManager {
       workDir: handle.workDir,
       userId: options.userId || 'anonymous',
       orgId: options.orgId || 'default',
-      role: options.role || 'member',
+      role: options.role || 'user',
       scopes: options.scopes || [],
       runtime: handle.runtime,
       handle,

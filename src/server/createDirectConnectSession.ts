@@ -1,5 +1,6 @@
 /* eslint-disable eslint-plugin-n/no-unsupported-features/node-builtins */
 
+import { z } from 'zod/v4'
 import { errorMessage } from '../utils/errors.js'
 import { jsonStringify } from '../utils/slowOperations.js'
 import type { DirectConnectConfig } from './directConnectManager.js'
@@ -10,13 +11,20 @@ import {
 import { resolveDirectConnectAccessToken } from './client/authClient.js'
 import type { SessionRuntimeOptions } from './sessionManager.js'
 
+type AttachSessionResponse = z.infer<
+  ReturnType<typeof attachSessionResponseSchema>
+>
+
 /**
  * Errors thrown by createDirectConnectSession when the connection fails.
  */
 export class DirectConnectError extends Error {
-  constructor(message: string) {
+  readonly statusCode?: number
+
+  constructor(message: string, statusCode?: number) {
     super(message)
     this.name = 'DirectConnectError'
+    this.statusCode = statusCode
   }
 }
 
@@ -132,6 +140,7 @@ export async function createDirectConnectSession({
   if (!resp.ok) {
     throw new DirectConnectError(
       await formatErrorResponse('Failed to create session', resp),
+      resp.status,
     )
   }
 
@@ -173,6 +182,7 @@ export async function attachDirectConnectSession({
 }): Promise<{
   config: DirectConnectConfig
   workDir?: string
+  session: AttachSessionResponse['session']
 }> {
   const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
@@ -204,6 +214,7 @@ export async function attachDirectConnectSession({
         `Failed to attach session ${sessionId}`,
         resp,
       ),
+      resp.status,
     )
   }
 
@@ -223,5 +234,6 @@ export async function attachDirectConnectSession({
       authToken: resolvedToken,
     },
     workDir: data.session.workDir,
+    session: data.session,
   }
 }

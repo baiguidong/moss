@@ -3,6 +3,7 @@ import { appendFile, mkdir, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { RuntimeBackend } from './backends/runtimeBackend.js'
 import { DirectConnectStore } from './db.js'
+import { getTranscriptPath } from './runtimePaths.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
 import type { RunnerClientMessage, RunnerServerMessage } from './runnerProtocol.js'
 import type { RunnerManifest } from './types.js'
@@ -21,6 +22,40 @@ async function safeUnlink(path: string): Promise<void> {
 async function writeStatus(path: string, payload: Record<string, unknown>): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractTranscriptSessionCandidate(value: unknown): {
+  sessionId: string
+  sourceType: string
+  sourceSubtype: string | null
+} | null {
+  if (!isJsonObject(value)) {
+    return null
+  }
+  const sessionId =
+    typeof value.session_id === 'string' ? value.session_id.trim() : ''
+  if (!sessionId) {
+    return null
+  }
+  if (value.type === 'result') {
+    return {
+      sessionId,
+      sourceType: 'result',
+      sourceSubtype: null,
+    }
+  }
+  if (value.type === 'system' && value.subtype === 'init') {
+    return {
+      sessionId,
+      sourceType: 'system',
+      sourceSubtype: 'init',
+    }
+  }
+  return null
 }
 
 export class SessionRunnerDaemon {
@@ -116,6 +151,7 @@ export class SessionRunnerDaemon {
       this.#armIdleTimer()
 
       handle.onStdoutLine(line => {
+        this.#maybeUpdateTranscriptSession(line)
         this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId)
         this.#store.touchSessionActivity(this.manifest.session.sessionId)
         void appendFile(this.manifest.attempt.stdoutLogPath, line, 'utf8').catch(() => {})
@@ -342,6 +378,51 @@ export class SessionRunnerDaemon {
       .join('\n')
       .trim()
     return text || null
+  }
+
+  #maybeUpdateTranscriptSession(line: string): void {
+    let parsed: unknown
+    try {
+      parsed = jsonParse(line)
+    } catch {
+      return
+    }
+    const candidate = extractTranscriptSessionCandidate(parsed)
+    if (!candidate) {
+      return
+    }
+    const nextTranscriptSessionId = candidate.sessionId
+    const currentTranscriptSessionId = this.manifest.session.transcriptSessionId
+    if (nextTranscriptSessionId === currentTranscriptSessionId) {
+      return
+    }
+    const currentTranscriptPath = this.manifest.session.transcriptPath
+    const nextTranscriptPath = this.manifest.session.runtime.configDir
+      ? getTranscriptPath(
+          this.manifest.session.runtime.configDir,
+          this.manifest.session.cwd,
+          nextTranscriptSessionId,
+        )
+      : currentTranscriptPath
+    this.#store.updateSessionTranscript(this.manifest.session.sessionId, {
+      transcriptSessionId: nextTranscriptSessionId,
+      transcriptPath: nextTranscriptPath,
+    })
+    this.manifest.session.transcriptSessionId = nextTranscriptSessionId
+    this.manifest.session.transcriptPath = nextTranscriptPath
+    this.#store.addEvent(
+      this.manifest.session.sessionId,
+      this.manifest.attempt.attemptId,
+      'transcript_session_updated',
+      {
+        previousTranscriptSessionId: currentTranscriptSessionId,
+        transcriptSessionId: nextTranscriptSessionId,
+        previousTranscriptPath: currentTranscriptPath,
+        transcriptPath: nextTranscriptPath,
+        sourceType: candidate.sourceType,
+        sourceSubtype: candidate.sourceSubtype,
+      },
+    )
   }
 
   async #fail(error: unknown, stopReason: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
+import { randomUUID, type UUID } from 'crypto'
 import type { Permutations } from 'src/types/utils.js'
 import { getSessionId } from '../bootstrap/state.js'
 import type { AppState } from '../state/AppState.js'
@@ -25,16 +26,35 @@ export type SetAppState = (f: (prev: AppState) => AppState) => void
 // Logging helper
 // ============================================================================
 
-function logOperation(operation: QueueOperation, content?: string): void {
-  const sessionId = getSessionId()
-  const queueOp: QueueOperationMessage = {
+function logOperation(
+  operation: QueueOperation,
+  command?: QueuedCommand,
+): void {
+  const sessionId = command?.sessionId ?? getSessionId()
+  const queueOp = {
     type: 'queue-operation',
     operation,
     timestamp: new Date().toISOString(),
     sessionId,
-    ...(content !== undefined && { content }),
-  }
+    ...(command?.uuid ? { uuid: command.uuid } : {}),
+    ...(typeof command?.value === 'string' ? { content: command.value } : {}),
+    ...(command?.mode ? { mode: command.mode } : {}),
+    ...(command?.origin ? { origin: command.origin } : {}),
+    ...(command?.isMeta ? { isMeta: true as const } : {}),
+  } as QueueOperationMessage
   void recordQueueOperation(queueOp)
+}
+
+function withQueueDefaults(
+  command: QueuedCommand,
+  priority: QueuePriority,
+): QueuedCommand {
+  return {
+    ...command,
+    uuid: command.uuid ?? (randomUUID() as UUID),
+    priority: command.priority ?? priority,
+    sessionId: command.sessionId ?? getSessionId(),
+  }
 }
 
 // ============================================================================
@@ -126,16 +146,10 @@ export function recheckCommandQueue(): void {
  * Defaults priority to 'next' (processed before task notifications).
  */
 export function enqueue(command: QueuedCommand): void {
-  commandQueue.push({
-    ...command,
-    priority: command.priority ?? 'next',
-    sessionId: command.sessionId ?? getSessionId(),
-  })
+  const queuedCommand = withQueueDefaults(command, 'next')
+  commandQueue.push(queuedCommand)
   notifySubscribers()
-  logOperation(
-    'enqueue',
-    typeof command.value === 'string' ? command.value : undefined,
-  )
+  logOperation('enqueue', queuedCommand)
 }
 
 /**
@@ -144,16 +158,10 @@ export function enqueue(command: QueuedCommand): void {
  * is never starved by system messages.
  */
 export function enqueuePendingNotification(command: QueuedCommand): void {
-  commandQueue.push({
-    ...command,
-    priority: command.priority ?? 'later',
-    sessionId: command.sessionId ?? getSessionId(),
-  })
+  const queuedCommand = withQueueDefaults(command, 'later')
+  commandQueue.push(queuedCommand)
   notifySubscribers()
-  logOperation(
-    'enqueue',
-    typeof command.value === 'string' ? command.value : undefined,
-  )
+  logOperation('enqueue', queuedCommand)
 }
 
 const PRIORITY_ORDER: Record<QueuePriority, number> = {
@@ -196,7 +204,7 @@ export function dequeue(
 
   const [dequeued] = commandQueue.splice(bestIdx, 1)
   notifySubscribers()
-  logOperation('dequeue')
+  logOperation('dequeue', dequeued)
   return dequeued
 }
 
@@ -213,8 +221,8 @@ export function dequeueAll(): QueuedCommand[] {
   commandQueue.length = 0
   notifySubscribers()
 
-  for (const _cmd of commands) {
-    logOperation('dequeue')
+  for (const cmd of commands) {
+    logOperation('dequeue', cmd)
   }
 
   return commands
@@ -267,8 +275,8 @@ export function dequeueAllMatching(
   commandQueue.length = 0
   commandQueue.push(...remaining)
   notifySubscribers()
-  for (const _cmd of matched) {
-    logOperation('dequeue')
+  for (const cmd of matched) {
+    logOperation('dequeue', cmd)
   }
   return matched
 }
@@ -294,8 +302,8 @@ export function remove(commandsToRemove: QueuedCommand[]): void {
     notifySubscribers()
   }
 
-  for (const _cmd of commandsToRemove) {
-    logOperation('remove')
+  for (const cmd of commandsToRemove) {
+    logOperation('remove', cmd)
   }
 }
 
@@ -315,8 +323,8 @@ export function removeByFilter(
 
   if (removed.length > 0) {
     notifySubscribers()
-    for (const _cmd of removed) {
-      logOperation('remove')
+    for (const cmd of removed) {
+      logOperation('remove', cmd)
     }
   }
 

@@ -27,6 +27,40 @@ export type SessionDetail = SessionSummary & {
 
 export type AgentEvent = Record<string, any>;
 
+export type PairedUser = {
+  userId: string | number
+  displayName: string
+  pairedAt: number
+}
+
+export type PairingState = {
+  code?: string | null
+  expiresAt?: number | null
+  createdAt?: number | null
+}
+
+export type AdapterFileConfig = {
+  serverUrl?: string
+  defaultProjectDir?: string
+  pairing?: PairingState
+  telegram?: {
+    botToken?: string
+    allowedUsers?: number[]
+    pairedUsers?: PairedUser[]
+    defaultWorkDir?: string
+  }
+  feishu?: {
+    appId?: string
+    appSecret?: string
+    encryptKey?: string
+    verificationToken?: string
+    allowedUsers?: string[]
+    pairedUsers?: PairedUser[]
+    defaultWorkDir?: string
+    streamingCard?: boolean
+  }
+}
+
 export type DesktopSettings = {
   agentMode: 'local' | 'remote-direct';
   bypassPermissions: boolean;
@@ -45,6 +79,7 @@ export type DesktopSettings = {
   };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
+  // Legacy key name; stores either username or email for password login.
   remoteDirectUserEmail: string;
   remoteDirectUserPassword: string;
   remoteDirectApiKey: string;
@@ -156,6 +191,8 @@ declare global {
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
+      getAdapterConfig: () => Promise<AdapterFileConfig>;
+      updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
       listSessions: () => Promise<SessionSummary[]>;
       createSession: (payload?: { workspace?: string; title?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
@@ -249,6 +286,7 @@ declare global {
       getInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
       getAssistantContext: (assistantName: string) => Promise<{ success: boolean; data?: string; error?: string }>;
       getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ name: string; path: string }>; error?: string }>;
+      logWrite: (payload: { level?: string; category?: string; message: string; data?: unknown }) => Promise<void>;
       update: {
         check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: UpdateCheckResult; msg?: string }>;
         download: (params: { url: string; fileName?: string }) => Promise<{ success: boolean; data?: { downloadId: string; filePath: string }; msg?: string }>;

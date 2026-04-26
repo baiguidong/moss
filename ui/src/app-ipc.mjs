@@ -1096,14 +1096,34 @@ export function createMossAppEventHandler(windows, events, options = {}) {
         }
 
         case 'image_generate': {
-          const { prompt, aspect_ratio, subject_reference, out_filepath } =
+          const { prompt, aspect_ratio, subject_reference, out_path } =
             event.input || {}
 
           if (!prompt || typeof prompt !== 'string') {
             throw new Error('image_generate requires a prompt string')
           }
-          if (!out_filepath || typeof out_filepath !== 'string') {
-            throw new Error('image_generate requires out_filepath')
+          if (!sessionRecord?.workspace) {
+            throw new Error('Session context is required for image_generate')
+          }
+          if (sessionRecord.agentMode === 'remote-direct') {
+            throw new Error('Remote Direct mode does not support writing generated images to the remote workspace yet.')
+          }
+          if (!out_path || typeof out_path !== 'string') {
+            throw new Error('image_generate requires out_path')
+          }
+
+          const resolvedOutputPath = path.resolve(sessionRecord.workspace, out_path)
+          const relativeOutputPath = path.relative(
+            sessionRecord.workspace,
+            resolvedOutputPath,
+          )
+          if (
+            relativeOutputPath.startsWith('..') ||
+            path.isAbsolute(relativeOutputPath)
+          ) {
+            throw new Error(
+              'image_generate out_path must stay inside the current session workspace',
+            )
           }
 
           const settings = getSettings() || {}
@@ -1127,9 +1147,9 @@ export function createMossAppEventHandler(windows, events, options = {}) {
             model: imageSettings.model,
           })
 
-          await fsp.mkdir(path.dirname(out_filepath), { recursive: true })
+          await fsp.mkdir(path.dirname(resolvedOutputPath), { recursive: true })
 
-          const parsedPath = path.parse(out_filepath)
+          const parsedPath = path.parse(resolvedOutputPath)
           const ext = parsedPath.ext || '.jpeg'
           const basePath = path.join(parsedPath.dir, parsedPath.name)
           const filePaths = []
@@ -1150,7 +1170,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           for (let i = 0; i < images.length; i += 1) {
             const filePath =
               images.length === 1
-                ? out_filepath
+                ? resolvedOutputPath
                 : `${basePath}-${i}${ext}`
             await fsp.writeFile(filePath, Buffer.from(images[i], 'base64'))
             filePaths.push(filePath)

@@ -63,6 +63,16 @@ export interface PreparedSessionResume {
   forkSession: boolean
 }
 
+function inferResumeCwd(messages: Message[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const maybeCwd = (messages[i] as { cwd?: unknown } | undefined)?.cwd
+    if (typeof maybeCwd === 'string' && maybeCwd.trim().length > 0) {
+      return maybeCwd
+    }
+  }
+  return null
+}
+
 export function prepareLoadedSessionResume(
   result: LoadedResumeConversation | null,
   options: {
@@ -76,6 +86,10 @@ export function prepareLoadedSessionResume(
 
   const forkSession = options.forkSession ?? false
   const projectDir = result.fullPath ? dirname(result.fullPath) : null
+  const cwd =
+    result.worktreeSession?.worktreePath ??
+    inferResumeCwd(result.messages) ??
+    projectDir
 
   return {
     sessionId: forkSession
@@ -83,7 +97,7 @@ export function prepareLoadedSessionResume(
       : (options.sessionIdOverride ?? result.sessionId),
     sourceSessionId: result.sessionId,
     projectDir,
-    cwd: result.worktreeSession?.worktreePath ?? projectDir,
+    cwd,
     fullPath: result.fullPath,
     messages: result.messages,
     turnInterruptionState: result.turnInterruptionState,

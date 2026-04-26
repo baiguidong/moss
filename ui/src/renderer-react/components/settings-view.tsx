@@ -5,6 +5,7 @@ import {
   FileText,
   Image as ImageIcon,
   Link2,
+  MessageSquare,
   Monitor,
   MoonStar,
   Palette,
@@ -20,11 +21,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { useAdapterConfig } from '@/lib/adapter-config';
 import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'permission' | 'text-model' | 'image-model' | 'prompt' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'permission' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -138,6 +140,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: FileText,
     iconGradientClassName: 'from-cyan-400 to-sky-600',
     keywords: ['prompt', '系统提示', 'append', 'instruction'],
+  },
+  {
+    id: 'im-adapter',
+    title: 'IM 接入',
+    icon: MessageSquare,
+    iconGradientClassName: 'from-emerald-400 to-green-600',
+    keywords: ['IM', '接入', 'im', 'adapter', '飞书', 'feishu', 'telegram', '电报', '机器人', 'bot', '即时通讯'],
   },
   {
     id: 'buddy',
@@ -374,6 +383,7 @@ export function SettingsView({
     'text-model': null,
     'image-model': null,
     prompt: null,
+    'im-adapter': null,
     buddy: null,
     appearance: null,
   });
@@ -655,14 +665,14 @@ export function SettingsView({
                           ) : (
                             <>
                               <SettingsRow
-                                title="用户名"
+                                title="用户名或邮箱"
                                 controlClassName="sm:w-[280px]"
                               >
                                 <Input
                                   className={FIELD_CLASS_NAME}
                                   value={settingsDraft.remoteDirectUserEmail || ''}
                                   onChange={(event) => updateSetting('remoteDirectUserEmail', event.target.value)}
-                                  placeholder="请输入用户名"
+                                  placeholder="请输入用户名或邮箱"
                                 />
                               </SettingsRow>
 
@@ -949,6 +959,18 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
+                {visibleSections.some((section) => section.id === 'im-adapter') ? (
+                  <SettingsSection
+                    id="im-adapter"
+                    title="IM 接入"
+                    sectionRef={(element) => {
+                      sectionRefs.current['im-adapter'] = element;
+                    }}
+                  >
+                    <ImAdapterSettings />
+                  </SettingsSection>
+                ) : null}
+
                 {visibleSections.some((section) => section.id === 'buddy') ? (
                   <SettingsSection
                     id="buddy"
@@ -1044,15 +1066,328 @@ export function SettingsView({
                           ))}
                         </div>
                       </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
+</SettingsGroup>
+                   </SettingsSection>
+                 ) : null}
+               </div>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+     </div>
+   );
+}
+
+type ImTab = 'feishu' | 'telegram'
+
+function ImAdapterSettings() {
+  const { config, isLoading, fetchConfig, updateConfig, generatePairingCode, removePairedUser } = useAdapterConfig()
+
+  const [activeIm, setActiveIm] = React.useState<ImTab>('feishu')
+  const [defaultProjectDir, setDefaultProjectDir] = React.useState('')
+  const [tgBotToken, setTgBotToken] = React.useState('')
+  const [tgAllowedUsers, setTgAllowedUsers] = React.useState('')
+  const [fsAppId, setFsAppId] = React.useState('')
+  const [fsAppSecret, setFsAppSecret] = React.useState('')
+  const [fsEncryptKey, setFsEncryptKey] = React.useState('')
+  const [fsVerificationToken, setFsVerificationToken] = React.useState('')
+  const [fsAllowedUsers, setFsAllowedUsers] = React.useState('')
+  const [fsStreamingCard, setFsStreamingCard] = React.useState(false)
+  const [isSaving, setIsSaving] = React.useState(false)
+  const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saved' | 'error'>('idle')
+  const [saveError, setSaveError] = React.useState('')
+  const [pairingCode, setPairingCode] = React.useState<string | null>(null)
+  const [isGenerating, setIsGenerating] = React.useState(false)
+  const [pendingUnbind, setPendingUnbind] = React.useState<{ platform: 'telegram' | 'feishu'; userId: string | number } | null>(null)
+  const [isUnbinding, setIsUnbinding] = React.useState(false)
+
+  React.useEffect(() => {
+    fetchConfig()
+  }, [fetchConfig])
+
+  React.useEffect(() => {
+    setDefaultProjectDir(config.defaultProjectDir ?? '')
+    setTgBotToken(config.telegram?.botToken ?? '')
+    setTgAllowedUsers(config.telegram?.allowedUsers?.join(', ') ?? '')
+    setFsAppId(config.feishu?.appId ?? '')
+    setFsAppSecret(config.feishu?.appSecret ?? '')
+    setFsEncryptKey(config.feishu?.encryptKey ?? '')
+    setFsVerificationToken(config.feishu?.verificationToken ?? '')
+    setFsAllowedUsers(config.feishu?.allowedUsers?.join(', ') ?? '')
+    setFsStreamingCard(config.feishu?.streamingCard ?? false)
+  }, [config])
+
+  async function handleSave() {
+    setIsSaving(true)
+    setSaveStatus('idle')
+    setSaveError('')
+    try {
+      const patch: Record<string, unknown> = {}
+      if (defaultProjectDir) patch.defaultProjectDir = defaultProjectDir
+      const tgUsers = tgAllowedUsers
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !isNaN(n))
+      patch.telegram = {
+        botToken: tgBotToken || undefined,
+        allowedUsers: tgUsers.length ? tgUsers : [],
+      }
+      const fsUsers = fsAllowedUsers
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      patch.feishu = {
+        appId: fsAppId || undefined,
+        appSecret: fsAppSecret || undefined,
+        encryptKey: fsEncryptKey || undefined,
+        verificationToken: fsVerificationToken || undefined,
+        allowedUsers: fsUsers.length ? fsUsers : [],
+        streamingCard: fsStreamingCard,
+      }
+      await updateConfig(patch as Partial<import('../types').AdapterFileConfig>)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } catch (err) {
+      setSaveStatus('error')
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleGenerateCode = async () => {
+    setIsGenerating(true)
+    try {
+      const code = await generatePairingCode()
+      setPairingCode(code)
+    } catch (err) {
+      console.error('Failed to generate pairing code:', err)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const handleUnbind = async () => {
+    if (!pendingUnbind) return
+    setIsUnbinding(true)
+    try {
+      await removePairedUser(pendingUnbind.platform, pendingUnbind.userId)
+      await fetchConfig()
+      setPendingUnbind(null)
+    } finally {
+      setIsUnbinding(false)
+    }
+  }
+
+  const allPairedUsers = [
+    ...(config.telegram?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'telegram' as const })),
+    ...(config.feishu?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'feishu' as const })),
+  ]
+
+  const pairingExpiry = config.pairing?.expiresAt
+  const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
+  const minutesLeft = pairingExpiry ? Math.max(0, Math.ceil((pairingExpiry - Date.now()) / 60000)) : 0
+
+  if (isLoading) {
+    return (
+      <Surface className="p-6">
+        <p className="text-sm font-medium text-foreground">正在加载 IM 接入配置…</p>
+      </Surface>
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      <SettingsGroup>
+        <SettingsRow title="IM 接入" description="配置飞书和 Telegram 机器人接入，允许用户通过 IM 应用与 AI 对话。" stacked>
+          <p className="text-xs leading-6 text-muted-foreground">在飞书或 Telegram 创建机器人，填入凭据后用户即可通过 IM 与 Agent 交互。</p>
+        </SettingsRow>
+      </SettingsGroup>
+
+      {/* Pairing */}
+      <Surface>
+        <div className="flex items-center gap-2 border-b border-sidebar-border bg-sidebar-accent/58 px-4 py-3">
+          <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          <span className="text-[13px] font-medium text-foreground">配对管理</span>
+        </div>
+        <div className="space-y-4 p-4">
+          <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书或 Telegram 机器人中输入该码即可绑定账号。</p>
+
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
+              {pairingCode || isPairingActive ? '重新生成' : '生成配对码'}
+            </Button>
+            {pairingCode && (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{pairingCode}</span>
+                <span className="text-xs text-muted-foreground">60 分钟内有效</span>
               </div>
+            )}
+            {!pairingCode && isPairingActive && (
+              <span className="text-xs text-muted-foreground">{minutesLeft} 分钟后过期</span>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-2 text-[13px] font-medium text-foreground">已配对用户</p>
+            {allPairedUsers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">暂无已配对用户</p>
+            ) : (
+              <div className="space-y-2">
+                {allPairedUsers.map((user) => (
+                  <div
+                    key={`${user.platform}-${user.userId}`}
+                    className="flex items-center justify-between rounded-xl border border-sidebar-border bg-sidebar-accent/70 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        {user.platform === 'feishu' ? '飞书' : 'Telegram'}
+                      </span>
+                      <span className="text-[13px] text-foreground">{user.displayName}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(user.pairedAt).toLocaleDateString()}</span>
+                    </div>
+                    <button
+                      onClick={() => setPendingUnbind({ platform: user.platform, userId: user.userId })}
+                      className="text-xs text-destructive hover:underline"
+                    >
+                      解绑
+                    </button>
+                  </div>
+                ))}
               </div>
+            )}
+          </div>
+        </div>
+      </Surface>
+
+      {/* Default Project */}
+      <SettingsGroup>
+        <SettingsRow title="默认工作目录" description="IM 会话的默认项目路径，不指定时使用服务器工作目录。" controlClassName="sm:w-[360px]">
+          <Input
+            className={FIELD_CLASS_NAME}
+            value={defaultProjectDir}
+            onChange={(e) => setDefaultProjectDir(e.target.value)}
+            placeholder="/path/to/project"
+          />
+        </SettingsRow>
+      </SettingsGroup>
+
+      {/* IM Tabs */}
+      <Surface>
+        <div role="tablist" aria-label="IM adapter" className="flex items-stretch border-b border-sidebar-border bg-sidebar-accent/58">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeIm === 'feishu'}
+            onClick={() => setActiveIm('feishu')}
+            className={cn(
+              'relative px-4 py-2.5 text-[13px] font-medium transition-colors',
+              activeIm === 'feishu'
+                ? 'text-foreground after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-primary'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            飞书
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeIm === 'telegram'}
+            onClick={() => setActiveIm('telegram')}
+            className={cn(
+              'relative px-4 py-2.5 text-[13px] font-medium transition-colors',
+              activeIm === 'telegram'
+                ? 'text-foreground after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-primary'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            Telegram
+          </button>
+        </div>
+
+        {activeIm === 'feishu' && (
+          <div className="space-y-3 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[13px] font-medium text-foreground">App ID</label>
+                <Input className={FIELD_CLASS_NAME} value={fsAppId} onChange={(e) => setFsAppId(e.target.value)} placeholder="cli_xxxxxxxx" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[13px] font-medium text-foreground">App Secret</label>
+                <Input type="password" className={FIELD_CLASS_NAME} value={fsAppSecret} onChange={(e) => setFsAppSecret(e.target.value)} placeholder="****" />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[13px] font-medium text-foreground">Encrypt Key</label>
+                <Input type="password" className={FIELD_CLASS_NAME} value={fsEncryptKey} onChange={(e) => setFsEncryptKey(e.target.value)} placeholder="****" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[13px] font-medium text-foreground">Verification Token</label>
+                <Input type="password" className={FIELD_CLASS_NAME} value={fsVerificationToken} onChange={(e) => setFsVerificationToken(e.target.value)} placeholder="****" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
+              <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（逗号分隔，留空允许所有人）" />
+            </div>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={fsStreamingCard}
+                onChange={(e) => setFsStreamingCard(e.target.checked)}
+                className="h-4 w-4 rounded border-sidebar-border accent-primary"
+              />
+              <div>
+                <span className="text-[13px] font-medium text-foreground">流式卡片</span>
+                <p className="text-xs text-muted-foreground">开启后，飞书消息流式更新（需要应用支持）</p>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {activeIm === 'telegram' && (
+          <div className="space-y-3 p-4">
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium text-foreground">Bot Token</label>
+              <Input type="password" className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')} value={tgBotToken} onChange={(e) => setTgBotToken(e.target.value)} placeholder="123456:ABC-DEF..." />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
+              <Input className={FIELD_CLASS_NAME} value={tgAllowedUsers} onChange={(e) => setTgAllowedUsers(e.target.value)} placeholder="123456789, 987654321（逗号分隔，留空允许所有人）" />
+            </div>
+          </div>
+        )}
+      </Surface>
+
+      {/* Save */}
+      <div className="flex items-center gap-3">
+        <Button onClick={handleSave} disabled={isSaving} className="rounded-xl">
+          {isSaving ? '保存中…' : saveStatus === 'saved' ? '已保存 ✓' : '保存配置'}
+        </Button>
+        {saveStatus === 'error' && (
+          <span className="text-sm text-destructive">{saveError}</span>
+        )}
+      </div>
+
+      {/* Unbind confirm */}
+      {pendingUnbind && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { if (!isUnbinding) setPendingUnbind(null) }}>
+          <div className="w-[360px] rounded-[20px] bg-background p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-[13px] font-medium text-foreground">确认解绑</p>
+            <p className="mt-2 text-xs text-muted-foreground">确定要解绑该用户吗？解绑后该用户将无法再通过 IM 与 Agent 对话。</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setPendingUnbind(null)} disabled={isUnbinding}>取消</Button>
+              <Button size="sm" className="rounded-xl bg-destructive text-white hover:bg-destructive/90" onClick={handleUnbind} disabled={isUnbinding}>
+                {isUnbinding ? '解绑中…' : '解绑'}
+              </Button>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
-  );
+  )
 }

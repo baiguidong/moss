@@ -41,10 +41,15 @@ export async function runConnectHeadless(
 
   await new Promise<void>((resolve, reject) => {
     let finished = false
+    let promptSent = false
+    let lastError: Error | null = null
 
     const manager = new DirectConnectSessionManager(config, {
       onConnected: () => {
-        manager.sendMessage(resolvedPrompt)
+        if (!promptSent) {
+          promptSent = true
+          manager.sendMessage(resolvedPrompt)
+        }
       },
       onMessage: (message) => {
         if (outputFormat === 'stream-json') {
@@ -76,12 +81,22 @@ export async function runConnectHeadless(
           message: 'Headless direct-connect does not support permission prompts',
         })
       },
+      onReconnecting: (attempt, maxAttempts) => {
+        process.stderr.write(
+          `Reattaching session ${config.sessionId} (${attempt}/${maxAttempts})...\n`,
+        )
+      },
       onDisconnected: () => {
         if (!finished) {
-          reject(new Error('Remote server disconnected before completion'))
+          reject(
+            lastError ??
+              new Error('Remote server disconnected before completion'),
+          )
         }
       },
-      onError: reject,
+      onError: error => {
+        lastError = error
+      },
     })
 
     manager.connect()

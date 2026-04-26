@@ -100,25 +100,6 @@ function mapAttempt(row: SqlRow): AttemptRecord {
   }
 }
 
-function mapSummary(row: SqlRow): SessionSummary {
-  const session = mapSession(row)
-  return {
-    sessionId: session.sessionId,
-    transcriptSessionId: session.transcriptSessionId,
-    workDir: session.cwd,
-    userId: session.userId,
-    orgId: session.orgId,
-    role: session.role,
-    scopes: session.scopes,
-    runtime: session.runtime,
-    status: session.status,
-    desiredState: session.desiredState,
-    createdAt: session.createdAt,
-    lastActiveAt: session.lastActiveAt,
-    endedAt: session.endedAt,
-  }
-}
-
 export class DirectConnectStore {
   readonly db: DatabaseSync
 
@@ -372,6 +353,25 @@ export class DirectConnectStore {
     `).run(now(), sessionId)
   }
 
+  updateSessionTranscript(
+    sessionId: string,
+    patch: {
+      transcriptSessionId: string
+      transcriptPath: string
+    },
+  ): void {
+    this.db.prepare(`
+      UPDATE sessions
+      SET transcript_session_id = ?,
+          transcript_path = ?
+      WHERE session_id = ?
+    `).run(
+      patch.transcriptSessionId,
+      patch.transcriptPath,
+      sessionId,
+    )
+  }
+
   updateSessionMetadata(
     sessionId: string,
     patch: { title?: string | null; summary?: string | null },
@@ -452,7 +452,7 @@ export class DirectConnectStore {
     })
   }
 
-  listSessions(filter: SessionListFilter): SessionSummary[] {
+  listSessionRecords(filter: SessionListFilter): SessionRecord[] {
     const clauses = ['org_id = ?']
     const values: Array<string | number> = [filter.orgId]
     if (filter.userId) {
@@ -471,7 +471,11 @@ export class DirectConnectStore {
       WHERE ${clauses.join(' AND ')}
       ORDER BY last_active_at DESC
     `).all(...values) as SqlRow[]
-    return rows.map(mapSummary)
+    return rows.map(mapSession)
+  }
+
+  listSessions(filter: SessionListFilter): SessionSummary[] {
+    return this.listSessionRecords(filter).map(toSessionSummary)
   }
 
   listUserSessions(orgId: string, userId: string): SessionRecord[] {

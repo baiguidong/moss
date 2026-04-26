@@ -206,6 +206,52 @@ API key 登录：
 
 ## Users API
 
+### GET `/api/v1/roles`
+
+需要 scope：`admin:users`
+
+返回固定角色定义：`admin / dept_admin / user`。
+
+## Departments API
+
+### GET `/api/v1/departments`
+
+需要 scope：`admin:users`
+
+返回当前组织下的部门列表，前端可据此构建层级树。
+
+### POST `/api/v1/departments`
+
+需要 scope：`admin:users`
+
+请求：
+
+```json
+{
+  "name": "研发中心",
+  "parent_id": null
+}
+```
+
+### PATCH `/api/v1/departments/:departmentId`
+
+需要 scope：`admin:users`
+
+支持字段：
+
+```json
+{
+  "name": "平台研发部",
+  "parent_id": "parent-department-id"
+}
+```
+
+### DELETE `/api/v1/departments/:departmentId`
+
+需要 scope：`admin:users`
+
+仅允许删除没有子部门且没有用户归属的部门。
+
 ### GET `/api/v1/users`
 
 需要 scope：`admin:users`
@@ -218,12 +264,14 @@ API key 登录：
 
 ```json
 {
-  "email": "member@example.com",
   "name": "Member",
-  "role": "member",
+  "department_id": "department-id",
+  "role": "user",
   "password": "Passw0rd!"
 }
 ```
+
+`email` 现在是可选字段。
 
 ### PATCH `/api/v1/users/:userId`
 
@@ -234,7 +282,8 @@ API key 登录：
 ```json
 {
   "name": "Updated Name",
-  "role": "viewer",
+  "department_id": "department-id",
+  "role": "dept_admin",
   "status": "active"
 }
 ```
@@ -313,7 +362,7 @@ API key 登录：
   "workDir": "/abs/path/project",
   "userId": "user-id",
   "orgId": "org-id",
-  "role": "member",
+  "role": "user",
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
   "runtime": {
     "type": "host",
@@ -383,6 +432,42 @@ API key 登录：
 - `active_only=true`
 
 有 `sessions:list:any` 时可看当前 org 的全部 session；否则只看自己的。
+
+### GET `/api/v1/dashboard/stats`
+
+需要 scope：
+
+- `sessions:list`
+- 或 `sessions:list:any`
+
+可选查询参数：
+
+- `from=<unix_ms>`
+- `to=<unix_ms>`
+
+按 session 的 `createdAt` 时间范围聚合看板统计。
+
+示例响应：
+
+```json
+{
+  "sessions": {
+    "total": 12,
+    "active": 3
+  },
+  "agents": {
+    "total": 4,
+    "active": 2
+  },
+  "usage": {
+    "inputTokens": 12345,
+    "outputTokens": 6789,
+    "cacheReadInputTokens": 111,
+    "cacheCreationInputTokens": 222,
+    "totalTokens": 19467
+  }
+}
+```
 
 ### GET `/api/v1/sessions/:sessionId`
 

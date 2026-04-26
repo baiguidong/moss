@@ -146,6 +146,7 @@ type RuntimeServiceOptions = {
 
 export class RuntimeService {
   readonly store: DirectConnectStore
+  private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
 
   constructor(private readonly options: RuntimeServiceOptions) {
     this.store = options.store ?? openDirectConnectStore(options.config)
@@ -157,6 +158,18 @@ export class RuntimeService {
     activeOnly?: boolean
   }): SessionSummary[] {
     return this.store.listSessions({
+      orgId: filter.orgId,
+      userId: filter.userId,
+      activeOnly: filter.activeOnly,
+    })
+  }
+
+  listSessionRecords(filter: {
+    orgId: string
+    userId?: string
+    activeOnly?: boolean
+  }): SessionRecord[] {
+    return this.store.listSessionRecords({
       orgId: filter.orgId,
       userId: filter.userId,
       activeOnly: filter.activeOnly,
@@ -273,6 +286,23 @@ export class RuntimeService {
   }
 
   private async ensureAttempt(session: SessionRecord): Promise<AttemptRecord> {
+    const pending = this.pendingEnsures.get(session.sessionId)
+    if (pending) {
+      return pending
+    }
+
+    const ensurePromise = this.ensureAttemptInternal(session).finally(() => {
+      if (this.pendingEnsures.get(session.sessionId) === ensurePromise) {
+        this.pendingEnsures.delete(session.sessionId)
+      }
+    })
+    this.pendingEnsures.set(session.sessionId, ensurePromise)
+    return ensurePromise
+  }
+
+  private async ensureAttemptInternal(
+    session: SessionRecord,
+  ): Promise<AttemptRecord> {
     const existing = session.currentAttemptId
       ? this.store.getAttempt(session.currentAttemptId)
       : null

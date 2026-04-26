@@ -375,7 +375,7 @@ export type MossImageGenerateInput = {
     type: 'character'
     image_file: string
   }>
-  out_filepath: string
+  out_path: string
 }
 
 export type MossAppEventResult =

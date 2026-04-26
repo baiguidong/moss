@@ -48,7 +48,7 @@ export const mockUsers: User[] = [
     id: '4',
     username: '赵六',
     email: 'zhaoliu@company.com',
-    role: 'viewer',
+    role: 'dept_admin',
     apiKey: 'sk-xxxx-xxxx-xxxx-3456',
     createdAt: '2024-03-01',
     lastLogin: '2024-03-15 11:00',

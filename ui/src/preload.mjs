@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   updateSettings: (payload) => ipcRenderer.invoke('agent:update-settings', payload),
+  getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
+  updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),

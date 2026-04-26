@@ -3,12 +3,16 @@ export type ToolStatus = 'pending' | 'running' | 'success' | 'error';
 export type ToolStep = {
   id: string;
   name: string;
+  toolName: string;
   type: 'exec' | 'search' | 'code' | 'api' | 'db' | 'other';
   status: ToolStatus;
   duration?: number;
   result?: string;
   inputSummary?: string;
   statusText?: string;
+  input?: unknown;
+  output?: unknown;
+  outputText?: string;
 };
 
 export type ChatMessage = {
@@ -25,6 +29,79 @@ export type ChatMessage = {
   files?: string[];
 };
 
+export type TranscriptAttachment = {
+  kind: 'image' | 'file';
+  path: string;
+};
+
+type TranscriptRenderMessageBase = {
+  id: string;
+  timestamp: Date;
+  meta?: string[];
+};
+
+export type UserTextRenderMessage = TranscriptRenderMessageBase & {
+  type: 'user_text';
+  role: 'user';
+  content: string;
+  attachments?: TranscriptAttachment[];
+};
+
+export type AssistantTextRenderMessage = TranscriptRenderMessageBase & {
+  type: 'assistant_text';
+  role: 'assistant';
+  content: string;
+  streaming?: boolean;
+  attachments?: TranscriptAttachment[];
+};
+
+export type ThinkingRenderMessage = TranscriptRenderMessageBase & {
+  type: 'thinking';
+  role: 'assistant';
+  content: string;
+  streaming?: boolean;
+};
+
+export type ToolUseRenderMessage = TranscriptRenderMessageBase & {
+  type: 'tool_use';
+  role: 'assistant';
+  toolUseId: string;
+  parentToolUseId?: string;
+  toolName: string;
+  displayName: string;
+  input?: unknown;
+  inputText?: string;
+  status: ToolStatus;
+  statusText?: string;
+  duration?: number;
+};
+
+export type ToolResultRenderMessage = TranscriptRenderMessageBase & {
+  type: 'tool_result';
+  role: 'assistant';
+  toolUseId: string;
+  parentToolUseId?: string;
+  toolName: string;
+  content: string;
+  rawContent?: unknown;
+  isError?: boolean;
+  attachments?: TranscriptAttachment[];
+};
+
+export type SystemRenderMessage = TranscriptRenderMessageBase & {
+  type: 'system';
+  role: 'system';
+  content: string;
+};
+
+export type TranscriptRenderMessage =
+  | UserTextRenderMessage
+  | AssistantTextRenderMessage
+  | ThinkingRenderMessage
+  | ToolUseRenderMessage
+  | ToolResultRenderMessage
+  | SystemRenderMessage;
+
 export type WorkerThreadStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export type WorkerThread = {
@@ -36,7 +113,7 @@ export type WorkerThread = {
   description?: string;
   summary?: string;
   resultText?: string;
-  messages: ChatMessage[];
+  messages: TranscriptRenderMessage[];
 };
 
 export type AgentTranscriptDebugInfo = {
@@ -61,6 +138,19 @@ type AgentEvent = Record<string, any>;
 
 type MutableChatMessage = ChatMessage & {
   _finalized?: boolean;
+};
+
+type AssistantTurnState = {
+  startedAt: Date;
+  items: TranscriptRenderMessage[];
+  meta: string[];
+};
+
+type RenderBuilderState = {
+  items: TranscriptRenderMessage[];
+  currentAssistantTurn: AssistantTurnState | null;
+  nextId: number;
+  toolUsesById: Map<string, ToolUseRenderMessage>;
 };
 
 function safeDate(input: unknown): Date {
@@ -147,6 +237,30 @@ function collectImagePathsFromToolResult(content: unknown): string[] {
   return Array.from(new Set(candidates));
 }
 
+function collectAttachmentsFromToolResult(content: unknown): TranscriptAttachment[] {
+  const payload = normalizeToolResultPayload(content);
+  if (!payload) return [];
+
+  const attachments: TranscriptAttachment[] = [];
+  const fileKind = typeof payload.fileKind === 'string' ? payload.fileKind : undefined;
+  const pushPath = (path: unknown) => {
+    if (typeof path !== 'string' || !path.trim()) return;
+    attachments.push({
+      kind: fileKind === 'image' || isImagePath(path) ? 'image' : 'file',
+      path,
+    });
+  };
+
+  pushPath(payload.filePath);
+  if (Array.isArray(payload.filePaths)) {
+    for (const filePath of payload.filePaths) {
+      pushPath(filePath);
+    }
+  }
+
+  return attachments;
+}
+
 function summarizeThinkingBlock(block: any): string {
   if (block?.type === 'thinking' && typeof block.thinking === 'string') {
     return block.thinking;
@@ -208,6 +322,20 @@ function buildToolDetail(input: unknown, output?: unknown): string {
   return parts.join('\n\n').trim();
 }
 
+function syncToolStep(step: ToolStep, block: any) {
+  const rawToolName = String(block?.tool_name || block?.name || step.toolName || block?.display_name || 'Tool').trim() || 'Tool';
+  const displayName = String(block?.display_name || rawToolName || step.name || 'Tool').trim() || 'Tool';
+  step.toolName = rawToolName;
+  step.name = humanizeToolName(displayName);
+  step.type = mapToolType(rawToolName);
+  if (Object.prototype.hasOwnProperty.call(block ?? {}, 'input')) {
+    step.input = block?.input;
+    step.inputSummary = extractInputSummary(block?.input);
+  }
+  const detailOutput = step.output !== undefined ? step.output : step.outputText;
+  step.result = buildToolDetail(step.input, detailOutput);
+}
+
 function normalizeTextFromContentBlocks(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
@@ -230,6 +358,436 @@ function previewText(value: unknown, max = 120): string {
   const text = normalizeText(value).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function isImagePath(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path);
+}
+
+function mergeMeta(
+  existing: string[] | undefined,
+  incoming: string[] | undefined,
+): string[] | undefined {
+  if (!existing?.length && !incoming?.length) return undefined;
+  const merged = [...(existing || [])];
+  for (const entry of incoming || []) {
+    if (!merged.includes(entry)) merged.push(entry);
+  }
+  return merged.length > 0 ? merged : undefined;
+}
+
+function mergeAttachments(
+  existing: TranscriptAttachment[] | undefined,
+  incoming: TranscriptAttachment[] | undefined,
+): TranscriptAttachment[] | undefined {
+  if (!existing?.length && !incoming?.length) return undefined;
+  const merged = [...(existing || [])];
+  for (const attachment of incoming || []) {
+    if (!merged.some((entry) => entry.kind === attachment.kind && entry.path === attachment.path)) {
+      merged.push(attachment);
+    }
+  }
+  return merged.length > 0 ? merged : undefined;
+}
+
+function attachmentsFromPaths(
+  images?: string[] | null,
+  files?: string[] | null,
+): TranscriptAttachment[] | undefined {
+  const attachments: TranscriptAttachment[] = [];
+
+  for (const image of images || []) {
+    if (typeof image === 'string' && image.trim()) {
+      attachments.push({ kind: 'image', path: image });
+    }
+  }
+
+  for (const file of files || []) {
+    if (typeof file !== 'string' || !file.trim()) continue;
+    attachments.push({
+      kind: isImagePath(file) ? 'image' : 'file',
+      path: file,
+    });
+  }
+
+  return attachments.length > 0 ? mergeAttachments(undefined, attachments) : undefined;
+}
+
+function nextRenderId(state: RenderBuilderState, prefix: string): string {
+  state.nextId += 1;
+  return `${prefix}-${state.nextId}`;
+}
+
+function createAssistantTurn(timestamp: Date): AssistantTurnState {
+  return {
+    startedAt: timestamp,
+    items: [],
+    meta: [],
+  };
+}
+
+function ensureAssistantTurn(
+  state: RenderBuilderState,
+  timestamp: Date,
+): AssistantTurnState {
+  if (!state.currentAssistantTurn) {
+    state.currentAssistantTurn = createAssistantTurn(timestamp);
+  } else if (timestamp.getTime() > state.currentAssistantTurn.startedAt.getTime()) {
+    state.currentAssistantTurn.startedAt = timestamp;
+  }
+  return state.currentAssistantTurn;
+}
+
+function pushTurnItem(
+  turn: AssistantTurnState,
+  item: TranscriptRenderMessage,
+) {
+  turn.items.push(item);
+}
+
+function resetAssistantTurn(
+  state: RenderBuilderState,
+  timestamp: Date,
+): AssistantTurnState {
+  const turn = ensureAssistantTurn(state, timestamp);
+  for (const item of turn.items) {
+    if (item.type === 'tool_use') {
+      state.toolUsesById.delete(item.toolUseId);
+    }
+  }
+  turn.startedAt = timestamp;
+  turn.items = [];
+  turn.meta = [];
+  return turn;
+}
+
+function appendTurnMeta(turn: AssistantTurnState, value: string) {
+  if (!value || turn.meta.includes(value)) return;
+  turn.meta.push(value);
+}
+
+function lastTurnItem(
+  turn: AssistantTurnState,
+): TranscriptRenderMessage | undefined {
+  return turn.items[turn.items.length - 1];
+}
+
+function ensureAssistantTextItem(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+): AssistantTextRenderMessage {
+  const last = lastTurnItem(turn);
+  if (last?.type === 'assistant_text') {
+    if (timestamp.getTime() > last.timestamp.getTime()) last.timestamp = timestamp;
+    return last;
+  }
+
+  const item: AssistantTextRenderMessage = {
+    id: nextRenderId(state, 'assistant-text'),
+    type: 'assistant_text',
+    role: 'assistant',
+    content: '',
+    timestamp,
+  };
+  pushTurnItem(turn, item);
+  return item;
+}
+
+function appendAssistantTextItem(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  text: string,
+  options?: { streaming?: boolean; preserveWhitespace?: boolean },
+) {
+  const rawText = String(text || '');
+  const normalized = options?.preserveWhitespace ? rawText : rawText.trim();
+  if (!normalized) return;
+
+  const item = ensureAssistantTextItem(state, turn, timestamp);
+  if (options?.preserveWhitespace) {
+    item.content += normalized;
+  } else {
+    item.content = item.content ? `${item.content}\n\n${normalized}` : normalized;
+  }
+  if (options?.streaming) item.streaming = true;
+}
+
+function ensureThinkingItem(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+): ThinkingRenderMessage {
+  const last = lastTurnItem(turn);
+  if (last?.type === 'thinking') {
+    if (timestamp.getTime() > last.timestamp.getTime()) last.timestamp = timestamp;
+    return last;
+  }
+
+  const item: ThinkingRenderMessage = {
+    id: nextRenderId(state, 'thinking'),
+    type: 'thinking',
+    role: 'assistant',
+    content: '',
+    timestamp,
+  };
+  pushTurnItem(turn, item);
+  return item;
+}
+
+function appendThinkingItem(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  text: string,
+  options?: { streaming?: boolean },
+) {
+  const normalized = String(text || '');
+  if (!normalized.trim()) return;
+  const item = ensureThinkingItem(state, turn, timestamp);
+  item.content += normalized;
+  if (options?.streaming) item.streaming = true;
+}
+
+function appendAssistantAttachments(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  attachments: TranscriptAttachment[] | undefined,
+) {
+  if (!attachments?.length) return;
+  const item = ensureAssistantTextItem(state, turn, timestamp);
+  item.attachments = mergeAttachments(item.attachments, attachments);
+}
+
+function buildToolInputText(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === 'string') return input;
+  if (typeof input === 'object' && Object.keys(input).length === 0) return undefined;
+  return formatJson(input);
+}
+
+function ensureToolUseMessage(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  block: any,
+): ToolUseRenderMessage {
+  const toolUseId = String(block?.id || block?.tool_use_id || block?.toolCallId || '').trim()
+    || nextRenderId(state, 'tool-use-generated');
+  const existing = state.toolUsesById.get(toolUseId);
+  if (existing && turn.items.includes(existing)) {
+    existing.timestamp = timestamp;
+    if (typeof block?.tool_name === 'string' && block.tool_name.trim()) {
+      existing.toolName = block.tool_name.trim();
+    }
+    if (typeof block?.display_name === 'string' && block.display_name.trim()) {
+      existing.displayName = humanizeToolName(block.display_name);
+    } else if (existing.displayName.trim().length === 0) {
+      existing.displayName = humanizeToolName(existing.toolName);
+    }
+    if (Object.prototype.hasOwnProperty.call(block ?? {}, 'input')) {
+      existing.input = block.input;
+      existing.inputText = buildToolInputText(block.input) ?? existing.inputText;
+    }
+    if (typeof block?.parent_tool_use_id === 'string' && block.parent_tool_use_id.trim()) {
+      existing.parentToolUseId = block.parent_tool_use_id.trim();
+    }
+    return existing;
+  }
+
+  const toolName = String(block?.tool_name || block?.name || 'Tool').trim() || 'Tool';
+  const item: ToolUseRenderMessage = {
+    id: nextRenderId(state, 'tool-use'),
+    type: 'tool_use',
+    role: 'assistant',
+    timestamp,
+    toolUseId,
+    parentToolUseId:
+      typeof block?.parent_tool_use_id === 'string' && block.parent_tool_use_id.trim()
+        ? block.parent_tool_use_id.trim()
+        : undefined,
+    toolName,
+    displayName: humanizeToolName(String(block?.display_name || toolName).trim() || toolName),
+    input: block?.input,
+    inputText: buildToolInputText(block?.input),
+    status: 'running',
+    statusText: '进行中',
+  };
+  pushTurnItem(turn, item);
+  state.toolUsesById.set(toolUseId, item);
+  return item;
+}
+
+function updateToolUseStatus(
+  state: RenderBuilderState,
+  toolUseId: string | undefined,
+  patch: Partial<Pick<ToolUseRenderMessage, 'status' | 'statusText' | 'duration' | 'timestamp'>>,
+) {
+  if (!toolUseId) return;
+  const toolUse = state.toolUsesById.get(toolUseId);
+  if (!toolUse) return;
+  if (patch.status) toolUse.status = patch.status;
+  if (typeof patch.statusText === 'string') toolUse.statusText = patch.statusText;
+  if (typeof patch.duration === 'number') toolUse.duration = patch.duration;
+  if (patch.timestamp) toolUse.timestamp = patch.timestamp;
+}
+
+function finalizeAssistantTurn(
+  state: RenderBuilderState,
+  options?: { complete?: boolean },
+) {
+  const turn = state.currentAssistantTurn;
+  if (!turn) return;
+
+  if (turn.meta.length > 0) {
+    const target = [...turn.items]
+      .reverse()
+      .find((item) => item.type !== 'system');
+    if (target) {
+      target.meta = mergeMeta(target.meta, turn.meta);
+    } else {
+      state.items.push({
+        id: nextRenderId(state, 'system'),
+        type: 'system',
+        role: 'system',
+        content: turn.meta.join(' · '),
+        timestamp: turn.startedAt,
+        meta: mergeMeta(undefined, turn.meta),
+      });
+    }
+  }
+
+  if (options?.complete) {
+    for (const item of turn.items) {
+      if (item.type === 'assistant_text' || item.type === 'thinking') {
+        item.streaming = false;
+      }
+      if (
+        item.type === 'tool_use' &&
+        (item.status === 'running' || item.status === 'pending')
+      ) {
+        item.status = 'success';
+        item.statusText = item.statusText && item.statusText !== '进行中'
+          ? item.statusText
+          : '执行完成';
+      }
+    }
+  }
+
+  state.items.push(...turn.items.filter((item) => {
+    if (item.type === 'assistant_text') {
+      return item.content.trim().length > 0 || (item.attachments?.length ?? 0) > 0;
+    }
+    if (item.type === 'thinking') {
+      return item.content.trim().length > 0;
+    }
+    return true;
+  }));
+  state.currentAssistantTurn = null;
+}
+
+function addUserRenderMessage(
+  state: RenderBuilderState,
+  timestamp: Date,
+  content: string,
+  attachments?: TranscriptAttachment[],
+) {
+  state.items.push({
+    id: nextRenderId(state, 'user'),
+    type: 'user_text',
+    role: 'user',
+    content: String(content || ''),
+    timestamp,
+    attachments,
+  });
+}
+
+function addSystemRenderMessage(
+  state: RenderBuilderState,
+  timestamp: Date,
+  content: string,
+  meta?: string[],
+) {
+  const normalized = String(content || '').trim();
+  if (!normalized) return;
+  state.items.push({
+    id: nextRenderId(state, 'system'),
+    type: 'system',
+    role: 'system',
+    content: normalized,
+    timestamp,
+    meta,
+  });
+}
+
+function addToolResultMessage(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  block: any,
+  rawContent?: unknown,
+) {
+  const toolUseId = String(block?.tool_use_id || '').trim();
+  const toolUse = toolUseId ? state.toolUsesById.get(toolUseId) : undefined;
+  const toolName = String(block?.tool_name || toolUse?.toolName || 'Tool').trim() || 'Tool';
+  const attachments = mergeAttachments(
+    attachmentsFromPaths(collectImagePathsFromToolResult(block?.content), undefined),
+    collectAttachmentsFromToolResult(rawContent ?? block?.content),
+  );
+  const content =
+    summarizeToolResultBlock(block)
+    || normalizeText(rawContent)
+    || formatJson(rawContent ?? block?.content ?? '');
+
+  if (toolUseId) {
+    updateToolUseStatus(state, toolUseId, {
+      status: block?.is_error ? 'error' : 'success',
+      statusText: block?.is_error ? '执行失败' : '执行完成',
+      timestamp,
+    });
+  }
+
+  pushTurnItem(turn, {
+    id: nextRenderId(state, 'tool-result'),
+    type: 'tool_result',
+    role: 'assistant',
+    timestamp,
+    toolUseId,
+    parentToolUseId: toolUse?.parentToolUseId,
+    toolName,
+    content,
+    rawContent: rawContent ?? block?.content,
+    isError: Boolean(block?.is_error),
+    attachments,
+  });
+}
+
+function extractRawUserText(event: AgentEvent): string {
+  if (typeof event?.prompt === 'string') {
+    return event.prompt;
+  }
+
+  const content = event?.message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block: any) => block.text)
+      .join('\n')
+      .trim();
+  }
+
+  return '';
+}
+
+function getEventOriginKind(event: AgentEvent): string | undefined {
+  const kind = event?.origin?.kind;
+  return typeof kind === 'string' && kind.trim() ? kind : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +813,11 @@ function isWorkerAsyncLaunchEvent(event: AgentEvent): boolean {
     typeof event.tool_use_result.agentId === 'string' &&
     event.tool_use_result.status === 'async_launched'
   );
+}
+
+function isNonHumanUserEvent(event: AgentEvent): boolean {
+  const originKind = getEventOriginKind(event);
+  return event?.type === 'user' && originKind !== undefined && originKind !== 'human';
 }
 
 function isSidechainEvent(event: AgentEvent): boolean {
@@ -323,6 +886,7 @@ function sanitizeMainHistory(history: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   for (const event of history) {
     if (!event || typeof event !== 'object') continue;
+    if (isNonHumanUserEvent(event)) continue;
     // Drop events that belong to a worker sub-agent (isSidechain path)
     if (isSidechainEvent(event)) continue;
     if (isWorkerAsyncLaunchEvent(event)) continue;
@@ -358,6 +922,314 @@ function sanitizeMainHistory(history: AgentEvent[]): AgentEvent[] {
     if (stripped) result.push(stripped);
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Render-message builders used by the new chat UI
+// ---------------------------------------------------------------------------
+
+export function buildWorkerRenderMessagesFromSubagentEvents(
+  events: AgentEvent[],
+): TranscriptRenderMessage[] {
+  const filtered = events.filter(
+    (event) => event && typeof event === 'object' && event.type !== 'system',
+  );
+  return buildTranscriptRenderMessages(filtered);
+}
+
+export function buildMainChatRenderMessagesFromHistory(
+  history: AgentEvent[],
+): TranscriptRenderMessage[] {
+  const sanitized = sanitizeMainHistory(history);
+  return buildTranscriptRenderMessages(sanitized);
+}
+
+export function buildTranscriptRenderMessages(
+  history: AgentEvent[],
+): TranscriptRenderMessage[] {
+  const state: RenderBuilderState = {
+    items: [],
+    currentAssistantTurn: null,
+    nextId: 0,
+    toolUsesById: new Map<string, ToolUseRenderMessage>(),
+  };
+
+  for (let index = 0; index < history.length; index += 1) {
+    const event = history[index];
+    const timestamp = safeDate(event?.timestamp);
+    const userText = event?.type === 'user' ? extractUserText(event) : '';
+
+    const userAttachments = attachmentsFromPaths(
+      Array.isArray(event?.images) ? event.images : undefined,
+      Array.isArray(event?.files) ? event.files : undefined,
+    );
+
+    if (
+      event?.type === 'user' &&
+      (userText.trim().length > 0 || (userAttachments?.length ?? 0) > 0)
+    ) {
+      finalizeAssistantTurn(state, { complete: true });
+      addUserRenderMessage(state, timestamp, userText, userAttachments);
+      continue;
+    }
+
+    if (event?.type === 'user' && Array.isArray(event?.message?.content)) {
+      const turn = ensureAssistantTurn(state, timestamp);
+      const resultBlocks = event.message.content.filter((block: any) => block?.type === 'tool_result');
+      for (let resultIndex = 0; resultIndex < resultBlocks.length; resultIndex += 1) {
+        const block = resultBlocks[resultIndex];
+        const rawContent = resultBlocks.length === 1 && event?.tool_use_result !== undefined
+          ? event.tool_use_result
+          : block?.content;
+        addToolResultMessage(state, turn, timestamp, block, rawContent);
+      }
+      continue;
+    }
+
+    if (event?.type === 'app_plan_state' && event?.kind === 'plan') {
+      finalizeAssistantTurn(state, { complete: true });
+
+      let content = '';
+      if (event.state === 'awaiting_approval') {
+        content = '执行计划已经生成，等待你确认后才会继续执行。';
+      } else if (event.state === 'approved') {
+        content = '已批准执行计划，任务将按计划继续。';
+      } else if (event.state === 'rejected') {
+        content = '已退回执行计划，当前不会继续执行。';
+      }
+
+      addSystemRenderMessage(state, timestamp, content, ['计划']);
+      continue;
+    }
+
+    if (event?.type === 'stream_event') {
+      const turn = ensureAssistantTurn(state, timestamp);
+      const streamEvent = event?.event;
+
+      if (
+        streamEvent?.type === 'content_block_start' &&
+        streamEvent.content_block?.type === 'tool_use'
+      ) {
+        const toolUse = ensureToolUseMessage(
+          state,
+          turn,
+          timestamp,
+          streamEvent.content_block,
+        );
+        toolUse.status = 'running';
+        toolUse.statusText = '进行中';
+      } else if (
+        streamEvent?.type === 'content_block_start' &&
+        streamEvent.content_block?.type === 'thinking'
+      ) {
+        appendThinkingItem(
+          state,
+          turn,
+          timestamp,
+          summarizeThinkingBlock(streamEvent.content_block),
+          { streaming: true },
+        );
+      } else if (streamEvent?.type === 'content_block_delta') {
+        if (
+          streamEvent.delta?.type === 'text_delta' &&
+          typeof streamEvent.delta.text === 'string'
+        ) {
+          appendAssistantTextItem(
+            state,
+            turn,
+            timestamp,
+            streamEvent.delta.text,
+            { streaming: true, preserveWhitespace: true },
+          );
+        } else if (
+          streamEvent.delta?.type === 'thinking_delta' &&
+          typeof streamEvent.delta.thinking === 'string'
+        ) {
+          appendThinkingItem(
+            state,
+            turn,
+            timestamp,
+            streamEvent.delta.thinking,
+            { streaming: true },
+          );
+        } else if (
+          streamEvent.delta?.type === 'input_json_delta' &&
+          typeof streamEvent.delta.partial_json === 'string'
+        ) {
+          const last = lastTurnItem(turn);
+          if (last?.type === 'tool_use') {
+            last.inputText = `${last.inputText || ''}${streamEvent.delta.partial_json}`;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (event?.type === 'tool_progress') {
+      const turn = ensureAssistantTurn(state, timestamp);
+      const toolId = String(event?.parent_tool_use_id || event?.tool_use_id || '').trim();
+      if (toolId) {
+        ensureToolUseMessage(state, turn, timestamp, {
+          id: toolId,
+          tool_name: event?.tool_name || 'Tool',
+          parent_tool_use_id: event?.parent_tool_use_id,
+        });
+        updateToolUseStatus(state, toolId, {
+          status: 'running',
+          statusText:
+            typeof event?.elapsed_time_seconds === 'number'
+              ? `运行 ${event.elapsed_time_seconds}s`
+              : '进行中',
+          duration:
+            typeof event?.elapsed_time_seconds === 'number'
+              ? event.elapsed_time_seconds * 1000
+              : undefined,
+          timestamp,
+        });
+      }
+      continue;
+    }
+
+    if (event?.type === 'system') {
+      const content = normalizeText(event?.content);
+      if (!content) continue;
+      if (state.currentAssistantTurn) {
+        appendTurnMeta(state.currentAssistantTurn, content);
+      } else {
+        addSystemRenderMessage(state, timestamp, content);
+      }
+      continue;
+    }
+
+    if (event?.type === 'assistant') {
+      const currentTurn = state.currentAssistantTurn;
+
+      // Preserve streaming thinking content — the completed message often
+      // contains redacted_thinking which would replace the full streamed content.
+      const streamingThinking = currentTurn
+        ? currentTurn.items.filter((item) => item.type === 'thinking')
+        : [];
+
+      // Multi-turn conversations: when tool results exist in the current turn,
+      // finalize it before starting a new turn. Without this, resetAssistantTurn
+      // discards all thinking and tool-call items from the previous response,
+      // causing them to disappear from the chat after task completion.
+      const hasToolResults = currentTurn
+        ? currentTurn.items.some((item) => item.type === 'tool_result')
+        : false;
+
+      if (hasToolResults && currentTurn) {
+        finalizeAssistantTurn(state, { complete: true });
+      }
+
+      const turn = resetAssistantTurn(state, timestamp);
+
+      // Re-add streaming thinking that was preserved above. This prevents
+      // thinking blocks from being lost when the completed message contains
+      // redacted_thinking (a placeholder) instead of the full content.
+      // Only re-add if the turn was not finalized (streaming scenario);
+      // finalized turns already have thinking in state.items.
+      if (!hasToolResults) {
+        for (const item of streamingThinking) {
+          pushTurnItem(turn, item);
+        }
+      }
+
+      if (Array.isArray(event?.message?.content)) {
+        for (const block of event.message.content) {
+          if (!block || typeof block !== 'object') continue;
+          if (block.type === 'text' && typeof block.text === 'string') {
+            appendAssistantTextItem(state, turn, timestamp, block.text);
+          } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+            if (streamingThinking.length === 0) {
+              appendThinkingItem(
+                state,
+                turn,
+                timestamp,
+                summarizeThinkingBlock(block),
+              );
+            }
+          } else if (block.type === 'tool_use') {
+            const toolUse = ensureToolUseMessage(state, turn, timestamp, block);
+            toolUse.status = 'running';
+            toolUse.statusText = '进行中';
+          } else if (block.type === 'image' && typeof block.source === 'object') {
+            const imagePath = String(block.source?.data || block.source?.url || '').trim();
+            if (imagePath) {
+              appendAssistantAttachments(
+                state,
+                turn,
+                timestamp,
+                [{ kind: 'image', path: imagePath }],
+              );
+            }
+          }
+        }
+      } else {
+        const normalizedText = normalizeTextFromContentBlocks(event?.message?.content);
+        if (normalizedText) {
+          appendAssistantTextItem(state, turn, timestamp, normalizedText);
+        }
+      }
+
+      if (event?.error?.message) {
+        appendTurnMeta(turn, `错误: ${String(event.error.message)}`);
+      }
+      continue;
+    }
+
+    if (event?.type === 'result') {
+      const turn = ensureAssistantTurn(state, timestamp);
+      if (typeof event.duration_ms === 'number') {
+        appendTurnMeta(turn, `耗时 ${event.duration_ms}ms`);
+      }
+      if (typeof event.total_cost_usd === 'number') {
+        appendTurnMeta(turn, `费用 $${event.total_cost_usd.toFixed(4)}`);
+      }
+      if (event.subtype && event.subtype !== 'success') {
+        appendTurnMeta(turn, `状态 ${String(event.subtype)}`);
+      }
+
+      for (const item of turn.items) {
+        if (
+          item.type === 'tool_use' &&
+          (item.status === 'running' || item.status === 'pending')
+        ) {
+          item.status = event.subtype === 'success' ? 'success' : 'error';
+          if (!item.statusText || item.statusText === '进行中' || item.statusText.startsWith('运行 ')) {
+            item.statusText = event.subtype === 'success' ? '执行完成' : '执行失败';
+          }
+        }
+      }
+
+      const resultText = typeof event.result === 'string' ? event.result.trim() : '';
+      const hasAssistantText = turn.items.some(
+        (item) => item.type === 'assistant_text' && item.content.trim().length > 0,
+      );
+      if (resultText && !hasAssistantText) {
+        appendAssistantTextItem(state, turn, timestamp, resultText);
+      }
+
+      finalizeAssistantTurn(state, { complete: true });
+      continue;
+    }
+
+    if (event?.type === 'error') {
+      const turn = ensureAssistantTurn(state, timestamp);
+      appendAssistantTextItem(
+        state,
+        turn,
+        timestamp,
+        String(event?.message || 'Unknown error'),
+      );
+      appendTurnMeta(turn, '执行失败');
+      finalizeAssistantTurn(state, { complete: true });
+      continue;
+    }
+  }
+
+  finalizeAssistantTurn(state);
+  return state.items;
 }
 
 // ---------------------------------------------------------------------------
@@ -433,16 +1305,24 @@ function ensureToolStep(message: MutableChatMessage, block: any): ToolStep {
   const toolSteps = ensureToolSteps(message);
   const toolId = String(block?.id || block?.tool_use_id || block?.toolCallId || `${message.id}-tool-${toolSteps.length}`);
   const existing = toolSteps.find((entry) => entry.id === toolId);
-  if (existing) return existing;
+  if (existing) {
+    syncToolStep(existing, block);
+    return existing;
+  }
+
+  const rawToolName = String(block?.tool_name || block?.name || block?.display_name || 'Tool').trim() || 'Tool';
+  const displayName = String(block?.display_name || rawToolName || 'Tool').trim() || 'Tool';
 
   const step: ToolStep = {
     id: toolId,
-    name: humanizeToolName(block?.display_name || block?.tool_name || block?.name || 'Tool'),
-    type: mapToolType(block?.tool_name || block?.name || 'tool'),
+    name: humanizeToolName(displayName),
+    toolName: rawToolName,
+    type: mapToolType(rawToolName),
     status: 'running',
     result: buildToolDetail(block?.input),
     inputSummary: extractInputSummary(block?.input),
     statusText: '进行中',
+    input: block?.input,
   };
   toolSteps.push(step);
   return step;
@@ -467,24 +1347,7 @@ function finalizeAssistant(message: MutableChatMessage | null) {
 }
 
 function extractUserText(event: AgentEvent): string {
-  if (typeof event?.prompt === 'string') {
-    return event.prompt;
-  }
-
-  const content = event?.message?.content;
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    return content
-      .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
-      .map((block: any) => block.text)
-      .join('\n')
-      .trim();
-  }
-
-  return '';
+  return extractRawUserText(event);
 }
 
 export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
@@ -555,7 +1418,14 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
           });
           step.status = block.is_error ? 'error' : 'success';
           step.statusText = block.is_error ? '执行失败' : '执行完成';
-          step.result = buildToolDetail(undefined, summarizeToolResultBlock(block));
+          step.output = resultBlocks.length === 1 && event?.tool_use_result !== undefined
+            ? event.tool_use_result
+            : block.content;
+          step.outputText = summarizeToolResultBlock(block);
+          step.result = buildToolDetail(
+            step.input,
+            step.output !== undefined ? step.output : step.outputText,
+          );
 
           const imagePaths = collectImagePathsFromToolResult(block.content);
           if (imagePaths.length > 0) {
@@ -654,11 +1524,47 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
     }
 
     if (event?.type === 'assistant') {
+      const currentAssistant = messages[messages.length - 1] as MutableChatMessage | undefined;
+      const hasToolSteps = currentAssistant && currentAssistant.toolSteps && currentAssistant.toolSteps.some(
+        (step) => step.status === 'success' || step.status === 'error',
+      );
+
+      // Preserve streaming thinking content — the completed message may contain
+      // redacted_thinking which would replace the full streamed content.
+      const preservedThinking = currentAssistant?.thinking || '';
+
+      if (hasToolSteps) {
+        // Multi-turn: finalize the previous assistant message (which has completed
+        // tool calls) before starting a new one. This prevents tool call steps and
+        // thinking from being discarded when a second response arrives.
+        finalizeAssistant(currentAssistant!);
+      }
+
       const assistant = getCurrentAssistant(timestamp);
       assistant.streaming = false;
+
+      // Preserve streaming thinking if the new response doesn't include it.
+      // Only carry over when the new response has no thinking blocks of its own
+      // and the previous thinking was from streaming (not redacted).
+      let preserveExistingThinking = false;
+      if (!hasToolSteps && preservedThinking) {
+        const hasThinkingBlock = Array.isArray(event?.message?.content) &&
+          event.message.content.some(
+            (block: any) => block?.type === 'thinking' || block?.type === 'redacted_thinking',
+          );
+        if (!hasThinkingBlock) {
+          preserveExistingThinking = true;
+        }
+      }
+
+      if (preserveExistingThinking) {
+        assistant.thinking = preservedThinking;
+      } else {
+        assistant.thinking = '';
+      }
+
       assistant.content = '';
-      assistant.thinking = '';
-      assistant.toolSteps = assistant.toolSteps || [];
+      assistant.toolSteps = hasToolSteps ? [] : (assistant.toolSteps || []);
       assistant.meta = assistant.meta || [];
       assistant.images = [];
       assistant.files = [];

@@ -87,25 +87,15 @@ build('moss-server.mjs', [
   ...defines,
 ])
 
-// direct-connect-server.mjs（兼容旧入口名）
-// build('direct-connect-server.mjs', [
-//   'build', 'src/server/serverCli.ts',
-//   '--outfile=direct-connect-server.mjs',
-//   '--target=node',
-//   '--format=esm',
-//   ...aliases,
-//   ...defines,
-// ])
-
-// direct-connect-session-runner.mjs（session detached runner）
-// build('direct-connect-session-runner.mjs', [
-//   'build', 'src/server/sessionRunnerCli.ts',
-//   '--outfile=direct-connect-session-runner.mjs',
-//   '--target=node',
-//   '--format=esm',
-//   ...aliases,
-//   ...defines,
-// ])
+//direct-connect-session-runner.mjs（session detached runner）
+build('direct-connect-session-runner.mjs', [
+  'build', 'src/server/sessionRunnerCli.ts',
+  '--outfile=direct-connect-session-runner.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])
 
 // direct-connect-open.mjs（独立 headless 客户端入口）
 // build('direct-connect-open.mjs', [

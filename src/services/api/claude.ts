@@ -163,7 +163,6 @@ import {
 } from 'src/utils/betas.js'
 import { CLAUDE_IN_CHROME_MCP_SERVER_NAME } from 'src/utils/claudeInChrome/common.js'
 import { CHROME_TOOL_SEARCH_INSTRUCTIONS } from 'src/utils/claudeInChrome/prompt.js'
-import { getMaxThinkingTokensForModel } from 'src/utils/context.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { type EffortValue, modelSupportsEffort } from 'src/utils/effort.js'
@@ -179,8 +178,7 @@ import { isMcpInstructionsDeltaEnabled } from 'src/utils/mcpInstructionsDelta.js
 import { calculateUSDCost } from 'src/utils/modelCost.js'
 import { endQueryProfile, queryCheckpoint } from 'src/utils/queryProfiler.js'
 import {
-  modelSupportsAdaptiveThinking,
-  modelSupportsThinking,
+  buildAPIThinkingParam,
   type ThinkingConfig,
 } from 'src/utils/thinking.js'
 import {
@@ -1593,41 +1591,14 @@ async function* queryModel(
       options.maxOutputTokensOverride ||
       getMaxOutputTokensForModel(options.model)
 
-    const hasThinking =
-      thinkingConfig.type !== 'disabled' &&
-      !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
-    let thinking: BetaMessageStreamParams['thinking'] | undefined = undefined
-
-    // IMPORTANT: Do not change the adaptive-vs-budget thinking selection below
-    // without notifying the model launch DRI and research. This is a sensitive
-    // setting that can greatly affect model quality and bashing.
-    if (hasThinking && modelSupportsThinking(options.model)) {
-      if (
-        !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING) &&
-        modelSupportsAdaptiveThinking(options.model)
-      ) {
-        // For models that support adaptive thinking, always use adaptive
-        // thinking without a budget.
-        thinking = {
-          type: 'adaptive',
-        } satisfies BetaMessageStreamParams['thinking']
-      } else {
-        // For models that do not support adaptive thinking, use the default
-        // thinking budget unless explicitly specified.
-        let thinkingBudget = getMaxThinkingTokensForModel(options.model)
-        if (
-          thinkingConfig.type === 'enabled' &&
-          thinkingConfig.budgetTokens !== undefined
-        ) {
-          thinkingBudget = thinkingConfig.budgetTokens
-        }
-        thinkingBudget = Math.min(maxOutputTokens - 1, thinkingBudget)
-        thinking = {
-          budget_tokens: thinkingBudget,
-          type: 'enabled',
-        } satisfies BetaMessageStreamParams['thinking']
-      }
-    }
+    const thinkingResolution = buildAPIThinkingParam(
+      options.model,
+      thinkingConfig,
+      maxOutputTokens,
+    )
+    const hasThinking = thinkingResolution.hasThinking
+    const thinking = thinkingResolution.thinking satisfies
+      BetaMessageStreamParams['thinking'] | undefined
 
     // Get API context management strategies if enabled
     const contextManagement = getAPIContextManagement({

@@ -3,7 +3,7 @@ export interface User {
   id: string
   username: string
   email: string
-  role: 'admin' | 'user' | 'viewer'
+  role: 'admin' | 'dept_admin' | 'user'
   apiKey: string
   createdAt: string
   lastLogin: string

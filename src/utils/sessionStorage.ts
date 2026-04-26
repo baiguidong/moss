@@ -177,6 +177,52 @@ function isLegacyProgressEntry(entry: unknown): entry is LegacyProgressEntry {
   )
 }
 
+type RestoredQueuedCommandMeta = {
+  isMeta?: true
+  mode?: string
+  origin?: TranscriptMessage['origin']
+  uuid?: UUID
+}
+
+type QueueOperationWithRestoreFields = QueueOperationMessage & {
+  content?: string
+  isMeta?: boolean
+  mode?: string
+  origin?: TranscriptMessage['origin']
+  uuid?: UUID
+}
+
+function getQueuedCommandMeta(
+  entry: QueueOperationMessage,
+): RestoredQueuedCommandMeta {
+  const raw = entry as QueueOperationWithRestoreFields
+  return {
+    isMeta: raw.isMeta === true ? true : undefined,
+    mode: typeof raw.mode === 'string' ? raw.mode : undefined,
+    origin:
+      raw.origin && typeof raw.origin === 'object' ? raw.origin : undefined,
+    uuid: typeof raw.uuid === 'string' ? raw.uuid : undefined,
+  }
+}
+
+function applyQueuedCommandProvenance(
+  message: UserMessage,
+  meta: RestoredQueuedCommandMeta,
+): void {
+  const origin =
+    meta.origin ??
+    (meta.mode === 'task-notification'
+      ? ({ kind: 'task-notification' } as const)
+      : undefined)
+
+  if (origin !== undefined && message.origin === undefined) {
+    message.origin = origin
+  }
+  if (meta.isMeta === true && message.isMeta !== true) {
+    message.isMeta = true
+  }
+}
+
 /**
  * High-frequency tool progress ticks (1/sec for Sleep, per-chunk for Bash).
  * These are UI-only: not sent to the API, not rendered after the tool
@@ -2300,6 +2346,13 @@ export async function loadTranscriptFromFile(
       summaries,
       customTitles,
       tags,
+      agentNames,
+      agentColors,
+      agentSettings,
+      prNumbers,
+      prUrls,
+      prRepositories,
+      modes,
       fileHistorySnapshots,
       attributionSnapshots,
       contextCollapseCommits,
@@ -2313,10 +2366,14 @@ export async function loadTranscriptFromFile(
       throw new Error('No messages found in JSONL file')
     }
 
-    // Find the most recent leaf message using pre-computed leaf UUIDs
-    const leafMessage = findLatestMessage(messages.values(), msg =>
-      leafUuids.has(msg.uuid),
-    )
+    // Prefer the main transcript leaf over sidechains so file-path resume
+    // matches the normal session-ID resume path.
+    const leafMessage =
+      findLatestMessage(
+        messages.values(),
+        msg => leafUuids.has(msg.uuid) && !msg.isSidechain,
+      ) ??
+      findLatestMessage(messages.values(), msg => leafUuids.has(msg.uuid))
 
     if (!leafMessage) {
       throw new Error('No valid conversation chain found in JSONL file')
@@ -2326,9 +2383,12 @@ export async function loadTranscriptFromFile(
     const transcript = buildConversationChain(messages, leafMessage)
 
     const summary = summaries.get(leafMessage.uuid)
-    const customTitle = customTitles.get(leafMessage.sessionId as UUID)
-    const tag = tags.get(leafMessage.sessionId as UUID)
     const sessionId = leafMessage.sessionId as UUID
+    const customTitle = customTitles.get(sessionId)
+    const tag = tags.get(sessionId)
+    const agentName = agentNames.get(sessionId)
+    const agentColor = agentColors.get(sessionId)
+    const agentSetting = agentSettings.get(sessionId)
     return {
       ...convertToLogOption(
         transcript,
@@ -2339,9 +2399,16 @@ export async function loadTranscriptFromFile(
         tag,
         filePath,
         buildAttributionSnapshotChain(attributionSnapshots, transcript),
-        undefined,
+        agentSetting,
         contentReplacements.get(sessionId) ?? [],
       ),
+      agentName,
+      agentColor,
+      agentSetting,
+      mode: modes.get(sessionId) as LogOption['mode'],
+      prNumber: prNumbers.get(sessionId),
+      prUrl: prUrls.get(sessionId),
+      prRepository: prRepositories.get(sessionId),
       contextCollapseCommits: contextCollapseCommits.filter(
         e => e.sessionId === sessionId,
       ),
@@ -3621,6 +3688,11 @@ export async function loadTranscriptFile(
     // as we see it, chain-resolving through consecutive progress entries, then
     // rewrite any subsequent message whose parentUuid lands in the bridge.
     const progressBridge = new Map<UUID, UUID | null>()
+    const queuedCommandsBySession = new Map<string, RestoredQueuedCommandMeta[]>()
+    const lastDequeuedCommandBySession = new Map<
+      string,
+      RestoredQueuedCommandMeta
+    >()
 
     for (const entry of entries) {
       // Legacy progress check runs before the Entry-typed else-if chain —
@@ -3639,9 +3711,57 @@ export async function loadTranscriptFile(
         )
         continue
       }
+      if (entry.type === 'queue-operation') {
+        const sessionKey = entry.sessionId
+        const queuedMeta = getQueuedCommandMeta(entry)
+        const queuedForSession =
+          queuedCommandsBySession.get(sessionKey) ?? []
+
+        if (entry.operation === 'enqueue') {
+          queuedForSession.push(queuedMeta)
+          queuedCommandsBySession.set(sessionKey, queuedForSession)
+        } else if (entry.operation === 'dequeue') {
+          const dequeuedMeta = queuedForSession.shift()
+          if (queuedForSession.length > 0) {
+            queuedCommandsBySession.set(sessionKey, queuedForSession)
+          } else {
+            queuedCommandsBySession.delete(sessionKey)
+          }
+          if (dequeuedMeta) {
+            lastDequeuedCommandBySession.set(sessionKey, dequeuedMeta)
+          } else {
+            lastDequeuedCommandBySession.delete(sessionKey)
+          }
+        } else if (entry.operation === 'remove') {
+          const removeIdx =
+            queuedMeta.uuid !== undefined
+              ? queuedForSession.findIndex(cmd => cmd.uuid === queuedMeta.uuid)
+              : queuedMeta.content !== undefined
+                ? queuedForSession.findIndex(
+                    cmd => cmd.content === queuedMeta.content,
+                  )
+                : -1
+          if (removeIdx >= 0) {
+            queuedForSession.splice(removeIdx, 1)
+          }
+          if (queuedForSession.length > 0) {
+            queuedCommandsBySession.set(sessionKey, queuedForSession)
+          } else {
+            queuedCommandsBySession.delete(sessionKey)
+          }
+        }
+        continue
+      }
       if (isTranscriptMessage(entry)) {
         if (entry.parentUuid && progressBridge.has(entry.parentUuid)) {
           entry.parentUuid = progressBridge.get(entry.parentUuid) ?? null
+        }
+        if (entry.type === 'user') {
+          const queuedMeta = lastDequeuedCommandBySession.get(entry.sessionId)
+          if (queuedMeta) {
+            applyQueuedCommandProvenance(entry, queuedMeta)
+            lastDequeuedCommandBySession.delete(entry.sessionId)
+          }
         }
         messages.set(entry.uuid, entry)
         // Compact boundary: prior marble-origami-commit entries reference
@@ -4366,10 +4486,20 @@ export function isLoggableMessage(m: Message): boolean {
   return true
 }
 
+function isWellFormedTranscriptMessage(
+  m: Message,
+): m is Exclude<Message, { type: 'progress' }> {
+  if (m.type === 'assistant' || m.type === 'user') {
+    const content = m.message?.content
+    return typeof content === 'string' || Array.isArray(content)
+  }
+  return true
+}
+
 function collectReplIds(messages: readonly Message[]): Set<string> {
   const ids = new Set<string>()
   for (const m of messages) {
-    if (m.type === 'assistant' && Array.isArray(m.message.content)) {
+    if (m.type === 'assistant' && Array.isArray(m.message?.content)) {
       for (const b of m.message.content) {
         if (b.type === 'tool_use' && b.name === REPL_TOOL_NAME) {
           ids.add(b.id)
@@ -4451,7 +4581,18 @@ export function cleanMessagesForLogging(
   messages: Message[],
   allMessages: readonly Message[] = messages,
 ): Transcript {
-  const filtered = messages.filter(isLoggableMessage) as Transcript
+  const filtered = messages.filter(m => {
+    if (!isLoggableMessage(m)) return false
+    if (isWellFormedTranscriptMessage(m)) return true
+    logForDebugging(
+      '[sessionStorage] Skipping malformed transcript message during logging',
+      {
+        type: m?.type,
+        uuid: (m as { uuid?: unknown })?.uuid,
+      },
+    )
+    return false
+  }) as Transcript
   return getUserType() !== 'ant'
     ? transformMessagesForExternalTranscript(
         filtered,

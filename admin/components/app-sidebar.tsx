@@ -1,5 +1,6 @@
 'use client'
 
+import type { ComponentType } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -8,40 +9,106 @@ import {
   Settings,
   LogOut,
   Shield,
-  Key,
+  Bot,
+  Sparkles,
+  Wallet,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/hooks/use-auth'
+import { hasAnyScope, hasScope } from '@/lib/api/client'
 
-const menuItems = [
+type NavItem = {
+  title: string
+  url: string
+  icon: ComponentType<{ className?: string }>
+  requiredScope?: string
+  requiredAnyScopes?: string[]
+}
+
+const roleLabels: Record<string, string> = {
+  admin: '管理员',
+  dept_admin: '部门管理员',
+  user: '普通用户',
+}
+
+const menuItems: NavItem[] = [
   {
     title: '数据看板',
     url: '/',
     icon: LayoutDashboard,
   },
   {
-    title: '用户管理',
+    title: '预算管理',
+    url: '/budget',
+    icon: Wallet,
+    requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
+  },
+  {
+    title: '用户与组织',
     url: '/users',
     icon: Users,
+    requiredScope: 'admin:users',
   },
   {
     title: '会话管理',
     url: '/sessions',
     icon: MessageSquare,
+    requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
+  },
+]
+
+const systemItems: NavItem[] = [
+  {
+    title: 'IM 接入',
+    url: '/settings/adapters',
+    icon: Bot,
   },
   {
-    title: 'API Keys',
-    url: '/api-keys',
-    icon: Key,
+    title: '智能体管理',
+    url: '/settings/agents',
+    icon: Bot,
+    requiredScope: 'admin:settings',
+  },
+  {
+    title: '技能商店',
+    url: '/settings/skill',
+    icon: Sparkles,
+    requiredScope: 'admin:settings',
+  },
+  {
+    title: '系统设置',
+    url: '/settings',
+    icon: Settings,
+    requiredScope: 'admin:settings',
   },
 ]
 
 export function AppSidebar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const { user, logout } = useAuth()
+  const { user, scopes, logout } = useAuth()
+
+  const visibleMenuItems = menuItems.filter((item) => {
+    if ('requiredScope' in item && item.requiredScope) {
+      return hasScope(scopes, item.requiredScope)
+    }
+    if ('requiredAnyScopes' in item && item.requiredAnyScopes) {
+      return hasAnyScope(scopes, item.requiredAnyScopes)
+    }
+    return true
+  })
+
+  const visibleSystemItems = systemItems.filter((item) => {
+    if ('requiredScope' in item && item.requiredScope) {
+      return hasScope(scopes, item.requiredScope)
+    }
+    if ('requiredAnyScopes' in item && item.requiredAnyScopes) {
+      return hasAnyScope(scopes, item.requiredAnyScopes)
+    }
+    return true
+  })
 
   const handleLogout = async () => {
     await logout()
@@ -66,7 +133,7 @@ export function AppSidebar() {
         <div className="mb-6">
           <p className="text-xs font-medium text-muted-foreground mb-2 px-3">主菜单</p>
           <ul className="space-y-1">
-            {menuItems.map((item) => {
+            {visibleMenuItems.map((item) => {
               const isActive =
                 item.url === '/'
                   ? pathname === '/'
@@ -93,14 +160,27 @@ export function AppSidebar() {
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-2 px-3">系统</p>
           <ul className="space-y-1">
-            <li>
-              <button
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Settings className="size-4" />
-                <span>系统设置</span>
-              </button>
-            </li>
+            {visibleSystemItems.map((item) => {
+              const isActive =
+                item.url === '/settings'
+                  ? pathname === item.url
+                  : pathname === item.url || pathname.startsWith(`${item.url}/`)
+              return (
+                <li key={item.title}>
+                  <Link
+                    to={item.url}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                      isActive
+                        ? 'bg-primary/10 text-primary font-medium'
+                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    <item.icon className="size-4" />
+                    <span>{item.title}</span>
+                  </Link>
+                </li>
+              )
+            })}
           </ul>
         </div>
       </nav>
@@ -115,7 +195,9 @@ export function AppSidebar() {
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.email || ''}</p>
+            <p className="text-xs text-muted-foreground truncate">
+              {user?.email || (user?.role ? roleLabels[user.role] || user.role : '')}
+            </p>
           </div>
           <Button
             variant="ghost"

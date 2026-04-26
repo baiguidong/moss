@@ -62,6 +62,11 @@ import { getManagedFilePath } from '../utils/settings/managedPath.js'
 import { isRestrictedToPluginOnly } from '../utils/settings/pluginOnlyPolicy.js'
 import { HooksSchema, type HooksSettings } from '../utils/settings/types.js'
 import { createSignal } from '../utils/signal.js'
+import {
+  MOSS_SKILLS_CUSTOM_DIR,
+  MOSS_SKILLS_HUB_DIR,
+  SKILL_HUB_META_FILE,
+} from '../utils/skills/localSkillDirectories.js'
 import { registerMCPSkillBuilders } from './mcpSkillBuilders.js'
 
 export type LoadedFrom =
@@ -430,6 +435,26 @@ async function loadSkillsFromSkillsDir(
         const skillDirPath = join(basePath, entry.name)
         const skillFilePath = join(skillDirPath, 'SKILL.md')
 
+        try {
+          const metaRaw = await fs.readFile(
+            join(skillDirPath, SKILL_HUB_META_FILE),
+            {
+              encoding: 'utf-8',
+            },
+          )
+          const parsedMeta = JSON.parse(metaRaw)
+          if (
+            typeof parsedMeta === 'object' &&
+            parsedMeta !== null &&
+            !Array.isArray(parsedMeta) &&
+            parsedMeta.enabled === false
+          ) {
+            return null
+          }
+        } catch {
+          // Ignore missing or malformed local skill metadata.
+        }
+
         let content: string
         try {
           content = await fs.readFile(skillFilePath, { encoding: 'utf-8' })
@@ -638,11 +663,12 @@ async function loadSkillsFromCommandsDir(
 export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
     const userSkillsDir = join(getClaudeConfigHomeDir(), 'skills')
+    const managedLocalSkillDirs = [MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_CUSTOM_DIR]
     const managedSkillsDir = join(getManagedFilePath(), '.claude', 'skills')
     const projectSkillsDirs = getProjectDirsUpToHome('skills', cwd)
 
     logForDebugging(
-      `Loading skills from: managed=${managedSkillsDir}, user=${userSkillsDir}, project=[${projectSkillsDirs.join(', ')}]`,
+      `Loading skills from: managed=${managedSkillsDir}, user=${userSkillsDir}, moss=[${managedLocalSkillDirs.join(', ')}], project=[${projectSkillsDirs.join(', ')}]`,
     )
 
     // Load from additional directories (--add-dir)
@@ -679,6 +705,7 @@ export const getSkillDirCommands = memoize(
     const [
       managedSkills,
       userSkills,
+      mossSkillsNested,
       projectSkillsNested,
       additionalSkillsNested,
       legacyCommands,
@@ -688,6 +715,13 @@ export const getSkillDirCommands = memoize(
         : loadSkillsFromSkillsDir(managedSkillsDir, 'policySettings'),
       isSettingSourceEnabled('userSettings') && !skillsLocked
         ? loadSkillsFromSkillsDir(userSkillsDir, 'userSettings')
+        : Promise.resolve([]),
+      isSettingSourceEnabled('userSettings') && !skillsLocked
+        ? Promise.all(
+            managedLocalSkillDirs.map(dir =>
+              loadSkillsFromSkillsDir(dir, 'userSettings'),
+            ),
+          )
         : Promise.resolve([]),
       projectSettingsEnabled
         ? Promise.all(
@@ -717,6 +751,7 @@ export const getSkillDirCommands = memoize(
     const allSkillsWithPaths = [
       ...managedSkills,
       ...userSkills,
+      ...mossSkillsNested.flat(),
       ...projectSkillsNested.flat(),
       ...additionalSkillsNested.flat(),
       ...legacyCommands,
@@ -796,7 +831,7 @@ export const getSkillDirCommands = memoize(
     }
 
     logForDebugging(
-      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
+      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, moss: ${mossSkillsNested.flat().length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
     )
 
     return unconditionalSkills

@@ -6,6 +6,7 @@ import { ensureServerDirectories } from './config.js'
 import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
+import { enableConfigs } from '../utils/config.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -21,6 +22,7 @@ export async function startStandaloneDirectConnectServer(
   bootstrapAdminPassword?: string
   stop: () => Promise<void>
 }> {
+  enableConfigs()
   await ensureServerDirectories(config)
   const store = openDirectConnectStore(config)
   const { service: authService, bootstrap } = await createAuthService({

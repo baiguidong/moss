@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useWorkspacePath } from "@/components/workspace-path-context";
 
 const imageDataUrlCache = new Map<string, string>();
 const imageDataUrlPending = new Map<string, Promise<string | null>>();
@@ -36,7 +37,7 @@ function decodeLocalUrlPath(src: string, protocol: string): string | null {
   }
 }
 
-function extractLocalImagePath(src: string): string | null {
+function resolveImagePath(src: string, workspace: string): string | null {
   const trimmed = String(src || "").trim();
   if (!trimmed) return null;
 
@@ -66,10 +67,16 @@ function extractLocalImagePath(src: string): string | null {
       return path ? decodeURIComponent(path) : null;
     }
   } catch {
-    return null;
+    // not a URL-like path
   }
 
   if (/^(data:|blob:|https?:)/i.test(trimmed)) return null;
+
+  // Relative path: resolve against workspace directory
+  if (workspace) {
+    const sep = workspace.endsWith("/") ? "" : "/";
+    return `${workspace}${sep}${trimmed}`;
+  }
 
   return null;
 }
@@ -83,10 +90,11 @@ export function LocalImage({
   alt?: string;
   className?: string;
 }) {
+  const workspace = useWorkspacePath();
   const originalSrc = String(src || "").trim();
   const localPath = React.useMemo(
-    () => extractLocalImagePath(originalSrc),
-    [originalSrc],
+    () => resolveImagePath(originalSrc, workspace),
+    [originalSrc, workspace],
   );
   const [resolvedSrc, setResolvedSrc] = React.useState<string | null>(
     localPath ? imageDataUrlCache.get(localPath) || null : originalSrc || null,
@@ -105,7 +113,14 @@ export function LocalImage({
     }
 
     if (!localPath) {
-      setResolvedSrc(originalSrc);
+      // If originalSrc looks like a bare filename (no protocol, no leading /),
+      // it's a relative path that we couldn't resolve — show failure state.
+      if (originalSrc && !/^(data:|blob:|https?:)/i.test(originalSrc)) {
+        setFailed(true);
+        setResolvedSrc(null);
+      } else {
+        setResolvedSrc(originalSrc || null);
+      }
       return () => {
         cancelled = true;
       };

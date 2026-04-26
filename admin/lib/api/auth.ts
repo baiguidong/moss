@@ -6,9 +6,15 @@ import type {
   UsersListResponse,
   CreateUserRequest,
   CreateUserResponse,
+  UpdateUserRequest,
   ApiKeysListResponse,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  DepartmentsListResponse,
+  CreateDepartmentRequest,
+  UpdateDepartmentRequest,
+  DepartmentResponse,
+  RolesListResponse,
 } from './types'
 
 export async function login(
@@ -51,6 +57,13 @@ export async function createUser(data: CreateUserRequest): Promise<CreateUserRes
   return authClient.post<CreateUserResponse>('/api/v1/users', data)
 }
 
+export async function updateUser(
+  userId: string,
+  data: UpdateUserRequest
+): Promise<CreateUserResponse> {
+  return authClient.patch<CreateUserResponse>(`/api/v1/users/${userId}`, data)
+}
+
 export async function resetPassword(
   userId: string,
   password: string
@@ -65,10 +78,44 @@ export async function getApiKeys(): Promise<ApiKeysListResponse> {
   return authClient.get<ApiKeysListResponse>('/api/v1/api-keys')
 }
 
+export async function revokeApiKey(keyId: string): Promise<{ ok: boolean }> {
+  return authClient.delete<{ ok: boolean }>(`/api/v1/api-keys/${keyId}`)
+}
+
 export async function createApiKey(
   data: CreateApiKeyRequest
 ): Promise<CreateApiKeyResponse> {
   return authClient.post<CreateApiKeyResponse>('/api/v1/api-keys', data)
+}
+
+export async function getDepartments(): Promise<DepartmentsListResponse> {
+  return authClient.get<DepartmentsListResponse>('/api/v1/departments')
+}
+
+export async function createDepartment(
+  data: CreateDepartmentRequest
+): Promise<DepartmentResponse> {
+  return authClient.post<DepartmentResponse>('/api/v1/departments', data)
+}
+
+export async function updateDepartment(
+  departmentId: string,
+  data: UpdateDepartmentRequest
+): Promise<DepartmentResponse> {
+  return authClient.patch<DepartmentResponse>(
+    `/api/v1/departments/${departmentId}`,
+    data
+  )
+}
+
+export async function deleteDepartment(
+  departmentId: string
+): Promise<{ ok: boolean }> {
+  return authClient.delete<{ ok: boolean }>(`/api/v1/departments/${departmentId}`)
+}
+
+export async function getRoles(): Promise<RolesListResponse> {
+  return authClient.get<RolesListResponse>('/api/v1/roles')
 }
 
 export function isAuthenticated(): boolean {

@@ -68,6 +68,7 @@ const scopeOptions = [
   { value: 'sessions:attach:any', label: '接入任何会话' },
   { value: 'admin:users', label: '管理用户' },
   { value: 'admin:api_keys', label: '管理 API Keys' },
+  { value: 'admin:settings', label: '管理系统设置' },
 ]
 
 export default function ApiKeysPage() {
@@ -305,7 +306,7 @@ export default function ApiKeysPage() {
                         <SelectContent>
                           {users.map((user) => (
                             <SelectItem key={user.id} value={user.id}>
-                              {user.name} ({user.email})
+                              {user.email ? `${user.name} (${user.email})` : user.name}
                             </SelectItem>
                           ))}
                         </SelectContent>

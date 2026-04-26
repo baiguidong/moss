@@ -1,5 +1,7 @@
 import { dcClient } from './client'
 import type {
+  BudgetStatsResponse,
+  DashboardStatsResponse,
   SessionsListResponse,
   GetSessionResponse,
   GetSessionContextResponse,
@@ -14,6 +16,27 @@ export async function getHealth(): Promise<HealthResponse> {
 export async function getSessions(activeOnly = false): Promise<SessionsListResponse> {
   const query = activeOnly ? '?active_only=true' : ''
   return dcClient.get<SessionsListResponse>(`/api/v1/sessions${query}`)
+}
+
+export async function getDashboardStats(params?: {
+  from?: number
+  to?: number
+}): Promise<DashboardStatsResponse> {
+  const search = new URLSearchParams()
+  if (params?.from !== undefined) {
+    search.set('from', String(params.from))
+  }
+  if (params?.to !== undefined) {
+    search.set('to', String(params.to))
+  }
+  const query = search.toString()
+  return dcClient.get<DashboardStatsResponse>(
+    `/api/v1/dashboard/stats${query ? `?${query}` : ''}`
+  )
+}
+
+export async function getBudgetStats(): Promise<BudgetStatsResponse> {
+  return dcClient.get<BudgetStatsResponse>('/api/v1/budget/stats')
 }
 
 export async function getSession(sessionId: string): Promise<GetSessionResponse> {

@@ -20,6 +20,10 @@ import { logForDebugging } from '../debug.js'
 import { getFsImplementation } from '../fsOperations.js'
 import { executeConfigChangeHooks, hasBlockingResult } from '../hooks.js'
 import { createSignal } from '../signal.js'
+import {
+  MOSS_SKILLS_CUSTOM_DIR,
+  MOSS_SKILLS_HUB_DIR,
+} from './localSkillDirectories.js'
 
 /**
  * Time in milliseconds to wait for file writes to stabilize before processing.
@@ -178,6 +182,15 @@ async function getWatchablePaths(): Promise<string[]> {
     try {
       await fs.stat(userSkillsPath)
       paths.push(userSkillsPath)
+    } catch {
+      // Path doesn't exist, skip it
+    }
+  }
+
+  for (const managedSkillPath of [MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_CUSTOM_DIR]) {
+    try {
+      await fs.stat(managedSkillPath)
+      paths.push(managedSkillPath)
     } catch {
       // Path doesn't exist, skip it
     }

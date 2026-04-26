@@ -2,14 +2,25 @@
 import type { Theme } from './theme.js'
 import { feature } from 'bun:bundle'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getMaxThinkingTokensForModel } from './context.js'
+import { isEnvTruthy } from './envUtils.js'
+import { resolveAntModel } from './model/antModels.js'
 import { getCanonicalName } from './model/model.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
-import { getAPIProvider } from './model/providers.js'
+import {
+  getAPIProvider,
+  isFirstPartyAnthropicBaseUrl,
+} from './model/providers.js'
 import { getSettingsWithErrors } from './settings/settings.js'
 
 export type ThinkingConfig =
   | { type: 'adaptive' }
   | { type: 'enabled'; budgetTokens: number }
+  | { type: 'disabled' }
+
+export type APIThinkingParam =
+  | { type: 'adaptive' }
+  | { type: 'enabled'; budget_tokens: number }
   | { type: 'disabled' }
 
 /**
@@ -101,8 +112,10 @@ export function modelSupportsThinking(model: string): boolean {
   // launch DRI and research. This can greatly affect model quality and bashing.
   const canonical = getCanonicalName(model)
   const provider = getAPIProvider()
+  const isNativeFirstParty =
+    provider === 'firstParty' && isFirstPartyAnthropicBaseUrl()
   // 1P and Foundry: all Claude 4+ models (including Haiku 4.5)
-  if (provider === 'foundry' || provider === 'firstParty') {
+  if (provider === 'foundry' || isNativeFirstParty) {
     return !canonical.includes('claude-3-')
   }
   // 3P (Bedrock/Vertex): only Opus 4+ and Sonnet 4+
@@ -140,7 +153,73 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
   // is a proxy). Do not default to true for other 3P as they have different formats
   // for their model strings.
   const provider = getAPIProvider()
-  return provider === 'firstParty' || provider === 'foundry'
+  return (
+    provider === 'foundry' ||
+    (provider === 'firstParty' && isFirstPartyAnthropicBaseUrl())
+  )
+}
+
+function modelRejectsDisabledThinking(model: string): boolean {
+  return (
+    process.env.USER_TYPE === 'ant' &&
+    resolveAntModel(model)?.alwaysOnThinking === true
+  )
+}
+
+export function buildAPIThinkingParam(
+  model: string,
+  thinkingConfig: ThinkingConfig,
+  maxOutputTokens: number,
+): {
+  hasThinking: boolean
+  thinking: APIThinkingParam | undefined
+} {
+  const thinkingDisabled =
+    thinkingConfig.type === 'disabled' ||
+    isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
+
+  if (thinkingDisabled) {
+    return {
+      hasThinking: false,
+      thinking: modelRejectsDisabledThinking(model)
+        ? undefined
+        : { type: 'disabled' },
+    }
+  }
+
+  if (!modelSupportsThinking(model)) {
+    return {
+      hasThinking: false,
+      thinking: undefined,
+    }
+  }
+
+  if (
+    !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING) &&
+    modelSupportsAdaptiveThinking(model)
+  ) {
+    return {
+      hasThinking: true,
+      thinking: { type: 'adaptive' },
+    }
+  }
+
+  let thinkingBudget = getMaxThinkingTokensForModel(model)
+  if (
+    thinkingConfig.type === 'enabled' &&
+    thinkingConfig.budgetTokens !== undefined
+  ) {
+    thinkingBudget = thinkingConfig.budgetTokens
+  }
+  thinkingBudget = Math.min(maxOutputTokens - 1, thinkingBudget)
+
+  return {
+    hasThinking: true,
+    thinking: {
+      budget_tokens: thinkingBudget,
+      type: 'enabled',
+    },
+  }
 }
 
 export function shouldEnableThinkingByDefault(): boolean {

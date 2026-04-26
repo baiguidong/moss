@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
 import type { RemotePermissionResponse } from '../remote/RemoteSessionManager.js'
@@ -23,7 +24,10 @@ import type { RemoteMessageContent } from '../utils/teleport/api.js'
 
 type UseDirectConnectResult = {
   isRemoteMode: boolean
-  sendMessage: (content: RemoteMessageContent) => Promise<boolean>
+  sendMessage: (
+    content: RemoteMessageContent,
+    opts?: { uuid?: string },
+  ) => Promise<boolean>
   cancelRequest: () => void
   disconnect: () => void
 }
@@ -48,6 +52,7 @@ export function useDirectConnect({
   const managerRef = useRef<DirectConnectSessionManager | null>(null)
   const hasReceivedInitRef = useRef(false)
   const isConnectedRef = useRef(false)
+  const hasEverConnectedRef = useRef(false)
 
   // Keep a ref to tools so the WebSocket callback doesn't go stale
   const toolsRef = useRef(tools)
@@ -61,6 +66,8 @@ export function useDirectConnect({
     }
 
     hasReceivedInitRef.current = false
+    isConnectedRef.current = false
+    hasEverConnectedRef.current = false
     logForDebugging(`[useDirectConnect] Connecting to ${config.wsUrl}`)
 
     const manager = new DirectConnectSessionManager(config, {
@@ -159,19 +166,58 @@ export function useDirectConnect({
         setIsLoading(false)
       },
       onConnected: () => {
-        logForDebugging('[useDirectConnect] Connected')
+        const reconnected = hasEverConnectedRef.current
+        logForDebugging(
+          reconnected
+            ? '[useDirectConnect] Reconnected'
+            : '[useDirectConnect] Connected',
+        )
         isConnectedRef.current = true
+        hasEverConnectedRef.current = true
+        if (reconnected) {
+          setMessages(prev => [
+            ...prev,
+            {
+              type: 'system',
+              subtype: 'informational',
+              content: 'Server reattached to the existing session.',
+              timestamp: new Date().toISOString(),
+              uuid: randomUUID(),
+              level: 'info',
+            },
+          ])
+        }
+      },
+      onReconnecting: (attempt, maxAttempts) => {
+        logForDebugging(
+          `[useDirectConnect] Reconnecting (${attempt}/${maxAttempts})`,
+        )
+        isConnectedRef.current = false
+        setMessages(prev => [
+          ...prev,
+          {
+            type: 'system',
+            subtype: 'informational',
+            content: `Server connection dropped — reattaching session (${attempt}/${maxAttempts})...`,
+            timestamp: new Date().toISOString(),
+            uuid: randomUUID(),
+            level: 'warning',
+          },
+        ])
       },
       onDisconnected: () => {
         logForDebugging('[useDirectConnect] Disconnected')
-        if (!isConnectedRef.current) {
+        if (!hasEverConnectedRef.current) {
           // Never connected — connection failure (e.g. auth rejected)
           process.stderr.write(
             `\nFailed to connect to server at ${config.wsUrl}\n`,
           )
-        } else {
-          // Was connected then lost — server process exited or network dropped
+        } else if (isConnectedRef.current) {
           process.stderr.write('\nServer disconnected.\n')
+        } else {
+          process.stderr.write(
+            '\nServer disconnected and the session could not be reattached.\n',
+          )
         }
         isConnectedRef.current = false
         void gracefulShutdown(1)
@@ -193,7 +239,10 @@ export function useDirectConnect({
   }, [config, setMessages, setIsLoading, setToolUseConfirmQueue])
 
   const sendMessage = useCallback(
-    async (content: RemoteMessageContent): Promise<boolean> => {
+    async (
+      content: RemoteMessageContent,
+      opts?: { uuid?: string },
+    ): Promise<boolean> => {
       const manager = managerRef.current
       if (!manager) {
         return false
@@ -201,7 +250,7 @@ export function useDirectConnect({
 
       setIsLoading(true)
 
-      return manager.sendMessage(content)
+      return manager.sendMessage(content, opts)
     },
     [setIsLoading],
   )

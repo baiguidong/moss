@@ -92,7 +92,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
-const EVENT_TRACE_ENABLED = process.env.MOSS_EVENT_TRACE !== '0';
 const MAX_SANITIZED_PATH_LENGTH = 200;
 
 function djb2Hash(value) {
@@ -176,7 +175,7 @@ const persistSessionStmt = (() => {
       agent_mode TEXT NOT NULL DEFAULT 'local',
       remote_workspace TEXT,
       underlying_session_id TEXT,
-      history_json TEXT NOT NULL,
+      history_json TEXT NOT NULL DEFAULT '[]',
       is_sub_agent INTEGER NOT NULL DEFAULT 0,
       worker_summaries_json TEXT
     )
@@ -215,7 +214,6 @@ const loadSessionsStmt = sessionDb.prepare(`
     agent_mode,
     remote_workspace,
     underlying_session_id,
-    history_json,
     is_sub_agent,
     worker_summaries_json
   FROM sessions
@@ -234,7 +232,6 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     agent_mode,
     remote_workspace,
     underlying_session_id,
-    history_json,
     is_sub_agent,
     worker_summaries_json
   FROM sessions
@@ -254,113 +251,12 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     agent_mode,
     remote_workspace,
     underlying_session_id,
-    history_json,
     is_sub_agent,
     worker_summaries_json
   FROM sessions
   WHERE is_sub_agent = 1 AND underlying_session_id = ?
   ORDER BY created_at ASC
 `);
-
-function extractTaskNotificationSummary(text) {
-  if (typeof text !== 'string' || !text.includes('<task-notification>')) {
-    return null;
-  }
-
-  const extractTag = (tagName) => {
-    const match = text.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, 'i'));
-    return match?.[1]?.trim() || '';
-  };
-
-  return {
-    taskId: extractTag('task-id'),
-    status: extractTag('status'),
-    summary: extractTag('summary'),
-  };
-}
-
-function summarizeEventForTrace(event) {
-  if (!event || typeof event !== 'object') {
-    return { type: typeof event, detail: String(event) };
-  }
-
-  const summary = {
-    type: event.type || 'unknown',
-  };
-
-  if (typeof event.subtype === 'string') {
-    summary.subtype = event.subtype;
-  }
-
-  if (typeof event.session_id === 'string') {
-    summary.runtimeSessionId = event.session_id;
-  }
-
-  if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-    summary.blockTypes = event.message.content.map((block) => block?.type).filter(Boolean);
-    const toolUses = event.message.content
-      .filter((block) => block?.type === 'tool_use')
-      .map((block) => ({
-        id: block.id,
-        name: block.name,
-      }));
-    if (toolUses.length > 0) {
-      summary.toolUses = toolUses;
-    }
-  } else if (event.type === 'user') {
-    if (typeof event.prompt === 'string') {
-      summary.promptPreview = event.prompt.slice(0, 160);
-    }
-    if (Array.isArray(event.message?.content)) {
-      summary.blockTypes = event.message.content.map((block) => block?.type).filter(Boolean);
-      const textBlocks = event.message.content
-        .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-        .map((block) => block.text);
-      if (textBlocks.length > 0) {
-        const taskNotification = extractTaskNotificationSummary(textBlocks.join('\n\n'));
-        if (taskNotification) {
-          summary.taskNotification = taskNotification;
-        } else {
-          summary.textPreview = textBlocks.join('\n\n').slice(0, 160);
-        }
-      }
-      const toolResults = event.message.content
-        .filter((block) => block?.type === 'tool_result')
-        .map((block) => ({
-          toolUseId: block.tool_use_id,
-          isError: Boolean(block.is_error),
-        }));
-      if (toolResults.length > 0) {
-        summary.toolResults = toolResults;
-      }
-    }
-  } else if (event.type === 'stream_event') {
-    summary.streamType = event.event?.type;
-    if (event.event?.content_block?.type) {
-      summary.blockType = event.event.content_block.type;
-    }
-    if (event.event?.delta?.type) {
-      summary.deltaType = event.event.delta.type;
-    }
-  } else if (event.type === 'error') {
-    summary.message = String(event.message || '').slice(0, 200);
-  } else if (event.type === 'tool_progress') {
-    summary.toolName = event.tool_name;
-    summary.toolUseId = event.tool_use_id || event.parent_tool_use_id;
-  }
-
-  return summary;
-}
-
-function traceEventFlow(label, context = {}, payload) {
-  if (!EVENT_TRACE_ENABLED) return;
-  const summary = summarizeEventForTrace(payload);
-  console.log(`[event-trace] ${label}`, {
-    ...context,
-    summary,
-    payload,
-  });
-}
 
 function loadLocalSettingsAuthConfig() {
   const result = {
@@ -633,9 +529,13 @@ function saveDesktopSettings(nextSettings) {
   const env = { ...existingEnv };
   if (nextSettings.url) {
     env.ANTHROPIC_BASE_URL = nextSettings.url;
+  } else {
+    delete env.ANTHROPIC_BASE_URL;
   }
   if (nextSettings.apiKey) {
     env.ANTHROPIC_AUTH_TOKEN = nextSettings.apiKey;
+  } else {
+    delete env.ANTHROPIC_AUTH_TOKEN;
   }
 
   // 构建完整的保存对象，保留所有现有配置
@@ -648,6 +548,9 @@ function saveDesktopSettings(nextSettings) {
   };
   // 删除 undefined 字段
   Object.keys(toSave).forEach(k => toSave[k] === undefined && delete toSave[k]);
+  if (!Object.keys(env).length) {
+    delete toSave.env;
+  }
 
   fs.writeFileSync(DESKTOP_SETTINGS_PATH, `${JSON.stringify(toSave, null, 2)}\n`, 'utf8');
   desktopSettingsState = {
@@ -736,7 +639,7 @@ function parseRemoteDirectServerInput(raw) {
 async function requestRemoteDirectAccessToken({
   authCenterUrl,
   credentialMode,
-  email,
+  loginIdentifier,
   password,
   apiKey,
 }) {
@@ -758,16 +661,20 @@ async function requestRemoteDirectAccessToken({
       api_key: normalizedApiKey,
     };
   } else {
-    const normalizedEmail = typeof email === 'string' ? email.trim() : '';
-    if (!normalizedEmail) {
-      throw new Error('User email is required for moss server password login.');
+    const normalizedLoginIdentifier = typeof loginIdentifier === 'string'
+      ? loginIdentifier.trim()
+      : '';
+    if (!normalizedLoginIdentifier) {
+      throw new Error('Username or email is required for moss server password login.');
     }
     if (typeof password !== 'string' || !password) {
       throw new Error('User password is required for moss server password login.');
     }
     payload = {
       grant_type: 'password',
-      email: normalizedEmail,
+      ...(normalizedLoginIdentifier.includes('@')
+        ? { email: normalizedLoginIdentifier }
+        : { username: normalizedLoginIdentifier }),
       password,
     };
   }
@@ -809,9 +716,10 @@ async function resolveRemoteDirectConnection() {
 
   const parsed = parseRemoteDirectServerInput(raw);
   const authToken = await requestRemoteDirectAccessToken({
-    authCenterUrl: parsed.serverUrl,
+    authCenterUrl: parsed.authCenterUrl,
     credentialMode: desktopSettings.remoteDirectCredentialMode,
-    email: desktopSettings.remoteDirectUserEmail,
+    // Legacy settings key; accepts either username or email.
+    loginIdentifier: desktopSettings.remoteDirectUserEmail,
     password: desktopSettings.remoteDirectUserPassword,
     apiKey: desktopSettings.remoteDirectApiKey,
   });
@@ -865,6 +773,32 @@ async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessionId })
   if (!response.ok) {
     throw new Error(
       await parseRemoteDirectError(`Failed to query remote session ${sessionId}`, response),
+    );
+  }
+
+  return response.json();
+}
+
+async function fetchRemoteDirectSessionContext({ serverUrl, authToken, sessionId }) {
+  let response;
+  try {
+    response = await fetch(
+      `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/context`,
+      {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${authToken}`,
+        },
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError(`Failed to query remote session context ${sessionId}`, response),
     );
   }
 
@@ -1213,16 +1147,6 @@ function refreshDesktopSettings(payload = {}) {
   });
 }
 
-function parseStoredHistory(historyJson) {
-  if (!historyJson) return [];
-  try {
-    const parsed = JSON.parse(historyJson);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
   return [
     sessionRecord.id,
@@ -1235,7 +1159,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
     sessionRecord.remoteWorkspace || null,
     sessionRecord.underlyingSessionId,
-    JSON.stringify(sessionRecord.history || []),
+    '[]',
     isSubAgent ? 1 : 0,
     sessionRecord.workerSummariesJson || null,
   ];
@@ -1295,7 +1219,6 @@ function inferPersistedSessionAgentMode(row) {
 function hydratePersistedSessions() {
   const rows = loadSessionsStmt.all();
   for (const row of rows) {
-    const history = parseStoredHistory(row.history_json);
     const agentMode = inferPersistedSessionAgentMode(row);
     const sessionRecord = {
       id: row.id,
@@ -1311,10 +1234,11 @@ function hydratePersistedSessions() {
       updatedAt: row.updated_at,
       busy: false,
       messageCount: row.message_count,
-      preview: row.preview || deriveSessionPreview(history),
+      preview: row.preview || '',
       underlyingSessionId: row.underlying_session_id || null,
-      pendingPlanApproval: derivePendingPlanApproval(history),
-      history,
+      pendingPlanApproval: null,
+      history: [],
+      historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
       resumeReadOnlyReason: null,
@@ -1329,7 +1253,6 @@ function hydratePersistedSessions() {
   // Load sub-agent sessions
   const subAgentRows = loadSubAgentSessionsStmt.all();
   for (const row of subAgentRows) {
-    const history = parseStoredHistory(row.history_json);
     const agentMode = inferPersistedSessionAgentMode(row);
     const sessionRecord = {
       id: row.id,
@@ -1345,10 +1268,11 @@ function hydratePersistedSessions() {
       updatedAt: row.updated_at,
       busy: false,
       messageCount: row.message_count,
-      preview: row.preview || deriveSessionPreview(history),
+      preview: row.preview || '',
       underlyingSessionId: row.underlying_session_id || null,
       pendingPlanApproval: null,
-      history,
+      history: [],
+      historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
       resumeReadOnlyReason: null,
@@ -1437,6 +1361,14 @@ async function getResumeClaudeSessionFn() {
   return mod.resumeClaudeSession;
 }
 
+async function getLoadClaudeSessionSnapshotFn() {
+  const mod = await getClaudeRuntimeModule();
+  if (typeof mod.loadClaudeSessionSnapshot !== 'function') {
+    throw new Error('electron-direct.mjs did not export loadClaudeSessionSnapshot.');
+  }
+  return mod.loadClaudeSessionSnapshot;
+}
+
 async function getAuthDebugSnapshot() {
   const mod = await getClaudeRuntimeModule();
   if (typeof mod.getAuthDebugSnapshot === 'function') {
@@ -1490,24 +1422,6 @@ function hasFile(filePath) {
   }
 }
 
-function getSessionModeMismatchReason(sessionRecord, targetAgentMode = getDesktopAgentMode()) {
-  if (!sessionRecord || sessionRecord.messageCount <= 0) {
-    return null;
-  }
-  const sessionAgentMode = sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
-  const currentAgentMode = targetAgentMode === 'remote-direct' ? 'remote-direct' : 'local';
-  if (sessionAgentMode === currentAgentMode) {
-    return null;
-  }
-  return `当前会话创建于 ${sessionAgentMode} 模式，但全局已切换到 ${currentAgentMode}。请新建一个 ${currentAgentMode} 会话后再继续。`;
-}
-
-function getSessionReadOnlyReason(sessionRecord, targetAgentMode = getDesktopAgentMode()) {
-  return getSessionModeMismatchReason(sessionRecord, targetAgentMode)
-    || sessionRecord.resumeReadOnlyReason
-    || null;
-}
-
 function getSessionSummary(sessionRecord) {
   const workspace = sessionRecord.agentMode === 'remote-direct'
     ? sessionRecord.remoteWorkspace || sessionRecord.workspace
@@ -1524,7 +1438,7 @@ function getSessionSummary(sessionRecord) {
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
-    resumeReadOnlyReason: getSessionReadOnlyReason(sessionRecord),
+    resumeReadOnlyReason: null,
   };
 }
 
@@ -1541,6 +1455,21 @@ function extractTextFromAssistantMessage(message) {
     .map((block) => block.text)
     .join('\n')
     .trim();
+}
+
+function extractTextFromUserReplayMessage(message) {
+  const content = message?.message?.content;
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n')
+      .trim();
+  }
+  return '';
 }
 
 function extractPreviewFromAssistantMessage(message) {
@@ -1623,22 +1552,119 @@ function derivePendingPlanApproval(history) {
   return pending;
 }
 
+function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
+  const nextHistory = Array.isArray(history) ? history : [];
+  sessionRecord.history = nextHistory;
+  sessionRecord.historyLoadedFromSource = true;
+  sessionRecord.messageCount = nextHistory.length;
+  sessionRecord.pendingPlanApproval = derivePendingPlanApproval(nextHistory);
+
+  const derivedPreview = deriveSessionPreview(nextHistory);
+  if (derivedPreview) {
+    sessionRecord.preview = derivedPreview;
+  }
+
+  if (typeof metadata.sessionId === 'string' && metadata.sessionId.trim()) {
+    sessionRecord.underlyingSessionId = metadata.sessionId.trim();
+  }
+  if (typeof metadata.customTitle === 'string' && metadata.customTitle.trim()) {
+    sessionRecord.title = metadata.customTitle.trim();
+  }
+  if (metadata.mode) {
+    sessionRecord.isCoordinatorMode = metadata.mode === 'coordinator';
+  }
+  if (typeof metadata.cwd === 'string' && metadata.cwd.trim()) {
+    sessionRecord.workspace = metadata.cwd.trim();
+  }
+  if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
+    sessionRecord.remoteWorkspace = metadata.remoteWorkspace.trim();
+  }
+}
+
+async function loadSessionHistoryFromSource(sessionRecord) {
+  if (!sessionRecord?.underlyingSessionId) {
+    return sessionRecord.history;
+  }
+
+  if (sessionRecord.runtime) {
+    return sessionRecord.history;
+  }
+
+  if (sessionRecord.historyLoadedFromSource) {
+    return sessionRecord.history;
+  }
+
+  if (sessionRecord.busy && Array.isArray(sessionRecord.history) && sessionRecord.history.length > 0) {
+    return sessionRecord.history;
+  }
+
+  if (sessionRecord.agentMode === 'remote-direct') {
+    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+    const context = await fetchRemoteDirectSessionContext({
+      serverUrl,
+      authToken,
+      sessionId: sessionRecord.underlyingSessionId,
+    });
+    const history = Array.isArray(context?.context?.messages) ? context.context.messages : [];
+    syncSessionRecordHistory(sessionRecord, history, {
+      sessionId: typeof context?.session?.sessionId === 'string'
+        ? context.session.sessionId
+        : sessionRecord.underlyingSessionId,
+      customTitle: typeof context?.context?.customTitle === 'string'
+        ? context.context.customTitle
+        : undefined,
+      remoteWorkspace: typeof context?.session?.workDir === 'string'
+        ? context.session.workDir
+        : undefined,
+    });
+    schedulePersistSession(sessionRecord);
+    emitSessionMeta(sessionRecord);
+    return sessionRecord.history;
+  }
+
+  const loadClaudeSessionSnapshot = await getLoadClaudeSessionSnapshotFn();
+  const snapshot = await loadClaudeSessionSnapshot(sessionRecord.underlyingSessionId, {
+    cwdHint: sessionRecord.workspace,
+  });
+  if (!snapshot) {
+    throw new Error(`无法从 Claude transcript 恢复会话：${sessionRecord.underlyingSessionId}`);
+  }
+
+  syncSessionRecordHistory(sessionRecord, snapshot.messages, {
+    sessionId: snapshot.metadata.sourceSessionId || snapshot.metadata.sessionId,
+    customTitle: snapshot.metadata.customTitle,
+    cwd: snapshot.metadata.cwd,
+    mode: snapshot.metadata.mode,
+  });
+  schedulePersistSession(sessionRecord);
+  emitSessionMeta(sessionRecord);
+  return sessionRecord.history;
+}
+
 function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
   sessionRecord.history.push(event);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
   schedulePersistSession(sessionRecord);
-  traceEventFlow('session-history:push', {
-    sessionId: sessionRecord.id,
-    isCoordinatorMode: Boolean(sessionRecord.isCoordinatorMode),
-  }, event);
   if (sender && !sender.isDestroyed()) {
-    traceEventFlow('ipc:agent:event', {
-      sessionId: sessionRecord.id,
-      target: 'main-renderer',
-    }, event);
     sender.send('agent:event', { sessionId: sessionRecord.id, payload: event });
   }
+}
+
+function maybeUpdateUnderlyingSessionId(target, nextSessionId) {
+  if (typeof nextSessionId !== 'string' || !nextSessionId.trim()) {
+    return;
+  }
+
+  // Remote-direct sessions must keep the server-side session ID returned by
+  // /api/v1/sessions. Streamed SDK messages can carry a different Claude
+  // transcript/session ID, and persisting that value breaks later
+  // /api/v1/sessions/:id lookups with "Session not found".
+  if (target?.agentMode === 'remote-direct') {
+    return;
+  }
+
+  target.underlyingSessionId = nextSessionId;
 }
 
 function setPendingPlanApproval(sessionRecord, pendingPlanApproval) {
@@ -1679,11 +1705,6 @@ async function runSessionPrompt({
     schedulePersistSession(sessionRecord, true);
     emitSessionMeta(sessionRecord);
     if (!sender.isDestroyed()) {
-      traceEventFlow('ipc:agent:event', {
-        sessionId: sessionRecord.id,
-        target: 'main-renderer',
-        phase: 'user-prompt',
-      }, userEvent);
       sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
     }
   }
@@ -1697,11 +1718,28 @@ async function runSessionPrompt({
   try {
     let latestAssistantText = '';
     let streamedAssistantText = '';
+    let skippedInitialReplayUser = false;
+    const expectedVisibleUserPrompt =
+      typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
 
     for await (const message of runtime.send(runtimePrompt)) {
-      if (message.session_id) {
-        sessionRecord.underlyingSessionId = message.session_id;
+      if (
+        !skippedInitialReplayUser &&
+        expectedVisibleUserPrompt &&
+        message?.type === 'user' &&
+        message?.parent_tool_use_id == null &&
+        !message?.tool_use_result &&
+        extractTextFromUserReplayMessage(message) === expectedVisibleUserPrompt
+        && (
+          message?.isReplay === true ||
+          sessionRecord.agentMode === 'remote-direct'
+        )
+      ) {
+        skippedInitialReplayUser = true;
+        continue;
       }
+
+      maybeUpdateUnderlyingSessionId(sessionRecord, message.session_id);
       sessionRecord.history.push(message);
       sessionRecord.updatedAt = Date.now();
       sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
@@ -1720,11 +1758,6 @@ async function runSessionPrompt({
       }
       schedulePersistSession(sessionRecord);
       if (!sender.isDestroyed()) {
-        traceEventFlow('ipc:agent:event', {
-          sessionId: sessionRecord.id,
-          target: 'main-renderer',
-          phase: 'runtime-stream',
-        }, message);
         sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
       }
     }
@@ -1752,11 +1785,6 @@ async function runSessionPrompt({
     sessionRecord.history.push(errorEvent);
     schedulePersistSession(sessionRecord, true);
     if (!sender.isDestroyed()) {
-      traceEventFlow('ipc:agent:event', {
-        sessionId: sessionRecord.id,
-        target: 'main-renderer',
-        phase: 'runtime-error',
-      }, errorEvent);
       sender.send('agent:event', { sessionId: sessionRecord.id, payload: errorEvent });
     }
     throw error;
@@ -2348,9 +2376,7 @@ async function sendPromptToAppAgent(appState, payload = {}) {
       let streamedAssistantText = '';
 
       for await (const message of runtime.send(runtimePrompt)) {
-        if (message.session_id) {
-          appState.underlyingSessionId = message.session_id;
-        }
+        maybeUpdateUnderlyingSessionId(appState, message.session_id);
         if (message.type === 'assistant') {
           const assistantText = extractTextFromAssistantMessage(message);
           if (assistantText) {
@@ -2700,13 +2726,6 @@ async function runPlanExecution(execSessionRecord, execWindow, execState, origin
 
   const sendEvent = (channel, data) => {
     if (execWindow.webContents.isDestroyed()) return;
-    if (channel === 'execution:event') {
-      traceEventFlow('ipc:execution:event', {
-        executionSessionId: execSessionRecord.id,
-        originalSessionId: execState.originalSessionId,
-        target: 'execution-window',
-      }, data?.payload || data);
-    }
     execWindow.webContents.send(channel, data);
     // Also send to bubble window if it exists
     if (execState.bubbleWindow && !execState.bubbleWindow.isDestroyed()) {
@@ -2754,9 +2773,7 @@ Important:
 
   try {
     for await (const message of runtime.send(runtimePrompt)) {
-      if (message.session_id) {
-        execSessionRecord.underlyingSessionId = message.session_id;
-      }
+      maybeUpdateUnderlyingSessionId(execSessionRecord, message.session_id);
       execSessionRecord.history.push(message);
       execSessionRecord.updatedAt = Date.now();
       execSessionRecord.preview = deriveSessionPreview(execSessionRecord.history);
@@ -2789,11 +2806,6 @@ Important:
         sessionId: execState.originalSessionId,
         payload: { type: 'message', message: { role: 'user', content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }] } },
       });
-      traceEventFlow('ipc:agent:event', {
-        sessionId: execState.originalSessionId,
-        target: 'main-renderer',
-        phase: 'plan-execution-complete',
-      }, { type: 'message', message: { role: 'user', content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }] } });
     }
   } catch (error) {
     execSessionRecord.busy = false;
@@ -2802,11 +2814,6 @@ Important:
     const message = error instanceof Error ? error.message : String(error);
     sendEvent('execution:event', { type: 'error', message });
     sendEvent('execution:state', { busy: false });
-    traceEventFlow('ipc:agent:event', {
-      sessionId: execState.originalSessionId,
-      target: 'main-renderer',
-      phase: 'plan-execution-error',
-    }, { type: 'plan_execution_error', message });
     notifyMainWindow('agent:event', {
       sessionId: execState.originalSessionId,
       payload: { type: 'plan_execution_error', message },
@@ -2861,6 +2868,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title } = {}) {
     underlyingSessionId: null,
     pendingPlanApproval: null,
     history: [],
+    historyLoadedFromSource: false,
     runtime: null,
     resumeReadOnlyReason: null,
     workspaceWatcher: null,
@@ -3134,10 +3142,6 @@ async function ensureRuntime(sessionRecord) {
 }
 
 async function resumeSessionRecord(sessionRecord) {
-  const modeMismatchReason = getSessionModeMismatchReason(sessionRecord);
-  if (modeMismatchReason) {
-    return null;
-  }
   if (sessionRecord.agentMode === 'remote-direct' || sessionRecord.isSubAgent) {
     return null;
   }
@@ -3159,16 +3163,11 @@ async function resumeSessionRecord(sessionRecord) {
   }
 
   const targetSessionId = sessionRecord.underlyingSessionId;
-  const transcriptPath = getTranscriptPathForWorkspace(
-    sessionRecord.workspace,
-    targetSessionId,
-  );
   const resumeClaudeSession = await getResumeClaudeSessionFn();
 
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...buildClaudeSessionConfig(sessionRecord.workspace),
-      sourceJsonlFile: transcriptPath || undefined,
       onPermissionRequest: async (toolName, input) => {
         const toolLabel = toolName || 'Tool';
         const detailParts = [];
@@ -3207,6 +3206,7 @@ async function resumeSessionRecord(sessionRecord) {
 
     sessionRecord.runtime = resumed.session;
     sessionRecord.resumeReadOnlyReason = null;
+    sessionRecord.historyLoadedFromSource = true;
     sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
     sessionRecord.history = Array.isArray(resumed.messages) ? resumed.messages : [];
     sessionRecord.messageCount = sessionRecord.history.length;
@@ -3649,9 +3649,49 @@ ipcMain.handle('agent:get-status', () => getBootStatus());
 ipcMain.handle('agent:get-auth-debug', async () => getAuthDebugSnapshot());
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:get-adapter-config', () => {
+  const adapterConfigPath = path.join(MOSS_HOME, 'adapters.json');
+  try {
+    if (!fs.existsSync(adapterConfigPath)) return {};
+    const raw = fs.readFileSync(adapterConfigPath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+});
+ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => {
+  const adapterConfigPath = path.join(MOSS_HOME, 'adapters.json');
+  let current = {};
+  try {
+    if (fs.existsSync(adapterConfigPath)) {
+      const raw = fs.readFileSync(adapterConfigPath, 'utf8');
+      current = JSON.parse(raw);
+    }
+  } catch { /* ignore */ }
+  const merged = { ...current, ...payload };
+  if (payload.telegram) merged.telegram = { ...current.telegram, ...payload.telegram };
+  if (payload.feishu) merged.feishu = { ...current.feishu, ...payload.feishu };
+  if (payload.pairing !== undefined) merged.pairing = { ...current.pairing, ...payload.pairing };
+  fs.mkdirSync(MOSS_HOME, { recursive: true });
+  fs.writeFileSync(adapterConfigPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  // Re-read to return (masking secrets like the server does)
+  try {
+    const fresh = JSON.parse(fs.readFileSync(adapterConfigPath, 'utf8'));
+    if (fresh.telegram?.botToken) fresh.telegram.botToken = '****' + fresh.telegram.botToken.slice(-4);
+    if (fresh.feishu?.appSecret) fresh.feishu.appSecret = '****' + fresh.feishu.appSecret.slice(-4);
+    if (fresh.feishu?.encryptKey) fresh.feishu.encryptKey = '****' + fresh.feishu.encryptKey.slice(-4);
+    if (fresh.feishu?.verificationToken) fresh.feishu.verificationToken = '****' + fresh.feishu.verificationToken.slice(-4);
+    if (fresh.pairing?.code) fresh.pairing.code = '******';
+    return fresh;
+  } catch {
+    return merged;
+  }
+});
 
 ipcMain.handle('agent:list-sessions', () => {
+  const currentMode = getDesktopAgentMode();
   return Array.from(sessions.values())
+    .filter(s => (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 });
@@ -3667,29 +3707,14 @@ ipcMain.handle('agent:create-session', (_event, payload = {}) => {
   };
 });
 
-ipcMain.handle('agent:get-session', (_event, { sessionId }) => {
+ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
-  return resumeSessionRecord(sessionRecord).then((resumed) => {
-    const history = resumed?.history ?? sessionRecord.history;
-    const readOnlyReason = getSessionReadOnlyReason(sessionRecord);
-    const readOnlyHistory = readOnlyReason
-      ? [
-          ...history,
-          {
-            type: 'error',
-            message: `当前会话为只读：${readOnlyReason}`,
-            timestamp: Date.now(),
-            readOnly: true,
-          },
-        ]
-      : history;
-
-    return {
-      ...getSessionSummary(sessionRecord),
-      history: readOnlyHistory,
-      workerSummariesJson: sessionRecord.workerSummariesJson || null,
-    };
-  });
+  const history = await loadSessionHistoryFromSource(sessionRecord);
+  return {
+    ...getSessionSummary(sessionRecord),
+    history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+  };
 });
 
 ipcMain.handle('agent:set-worker-summaries', (_event, { sessionId, workerSummariesJson }) => {
@@ -4200,15 +4225,8 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
   }
-  const readOnlyReason = getSessionReadOnlyReason(sessionRecord);
-  if (readOnlyReason) {
-    throw new Error(readOnlyReason);
-  }
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
     await resumeSessionRecord(sessionRecord);
-  }
-  if (sessionRecord.resumeReadOnlyReason) {
-    throw new Error(`当前会话未成功恢复，不能继续写入：${sessionRecord.resumeReadOnlyReason}`);
   }
 
   // Store coordinator mode flag on sessionRecord so runtime can read it
@@ -4541,12 +4559,9 @@ ipcMain.handle('coordinator:list-tasks', async (_event, { sessionId }) => {
 });
 
 ipcMain.handle('execution:create-for-teammate', async (event, { sessionId, taskId, description, prompt }) => {
-  console.log(`[execution:create-for-teammate] Called with taskId=${taskId}, description=${description}`);
-
   // Check if already created for this taskId
   for (const state of executionWindowStates.values()) {
     if (state.teammateTaskId === taskId && state.originalSessionId === sessionId) {
-      console.log(`[execution:create-for-teammate] Already exists for taskId=${taskId}, skipping`);
       return { ok: true, executionSessionId: state.id, alreadyExists: true };
     }
   }
@@ -4555,7 +4570,6 @@ ipcMain.handle('execution:create-for-teammate', async (event, { sessionId, taskI
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   const mainWin = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
   if (!mainWin) {
-    console.log(`[execution:create-for-teammate] No main window available`);
     return { error: 'No main window' };
   }
 
@@ -4623,7 +4637,6 @@ ipcMain.handle('execution:create-for-teammate', async (event, { sessionId, taskI
   execWindow.hide();
 
   execWindow.webContents.once('did-finish-load', () => {
-    console.log(`[execution:create-for-teammate] Window loaded for ${taskId}`);
     emitToExecutionWindow(execWindow.webContents, 'execution:init', {
       originalPrompt: prompt || description || 'Worker task',
       plan: prompt || description || 'Worker task',
@@ -4631,10 +4644,8 @@ ipcMain.handle('execution:create-for-teammate', async (event, { sessionId, taskI
       workspace: execWorkspace,
     });
     // Don't show window - just add to ExecutionPetPanel as a hidden/minimized icon
-    console.log(`[execution:create-for-teammate] Window ready for ${taskId} (minimized)`);
   });
 
-  console.log(`[execution:create-for-teammate] Returning success for ${taskId}, execSessionId=${execSessionId}`);
   return { ok: true, executionSessionId: execSessionId };
 });
 
@@ -4642,7 +4653,6 @@ ipcMain.handle('execution:update-teammate-state', async (event, { taskId, sessio
   // Find execution window by teammateTaskId and update its state
   for (const state of executionWindowStates.values()) {
     if (state.teammateTaskId === taskId && state.originalSessionId === sessionId) {
-      console.log(`[execution:update-teammate-state] Found window for taskId=${taskId}, completed=${completed}`);
       if (completed) {
         state.busy = false;  // Update the busy state so execution:list returns correct value
         if (!state.window.isDestroyed()) {
@@ -4653,7 +4663,6 @@ ipcMain.handle('execution:update-teammate-state', async (event, { taskId, sessio
       return { ok: true };
     }
   }
-  console.log(`[execution:update-teammate-state] No window found for taskId=${taskId}`);
   return { ok: false, error: 'Not found' };
 });
 
@@ -4706,14 +4715,6 @@ ipcMain.handle('execution:send', async (event, { message }) => {
   const sendEvent = (channel, data) => {
     // Send to main window
     if (!execState.window.isDestroyed()) {
-      if (channel === 'execution:event') {
-        traceEventFlow('ipc:execution:event', {
-          executionSessionId: sessionRecord.id,
-          originalSessionId: execState.originalSessionId,
-          teammateTaskId: execState.teammateTaskId,
-          target: 'execution-window',
-        }, data?.payload || data);
-      }
       execState.window.webContents.send(channel, data);
     }
     // Send to bubble if it exists
@@ -4740,9 +4741,7 @@ ipcMain.handle('execution:send', async (event, { message }) => {
   try {
     const runtime = await ensureRuntime(sessionRecord);
     for await (const msg of runtime.send(message)) {
-      if (msg.session_id) {
-        sessionRecord.underlyingSessionId = msg.session_id;
-      }
+      maybeUpdateUnderlyingSessionId(sessionRecord, msg.session_id);
       sessionRecord.history.push(msg);
       sessionRecord.updatedAt = Date.now();
       sessionRecord.preview = deriveSessionPreview(sessionRecord.history);

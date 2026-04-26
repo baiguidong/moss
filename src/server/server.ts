@@ -10,6 +10,34 @@ import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { RuntimeService } from './runtimeService.js'
+import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
+import {
+  fetchAgentHubAssistantDetail,
+  fetchAgentHubAssistants,
+  fetchAgentHubCategories,
+  fetchAgentHubSkillDetailsByIds,
+  getInstalledAssistants,
+  installHubAssistant,
+  type AgentHubAssistant,
+  uninstallAssistant,
+  updateInstalledAssistantMeta,
+} from './agentStore.js'
+import {
+  fetchSkillHubCategories,
+  fetchSkillHubSkillDetail,
+  fetchSkillHubSkills,
+  getInstalledSkills,
+  importLocalSkillArchive,
+  importLocalSkillDirectory,
+  installHubSkill,
+  setInstalledSkillEnabled,
+  type SkillHubSkill,
+  uninstallSkill,
+} from './skillStore.js'
+import { createAdaptersApi } from './api/adapters.js'
+import { adapterProcessManager } from './adapterProcessManager.js'
+import { loadBudgetStats } from './budgetStats.js'
+import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
 
@@ -74,6 +102,22 @@ function serializeSession(session: {
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
   }
+}
+
+function parseOptionalTimestampQuery(
+  value: string | null,
+  paramName: string,
+): number | null {
+  if (value === null || value.trim() === '') {
+    return null
+  }
+
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new HttpError(400, `Invalid ${paramName} query parameter`)
+  }
+
+  return parsed
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -205,6 +249,70 @@ function canAccessSession(
   )
 }
 
+function resolveAdapterTargetUserId(
+  auth: AuthContext,
+  authService: AuthService,
+  requestedUserId: string | null | undefined,
+): string {
+  const targetUserId =
+    typeof requestedUserId === 'string' ? requestedUserId.trim() : ''
+
+  if (!targetUserId || targetUserId === auth.userId) {
+    return auth.userId
+  }
+
+  if (!hasScope(auth.scopes, 'admin:settings')) {
+    throw new AuthServiceError(403, 'Missing scope: admin:settings')
+  }
+
+  if (!authService.getUserOrNull(targetUserId, auth.orgId)) {
+    throw new HttpError(404, 'Unknown user_id')
+  }
+
+  return targetUserId
+}
+
+function listAdapterProcessStatusesForUser(
+  orgId: string,
+  userId: string,
+): Record<
+  string,
+  {
+    status: 'running' | 'stopped' | 'error'
+    pid: number | null
+    error: string | null
+    startedAt: number | null
+    orgId: string
+    userId: string
+    platform: 'telegram' | 'feishu'
+  }
+> {
+  const result: Record<
+    string,
+    {
+      status: 'running' | 'stopped' | 'error'
+      pid: number | null
+      error: string | null
+      startedAt: number | null
+      orgId: string
+      userId: string
+      platform: 'telegram' | 'feishu'
+    }
+  > = {}
+
+  for (const platform of ['telegram', 'feishu'] as const) {
+    const key = `${orgId}:${userId}:${platform}`
+    result[key] = {
+      ...adapterProcessManager.getStatus(platform, orgId, userId),
+      orgId,
+      userId,
+      platform,
+    }
+  }
+
+  return result
+}
+
 function resolveAdminDistDir(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [
@@ -310,6 +418,7 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
+  const adaptersApi = createAdaptersApi(runtime.store.db)
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -415,9 +524,74 @@ export function startServer(
         throw new HttpError(401, 'Unauthorized')
       }
 
+      if (req.method === 'GET' && pathname === '/api/v1/roles') {
+        authService.requireScope(auth, 'admin:users')
+        writeJson(res, 200, authService.listRoles())
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/departments') {
+        authService.requireScope(auth, 'admin:users')
+        writeJson(res, 200, authService.listDepartments(auth.orgId, auth))
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/departments') {
+        authService.requireScope(auth, 'admin:users')
+        const body = await readJsonBody(req)
+        writeJson(
+          res,
+          200,
+          authService.createDepartment({
+            orgId: auth.orgId,
+            name: typeof body.name === 'string' ? body.name : '',
+            parentId:
+              body.parent_id === null || typeof body.parent_id === 'string'
+                ? body.parent_id
+                : undefined,
+          }),
+        )
+        return
+      }
+
+      const departmentMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)$/)
+      if (req.method === 'PATCH' && departmentMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const departmentId = departmentMatch[1] || ''
+        const body = await readJsonBody(req)
+        writeJson(
+          res,
+          200,
+          authService.updateDepartment({
+            orgId: auth.orgId,
+            departmentId,
+            name: typeof body.name === 'string' ? body.name : undefined,
+            parentId:
+              body.parent_id === null || typeof body.parent_id === 'string'
+                ? body.parent_id
+                : undefined,
+          }),
+        )
+        return
+      }
+
+      if (req.method === 'DELETE' && departmentMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const departmentId = departmentMatch[1] || ''
+        writeJson(
+          res,
+          200,
+          authService.deleteDepartment({
+            orgId: auth.orgId,
+            departmentId,
+          }),
+        )
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/users') {
         authService.requireScope(auth, 'admin:users')
-        writeJson(res, 200, authService.listUsers(auth.orgId))
+        writeJson(res, 200, authService.listUsers(auth.orgId, auth))
         return
       }
 
@@ -431,9 +605,13 @@ export function startServer(
             orgId: auth.orgId,
             email: typeof body.email === 'string' ? body.email : '',
             name: typeof body.name === 'string' ? body.name : '',
-            role: typeof body.role === 'string' ? body.role : 'member',
+            departmentId:
+              body.department_id === null || typeof body.department_id === 'string'
+                ? body.department_id
+                : undefined,
+            role: typeof body.role === 'string' ? body.role : 'user',
             password: typeof body.password === 'string' ? body.password : '',
-          }),
+          }, auth),
         )
         return
       }
@@ -450,10 +628,14 @@ export function startServer(
             orgId: auth.orgId,
             userId,
             name: typeof body.name === 'string' ? body.name : undefined,
+            departmentId:
+              body.department_id === null || typeof body.department_id === 'string'
+                ? body.department_id
+                : undefined,
             role: typeof body.role === 'string' ? body.role : undefined,
             status:
               typeof body.status === 'string' ? body.status : undefined,
-          }),
+          }, auth),
         )
         return
       }
@@ -470,7 +652,7 @@ export function startServer(
             orgId: auth.orgId,
             userId,
             password: typeof body.password === 'string' ? body.password : '',
-          }),
+          }, auth),
         )
         return
       }
@@ -479,7 +661,7 @@ export function startServer(
       if (req.method === 'GET' && userSessionsMatch) {
         authService.requireScope(auth, 'admin:users')
         const userId = userSessionsMatch[1] || ''
-        const user = authService.getUserOrNull(userId, auth.orgId)
+        const user = authService.getUserOrNull(userId, auth.orgId, auth)
         if (!user) {
           throw new HttpError(404, 'Unknown user_id')
         }
@@ -494,7 +676,7 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/api-keys') {
         authService.requireScope(auth, 'admin:api_keys')
-        writeJson(res, 200, authService.listApiKeys(auth.orgId))
+        writeJson(res, 200, authService.listApiKeys(auth.orgId, auth))
         return
       }
 
@@ -511,7 +693,7 @@ export function startServer(
             scopes: Array.isArray(body.scopes)
               ? body.scopes.filter((scope): scope is string => typeof scope === 'string')
               : [],
-          }),
+          }, auth),
         )
         return
       }
@@ -520,7 +702,427 @@ export function startServer(
       if (req.method === 'DELETE' && apiKeyMatch) {
         authService.requireScope(auth, 'admin:api_keys')
         const keyId = apiKeyMatch[1] || ''
-        writeJson(res, 200, authService.revokeApiKey({ orgId: auth.orgId, keyId }))
+        writeJson(res, 200, authService.revokeApiKey({ orgId: auth.orgId, keyId }, auth))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/settings/system') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, getSystemSettings())
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/settings/system') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        writeJson(res, 200, updateSystemSettings(body))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agent-hub/categories') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, await fetchAgentHubCategories())
+        return
+      }
+
+      if (
+        req.method === 'GET' &&
+        pathname === '/api/v1/agent-hub/assistants/cursor'
+      ) {
+        authService.requireScope(auth, 'admin:settings')
+        const limitRaw = url.searchParams.get('limit')
+        const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined
+
+        writeJson(
+          res,
+          200,
+          await fetchAgentHubAssistants({
+            cursor: url.searchParams.get('cursor') || undefined,
+            limit: Number.isFinite(limit) ? limit : undefined,
+            query: url.searchParams.get('query') || undefined,
+            category: url.searchParams.get('category') || undefined,
+          }),
+        )
+        return
+      }
+
+      const agentHubDetailMatch = pathname.match(
+        /^\/api\/v1\/agent-hub\/assistants\/([^/]+)$/,
+      )
+      if (req.method === 'GET' && agentHubDetailMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const assistantId = decodeURIComponent(agentHubDetailMatch[1] || '')
+        writeJson(res, 200, await fetchAgentHubAssistantDetail(assistantId))
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agent-hub/skills/by-ids') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const skillIds = Array.isArray(body.skillIds)
+          ? body.skillIds
+              .map(skillId => String(skillId || '').trim())
+              .filter(Boolean)
+          : []
+        writeJson(res, 200, await fetchAgentHubSkillDetailsByIds(skillIds))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, await getInstalledAssistants())
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agents/install') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const assistantMeta = isJsonBody(body.assistantMeta)
+          ? (body.assistantMeta as AgentHubAssistant)
+          : null
+        const selectedSkillIds = Array.isArray(body.selectedSkillIds)
+          ? body.selectedSkillIds
+              .map(skillId => String(skillId || '').trim())
+              .filter(Boolean)
+          : []
+
+        writeJson(
+          res,
+          200,
+          await installHubAssistant({
+            assistantName:
+              typeof body.assistantName === 'string' ? body.assistantName : '',
+            sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
+            version: typeof body.version === 'string' ? body.version : undefined,
+            checksum:
+              typeof body.checksum === 'string' ? body.checksum : undefined,
+            assistantMeta,
+            selectedSkillIds,
+          }),
+        )
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agents/uninstall') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        await uninstallAssistant({
+          assistantName:
+            typeof body.assistantName === 'string' ? body.assistantName : '',
+          sourcePath:
+            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/agents/meta') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const updates = isJsonBody(body.updates) ? body.updates : {}
+
+        await updateInstalledAssistantMeta({
+          assistantName:
+            typeof body.assistantName === 'string' ? body.assistantName : '',
+          updates: {
+            display_name:
+              typeof updates.display_name === 'string'
+                ? updates.display_name
+                : undefined,
+            description:
+              typeof updates.description === 'string'
+                ? updates.description
+                : undefined,
+            avatar:
+              typeof updates.avatar === 'string' ? updates.avatar : undefined,
+          },
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/skill-hub/categories') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, await fetchSkillHubCategories())
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/skill-hub/skills/cursor') {
+        authService.requireScope(auth, 'admin:settings')
+        const category =
+          typeof url.searchParams.get('category') === 'string'
+            ? url.searchParams.get('category') || ''
+            : typeof url.searchParams.get('categories') === 'string'
+              ? url.searchParams.get('categories') || ''
+              : ''
+        const limitRaw = url.searchParams.get('limit')
+        const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined
+
+        writeJson(
+          res,
+          200,
+          await fetchSkillHubSkills({
+            cursor: url.searchParams.get('cursor') || undefined,
+            limit: Number.isFinite(limit) ? limit : undefined,
+            query: url.searchParams.get('query') || undefined,
+            category: category || undefined,
+            tenantId: url.searchParams.get('tenant_id') || undefined,
+          }),
+        )
+        return
+      }
+
+      const skillHubDetailMatch = pathname.match(/^\/api\/v1\/skill-hub\/skills\/([^/]+)$/)
+      if (req.method === 'GET' && skillHubDetailMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const skillId = decodeURIComponent(skillHubDetailMatch[1] || '')
+        writeJson(res, 200, await fetchSkillHubSkillDetail(skillId))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, await getInstalledSkills())
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/skills/install') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const skillMeta = isJsonBody(body.skillMeta)
+          ? (body.skillMeta as SkillHubSkill)
+          : null
+        writeJson(
+          res,
+          200,
+          await installHubSkill({
+            skillName: typeof body.skillName === 'string' ? body.skillName : '',
+            sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
+            version: typeof body.version === 'string' ? body.version : undefined,
+            checksum:
+              typeof body.checksum === 'string' ? body.checksum : undefined,
+            skillMeta,
+          }),
+        )
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/skills/uninstall') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        await uninstallSkill({
+          skillName: typeof body.skillName === 'string' ? body.skillName : '',
+          sourcePath:
+            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/skills/enabled') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        if (typeof body.enabled !== 'boolean') {
+          throw new HttpError(400, 'enabled must be a boolean')
+        }
+        await setInstalledSkillEnabled({
+          skillName: typeof body.skillName === 'string' ? body.skillName : '',
+          enabled: body.enabled,
+          sourcePath:
+            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/skills/import/archive') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        writeJson(
+          res,
+          200,
+          await importLocalSkillArchive({
+            fileName: typeof body.fileName === 'string' ? body.fileName : '',
+            archiveBase64:
+              typeof body.archiveBase64 === 'string' ? body.archiveBase64 : '',
+          }),
+        )
+        return
+      }
+
+      if (
+        req.method === 'POST' &&
+        pathname === '/api/v1/skills/import/directory'
+      ) {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const entries = Array.isArray(body.entries)
+          ? body.entries
+              .filter(isJsonBody)
+              .map(entry => ({
+                path: typeof entry.path === 'string' ? entry.path : '',
+                contentBase64:
+                  typeof entry.contentBase64 === 'string'
+                    ? entry.contentBase64
+                    : '',
+              }))
+              .filter(entry => entry.path && entry.contentBase64)
+          : []
+        writeJson(
+          res,
+          200,
+          await importLocalSkillDirectory({
+            entries,
+          }),
+        )
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/all') {
+        authService.requireScope(auth, 'admin:settings')
+        const rows = adaptersApi.listAll(auth.orgId)
+        writeJson(res, 200, rows)
+        return
+      }
+
+      if (pathname === '/api/v1/adapters') {
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+        if (req.method === 'GET') {
+          const result = adaptersApi.list(auth.orgId, targetUserId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          const {
+            platform: rawPlatform,
+            userId: _ignoredUserId,
+            ...patch
+          } = body
+          const platform =
+            rawPlatform === 'feishu' ? 'feishu' : 'telegram'
+          const result = adaptersApi.upsert(
+            auth.orgId,
+            targetUserId,
+            platform,
+            patch as Record<string, unknown>,
+          )
+          if ('error' in result) {
+            writeJson(res, 400, result)
+            return
+          }
+          writeJson(res, 200, result)
+          return
+        }
+        throw new HttpError(405, `Method ${req.method} not allowed`)
+      }
+
+      // PUT /api/v1/adapters/:platform — platform-specific upsert
+      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(telegram|feishu)$/)
+      if (adapterPlatformMatch) {
+        const platform = adapterPlatformMatch[1]!
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+
+        if (req.method === 'GET') {
+          const result = adaptersApi.list(auth.orgId, targetUserId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          const {
+            userId: _ignoredUserId,
+            platform: _ignoredPlatform,
+            ...patch
+          } = body
+          const result = adaptersApi.upsert(
+            auth.orgId,
+            targetUserId,
+            platform,
+            patch as Record<string, unknown>,
+          )
+          if ('error' in result) {
+            writeJson(res, 400, result)
+            return
+          }
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = adaptersApi.remove(auth.orgId, targetUserId, platform)
+          writeJson(res, 200, result)
+          return
+        }
+        throw new HttpError(405, `Method ${req.method} not allowed`)
+      }
+
+      if (pathname === '/api/v1/adapters/processes') {
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+        writeJson(
+          res,
+          200,
+          listAdapterProcessStatusesForUser(auth.orgId, targetUserId),
+        )
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/restart' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.restart(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/start' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.start(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/stop' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.stop(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
         return
       }
 
@@ -533,6 +1135,53 @@ export function startServer(
           activeOnly,
         })
         writeJson(res, 200, { sessions })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/dashboard/stats') {
+        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        const from = parseOptionalTimestampQuery(
+          url.searchParams.get('from'),
+          'from',
+        )
+        const to = parseOptionalTimestampQuery(url.searchParams.get('to'), 'to')
+        if (from !== null && to !== null && from > to) {
+          throw new HttpError(400, 'Invalid dashboard stats range')
+        }
+
+        const sessions = runtime
+          .listSessionRecords({
+            orgId: auth.orgId,
+            userId: hasScope(auth.scopes, 'sessions:list:any')
+              ? undefined
+              : auth.userId,
+          })
+          .filter(session => {
+            if (from !== null && session.createdAt < from) {
+              return false
+            }
+            if (to !== null && session.createdAt > to) {
+              return false
+            }
+            return true
+          })
+
+        const stats = await loadDashboardStats(sessions)
+        writeJson(res, 200, stats)
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/budget/stats') {
+        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        const sessions = runtime.listSessionRecords({
+          orgId: auth.orgId,
+          userId: hasScope(auth.scopes, 'sessions:list:any')
+            ? undefined
+            : auth.userId,
+        })
+
+        const stats = await loadBudgetStats(sessions)
+        writeJson(res, 200, stats)
         return
       }
 

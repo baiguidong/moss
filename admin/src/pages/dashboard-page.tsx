@@ -1,31 +1,34 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, type ComponentType, type ReactNode } from 'react'
 import { DashboardLayout } from '@/components/dashboard-layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChartContainer, ChartTooltipContent } from '@/components/ui/chart'
-import { getSessions, getHealth } from '@/lib/api/sessions'
+import { getDashboardStats, getSessions, getHealth } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
+import { ApiRequestError, hasAnyScope, hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
-import { Users, MessageSquare, Coins, Activity, RefreshCw, Calendar, TrendingUp } from 'lucide-react'
+import { Users, MessageSquare, Coins, Activity, RefreshCw, Calendar, TrendingUp, Bot } from 'lucide-react'
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer,
   Legend,
 } from 'recharts'
-import type { Session, HealthResponse, AuthUser } from '@/lib/api/types'
+import type {
+  Session,
+  HealthResponse,
+  AuthUser,
+  DashboardStatsResponse,
+} from '@/lib/api/types'
 import { Link } from 'react-router-dom'
 import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns'
 
@@ -63,8 +66,8 @@ function StatCard({
 }: {
   title: string
   value: string | number
-  icon: React.ComponentType<{ className?: string }>
-  description?: string
+  icon: ComponentType<{ className?: string }>
+  description?: ReactNode
   trend?: number
 }) {
   return (
@@ -75,14 +78,12 @@ function StatCard({
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-bold">{value}</div>
-        <div className="flex items-center gap-2 mt-1">
-          {description && <p className="text-xs text-muted-foreground">{description}</p>}
-          {trend !== undefined && trend !== 0 && (
-            <span className={`text-xs ${trend > 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {trend > 0 ? '+' : ''}{trend}%
-            </span>
-          )}
-        </div>
+        {description && <div className="mt-1 text-xs text-muted-foreground">{description}</div>}
+        {trend !== undefined && trend !== 0 && (
+          <div className={`mt-1 text-xs ${trend > 0 ? 'text-green-500' : 'text-red-500'}`}>
+            {trend > 0 ? '+' : ''}{trend}%
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -111,31 +112,50 @@ const DATE_RANGES = [
 ]
 
 export default function DashboardPage() {
-  const { user } = useAuth()
+  const { scopes } = useAuth()
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [dashboardStats, setDashboardStats] = useState<DashboardStatsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [dateRange, setDateRange] = useState(7)
+  const canListSessions = hasAnyScope(scopes, ['sessions:list', 'sessions:list:any'])
+  const canListUsers = hasScope(scopes, 'admin:users')
+
+  const getStatsQuery = useCallback((days: number) => {
+    if (days === -1) {
+      return undefined
+    }
+
+    const now = new Date()
+    return {
+      from: subDays(startOfDay(now), days).getTime(),
+      to: endOfDay(now).getTime(),
+    }
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, healthRes, usersRes] = await Promise.all([
-        getSessions(),
+      const [sessionsRes, healthRes, usersRes, statsRes] = await Promise.all([
+        canListSessions ? getSessions() : Promise.resolve(null),
         getHealth(),
-        getUsers(),
+        canListUsers ? getUsers() : Promise.resolve(null),
+        canListSessions ? getDashboardStats(getStatsQuery(dateRange)) : Promise.resolve(null),
       ])
-      setSessions(sessionsRes.sessions)
+      setSessions(sessionsRes?.sessions ?? [])
       setHealth(healthRes)
-      setUsers(usersRes.users)
+      setUsers(usersRes?.users ?? [])
+      setDashboardStats(statsRes)
     } catch (error) {
-      console.error('Failed to fetch data:', error)
+      if (!(error instanceof ApiRequestError && error.status === 401)) {
+        console.error('Failed to fetch data:', error)
+      }
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [])
+  }, [canListSessions, canListUsers, dateRange, getStatsQuery])
 
   useEffect(() => {
     fetchData()
@@ -166,11 +186,18 @@ export default function DashboardPage() {
 
   // Stats
   const totalSessions = filteredSessions.length
-  const activeSessions = health?.sessions || filteredSessions.filter((s) => s.status === 'active').length
-  const uniqueUsers = new Set(filteredSessions.map((s) => s.userId)).size
-  const activeUsers = new Set(
-    filteredSessions.filter((s) => s.status === 'active').map((s) => s.userId)
-  ).size
+  const activeSessions = filteredSessions.filter((s) =>
+    ['creating', 'active', 'detached'].includes(s.status)
+  ).length
+  const activeAgents = dashboardStats?.agents.active ?? activeSessions
+  const totalAgents = dashboardStats?.agents.total ?? totalSessions
+  const tokenUsage = dashboardStats?.usage ?? {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    totalTokens: 0,
+  }
 
   // Sessions by date
   const sessionsByDate = filteredSessions.reduce((acc, session) => {
@@ -265,13 +292,30 @@ export default function DashboardPage() {
 
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="总用户数" value={uniqueUsers} icon={Users} description="会话用户总数" />
-          <StatCard title="活跃用户" value={activeUsers} icon={Activity} description="当前活跃用户" />
+          <StatCard
+            title="Agent"
+            value={`${activeAgents}/${totalAgents}`}
+            icon={Bot}
+            description="活跃 / 总数"
+          />
+          <StatCard
+            title="总 Token 消耗"
+            value={tokenUsage.totalTokens.toLocaleString()}
+            icon={Coins}
+            description={
+              <div className="space-y-1">
+                <p>输入 {tokenUsage.inputTokens.toLocaleString()} · 输出 {tokenUsage.outputTokens.toLocaleString()}</p>
+                <p>
+                  缓存读 {tokenUsage.cacheReadInputTokens.toLocaleString()} · 写 {tokenUsage.cacheCreationInputTokens.toLocaleString()}
+                </p>
+              </div>
+            }
+          />
           <StatCard title="总会话数" value={totalSessions} icon={MessageSquare} description={`活跃 ${activeSessions}`} />
           <StatCard
             title="服务状态"
             value={health?.ok ? '正常' : '异常'}
-            icon={Coins}
+            icon={Activity}
             description={health?.auth_mode || ''}
           />
         </div>

@@ -1,5 +1,7 @@
 import { type UUID } from 'crypto'
 import { dirname, join } from 'path'
+import type { Message } from '../types/message.js'
+import { prepareSessionResume } from '../utils/sessionResumeCore.js'
 import { loadTranscriptFile } from '../utils/sessionStorage.js'
 import { getSessionUsageSummaryFromTranscriptPath } from '../utils/sessionUsage.js'
 import type { SessionRecord } from './types.js'
@@ -40,7 +42,7 @@ export async function loadSessionContextFromTranscript(session: SessionRecord): 
   customTitle?: string
   tag?: string
   summary?: string
-  messages: TranscriptMessage[]
+  messages: Message[]
   usage: Awaited<ReturnType<typeof getSessionUsageSummaryFromTranscriptPath>>
 } | null> {
   const loaded = await loadTranscriptFile(session.transcriptPath)
@@ -49,6 +51,12 @@ export async function loadSessionContextFromTranscript(session: SessionRecord): 
   }
   const lastMessage = findLatestMessage(loaded.messages.values())
   if (!lastMessage) {
+    return null
+  }
+  const prepared = await prepareSessionResume(session.transcriptSessionId, {
+    sourceJsonlFile: session.transcriptPath,
+  })
+  if (!prepared) {
     return null
   }
   const usage = await getSessionUsageSummaryFromTranscriptPath({
@@ -64,7 +72,7 @@ export async function loadSessionContextFromTranscript(session: SessionRecord): 
     customTitle: loaded.customTitles.get(lastMessage.sessionId as UUID),
     tag: loaded.tags.get(lastMessage.sessionId as UUID),
     summary: loaded.summaries.get(lastMessage.uuid as UUID),
-    messages: buildConversationChain(loaded.messages, lastMessage),
+    messages: prepared.messages,
     usage,
   }
 }

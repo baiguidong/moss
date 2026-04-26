@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   Bot,
-  ChevronDown,
   Copy,
   Check,
   FileText,
@@ -23,17 +22,11 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { ChatTranscript } from "@/components/chat-transcript";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { MessageList } from "@/components/chat/message-list";
 import { FilePreview } from "@/components/file-preview";
-import { MarkdownView } from "@/components/markdown-view";
 import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
-import type { ChatMessage, WorkerThread } from "@/lib/agent-transcript";
+import type { TranscriptRenderMessage, WorkerThread } from "@/lib/agent-transcript";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
 
 type ComposerIntent = "chat" | "plan" | "coordinator";
@@ -85,7 +78,7 @@ function SessionTabBar({
 }) {
   return (
     <div className="shrink-0 border-b border-border/70 bg-background/88 px-3 py-2 backdrop-blur sm:px-4">
-      <div className="mx-auto flex max-w-[980px] items-center justify-between gap-3">
+      <div className="mx-auto flex max-w-[980px] min-w-0 items-center justify-between gap-3">
         <Button
           variant="ghost"
           size="icon"
@@ -97,7 +90,7 @@ function SessionTabBar({
         </Button>
 
         <div className="min-w-0 max-w-[calc(100%-6rem)] rounded-full border border-border/75 bg-card/88 px-4 py-1.5 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.7)]">
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex min-w-0 items-center justify-center gap-2">
             <span className="truncate text-sm font-medium text-foreground">
               {title || "New Session"}
             </span>
@@ -119,125 +112,6 @@ function SessionTabBar({
       </div>
     </div>
   );
-}
-
-type ContentSegment = {
-  type: "text" | "code";
-  value: string;
-  language?: string;
-  incomplete?: boolean;
-};
-
-function parseContentSegments(content: string): ContentSegment[] {
-  const normalized = content.trim();
-  if (!normalized) return [];
-
-  const fenceStartRegex = /```([\w-]*)\n?/gi;
-  const segments: ContentSegment[] = [];
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-
-  while (cursor < normalized.length) {
-    fenceStartRegex.lastIndex = cursor;
-    match = fenceStartRegex.exec(normalized);
-    if (!match) {
-      const trailingText = normalized.slice(cursor).trim();
-      if (trailingText) {
-        segments.push({ type: "text", value: trailingText });
-      }
-      break;
-    }
-
-    const textBefore = normalized.slice(cursor, match.index).trim();
-    if (textBefore) {
-      segments.push({ type: "text", value: textBefore });
-    }
-
-    const codeStart = fenceStartRegex.lastIndex;
-    const fenceEnd = normalized.indexOf("```", codeStart);
-    if (fenceEnd === -1) {
-      segments.push({
-        type: "code",
-        language: match[1] || "",
-        value: normalized.slice(codeStart).trimEnd(),
-        incomplete: true,
-      });
-      break;
-    }
-
-    segments.push({
-      type: "code",
-      language: match[1] || "",
-      value: normalized.slice(codeStart, fenceEnd).trimEnd(),
-    });
-    cursor = fenceEnd + 3;
-  }
-
-  return segments;
-}
-
-function renderTextSegments(content: string, streaming = false) {
-  const segments = parseContentSegments(content);
-
-  if (segments.length === 0) return null;
-
-  return segments.map((segment, index) => {
-    if (segment.type === "code") {
-      const language = (segment.language || "").toLowerCase();
-      const lines = segment.value.split("\n").length;
-      const displayName =
-        language === "app-meta"
-          ? "app-meta.json"
-          : language === "html" || language === "htm"
-            ? "index.html"
-            : segment.language
-              ? `snippet.${segment.language}`
-              : "code.txt";
-
-      return (
-        <Collapsible
-          key={`${segment.type}-${index}`}
-          defaultOpen={false}
-          className="overflow-hidden rounded-2xl border border-border/70 bg-background/70"
-        >
-          <CollapsibleTrigger className="group w-full">
-            <div className="flex items-center justify-between gap-3 px-3 py-3 text-left">
-              <div className="min-w-0 flex items-center gap-2">
-                <FileText className="h-4 w-4 shrink-0 text-primary" />
-                <div className="min-w-0">
-                  <div className="truncate font-mono text-[12px] font-medium text-foreground">
-                    {`Generated ${displayName}`}
-                  </div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    {segment.incomplete && streaming ? "生成中" : `${lines} lines`}
-                    {segment.language ? ` · ${segment.language}` : ""}
-                  </div>
-                </div>
-              </div>
-              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-            </div>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="border-t border-border/70 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              {segment.language || "code"}
-            </div>
-            <pre className="max-h-[26rem] overflow-auto p-3 text-[12px] leading-6 text-foreground">
-              <code>{segment.value}</code>
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
-      );
-    }
-
-    return segment.value.split(/\n{2,}/).map((paragraph, paragraphIndex) => (
-      <p
-        key={`${segment.type}-${index}-${paragraphIndex}`}
-        className="whitespace-pre-wrap break-words leading-7"
-      >
-        {paragraph.trim()}
-      </p>
-    ));
-  });
 }
 
 function IntentChip({
@@ -579,9 +453,11 @@ function ComposerPanel({
           disabled={Boolean(readOnlyReason)}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-7 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
-            isHomeComposer ? "min-h-[160px] pb-4" : "min-h-[92px] pb-36 pr-26",
+            isHomeComposer
+              ? "min-h-[160px] pb-4"
+              : "min-h-[56px] max-h-[132px] overflow-y-auto pb-3 [field-sizing:fixed]",
           )}
-          rows={isHomeComposer ? 5 : 3}
+          rows={isHomeComposer ? 5 : 2}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               if (submitDisabled) {
@@ -600,83 +476,84 @@ function ComposerPanel({
           </div>
         )}
 
-        {!isHomeComposer && attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-4 pb-2">
-            {attachments.map((file, index) => (
-              <FilePreview
-                key={`${file.path}-${index}`}
-                path={file.path}
-                onRemove={() => handleRemoveAttachment(index)}
-              />
-            ))}
-          </div>
-        )}
-
-        {!isHomeComposer && selectedAssistant && (
-          <div className="absolute bottom-12 left-3 flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
-              <Bot className="h-3 w-3" />
-              <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
-              <button
-                type="button"
-                onClick={onClearAssistant}
-                className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          </div>
-        )}
-
-        {!isHomeComposer && (
-          <div className="absolute bottom-3 right-3 flex items-center gap-2">
-            {loading && (
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 rounded-full"
-                onClick={onStop}
-              >
-                <Square className="h-3.5 w-3.5" />
-              </Button>
-            )}
-
-            <Button
-              className="h-9 rounded-full px-3.5 sm:px-4"
-              disabled={submitDisabled}
-              onClick={handleSendClick}
-            >
-              <Send className="h-4 w-4" />
-              发送
-            </Button>
-          </div>
-        )}
-
-        {showModeButtons && (
-          <div className="absolute bottom-3 left-3 flex items-center gap-1">
-            {intentOptions
-              .filter((o) => o.id !== "chat")
-              .map((option) => (
-                <Button
-                  key={option.id}
-                  variant={composerIntent === option.id ? "default" : "outline"}
-                  size="sm"
-                  className={cn(
-                    "h-7 rounded-full px-2.5 text-xs",
-                    composerIntent === option.id && "bg-green-500 hover:bg-green-600 border-green-500"
-                  )}
-                  onClick={() =>
-                    onComposerIntentChange(
-                      composerIntent === option.id ? "chat" : (option.id as ComposerIntent)
-                    )
-                  }
-                >
-                  {option.title}
-                </Button>
-              ))}
-          </div>
-        )}
       </div>
+
+      {!isHomeComposer && (
+        <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+          {attachments.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {attachments.map((file, index) => (
+                <FilePreview
+                  key={`${file.path}-${index}`}
+                  path={file.path}
+                  onRemove={() => handleRemoveAttachment(index)}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedAssistant && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
+                  <Bot className="h-3 w-3" />
+                  <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
+                  <button
+                    type="button"
+                    onClick={onClearAssistant}
+                    className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+
+              {showModeButtons && intentOptions
+                .filter((o) => o.id !== "chat")
+                .map((option) => (
+                  <Button
+                    key={option.id}
+                    variant={composerIntent === option.id ? "default" : "outline"}
+                    size="sm"
+                    className={cn(
+                      "h-7 rounded-full px-2.5 text-xs",
+                      composerIntent === option.id && "border-green-500 bg-green-500 hover:bg-green-600"
+                    )}
+                    onClick={() =>
+                      onComposerIntentChange(
+                        composerIntent === option.id ? "chat" : (option.id as ComposerIntent)
+                      )
+                    }
+                  >
+                    {option.title}
+                  </Button>
+                ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              {loading && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 rounded-full"
+                  onClick={onStop}
+                >
+                  <Square className="h-3.5 w-3.5" />
+                </Button>
+              )}
+
+              <Button
+                className="h-9 rounded-full px-3.5 sm:px-4"
+                disabled={submitDisabled}
+                onClick={handleSendClick}
+              >
+                <Send className="h-4 w-4" />
+                发送
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isHomeComposer && (
         <div className="px-4 py-3 sm:px-5">
@@ -835,7 +712,7 @@ function HomeLanding({
   onClearAssistant?: () => void;
 }) {
   return (
-    <div className="mx-auto flex h-[60%] w-full max-w-[80%] flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto flex h-[60%] w-full max-w-[80%] min-w-0 flex-col justify-center px-4 py-4 sm:px-6 sm:py-6">
       <div className="mb-8 text-center sm:mb-10">
         <h1 className="mt-36 text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
           Hi，今天有什么安排？
@@ -845,7 +722,7 @@ function HomeLanding({
         </p>
       </div>
 
-      <div className="mb-6 flex justify-center gap-4">
+      <div className="mb-6 flex flex-wrap justify-center gap-4">
         {[chatIntentOption, ...intentOptions]
           .map((option) => {
           const isSelected = composerIntent === option.id;
@@ -885,7 +762,7 @@ function HomeLanding({
         onClearAssistant={onClearAssistant}
       />
       {installedAssistants && onSelectAssistant && (
-        <div className="mt-8">
+      <div className="mt-8 min-w-0">
           <AssistantSelectionArea
             assistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
@@ -903,18 +780,18 @@ export function ChatArea({
   selectedAppName,
   loading,
   readOnlyReason,
-  sessionBusy,
   hasActiveSession,
   sessionTitle,
   sessionMessageCount,
   sessionId,
+  sessionWorkspace,
   pendingPlanApproval,
   planDecisionBusy,
   leftCollapsed,
   rightCollapsed,
   composerIntent,
   workerThreads,
-  archivedWorkerThreads,
+  archivedWorkerRounds,
   activeWorkerThreadId,
   onChange,
   onComposerIntentChange,
@@ -930,23 +807,23 @@ export function ChatArea({
   onSelectAssistant,
   onClearAssistant,
 }: {
-  messages: ChatMessage[];
+  messages: TranscriptRenderMessage[];
   value: string;
   selectedAppName: string;
   loading: boolean;
   readOnlyReason?: string | null;
-  sessionBusy?: boolean;
   hasActiveSession: boolean;
   sessionTitle: string;
   sessionMessageCount: number;
   sessionId?: string;
+  sessionWorkspace?: string;
   pendingPlanApproval: PendingPlanApproval | null;
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   composerIntent: ComposerIntent;
   workerThreads: WorkerThread[];
-  archivedWorkerThreads: WorkerThread[];
+  archivedWorkerRounds: WorkerThread[][];
   activeWorkerThreadId: string | null;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
@@ -967,10 +844,6 @@ export function ChatArea({
   const [workspace, setWorkspace] = React.useState<string | undefined>();
 
   React.useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
-
-  React.useEffect(() => {
     if (hasActiveSession) {
       setAttachments([]);
       setWorkspace(undefined);
@@ -983,7 +856,7 @@ export function ChatArea({
 
   if (!hasActiveSession) {
     return (
-      <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
+      <div className="flex h-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
         <HomeLanding
           value={value}
           selectedAppName={selectedAppName}
@@ -1008,7 +881,7 @@ export function ChatArea({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
         title={sessionTitle}
         messageCount={sessionMessageCount}
@@ -1018,9 +891,9 @@ export function ChatArea({
         onToggleRight={onToggleRightSidebar}
       />
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div>
-          <ChatTranscript messages={messages} bottomRef={bottomRef} sessionBusy={sessionBusy} />
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
+        <div className="min-w-0">
+          <MessageList messages={messages} bottomRef={bottomRef} workspace={sessionWorkspace} />
           {pendingPlanApproval && (
             <div className="mx-auto w-full max-w-[980px] px-3 pb-3 sm:px-4 sm:pb-4">
               <PlanApprovalCard
@@ -1034,11 +907,11 @@ export function ChatArea({
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
-        <div className="mx-auto max-w-[980px]">
+      <div className="shrink-0 min-w-0 border-t border-border/70 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
+        <div className="mx-auto max-w-[980px] min-w-0">
           <WorkerThreadPanel
             threads={workerThreads}
-            archivedThreads={archivedWorkerThreads}
+            archivedRounds={archivedWorkerRounds}
             activeThreadId={activeWorkerThreadId}
             onToggleThread={onToggleWorkerThread}
           />

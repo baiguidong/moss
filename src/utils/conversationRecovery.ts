@@ -44,6 +44,7 @@ import {
   isLiteLog,
   loadFullLog,
   loadMessageLogs,
+  loadTranscriptFromFile,
   loadTranscriptFile,
   removeExtraFields,
 } from './sessionStorage.js'
@@ -512,11 +513,10 @@ export async function loadConversationForResume(
         }) ?? null
     } else if (sourceJsonlFile) {
       // --resume with a .jsonl path (cli/print.ts routes on suffix).
-      // Same chain walk as the sid branch below — only the starting
-      // path differs.
-      const loaded = await loadMessagesFromJsonlPath(sourceJsonlFile)
-      messages = loaded.messages
-      sessionId = loaded.sessionId
+      // Load the standard transcript into a full LogOption so the rest of
+      // the resume pipeline sees the same metadata as the normal log path.
+      log = await loadTranscriptFromFile(sourceJsonlFile)
+      sessionId = getSessionIdFromLog(log) as UUID
     } else if (typeof source === 'string') {
       // Load specific session by ID
       log = await getLastSessionLog(source as UUID)

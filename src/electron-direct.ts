@@ -27,18 +27,35 @@ import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
 import type { Message } from './types/message.js'
 
 import { bootstrapHeadless } from './bootstrap/headless.js'
+import { switchSession } from './bootstrap/state.js'
 import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
+import { restoreCostStateForSession } from './cost-tracker.js'
 import { asSessionId, type SessionId } from './types/ids.js'
 import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './utils/sessionIdContext.js'
+import { updateSessionName } from './utils/concurrentSessions.js'
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
 import { sleep } from './utils/sleep.js'
+import { renameRecordingForSession } from './utils/asciicast.js'
 import {
   prepareSessionResume,
   type PreparedSessionResume,
 } from './utils/sessionResumeCore.js'
-import { restoreSessionStateFromLog } from './utils/sessionRestore.js'
+import {
+  exitRestoredWorktree,
+  restoreSessionStateFromLog,
+  restoreWorktreeForResume,
+} from './utils/sessionRestore.js'
+import {
+  adoptResumedSessionFile,
+  clearSessionMetadata,
+  recordContentReplacement,
+  resetSessionFilePointer,
+  restoreSessionMetadata,
+  saveMode,
+} from './utils/sessionStorage.js'
+import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 export { startServer } from './server/server.js'
 export { SessionManager } from './server/sessionManager.js'
 export { DangerousBackend } from './server/backends/dangerousBackend.js'
@@ -136,6 +153,35 @@ type ResolvedClaudeSessionOptions = {
   resumeState?: PreparedSessionResume
 }
 
+let activeSessionStorageKey: string | null = null
+
+async function resolveResumeSourceJsonlFile(
+  sessionId: string | undefined,
+  options: {
+    sourceJsonlFile?: string
+    cwdHint?: string
+  } = {},
+): Promise<string | undefined> {
+  if (options.sourceJsonlFile) {
+    return options.sourceJsonlFile
+  }
+  if (!sessionId) {
+    return undefined
+  }
+
+  const cwdHint =
+    typeof options.cwdHint === 'string' && options.cwdHint.trim().length > 0
+      ? options.cwdHint.trim()
+      : undefined
+
+  const resolved =
+    (cwdHint
+      ? await resolveSessionFilePath(sessionId, cwdHint)
+      : undefined) ?? (await resolveSessionFilePath(sessionId))
+
+  return resolved?.filePath
+}
+
 export class ClaudeSession {
   readonly sessionId: string
 
@@ -146,6 +192,7 @@ export class ClaudeSession {
   #queue: Array<() => void> = []
   #processing = false
   #disposed = false
+  #forkContentReplacementsSeeded = false
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -171,6 +218,55 @@ export class ClaudeSession {
       projectDir: opts.projectDir,
       resumeState: opts.resumeState,
     }
+  }
+
+  async #activateSessionStorage(): Promise<void> {
+    const activationKey = `${this.sessionId}:${this.#opts.projectDir ?? ''}`
+    if (activeSessionStorageKey === activationKey) {
+      return
+    }
+
+    const { projectDir, resumeState, coordinatorMode } = this.#opts
+
+    switchSession(asSessionId(this.sessionId), projectDir ?? null)
+
+    if (resumeState && !resumeState.forkSession) {
+      await renameRecordingForSession()
+    }
+
+    await resetSessionFilePointer()
+    clearSessionMetadata()
+
+    if (!resumeState || !resumeState.forkSession) {
+      exitRestoredWorktree()
+    }
+
+    if (resumeState) {
+      restoreCostStateForSession(this.sessionId)
+      restoreSessionMetadata(
+        resumeState.forkSession
+          ? { ...resumeState, worktreeSession: undefined }
+          : resumeState,
+      )
+
+      if (resumeState.forkSession) {
+        if (
+          !this.#forkContentReplacementsSeeded &&
+          resumeState.contentReplacements?.length
+        ) {
+          await recordContentReplacement(resumeState.contentReplacements)
+          this.#forkContentReplacementsSeeded = true
+        }
+      } else {
+        restoreWorktreeForResume(resumeState.worktreeSession)
+        adoptResumedSessionFile()
+      }
+
+      void updateSessionName(resumeState.agentName)
+    }
+
+    saveMode(coordinatorMode ? 'coordinator' : 'normal')
+    activeSessionStorageKey = activationKey
   }
 
   /** 懒初始化：第一次 send() 时构建 QueryEngine */
@@ -295,6 +391,10 @@ export class ClaudeSession {
         runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
         )
+
+      await runWithCwdOverride(this.#opts.cwd, () =>
+        runInSessionContext(() => this.#activateSessionStorage()),
+      )
 
       const engine = await runWithCwdOverride(this.#opts.cwd, () =>
         runInSessionContext(() => this.#getEngine()),
@@ -436,6 +536,10 @@ export class ClaudeSession {
     this.#disposed = true
     this.#engine = null
     this.#pendingListeners = []
+    const activationKey = `${this.sessionId}:${this.#opts.projectDir ?? ''}`
+    if (activeSessionStorageKey === activationKey) {
+      activeSessionStorageKey = null
+    }
   }
 
   /** 订阅 app state 变化（用于通知前端新 teammate task 等） */
@@ -471,6 +575,48 @@ export interface ResumeClaudeSessionResult {
   }
 }
 
+export interface ClaudeSessionSnapshot {
+  messages: Message[]
+  metadata: {
+    sessionId: string
+    sourceSessionId: string
+    customTitle?: string
+    projectDir: string | null
+    cwd: string | null
+    fullPath?: string
+    mode?: 'coordinator' | 'normal'
+  }
+}
+
+export async function loadClaudeSessionSnapshot(
+  sessionId: string | undefined,
+  options: {
+    sourceJsonlFile?: string
+    cwdHint?: string
+  } = {},
+): Promise<ClaudeSessionSnapshot | null> {
+  const sourceJsonlFile = await resolveResumeSourceJsonlFile(sessionId, options)
+  const prepared = await prepareSessionResume(sessionId, {
+    sourceJsonlFile,
+  })
+  if (!prepared) {
+    return null
+  }
+
+  return {
+    messages: prepared.messages,
+    metadata: {
+      sessionId: prepared.sessionId,
+      sourceSessionId: prepared.sourceSessionId,
+      customTitle: prepared.customTitle,
+      projectDir: prepared.projectDir,
+      cwd: prepared.cwd,
+      fullPath: prepared.fullPath,
+      mode: prepared.mode,
+    },
+  }
+}
+
 export async function resumeClaudeSession(
   sessionId: string,
   options: Omit<ClaudeSessionOptions, 'sessionId' | 'initialMessages' | 'projectDir'> & {
@@ -479,9 +625,13 @@ export async function resumeClaudeSession(
   } = {},
 ): Promise<ResumeClaudeSessionResult | null> {
   const { forkSession, sourceJsonlFile, ...sessionOptions } = options
+  const resolvedSourceJsonlFile = await resolveResumeSourceJsonlFile(sessionId, {
+    sourceJsonlFile,
+    cwdHint: sessionOptions.cwd,
+  })
   const prepared = await prepareSessionResume(sessionId, {
     forkSession,
-    sourceJsonlFile,
+    sourceJsonlFile: resolvedSourceJsonlFile,
   })
   if (!prepared) {
     return null
