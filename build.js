@@ -5,7 +5,7 @@
  */
 import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 
 /**
@@ -58,6 +58,14 @@ function build(label, args) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+function ensureAdminBuildDependencies() {
+  const viteBin = resolve('admin', 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
+  if (!existsSync(viteBin)) {
+    console.error('Missing admin build dependencies. Run "bun install" in the admin directory before "bun run build:node".')
+    process.exit(1)
+  }
+}
+
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
 if (!onlyNode) {
@@ -93,6 +101,7 @@ build('electron-direct.mjs', [
 sanitizePaths('electron-direct.mjs')
 
 // admin/dist（由 moss server 直接挂载到 /admin）
+ensureAdminBuildDependencies()
 build('admin/dist', [
   'run',
   '--cwd', 'admin',

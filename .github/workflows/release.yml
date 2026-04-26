@@ -26,6 +26,10 @@ jobs:
       - name: Install root dependencies
         run: bun install
 
+      - name: Install admin dependencies
+        run: bun install
+        working-directory: admin
+
       - name: Build parent JS files
         run: bun run build:node
 
