@@ -4,7 +4,7 @@ import type { AdapterFileConfig } from '../types'
 const SAFE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const CODE_LENGTH = 6
 
-function generatePairingCode(): string {
+function createPairingCode(): string {
   let code = ''
   while (code.length < CODE_LENGTH) {
     const array = new Uint8Array(1)
@@ -51,7 +51,7 @@ export function useAdapterConfig() {
   }, [])
 
   const generatePairingCode = React.useCallback(async (): Promise<string> => {
-    const code = generatePairingCode()
+    const code = createPairingCode()
     const now = Date.now()
     await updateConfig({
       pairing: {
