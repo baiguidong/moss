@@ -1,4 +1,5 @@
-import { mkdir, readFile } from 'fs/promises'
+import { existsSync } from 'fs'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { serverFileConfigSchema, type ServerConfig, type ServerFileConfig } from './types.js'
 import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
@@ -8,14 +9,73 @@ export function getDefaultServerConfigPath(): string {
   return join(getClaudeConfigHomeDir(), 'server', 'server.json')
 }
 
+function getDefaultStoragePaths(): {
+  rootDir: string
+  dbPath: string
+  transcriptDir: string
+  runtimeDir: string
+} {
+  const baseDir = join(getClaudeConfigHomeDir(), 'server')
+  return {
+    rootDir: baseDir,
+    dbPath: join(baseDir, 'moss.db'),
+    transcriptDir: join(baseDir, 'transcripts'),
+    runtimeDir: join(baseDir, 'runtime'),
+  }
+}
+
+export function getDefaultServerConfig(): ServerFileConfig {
+  const storage = getDefaultStoragePaths()
+  return {
+    server: {
+      host: '0.0.0.0',
+      port: 43127,
+    },
+    auth: {
+      mode: 'local',
+      tokenTtlSec: 60 * 60,
+    },
+    bootstrapAdmin: {
+      username: 'admin',
+    },
+    storage: {
+      rootDir: storage.rootDir,
+      dbPath: storage.dbPath,
+      transcriptDir: storage.transcriptDir,
+      runtimeDir: storage.runtimeDir,
+    },
+    runtimeDefaults: {
+      type: 'host',
+      dockerMode: 'session',
+      idleTimeoutMs: 10 * 60 * 1000,
+      maxSessions: 32,
+    },
+    docker: {
+      stopTimeoutSec: 10,
+      labels: {},
+    },
+    recovery: {
+      startupPolicy: 'reattach-or-resume',
+      heartbeatTimeoutMs: 30_000,
+      reattachProbeTimeoutMs: 3_000,
+      resumeOnMissingRuntime: true,
+    },
+    logging: {
+      level: 'info',
+    },
+  }
+}
+
 function normalizePath(input: string): string {
   return expandPath(input)
 }
 
 function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
+  const defaultStorage = getDefaultStoragePaths()
   return {
     host: raw.server.host,
     port: raw.server.port,
+    advertisedHost: raw.server.advertisedHost,
     authMode: 'local',
     tokenTtlSec: raw.auth.tokenTtlSec,
     bootstrapAdmin: {
@@ -31,10 +91,18 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     dockerMode: raw.runtimeDefaults.dockerMode,
     idleTimeoutMs: raw.runtimeDefaults.idleTimeoutMs,
     maxSessions: raw.runtimeDefaults.maxSessions,
-    rootDir: normalizePath(raw.storage.rootDir),
-    dbPath: normalizePath(raw.storage.dbPath),
-    transcriptDir: normalizePath(raw.storage.transcriptDir),
-    runtimeDir: normalizePath(raw.storage.runtimeDir),
+    rootDir: raw.storage.rootDir
+      ? normalizePath(raw.storage.rootDir)
+      : defaultStorage.rootDir,
+    dbPath: raw.storage.dbPath
+      ? normalizePath(raw.storage.dbPath)
+      : defaultStorage.dbPath,
+    transcriptDir: raw.storage.transcriptDir
+      ? normalizePath(raw.storage.transcriptDir)
+      : defaultStorage.transcriptDir,
+    runtimeDir: raw.storage.runtimeDir
+      ? normalizePath(raw.storage.runtimeDir)
+      : defaultStorage.runtimeDir,
     dockerNetwork: raw.docker.network,
     dockerStopTimeoutSec: raw.docker.stopTimeoutSec,
     dockerLabels: raw.docker.labels,
@@ -56,6 +124,24 @@ export async function readServerConfig(
   config: ServerConfig
 }> {
   const resolvedConfigPath = normalizePath(configPath)
+
+  // Check if config file exists
+  if (!existsSync(resolvedConfigPath)) {
+    // Create default config file and parent directory
+    const defaultConfig = getDefaultServerConfig()
+    await mkdir(dirname(resolvedConfigPath), { recursive: true })
+    await writeFile(resolvedConfigPath, JSON.stringify(defaultConfig, null, 2), 'utf8')
+
+    process.stderr.write(`\nCreated default config at: ${resolvedConfigPath}\n`)
+    process.stderr.write(`Please edit the config file to customize settings.\n`)
+    process.stderr.write(`Note: bootstrapAdmin.password should be set before first login.\n\n`)
+
+    return {
+      configPath: resolvedConfigPath,
+      config: resolveServerConfig(defaultConfig),
+    }
+  }
+
   const rawText = await readFile(resolvedConfigPath, 'utf8')
   const parsed = rawText.trim()
     ? (JSON.parse(rawText) as Record<string, unknown>)

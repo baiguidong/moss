@@ -232,11 +232,20 @@ function parseRuntimeOptions(body: JsonBody) {
 }
 
 function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
-  const host =
-    config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host
   const address = server.address()
   const actualPort =
     typeof address === 'object' && address ? address.port : config.port
+
+  // Use advertisedHost if configured, otherwise derive from bind host
+  let host: string
+  if (config.advertisedHost) {
+    host = config.advertisedHost
+  } else if (config.host === '0.0.0.0' || config.host === '::') {
+    host = '127.0.0.1'
+  } else {
+    host = config.host
+  }
+
   return `ws://${host}:${actualPort}/ws/sessions/${sessionId}`
 }
 

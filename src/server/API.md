@@ -23,6 +23,35 @@
 - `~/.moss/server/server.json`
 - 可通过 `MOSS_SERVER_CONFIG=/path/to/server.json` 覆盖
 
+**首次启动**：如果配置文件不存在，server 会自动创建一个默认配置文件，包含：
+
+- 监听 `0.0.0.0:43127`
+- 本地认证模式 (`auth.mode: local`)
+- 默认管理员用户名 `admin`（密码需手动设置）
+- 数据存储在 `~/.moss/server/` 目录下
+
+启动后会提示编辑配置文件设置 `bootstrapAdmin.password`。
+
+### 远程访问配置
+
+如果 server 需要被远程客户端访问（非本地），需要配置 `advertisedHost`：
+
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 43127,
+    "advertisedHost": "10.0.1.179"
+  }
+}
+```
+
+说明：
+
+- `host`: 监听地址，`0.0.0.0` 表示监听所有接口
+- `advertisedHost`: 对外广播的地址，用于 WebSocket URL
+- 如果不设置 `advertisedHost`，当 `host` 为 `0.0.0.0` 或 `::` 时，WebSocket URL 会使用 `127.0.0.1`，导致远程客户端无法连接
+
 首次初始化 admin 可直接从配置文件读取：
 
 ```json

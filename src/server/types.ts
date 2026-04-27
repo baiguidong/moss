@@ -47,6 +47,10 @@ export const serverFileConfigSchema = lazySchema(() =>
     server: z.object({
       host: z.string().default('0.0.0.0'),
       port: z.number().int().min(0).default(43127),
+      advertisedHost: z.string().min(1).optional(),
+    }).default({
+      host: '0.0.0.0',
+      port: 43127,
     }),
     auth: z.object({
       mode: z.enum(['local', 'auth-center']).default('local'),
@@ -64,11 +68,11 @@ export const serverFileConfigSchema = lazySchema(() =>
       username: 'admin',
     }),
     storage: z.object({
-      rootDir: z.string().min(1),
-      dbPath: z.string().min(1),
-      transcriptDir: z.string().min(1),
-      runtimeDir: z.string().min(1),
-    }),
+      rootDir: z.string().min(1).optional(),
+      dbPath: z.string().min(1).optional(),
+      transcriptDir: z.string().min(1).optional(),
+      runtimeDir: z.string().min(1).optional(),
+    }).default({}),
     runtimeDefaults: z.object({
       type: z.enum(['host', 'docker']).default('host'),
       dockerImage: z.string().optional(),
@@ -76,6 +80,11 @@ export const serverFileConfigSchema = lazySchema(() =>
       workspace: z.string().optional(),
       idleTimeoutMs: z.number().int().min(0).default(10 * 60 * 1000),
       maxSessions: z.number().int().min(0).default(32),
+    }).default({
+      type: 'host',
+      dockerMode: 'session',
+      idleTimeoutMs: 10 * 60 * 1000,
+      maxSessions: 32,
     }),
     docker: z.object({
       network: z.string().optional(),
@@ -90,6 +99,11 @@ export const serverFileConfigSchema = lazySchema(() =>
       heartbeatTimeoutMs: z.number().int().min(1).default(30_000),
       reattachProbeTimeoutMs: z.number().int().min(1).default(3_000),
       resumeOnMissingRuntime: z.boolean().default(true),
+    }).default({
+      startupPolicy: 'reattach-or-resume',
+      heartbeatTimeoutMs: 30_000,
+      reattachProbeTimeoutMs: 3_000,
+      resumeOnMissingRuntime: true,
     }),
     logging: z.object({
       level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -105,6 +119,7 @@ export type ServerFileConfig = z.infer<ReturnType<typeof serverFileConfigSchema>
 export type ServerConfig = {
   host: string
   port: number
+  advertisedHost?: string
   authMode: 'local'
   tokenTtlSec: number
   bootstrapAdmin: {
