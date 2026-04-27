@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
   // Assistant management
   getInstalledAssistants: () => ipcRenderer.invoke('agent:getInstalledAssistants'),
+  getRemoteInstalledAssistants: () => ipcRenderer.invoke('agent:getRemoteInstalledAssistants'),
   getAssistantContext: (assistantName) => ipcRenderer.invoke('agent:getAssistantContext', { assistantName }),
   getSkillInfosByIds: (skillIds) => ipcRenderer.invoke('agent:getSkillInfosByIds', { skillIds }),
   // Log management

@@ -287,6 +287,7 @@ declare global {
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
       getInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
+      getRemoteInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
       getAssistantContext: (assistantName: string) => Promise<{ success: boolean; data?: string; error?: string }>;
       getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ name: string; path: string }>; error?: string }>;
       logWrite: (payload: { level?: string; category?: string; message: string; data?: unknown }) => Promise<void>;

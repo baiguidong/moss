@@ -362,12 +362,15 @@ export default function App() {
     return nextApps;
   }, []);
 
-  const refreshAssistants = React.useCallback(async () => {
-    const result = await window.agentDesktop.getInstalledAssistants();
+  const refreshAssistants = React.useCallback(async (mode?: 'local' | 'remote-direct') => {
+    const agentMode = mode ?? desktopSettings?.agentMode ?? 'local';
+    const result = agentMode === 'remote-direct'
+      ? await window.agentDesktop.getRemoteInstalledAssistants()
+      : await window.agentDesktop.getInstalledAssistants();
     const assistants = result?.data ?? result ?? [];
     setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
     return assistants;
-  }, []);
+  }, [desktopSettings?.agentMode]);
 
   const loadAppVersions = React.useCallback(async (name: string) => {
     const versions = await window.agentDesktop.listAppVersions({ name });
@@ -1501,7 +1504,9 @@ export default function App() {
 
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
     await autoSaveSettings('agentMode', mode);
-  }, [autoSaveSettings]);
+    // Refresh assistants list based on new mode
+    await refreshAssistants(mode);
+  }, [autoSaveSettings, refreshAssistants]);
 
   const renderSettingsView = () => (
     <SettingsView

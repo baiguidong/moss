@@ -3676,6 +3676,27 @@ ipcMain.handle('agent:get-status', () => getBootStatus());
 ipcMain.handle('agent:get-auth-debug', async () => getAuthDebugSnapshot());
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+
+ipcMain.handle('agent:getRemoteInstalledAssistants', async () => {
+  try {
+    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+    const response = await fetch(`${serverUrl}/api/v1/agents/installed`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+    if (!response.ok) {
+      const detail = await parseRemoteDirectError('Failed to fetch remote assistants', response);
+      return { success: false, error: detail };
+    }
+    const assistants = await response.json();
+    return { success: true, data: assistants };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: message };
+  }
+});
 ipcMain.handle('agent:get-adapter-config', () => {
   const adapterConfigPath = path.join(MOSS_HOME, 'adapters.json');
   try {
