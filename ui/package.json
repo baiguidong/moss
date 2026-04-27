@@ -82,7 +82,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "moss-ai",
+      "owner": "sudoprivacy",
       "repo": "moss"
     }
   },
