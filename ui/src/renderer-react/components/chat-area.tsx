@@ -867,7 +867,7 @@ export function ChatArea({
 
       <ScrollArea className="min-h-0 min-w-0 flex-1">
         <div className="min-w-0">
-          <MessageList messages={messages} bottomRef={bottomRef} workspace={sessionWorkspace} />
+          <MessageList messages={messages} bottomRef={bottomRef} workspace={sessionWorkspace} loading={loading} />
           {pendingPlanApproval && (
             <div className="mx-auto w-full max-w-[980px] px-3 pb-3 sm:px-4 sm:pb-4">
               <PlanApprovalCard

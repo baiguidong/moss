@@ -26,7 +26,12 @@ export function AssistantMessage({ message }: { message: AssistantTextRenderMess
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length);
 
   return (
-    <div className="group mb-5 flex justify-start">
+    <div className="group mb-5 flex justify-start gap-2">
+      <img
+        src="./build/icon.png"
+        alt="Moss"
+        className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+      />
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? "document" : "bubble"}

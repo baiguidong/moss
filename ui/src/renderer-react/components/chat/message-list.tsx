@@ -125,11 +125,13 @@ export function MessageList({
   bottomRef,
   emptyState,
   workspace,
+  loading,
 }: {
   messages: TranscriptRenderMessage[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
   emptyState?: React.ReactNode;
   workspace?: string;
+  loading?: boolean;
 }) {
   const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
     () => buildRenderModel(messages),
@@ -182,6 +184,21 @@ export function MessageList({
           </div>
         )
       )}
+
+      {loading && (
+        <div className="flex justify-start gap-2">
+          <img
+            src="./build/icon.png"
+            alt="Moss"
+            className="h-7 w-7 shrink-0 self-start rounded-sm object-contain animate-spin"
+            style={{ animationDuration: '2s' }}
+          />
+          <div className="rounded-[18px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
+            working...
+          </div>
+        </div>
+      )}
+
       {bottomRef ? <div ref={bottomRef} /> : null}
     </div>
     </WorkspacePathProvider>
