@@ -1,7 +1,8 @@
 import os from 'os'
 import path from 'path'
 
-export const MOSS_HOME = path.join(os.homedir(), '.moss')
+// Support MOSS_HOME environment variable for Docker/container environments
+export const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
 export const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills')
 export const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 export const MOSS_SKILLS_HUB_DIR = path.join(MOSS_SKILLS_DIR, 'hub')

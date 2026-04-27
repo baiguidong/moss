@@ -485,17 +485,19 @@ async function extractSkillZip(
   buffer: Buffer,
   targetDir: string,
 ): Promise<void> {
-  const { unzipSync } = await import('fflate')
-  const zipEntries = unzipSync(new Uint8Array(buffer))
-  const entryNames = Object.keys(zipEntries)
-  const skillMdFiles = entryNames.filter(name =>
-    name.toLowerCase().endsWith('skill.md'),
+  const JSZip = await import('jszip')
+  const zip = await JSZip.loadAsync(buffer)
+  const files = Object.values(zip.files)
+
+  // Find root SKILL.md path
+  const skillMdFiles = files.filter(
+    f => !f.dir && f.name.toLowerCase().endsWith('skill.md'),
   )
 
   let stripPrefix = ''
   if (
-    skillMdFiles.some(name => {
-      const normalized = name.replace(/\\/g, '/').replace(/^\.\/+/, '')
+    skillMdFiles.some(f => {
+      const normalized = f.name.replace(/\\/g, '/').replace(/^\.\/+/, '')
       return normalized === 'SKILL.md' || normalized === 'skill.md'
     })
   ) {
@@ -503,10 +505,8 @@ async function extractSkillZip(
   } else if (skillMdFiles.length > 0) {
     const rootPaths = [
       ...new Set(
-        skillMdFiles.map(name =>
-          path
-            .dirname(name.replace(/\\/g, '/').replace(/^\.\/+/, ''))
-            .split('/')[0],
+        skillMdFiles.map(f =>
+          path.dirname(f.name.replace(/\\/g, '/').replace(/^\.\/+/, '')).split('/')[0],
         ),
       ),
     ].filter(Boolean)
@@ -516,8 +516,11 @@ async function extractSkillZip(
     }
   }
 
-  for (const [rawEntryName, content] of Object.entries(zipEntries)) {
-    let entryName = rawEntryName.replace(/\\/g, '/').replace(/^\.\/+/, '')
+  for (const entry of files) {
+    // Skip directory entries (JSZip has entry.dir property)
+    if (entry.dir) continue
+
+    let entryName = entry.name.replace(/\\/g, '/').replace(/^\.\/+/, '')
     if (stripPrefix && entryName.startsWith(stripPrefix)) {
       entryName = entryName.slice(stripPrefix.length)
     }
@@ -526,7 +529,8 @@ async function extractSkillZip(
     if (!fullPath) continue
 
     await mkdir(path.dirname(fullPath), { recursive: true })
-    await writeFile(fullPath, Buffer.from(content))
+    const content = await entry.async('nodebuffer')
+    await writeFile(fullPath, content)
   }
 }
 

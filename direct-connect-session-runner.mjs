@@ -48,26 +48,38 @@ import { dirname as dirname4 } from "path";
 import { spawn } from "child_process";
 import { createInterface } from "readline";
 import fs from "fs";
-import path from "path";
+import path2 from "path";
 import { fileURLToPath } from "url";
+
+// src/utils/skills/localSkillDirectories.ts
+import os from "os";
+import path from "path";
+var MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), ".moss");
+var MOSS_SKILLS_DIR = path.join(MOSS_HOME, "skills");
+var USER_SKILLS_DIR = path.join(os.homedir(), ".claude", "skills");
+var MOSS_SKILLS_HUB_DIR = path.join(MOSS_SKILLS_DIR, "hub");
+var MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_SKILLS_DIR, "system");
+var MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_SKILLS_DIR, "custom");
+
+// src/server/backends/backendUtils.ts
 var __filename2 = fileURLToPath(import.meta.url);
-var __dirname2 = path.dirname(__filename2);
+var __dirname2 = path2.dirname(__filename2);
 function resolveNodeCliPath() {
   const configured = process.env.CLAUDE_CODE_CLI_PATH;
   const candidates = [
     configured,
-    path.join(process.cwd(), "cli-node.js"),
-    path.join(__dirname2, "cli-node.js"),
-    path.join(__dirname2, "../cli-node.js"),
-    path.join(__dirname2, "../../cli-node.js"),
-    path.join(__dirname2, "../../../cli-node.js")
+    path2.join(process.cwd(), "cli-node.js"),
+    path2.join(__dirname2, "cli-node.js"),
+    path2.join(__dirname2, "../cli-node.js"),
+    path2.join(__dirname2, "../../cli-node.js"),
+    path2.join(__dirname2, "../../../cli-node.js")
   ].filter((value) => Boolean(value));
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
     }
   }
-  return candidates[0] || path.join(process.cwd(), "cli-node.js");
+  return candidates[0] || path2.join(process.cwd(), "cli-node.js");
 }
 function ensureCliExists(nodeCliPath) {
   if (!fs.existsSync(nodeCliPath)) {
@@ -77,6 +89,7 @@ function ensureCliExists(nodeCliPath) {
 function buildSessionEnv(options, overrides = {}) {
   return {
     ...process.env,
+    MOSS_HOME,
     ...options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {},
     ...options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {},
     ...options.role ? { MOSS_SESSION_ROLE: options.role } : {},
@@ -663,7 +676,8 @@ class DockerBackend {
     const mounts = uniqueMounts([
       options.cwd,
       dirname(nodeCliPath),
-      configDir
+      configDir,
+      MOSS_HOME
     ]);
     const containerName = runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`;
     const env = buildSessionEnv(options, {
@@ -704,6 +718,7 @@ class DockerBackend {
       }
     }
     args.push("-e", `HOME=${configDir}`);
+    args.push("-e", `MOSS_HOME=${MOSS_HOME}`);
     args.push(image, "node", nodeCliPath, "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json", "--permission-prompt-tool", "stdio");
     if (options.resumeSessionId) {
       args.push("--resume", options.resumeSessionId);
@@ -2793,12 +2808,12 @@ function encodeURIPath(str) {
   return str.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
 var EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-var createPathTagFunction = (pathEncoder = encodeURIPath) => function path2(statics, ...params) {
+var createPathTagFunction = (pathEncoder = encodeURIPath) => function path3(statics, ...params) {
   if (statics.length === 1)
     return statics[0];
   let postPath = false;
   const invalidSegments = [];
-  const path3 = statics.reduce((previousValue, currentValue, index) => {
+  const path4 = statics.reduce((previousValue, currentValue, index) => {
     if (/[?#]/.test(currentValue)) {
       postPath = true;
     }
@@ -2814,7 +2829,7 @@ var createPathTagFunction = (pathEncoder = encodeURIPath) => function path2(stat
     }
     return previousValue + currentValue + (index === params.length ? "" : encoded);
   }, "");
-  const pathOnly = path3.split(/[?#]/, 1)[0];
+  const pathOnly = path4.split(/[?#]/, 1)[0];
   const invalidSegmentPattern = /(?<=^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
   let match;
   while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -2836,12 +2851,12 @@ var createPathTagFunction = (pathEncoder = encodeURIPath) => function path2(stat
     throw new AnthropicError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e) => e.error).join(`
 `)}
-${path3}
+${path4}
 ${underline}`);
   }
-  return path3;
+  return path4;
 };
-var path2 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+var path3 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
 
 // node_modules/@anthropic-ai/sdk/resources/beta/files.mjs
 class Files extends APIResource {
@@ -2858,7 +2873,7 @@ class Files extends APIResource {
   }
   delete(fileID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.delete(path2`/v1/files/${fileID}`, {
+    return this._client.delete(path3`/v1/files/${fileID}`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "files-api-2025-04-14"].toString() },
@@ -2868,7 +2883,7 @@ class Files extends APIResource {
   }
   download(fileID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/files/${fileID}/content`, {
+    return this._client.get(path3`/v1/files/${fileID}/content`, {
       ...options,
       headers: buildHeaders([
         {
@@ -2882,7 +2897,7 @@ class Files extends APIResource {
   }
   retrieveMetadata(fileID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/files/${fileID}`, {
+    return this._client.get(path3`/v1/files/${fileID}`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "files-api-2025-04-14"].toString() },
@@ -2908,7 +2923,7 @@ class Files extends APIResource {
 class Models extends APIResource {
   retrieve(modelID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/models/${modelID}?beta=true`, {
+    return this._client.get(path3`/v1/models/${modelID}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : undefined },
@@ -4129,7 +4144,7 @@ class Batches extends APIResource {
   }
   retrieve(messageBatchID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/messages/batches/${messageBatchID}?beta=true`, {
+    return this._client.get(path3`/v1/messages/batches/${messageBatchID}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "message-batches-2024-09-24"].toString() },
@@ -4150,7 +4165,7 @@ class Batches extends APIResource {
   }
   delete(messageBatchID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.delete(path2`/v1/messages/batches/${messageBatchID}?beta=true`, {
+    return this._client.delete(path3`/v1/messages/batches/${messageBatchID}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "message-batches-2024-09-24"].toString() },
@@ -4160,7 +4175,7 @@ class Batches extends APIResource {
   }
   cancel(messageBatchID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.post(path2`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
+    return this._client.post(path3`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "message-batches-2024-09-24"].toString() },
@@ -4291,7 +4306,7 @@ Messages.ToolError = ToolError;
 class Versions extends APIResource {
   create(skillID, params = {}, options) {
     const { betas, ...body } = params ?? {};
-    return this._client.post(path2`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
+    return this._client.post(path3`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
       body,
       ...options,
       headers: buildHeaders([
@@ -4302,7 +4317,7 @@ class Versions extends APIResource {
   }
   retrieve(version, params, options) {
     const { skill_id, betas } = params;
-    return this._client.get(path2`/v1/skills/${skill_id}/versions/${version}?beta=true`, {
+    return this._client.get(path3`/v1/skills/${skill_id}/versions/${version}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "skills-2025-10-02"].toString() },
@@ -4312,7 +4327,7 @@ class Versions extends APIResource {
   }
   list(skillID, params = {}, options) {
     const { betas, ...query } = params ?? {};
-    return this._client.getAPIList(path2`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
+    return this._client.getAPIList(path3`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
       query,
       ...options,
       headers: buildHeaders([
@@ -4323,7 +4338,7 @@ class Versions extends APIResource {
   }
   delete(version, params, options) {
     const { skill_id, betas } = params;
-    return this._client.delete(path2`/v1/skills/${skill_id}/versions/${version}?beta=true`, {
+    return this._client.delete(path3`/v1/skills/${skill_id}/versions/${version}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "skills-2025-10-02"].toString() },
@@ -4352,7 +4367,7 @@ class Skills extends APIResource {
   }
   retrieve(skillID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/skills/${skillID}?beta=true`, {
+    return this._client.get(path3`/v1/skills/${skillID}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "skills-2025-10-02"].toString() },
@@ -4373,7 +4388,7 @@ class Skills extends APIResource {
   }
   delete(skillID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.delete(path2`/v1/skills/${skillID}?beta=true`, {
+    return this._client.delete(path3`/v1/skills/${skillID}?beta=true`, {
       ...options,
       headers: buildHeaders([
         { "anthropic-beta": [...betas ?? [], "skills-2025-10-02"].toString() },
@@ -5008,16 +5023,16 @@ class Batches2 extends APIResource {
     return this._client.post("/v1/messages/batches", { body, ...options });
   }
   retrieve(messageBatchID, options) {
-    return this._client.get(path2`/v1/messages/batches/${messageBatchID}`, options);
+    return this._client.get(path3`/v1/messages/batches/${messageBatchID}`, options);
   }
   list(query = {}, options) {
     return this._client.getAPIList("/v1/messages/batches", Page, { query, ...options });
   }
   delete(messageBatchID, options) {
-    return this._client.delete(path2`/v1/messages/batches/${messageBatchID}`, options);
+    return this._client.delete(path3`/v1/messages/batches/${messageBatchID}`, options);
   }
   cancel(messageBatchID, options) {
-    return this._client.post(path2`/v1/messages/batches/${messageBatchID}/cancel`, options);
+    return this._client.post(path3`/v1/messages/batches/${messageBatchID}/cancel`, options);
   }
   async results(messageBatchID, options) {
     const batch = await this.retrieve(messageBatchID);
@@ -5092,7 +5107,7 @@ Messages2.Batches = Batches2;
 class Models2 extends APIResource {
   retrieve(modelID, params = {}, options) {
     const { betas } = params ?? {};
-    return this._client.get(path2`/v1/models/${modelID}`, {
+    return this._client.get(path3`/v1/models/${modelID}`, {
       ...options,
       headers: buildHeaders([
         { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : undefined },
@@ -5229,9 +5244,9 @@ new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
   makeStatusError(status, error2, message, headers) {
     return APIError.generate(status, error2, message, headers);
   }
-  buildURL(path3, query, defaultBaseURL) {
+  buildURL(path4, query, defaultBaseURL) {
     const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
-    const url = isAbsoluteURL(path3) ? new URL(path3) : new URL(baseURL + (baseURL.endsWith("/") && path3.startsWith("/") ? path3.slice(1) : path3));
+    const url = isAbsoluteURL(path4) ? new URL(path4) : new URL(baseURL + (baseURL.endsWith("/") && path4.startsWith("/") ? path4.slice(1) : path4));
     const defaultQuery = this.defaultQuery();
     const pathQuery = Object.fromEntries(url.searchParams);
     if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -5252,24 +5267,24 @@ new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
   }
   async prepareOptions(options) {}
   async prepareRequest(request, { url, options }) {}
-  get(path3, opts) {
-    return this.methodRequest("get", path3, opts);
+  get(path4, opts) {
+    return this.methodRequest("get", path4, opts);
   }
-  post(path3, opts) {
-    return this.methodRequest("post", path3, opts);
+  post(path4, opts) {
+    return this.methodRequest("post", path4, opts);
   }
-  patch(path3, opts) {
-    return this.methodRequest("patch", path3, opts);
+  patch(path4, opts) {
+    return this.methodRequest("patch", path4, opts);
   }
-  put(path3, opts) {
-    return this.methodRequest("put", path3, opts);
+  put(path4, opts) {
+    return this.methodRequest("put", path4, opts);
   }
-  delete(path3, opts) {
-    return this.methodRequest("delete", path3, opts);
+  delete(path4, opts) {
+    return this.methodRequest("delete", path4, opts);
   }
-  methodRequest(method, path3, opts) {
+  methodRequest(method, path4, opts) {
     return this.request(Promise.resolve(opts).then((opts2) => {
-      return { method, path: path3, ...opts2 };
+      return { method, path: path4, ...opts2 };
     }));
   }
   request(options, remainingRetries = null) {
@@ -5373,8 +5388,8 @@ new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
     }));
     return { response, options, controller, requestLogID, retryOfRequestLogID, startTime };
   }
-  getAPIList(path3, Page2, opts) {
-    return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path3, ...opts2 })) : { method: "get", path: path3, ...opts });
+  getAPIList(path4, Page2, opts) {
+    return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path4, ...opts2 })) : { method: "get", path: path4, ...opts });
   }
   requestAPIList(Page2, options) {
     const request = this.makeRequest(options, null, undefined);
@@ -5462,8 +5477,8 @@ new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
   }
   async buildRequest(inputOptions, { retryCount = 0 } = {}) {
     const options = { ...inputOptions };
-    const { method, path: path3, query, defaultBaseURL } = options;
-    const url = this.buildURL(path3, query, defaultBaseURL);
+    const { method, path: path4, query, defaultBaseURL } = options;
+    const url = this.buildURL(path4, query, defaultBaseURL);
     if ("timeout" in options)
       validatePositiveInteger("timeout", options.timeout);
     options.timeout = options.timeout ?? this.timeout;
@@ -5665,14 +5680,14 @@ var jsonParse = (text, reviver) => {
 };
 
 // src/server/sessionRunnerDaemon.ts
-async function safeUnlink(path3) {
+async function safeUnlink(path4) {
   try {
-    await unlink2(path3);
+    await unlink2(path4);
   } catch {}
 }
-async function writeStatus(path3, payload) {
-  await mkdir3(dirname4(path3), { recursive: true });
-  await writeFile(path3, `${JSON.stringify(payload, null, 2)}
+async function writeStatus(path4, payload) {
+  await mkdir3(dirname4(path4), { recursive: true });
+  await writeFile(path4, `${JSON.stringify(payload, null, 2)}
 `, "utf8");
 }
 function isJsonObject(value) {

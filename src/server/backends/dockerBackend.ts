@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { mkdir } from 'fs/promises'
 import { dirname, join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -87,6 +88,7 @@ export class DockerBackend implements SessionBackend {
       options.cwd,
       dirname(nodeCliPath),
       configDir,
+      MOSS_HOME,
     ])
 
     const containerName =
@@ -131,6 +133,7 @@ export class DockerBackend implements SessionBackend {
       }
     }
     args.push('-e', `HOME=${configDir}`)
+    args.push('-e', `MOSS_HOME=${MOSS_HOME}`)
 
     args.push(
       image,

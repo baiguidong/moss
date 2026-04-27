@@ -3,6 +3,9 @@ import { createInterface } from 'readline'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import {
+  MOSS_HOME,
+} from '../../utils/skills/localSkillDirectories.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -46,6 +49,7 @@ export function buildSessionEnv(
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    MOSS_HOME,
     ...(options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {}),
     ...(options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {}),
     ...(options.role ? { MOSS_SESSION_ROLE: options.role } : {}),

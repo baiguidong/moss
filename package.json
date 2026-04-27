@@ -66,6 +66,7 @@
     "indent-string": "^5.0.0",
     "ink": "^7.0.0",
     "jsonc-parser": "^3.3.1",
+    "jszip": "^3.10.1",
     "lodash-es": "*",
     "lru-cache": "^11.3.3",
     "marked": "^18.0.0",
