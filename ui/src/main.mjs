@@ -1357,9 +1357,15 @@ async function getClaudeRuntimeModule() {
     return claudeRuntimeModulePromise;
   }
 
+  mossLog('info', 'sdk', 'Loading SDK module', { sdkPath });
   installRuntimeMacros();
   claudeRuntimeModulePromise = import(sdkPath)
+    .then((mod) => {
+      mossLog('info', 'sdk', 'SDK module loaded successfully', { exports: Object.keys(mod) });
+      return mod;
+    })
     .catch((error) => {
+      mossLog('error', 'sdk', 'Failed to load SDK module', { error: error instanceof Error ? error.message : String(error) });
       claudeRuntimeModulePromise = null;
       throw error;
     });
@@ -1716,7 +1722,9 @@ async function runSessionPrompt({
   visibleUserPrompt,
   attachments = [],
 }) {
+  mossLog('info', 'session', 'Starting runSessionPrompt', { sessionId: sessionRecord.id, agentMode: sessionRecord.agentMode });
   const runtime = await ensureRuntime(sessionRecord);
+  mossLog('info', 'session', 'Runtime ensured', { sessionId: sessionRecord.id, hasRuntime: !!runtime });
 
   if (typeof visibleUserPrompt === 'string' && visibleUserPrompt.trim()) {
     const trimmedUserPrompt = visibleUserPrompt.trim();
@@ -1737,6 +1745,7 @@ async function runSessionPrompt({
     if (sessionRecord.title === 'New Session') {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
     }
+    mossLog('info', 'session', 'User event added', { sessionId: sessionRecord.id, messageCount: sessionRecord.messageCount, title: sessionRecord.title });
     schedulePersistSession(sessionRecord, true);
     emitSessionMeta(sessionRecord);
     if (!sender.isDestroyed()) {
@@ -1757,7 +1766,16 @@ async function runSessionPrompt({
     const expectedVisibleUserPrompt =
       typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
 
+    mossLog('info', 'session', 'Starting runtime.send', { sessionId: sessionRecord.id });
+    let messageCount = 0;
     for await (const message of runtime.send(runtimePrompt)) {
+      messageCount++;
+      if (messageCount === 1) {
+        mossLog('info', 'session', 'First message received', { sessionId: sessionRecord.id, type: message?.type });
+      }
+      if (messageCount % 10 === 0) {
+        mossLog('info', 'session', 'Messages received', { sessionId: sessionRecord.id, count: messageCount });
+      }
       if (
         !skippedInitialReplayUser &&
         expectedVisibleUserPrompt &&
@@ -1797,12 +1815,14 @@ async function runSessionPrompt({
       }
     }
 
+    mossLog('info', 'session', 'runtime.send completed', { sessionId: sessionRecord.id, totalMessages: messageCount });
     return {
       latestAssistantText,
       streamedAssistantText,
     };
   } catch (error) {
     let message = error instanceof Error ? error.message : String(error);
+    mossLog('error', 'session', 'runtime.send error', { sessionId: sessionRecord.id, error: message });
     if (/Failed to authenticate|API Error:\s*403|API Error:\s*401|forbidden|unauthorized/i.test(message)) {
       try {
         const authDebug = await getAuthDebugSnapshot();
@@ -3105,6 +3125,7 @@ async function startWorkspaceWatcher(sessionRecord) {
 
 async function ensureRuntime(sessionRecord) {
   if (!hasFile(sdkPath)) {
+    mossLog('error', 'runtime', 'SDK file not found', { sdkPath });
     throw new Error(`Missing electron-direct.mjs at ${sdkPath}.`);
   }
 
@@ -3113,12 +3134,16 @@ async function ensureRuntime(sessionRecord) {
     const currentCoordinatorMode = sessionRecord.isCoordinatorMode ?? false
     const existingCoordinatorMode = sessionRecord.runtime.coordinatorMode ?? false
     if (currentCoordinatorMode !== existingCoordinatorMode) {
+      mossLog('info', 'runtime', 'Coordinator mode changed, recreating runtime', { sessionId: sessionRecord.id });
       sessionRecord.runtime.dispose()
       sessionRecord.runtime = null
     } else {
+      mossLog('info', 'runtime', 'Reusing existing runtime', { sessionId: sessionRecord.id });
       return sessionRecord.runtime
     }
   }
+
+  mossLog('info', 'runtime', 'Creating new runtime', { sessionId: sessionRecord.id, agentMode: sessionRecord.agentMode });
 
   const onPermissionRequest = async (toolName, input) => {
     const toolLabel = toolName || 'Tool';
@@ -3159,6 +3184,7 @@ async function ensureRuntime(sessionRecord) {
         }
       },
     });
+    mossLog('info', 'runtime', 'Remote-direct runtime created', { sessionId: sessionRecord.id });
     return sessionRecord.runtime;
   }
 
@@ -3170,6 +3196,7 @@ async function ensureRuntime(sessionRecord) {
     onPermissionRequest,
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
+  mossLog('info', 'runtime', 'Local runtime created', { sessionId: sessionRecord.id, workspace: sessionRecord.workspace });
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
   // All teammate events are already routed through the main coordinator session via the SDK
@@ -4286,11 +4313,14 @@ ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourc
 });
 
 ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode, assistantName }) => {
+  mossLog('info', 'agent', 'Received agent:send request', { sessionId, prompt: prompt?.slice(0, 50), mode, appName });
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
+    mossLog('warn', 'agent', 'Session is busy', { sessionId });
     throw new Error('This session is already processing a request.');
   }
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
+    mossLog('info', 'agent', 'Resuming session record', { sessionId, underlyingSessionId: sessionRecord.underlyingSessionId });
     await resumeSessionRecord(sessionRecord);
   }
 
