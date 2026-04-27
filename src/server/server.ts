@@ -816,7 +816,6 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
-        authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, await getInstalledAssistants())
         return
       }
