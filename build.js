@@ -49,6 +49,7 @@ const aliases = [
   '--alias=@anthropic-ai/foundry-sdk=./vendor/@anthropic-ai/foundry-sdk/index.mjs',
   '--alias=@anthropic-ai/vertex-sdk=./vendor/@anthropic-ai/vertex-sdk/index.mjs',
   '--alias=@anthropic-ai/mcpb=./vendor/@anthropic-ai/mcpb/index.mjs',
+  '--alias=color-diff-napi=./vendor/color-diff-napi/index.js',
   '--alias=modifiers-napi=./vendor/modifiers-napi/index.js',
 ]
 
