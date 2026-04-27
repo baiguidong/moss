@@ -112,16 +112,8 @@ function SessionItem({
     <div
       role="button"
       tabIndex={0}
-      onClick={() => {
-        console.log('[SessionItem] onClick triggered for session:', session.id);
-        onClick();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          console.log('[SessionItem] onKeyDown Enter triggered for session:', session.id);
-          onClick();
-        }
-      }}
+      onClick={onClick}
+      onKeyDown={(e) => e.key === 'Enter' && onClick()}
       className={cn(
         "group relative w-full max-w-full overflow-hidden rounded-xl border px-2 py-1 pr-14 text-left transition-colors",
         isActive
