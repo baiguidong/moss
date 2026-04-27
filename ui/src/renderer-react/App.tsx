@@ -404,20 +404,26 @@ export default function App() {
   }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
   const openSession = React.useCallback(async (sessionId: string) => {
+    console.log('[openSession] called with sessionId:', sessionId);
     if (activeSessionIdRef.current !== sessionId) {
       if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认切换到其他会话？')) {
+        console.log('[openSession] discarded due to dirty preview tabs');
         return false;
       }
     }
     const requestId = ++openSessionRequestIdRef.current;
+    console.log('[openSession] calling getSession with requestId:', requestId);
     const detail = await window.agentDesktop.getSession({ sessionId });
+    console.log('[openSession] getSession returned:', detail ? 'has detail' : 'null');
     if (requestId !== openSessionRequestIdRef.current) {
+      console.log('[openSession] requestId mismatch, returning false');
       return false;
     }
     setActiveView('chat');
     setActiveSessionId(sessionId);
     setActiveDetail(detail);
     clearSessionWorkspaceState();
+    console.log('[openSession] session opened successfully');
     return true;
   }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
@@ -1244,7 +1250,9 @@ export default function App() {
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
+    console.log('[handleSelectSession] called with sessionId:', sessionId);
     const opened = await openSession(sessionId);
+    console.log('[handleSelectSession] openSession returned:', opened);
     if (!opened) return;
     setActiveView('chat');
   }, [openSession]);
