@@ -739,7 +739,7 @@ export default function App() {
         applyDesktopSettings(nextSettings);
         await refreshApps();
         await refreshSummaries();
-        await refreshAssistants();
+        await refreshAssistants(nextSettings.agentMode ?? 'local');
         if (cancelled) return;
         setActiveSessionId(null);
         setActiveDetail(null);
