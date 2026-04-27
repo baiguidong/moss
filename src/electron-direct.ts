@@ -56,6 +56,18 @@ import {
   saveMode,
 } from './utils/sessionStorage.js'
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
+import { initBundledSkills } from './skills/bundled/index.js'
+import { initBuiltinPlugins } from './plugins/bundled/index.js'
+
+// Bundled skills 必须在模块初始化阶段注册，不能等到 bootstrapHeadless()，
+// 因为 loadAllCommands 是 memoized 的，如果在 initBundledSkills() 执行之前
+// 调用 getCommands()，会缓存空的 bundledSkills 数组。
+// 参考 main.tsx:2004 的注释：
+// "Previously ran inside setup() after ~20ms of await points,
+//  so the parallel getCommands() memoized an empty list."
+initBundledSkills()
+initBuiltinPlugins()
+
 export { startServer } from './server/server.js'
 export { SessionManager } from './server/sessionManager.js'
 export { DangerousBackend } from './server/backends/dangerousBackend.js'

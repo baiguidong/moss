@@ -41,7 +41,20 @@ export type BundledSkillDefinition = {
 }
 
 // Internal registry for bundled skills
-const bundledSkills: Command[] = []
+// Use a guard to prevent bun bundler's __esm wrapper from resetting the array
+// multiple times when different modules import this file.
+// IMPORTANT: Do NOT initialize bundledSkills here - only declare it.
+// Bun bundler moves variable initializations into __esm() wrappers which
+// get called multiple times, resetting the array. We initialize in
+// ensureBundledSkillsInitialized() instead.
+let bundledSkills: Command[]
+let bundledSkillsInitialized = false
+
+function ensureBundledSkillsInitialized(): void {
+  if (bundledSkillsInitialized) return
+  bundledSkillsInitialized = true
+  bundledSkills = []
+}
 
 /**
  * Register a bundled skill that will be available to the model.
@@ -51,6 +64,7 @@ const bundledSkills: Command[] = []
  * They follow the same pattern as registerPostSamplingHook() for internal features.
  */
 export function registerBundledSkill(definition: BundledSkillDefinition): void {
+  ensureBundledSkillsInitialized()
   const { files } = definition
 
   let skillRoot: string | undefined
@@ -104,6 +118,7 @@ export function registerBundledSkill(definition: BundledSkillDefinition): void {
  * Returns a copy to prevent external mutation.
  */
 export function getBundledSkills(): Command[] {
+  ensureBundledSkillsInitialized()
   return [...bundledSkills]
 }
 
@@ -111,7 +126,8 @@ export function getBundledSkills(): Command[] {
  * Clear bundled skills registry (for testing).
  */
 export function clearBundledSkills(): void {
-  bundledSkills.length = 0
+  bundledSkillsInitialized = false
+  bundledSkills = []
 }
 
 /**

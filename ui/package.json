@@ -7,7 +7,7 @@
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
-    "build:renderer": "vite build && mkdir -p dist/apps && cp -r src/apps/* dist/apps/ && mkdir -p dist/renderer/build && cp -r build/* dist/renderer/build/ && cp ../electron-direct.mjs .",
+    "build:renderer": "vite build && mkdir -p dist/apps && cp -r src/apps/* dist/apps/ && mkdir -p dist/renderer/build && cp -r build/* dist/renderer/build/",
     "start": "vite build && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",

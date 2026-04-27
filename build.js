@@ -93,16 +93,16 @@ build('cli-node.js', [
 ])
 sanitizePaths('cli-node.js')
 
-// electron-direct.mjs（供 Electron 主进程直接 import，无子进程）
-build('electron-direct.mjs', [
+// ui/electron-direct.mjs（供 Electron 桌面端打包）
+build('ui/electron-direct.mjs', [
   'build', 'src/electron-direct.ts',
-  '--outfile=electron-direct.mjs',
+  '--outfile=ui/electron-direct.mjs',
   '--target=node',
   '--format=esm',
   ...aliases,
   ...defines,
 ])
-sanitizePaths('electron-direct.mjs')
+sanitizePaths('ui/electron-direct.mjs')
 
 // admin/dist（由 moss server 直接挂载到 /admin）
 ensureAdminBuildDependencies()

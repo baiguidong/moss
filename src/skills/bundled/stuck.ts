@@ -59,10 +59,6 @@ If Slack MCP isn't available, format the report as a message the user can copy-p
 `
 
 export function registerStuckSkill(): void {
-  if (process.env.USER_TYPE !== 'ant') {
-    return
-  }
-
   registerBundledSkill({
     name: 'stuck',
     description:

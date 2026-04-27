@@ -232,10 +232,6 @@ function generateLoremIpsum(targetTokens: number): string {
 }
 
 export function registerLoremIpsumSkill(): void {
-  if (process.env.USER_TYPE !== 'ant') {
-    return
-  }
-
   registerBundledSkill({
     name: 'lorem-ipsum',
     description:

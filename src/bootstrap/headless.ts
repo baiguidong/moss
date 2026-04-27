@@ -1,6 +1,4 @@
 import { init } from '../entrypoints/init.js'
-import { initBundledSkills } from '../skills/bundled/index.js'
-import { initBuiltinPlugins } from '../plugins/bundled/index.js'
 import { setProjectRoot, setOriginalCwd, setCwdState } from './state.js'
 import { findGitRoot } from '../utils/git.js'
 import { processSessionStartHooks } from '../utils/sessionStart.js'
@@ -40,8 +38,10 @@ export async function bootstrapHeadless(cwd: string): Promise<BootstrapResult> {
     globalInitDone = true
 
     await init()
-    initBundledSkills()
-    initBuiltinPlugins()
+    // Note: initBundledSkills() and initBuiltinPlugins() are now called at
+    // module initialization time in electron-direct.ts to ensure bundled
+    // skills are registered before any memoized getCommands() call.
+    // This matches the pattern in main.tsx:2004.
 
     // Initialize LSP manager (non-blocking)
     // This will use whatever plugins/servers are available in the user's environment
