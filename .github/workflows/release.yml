@@ -12,8 +12,13 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Create GitHub Release
-        run: gh release create ${{ github.ref_name }} --draft --title "${{ github.ref_name }}" --repo ${{ github.repository }}
+      - name: Create or reset GitHub Release draft
+        run: |
+          if gh release view ${{ github.ref_name }} --repo ${{ github.repository }} >/dev/null 2>&1; then
+            gh release edit ${{ github.ref_name }} --draft --title "${{ github.ref_name }}" --repo ${{ github.repository }}
+          else
+            gh release create ${{ github.ref_name }} --draft --title "${{ github.ref_name }}" --repo ${{ github.repository }}
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -47,6 +52,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Sync UI version to release tag
+        run: node scripts/sync-ui-version.mjs "${{ github.ref_name }}"
+
       - name: Install UI dependencies
         run: bun install
         working-directory: ui
@@ -65,6 +73,16 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Ensure release has uploaded assets
+        run: |
+          asset_count=$(gh release view ${{ github.ref_name }} --json assets --jq '.assets | length')
+          if [ "$asset_count" -eq 0 ]; then
+            echo "Release ${{ github.ref_name }} has no uploaded assets; refusing to publish an empty release."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish GitHub Release
         run: gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}
         env:
