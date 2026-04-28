@@ -7,7 +7,8 @@ dist/
 tmp/
 ui/dist/
 ui/node_modules/
-cli-node.js
-cli.js
+bin/cli-node.js
+bin/cli.js
+bin/moss-server.mjs
+bin/direct-connect-session-runner.mjs
 ui/electron-direct.mjs
-moss-server.mjs

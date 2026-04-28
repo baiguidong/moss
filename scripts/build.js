@@ -43,7 +43,7 @@ const defines = [
 ]
 
 const aliases = [
-  '--alias=bun:bundle=./bun-bundle-feature.js',
+  '--alias=bun:bundle=./scripts/bun-bundle-feature.js',
   '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp/index.js',
   '--alias=@anthropic-ai/bedrock-sdk=./vendor/@anthropic-ai/bedrock-sdk/index.mjs',
   '--alias=@anthropic-ai/foundry-sdk=./vendor/@anthropic-ai/foundry-sdk/index.mjs',
@@ -74,25 +74,25 @@ function ensureAdminBuildDependencies() {
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
 if (!onlyNode) {
-  // cli.js（bun target，生产用）
-  build('cli.js', [
+  // bin/cli.js（bun target，生产用）
+  build('bin/cli.js', [
     'build', 'src/entrypoints/cli.tsx',
-    '--outfile=cli.js',
+    '--outfile=bin/cli.js',
     '--target=bun',
     ...aliases,
     ...defines,
   ])
 }
 
-// cli-node.js（node target，测试 / electron-sdk 子进程用）
-build('cli-node.js', [
+// bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
+build('bin/cli-node.js', [
   'build', 'src/entrypoints/cli.tsx',
-  '--outfile=cli-node.js',
+  '--outfile=bin/cli-node.js',
   '--target=node',
   ...aliases,
   ...defines,
 ])
-sanitizePaths('cli-node.js')
+sanitizePaths('bin/cli-node.js')
 
 // ui/electron-direct.mjs（供 Electron 桌面端打包）
 build('ui/electron-direct.mjs', [
@@ -113,21 +113,21 @@ build('admin/dist', [
   'build',
 ])
 
-// moss-server.mjs（统一服务端入口）
-build('moss-server.mjs', [
+// bin/moss-server.mjs（统一服务端入口）
+build('bin/moss-server.mjs', [
   'build', 'src/server/serverCli.ts',
-  '--outfile=moss-server.mjs',
+  '--outfile=bin/moss-server.mjs',
   '--target=node',
   '--format=esm',
   ...aliases,
   ...defines,
 ])
-sanitizePaths('moss-server.mjs')
+sanitizePaths('bin/moss-server.mjs')
 
-//direct-connect-session-runner.mjs（session detached runner）
-build('direct-connect-session-runner.mjs', [
+// bin/direct-connect-session-runner.mjs（session detached runner）
+build('bin/direct-connect-session-runner.mjs', [
   'build', 'src/server/sessionRunnerCli.ts',
-  '--outfile=direct-connect-session-runner.mjs',
+  '--outfile=bin/direct-connect-session-runner.mjs',
   '--target=node',
   '--format=esm',
   ...aliases,
