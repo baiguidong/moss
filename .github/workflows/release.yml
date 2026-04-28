@@ -76,7 +76,7 @@ jobs:
     steps:
       - name: Ensure release has uploaded assets
         run: |
-          asset_count=$(gh release view ${{ github.ref_name }} --json assets --jq '.assets | length')
+          asset_count=$(gh release view ${{ github.ref_name }} --repo ${{ github.repository }} --json assets --jq '.assets | length')
           if [ "$asset_count" -eq 0 ]; then
             echo "Release ${{ github.ref_name }} has no uploaded assets; refusing to publish an empty release."
             exit 1
