@@ -105,6 +105,23 @@ const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
 const MAX_SANITIZED_PATH_LENGTH = 200;
 
+// Desktop sessions should always resolve user-scoped settings/data from
+// ~/.moss without relocating the legacy ~/.claude.json global config file.
+process.env.MOSS_HOME = MOSS_HOME;
+
+function normalizeAnthropicBaseUrl(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
+    return `${url.origin}${normalizedPath}${url.search}${url.hash}`;
+  } catch {
+    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '');
+  }
+}
+
 function djb2Hash(value) {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
@@ -303,7 +320,11 @@ function loadLocalSettingsAuthConfig() {
     for (const key of Object.keys(env)) {
       const value = env[key];
       if (typeof value === 'string' && value.trim()) {
-        process.env[key] = value.trim();
+        const normalizedValue = key === 'ANTHROPIC_BASE_URL'
+          ? normalizeAnthropicBaseUrl(value)
+          : value.trim();
+        if (!normalizedValue) continue;
+        process.env[key] = normalizedValue;
         result.injected.push(key);
       }
     }
@@ -383,7 +404,7 @@ function normalizeDesktopSettings(input, existing = {}) {
   }
 
   if (typeof source.url === 'string') {
-    result.url = source.url.trim();
+    result.url = normalizeAnthropicBaseUrl(source.url);
   } else if (result.url === undefined) {
     result.url = DEFAULT_DESKTOP_SETTINGS.url;
   }
@@ -507,7 +528,9 @@ function loadDesktopSettings() {
     const parsed = JSON.parse(raw);
     // 从 env 中提取 url 和 apiKey
     const env = parsed && parsed.env && typeof parsed.env === 'object' ? parsed.env : {};
-    const urlFromEnv = typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL.trim() : '';
+    const urlFromEnv = normalizeAnthropicBaseUrl(
+      typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL : '',
+    );
     const apiKeyFromEnv = typeof env.ANTHROPIC_AUTH_TOKEN === 'string' ? env.ANTHROPIC_AUTH_TOKEN.trim() : '';
     // 启动加载时，保留原始 JSON 中的所有 key，只对标准 key 进行合并/格式化
     const normalized = normalizeDesktopSettings(parsed, parsed);
@@ -528,8 +551,25 @@ function loadDesktopSettings() {
   }
 }
 
+function syncClaudeAuthEnv(settings = desktopSettings) {
+  const nextUrl = normalizeAnthropicBaseUrl(settings?.url);
+  if (nextUrl) {
+    process.env.ANTHROPIC_BASE_URL = nextUrl;
+  } else {
+    delete process.env.ANTHROPIC_BASE_URL;
+  }
+
+  const nextApiKey = typeof settings?.apiKey === 'string' ? settings.apiKey.trim() : '';
+  if (nextApiKey) {
+    process.env.ANTHROPIC_AUTH_TOKEN = nextApiKey;
+  } else {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+  }
+}
+
 let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
+syncClaudeAuthEnv(desktopSettings);
 mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
 
 function getDesktopSettingsPayload(extra = {}) {
@@ -544,6 +584,8 @@ function getDesktopSettingsPayload(extra = {}) {
 }
 
 function saveDesktopSettings(nextSettings) {
+  const normalizedSettings = normalizeDesktopSettings(nextSettings, desktopSettings);
+
   // 读取现有文件，保留 env 等其他配置
   let existingEnv = {};
   try {
@@ -558,20 +600,21 @@ function saveDesktopSettings(nextSettings) {
 
   // 将 url 和 apiKey 存入 env
   const env = { ...existingEnv };
-  if (nextSettings.url) {
-    env.ANTHROPIC_BASE_URL = nextSettings.url;
+  const normalizedUrl = normalizeAnthropicBaseUrl(normalizedSettings.url);
+  if (normalizedUrl) {
+    env.ANTHROPIC_BASE_URL = normalizedUrl;
   } else {
     delete env.ANTHROPIC_BASE_URL;
   }
-  if (nextSettings.apiKey) {
-    env.ANTHROPIC_AUTH_TOKEN = nextSettings.apiKey;
+  if (normalizedSettings.apiKey) {
+    env.ANTHROPIC_AUTH_TOKEN = normalizedSettings.apiKey;
   } else {
     delete env.ANTHROPIC_AUTH_TOKEN;
   }
 
   // 构建完整的保存对象，保留所有现有配置
   const toSave = {
-    ...nextSettings,
+    ...normalizedSettings,
     env,
     // 从顶级别存，避免重复
     url: undefined,
@@ -589,9 +632,10 @@ function saveDesktopSettings(nextSettings) {
     exists: true,
     loaded: true,
     parseError: '',
-    value: nextSettings,
+    value: normalizedSettings,
   };
-  desktopSettings = nextSettings;
+  desktopSettings = normalizedSettings;
+  syncClaudeAuthEnv(normalizedSettings);
 }
 
 function buildThinkingConfig() {
@@ -1842,6 +1886,7 @@ function getBootStatus() {
     uiRoot,
     cliPath,
     sdkPath,
+    mossHome: process.env.MOSS_HOME || null,
     cliReady: true, // 核心改动：不再依赖外部 cli-node.js，因为逻辑已经由 electron-direct.mjs 嵌入
     sdkReady: hasFile(sdkPath),
     sessionsCount: sessions.size,

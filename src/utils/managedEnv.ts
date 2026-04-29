@@ -14,6 +14,20 @@ import {
   getSettingsForSource,
 } from './settings/settings.js'
 
+function normalizeAnthropicBaseUrl(value: string | undefined): string | undefined {
+  if (!value) return value
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  try {
+    const url = new URL(trimmed)
+    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '')
+    return `${url.origin}${normalizedPath}${url.search}${url.hash}`
+  } catch {
+    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
+  }
+}
+
 /**
  * `claude ssh` remote: ANTHROPIC_UNIX_SOCKET routes auth through a -R forwarded
  * socket to a local proxy, and the launcher sets a handful of placeholder auth
@@ -79,14 +93,32 @@ function withoutCcdSpawnEnvKeys(
   return out
 }
 
+function normalizeSettingsEnv(
+  env: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!env) return {}
+  const out = { ...env }
+  if (typeof out.ANTHROPIC_BASE_URL === 'string') {
+    const normalized = normalizeAnthropicBaseUrl(out.ANTHROPIC_BASE_URL)
+    if (normalized) {
+      out.ANTHROPIC_BASE_URL = normalized
+    } else {
+      delete out.ANTHROPIC_BASE_URL
+    }
+  }
+  return out
+}
+
 /**
  * Compose the strip filters applied to every settings-sourced env object.
  */
 function filterSettingsEnv(
   env: Record<string, string> | undefined,
 ): Record<string, string> {
-  return withoutCcdSpawnEnvKeys(
-    withoutHostManagedProviderVars(withoutSSHTunnelVars(env)),
+  return normalizeSettingsEnv(
+    withoutCcdSpawnEnvKeys(
+      withoutHostManagedProviderVars(withoutSSHTunnelVars(env)),
+    ),
   )
 }
 
@@ -107,6 +139,18 @@ const TRUSTED_SETTING_SOURCES = [
   'flagSettings',
   'policySettings',
 ] as const
+
+/**
+ * Apply built-in env defaults before settings-backed env vars are loaded.
+ *
+ * Only fills keys that are completely unset in the current process so shell
+ * env and later settings.env application can still override them.
+ */
+export function applyDefaultConfigEnvironmentVariables(): void {
+  if (process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === undefined) {
+    process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
+  }
+}
 
 /**
  * Apply environment variables from trusted sources to process.env.

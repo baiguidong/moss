@@ -125,6 +125,10 @@ export interface ClaudeSessionOptions {
   cwd?: string
   /** 模型名，如 'claude-sonnet-4-6' */
   model?: string
+  /** 覆盖默认 API base URL（写入当前进程环境） */
+  url?: string
+  /** 覆盖默认 API token（写入当前进程环境） */
+  apiKey?: string
   /** 系统提示词（追加到默认之后） */
   appendSystemPrompt?: string
   /** 权限模式：'allow-all' 跳过所有确认，'default' 遵循 settings */
@@ -152,6 +156,8 @@ export interface ClaudeSessionOptions {
 type ResolvedClaudeSessionOptions = {
   cwd: string
   model: string
+  url?: string
+  apiKey?: string
   appendSystemPrompt: string
   permissionMode: PermissionMode
   onPermissionRequest: (tool: string, input: unknown) => Promise<boolean>
@@ -166,6 +172,44 @@ type ResolvedClaudeSessionOptions = {
 }
 
 let activeSessionStorageKey: string | null = null
+
+function normalizeAnthropicBaseUrl(value: string | undefined): string | undefined {
+  if (!value) return value
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  try {
+    const url = new URL(trimmed)
+    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '')
+    return `${url.origin}${normalizedPath}${url.search}${url.hash}`
+  } catch {
+    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
+  }
+}
+
+function applySessionApiOverrides(opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey'>): void {
+  // Direct-embed sessions share a process with the UI host, so provider
+  // overrides must be reflected into process.env before bootstrap/init.
+  if (Object.prototype.hasOwnProperty.call(opts, 'url')) {
+    const url = normalizeAnthropicBaseUrl(
+      typeof opts.url === 'string' ? opts.url : undefined,
+    )
+    if (url) {
+      process.env.ANTHROPIC_BASE_URL = url
+    } else {
+      delete process.env.ANTHROPIC_BASE_URL
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(opts, 'apiKey')) {
+    const apiKey = typeof opts.apiKey === 'string' ? opts.apiKey.trim() : ''
+    if (apiKey) {
+      process.env.ANTHROPIC_AUTH_TOKEN = apiKey
+    } else {
+      delete process.env.ANTHROPIC_AUTH_TOKEN
+    }
+  }
+}
 
 async function resolveResumeSourceJsonlFile(
   sessionId: string | undefined,
@@ -211,6 +255,7 @@ export class ClaudeSession {
   }
 
   constructor(opts: ClaudeSessionOptions = {}) {
+    applySessionApiOverrides(opts)
     if (opts.onAppEvent) {
       setGlobalAppEventBridge(opts.onAppEvent)
     }
@@ -218,6 +263,8 @@ export class ClaudeSession {
     this.#opts = {
       cwd: opts.cwd ?? process.cwd(),
       model: opts.model ?? 'claude-sonnet-4-6',
+      url: opts.url,
+      apiKey: opts.apiKey,
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? (() => Promise.resolve(true)),
@@ -288,6 +335,8 @@ export class ClaudeSession {
     const {
       cwd,
       model,
+      url,
+      apiKey,
       appendSystemPrompt,
       permissionMode,
       onPermissionRequest,
@@ -302,6 +351,11 @@ export class ClaudeSession {
     const bootstrapResult = await bootstrapHeadless(cwd)
     const { initialMessages: bootstrapMessages, mcp, agents: customAgents } =
       bootstrapResult
+
+    // bootstrap/init reapplies userSettings env from the configured home dir.
+    // Restore explicit session provider overrides afterward so they stay
+    // authoritative inside the shared desktop process.
+    applySessionApiOverrides({ url, apiKey })
 
     // 权限上下文
     const permissionContext = {

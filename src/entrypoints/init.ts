@@ -33,6 +33,7 @@ import {
   setupGracefulShutdown,
 } from '../utils/gracefulShutdown.js'
 import {
+  applyDefaultConfigEnvironmentVariables,
   applyConfigEnvironmentVariables,
   applySafeConfigEnvironmentVariables,
 } from '../utils/managedEnv.js'
@@ -67,6 +68,10 @@ export const init = memoize(async (): Promise<void> => {
       duration_ms: Date.now() - configsStart,
     })
     profileCheckpoint('init_configs_enabled')
+
+    // Default experimental betas off unless the shell env or settings env
+    // explicitly overrides this later in initialization.
+    applyDefaultConfigEnvironmentVariables()
 
     // Apply only safe environment variables before trust dialog
     // Full environment variables are applied after trust is established
