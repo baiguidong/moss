@@ -29,8 +29,11 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
   let rpcId = 1
   let acpSessionId: string | null = null
   const pendingStdin: string[] = []
+  const pendingStdout: string[] = []
   let currentAssistantText = ''
   let lastPersistedUuid: string | null = null
+  let isHandshakeComplete = false
+  let currentTurnAssistantUuid: string | null = null
 
   const writeTranscript = async (event: any) => {
     if (!transcriptPath) return
@@ -50,18 +53,40 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     child.stdin!.write(raw)
   }
 
+  const emitStdout = (line: string) => {
+    if (!isHandshakeComplete) {
+      pendingStdout.push(line)
+      return
+    }
+    for (const l of stdoutListeners) l(line)
+  }
+
+  const flushStdout = () => {
+    while (pendingStdout.length > 0) {
+      const line = pendingStdout.shift()!
+      for (const l of stdoutListeners) l(line)
+    }
+  }
+
   const processUserMessage = (data: string) => {
     let cleanText = data
     let userUuid = randomUUID()
     try {
       const parsed = JSON.parse(data)
       if (parsed.type === 'user') {
-        cleanText = parsed.message?.content || data
+        const content = parsed.message?.content || data
+        if (Array.isArray(content)) {
+          cleanText = content.map((c: any) => c.text || '').join('\n')
+        } else {
+          cleanText = typeof content === 'string' ? content : (content?.text || JSON.stringify(content))
+        }
         userUuid = parsed.uuid || userUuid
       }
     } catch {
       cleanText = data
     }
+
+    const trimmedText = typeof cleanText === 'string' ? cleanText.trim() : String(cleanText)
 
     const userEvent = {
       type: 'user',
@@ -75,7 +100,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
       version: 'unknown',
       message: {
         role: 'user',
-        content: cleanText.trim(),
+        content: trimmedText,
       },
     }
     void writeTranscript(userEvent)
@@ -83,22 +108,39 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
     sendRpc('session/prompt', {
       sessionId: acpSessionId,
-      prompt: [{ type: 'text', text: cleanText.trim() }],
+      prompt: [{ type: 'text', text: trimmedText }],
     })
   }
 
   const flushPending = () => {
-    if (!acpSessionId) return
-    while (pendingStdin.length > 0) {
-      const data = pendingStdin.shift()!
-      processUserMessage(data)
+    if (!acpSessionId || !isHandshakeComplete) {
+      process.stderr.write(`[AcpBridge] flushPending skipped: sessionId=${!!acpSessionId}, ready=${isHandshakeComplete}\n`)
+      return
     }
+
+    if (pendingStdin.length === 0) return
+
+    process.stderr.write(`[AcpBridge] Flushing ${pendingStdin.length} pending user messages...\n`)
+
+    // Use setImmediate to ensure the engine has finished processing the session/new response
+    setImmediate(() => {
+      while (pendingStdin.length > 0) {
+        const data = pendingStdin.shift()!
+        try {
+          process.stderr.write(`[AcpBridge] Flushing message: ${data.slice(0, 50)}...\n`)
+          processUserMessage(data)
+        } catch (e: any) {
+          process.stderr.write(`[AcpBridge] Error flushing message: ${e.message}\n`)
+        }
+      }
+    })
   }
 
   let stdoutBuffer = ''
   child.stdout.on('data', (data: Buffer) => {
     const chunk = data.toString('utf8')
-    process.stderr.write(`[AcpBridge] RAW STDOUT: ${chunk}\n`)
+    // Silencing the very verbose RAW STDOUT unless needed for deep debugging
+    // process.stderr.write(`[AcpBridge] RAW STDOUT: ${chunk}\n`)
     stdoutBuffer += chunk
 
     while (true) {
@@ -112,14 +154,31 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
       try {
         const parsed = JSON.parse(line)
-        if (parsed.result?.sessionId) {
-          acpSessionId = parsed.result.sessionId
-          process.stderr.write(`[AcpBridge] ACP Session Ready: ${acpSessionId}\n`)
-          flushPending()
+
+        if (parsed.id === 'm-init') {
+          process.stderr.write(`[AcpBridge] Initialization complete, creating session...\n`)
+          sendRpc('session/new', {
+            cwd,
+            mcpServers: [],
+          }, 'm-session-new')
+          continue
         }
+
+        if (parsed.id === 'm-session-new') {
+          acpSessionId = parsed.result?.sessionId
+          process.stderr.write(`[AcpBridge] ACP Session Ready: ${acpSessionId}\n`)
+          isHandshakeComplete = true
+          process.stderr.write(`[AcpBridge] Handshake complete, flushing buffers (Stdout: ${pendingStdout.length}, Stdin: ${pendingStdin.length})\n`)
+          flushStdout()
+          flushPending()
+          continue
+        }
+
+        // ... (rest of the stdout processing logic)
 
         if (parsed.result?.stopReason) {
           process.stderr.write(`[AcpBridge] Turn Ended. Unblocking UI...\n`)
+          currentTurnAssistantUuid = null // Reset UUID for the next turn
 
           const rawUsage = parsed.result.usage || {}
           const usage = {
@@ -159,7 +218,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
             usage,
           })
           process.stderr.write(`[AcpBridge] EMITTING RESULT EVENT: ${resultEvent}\n`)
-          for (const l of stdoutListeners) l(resultEvent + '\n')
+          emitStdout(resultEvent + '\n')
 
           currentAssistantText = ''
         }
@@ -170,10 +229,21 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
           if (sessionUpdate === 'agent_message_chunk' && update) {
             const content = update.content || update.message?.content
-            const text = content?.text || (Array.isArray(content) ? content[0]?.text : content?.text) || ''
+            let text = ''
+            if (typeof content === 'string') {
+              text = content
+            } else if (content && typeof content === 'object') {
+              text = content.text || (Array.isArray(content) ? content[0]?.text : content?.text) || ''
+            }
 
             if (text) {
+              process.stderr.write(`[AcpBridge] Received chunk: ${text.slice(0, 20)}...\n`)
               currentAssistantText += text
+
+              if (!currentTurnAssistantUuid) {
+                currentTurnAssistantUuid = randomUUID()
+              }
+
               const messagePayload = {
                 role: 'assistant',
                 content: [{ type: 'text', text: currentAssistantText }],
@@ -182,14 +252,12 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
                 type: 'assistant',
                 session_id: sessionId,
                 message: messagePayload,
-                uuid: sessionId,
+                uuid: currentTurnAssistantUuid,
                 timestamp: new Date().toISOString(),
               })
               process.stderr.write(`[AcpBridge] EMITTING ASSISTANT EVENT: ${mossEvent}\n`)
-              for (const l of stdoutListeners) {
-                l(mossEvent + '\n')
-                l(currentAssistantText + '\n')
-              }
+              emitStdout(mossEvent + '\n')
+              // Removed raw text emission to prevent duplicate display in UI
             }
           }
 
@@ -210,7 +278,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
               version: 'unknown',
             }
             process.stderr.write(`[AcpBridge] EMITTING TOOL_USE EVENT: ${JSON.stringify(toolEvent)}\n`)
-            for (const l of stdoutListeners) l(JSON.stringify(toolEvent) + '\n')
+            emitStdout(JSON.stringify(toolEvent) + '\n')
             void writeTranscript(toolEvent)
             lastPersistedUuid = toolUuid
           }
@@ -221,28 +289,26 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     }
   })
 
-  setTimeout(() => {
-    process.stderr.write(`[AcpBridge] Unblocking UI with fake hello...\n`)
+  // Initial hello and start handshake
+  process.nextTick(() => {
+    process.stderr.write(`[AcpBridge] Emitting initial hello and starting handshake...\n`)
     const hello = JSON.stringify({
       type: 'hello',
       session_id: sessionId,
       runtimeType: runtime.type,
       state: 'running',
     }) + '\n'
-    for (const l of stdoutListeners) l(hello)
+    // We don't use emitStdout here because we want hello to be first and we know
+    // it will be buffered if listeners aren't ready yet, or sent immediately if they are.
+    // However, during the very first tick, they might not be ready.
+    // So we use the same buffering logic.
+    emitStdout(hello)
 
     sendRpc('initialize', {
       protocolVersion: '1.0',
       clientInfo: { name: 'moss-bridge', version: '1.0' },
     }, 'm-init')
-
-    setTimeout(() => {
-      sendRpc('session/new', {
-        cwd,
-        mcpServers: [],
-      }, 'm-session-new')
-    }, 500)
-  }, 200)
+  })
 
   if (child.stderr) {
     const stderrRl = createInterface({ input: child.stderr })
