@@ -347,6 +347,14 @@ export class AuthCenterDb {
     return row ? mapDepartment(row) : null
   }
 
+  getDepartmentName(id: string | null): string | null {
+    if (!id) {
+      return null
+    }
+    const department = this.getDepartmentById(id)
+    return department ? department.name : null
+  }
+
   getDepartmentByIdAndOrg(
     id: string,
     orgId: string,

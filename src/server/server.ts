@@ -36,6 +36,7 @@ import {
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
 import { createEnterpriseApi } from './api/enterprise.js'
+import { getUserProfile } from './api/userProfile.js'
 import { adapterProcessManager } from './adapterProcessManager.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -534,6 +535,16 @@ export function startServer(
           throw new HttpError(401, 'Invalid access token')
         }
         writeJson(res, 200, authService.getMe(auth))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/user/profile') {
+        const auth = authenticateRequest(req, authService)
+        if (!auth) {
+          throw new HttpError(401, 'Unauthorized')
+        }
+        const result = await getUserProfile(auth, authService, runtime.store)
+        writeJson(res, 200, result)
         return
       }
 
