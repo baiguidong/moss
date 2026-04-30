@@ -25,9 +25,14 @@ echo "=== Moss 部署启动流程开始 ==="
 
 # 1. 加载 Docker 镜像
 if [ -f "$DOCKER_IMAGE_PACKAGE" ]; then
-    echo "[1/3] 检测到 Docker 镜像包，正在加载..."
-    docker load -i "$DOCKER_IMAGE_PACKAGE"
-    echo "镜像加载完成。"
+    IMAGE_NAME="my-moss-runtime:v1"
+    if docker image inspect "$IMAGE_NAME" &> /dev/null; then
+        echo "[1/3] 镜像 $IMAGE_NAME 已存在，跳过加载。"
+    else
+        echo "[1/3] 检测到 Docker 镜像包，正在加载..."
+        docker load -i "$DOCKER_IMAGE_PACKAGE"
+        echo "镜像加载完成。"
+    fi
 else
     echo "[1/3] 警告: 未发现 $DOCKER_IMAGE_PACKAGE，跳过镜像加载。"
 fi
@@ -36,18 +41,24 @@ fi
 echo "[2/3] 检查 Node.js 环境..."
 
 INSTALL_LOCAL_NODE=false
-if ! command -v node &> /dev/null; then
-    echo "系统未安装 Node.js，准备使用自带安装包。"
-    INSTALL_LOCAL_NODE=true
+# 先检查自带 Node 是否已安装
+if [ -f "$BASE_DIR/deps/node/bin/node" ]; then
+    echo "自带 Node.js 已安装，跳过检查系统版本。"
+    NODE_BIN="$BASE_DIR/deps/node/bin/node"
 else
-    # 检查版本
-    CURRENT_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-    if [ "$CURRENT_VERSION" -lt "$MIN_NODE_MAJOR" ]; then
-        echo "系统 Node 版本过低 ($CURRENT_VERSION)，要求 v$MIN_NODE_MAJOR+，准备使用自带安装包。"
+    if ! command -v node &> /dev/null; then
+        echo "系统未安装 Node.js，准备使用自带安装包。"
         INSTALL_LOCAL_NODE=true
     else
-        echo "系统 Node 版本符合要求: $(node -v)"
-        NODE_BIN=$(command -v node)
+        # 检查版本
+        CURRENT_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+        if [ "$CURRENT_VERSION" -lt "$MIN_NODE_MAJOR" ]; then
+            echo "系统 Node 版本过低 ($CURRENT_VERSION)，要求 v$MIN_NODE_MAJOR+，准备使用自带安装包。"
+            INSTALL_LOCAL_NODE=true
+        else
+            echo "系统 Node 版本符合要求: $(node -v)"
+            NODE_BIN=$(command -v node)
+        fi
     fi
 fi
 
