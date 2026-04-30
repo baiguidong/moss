@@ -8,6 +8,7 @@ export type SessionRuntimeOptions = {
   type?: SessionRuntimeType
   engine?: 'legacy' | 'scode'
   scodePath?: string
+  model?: string
   dockerImage?: string
   dockerMode?: 'session' | 'user'
   configDir?: string
@@ -17,6 +18,7 @@ export type SessionRuntimeOptions = {
 export type SessionRuntimeInfo = {
   type: SessionRuntimeType
   engine: 'legacy' | 'scode'
+  model?: string
   dockerImage?: string
   dockerMode?: 'session' | 'user'
   containerName?: string
