@@ -58,7 +58,12 @@ export class ApiClient {
     const token = getToken()
     const headers = new Headers(options.headers)
 
-    if (options.body !== undefined && !headers.has('Content-Type')) {
+    if (
+      options.body !== undefined &&
+      !(options.body instanceof FormData) &&
+      !(options.body instanceof File) &&
+      !headers.has('Content-Type')
+    ) {
       headers.set('Content-Type', 'application/json')
     }
 
@@ -92,24 +97,33 @@ export class ApiClient {
     return this.request<T>(path)
   }
 
-  post<T>(path: string, body?: unknown): Promise<T> {
+  post<T>(path: string, body?: unknown, options: Partial<RequestInit> = {}): Promise<T> {
+    const isFormData = body instanceof FormData
+    const isFile = body instanceof File
     return this.request<T>(path, {
+      ...options,
       method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? (isFormData || isFile ? body as BodyInit : JSON.stringify(body)) : undefined,
     })
   }
 
-  patch<T>(path: string, body?: unknown): Promise<T> {
+  patch<T>(path: string, body?: unknown, options: Partial<RequestInit> = {}): Promise<T> {
+    const isFormData = body instanceof FormData
+    const isFile = body instanceof File
     return this.request<T>(path, {
+      ...options,
       method: 'PATCH',
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? (isFormData || isFile ? body as BodyInit : JSON.stringify(body)) : undefined,
     })
   }
 
-  put<T>(path: string, body?: unknown): Promise<T> {
+  put<T>(path: string, body?: unknown, options: Partial<RequestInit> = {}): Promise<T> {
+    const isFormData = body instanceof FormData
+    const isFile = body instanceof File
     return this.request<T>(path, {
+      ...options,
       method: 'PUT',
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? (isFormData || isFile ? body as BodyInit : JSON.stringify(body)) : undefined,
     })
   }
 

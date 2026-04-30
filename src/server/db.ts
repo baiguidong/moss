@@ -6,6 +6,7 @@ import type {
   AttemptRecord,
   AttemptRuntimeState,
   DesiredSessionState,
+  EnterpriseRecord,
   ServerConfig,
   ServerInstanceRecord,
   SessionCreateInput,
@@ -38,6 +39,7 @@ function parseJsonArray(value: unknown): string[] {
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
   return {
     type: String(row.runtime_type) === 'docker' ? 'docker' : 'host',
+    engine: String(row.engine) === 'scode' ? 'scode' : 'legacy',
     dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
     dockerMode:
       row.docker_mode === 'user'
@@ -45,9 +47,9 @@ function mapRuntime(row: SqlRow): SessionRuntimeInfo {
         : row.docker_mode === 'session'
           ? 'session'
           : undefined,
-    containerName:
+    container_name:
       typeof row.container_name === 'string' ? row.container_name : undefined,
-    configDir: typeof row.config_dir === 'string' ? row.config_dir : undefined,
+    config_dir: typeof row.config_dir === 'string' ? row.config_dir : undefined,
   }
 }
 
@@ -179,6 +181,18 @@ export class DirectConnectStore {
         created_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS enterprises (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        logo TEXT,
+        app_name TEXT,
+        top_name TEXT,
+        about_name TEXT,
+        app_company_name TEXT,
+        login_desp TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS sessions_user_idx
         ON sessions (org_id, user_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS sessions_state_idx
@@ -186,6 +200,12 @@ export class DirectConnectStore {
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
     `)
+
+    const nowTs = now()
+    this.db.prepare(`
+      INSERT OR IGNORE INTO enterprises (id, app_name, created_at, updated_at)
+      VALUES ('default', 'Moss', ?, ?)
+    `).run(nowTs, nowTs)
 
     // Migration: add assistant_name column if it doesn't exist
     try {
@@ -619,6 +639,43 @@ export class DirectConnectStore {
           : {},
       createdAt: Number(row.created_at),
     }
+  }
+
+  getEnterprise(): EnterpriseRecord {
+    const row = this.db.prepare(`
+      SELECT * FROM enterprises WHERE id = 'default' LIMIT 1
+    `).get() as SqlRow | undefined
+
+    if (!row) {
+      throw new Error('Default enterprise record not found')
+    }
+
+    return {
+      id: String(row.id),
+      logo: typeof row.logo === 'string' ? row.logo : null,
+      app_name: typeof row.app_name === 'string' ? row.app_name : null,
+      top_name: typeof row.top_name === 'string' ? row.top_name : null,
+      about_name: typeof row.about_name === 'string' ? row.about_name : null,
+      app_company_name: typeof row.app_company_name === 'string' ? row.app_company_name : null,
+      login_desp: typeof row.login_desp === 'string' ? row.login_desp : null,
+      created_at: Number(row.created_at),
+      updated_at: Number(row.updated_at),
+    }
+  }
+
+  updateEnterprise(patch: Partial<Omit<EnterpriseRecord, 'id' | 'created_at' | 'updated_at'>>): void {
+    const entries = Object.entries(patch)
+    if (entries.length === 0) return
+
+    const sets = entries.map(([key]) => `${key} = ?`).join(', ')
+    const values = entries.map(([, value]) => value ?? null)
+    const ts = now()
+
+    this.db.prepare(`
+      UPDATE enterprises
+      SET ${sets}, updated_at = ?
+      WHERE id = 'default'
+    `).run(...values, ts)
   }
 }
 

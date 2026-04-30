@@ -270,6 +270,18 @@ export type SessionCreateInput = {
   assistantName?: string
 }
 
+export type EnterpriseRecord = {
+  id: string
+  logo: string | null
+  app_name: string | null
+  top_name: string | null
+  about_name: string | null
+  app_company_name: string | null
+  login_desp: string | null
+  created_at: number
+  updated_at: number
+}
+
 export type RunnerManifest = {
   config: ServerConfig
   session: {

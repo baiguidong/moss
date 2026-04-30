@@ -13,6 +13,7 @@ const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
 const AdapterSettingsPage = lazy(() => import('./pages/adapter-settings-page'))
 const SkillStorePage = lazy(() => import('./pages/skill-store-page'))
 const AgentHubPage = lazy(() => import('./pages/agent-hub-page'))
+const EnterpriseConfigPage = lazy(() => import('./pages/enterprise-config-page'))
 const SessionDetailPage = lazy(() =>
   import('./pages/session-detail-page').then((module) => ({
     default: module.SessionDetailPage,
@@ -130,6 +131,14 @@ export default function App() {
           element={
             <SuspendedRoute>
               <AgentHubPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/settings/enterprise"
+          element={
+            <SuspendedRoute>
+              <EnterpriseConfigPage />
             </SuspendedRoute>
           }
         />

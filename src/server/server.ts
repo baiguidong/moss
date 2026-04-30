@@ -1,7 +1,7 @@
 import http from 'http'
 import net from 'net'
 import { existsSync } from 'fs'
-import { readFile, stat } from 'fs/promises'
+import { readFile, stat, mkdir, writeFile } from 'fs/promises'
 import { dirname, extname, join, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
@@ -35,6 +35,7 @@ import {
   uninstallSkill,
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
+import { createEnterpriseApi } from './api/enterprise.js'
 import { adapterProcessManager } from './adapterProcessManager.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -134,6 +135,17 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   })
 }
 
+function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
+  return new Promise((resolveBody, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', chunk => {
+      chunks.push(Buffer.from(chunk))
+    })
+    req.on('end', () => resolveBody(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
   const rawBody = await readBody(req)
   if (!rawBody.trim()) {
@@ -165,7 +177,11 @@ function authenticateRequest(
   authService: AuthService,
 ): AuthContext | null {
   const token = getBearerToken(req)
-  return token ? authService.verifyAccessToken(token) : null
+  const auth = token ? authService.verifyAccessToken(token) : null
+  if (token && !auth) {
+    process.stderr.write(`[authenticateRequest] Verification failed for token: ${token.slice(0, 10)}...\n`)
+  }
+  return auth
 }
 
 function writeJson(
@@ -430,6 +446,7 @@ export function startServer(
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
   const adaptersApi = createAdaptersApi(runtime.store.db)
+  const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -527,6 +544,11 @@ export function startServer(
           throw new HttpError(400, 'Missing token')
         }
         writeJson(res, 200, authService.introspect(token))
+        return
+      }
+
+      if ((req.method === 'GET' || isHead) && pathname === '/api/v1/tenant/config') {
+        writeJson(res, 200, await enterpriseApi.getConfig())
         return
       }
 
@@ -763,6 +785,42 @@ export function startServer(
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         writeJson(res, 200, updateSystemSettings(body))
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/settings/enterprise') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        writeJson(res, 200, await enterpriseApi.updateConfig(body))
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/upload/logo') {
+        authService.requireScope(auth, 'admin:settings')
+        const buffer = await readRawBody(req)
+        const uploadDir = join(config.runtimeDir, 'uploads', 'enterprise')
+        await mkdir(uploadDir, { recursive: true })
+
+        const contentType = req.headers['content-type']
+        let ext = '.png'
+        if (typeof contentType === 'string') {
+          const mime = contentType.split(';')[0].trim().toLowerCase()
+          if (mime === 'image/png') {
+            ext = '.png'
+          } else if (mime === 'image/jpeg' || mime === 'image/jpg') {
+            ext = '.jpg'
+          } else if (mime === 'image/webp') {
+            ext = '.webp'
+          } else if (mime === 'image/svg+xml') {
+            ext = '.svg'
+          }
+        }
+
+        const filename = `logo_${Date.now()}${ext}`
+        const filePath = join(uploadDir, filename)
+        await writeFile(filePath, buffer)
+
+        writeJson(res, 200, { success: true, data: { url: filename } })
         return
       }
 
@@ -1356,12 +1414,17 @@ export function startServer(
   server.on('upgrade', (req, socket, head) => {
     void (async () => {
       try {
+        process.stderr.write(`[WS Upgrade] Incoming request: ${req.url}\n`)
+        const token = getBearerToken(req)
         const auth = authenticateRequest(req, authService)
         if (!auth) {
+          process.stderr.write(`[WS Upgrade Auth Failed v2] Token: ${token ? (token.slice(0, 10) + '...') : 'MISSING'}, URL: ${req.url}\n`)
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
           socket.destroy()
           return
         }
+
+        process.stderr.write(`[WS Upgrade Auth Success v2] User: ${auth.userId}, Org: ${auth.orgId}\n`)
 
         const url = new URL(req.url || '/', 'http://localhost')
         const pathname = url.pathname

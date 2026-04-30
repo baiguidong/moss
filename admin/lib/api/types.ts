@@ -457,3 +457,17 @@ export interface AdapterConfigRow {
   createdAt: number
   updatedAt: number
 }
+
+export interface EnterpriseConfig {
+  logo: string | null;
+  app_name: string;
+  top_name: string;
+  about_name: string;
+  app_company_name: string;
+  login_desp: string;
+}
+
+export interface EnterpriseConfigResponse {
+  success: boolean;
+  data: EnterpriseConfig;
+}

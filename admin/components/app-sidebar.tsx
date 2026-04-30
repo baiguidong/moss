@@ -12,6 +12,7 @@ import {
   Bot,
   Sparkles,
   Wallet,
+  Building2,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -77,6 +78,12 @@ const menuItems: NavItem[] = [
 ]
 
 const systemItems: NavItem[] = [
+  {
+    title: '企业信息配置',
+    url: '/settings/enterprise',
+    icon: Building2,
+    requiredScope: 'admin:settings',
+  },
   {
     title: '系统设置',
     url: '/settings',
