@@ -92,7 +92,7 @@ export function buildSessionEnv(
     ANTHROPIC_BASE_URL: fileBaseUrl
       || settings.url
       || process.env.ANTHROPIC_BASE_URL
-      || 'https://hk.sudorouter.ai',
+      || 'https://hk.sudorouter.ai/v1',
     ...(options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {}),
     ...(options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {}),
     ...(options.role ? { MOSS_SESSION_ROLE: options.role } : {}),
