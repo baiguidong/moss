@@ -196,7 +196,12 @@ export class DirectConnectStore {
   }
 
   close(): void {
+    (this as any)._closed = true
     this.db.close()
+  }
+
+  isOpen(): boolean {
+    return !(this as any)._closed
   }
 
   registerServerInstance(host: string, pid = process.pid): ServerInstanceRecord {
@@ -647,8 +652,10 @@ export function mergeRuntime(
   const type = runtime?.type || config.defaultRuntime
   return {
     type,
+    engine: runtime?.engine || config.engine || 'legacy',
     dockerImage: runtime?.dockerImage || config.dockerImage,
     dockerMode: runtime?.dockerMode || config.dockerMode,
     configDir: runtime?.configDir,
+    scodePath: runtime?.scodePath || config.scodePath,
   }
 }

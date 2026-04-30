@@ -3,6 +3,10 @@ import { startStandaloneDirectConnectServer } from './startStandaloneServer.js'
 
 async function main(): Promise<void> {
   const { configPath, config } = await readServerConfig()
+
+  process.stderr.write(`\n[ServerCli] DEBUG: Parsed Configuration:\n`)
+  process.stderr.write(`${JSON.stringify(config, null, 2)}\n\n`)
+
   const running = await startStandaloneDirectConnectServer(config)
 
   process.stderr.write(`\nConfig: ${configPath}\n`)

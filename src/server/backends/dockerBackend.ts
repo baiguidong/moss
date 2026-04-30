@@ -126,6 +126,11 @@ export class DockerBackend implements SessionBackend {
       'MOSS_SESSION_SCOPES',
       'MOSS_SESSION_RUNTIME_TYPE',
       'MOSS_ASSISTANT_NAME',
+      'MOSS_DEFAULT_MODEL',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+      'PROXY_AUTH_TOKEN',
     ]
     for (const key of passthroughEnvKeys) {
       if (env[key]) {
@@ -168,6 +173,7 @@ export class DockerBackend implements SessionBackend {
 
     const runtimeInfo: SessionRuntimeInfo = {
       type: 'docker',
+      engine: options.runtime?.engine || 'legacy',
       dockerImage: image,
       dockerMode: mode,
       containerName,

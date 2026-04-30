@@ -35,6 +35,7 @@ export async function startStandaloneDirectConnectServer(
   const runtime = new RuntimeService({
     config,
     store,
+    authService,
     serverInstanceId: instance.instanceId,
   })
   await runtime.reconcileOnStartup()

@@ -1315,10 +1315,12 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/sessions') {
         authService.requireScope(auth, 'sessions:create')
         const body = await readJsonBody(req)
-        const cwd =
+        const fallbackCwd = config.workspace || process.cwd()
+        const requestedCwd =
           typeof body.cwd === 'string' && body.cwd.trim()
             ? body.cwd
-            : config.workspace || process.cwd()
+            : fallbackCwd
+        const cwd = existsSync(requestedCwd) ? requestedCwd : fallbackCwd
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const runtimeOptions = parseRuntimeOptions(body)

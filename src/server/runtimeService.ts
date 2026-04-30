@@ -5,7 +5,9 @@ import net from 'net'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
+import { loadBudgetStats } from './budgetStats.js'
 import { DirectConnectStore, mergeRuntime, openDirectConnectStore, toSessionSummary } from './db.js'
+import { AuthService } from './auth/service.js'
 import type {
   AttemptRecord,
   RunnerManifest,
@@ -141,15 +143,18 @@ export async function probeAttachPath(
 type RuntimeServiceOptions = {
   config: ServerConfig
   store?: DirectConnectStore
+  authService: AuthService
   serverInstanceId: string
 }
 
 export class RuntimeService {
   readonly store: DirectConnectStore
+  readonly authService: AuthService
   private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
 
   constructor(private readonly options: RuntimeServiceOptions) {
     this.store = options.store ?? openDirectConnectStore(options.config)
+    this.authService = options.authService
   }
 
   listSessions(filter: {
@@ -198,6 +203,36 @@ export class RuntimeService {
       )
     }
 
+    // Token Quota Enforcement (System wide / User specific / Department specific)
+    const [budgetStats, limits] = await Promise.all([
+      loadBudgetStats(this.store.listUserSessions(input.orgId, input.userId)),
+      this.authService.getTokenLimits(input.userId, input.orgId)
+    ])
+    const totalTokensUsed = budgetStats.summary.totalTokens
+
+    // 1. Check User Limit
+    if (limits.userLimit !== null && totalTokensUsed >= limits.userLimit) {
+      throw new Error(`个人 Token 额度已用尽 (已用: ${totalTokensUsed.toLocaleString()}, 限额: ${limits.userLimit.toLocaleString()})`)
+    }
+
+    // 2. Check Department Limit (Aggregate usage for all users in department)
+    if (limits.departmentLimit !== null) {
+      const user = await this.authService.getUserOrNull(input.userId, input.orgId)
+      if (user?.departmentId) {
+        const deptSessions = this.store.listSessionRecords({ orgId: input.orgId }).filter(s => {
+          // This is a simple heuristic: list sessions, then filter by those users who belong to the same department.
+          // In a real high-scale system, this should be a DB join or aggregate table.
+          const sessionUser = this.authService.getUserOrNull(s.userId, input.orgId)
+          return sessionUser?.departmentId === user.departmentId
+        })
+        const deptStats = await loadBudgetStats(deptSessions)
+        const deptTotalUsed = deptStats.summary.totalTokens
+        if (deptTotalUsed >= limits.departmentLimit) {
+          throw new Error(`部门 Token 额度已用尽 (已用: ${deptTotalUsed.toLocaleString()}, 限额: ${limits.departmentLimit.toLocaleString()})`)
+        }
+      }
+    }
+
     const sessionId = randomUUID()
     const runtime = mergeRuntime(this.options.config, input.runtime)
     runtime.configDir =
@@ -208,7 +243,11 @@ export class RuntimeService {
         input.userId,
         runtime.type === 'docker' ? runtime.dockerMode : 'session',
       )
-    const transcriptPath = getTranscriptPath(runtime.configDir, input.cwd, sessionId)
+    const transcriptPath = getTranscriptPath(
+      this.options.config.transcriptDir || runtime.configDir,
+      input.cwd,
+      sessionId,
+    )
     const created = this.store.createSession({
       sessionId,
       transcriptSessionId: sessionId,
@@ -223,6 +262,13 @@ export class RuntimeService {
       desiredState: 'active',
       assistantName: input.assistantName,
     })
+
+    // Ensure config directory exists for scode sessions (which don't use session-runner which normally creates it)
+    if (runtime.engine === 'scode') {
+      try {
+        await mkdir(runtime.configDir!, { recursive: true })
+      } catch {}
+    }
 
     try {
       await this.spawnAttempt(created, {
@@ -375,6 +421,10 @@ export class RuntimeService {
     })
     this.store.setCurrentAttempt(session.sessionId, attempt.attemptId)
 
+    // Force sync global engine config into session runtime for manifest
+    session.runtime.engine = this.options.config.engine
+    session.runtime.scodePath = this.options.config.scodePath
+
     const manifest: RunnerManifest = {
       config: this.options.config,
       session: {
@@ -414,10 +464,11 @@ export class RuntimeService {
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
     const runnerPath = resolveRunnerPath()
+    const cwd = existsSync(session.cwd) ? session.cwd : process.cwd()
     const child = spawn(process.execPath, [runnerPath, manifestPath], {
       detached: true,
-      stdio: 'ignore',
-      cwd: session.cwd,
+      stdio: 'inherit',
+      cwd,
     })
     child.unref()
     if (!child.pid) {

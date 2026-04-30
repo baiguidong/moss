@@ -36,6 +36,7 @@ export type DashboardStats = {
     cacheReadInputTokens: number
     cacheCreationInputTokens: number
     totalTokens: number
+    costUSD: number
   }
 }
 
@@ -61,6 +62,7 @@ function createEmptyDashboardStats(): DashboardStats {
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
       totalTokens: 0,
+      costUSD: 0,
     },
   }
 }
@@ -128,6 +130,7 @@ async function loadSingleSessionStats(session: SessionRecord): Promise<{
       cacheReadInputTokens: usageSummary?.cacheReadInputTokens ?? 0,
       cacheCreationInputTokens: usageSummary?.cacheCreationInputTokens ?? 0,
       totalTokens: usageSummary?.totalTokens ?? 0,
+      costUSD: usageSummary?.costUSD ?? 0,
     },
   }
 }
@@ -164,6 +167,7 @@ export async function loadDashboardStats(
     stats.usage.cacheCreationInputTokens +=
       sessionStat.usage.cacheCreationInputTokens
     stats.usage.totalTokens += sessionStat.usage.totalTokens
+    stats.usage.costUSD += sessionStat.usage.costUSD
 
     // Count by assistantName - only count sessions with explicit assistantName
     const assistantName = session.assistantName

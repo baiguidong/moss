@@ -6,6 +6,8 @@ export type SessionRuntimeType = 'host' | 'docker'
 
 export type SessionRuntimeOptions = {
   type?: SessionRuntimeType
+  engine?: 'legacy' | 'scode'
+  scodePath?: string
   dockerImage?: string
   dockerMode?: 'session' | 'user'
   configDir?: string
@@ -14,6 +16,7 @@ export type SessionRuntimeOptions = {
 
 export type SessionRuntimeInfo = {
   type: SessionRuntimeType
+  engine: 'legacy' | 'scode'
   dockerImage?: string
   dockerMode?: 'session' | 'user'
   containerName?: string
@@ -35,6 +38,7 @@ export type BackendSpawnOptions = {
   sessionId: string
   resumeSessionId?: string
   cwd: string
+  transcriptPath?: string
   dangerouslySkipPermissions?: boolean
   userId?: string
   orgId?: string

@@ -131,6 +131,9 @@ function formatCompactTokens(value: number): string {
 }
 
 function formatCostUSD(value: number): string {
+  if (value == null) {
+    return usdFormatter.format(0)
+  }
   if (value === 0) {
     return usdFormatter.format(0)
   }

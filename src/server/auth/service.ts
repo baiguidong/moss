@@ -350,6 +350,7 @@ export class AuthService {
       departmentId,
       role,
       status: 'active',
+      tokenLimit: null,
       createdAt,
       passwordHash: hashPassword(input.password),
       passwordUpdatedAt: createdAt,
@@ -950,6 +951,24 @@ export class AuthService {
         403,
         'Department admin can only issue user-scoped API keys',
       )
+    }
+  }
+
+  getTokenLimits(userId: string, orgId: string): { userLimit: number | null; departmentLimit: number | null } {
+    const user = this.db.getUserByIdAndOrg(userId, orgId)
+    if (!user) {
+      return { userLimit: null, departmentLimit: null }
+    }
+
+    let departmentLimit: number | null = null
+    if (user.departmentId) {
+      const dept = this.db.getDepartmentByIdAndOrg(user.departmentId, orgId)
+      departmentLimit = dept?.tokenLimit ?? null
+    }
+
+    return {
+      userLimit: user.tokenLimit ?? null,
+      departmentLimit,
     }
   }
 }

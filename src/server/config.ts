@@ -46,6 +46,7 @@ export function getDefaultServerConfig(): ServerFileConfig {
     },
     runtimeDefaults: {
       type: 'host',
+      engine: 'legacy',
       dockerMode: 'session',
       idleTimeoutMs: 10 * 60 * 1000,
       maxSessions: 32,
@@ -87,6 +88,10 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       ? normalizePath(raw.runtimeDefaults.workspace)
       : undefined,
     defaultRuntime: raw.runtimeDefaults.type,
+    engine: raw.runtimeDefaults.engine,
+    scodePath: raw.runtimeDefaults.scodePath
+      ? normalizePath(raw.runtimeDefaults.scodePath)
+      : undefined,
     dockerImage: raw.runtimeDefaults.dockerImage,
     dockerMode: raw.runtimeDefaults.dockerMode,
     idleTimeoutMs: raw.runtimeDefaults.idleTimeoutMs,

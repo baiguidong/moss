@@ -121,10 +121,10 @@ function accumulateAssistantUsage(
     return
   }
 
-  const inputTokens = usage.input_tokens || 0
-  const outputTokens = usage.output_tokens || 0
-  const cacheReadInputTokens = usage.cache_read_input_tokens || 0
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens || 0
+  const inputTokens = usage.input_tokens || usage.inputTokens || 0
+  const outputTokens = usage.output_tokens || usage.outputTokens || 0
+  const cacheReadInputTokens = usage.cache_read_input_tokens || usage.cachedReadTokens || 0
+  const cacheCreationInputTokens = usage.cache_creation_input_tokens || usage.cachedWriteTokens || 0
   const totalTokens =
     inputTokens +
     outputTokens +
@@ -132,7 +132,18 @@ function accumulateAssistantUsage(
     cacheCreationInputTokens
   const webSearchRequests =
     usage.server_tool_use?.web_search_requests ?? 0
-  const costUSD = calculateUSDCost(model, usage)
+
+  // Normalize usage object for cost calculation
+  const normalizedUsage = {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_read_input_tokens: cacheReadInputTokens,
+    cache_creation_input_tokens: cacheCreationInputTokens,
+    server_tool_use: usage.server_tool_use
+  }
+
+  const cost = calculateUSDCost(model, normalizedUsage as any)
+  const costUSD = isNaN(cost) ? 0 : cost
 
   summary.inputTokens += inputTokens
   summary.outputTokens += outputTokens

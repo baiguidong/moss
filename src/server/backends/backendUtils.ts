@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 import { fileURLToPath } from 'url'
 import {
   MOSS_HOME,
@@ -11,6 +12,7 @@ import type {
   BackendSpawnOptions,
   SessionRuntimeInfo,
 } from '../sessionManager.js'
+import { getSystemSettings } from '../systemSettings.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -35,6 +37,19 @@ export function resolveNodeCliPath(): string {
   return candidates[0] || path.join(process.cwd(), 'cli-node.js')
 }
 
+export function resolveScodeCliPath(configPath?: string): string {
+  if (configPath && fs.existsSync(configPath)) {
+    return configPath
+  }
+
+  const defaultRelativePath = path.join(process.cwd(), '../sudocode/scode')
+  if (fs.existsSync(defaultRelativePath)) {
+    return defaultRelativePath
+  }
+
+  return 'scode'
+}
+
 export function ensureCliExists(nodeCliPath: string): void {
   if (!fs.existsSync(nodeCliPath)) {
     throw new Error(
@@ -47,9 +62,37 @@ export function buildSessionEnv(
   options: BackendSpawnOptions,
   overrides: Record<string, string | undefined> = {},
 ): NodeJS.ProcessEnv {
-  return {
+  const settings = getSystemSettings()
+
+  // DIRECT FILE READ for robust extraction from ~/.moss/settings.json
+  let fileApiKey = '';
+  let fileBaseUrl = '';
+  try {
+    const settingsPath = path.join(os.homedir(), '.moss', 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      fileApiKey = content.env?.ANTHROPIC_AUTH_TOKEN || content.env?.ANTHROPIC_API_KEY || content.apiKey || '';
+      fileBaseUrl = content.env?.ANTHROPIC_BASE_URL || content.url || '';
+    }
+  } catch (e) {
+    // Ignore read errors
+  }
+
+  const apiKey = fileApiKey
+    || settings.apiKey
+    || process.env.ANTHROPIC_API_KEY
+    || process.env.ANTHROPIC_AUTH_TOKEN
+
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     MOSS_HOME,
+    ...(apiKey ? { ANTHROPIC_AUTH_TOKEN: apiKey } : {}),
+    ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
+    ...(apiKey ? { PROXY_AUTH_TOKEN: apiKey } : {}),
+    ANTHROPIC_BASE_URL: fileBaseUrl
+      || settings.url
+      || process.env.ANTHROPIC_BASE_URL
+      || 'https://hk.sudorouter.ai',
     ...(options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {}),
     ...(options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {}),
     ...(options.role ? { MOSS_SESSION_ROLE: options.role } : {}),
@@ -59,10 +102,13 @@ export function buildSessionEnv(
     ...(options.assistantName
       ? { MOSS_ASSISTANT_NAME: options.assistantName }
       : {}),
+    MOSS_DEFAULT_MODEL: settings.model || process.env.MOSS_DEFAULT_MODEL || 'gemini-3-flash-preview',
     ...Object.fromEntries(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
     ),
   }
+
+  return env
 }
 
 export function createStreamBackendHandle(

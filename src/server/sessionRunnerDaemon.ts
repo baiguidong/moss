@@ -75,6 +75,8 @@ export class SessionRunnerDaemon {
   constructor(private readonly manifest: RunnerManifest) {
     this.#store = new DirectConnectStore(manifest.config.dbPath)
     this.#backend = new RuntimeBackend({
+      engine: manifest.session.runtime.engine,
+      scodePath: manifest.session.runtime.scodePath,
       defaultRuntime: manifest.session.runtime,
       docker: {
         image: manifest.session.runtime.dockerImage,
@@ -115,6 +117,7 @@ export class SessionRunnerDaemon {
           ? this.manifest.session.transcriptSessionId
           : undefined,
         cwd: this.manifest.session.cwd,
+        transcriptPath: this.manifest.session.transcriptPath,
         dangerouslySkipPermissions: this.manifest.session.dangerouslySkipPermissions,
         userId: this.manifest.session.userId,
         orgId: this.manifest.session.orgId,
@@ -152,6 +155,7 @@ export class SessionRunnerDaemon {
       this.#armIdleTimer()
 
       handle.onStdoutLine(line => {
+        process.stderr.write(`[SessionRunnerDaemon] ON STDOUT: ${line}`)
         this.#maybeUpdateTranscriptSession(line)
         this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId)
         this.#store.touchSessionActivity(this.manifest.session.sessionId)
@@ -323,6 +327,7 @@ export class SessionRunnerDaemon {
 
   #broadcast(message: RunnerServerMessage): void {
     const line = `${jsonStringify(message)}\n`
+    process.stderr.write(`[SessionRunnerDaemon] BROADCASTING TO ${this.#clients.size} CLIENTS: ${line}`)
     for (const client of this.#clients) {
       if (!client.destroyed) {
         client.write(line)
@@ -343,7 +348,7 @@ export class SessionRunnerDaemon {
 
   #armIdleTimer(): void {
     this.#clearIdleTimer()
-    if (this.#clients.size > 0 || this.manifest.config.idleTimeoutMs <= 0) {
+    if (this.#clients.size > 0 || this.manifest.config.idleTimeoutMs <= 0 || !this.#store.isOpen()) {
       return
     }
     this.#store.setSessionLifecycle(
