@@ -6,7 +6,7 @@ import type { Entry, TranscriptMessage } from '../types/logs.js'
 import { errorMessage, isENOENT } from '../utils/errors.js'
 import { readJSONLFile } from '../utils/json.js'
 import { calculateUSDCost } from '../utils/modelCost.js'
-import { SYNTHETIC_MODEL } from '../utils/messages.js'
+import { SYNTHETIC_MODEL } from '../utils/syntheticModel.js'
 import { isTranscriptMessage } from '../utils/sessionStorage.js'
 import type { SessionRecord } from './types.js'
 

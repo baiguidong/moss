@@ -7,7 +7,7 @@ export type SessionRuntimeType = 'host' | 'docker'
 
 export type SessionRuntimeOptions = {
   type?: SessionRuntimeType
-  engine?: 'legacy' | 'scode'
+  engine?: 'scode'
   scodePath?: string
   model?: string
   dockerImage?: string
@@ -18,7 +18,7 @@ export type SessionRuntimeOptions = {
 
 export type SessionRuntimeInfo = {
   type: SessionRuntimeType
-  engine: 'legacy' | 'scode'
+  engine: 'scode'
   model?: string
   dockerImage?: string
   dockerMode?: 'session' | 'user'

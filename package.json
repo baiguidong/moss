@@ -3,7 +3,7 @@
   "version": "2.1.88",
   "type": "module",
   "bin": {
-    "claude": "bin/cli.js"
+    "moss-server": "bin/moss-server.mjs"
   },
   "scripts": {
     "build": "bun run scripts/build.js",

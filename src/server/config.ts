@@ -46,7 +46,7 @@ export function getDefaultServerConfig(): ServerFileConfig {
     },
     runtimeDefaults: {
       type: 'host',
-      engine: 'legacy',
+      engine: 'scode',
       dockerMode: 'session',
       idleTimeoutMs: 10 * 60 * 1000,
       maxSessions: 32,

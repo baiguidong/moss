@@ -73,37 +73,7 @@ function ensureAdminBuildDependencies() {
 
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
-if (!onlyNode) {
-  // bin/cli.js（bun target，生产用）
-  build('bin/cli.js', [
-    'build', 'src/entrypoints/cli.tsx',
-    '--outfile=bin/cli.js',
-    '--target=bun',
-    ...aliases,
-    ...defines,
-  ])
-}
 
-// bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
-build('bin/cli-node.js', [
-  'build', 'src/entrypoints/cli.tsx',
-  '--outfile=bin/cli-node.js',
-  '--target=node',
-  ...aliases,
-  ...defines,
-])
-sanitizePaths('bin/cli-node.js')
-
-// ui/electron-direct.mjs（供 Electron 桌面端打包）
-build('ui/electron-direct.mjs', [
-  'build', 'src/electron-direct.ts',
-  '--outfile=ui/electron-direct.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])
-sanitizePaths('ui/electron-direct.mjs')
 
 // admin/dist（由 moss server 直接挂载到 /admin）
 ensureAdminBuildDependencies()

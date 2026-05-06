@@ -39,7 +39,7 @@ function parseJsonArray(value: unknown): string[] {
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
   return {
     type: String(row.runtime_type) === 'docker' ? 'docker' : 'host',
-    engine: String(row.engine) === 'scode' ? 'scode' : 'legacy',
+    engine: String(row.engine) === 'scode' ? 'scode' : 'scode',
     dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
     dockerMode:
       row.docker_mode === 'user'
@@ -709,7 +709,7 @@ export function mergeRuntime(
   const type = runtime?.type || config.defaultRuntime
   return {
     type,
-    engine: runtime?.engine || config.engine || 'legacy',
+    engine: runtime?.engine || config.engine || 'scode',
     dockerImage: runtime?.dockerImage || config.dockerImage,
     dockerMode: runtime?.dockerMode || config.dockerMode,
     configDir: runtime?.configDir,

@@ -5,7 +5,7 @@ import type { SessionRuntimeInfo, SessionRuntimeOptions, SessionRuntimeType } fr
 export const runtimeInfoSchema = lazySchema(() =>
   z.object({
     type: z.enum(['host', 'docker']),
-    engine: z.enum(['legacy', 'scode']).optional(),
+    engine: z.enum(['scode']).optional(),
     scodePath: z.string().optional(),
     dockerImage: z.string().optional(),
     dockerMode: z.enum(['session', 'user']).optional(),
@@ -77,7 +77,7 @@ export const serverFileConfigSchema = lazySchema(() =>
     }).default({}),
     runtimeDefaults: z.object({
       type: z.enum(['host', 'docker']).default('host'),
-      engine: z.enum(['legacy', 'scode']).default('legacy'),
+      engine: z.enum(['scode']).default('scode'),
       scodePath: z.string().optional(),
       dockerImage: z.string().optional(),
       dockerMode: z.enum(['session', 'user']).default('session'),
@@ -86,7 +86,7 @@ export const serverFileConfigSchema = lazySchema(() =>
       maxSessions: z.number().int().min(0).default(32),
     }).default({
       type: 'host',
-      engine: 'legacy',
+      engine: 'scode',
       dockerMode: 'session',
       idleTimeoutMs: 10 * 60 * 1000,
       maxSessions: 32,
@@ -134,7 +134,7 @@ export type ServerConfig = {
   }
   workspace?: string
   defaultRuntime: SessionRuntimeType
-  engine: 'legacy' | 'scode'
+  engine: 'scode'
   scodePath?: string
   dockerImage?: string
   dockerMode?: 'session' | 'user'

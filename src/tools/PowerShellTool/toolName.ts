@@ -1,2 +1,1 @@
-// Here to break circular dependency from prompt.ts
-export const POWERSHELL_TOOL_NAME = 'PowerShell' as const
+export const POWERSHELL_TOOL_NAME = 'powershell'

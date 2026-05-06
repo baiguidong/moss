@@ -17,26 +17,6 @@ import { getSystemSettings } from '../systemSettings.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-export function resolveNodeCliPath(): string {
-  const configured = process.env.CLAUDE_CODE_CLI_PATH
-  const candidates = [
-    configured,
-    path.join(process.cwd(), 'cli-node.js'),
-    path.join(__dirname, 'cli-node.js'),
-    path.join(__dirname, '../cli-node.js'),
-    path.join(__dirname, '../../cli-node.js'),
-    path.join(__dirname, '../../../cli-node.js'),
-  ].filter((value): value is string => Boolean(value))
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate
-    }
-  }
-
-  return candidates[0] || path.join(process.cwd(), 'cli-node.js')
-}
-
 export function resolveScodeCliPath(configPath?: string): string {
   if (configPath && fs.existsSync(configPath)) {
     return configPath
@@ -50,31 +30,22 @@ export function resolveScodeCliPath(configPath?: string): string {
   return 'scode'
 }
 
-export function ensureCliExists(nodeCliPath: string): void {
-  if (!fs.existsSync(nodeCliPath)) {
-    throw new Error(
-      `Missing ${nodeCliPath}. Run "bun run build:node" before starting the session server.`,
-    )
-  }
-}
-
 export function buildSessionEnv(
   options: BackendSpawnOptions,
   overrides: Record<string, string | undefined> = {},
 ): NodeJS.ProcessEnv {
   const settings = getSystemSettings()
 
-  // DIRECT FILE READ for robust extraction from ~/.moss/settings.json
-  let fileApiKey = '';
-  let fileBaseUrl = '';
+  let fileApiKey = ''
+  let fileBaseUrl = ''
   try {
-    const settingsPath = path.join(os.homedir(), '.moss', 'settings.json');
+    const settingsPath = path.join(os.homedir(), '.moss', 'settings.json')
     if (fs.existsSync(settingsPath)) {
-      const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      fileApiKey = content.env?.ANTHROPIC_AUTH_TOKEN || content.env?.ANTHROPIC_API_KEY || content.apiKey || '';
-      fileBaseUrl = content.env?.ANTHROPIC_BASE_URL || content.url || '';
+      const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+      fileApiKey = content.env?.ANTHROPIC_AUTH_TOKEN || content.env?.ANTHROPIC_API_KEY || content.apiKey || ''
+      fileBaseUrl = content.env?.ANTHROPIC_BASE_URL || content.url || ''
     }
-  } catch (e) {
+  } catch {
     // Ignore read errors
   }
 
@@ -197,41 +168,4 @@ export function createStreamBackendHandle(
       child.kill(force ? 'SIGKILL' : 'SIGTERM')
     },
   }
-}
-
-export function spawnLocalCliProcess(
-  options: BackendSpawnOptions,
-  env: NodeJS.ProcessEnv,
-): ChildProcess {
-  const nodeCliPath = resolveNodeCliPath()
-  ensureCliExists(nodeCliPath)
-
-  const args = [
-    nodeCliPath,
-    '--print',
-    '--verbose',
-    '--input-format',
-    'stream-json',
-    '--output-format',
-    'stream-json',
-    '--permission-prompt-tool',
-    'stdio',
-  ]
-
-  if (options.resumeSessionId) {
-    args.push('--resume', options.resumeSessionId)
-  } else {
-    args.push('--session-id', options.sessionId)
-  }
-
-  if (options.dangerouslySkipPermissions) {
-    args.push('--dangerously-skip-permissions')
-  }
-
-  return spawn(process.execPath, args, {
-    cwd: options.cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
 }
