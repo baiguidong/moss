@@ -464,11 +464,12 @@ export class RuntimeService {
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
     const runnerPath = resolveRunnerPath()
-    const cwd = existsSync(session.cwd) ? session.cwd : process.cwd()
+    const cwd = (existsSync(session.cwd) ? session.cwd : process.cwd())
+    const safeCwd = cwd === '/' ? '/root' : cwd
     const child = spawn(process.execPath, [runnerPath, manifestPath], {
       detached: true,
       stdio: 'inherit',
-      cwd,
+      cwd: safeCwd,
     })
     child.unref()
     if (!child.pid) {

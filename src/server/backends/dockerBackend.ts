@@ -89,11 +89,12 @@ export class DockerBackend implements SessionBackend {
       ensureCliExists(nodeCliPath)
     }
 
+    const safeCwd = options.cwd === '/' ? '/root' : options.cwd
     const mounts = uniqueMounts([
-      options.cwd,
+      safeCwd,
       configDir,
       MOSS_HOME,
-    ])
+    ]).filter(p => p !== '/')
     if (!isScode) {
       mounts.push(dirname(nodeCliPath))
     }
@@ -186,7 +187,7 @@ export class DockerBackend implements SessionBackend {
       args.push('-v', `${mount}:${mount}`)
     }
 
-    args.push('-w', options.cwd)
+    args.push('-w', safeCwd)
     for (const key of passthroughEnvKeys) {
       if (env[key]) {
         args.push('-e', `${key}=${env[key]}`)
@@ -222,11 +223,11 @@ export class DockerBackend implements SessionBackend {
       process.stderr.write(`\n[DockerBackend] Spawning scode engine inside Docker:\n`)
       process.stderr.write(`  Image: ${image}\n`)
       process.stderr.write(`  scode: ${containerScodePath}\n`)
-      process.stderr.write(`  CWD: ${options.cwd}\n`)
+      process.stderr.write(`  CWD: ${safeCwd}\n`)
       process.stderr.write(`  Model: ${model}\n\n`)
 
       const child = spawn('docker', args, {
-        cwd: options.cwd,
+        cwd: safeCwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -244,7 +245,7 @@ export class DockerBackend implements SessionBackend {
       const handle = createAcpBridgeHandle({
         child,
         sessionId: options.sessionId,
-        cwd: options.cwd,
+        cwd: safeCwd,
         model,
         transcriptPath: (options as any).transcriptPath,
         runtime: runtimeInfo,
@@ -291,7 +292,7 @@ export class DockerBackend implements SessionBackend {
     }
 
     const child = spawn('docker', args, {
-      cwd: options.cwd,
+      cwd: safeCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

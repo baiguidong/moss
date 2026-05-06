@@ -1385,11 +1385,12 @@ export function startServer(
         authService.requireScope(auth, 'sessions:create')
         const body = await readJsonBody(req)
         const fallbackCwd = config.workspace || process.cwd()
+        const normalizeCwd = (p: string) => p === '/' ? '/root' : p
         const requestedCwd =
           typeof body.cwd === 'string' && body.cwd.trim()
             ? body.cwd
             : fallbackCwd
-        const cwd = existsSync(requestedCwd) ? requestedCwd : fallbackCwd
+        const cwd = normalizeCwd(existsSync(requestedCwd) ? requestedCwd : fallbackCwd)
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const runtimeOptions = parseRuntimeOptions(body)
