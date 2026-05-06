@@ -1,1 +1,0 @@
-export type CanUseToolFn = (...args: unknown[]) => unknown
