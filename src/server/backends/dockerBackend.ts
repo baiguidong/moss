@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { existsSync, writeFileSync } from 'fs'
 import { mkdir } from 'fs/promises'
+import os from 'os'
 import { dirname, join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
@@ -89,7 +90,7 @@ export class DockerBackend implements SessionBackend {
       ensureCliExists(nodeCliPath)
     }
 
-    const safeCwd = options.cwd === '/' ? '/root' : options.cwd
+    const safeCwd = options.cwd === '/' ? os.homedir() : options.cwd
     const mounts = uniqueMounts([
       safeCwd,
       configDir,

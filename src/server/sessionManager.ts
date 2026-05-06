@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import os from 'os'
 import type { WebSocket } from 'ws'
 import type { SessionIndexEntry } from './types.js'
 
@@ -123,7 +124,7 @@ export class SessionManager {
   }> {
     const summary = await this.#spawnSession({
       sessionId: randomUUID(),
-      cwd: (options.cwd || process.cwd()) === '/' ? '/root' : (options.cwd || process.cwd()),
+      cwd: (options.cwd || process.cwd()) === '/' ? os.homedir() : (options.cwd || process.cwd()),
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       userId: options.userId,
       orgId: options.orgId,

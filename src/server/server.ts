@@ -2,6 +2,7 @@ import http from 'http'
 import net from 'net'
 import { existsSync } from 'fs'
 import { readFile, stat, mkdir, writeFile } from 'fs/promises'
+import os from 'os'
 import { dirname, extname, join, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
@@ -1385,7 +1386,7 @@ export function startServer(
         authService.requireScope(auth, 'sessions:create')
         const body = await readJsonBody(req)
         const fallbackCwd = config.workspace || process.cwd()
-        const normalizeCwd = (p: string) => p === '/' ? '/root' : p
+        const normalizeCwd = (p: string) => p === '/' ? os.homedir() : p
         const requestedCwd =
           typeof body.cwd === 'string' && body.cwd.trim()
             ? body.cwd

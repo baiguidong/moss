@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
+import os from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
@@ -465,7 +466,7 @@ export class RuntimeService {
 
     const runnerPath = resolveRunnerPath()
     const cwd = (existsSync(session.cwd) ? session.cwd : process.cwd())
-    const safeCwd = cwd === '/' ? '/root' : cwd
+    const safeCwd = cwd === '/' ? os.homedir() : cwd
     const child = spawn(process.execPath, [runnerPath, manifestPath], {
       detached: true,
       stdio: 'inherit',
