@@ -246,7 +246,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
               const messagePayload = {
                 role: 'assistant',
-                content: [{ type: 'text', text: currentAssistantText }],
+                content: [{ type: 'text', text: text }], // Send only the current chunk/delta
               }
               const mossEvent = JSON.stringify({
                 type: 'assistant',
@@ -254,6 +254,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
                 message: messagePayload,
                 uuid: currentTurnAssistantUuid,
                 timestamp: new Date().toISOString(),
+                delta: true, // Mark as delta for the frontend to handle correctly
               })
               process.stderr.write(`[AcpBridge] EMITTING ASSISTANT EVENT: ${mossEvent}\n`)
               emitStdout(mossEvent + '\n')
