@@ -1,5 +1,6 @@
 # ---------------------------------------------------------
 # 使用 Ubuntu 24.04 以支持最新的 GLIBC 2.39
+# docker build -t my-moss-runtime:v1 -f deploy/runtime/Dockerfile .
 # ---------------------------------------------------------
 FROM ubuntu:24.04
 
