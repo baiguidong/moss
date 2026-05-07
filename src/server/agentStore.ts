@@ -1,3 +1,8 @@
+import {
+  bridgeAgent as bridgeAgentToScode,
+  unbridgeAgent as unbridgeAgentFromScode,
+  refreshInstructionsFile,
+} from '../utils/scodeBridge.js'
 import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
@@ -91,7 +96,7 @@ export type AssistantStoreMeta = {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'custom'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -879,12 +884,75 @@ export async function installHubAssistant(params: {
   }
   await writeAssistantMeta(assistantDir, meta)
 
+  try {
+    bridgeAgentToScode(assistantName, assistantDir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync failed: ${bridgeErr}`)
+  }
+
   return {
     assistantName,
     version: installedVersion,
     installedSkills: installedSkillNames,
     failedSkills: failedSkillIds,
   }
+}
+
+export async function createCustomAssistant(params: {
+  name: string
+  displayName: string
+  description?: string
+  avatar?: string
+  emoji?: string | null
+  rules: string
+  skills?: string[]
+}): Promise<{ assistantName: string }> {
+  const assistantName = params.name.trim().replace(/\s+/g, '-')
+  if (!assistantName) throw new Error('Name is required')
+
+  // 1. Check if already exists
+  const existing = await findAssistantDir(assistantName)
+  if (existing) throw new Error(`Assistant already exists: ${assistantName}`)
+
+  // 2. Prepare directory
+  await mkdir(ASSISTANT_CUSTOM_DIR, { recursive: true })
+  const assistantDir = path.join(ASSISTANT_CUSTOM_DIR, assistantName)
+  await mkdir(assistantDir, { recursive: true })
+
+  // 3. Write instructions file
+  const ruleFile = 'instructions.md'
+  await writeFile(path.join(assistantDir, ruleFile), params.rules.trim(), 'utf8')
+
+  // 4. Write metadata
+  const meta: AssistantStoreMeta = {
+    id: assistantName,
+    name: assistantName,
+    display_name: params.displayName,
+    description: params.description || '',
+    avatar: params.avatar || '',
+    emoji: params.emoji || null,
+    source_type: 'custom',
+    tag: 'custom',
+    is_builtin: false,
+    enabled: true,
+    installed_version: '1.0.0',
+    installed_at: new Date().toISOString(),
+    ruleFile,
+    skills: params.skills || [],
+    enabledSkills: params.skills || [],
+  }
+  await writeAssistantMeta(assistantDir, meta)
+
+  // 5. Sync to scode
+  try {
+    bridgeAgentToScode(assistantName, assistantDir)
+    await refreshInstructionsFile()
+  } catch (err) {
+    console.warn(`[AgentStore] Scode bridge sync failed: ${err}`)
+  }
+
+  return { assistantName }
 }
 
 export async function uninstallAssistant(params: {
@@ -903,12 +971,19 @@ export async function uninstallAssistant(params: {
   }
 
   await rm(sourcePath, { recursive: true, force: true })
+
+  try {
+    unbridgeAgentFromScode(params.assistantName)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after uninstall failed: ${bridgeErr}`)
+  }
 }
 
 export async function updateInstalledAssistantMeta(params: {
   assistantName: string
   updates: Partial<
-    Pick<AssistantStoreMeta, 'display_name' | 'description' | 'avatar'>
+    Pick<AssistantStoreMeta, 'display_name' | 'description' | 'avatar' | 'emoji'>
   >
 }): Promise<void> {
   const result = await findAssistantDir(params.assistantName)
@@ -930,8 +1005,18 @@ export async function updateInstalledAssistantMeta(params: {
   if (typeof params.updates.avatar === 'string') {
     nextMeta.avatar = params.updates.avatar.trim()
   }
+  if (typeof params.updates.emoji === 'string') {
+    nextMeta.emoji = params.updates.emoji.trim()
+  }
 
   await writeAssistantMeta(result.dir, nextMeta)
+
+  try {
+    bridgeAgentToScode(params.assistantName, result.dir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after meta update failed: ${bridgeErr}`)
+  }
 }
 
 export async function getAssistantContextSummary(

@@ -24,6 +24,7 @@ import {
   MOSS_SKILLS_CUSTOM_DIR,
   MOSS_SKILLS_HUB_DIR,
 } from './localSkillDirectories.js'
+import { refreshInstructionsFile } from '../scodeBridge.js'
 
 /**
  * Time in milliseconds to wait for file writes to stabilize before processing.
@@ -287,6 +288,9 @@ function scheduleReload(changedPath: string): void {
     clearSkillCaches()
     clearCommandsCache()
     resetSentSkillNames()
+    refreshInstructionsFile().catch(err => {
+      logForDebugging(`[scodeBridge] refreshInstructionsFile after skill change failed: ${err}`)
+    })
     skillsChanged.emit()
   }, testOverrides?.reloadDebounce ?? RELOAD_DEBOUNCE_MS)
 }

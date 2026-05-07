@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { getMe, login as apiLogin, loginWithApiKey, logout as apiLogout, isAuthenticated } from '@/lib/api/auth'
-import { UNAUTHORIZED_EVENT } from '@/lib/api/client'
+import { UNAUTHORIZED_EVENT, removeToken } from '@/lib/api/client'
 import type { AuthUser } from '@/lib/api/types'
 
 interface AuthContextType {
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(response.user)
       setScopes(response.scopes)
     } catch {
-      localStorage.removeItem('moss_access_token')
+      removeToken()
       setUser(null)
       setScopes([])
     } finally {

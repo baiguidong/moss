@@ -232,6 +232,11 @@ export class AuthCenterDb {
         last_used_at INTEGER
       );
 
+      CREATE TABLE IF NOT EXISTS revoked_tokens (
+        jti TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS server_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -243,6 +248,7 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS users_email_idx ON users (email);
       CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
       CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
+      CREATE INDEX IF NOT EXISTS revoked_tokens_expiry_idx ON revoked_tokens (expires_at);
     `)
 
     // Older databases may need the column added before SQLite can create the index.
@@ -578,6 +584,27 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE api_keys SET status = 'revoked' WHERE id = ?
     `).run(id)
+  }
+
+  // Token revocation operations
+  revokeToken(jti: string, expiresAt: number): void {
+    this.db.prepare(`
+      INSERT INTO revoked_tokens (jti, expires_at) VALUES (?, ?)
+      ON CONFLICT(jti) DO UPDATE SET expires_at = excluded.expires_at
+    `).run(jti, expiresAt)
+  }
+
+  isTokenRevoked(jti: string): boolean {
+    const row = this.db.prepare(`
+      SELECT jti FROM revoked_tokens WHERE jti = ? LIMIT 1
+    `).get(jti) as SqlRow | undefined
+    return row !== undefined
+  }
+
+  cleanupExpiredRevokedTokens(): void {
+    this.db.prepare(`
+      DELETE FROM revoked_tokens WHERE expires_at < ?
+    `).run(Math.floor(Date.now() / 1000))
   }
 
   // Config operations

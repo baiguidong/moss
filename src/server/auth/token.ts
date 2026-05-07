@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto'
+import { createHmac, timingSafeEqual, randomUUID } from 'crypto'
 
 export type AccessTokenClaims = {
   iss: string
@@ -7,7 +7,8 @@ export type AccessTokenClaims = {
   role: string
   scopes: string[]
   key_id: string
-  type: 'access'
+  jti: string
+  type: 'access' | 'refresh'
   iat: number
   exp: number
 }
@@ -19,6 +20,8 @@ export type AuthContext = {
   role: string
   scopes: string[]
   keyId: string
+  jti: string
+  exp: number
 }
 
 function base64UrlEncode(input: string | Buffer): string {
@@ -42,9 +45,10 @@ function signHs256(payload: string, secret: string): string {
 }
 
 export function issueAccessToken(
-  claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'type'>,
+  claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'type' | 'jti'>,
   secret: string,
   expiresInSec = 60 * 60,
+  type: 'access' | 'refresh' = 'access',
 ): {
   token: string
   expiresAt: number
@@ -54,7 +58,8 @@ export function issueAccessToken(
   const header = { alg: 'HS256', typ: 'JWT' }
   const payload: AccessTokenClaims = {
     ...claims,
-    type: 'access',
+    type,
+    jti: randomUUID(),
     iat: issuedAt,
     exp: expiresAt,
   }
@@ -74,6 +79,7 @@ export function verifyAccessToken(
   token: string,
   secret: string,
   expectedIssuer?: string,
+  expectedType: 'access' | 'refresh' = 'access',
 ): AuthContext | null {
   const parts = token.split('.')
   if (parts.length !== 3) {
@@ -118,10 +124,11 @@ export function verifyAccessToken(
 
   const now = Math.floor(Date.now() / 1000)
   if (
-    payload.type !== 'access' ||
+    payload.type !== expectedType ||
     typeof payload.sub !== 'string' ||
     typeof payload.org_id !== 'string' ||
     typeof payload.key_id !== 'string' ||
+    typeof payload.jti !== 'string' ||
     typeof payload.role !== 'string' ||
     !Array.isArray(payload.scopes) ||
     typeof payload.exp !== 'number' ||
@@ -141,6 +148,8 @@ export function verifyAccessToken(
     role: payload.role,
     scopes: payload.scopes,
     keyId: payload.key_id,
+    jti: payload.jti,
+    exp: payload.exp,
   }
 }
 

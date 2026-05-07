@@ -65,6 +65,7 @@ export async function startStandaloneDirectConnectServer(
     if (stopped) return
     stopped = true
     clearInterval(heartbeatTimer)
+    authService.destroy()
     await server.stop()
     store.stopServerInstance(instance.instanceId)
     store.close()
