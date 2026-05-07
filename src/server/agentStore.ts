@@ -1,3 +1,8 @@
+import {
+  bridgeAgent as bridgeAgentToScode,
+  unbridgeAgent as unbridgeAgentFromScode,
+  refreshInstructionsFile,
+} from '../utils/scodeBridge.js'
 import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
@@ -879,6 +884,13 @@ export async function installHubAssistant(params: {
   }
   await writeAssistantMeta(assistantDir, meta)
 
+  try {
+    bridgeAgentToScode(assistantName, assistantDir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync failed: ${bridgeErr}`)
+  }
+
   return {
     assistantName,
     version: installedVersion,
@@ -903,6 +915,13 @@ export async function uninstallAssistant(params: {
   }
 
   await rm(sourcePath, { recursive: true, force: true })
+
+  try {
+    unbridgeAgentFromScode(params.assistantName)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after uninstall failed: ${bridgeErr}`)
+  }
 }
 
 export async function updateInstalledAssistantMeta(params: {
@@ -932,6 +951,13 @@ export async function updateInstalledAssistantMeta(params: {
   }
 
   await writeAssistantMeta(result.dir, nextMeta)
+
+  try {
+    bridgeAgentToScode(params.assistantName, result.dir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after meta update failed: ${bridgeErr}`)
+  }
 }
 
 export async function getAssistantContextSummary(

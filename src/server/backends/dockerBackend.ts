@@ -5,6 +5,7 @@ import os from 'os'
 import { join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
+import { syncAllBridgesAsync } from '../../utils/scodeBridge.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -103,6 +104,14 @@ export class DockerBackend implements SessionBackend {
 
     const dotNexusDir = join(configDir, '.nexus', 'sudocode')
     await mkdir(dotNexusDir, { recursive: true })
+
+    // Sync skill/agent bridges into the config directory so scode can discover them
+    try {
+      await syncAllBridgesAsync(configDir)
+    } catch (bridgeErr) {
+      process.stderr.write(`[DockerBackend] scode bridge sync warning: ${bridgeErr}\n`)
+    }
+
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
 
     try {
