@@ -604,7 +604,7 @@ export class AuthCenterDb {
   cleanupExpiredRevokedTokens(): void {
     this.db.prepare(`
       DELETE FROM revoked_tokens WHERE expires_at < ?
-    `).run(Date.now())
+    `).run(Math.floor(Date.now() / 1000))
   }
 
   // Config operations

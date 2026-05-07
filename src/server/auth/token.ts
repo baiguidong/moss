@@ -21,6 +21,7 @@ export type AuthContext = {
   scopes: string[]
   keyId: string
   jti: string
+  exp: number
 }
 
 function base64UrlEncode(input: string | Buffer): string {
@@ -148,6 +149,7 @@ export function verifyAccessToken(
     scopes: payload.scopes,
     keyId: payload.key_id,
     jti: payload.jti,
+    exp: payload.exp,
   }
 }
 
