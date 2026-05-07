@@ -1510,8 +1510,27 @@ export function startServer(
     void (async () => {
       try {
         process.stderr.write(`[WS Upgrade] Incoming request: ${req.url}\n`)
-        const token = getBearerToken(req)
-        const auth = authenticateRequest(req, authService)
+        let token = getBearerToken(req)
+        let auth = token ? authService.verifyAccessToken(token) : null
+
+        // If access_token is expired, try refreshing with refresh_token from query param
+        if (token && !auth) {
+          const url = new URL(req.url || '/', 'http://localhost')
+          const refreshToken = url.searchParams.get('refresh_token')
+          if (refreshToken) {
+            try {
+              const refreshed = authService.refreshToken(refreshToken)
+              auth = authService.verifyAccessToken(refreshed.access_token)
+              if (auth) {
+                token = refreshed.access_token
+                process.stderr.write(`[WS Upgrade] Token refreshed successfully for user: ${auth.userId}\n`)
+              }
+            } catch (refreshError) {
+              process.stderr.write(`[WS Upgrade] Token refresh failed: ${refreshError}\n`)
+            }
+          }
+        }
+
         if (!auth) {
           process.stderr.write(`[WS Upgrade Auth Failed v2] Token: ${token ? (token.slice(0, 10) + '...') : 'MISSING'}, URL: ${req.url}\n`)
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
