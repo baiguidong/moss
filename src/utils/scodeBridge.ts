@@ -1,5 +1,7 @@
 import {
+  existsSync,
   lstatSync,
+  mkdirSync,
   readlinkSync,
   readdirSync,
   readFileSync,
@@ -7,7 +9,6 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-  existsSync,
 } from 'fs'
 import os from 'os'
 import path from 'path'
