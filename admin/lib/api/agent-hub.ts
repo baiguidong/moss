@@ -36,7 +36,7 @@ export interface InstalledAgentMeta {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'custom'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -75,6 +75,16 @@ export interface InstallAgentRequest {
   checksum?: string
   assistantMeta?: AgentHubAssistant | null
   selectedSkillIds?: string[]
+}
+
+export interface CreateAssistantRequest {
+  name: string
+  displayName: string
+  description?: string
+  avatar?: string
+  emoji?: string
+  rules: string
+  skills?: string[]
 }
 
 export function getAgentHubAssistants(params: {
@@ -134,10 +144,19 @@ export function uninstallAgent(data: {
   return authClient.post<{ ok: boolean }>('/api/v1/agents/uninstall', data)
 }
 
+export function createCustomAssistant(
+  data: CreateAssistantRequest,
+): Promise<{ success: boolean; data: InstalledAgentInfo }> {
+  return authClient.post<{ success: boolean; data: InstalledAgentInfo }>(
+    '/api/v1/agents/create',
+    data,
+  )
+}
+
 export function updateInstalledAgentMeta(data: {
   assistantName: string
   updates: Partial<
-    Pick<InstalledAgentMeta, 'display_name' | 'description' | 'avatar'>
+    Pick<InstalledAgentMeta, 'display_name' | 'description' | 'avatar' | 'emoji'>
   >
 }): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>('/api/v1/agents/meta', data)

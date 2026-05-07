@@ -1,6 +1,8 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const TOKEN_KEY = 'moss_access_token'
+const REFRESH_TOKEN_KEY = 'moss_refresh_token'
+const TOKEN_EXPIRES_KEY = 'moss_token_expires_at'
 export const UNAUTHORIZED_EVENT = 'moss:unauthorized'
 
 export function getToken(): string | null {
@@ -13,9 +15,96 @@ export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token)
 }
 
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(REFRESH_TOKEN_KEY)
+}
+
+export function setRefreshToken(token: string): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(REFRESH_TOKEN_KEY, token)
+}
+
+export function getTokenExpiresAt(): number | null {
+  if (typeof window === 'undefined') return null
+  const val = localStorage.getItem(TOKEN_EXPIRES_KEY)
+  return val ? Number(val) : null
+}
+
+export function setTokenExpiresAt(expiresAt: number): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(TOKEN_EXPIRES_KEY, String(expiresAt))
+}
+
 export function removeToken(): void {
   if (typeof window === 'undefined') return
   localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem(TOKEN_EXPIRES_KEY)
+}
+
+let refreshPromise: Promise<string | null> | null = null
+
+export async function ensureValidToken(): Promise<string | null> {
+  const token = getToken()
+  if (!token) return null
+
+  const expiresAt = getTokenExpiresAt()
+  const buffer = 5 * 60 * 1000
+
+  if (expiresAt && Date.now() < expiresAt - buffer) {
+    return token
+  }
+
+  if (refreshPromise) return refreshPromise
+
+  refreshPromise = (async () => {
+    const refreshToken = getRefreshToken()
+    if (!refreshToken) {
+      removeToken()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+      }
+      return null
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+        }),
+      })
+
+      if (!response.ok) {
+        removeToken()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+        }
+        return null
+      }
+
+      const data = await response.json()
+      setToken(data.access_token)
+      if (data.refresh_token) {
+        setRefreshToken(data.refresh_token)
+      }
+      setTokenExpiresAt(Date.now() + (data.expires_in || 3600) * 1000)
+      return data.access_token
+    } catch {
+      removeToken()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+      }
+      return null
+    } finally {
+      refreshPromise = null
+    }
+  })()
+
+  return refreshPromise
 }
 
 interface ApiErrorResponse {
@@ -71,11 +160,32 @@ export class ApiClient {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    let response = await fetch(`${this.baseUrl}${path}`, {
       ...options,
       headers,
       credentials: 'include',
     })
+
+    if (response.status === 401 && token) {
+      const newToken = await ensureValidToken()
+      if (newToken) {
+        const retryHeaders = new Headers(options.headers)
+        retryHeaders.set('Authorization', `Bearer ${newToken}`)
+        if (
+          options.body !== undefined &&
+          !(options.body instanceof FormData) &&
+          !(options.body instanceof File) &&
+          !retryHeaders.has('Content-Type')
+        ) {
+          retryHeaders.set('Content-Type', 'application/json')
+        }
+        response = await fetch(`${this.baseUrl}${path}`, {
+          ...options,
+          headers: retryHeaders,
+          credentials: 'include',
+        })
+      }
+    }
 
     if (!response.ok) {
       if (response.status === 401) {

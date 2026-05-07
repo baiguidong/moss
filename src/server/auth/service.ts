@@ -91,11 +91,24 @@ export async function createAuthService(
   }
 }
 
+const REVOKED_TOKENS_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+
 export class AuthService {
+  private readonly cleanupTimer: ReturnType<typeof setInterval>
+
   constructor(
     private readonly db: AuthCenterDb,
     private readonly tokenTtlSec: number,
-  ) {}
+  ) {
+    this.cleanupTimer = setInterval(() => {
+      this.db.cleanupExpiredRevokedTokens()
+    }, REVOKED_TOKENS_CLEANUP_INTERVAL_MS)
+    this.cleanupTimer.unref?.()
+  }
+
+  destroy(): void {
+    clearInterval(this.cleanupTimer)
+  }
 
   verifyAccessToken(token: string): AuthContext | null {
     const auth = verifyAccessToken(token, this.db.getJwtSecret(), this.db.getIssuer())
@@ -120,6 +133,8 @@ export class AuthService {
         this.db.revokeToken(refresh.jti, refresh.exp)
       }
     }
+
+    this.db.cleanupExpiredRevokedTokens()
   }
 
   refreshToken(token: string): {
@@ -131,15 +146,20 @@ export class AuthService {
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
+    
     const auth = verifyAccessToken(token, this.db.getJwtSecret(), this.db.getIssuer(), 'refresh')
     if (!auth || this.db.isTokenRevoked(auth.jti)) {
       throw new AuthServiceError(401, 'Invalid refresh token')
     }
 
+    this.db.revokeToken(auth.jti, auth.exp)
+
     const user = this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
     if (!user || user.status !== 'active') {
       throw new AuthServiceError(401, 'User is invalid')
     }
+
+    this.db.cleanupExpiredRevokedTokens()
 
     return this.issueToken({
       user,

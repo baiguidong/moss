@@ -45,6 +45,7 @@ import {
   installAgent,
   uninstallAgent,
   updateInstalledAgentMeta,
+  createCustomAssistant,
   type AgentHubAssistant,
   type AgentHubDetail,
   type InstalledAgentInfo,
@@ -62,6 +63,7 @@ import {
   CheckCircle2,
   Loader2,
   Package,
+  Plus,
   RefreshCw,
   Search,
   Shield,
@@ -410,9 +412,19 @@ export default function AgentHubPage() {
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editAvatar, setEditAvatar] = useState('')
+  const [editEmoji, setEditEmoji] = useState('')
   const [editSkills, setEditSkills] = useState<SkillHubSkill[]>([])
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createDisplayName, setCreateDisplayName] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createAvatar, setCreateAvatar] = useState('')
+  const [createEmoji, setCreateEmoji] = useState('')
+  const [createRules, setCreateRules] = useState('')
+  const [creatingAssistant, setCreatingAssistant] = useState(false)
 
   const [pendingUninstallAgent, setPendingUninstallAgent] =
     useState<InstalledAgentInfo | null>(null)
@@ -713,6 +725,7 @@ export default function AgentHubPage() {
     setEditName(agent.displayName || agent.name)
     setEditDescription(agent.description || '')
     setEditAvatar(agent.avatar || '')
+    setEditEmoji(agent.emoji || '')
     setEditSkills([])
     setEditOpen(true)
 
@@ -791,6 +804,7 @@ export default function AgentHubPage() {
           display_name: editName.trim(),
           description: editDescription.trim(),
           avatar: editAvatar.trim(),
+          emoji: editEmoji.trim(),
         },
       })
       toast.success(`已更新 ${editingAgent.displayName}`)
@@ -801,7 +815,48 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editName, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editingAgent, fetchInstalledState])
+
+  const handleCreate = useCallback(async () => {
+    const name = createName.trim()
+    const displayName = createDisplayName.trim()
+    const rules = createRules.trim()
+
+    if (!name || !displayName) {
+      toast.error('名称和显示名称为必填项')
+      return
+    }
+
+    if (!rules) {
+      toast.error('系统指令为必填项')
+      return
+    }
+
+    setCreatingAssistant(true)
+    try {
+      await createCustomAssistant({
+        name,
+        displayName,
+        description: createDescription.trim() || undefined,
+        avatar: createAvatar.trim() || undefined,
+        emoji: createEmoji.trim() || undefined,
+        rules,
+      })
+      toast.success(`已创建智能体 ${displayName}`)
+      setCreateOpen(false)
+      setCreateName('')
+      setCreateDisplayName('')
+      setCreateDescription('')
+      setCreateAvatar('')
+      setCreateEmoji('')
+      setCreateRules('')
+      await fetchInstalledState(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '创建智能体失败')
+    } finally {
+      setCreatingAssistant(false)
+    }
+  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, fetchInstalledState])
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!pendingUninstallAgent) {
@@ -885,10 +940,16 @@ export default function AgentHubPage() {
             <Badge variant="secondary">已安装 {installedAgents.length} 个智能体</Badge>
           </div>
 
-          <Button variant="outline" onClick={() => void handleRefresh()}>
-            <RefreshCw className="mr-2 size-4" />
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-2 size-4" />
+              创建智能体
+            </Button>
+            <Button variant="outline" onClick={() => void handleRefresh()}>
+              <RefreshCw className="mr-2 size-4" />
+              刷新
+            </Button>
+          </div>
         </div>
 
         {pageError ? (
@@ -1285,6 +1346,16 @@ export default function AgentHubPage() {
             </div>
 
             <div className="space-y-2">
+              <label className="text-sm font-medium">Emoji</label>
+              <Input
+                value={editEmoji}
+                onChange={event => setEditEmoji(event.target.value)}
+                placeholder="🚀"
+                className="w-32"
+              />
+            </div>
+
+            <div className="space-y-2">
               <label className="text-sm font-medium">描述</label>
               <Textarea
                 value={editDescription}
@@ -1377,6 +1448,124 @@ export default function AgentHubPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={createOpen}
+        onOpenChange={open => {
+          setCreateOpen(open)
+          if (!open) {
+            setCreateName('')
+            setCreateDisplayName('')
+            setCreateDescription('')
+            setCreateAvatar('')
+            setCreateEmoji('')
+            setCreateRules('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>创建自定义智能体</DialogTitle>
+            <DialogDescription>
+              创建一个新的自定义智能体，将在 server 上生成智能体目录和配置文件。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  标识名称 <span className="text-destructive">*</span>
+                </label>
+                <Input
+                  value={createName}
+                  onChange={event => setCreateName(event.target.value)}
+                  placeholder="my-agent（英文，用作目录名）"
+                />
+                <p className="text-xs text-muted-foreground">
+                  仅支持英文、数字和连字符，将作为智能体的唯一标识和目录名称
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  显示名称 <span className="text-destructive">*</span>
+                </label>
+                <Input
+                  value={createDisplayName}
+                  onChange={event => setCreateDisplayName(event.target.value)}
+                  placeholder="我的智能体"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Emoji</label>
+                <Input
+                  value={createEmoji}
+                  onChange={event => setCreateEmoji(event.target.value)}
+                  placeholder="🚀"
+                  className="w-32"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">头像地址</label>
+                <Input
+                  value={createAvatar}
+                  onChange={event => setCreateAvatar(event.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">描述</label>
+              <Textarea
+                value={createDescription}
+                onChange={event => setCreateDescription(event.target.value)}
+                rows={2}
+                placeholder="输入智能体描述"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                系统指令 <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                value={createRules}
+                onChange={event => setCreateRules(event.target.value)}
+                rows={8}
+                placeholder="输入智能体的系统指令（System Prompt），定义智能体的行为和角色..."
+              />
+              <p className="text-xs text-muted-foreground">
+                系统指令将写入 instructions.md 文件，作为智能体的核心行为定义
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={creatingAssistant || !createName.trim() || !createDisplayName.trim() || !createRules.trim()}
+              onClick={() => void handleCreate()}
+            >
+              {creatingAssistant ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  创建中
+                </>
+              ) : (
+                '创建'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

@@ -13,6 +13,7 @@ import { AuthService, AuthServiceError } from './auth/service.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import {
+  createCustomAssistant,
   fetchAgentHubAssistantDetail,
   fetchAgentHubAssistants,
   fetchAgentHubCategories,
@@ -435,6 +436,28 @@ function writeError(
   })
 }
 
+function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const origin = req.headers.origin
+  if (!origin) return false
+
+  res.setHeader('Access-Control-Allow-Origin', origin)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Id')
+  res.setHeader('Access-Control-Allow-Credentials', 'true')
+  res.setHeader('Access-Control-Max-Age', '86400')
+  return true
+}
+
+function handleCorsPreflight(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (req.method === 'OPTIONS' && req.headers.origin) {
+    setCorsHeaders(req, res)
+    res.writeHead(204)
+    res.end()
+    return true
+  }
+  return false
+}
+
 export function startServer(
   config: ServerConfig,
   runtime: RuntimeService,
@@ -455,6 +478,16 @@ export function startServer(
       const url = new URL(req.url || '/', 'http://localhost')
       const pathname = url.pathname
       const isHead = req.method === 'HEAD'
+
+      // Handle CORS preflight for all API routes
+      if (pathname.startsWith('/api/') && handleCorsPreflight(req, res)) {
+        return
+      }
+
+      // Set CORS headers for all API routes (non-preflight)
+      if (pathname.startsWith('/api/')) {
+        setCorsHeaders(req, res)
+      }
 
       if ((req.method === 'GET' || isHead) && pathname === '/') {
         redirect(res, '/admin')
@@ -498,7 +531,6 @@ export function startServer(
             : typeof body.api_key === 'string'
               ? 'api_key'
               : 'password'
-
         if (grantType === 'api_key') {
           writeJson(
             res,
@@ -543,10 +575,7 @@ export function startServer(
         if (!auth) {
           throw new HttpError(401, 'Unauthorized')
         }
-        const accessToken = getBearerToken(req)
-        if (!accessToken) {
-          throw new HttpError(401, 'Missing bearer token')
-        }
+        const accessToken = getBearerToken(req)!
         const body = await readJsonBody(req).catch(() => ({}))
         const refreshToken =
           typeof body.refresh_token === 'string'
@@ -950,6 +979,26 @@ export function startServer(
         return
       }
 
+      if (req.method === 'POST' && pathname === '/api/v1/agents/create') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+
+        const result = await createCustomAssistant({
+          name: typeof body.name === 'string' ? body.name : '',
+          displayName: typeof body.displayName === 'string' ? body.displayName : '',
+          description: typeof body.description === 'string' ? body.description : undefined,
+          avatar: typeof body.avatar === 'string' ? body.avatar : undefined,
+          emoji: typeof body.emoji === 'string' ? body.emoji : undefined,
+          rules: typeof body.rules === 'string' ? body.rules : '',
+          skills: Array.isArray(body.skills)
+            ? body.skills.filter((s): s is string => typeof s === 'string')
+            : undefined,
+        })
+
+        writeJson(res, 200, { success: true, data: result })
+        return
+      }
+
       if (req.method === 'POST' && pathname === '/api/v1/agents/uninstall') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
@@ -982,6 +1031,8 @@ export function startServer(
                 : undefined,
             avatar:
               typeof updates.avatar === 'string' ? updates.avatar : undefined,
+            emoji:
+              typeof updates.emoji === 'string' ? updates.emoji : undefined,
           },
         })
         writeJson(res, 200, { ok: true })
