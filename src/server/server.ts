@@ -523,7 +523,38 @@ export function startServer(
           return
         }
 
+        if (grantType === 'refresh_token') {
+          const refreshToken =
+            typeof body.refresh_token === 'string'
+              ? body.refresh_token.trim()
+              : ''
+          if (!refreshToken) {
+            throw new HttpError(400, 'Missing refresh_token')
+          }
+          writeJson(res, 200, authService.refreshToken(refreshToken))
+          return
+        }
+
         throw new HttpError(400, `Unsupported grant_type: ${grantType}`)
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/logout') {
+        const auth = authenticateRequest(req, authService)
+        if (!auth) {
+          throw new HttpError(401, 'Unauthorized')
+        }
+        const accessToken = getBearerToken(req)
+        if (!accessToken) {
+          throw new HttpError(401, 'Missing bearer token')
+        }
+        const body = await readJsonBody(req).catch(() => ({}))
+        const refreshToken =
+          typeof body.refresh_token === 'string'
+            ? body.refresh_token.trim()
+            : undefined
+        authService.logout(accessToken, refreshToken)
+        writeJson(res, 200, { ok: true })
+        return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/auth/me') {
