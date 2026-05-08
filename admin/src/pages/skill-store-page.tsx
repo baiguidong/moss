@@ -8,6 +8,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
@@ -36,6 +37,9 @@ import {
   type SkillStoreTab,
 } from '@/lib/api/skill-store'
 import type { SystemSettings } from '@/lib/api/types'
+import type { AuthDepartment } from '@/lib/api/types'
+import { getDepartments } from '@/lib/api/auth'
+import { updateSkillVisibility } from '@/lib/api/skill-store'
 import { cn } from '@/lib/utils'
 import {
   CheckCircle2,
@@ -277,6 +281,8 @@ type InstalledSkillCardProps = {
   onToggleEnabled: (skill: InstalledSkillInfo, enabled: boolean) => void
   onRequestUninstall: (skill: InstalledSkillInfo) => void
   onUpdate: (skill: InstalledSkillInfo) => void
+  onEditVisibility: (skill: InstalledSkillInfo) => void
+  departmentNameMap: Map<string, string>
 }
 
 function InstalledSkillCard({
@@ -290,6 +296,8 @@ function InstalledSkillCard({
   onToggleEnabled,
   onRequestUninstall,
   onUpdate,
+  onEditVisibility,
+  departmentNameMap,
 }: InstalledSkillCardProps) {
   const canManage = !skill.isBuiltin
 
@@ -359,12 +367,33 @@ function InstalledSkillCard({
           <span>当前版本 {normalizeSkillVersion(skill.version) || '未知'}</span>
           {latestVersion && hasUpdate ? <span>最新 {latestVersion.version}</span> : null}
         </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {(skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids)?.length ? (
+            (skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids ?? []).map(deptId => {
+              const name = departmentNameMap.get(deptId)
+              return name ? (
+                <Badge key={deptId} variant="outline" className="text-[10px]">{name}</Badge>
+              ) : null
+            })
+          ) : (
+            <span className="text-[11px] text-muted-foreground">所有部门可见</span>
+          )}
+        </div>
       </div>
 
       <div
         className="absolute top-4 right-4 flex items-center gap-2"
         onClick={event => event.stopPropagation()}
       >
+        {canManage ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onEditVisibility(skill)}
+          >
+            <Shield className="size-4" />
+          </Button>
+        ) : null}
         {canManage ? (
           <Switch
             checked={skill.enabled}
@@ -467,12 +496,25 @@ export default function SkillStorePage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importingMode, setImportingMode] = useState<'zip' | 'directory' | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [editVisibilityOpen, setEditVisibilityOpen] = useState(false)
+  const [editingSkillName, setEditingSkillName] = useState('')
+  const [editSkillVisibleTo, setEditSkillVisibleTo] = useState<string[]>([])
+  const [savingVisibility, setSavingVisibility] = useState(false)
 
   const latestVersionsRef = useRef(latestVersions)
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const zipInputRef = useRef<HTMLInputElement | null>(null)
   const directoryInputRef = useRef<HTMLInputElement | null>(null)
+
+  type DepartmentOption = AuthDepartment & { depth: number }
+
+  const departmentOptions = useMemo((): DepartmentOption[] => {
+    const build = (depts: AuthDepartment[], parentId: string | null, depth: number): DepartmentOption[] =>
+      depts.filter(d => d.parentId === parentId).flatMap(d => [{ ...d, depth }, ...build(depts, d.id, depth + 1)])
+    return build(departments, null, 0)
+  }, [departments])
 
   useEffect(() => {
     latestVersionsRef.current = latestVersions
@@ -655,6 +697,11 @@ export default function SkillStorePage() {
     }
 
     setPageLoading(false)
+
+    try {
+      const deptResult = await getDepartments()
+      setDepartments(deptResult.departments)
+    } catch { /* non-critical */ }
   }, [])
 
   useEffect(() => {
@@ -1047,6 +1094,34 @@ export default function SkillStorePage() {
     [fetchInstalledList],
   )
 
+  const handleOpenVisibilityEdit = useCallback((skill: InstalledSkillInfo) => {
+    setEditingSkillName(skill.name)
+    setEditSkillVisibleTo(skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids ?? [])
+    setEditVisibilityOpen(true)
+  }, [])
+
+  const handleSaveVisibility = useCallback(async () => {
+    setSavingVisibility(true)
+    try {
+      await updateSkillVisibility(
+        editingSkillName,
+        editSkillVisibleTo.length > 0 ? { department_ids: editSkillVisibleTo } : null,
+      )
+      toast.success('可见性已更新')
+      setEditVisibilityOpen(false)
+      await fetchInstalledList()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '更新可见性失败')
+    } finally {
+      setSavingVisibility(false)
+    }
+  }, [editingSkillName, editSkillVisibleTo, fetchInstalledList])
+
+  const departmentNameMap = useMemo(
+    () => new Map(departments.map(dept => [dept.id, dept.name])),
+    [departments],
+  )
+
   const renderInstalledCard = useCallback(
     (skill: InstalledSkillInfo) => {
       const latestVersion = skill.meta?.id
@@ -1075,10 +1150,14 @@ export default function SkillStorePage() {
               void handleUpdate(item.meta.id, item)
             }
           }}
+          onEditVisibility={handleOpenVisibilityEdit}
+          departmentNameMap={departmentNameMap}
         />
       )
     },
     [
+      departmentNameMap,
+      handleOpenVisibilityEdit,
       handleToggleEnabled,
       handleUpdate,
       latestVersions,
@@ -1537,12 +1616,21 @@ export default function SkillStorePage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {detailResolvedInstalledSkill && !detailResolvedInstalledSkill.isBuiltin ? (
-                <Button
-                  variant="outline"
-                  onClick={() => setPendingUninstallSkill(detailResolvedInstalledSkill)}
-                >
-                  卸载
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleOpenVisibilityEdit(detailResolvedInstalledSkill)}
+                  >
+                    <Shield className="mr-2 size-4" />
+                    编辑可见性
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setPendingUninstallSkill(detailResolvedInstalledSkill)}
+                  >
+                    卸载
+                  </Button>
+                </>
               ) : null}
               {detailHasUpdate && detailSkill ? (
                 <Button
@@ -1628,7 +1716,7 @@ export default function SkillStorePage() {
             <AlertDialogTitle>确认卸载技能</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingUninstallSkill
-                ? `将从本机删除技能“${pendingUninstallSkill.displayName}”。`
+                ? `将从本机删除技能'${pendingUninstallSkill.displayName}'。`
                 : '将从本机删除该技能。'}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1640,6 +1728,58 @@ export default function SkillStorePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={editVisibilityOpen} onOpenChange={setEditVisibilityOpen}>
+        <DialogContent className='max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>编辑技能可见性</DialogTitle>
+            <DialogDescription>
+              设置哪些部门可以看到此技能。留空表示所有部门可见。
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-3'>
+            {departmentOptions.length === 0 ? (
+              <p className='text-sm text-muted-foreground'>暂无部门数据</p>
+            ) : (
+              <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                {departmentOptions.map(dept => (
+                  <label
+                    key={dept.id}
+                    className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                  >
+                    <Checkbox
+                      checked={editSkillVisibleTo.includes(dept.id)}
+                      onCheckedChange={checked => {
+                        setEditSkillVisibleTo(
+                          checked === true
+                            ? [...editSkillVisibleTo, dept.id]
+                            : editSkillVisibleTo.filter(id => id !== dept.id),
+                        )
+                      }}
+                    />
+                    <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setEditVisibilityOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={savingVisibility} onClick={() => void handleSaveVisibility()}>
+              {savingVisibility ? (
+                <>
+                  <Loader2 className='mr-2 size-4 animate-spin' />
+                  保存中
+                </>
+              ) : (
+                '保存'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <input
         ref={zipInputRef}

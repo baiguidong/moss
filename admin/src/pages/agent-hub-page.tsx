@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,13 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -58,6 +66,8 @@ import {
   type InstalledSkillInfo,
   type SkillHubSkill,
 } from '@/lib/api/skill-store'
+import type { AuthDepartment } from '@/lib/api/types'
+import { getDepartments } from '@/lib/api/auth'
 import type { SystemSettings } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 import {
@@ -291,6 +301,7 @@ function InstalledAgentCard({
     agent.isBuiltin ? '系统内置' : agent.isHubInstalled ? 'Hub' : '本地',
     agent.version ? `v${agent.version}` : '',
     agent.skills.length > 0 ? `${agent.skills.length} 个关联技能` : '',
+    (agent.agentType || agent.meta?.agent_type) === 'workflow' ? '业务流程' : '对话助手',
   ].filter(Boolean)
 
   return (
@@ -418,6 +429,13 @@ export default function AgentHubPage() {
   const [editSkills, setEditSkills] = useState<SkillHubSkill[]>([])
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
+  const [editAgentType, setEditAgentType] = useState<'chat' | 'workflow'>('chat')
+  const [editMemoryMode, setEditMemoryMode] = useState<'session' | 'user'>('session')
+  const [editVisibleTo, setEditVisibleTo] = useState<string[]>([])
+  const [editWorkflowTrigger, setEditWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
+  const [editWorkflowCron, setEditWorkflowCron] = useState('')
+  const [editWorkflowOutputTargets, setEditWorkflowOutputTargets] = useState<string[]>([])
+  const [departments, setDepartments] = useState<AuthDepartment[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
@@ -434,6 +452,14 @@ export default function AgentHubPage() {
 
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  type DepartmentOption = AuthDepartment & { depth: number }
+
+  const departmentOptions = useMemo((): DepartmentOption[] => {
+    const build = (depts: AuthDepartment[], parentId: string | null, depth: number): DepartmentOption[] =>
+      depts.filter(d => d.parentId === parentId).flatMap(d => [{ ...d, depth }, ...build(depts, d.id, depth + 1)])
+    return build(departments, null, 0)
+  }, [departments])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -560,6 +586,11 @@ export default function AgentHubPage() {
           : '读取已安装智能体失败'
       setPageError(current => current || message)
     }
+
+    try {
+      const deptResult = await getDepartments()
+      setDepartments(deptResult.departments)
+    } catch { /* non-critical */ }
 
     setPageLoading(false)
   }, [fetchInstalledState])
@@ -729,6 +760,12 @@ export default function AgentHubPage() {
     setEditDescription(agent.description || '')
     setEditAvatar(agent.avatar || '')
     setEditEmoji(agent.emoji || '')
+    setEditAgentType(agent.agentType || agent.meta?.agent_type || 'chat')
+    setEditMemoryMode(agent.memoryMode || agent.meta?.memory_mode || 'session')
+    setEditVisibleTo(agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids ?? [])
+    setEditWorkflowTrigger(agent.workflow?.trigger || agent.meta?.workflow?.trigger || 'manual')
+    setEditWorkflowCron(agent.workflow?.cron || agent.meta?.workflow?.cron || '')
+    setEditWorkflowOutputTargets(agent.workflow?.output_targets || agent.meta?.workflow?.output_targets || [])
     setEditSkills([])
     setEditOpen(true)
 
@@ -808,6 +845,16 @@ export default function AgentHubPage() {
           description: editDescription.trim(),
           avatar: editAvatar.trim(),
           emoji: editEmoji.trim(),
+          agent_type: editAgentType,
+          memory_mode: editAgentType === 'chat' ? editMemoryMode : undefined,
+          visible_to: editVisibleTo.length > 0 ? { department_ids: editVisibleTo } : null,
+          workflow: editAgentType === 'workflow'
+            ? {
+                trigger: editWorkflowTrigger,
+                cron: editWorkflowTrigger === 'cron' ? editWorkflowCron.trim() || undefined : undefined,
+                output_targets: editWorkflowOutputTargets.length > 0 ? editWorkflowOutputTargets : undefined,
+              }
+            : null,
         },
       })
       toast.success(`已更新 ${editingAgent.displayName}`)
@@ -818,7 +865,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibleTo, editWorkflowTrigger, editWorkflowCron, editWorkflowOutputTargets, editingAgent, fetchInstalledState])
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim()
@@ -1391,6 +1438,124 @@ export default function AgentHubPage() {
                 rows={4}
                 placeholder="输入智能体描述"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">工作模式</label>
+              <Select value={editAgentType} onValueChange={value => setEditAgentType(value as 'chat' | 'workflow')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="chat">对话助手</SelectItem>
+                  <SelectItem value="workflow">业务流程</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {editAgentType === 'chat' ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">记忆模式</label>
+                <Select value={editMemoryMode} onValueChange={value => setEditMemoryMode(value as 'session' | 'user')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="session">会话独立</SelectItem>
+                    <SelectItem value="user">跨会话共享</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  会话独立模式下每次对话互不影响；跨会话共享模式会保留用户历史记忆。
+                </p>
+              </div>
+            ) : null}
+
+            {editAgentType === 'workflow' ? (
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">触发方式</label>
+                  <Select value={editWorkflowTrigger} onValueChange={value => setEditWorkflowTrigger(value as 'cron' | 'webhook' | 'manual')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">手动</SelectItem>
+                      <SelectItem value="cron">定时</SelectItem>
+                      <SelectItem value="webhook">Webhook</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {editWorkflowTrigger === 'cron' ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Cron 表达式</label>
+                    <Input
+                      value={editWorkflowCron}
+                      onChange={event => setEditWorkflowCron(event.target.value)}
+                      placeholder="0 8 * * *"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      例如：0 8 * * * 表示每天早上 8 点执行
+                    </p>
+                  </div>
+                ) : null}
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">输出目标</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['chat', 'webhook', 'file'].map(target => (
+                      <label
+                        key={target}
+                        className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer hover:bg-accent/30"
+                      >
+                        <Checkbox
+                          checked={editWorkflowOutputTargets.includes(target)}
+                          onCheckedChange={checked => {
+                            setEditWorkflowOutputTargets(
+                              checked === true
+                                ? [...editWorkflowOutputTargets, target]
+                                : editWorkflowOutputTargets.filter(t => t !== target),
+                            )
+                          }}
+                        />
+                        {target === 'chat' ? '对话' : target === 'webhook' ? 'Webhook' : '文件'}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <div>
+                <label className="text-sm font-medium">可见范围</label>
+                <p className="text-sm text-muted-foreground">留空表示所有部门可见</p>
+              </div>
+              {departmentOptions.length === 0 ? (
+                <p className="text-xs text-muted-foreground">暂无部门数据</p>
+              ) : (
+                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                  {departmentOptions.map(dept => (
+                    <label
+                      key={dept.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                    >
+                      <Checkbox
+                        checked={editVisibleTo.includes(dept.id)}
+                        onCheckedChange={checked => {
+                          setEditVisibleTo(
+                            checked === true
+                              ? [...editVisibleTo, dept.id]
+                              : editVisibleTo.filter(id => id !== dept.id),
+                          )
+                        }}
+                      />
+                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
