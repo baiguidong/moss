@@ -1064,3 +1064,65 @@ export async function getAssistantSystemPrompt(
 }
 
 export { ASSISTANT_HUB_DIR, ASSISTANT_SEARCH_DIRS }
+
+export async function batchSyncAssistants(): Promise<{
+  installed: Array<{ assistantName: string; version: string }>
+  updated: Array<{ assistantName: string; version: string }>
+  skipped: Array<{ assistantName: string; reason: string }>
+  failed: Array<{ assistantName: string; error: string }>
+}> {
+  const installed: Array<{ assistantName: string; version: string }> = []
+  const updated: Array<{ assistantName: string; version: string }> = []
+  const skipped: Array<{ assistantName: string; reason: string }> = []
+  const failed: Array<{ assistantName: string; error: string }> = []
+
+  const installedAssistants = await getInstalledAssistants()
+  const byName = new Map(installedAssistants.map(a => [a.name, a]))
+
+  let cursor: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const page = await fetchAgentHubAssistants({ cursor, limit: 100 })
+    for (const hubAsst of page.assistants) {
+      const sourceUrl = hubAsst.sourceUrl?.trim()
+      if (!sourceUrl) {
+        skipped.push({ assistantName: hubAsst.name, reason: 'no download URL' })
+        continue
+      }
+      const existing = byName.get(hubAsst.name)
+      if (existing) {
+        skipped.push({
+          assistantName: hubAsst.name,
+          reason: 'already installed',
+        })
+        continue
+      }
+      try {
+        const detail = await fetchAgentHubAssistantDetail(hubAsst.id)
+        const ver = detail?.versions?.[0]
+        const result = await installHubAssistant({
+          assistantName: hubAsst.name,
+          sourceUrl,
+          version:
+            typeof ver?.version === 'string' ? ver.version : undefined,
+          checksum:
+            typeof ver?.checksum === 'string' ? ver.checksum : undefined,
+          assistantMeta: hubAsst,
+        })
+        installed.push({
+          assistantName: result.assistantName,
+          version: result.version,
+        })
+      } catch (error) {
+        failed.push({
+          assistantName: hubAsst.name,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    cursor = page.next_cursor ?? undefined
+    hasMore = page.has_more
+  }
+
+  return { installed, updated, skipped, failed }
+}
