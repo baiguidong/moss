@@ -958,3 +958,26 @@ export async function batchSyncSkills(params?: {
 
   return { installed, updated, skipped, failed }
 }
+
+export async function setInstalledSkillMeta(
+  skillName: string,
+  updates: Partial<
+    Pick<SkillStoreMeta, 'visible_to'>
+  >,
+): Promise<void> {
+  const sourcePath = await findInstalledSkillPath(skillName)
+  if (!sourcePath) {
+    throw new Error(`Skill not found: ${skillName}`)
+  }
+
+  const meta = await readSkillMeta(sourcePath)
+  if (!meta) {
+    throw new Error(`Skill metadata not found: ${skillName}`)
+  }
+
+  if (updates.visible_to !== undefined) {
+    meta.visible_to = updates.visible_to
+  }
+
+  await writeSkillMeta(sourcePath, meta)
+}

@@ -34,7 +34,9 @@ import {
   importLocalSkillDirectory,
   installHubSkill,
   setInstalledSkillEnabled,
+  setInstalledSkillMeta,
   type SkillHubSkill,
+  type SkillStoreMeta,
   uninstallSkill,
   batchSyncSkills,
 } from './skillStore.js'
@@ -1038,6 +1040,22 @@ export function startServer(
               typeof updates.avatar === 'string' ? updates.avatar : undefined,
             emoji:
               typeof updates.emoji === 'string' ? updates.emoji : undefined,
+            agent_type:
+              updates.agent_type === 'chat' || updates.agent_type === 'workflow'
+                ? updates.agent_type
+                : undefined,
+            memory_mode:
+              updates.memory_mode === 'session' || updates.memory_mode === 'user'
+                ? updates.memory_mode
+                : undefined,
+            visible_to:
+              updates.visible_to !== undefined
+                ? (updates.visible_to as AssistantStoreMeta['visible_to'])
+                : undefined,
+            workflow:
+              updates.workflow !== undefined
+                ? (updates.workflow as AssistantStoreMeta['workflow'])
+                : undefined,
           },
         })
         writeJson(res, 200, { ok: true })
@@ -1186,6 +1204,19 @@ export function startServer(
             entries,
           }),
         )
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/skills/visibility') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const skillName =
+          typeof body.skillName === 'string' ? body.skillName : ''
+        const visibleTo = body.visible_to ?? null
+        await setInstalledSkillMeta(skillName, {
+          visible_to: visibleTo as SkillStoreMeta['visible_to'],
+        })
+        writeJson(res, 200, { ok: true })
         return
       }
 

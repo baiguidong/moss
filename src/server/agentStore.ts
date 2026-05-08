@@ -1014,7 +1014,10 @@ export async function uninstallAssistant(params: {
 export async function updateInstalledAssistantMeta(params: {
   assistantName: string
   updates: Partial<
-    Pick<AssistantStoreMeta, 'display_name' | 'description' | 'avatar' | 'emoji'>
+    Pick<
+      AssistantStoreMeta,
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow'
+    >
   >
 }): Promise<void> {
   const result = await findAssistantDir(params.assistantName)
@@ -1038,6 +1041,18 @@ export async function updateInstalledAssistantMeta(params: {
   }
   if (typeof params.updates.emoji === 'string') {
     nextMeta.emoji = params.updates.emoji.trim()
+  }
+  if (params.updates.agent_type === 'chat' || params.updates.agent_type === 'workflow') {
+    nextMeta.agent_type = params.updates.agent_type
+  }
+  if (params.updates.memory_mode === 'session' || params.updates.memory_mode === 'user') {
+    nextMeta.memory_mode = params.updates.memory_mode
+  }
+  if (params.updates.visible_to !== undefined) {
+    nextMeta.visible_to = params.updates.visible_to
+  }
+  if (params.updates.workflow !== undefined) {
+    nextMeta.workflow = params.updates.workflow
   }
 
   await writeAssistantMeta(result.dir, nextMeta)
