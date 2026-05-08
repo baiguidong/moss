@@ -938,6 +938,10 @@ export async function createCustomAssistant(params: {
   emoji?: string | null
   rules: string
   skills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: AssistantStoreMeta['workflow']
 }): Promise<{ assistantName: string }> {
   const assistantName = params.name.trim().replace(/\s+/g, '-')
   if (!assistantName) throw new Error('Name is required')
@@ -972,6 +976,10 @@ export async function createCustomAssistant(params: {
     ruleFile,
     skills: params.skills || [],
     enabledSkills: params.skills || [],
+    agent_type: params.agent_type,
+    memory_mode: params.memory_mode,
+    visible_to: params.visible_to,
+    workflow: params.workflow,
   }
   await writeAssistantMeta(assistantDir, meta)
 
@@ -1016,7 +1024,7 @@ export async function updateInstalledAssistantMeta(params: {
   updates: Partial<
     Pick<
       AssistantStoreMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
     >
   >
 }): Promise<void> {
@@ -1053,6 +1061,12 @@ export async function updateInstalledAssistantMeta(params: {
   }
   if (params.updates.workflow !== undefined) {
     nextMeta.workflow = params.updates.workflow
+  }
+  if (Array.isArray(params.updates.enabledSkills)) {
+    nextMeta.enabledSkills = params.updates.enabledSkills
+  }
+  if (Array.isArray(params.updates.skills)) {
+    nextMeta.skills = params.updates.skills
   }
 
   await writeAssistantMeta(result.dir, nextMeta)
@@ -1119,7 +1133,9 @@ export async function getAssistantSystemPrompt(
 
 export { ASSISTANT_HUB_DIR, ASSISTANT_SEARCH_DIRS }
 
-export async function batchSyncAssistants(): Promise<{
+export async function batchSyncAssistants(params?: {
+  onProgress?: (processed: number, total: number) => void
+}): Promise<{
   installed: Array<{ assistantName: string; version: string }>
   updated: Array<{ assistantName: string; version: string }>
   skipped: Array<{ assistantName: string; reason: string }>
@@ -1133,49 +1149,61 @@ export async function batchSyncAssistants(): Promise<{
   const installedAssistants = await getInstalledAssistants()
   const byName = new Map(installedAssistants.map(a => [a.name, a]))
 
+  const allHubAssistants: AgentHubAssistant[] = []
   let cursor: string | undefined
   let hasMore = true
   while (hasMore) {
     const page = await fetchAgentHubAssistants({ cursor, limit: 100 })
-    for (const hubAsst of page.assistants) {
-      const sourceUrl = hubAsst.sourceUrl?.trim()
-      if (!sourceUrl) {
-        skipped.push({ assistantName: hubAsst.name, reason: 'no download URL' })
-        continue
-      }
-      const existing = byName.get(hubAsst.name)
-      if (existing) {
-        skipped.push({
-          assistantName: hubAsst.name,
-          reason: 'already installed',
-        })
-        continue
-      }
-      try {
-        const detail = await fetchAgentHubAssistantDetail(hubAsst.id)
-        const ver = detail?.versions?.[0]
-        const result = await installHubAssistant({
-          assistantName: hubAsst.name,
-          sourceUrl,
-          version:
-            typeof ver?.version === 'string' ? ver.version : undefined,
-          checksum:
-            typeof ver?.checksum === 'string' ? ver.checksum : undefined,
-          assistantMeta: hubAsst,
-        })
-        installed.push({
-          assistantName: result.assistantName,
-          version: result.version,
-        })
-      } catch (error) {
-        failed.push({
-          assistantName: hubAsst.name,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
+    allHubAssistants.push(...page.assistants)
     cursor = page.next_cursor ?? undefined
     hasMore = page.has_more
+  }
+
+  const total = allHubAssistants.length
+  let processed = 0
+
+  for (const hubAsst of allHubAssistants) {
+    const sourceUrl = hubAsst.sourceUrl?.trim()
+    if (!sourceUrl) {
+      skipped.push({ assistantName: hubAsst.name, reason: 'no download URL' })
+      processed++
+      params?.onProgress?.(processed, total)
+      continue
+    }
+    const existing = byName.get(hubAsst.name)
+    if (existing) {
+      skipped.push({
+        assistantName: hubAsst.name,
+        reason: 'already installed',
+      })
+      processed++
+      params?.onProgress?.(processed, total)
+      continue
+    }
+    try {
+      const detail = await fetchAgentHubAssistantDetail(hubAsst.id)
+      const ver = detail?.versions?.[0]
+      const result = await installHubAssistant({
+        assistantName: hubAsst.name,
+        sourceUrl,
+        version:
+          typeof ver?.version === 'string' ? ver.version : undefined,
+        checksum:
+          typeof ver?.checksum === 'string' ? ver.checksum : undefined,
+        assistantMeta: hubAsst,
+      })
+      installed.push({
+        assistantName: result.assistantName,
+        version: result.version,
+      })
+    } catch (error) {
+      failed.push({
+        assistantName: hubAsst.name,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    processed++
+    params?.onProgress?.(processed, total)
   }
 
   return { installed, updated, skipped, failed }

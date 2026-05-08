@@ -887,6 +887,7 @@ export async function setInstalledSkillEnabled(params: {
 
 export async function batchSyncSkills(params?: {
   tenantId?: string
+  onProgress?: (processed: number, total: number) => void
 }): Promise<{
   installed: Array<{ skillName: string; version: string }>
   updated: Array<{ skillName: string; version: string }>
@@ -901,6 +902,7 @@ export async function batchSyncSkills(params?: {
   const installedSkills = await getInstalledSkills()
   const byName = new Map(installedSkills.map(s => [s.name, s]))
 
+  const allHubSkills: SkillHubSkill[] = []
   let cursor: string | undefined
   let hasMore = true
   while (hasMore) {
@@ -909,51 +911,58 @@ export async function batchSyncSkills(params?: {
       limit: 100,
       tenantId: params?.tenantId,
     })
-    for (const hubSkill of page.skills) {
-      try {
-        const detail = await fetchSkillHubSkillDetail(hubSkill.id)
-        const latest = detail?.versions?.[0]
-        if (!latest?.source_url) {
-          skipped.push({ skillName: hubSkill.name, reason: 'no download URL' })
-          continue
-        }
-        const existing = byName.get(hubSkill.name)
-        if (existing) {
-          const curVer = normalizeSkillVersion(existing.version)
-          if (curVer && curVer === latest.version) {
-            skipped.push({
-              skillName: hubSkill.name,
-              reason: 'already up to date',
-            })
-            continue
-          }
-          await installHubSkill({
-            skillName: hubSkill.name,
-            sourceUrl: latest.source_url,
-            version: latest.version,
-            checksum: latest.checksum,
-            skillMeta: hubSkill,
-          })
-          updated.push({ skillName: hubSkill.name, version: latest.version })
-        } else {
-          await installHubSkill({
-            skillName: hubSkill.name,
-            sourceUrl: latest.source_url,
-            version: latest.version,
-            checksum: latest.checksum,
-            skillMeta: hubSkill,
-          })
-          installed.push({ skillName: hubSkill.name, version: latest.version })
-        }
-      } catch (error) {
-        failed.push({
-          skillName: hubSkill.name,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
+    allHubSkills.push(...page.skills)
     cursor = page.next_cursor ?? undefined
     hasMore = page.has_more
+  }
+
+  const total = allHubSkills.length
+  let processed = 0
+
+  for (const hubSkill of allHubSkills) {
+    try {
+      const detail = await fetchSkillHubSkillDetail(hubSkill.id)
+      const latest = detail?.versions?.[0]
+      if (!latest?.source_url) {
+        skipped.push({ skillName: hubSkill.name, reason: 'no download URL' })
+        continue
+      }
+      const existing = byName.get(hubSkill.name)
+      if (existing) {
+        const curVer = normalizeSkillVersion(existing.version)
+        if (curVer && curVer === latest.version) {
+          skipped.push({
+            skillName: hubSkill.name,
+            reason: 'already up to date',
+          })
+          continue
+        }
+        await installHubSkill({
+          skillName: hubSkill.name,
+          sourceUrl: latest.source_url,
+          version: latest.version,
+          checksum: latest.checksum,
+          skillMeta: hubSkill,
+        })
+        updated.push({ skillName: hubSkill.name, version: latest.version })
+      } else {
+        await installHubSkill({
+          skillName: hubSkill.name,
+          sourceUrl: latest.source_url,
+          version: latest.version,
+          checksum: latest.checksum,
+          skillMeta: hubSkill,
+        })
+        installed.push({ skillName: hubSkill.name, version: latest.version })
+      }
+    } catch (error) {
+      failed.push({
+        skillName: hubSkill.name,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    processed++
+    params?.onProgress?.(processed, total)
   }
 
   return { installed, updated, skipped, failed }

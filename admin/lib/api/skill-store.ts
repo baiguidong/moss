@@ -187,10 +187,26 @@ export interface BatchSyncResult {
   failed: Array<{ skillName: string; error: string }>
 }
 
-export function batchSyncSkills(tenantId?: string): Promise<BatchSyncResult> {
-  return authClient.post<BatchSyncResult>('/api/v1/skills/sync', {
+export function batchSyncSkills(tenantId?: string): Promise<{ started: boolean }> {
+  return authClient.post<{ started: boolean }>('/api/v1/skills/sync-from-hub', {
     tenantId: tenantId || undefined,
   })
+}
+
+export interface SkillSyncProgress {
+  status: 'idle' | 'running' | 'done' | 'error'
+  total: number
+  processed: number
+  installed: number
+  updated: number
+  skipped: number
+  failed: number
+  error?: string
+  startedAt: number
+}
+
+export function getSkillSyncStatus(): Promise<SkillSyncProgress> {
+  return authClient.get<SkillSyncProgress>('/api/v1/skills/sync-status')
 }
 
 export function updateSkillVisibility(

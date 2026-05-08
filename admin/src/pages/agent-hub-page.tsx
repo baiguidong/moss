@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -55,14 +56,18 @@ import {
   uninstallAgent,
   updateInstalledAgentMeta,
   createCustomAssistant,
+  getAgentSyncStatus,
   type AgentHubAssistant,
   type AgentHubDetail,
   type BatchSyncAgentResult,
   type InstalledAgentInfo,
+  type AgentSyncProgress,
 } from '@/lib/api/agent-hub'
 import { getSystemSettings } from '@/lib/api/settings'
 import {
   getInstalledSkills,
+  getSkillHubDetail,
+  installSkill,
   type InstalledSkillInfo,
   type SkillHubSkill,
 } from '@/lib/api/skill-store'
@@ -288,6 +293,7 @@ type InstalledAgentCardProps = {
   agent: InstalledAgentInfo
   uninstalling: boolean
   onOpenEdit: (agent: InstalledAgentInfo) => void
+  onOpenVisibility: (agent: InstalledAgentInfo) => void
   onRequestUninstall: (agent: InstalledAgentInfo) => void
 }
 
@@ -295,6 +301,7 @@ function InstalledAgentCard({
   agent,
   uninstalling,
   onOpenEdit,
+  onOpenVisibility,
   onRequestUninstall,
 }: InstalledAgentCardProps) {
   const badges = [
@@ -359,6 +366,17 @@ function InstalledAgentCard({
 
       <div className="flex shrink-0 items-center gap-2">
         <Button
+          size="icon"
+          variant="ghost"
+          onClick={event => {
+            event.stopPropagation()
+            onOpenVisibility(agent)
+          }}
+          title="编辑可见性"
+        >
+          <Shield className="size-4" />
+        </Button>
+        <Button
           size="sm"
           variant="outline"
           onClick={event => {
@@ -399,6 +417,8 @@ export default function AgentHubPage() {
   const [assistants, setAssistants] = useState<AgentHubAssistant[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCategory, setSelectedCategory] = useState('all')
+  const [installedFilterAgentType, setInstalledFilterAgentType] = useState<'all' | 'chat' | 'workflow'>('all')
+  const [installedFilterVisibility, setInstalledFilterVisibility] = useState<'all' | 'public' | 'restricted' | 'admin-only'>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
 
@@ -428,14 +448,27 @@ export default function AgentHubPage() {
   const [editEmoji, setEditEmoji] = useState('')
   const [editSkills, setEditSkills] = useState<SkillHubSkill[]>([])
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
+  const [editEnabledSkills, setEditEnabledSkills] = useState<string[]>([])
+  const [editAddSkillOpen, setEditAddSkillOpen] = useState(false)
+  const [editAddSkillSelection, setEditAddSkillSelection] = useState<string[]>([])
   const [savingEdit, setSavingEdit] = useState(false)
   const [editAgentType, setEditAgentType] = useState<'chat' | 'workflow'>('chat')
   const [editMemoryMode, setEditMemoryMode] = useState<'session' | 'user'>('session')
+  const [editVisibilityMode, setEditVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
   const [editVisibleTo, setEditVisibleTo] = useState<string[]>([])
   const [editWorkflowTrigger, setEditWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
   const [editWorkflowCron, setEditWorkflowCron] = useState('')
+  const [editWorkflowWebhookPath, setEditWorkflowWebhookPath] = useState('')
+  const [editWorkflowOutputWebhook, setEditWorkflowOutputWebhook] = useState('')
+  const [editWorkflowTimeout, setEditWorkflowTimeout] = useState('')
   const [editWorkflowOutputTargets, setEditWorkflowOutputTargets] = useState<string[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+
+  const [agentVisibilityOpen, setAgentVisibilityOpen] = useState(false)
+  const [editingVisibilityAgent, setEditingVisibilityAgent] = useState<InstalledAgentInfo | null>(null)
+  const [agentVisibilityMode, setAgentVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [editAgentVisibleTo, setEditAgentVisibleTo] = useState<string[]>([])
+  const [savingAgentVisibility, setSavingAgentVisibility] = useState(false)
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
@@ -444,11 +477,24 @@ export default function AgentHubPage() {
   const [createAvatar, setCreateAvatar] = useState('')
   const [createEmoji, setCreateEmoji] = useState('')
   const [createRules, setCreateRules] = useState('')
+  const [createAgentType, setCreateAgentType] = useState<'chat' | 'workflow'>('chat')
+  const [createMemoryMode, setCreateMemoryMode] = useState<'session' | 'user'>('session')
+  const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [createVisibleTo, setCreateVisibleTo] = useState<string[]>([])
+  const [createWorkflowTrigger, setCreateWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
+  const [createWorkflowCron, setCreateWorkflowCron] = useState('')
+  const [createWorkflowWebhookPath, setCreateWorkflowWebhookPath] = useState('')
+  const [createWorkflowOutputWebhook, setCreateWorkflowOutputWebhook] = useState('')
+  const [createWorkflowTimeout, setCreateWorkflowTimeout] = useState('')
+  const [createWorkflowOutputTargets, setCreateWorkflowOutputTargets] = useState<string[]>([])
+  const [createSelectedSkills, setCreateSelectedSkills] = useState<string[]>([])
   const [creatingAssistant, setCreatingAssistant] = useState(false)
 
   const [pendingUninstallAgent, setPendingUninstallAgent] =
     useState<InstalledAgentInfo | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncProgressOpen, setSyncProgressOpen] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<AgentSyncProgress | null>(null)
 
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -742,8 +788,43 @@ export default function AgentHubPage() {
 
         const skillIds = parseStringArray(detail?.skills ?? agent.skills)
         if (skillIds.length > 0) {
-          const skills = await fetchAgentHubSkillDetailsByIds(skillIds)
-          setDetailSkills(buildSkillSummaries(skills))
+          // Resolve skill details from local installed data first, then Hub
+          const localResolved: SkillHubSkill[] = []
+          const missingIds: string[] = []
+
+          for (const sid of skillIds) {
+            const trimmed = sid.trim()
+            const local = installedSkills.find(
+              s => s.id.trim() === trimmed || s.name.trim() === trimmed || (s.meta?.id || '').trim() === trimmed,
+            )
+            if (local) {
+              localResolved.push({
+                id: (local.meta?.id || local.id).trim(),
+                name: local.name.trim(),
+                display_name: local.displayName,
+                description: local.description,
+                icon: local.icon,
+                emoji: local.emoji,
+                category: local.category,
+                categories: local.categories,
+              })
+            } else {
+              missingIds.push(trimmed)
+            }
+          }
+
+          let hubResolved: SkillHubSkill[] = []
+          if (missingIds.length > 0) {
+            try {
+              hubResolved = await fetchAgentHubSkillDetailsByIds(missingIds)
+            } catch {
+              for (const mid of missingIds) {
+                hubResolved.push({ id: mid, name: mid, display_name: mid })
+              }
+            }
+          }
+
+          setDetailSkills(buildSkillSummaries([...localResolved, ...hubResolved]))
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : '读取智能体详情失败')
@@ -751,7 +832,7 @@ export default function AgentHubPage() {
         setDetailLoading(false)
       }
     },
-    [buildSkillSummaries],
+    [buildSkillSummaries, installedSkills],
   )
 
   const openEdit = useCallback(async (agent: InstalledAgentInfo) => {
@@ -763,10 +844,23 @@ export default function AgentHubPage() {
     setEditAgentType(agent.agentType || agent.meta?.agent_type || 'chat')
     setEditMemoryMode(agent.memoryMode || agent.meta?.memory_mode || 'session')
     setEditVisibleTo(agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids ?? [])
+    const deptIds = agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids
+    setEditVisibilityMode(
+      deptIds === null || deptIds === undefined ? 'all'
+        : deptIds.length === 0 ? 'admin'
+        : 'departments'
+    )
     setEditWorkflowTrigger(agent.workflow?.trigger || agent.meta?.workflow?.trigger || 'manual')
     setEditWorkflowCron(agent.workflow?.cron || agent.meta?.workflow?.cron || '')
+    setEditWorkflowWebhookPath(agent.workflow?.webhook_path || agent.meta?.workflow?.webhook_path || '')
+    setEditWorkflowOutputWebhook(agent.workflow?.output_webhook || agent.meta?.workflow?.output_webhook || '')
+    setEditWorkflowTimeout(String(agent.workflow?.timeout_minutes ?? agent.meta?.workflow?.timeout_minutes ?? ''))
     setEditWorkflowOutputTargets(agent.workflow?.output_targets || agent.meta?.workflow?.output_targets || [])
     setEditSkills([])
+    // Normalize enabledSkills: trim whitespace and deduplicate
+    const rawEnabled = agent.enabledSkills || agent.meta?.enabledSkills || agent.skills || []
+    const normalizedEnabled = [...new Set(rawEnabled.map(s => s.trim()).filter(Boolean))]
+    setEditEnabledSkills(normalizedEnabled)
     setEditOpen(true)
 
     if (agent.skills.length === 0) {
@@ -776,14 +870,52 @@ export default function AgentHubPage() {
 
     setEditSkillsLoading(true)
     try {
-      const skills = await fetchAgentHubSkillDetailsByIds(agent.skills)
-      setEditSkills(skills)
+      // agent.skills can be UUIDs (Hub agents) or names (custom agents)
+      // installedSkills may have leading/trailing whitespace in name/id fields
+      const allInstalled = installedSkills
+      const localSkills: SkillHubSkill[] = []
+      const missingIds: string[] = []
+
+      for (const skillRef of agent.skills) {
+        const trimmed = skillRef.trim()
+        const local = allInstalled.find(
+          s => s.id.trim() === trimmed || s.name.trim() === trimmed || (s.meta?.id || '').trim() === trimmed,
+        )
+        if (local) {
+          localSkills.push({
+            id: (local.meta?.id || local.id).trim(),
+            name: local.name.trim(),
+            display_name: local.displayName,
+            description: local.description,
+            icon: local.icon,
+            emoji: local.emoji,
+            category: local.category,
+            categories: local.categories,
+          })
+        } else {
+          missingIds.push(trimmed)
+        }
+      }
+
+      // Fetch missing skill details from Hub API
+      if (missingIds.length > 0) {
+        try {
+          const hubSkills = await fetchAgentHubSkillDetailsByIds(missingIds)
+          localSkills.push(...hubSkills)
+        } catch {
+          for (const mid of missingIds) {
+            localSkills.push({ id: mid, name: mid, display_name: mid })
+          }
+        }
+      }
+
+      setEditSkills(localSkills)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '读取关联技能失败')
     } finally {
       setEditSkillsLoading(false)
     }
-  }, [])
+  }, [installedSkills])
 
   const handleInstall = useCallback(
     async (agent: AgentHubAssistant, skillIds: string[]) => {
@@ -847,12 +979,21 @@ export default function AgentHubPage() {
           emoji: editEmoji.trim(),
           agent_type: editAgentType,
           memory_mode: editAgentType === 'chat' ? editMemoryMode : undefined,
-          visible_to: editVisibleTo.length > 0 ? { department_ids: editVisibleTo } : null,
+          skills: editSkills.map(s => s.id || s.name),
+          enabledSkills: editEnabledSkills,
+          visible_to: editVisibilityMode === 'admin'
+            ? { department_ids: [] }
+            : editVisibilityMode === 'departments'
+              ? (editVisibleTo.length > 0 ? { department_ids: editVisibleTo } : null)
+              : null,
           workflow: editAgentType === 'workflow'
             ? {
                 trigger: editWorkflowTrigger,
                 cron: editWorkflowTrigger === 'cron' ? editWorkflowCron.trim() || undefined : undefined,
+                webhook_path: editWorkflowTrigger === 'webhook' ? editWorkflowWebhookPath.trim() || undefined : undefined,
                 output_targets: editWorkflowOutputTargets.length > 0 ? editWorkflowOutputTargets : undefined,
+                output_webhook: editWorkflowOutputWebhook.trim() || undefined,
+                timeout_minutes: editWorkflowTimeout ? Number(editWorkflowTimeout) || undefined : undefined,
               }
             : null,
         },
@@ -865,7 +1006,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibleTo, editWorkflowTrigger, editWorkflowCron, editWorkflowOutputTargets, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim()
@@ -891,6 +1032,24 @@ export default function AgentHubPage() {
         avatar: createAvatar.trim() || undefined,
         emoji: createEmoji.trim() || undefined,
         rules,
+        skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
+        agent_type: createAgentType,
+        memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
+        visible_to: createVisibilityMode === 'admin'
+          ? { department_ids: [] }
+          : createVisibilityMode === 'departments'
+            ? (createVisibleTo.length > 0 ? { department_ids: createVisibleTo } : null)
+            : null,
+        workflow: createAgentType === 'workflow'
+          ? {
+              trigger: createWorkflowTrigger,
+              cron: createWorkflowTrigger === 'cron' ? createWorkflowCron.trim() || undefined : undefined,
+              webhook_path: createWorkflowTrigger === 'webhook' ? createWorkflowWebhookPath.trim() || undefined : undefined,
+              output_targets: createWorkflowOutputTargets.length > 0 ? createWorkflowOutputTargets : undefined,
+              output_webhook: createWorkflowOutputWebhook.trim() || undefined,
+              timeout_minutes: createWorkflowTimeout ? Number(createWorkflowTimeout) || undefined : undefined,
+            }
+          : null,
       })
       toast.success(`已创建智能体 ${displayName}`)
       setCreateOpen(false)
@@ -900,13 +1059,21 @@ export default function AgentHubPage() {
       setCreateAvatar('')
       setCreateEmoji('')
       setCreateRules('')
+      setCreateAgentType('chat')
+      setCreateMemoryMode('session')
+      setCreateVisibilityMode('all')
+      setCreateVisibleTo([])
+      setCreateWorkflowTrigger('manual')
+      setCreateWorkflowCron('')
+      setCreateWorkflowOutputTargets([])
+      setCreateSelectedSkills([])
       await fetchInstalledState(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建智能体失败')
     } finally {
       setCreatingAssistant(false)
     }
-  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, fetchInstalledState])
+  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, fetchInstalledState])
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!pendingUninstallAgent) {
@@ -938,6 +1105,63 @@ export default function AgentHubPage() {
     pendingUninstallAgent,
   ])
 
+  const openAgentVisibility = useCallback((agent: InstalledAgentInfo) => {
+    setEditingVisibilityAgent(agent)
+    const deptIds = agent.visibleTo?.department_ids
+    setAgentVisibilityMode(
+      deptIds === null || deptIds === undefined ? 'all'
+        : deptIds.length === 0 ? 'admin'
+        : 'departments'
+    )
+    setEditAgentVisibleTo(deptIds ?? [])
+    setAgentVisibilityOpen(true)
+  }, [])
+
+  const handleSaveAgentVisibility = useCallback(async () => {
+    if (!editingVisibilityAgent) return
+    setSavingAgentVisibility(true)
+    try {
+      await updateInstalledAgentMeta({
+        assistantName: editingVisibilityAgent.name,
+        updates: {
+          visible_to: agentVisibilityMode === 'admin'
+            ? { department_ids: [] }
+            : agentVisibilityMode === 'departments'
+              ? (editAgentVisibleTo.length > 0 ? { department_ids: editAgentVisibleTo } : null)
+              : null,
+        },
+      })
+      toast.success('可见性已更新')
+      setAgentVisibilityOpen(false)
+      await fetchInstalledState(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '更新可见性失败')
+    } finally {
+      setSavingAgentVisibility(false)
+    }
+  }, [editingVisibilityAgent, agentVisibilityMode, editAgentVisibleTo, fetchInstalledState])
+
+  const departmentNameMap = useMemo(
+    () => new Map(departments.map(dept => [dept.id, dept.name])),
+    [departments],
+  )
+
+  const filteredInstalledAgents = useMemo(() => {
+    return installedAgents.filter(agent => {
+      if (installedFilterAgentType !== 'all') {
+        const type = agent.agentType || agent.meta?.agent_type
+        if (type !== installedFilterAgentType) return false
+      }
+      if (installedFilterVisibility !== 'all') {
+        const deptIds = agent.visibleTo?.department_ids
+        if (installedFilterVisibility === 'public' && deptIds !== null && deptIds !== undefined) return false
+        if (installedFilterVisibility === 'restricted' && (deptIds === null || deptIds === undefined || deptIds.length === 0)) return false
+        if (installedFilterVisibility === 'admin-only' && (deptIds === null || deptIds === undefined || deptIds.length > 0)) return false
+      }
+      return true
+    })
+  }, [installedAgents, installedFilterAgentType, installedFilterVisibility])
+
   const handleRefresh = useCallback(async () => {
     await loadBootstrapData()
     if (activeTab === 'store') {
@@ -965,20 +1189,38 @@ export default function AgentHubPage() {
   const handleSync = useCallback(async () => {
     setSyncing(true)
     try {
-      const result = await batchSyncAgents()
-      const parts: string[] = []
-      if (result.installed.length > 0) parts.push(`新安装 ${result.installed.length} 个`)
-      if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 个`)
-      if (result.failed.length > 0) parts.push(`${result.failed.length} 个失败`)
-      if (parts.length === 0) {
-        toast.info('所有智能体已是最新版本')
-      } else {
-        toast.success(`同步完成：${parts.join('，')}`)
-      }
-      await fetchInstalledState(false)
+      await batchSyncAgents()
+      setSyncProgressOpen(true)
+      setSyncProgress(null)
+      const poll = setInterval(async () => {
+        try {
+          const status = await getAgentSyncStatus()
+          setSyncProgress(status)
+          if (status.status === 'done' || status.status === 'error') {
+            clearInterval(poll)
+            setSyncing(false)
+            if (status.status === 'done') {
+              const parts: string[] = []
+              if (status.installed > 0) parts.push(`新安装 ${status.installed} 个`)
+              if (status.updated > 0) parts.push(`更新 ${status.updated} 个`)
+              if (status.failed > 0) parts.push(`${status.failed} 个失败`)
+              if (parts.length === 0) {
+                toast.info('所有智能体已是最新版本')
+              } else {
+                toast.success(`同步完成：${parts.join('，')}`)
+              }
+            } else {
+              toast.error(status.error || '同步失败')
+            }
+            await fetchInstalledState(false)
+          }
+        } catch {
+          clearInterval(poll)
+          setSyncing(false)
+        }
+      }, 1000)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '同步智能体失败')
-    } finally {
       setSyncing(false)
     }
   }, [fetchInstalledState])
@@ -1092,7 +1334,42 @@ export default function AgentHubPage() {
                   </button>
                 ))}
               </div>
-            ) : null}
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground mr-1">类型</span>
+                {([['all', '全部'], ['chat', '对话助手'], ['workflow', '业务流程']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setInstalledFilterAgentType(key)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-sm transition-colors',
+                      installedFilterAgentType === key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <span className="text-sm text-muted-foreground ml-3 mr-1">可见性</span>
+                {([['all', '全部'], ['public', '全员可见'], ['restricted', '指定部门'], ['admin-only', '仅管理员']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setInstalledFilterVisibility(key)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-sm transition-colors',
+                      installedFilterVisibility === key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </CardHeader>
 
           <CardContent className="pt-6">
@@ -1164,12 +1441,13 @@ export default function AgentHubPage() {
                   </Empty>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
-                    {installedAgents.map(agent => (
+                    {filteredInstalledAgents.map(agent => (
                       <InstalledAgentCard
                         key={`${agent.source}:${agent.name}`}
                         agent={agent}
                         uninstalling={pendingUninstallAgent?.source === agent.source}
                         onOpenEdit={item => void openEdit(item)}
+                        onOpenVisibility={item => void openAgentVisibility(item)}
                         onRequestUninstall={setPendingUninstallAgent}
                       />
                     ))}
@@ -1401,6 +1679,7 @@ export default function AgentHubPage() {
             </DialogDescription>
           </DialogHeader>
 
+          <ScrollArea className="max-h-[65vh] pr-4">
           <div className="space-y-5">
             <div className="space-y-2">
               <label className="text-sm font-medium">显示名称</label>
@@ -1501,6 +1780,17 @@ export default function AgentHubPage() {
                   </div>
                 ) : null}
 
+                {editWorkflowTrigger === 'webhook' ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Webhook 路径</label>
+                    <Input
+                      value={editWorkflowWebhookPath}
+                      onChange={event => setEditWorkflowWebhookPath(event.target.value)}
+                      placeholder="/hooks/contract-review"
+                    />
+                  </div>
+                ) : null}
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium">输出目标</label>
                   <div className="flex flex-wrap gap-2">
@@ -1524,45 +1814,84 @@ export default function AgentHubPage() {
                     ))}
                   </div>
                 </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">输出 Webhook 地址</label>
+                  <Input
+                    value={editWorkflowOutputWebhook}
+                    onChange={event => setEditWorkflowOutputWebhook(event.target.value)}
+                    placeholder="https://hooks.example.com/workflow"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">超时时间（分钟）</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={editWorkflowTimeout}
+                    onChange={event => setEditWorkflowTimeout(event.target.value)}
+                    placeholder="30"
+                    className="w-32"
+                  />
+                </div>
               </div>
             ) : null}
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div>
                 <label className="text-sm font-medium">可见范围</label>
-                <p className="text-sm text-muted-foreground">留空表示所有部门可见</p>
               </div>
-              {departmentOptions.length === 0 ? (
-                <p className="text-xs text-muted-foreground">暂无部门数据</p>
-              ) : (
-                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
-                  {departmentOptions.map(dept => (
-                    <label
-                      key={dept.id}
-                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
-                    >
-                      <Checkbox
-                        checked={editVisibleTo.includes(dept.id)}
-                        onCheckedChange={checked => {
-                          setEditVisibleTo(
-                            checked === true
-                              ? [...editVisibleTo, dept.id]
-                              : editVisibleTo.filter(id => id !== dept.id),
-                          )
-                        }}
-                      />
-                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
-                    </label>
-                  ))}
+              <RadioGroup
+                value={editVisibilityMode}
+                onValueChange={value => setEditVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="all" />
+                  <label className="text-sm cursor-pointer">全员可见</label>
                 </div>
-              )}
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="departments" />
+                  <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="admin" />
+                  <label className="text-sm cursor-pointer">仅管理员可见</label>
+                </div>
+              </RadioGroup>
+              {editVisibilityMode === 'departments' ? (
+                departmentOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无部门数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {departmentOptions.map(dept => (
+                      <label
+                        key={dept.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={editVisibleTo.includes(dept.id)}
+                          onCheckedChange={checked => {
+                            setEditVisibleTo(
+                              checked === true
+                                ? [...editVisibleTo, dept.id]
+                                : editVisibleTo.filter(id => id !== dept.id),
+                            )
+                          }}
+                        />
+                        <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : null}
             </div>
 
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium">关联技能</div>
                 <p className="text-sm text-muted-foreground">
-                  这里展示当前已安装智能体声明的技能列表，暂不在 admin 中编辑。
+                  管理该智能体关联的技能，可勾选启用、添加或移除。
                 </p>
               </div>
 
@@ -1571,18 +1900,175 @@ export default function AgentHubPage() {
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                 </div>
-              ) : editSkills.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
-                  该智能体没有关联技能。
-                </div>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {editSkills.map(skill => (
-                    <Badge key={`edit-skill:${skill.id}`} variant="outline">
-                      {skill.display_name || skill.name}
-                    </Badge>
-                  ))}
-                </div>
+                <>
+                  {/* Current associated skills */}
+                  {editSkills.length > 0 ? (
+                    <div className="space-y-2">
+                      {editSkills.map(skill => {
+                        const skillId = skill.id || skill.name
+                        const isInstalled = installedSkillLookup.has(skill.id?.trim()) || installedSkillLookup.has(skill.name?.trim())
+                        const isEnabled = editEnabledSkills.includes(skillId) || editEnabledSkills.includes(skill.name?.trim())
+                        return (
+                          <div
+                            key={`edit-skill:${skillId}`}
+                            className="flex items-center gap-3 rounded-lg border px-3 py-2 hover:bg-accent/30"
+                          >
+                            <Checkbox
+                              checked={isEnabled}
+                              onCheckedChange={checked => {
+                                setEditEnabledSkills(
+                                  checked === true
+                                    ? [...editEnabledSkills, skill.name?.trim() || skillId]
+                                    : editEnabledSkills.filter(s => s !== skillId && s !== skill.name?.trim()),
+                                )
+                              }}
+                            />
+                            <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background text-lg">
+                              {skill.icon ? (
+                                <img src={skill.icon} alt={skill.display_name} className="size-full object-cover" />
+                              ) : skill.emoji ? (
+                                <span>{skill.emoji}</span>
+                              ) : (
+                                <Package className="size-4 text-muted-foreground" />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium">{skill.display_name || skill.name}</div>
+                              {skill.description ? (
+                                <div className="line-clamp-1 text-xs text-muted-foreground">{skill.description}</div>
+                              ) : null}
+                            </div>
+                            {isInstalled ? (
+                              <Badge variant="secondary">已安装</Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const detail = await getSkillHubDetail(skillId)
+                                    const latestVersion = detail?.versions?.[0]
+                                    if (!latestVersion?.source_url) {
+                                      toast.error('该技能暂不支持安装')
+                                      return
+                                    }
+                                    await installSkill({
+                                      skillName: skill.name?.trim() || skillId,
+                                      sourceUrl: latestVersion.source_url,
+                                      version: typeof latestVersion.version === 'string' ? latestVersion.version : undefined,
+                                      checksum: typeof latestVersion.checksum === 'string' ? latestVersion.checksum : undefined,
+                                      skillMeta: skill,
+                                    })
+                                    toast.success(`已安装技能 ${skill.display_name || skill.name}`)
+                                    await fetchInstalledState(false)
+                                  } catch (err) {
+                                    toast.error(err instanceof Error ? err.message : '安装技能失败')
+                                  }
+                                }}
+                              >
+                                安装
+                              </Button>
+                            )}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => {
+                                setEditSkills(prev => prev.filter(s => (s.id || s.name) !== skillId))
+                                setEditEnabledSkills(prev => prev.filter(s => s !== skillId && s !== skill.name?.trim()))
+                              }}
+                              title="移除关联"
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                      该智能体暂无关联技能，点击下方按钮添加。
+                    </div>
+                  )}
+
+                  {/* Add skill from installed skills */}
+                  {(() => {
+                    const associatedNames = new Set(editSkills.map(s => (s.name?.trim() || s.id)))
+                    const availableToAdd = installedSkills.filter(s => !associatedNames.has(s.name.trim()))
+                    if (availableToAdd.length === 0) return null
+                    return (
+                      <div className="space-y-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditAddSkillOpen(!editAddSkillOpen)}
+                        >
+                          <Plus className="mr-1 size-4" />
+                          添加已安装技能
+                        </Button>
+                        {editAddSkillOpen ? (
+                          <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border p-2">
+                            {availableToAdd.map(skill => (
+                              <label
+                                key={`add-skill:${skill.name}`}
+                                className="flex items-center gap-3 rounded-lg px-2 py-1.5 cursor-pointer hover:bg-accent/30"
+                              >
+                                <Checkbox
+                                  checked={editAddSkillSelection.includes(skill.name.trim())}
+                                  onCheckedChange={checked => {
+                                    const name = skill.name.trim()
+                                    setEditAddSkillSelection(
+                                      checked === true
+                                        ? [...editAddSkillSelection, name]
+                                        : editAddSkillSelection.filter(n => n !== name),
+                                    )
+                                  }}
+                                />
+                                <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background">
+                                  {skill.icon ? (
+                                    <img src={skill.icon} alt={skill.displayName} className="size-full object-cover" />
+                                  ) : skill.emoji ? (
+                                    <span className="text-sm">{skill.emoji}</span>
+                                  ) : (
+                                    <Package className="size-3.5 text-muted-foreground" />
+                                  )}
+                                </div>
+                                <span className="text-sm">{skill.displayName}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
+                        {editAddSkillSelection.length > 0 ? (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              const newSkills = editAddSkillSelection
+                                .map(name => installedSkills.find(s => s.name.trim() === name))
+                                .filter(Boolean)
+                                .map(s => ({
+                                  id: (s!.meta?.id || s!.id).trim(),
+                                  name: s!.name.trim(),
+                                  display_name: s!.displayName,
+                                  description: s!.description,
+                                  icon: s!.icon,
+                                  emoji: s!.emoji,
+                                  category: s!.category,
+                                  categories: s!.categories,
+                                }))
+                              setEditSkills(prev => [...prev, ...newSkills])
+                              setEditEnabledSkills(prev => [...prev, ...newSkills.map(s => s.name)])
+                              setEditAddSkillSelection([])
+                              setEditAddSkillOpen(false)
+                            }}
+                          >
+                            确认添加 ({editAddSkillSelection.length})
+                          </Button>
+                        ) : null}
+                      </div>
+                    )
+                  })()}
+                </>
               )}
             </div>
 
@@ -1597,6 +2083,7 @@ export default function AgentHubPage() {
               </Alert>
             ) : null}
           </div>
+          </ScrollArea>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>
@@ -1653,6 +2140,14 @@ export default function AgentHubPage() {
             setCreateAvatar('')
             setCreateEmoji('')
             setCreateRules('')
+            setCreateAgentType('chat')
+            setCreateMemoryMode('session')
+            setCreateVisibilityMode('all')
+            setCreateVisibleTo([])
+            setCreateWorkflowTrigger('manual')
+            setCreateWorkflowCron('')
+            setCreateWorkflowOutputTargets([])
+            setCreateSelectedSkills([])
           }
         }}
       >
@@ -1664,6 +2159,7 @@ export default function AgentHubPage() {
             </DialogDescription>
           </DialogHeader>
 
+	          <ScrollArea className="max-h-[65vh] pr-4">
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -1724,6 +2220,174 @@ export default function AgentHubPage() {
             </div>
 
             <div className="space-y-2">
+              <label className="text-sm font-medium">工作模式</label>
+              <Select value={createAgentType} onValueChange={value => setCreateAgentType(value as 'chat' | 'workflow')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="chat">对话助手</SelectItem>
+                  <SelectItem value="workflow">业务流程</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {createAgentType === 'chat' ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">记忆模式</label>
+                <Select value={createMemoryMode} onValueChange={value => setCreateMemoryMode(value as 'session' | 'user')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="session">会话独立</SelectItem>
+                    <SelectItem value="user">跨会话共享</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  会话独立模式下每次对话互不影响；跨会话共享模式会保留用户历史记忆。
+                </p>
+              </div>
+            ) : null}
+
+            {createAgentType === 'workflow' ? (
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">触发方式</label>
+                  <Select value={createWorkflowTrigger} onValueChange={value => setCreateWorkflowTrigger(value as 'cron' | 'webhook' | 'manual')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">手动</SelectItem>
+                      <SelectItem value="cron">定时</SelectItem>
+                      <SelectItem value="webhook">Webhook</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {createWorkflowTrigger === 'cron' ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Cron 表达式</label>
+                    <Input
+                      value={createWorkflowCron}
+                      onChange={event => setCreateWorkflowCron(event.target.value)}
+                      placeholder="0 8 * * *"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      例如：0 8 * * * 表示每天早上 8 点执行
+                    </p>
+                  </div>
+                ) : null}
+
+                {createWorkflowTrigger === 'webhook' ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Webhook 路径</label>
+                    <Input
+                      value={createWorkflowWebhookPath}
+                      onChange={event => setCreateWorkflowWebhookPath(event.target.value)}
+                      placeholder="/hooks/contract-review"
+                    />
+                  </div>
+                ) : null}
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">输出目标</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['chat', 'webhook', 'file'].map(target => (
+                      <label
+                        key={target}
+                        className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer hover:bg-accent/30"
+                      >
+                        <Checkbox
+                          checked={createWorkflowOutputTargets.includes(target)}
+                          onCheckedChange={checked => {
+                            setCreateWorkflowOutputTargets(
+                              checked === true
+                                ? [...createWorkflowOutputTargets, target]
+                                : createWorkflowOutputTargets.filter(t => t !== target),
+                            )
+                          }}
+                        />
+                        {target === 'chat' ? '对话' : target === 'webhook' ? 'Webhook' : '文件'}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">输出 Webhook 地址</label>
+                  <Input
+                    value={createWorkflowOutputWebhook}
+                    onChange={event => setCreateWorkflowOutputWebhook(event.target.value)}
+                    placeholder="https://hooks.example.com/workflow"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">超时时间（分钟）</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={createWorkflowTimeout}
+                    onChange={event => setCreateWorkflowTimeout(event.target.value)}
+                    placeholder="30"
+                    className="w-32"
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium">可见范围</label>
+              </div>
+              <RadioGroup
+                value={createVisibilityMode}
+                onValueChange={value => setCreateVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="all" />
+                  <label className="text-sm cursor-pointer">全员可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="departments" />
+                  <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="admin" />
+                  <label className="text-sm cursor-pointer">仅管理员可见</label>
+                </div>
+              </RadioGroup>
+              {createVisibilityMode === 'departments' ? (
+                departmentOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无部门数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {departmentOptions.map(dept => (
+                      <label
+                        key={dept.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={createVisibleTo.includes(dept.id)}
+                          onCheckedChange={checked => {
+                            setCreateVisibleTo(
+                              checked === true
+                                ? [...createVisibleTo, dept.id]
+                                : createVisibleTo.filter(id => id !== dept.id),
+                            )
+                          }}
+                        />
+                        <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
               <label className="text-sm font-medium">
                 系统指令 <span className="text-destructive">*</span>
               </label>
@@ -1737,7 +2401,60 @@ export default function AgentHubPage() {
                 系统指令将写入 instructions.md 文件，作为智能体的核心行为定义
               </p>
             </div>
-          </div>
+
+            <div className="space-y-3">
+              <div>
+                <div className="text-sm font-medium">关联技能</div>
+                <p className="text-sm text-muted-foreground">
+                  选择要关联到该智能体的已安装技能。
+                </p>
+              </div>
+              {installedSkills.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                  暂无已安装技能，请先在技能商店安装技能。
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {installedSkills.map(skill => {
+                    const isSelected = createSelectedSkills.includes(skill.name)
+                    return (
+                      <label
+                        key={`create-skill:${skill.name}`}
+                        className="flex items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer hover:bg-accent/30"
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={checked => {
+                            setCreateSelectedSkills(
+                              checked === true
+                                ? [...createSelectedSkills, skill.name]
+                                : createSelectedSkills.filter(s => s !== skill.name),
+                            )
+                          }}
+                        />
+                        <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background text-lg">
+                          {skill.icon ? (
+                            <img src={skill.icon} alt={skill.displayName} className="size-full object-cover" />
+                          ) : skill.emoji ? (
+                            <span>{skill.emoji}</span>
+                          ) : (
+                            <Package className="size-4 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium">{skill.displayName}</div>
+                          {skill.description ? (
+                            <div className="line-clamp-1 text-xs text-muted-foreground">{skill.description}</div>
+                          ) : null}
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+	          </div>
+          </ScrollArea>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -1754,6 +2471,136 @@ export default function AgentHubPage() {
                 </>
               ) : (
                 '创建'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={syncProgressOpen} onOpenChange={open => { if (!open) setSyncProgressOpen(false) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>智能体同步进度</DialogTitle>
+            <DialogDescription>
+              {syncProgress?.status === 'running'
+                ? '正在从 Hub 同步智能体...'
+                : syncProgress?.status === 'done'
+                  ? '同步完成'
+                  : syncProgress?.status === 'error'
+                    ? '同步失败'
+                    : '等待同步...'}
+            </DialogDescription>
+          </DialogHeader>
+          {syncProgress ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span>进度</span>
+                <span className="text-muted-foreground">
+                  {syncProgress.processed}/{syncProgress.total}
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-muted">
+                <div
+                  className="h-2 rounded-full bg-primary transition-all"
+                  style={{
+                    width: syncProgress.total > 0
+                      ? `${(syncProgress.processed / syncProgress.total) * 100}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>新安装: <span className="font-medium">{syncProgress.installed}</span></div>
+                <div>更新: <span className="font-medium">{syncProgress.updated}</span></div>
+                <div>跳过: <span className="font-medium">{syncProgress.skipped}</span></div>
+                <div>失败: <span className="font-medium text-destructive">{syncProgress.failed}</span></div>
+              </div>
+              {syncProgress.status === 'error' && syncProgress.error ? (
+                <p className="text-sm text-destructive">{syncProgress.error}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSyncProgressOpen(false)}
+              disabled={syncProgress?.status === 'running'}
+            >
+              {syncProgress?.status === 'running' ? '同步中...' : '关闭'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={agentVisibilityOpen} onOpenChange={setAgentVisibilityOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>编辑智能体可见性</DialogTitle>
+            <DialogDescription>
+              {editingVisibilityAgent?.displayName ?? ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <RadioGroup
+              value={agentVisibilityMode}
+              onValueChange={value => setAgentVisibilityMode(value as 'all' | 'departments' | 'admin')}
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="all" />
+                <label className="text-sm cursor-pointer">全员可见</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="departments" />
+                <label className="text-sm cursor-pointer">指定部门可见</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="admin" />
+                <label className="text-sm cursor-pointer">仅管理员可见</label>
+              </div>
+            </RadioGroup>
+            {agentVisibilityMode === 'departments' ? (
+              departmentOptions.length === 0 ? (
+                <p className="text-xs text-muted-foreground">暂无部门数据</p>
+              ) : (
+                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                  {departmentOptions.map(dept => (
+                    <label
+                      key={dept.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                    >
+                      <Checkbox
+                        checked={editAgentVisibleTo.includes(dept.id)}
+                        onCheckedChange={checked => {
+                          setEditAgentVisibleTo(
+                            checked === true
+                              ? [...editAgentVisibleTo, dept.id]
+                              : editAgentVisibleTo.filter(id => id !== dept.id),
+                          )
+                        }}
+                      />
+                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAgentVisibilityOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={savingAgentVisibility} onClick={() => void handleSaveAgentVisibility()}>
+              {savingAgentVisibility ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  保存中
+                </>
+              ) : (
+                '保存'
               )}
             </Button>
           </DialogFooter>

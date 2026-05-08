@@ -24,6 +24,7 @@ import {
   uninstallAssistant,
   updateInstalledAssistantMeta,
   batchSyncAssistants,
+  type AssistantStoreMeta,
 } from './agentStore.js'
 import {
   fetchSkillHubCategories,
@@ -41,6 +42,14 @@ import {
   batchSyncSkills,
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
+import {
+  getSkillSyncProgress,
+  getAgentSyncProgress,
+  updateSkillSyncProgress,
+  updateAgentSyncProgress,
+  resetSkillSyncProgress,
+  resetAgentSyncProgress,
+} from './syncProgress.js'
 import { createEnterpriseApi } from './api/enterprise.js'
 import { getUserProfile } from './api/userProfile.js'
 import { adapterProcessManager } from './adapterProcessManager.js'
@@ -1000,6 +1009,22 @@ export function startServer(
           skills: Array.isArray(body.skills)
             ? body.skills.filter((s): s is string => typeof s === 'string')
             : undefined,
+          agent_type:
+            body.agent_type === 'chat' || body.agent_type === 'workflow'
+              ? body.agent_type
+              : undefined,
+          memory_mode:
+            body.memory_mode === 'session' || body.memory_mode === 'user'
+              ? body.memory_mode
+              : undefined,
+          visible_to:
+            body.visible_to !== undefined
+              ? (body.visible_to as AssistantStoreMeta['visible_to'])
+              : undefined,
+          workflow:
+            body.workflow !== undefined
+              ? (body.workflow as AssistantStoreMeta['workflow'])
+              : undefined,
         })
 
         writeJson(res, 200, { success: true, data: result })
@@ -1056,15 +1081,93 @@ export function startServer(
               updates.workflow !== undefined
                 ? (updates.workflow as AssistantStoreMeta['workflow'])
                 : undefined,
+            enabledSkills:
+              Array.isArray(updates.enabledSkills)
+                ? updates.enabledSkills.filter((s: unknown) => typeof s === 'string')
+                : undefined,
+            skills:
+              Array.isArray(updates.skills)
+                ? updates.skills.filter((s: unknown) => typeof s === 'string')
+                : undefined,
           },
         })
         writeJson(res, 200, { ok: true })
         return
       }
 
+      if (req.method === 'PATCH' && pathname === '/api/v1/agents/visibility') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        await updateInstalledAssistantMeta({
+          assistantName: typeof body.assistantName === 'string' ? body.assistantName : '',
+          updates: { visible_to: (body.visible_to ?? null) as AssistantStoreMeta['visible_to'] },
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agents/sync-from-hub') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getAgentSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        resetAgentSyncProgress()
+        updateAgentSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncAssistants({
+          onProgress: (processed, total) => {
+            updateAgentSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateAgentSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateAgentSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      // backward compat alias
       if (req.method === 'POST' && pathname === '/api/v1/agents/sync') {
         authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await batchSyncAssistants())
+        if (getAgentSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        resetAgentSyncProgress()
+        updateAgentSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncAssistants({
+          onProgress: (processed, total) => {
+            updateAgentSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateAgentSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateAgentSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agents/sync-status') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, getAgentSyncProgress())
         return
       }
 
@@ -1220,12 +1323,76 @@ export function startServer(
         return
       }
 
-      if (req.method === 'POST' && pathname === '/api/v1/skills/sync') {
+      if (req.method === 'POST' && pathname === '/api/v1/skills/sync-from-hub') {
         authService.requireScope(auth, 'admin:settings')
+        if (getSkillSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
         const body = await readJsonBody(req)
         const tenantId =
           typeof body.tenantId === 'string' ? body.tenantId : undefined
-        writeJson(res, 200, await batchSyncSkills({ tenantId }))
+        resetSkillSyncProgress()
+        updateSkillSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncSkills({
+          tenantId,
+          onProgress: (processed, total) => {
+            updateSkillSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateSkillSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateSkillSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      // backward compat alias
+      if (req.method === 'POST' && pathname === '/api/v1/skills/sync') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getSkillSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        const body = await readJsonBody(req)
+        const tenantId =
+          typeof body.tenantId === 'string' ? body.tenantId : undefined
+        resetSkillSyncProgress()
+        updateSkillSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncSkills({
+          tenantId,
+          onProgress: (processed, total) => {
+            updateSkillSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateSkillSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateSkillSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/skills/sync-status') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, getSkillSyncProgress())
         return
       }
 

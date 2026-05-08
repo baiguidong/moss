@@ -49,7 +49,7 @@ export function buildVisibilityFilter(
   return { isAdmin: false, departmentId, visibleDepartmentIds }
 }
 
-function getUserAncestorIds(
+export function getUserAncestorIds(
   userId: string,
   orgId: string,
   getUserByIdAndOrg: (

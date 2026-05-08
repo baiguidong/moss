@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -29,12 +30,14 @@ import {
   resolveSkillTenantId,
   setInstalledSkillEnabled,
   uninstallSkill,
+  getSkillSyncStatus,
   type BatchSyncResult,
   type InstalledSkillInfo,
   type SkillHubDetail,
   type SkillHubSkill,
   type SkillHubVersion,
   type SkillStoreTab,
+  type SkillSyncProgress,
 } from '@/lib/api/skill-store'
 import type { SystemSettings } from '@/lib/api/types'
 import type { AuthDepartment } from '@/lib/api/types'
@@ -496,9 +499,12 @@ export default function SkillStorePage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importingMode, setImportingMode] = useState<'zip' | 'directory' | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [skillSyncProgressOpen, setSkillSyncProgressOpen] = useState(false)
+  const [skillSyncProgress, setSkillSyncProgress] = useState<SkillSyncProgress | null>(null)
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [editVisibilityOpen, setEditVisibilityOpen] = useState(false)
   const [editingSkillName, setEditingSkillName] = useState('')
+  const [skillVisibilityMode, setSkillVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
   const [editSkillVisibleTo, setEditSkillVisibleTo] = useState<string[]>([])
   const [savingVisibility, setSavingVisibility] = useState(false)
 
@@ -873,20 +879,38 @@ export default function SkillStorePage() {
   const handleSync = useCallback(async () => {
     setSyncing(true)
     try {
-      const result = await batchSyncSkills(tenantId || undefined)
-      const parts: string[] = []
-      if (result.installed.length > 0) parts.push(`新安装 ${result.installed.length} 个`)
-      if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 个`)
-      if (result.failed.length > 0) parts.push(`${result.failed.length} 个失败`)
-      if (parts.length === 0) {
-        toast.info('所有技能已是最新版本')
-      } else {
-        toast.success(`同步完成：${parts.join('，')}`)
-      }
-      await fetchInstalledList()
+      await batchSyncSkills(tenantId || undefined)
+      setSkillSyncProgressOpen(true)
+      setSkillSyncProgress(null)
+      const poll = setInterval(async () => {
+        try {
+          const status = await getSkillSyncStatus()
+          setSkillSyncProgress(status)
+          if (status.status === 'done' || status.status === 'error') {
+            clearInterval(poll)
+            setSyncing(false)
+            if (status.status === 'done') {
+              const parts: string[] = []
+              if (status.installed > 0) parts.push(`新安装 ${status.installed} 个`)
+              if (status.updated > 0) parts.push(`更新 ${status.updated} 个`)
+              if (status.failed > 0) parts.push(`${status.failed} 个失败`)
+              if (parts.length === 0) {
+                toast.info('所有技能已是最新版本')
+              } else {
+                toast.success(`同步完成：${parts.join('，')}`)
+              }
+            } else {
+              toast.error(status.error || '同步失败')
+            }
+            await fetchInstalledList()
+          }
+        } catch {
+          clearInterval(poll)
+          setSyncing(false)
+        }
+      }, 1000)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '同步技能失败')
-    } finally {
       setSyncing(false)
     }
   }, [fetchInstalledList, tenantId])
@@ -1096,7 +1120,13 @@ export default function SkillStorePage() {
 
   const handleOpenVisibilityEdit = useCallback((skill: InstalledSkillInfo) => {
     setEditingSkillName(skill.name)
-    setEditSkillVisibleTo(skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids ?? [])
+    const deptIds = skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids
+    setSkillVisibilityMode(
+      deptIds === null || deptIds === undefined ? 'all'
+        : deptIds.length === 0 ? 'admin'
+        : 'departments'
+    )
+    setEditSkillVisibleTo(deptIds ?? [])
     setEditVisibilityOpen(true)
   }, [])
 
@@ -1105,7 +1135,11 @@ export default function SkillStorePage() {
     try {
       await updateSkillVisibility(
         editingSkillName,
-        editSkillVisibleTo.length > 0 ? { department_ids: editSkillVisibleTo } : null,
+        skillVisibilityMode === 'admin'
+          ? { department_ids: [] }
+          : skillVisibilityMode === 'departments'
+            ? (editSkillVisibleTo.length > 0 ? { department_ids: editSkillVisibleTo } : null)
+            : null,
       )
       toast.success('可见性已更新')
       setEditVisibilityOpen(false)
@@ -1115,7 +1149,7 @@ export default function SkillStorePage() {
     } finally {
       setSavingVisibility(false)
     }
-  }, [editingSkillName, editSkillVisibleTo, fetchInstalledList])
+  }, [editingSkillName, skillVisibilityMode, editSkillVisibleTo, fetchInstalledList])
 
   const departmentNameMap = useMemo(
     () => new Map(departments.map(dept => [dept.id, dept.name])),
@@ -1734,34 +1768,53 @@ export default function SkillStorePage() {
           <DialogHeader>
             <DialogTitle>编辑技能可见性</DialogTitle>
             <DialogDescription>
-              设置哪些部门可以看到此技能。留空表示所有部门可见。
+              设置哪些部门可以看到此技能。
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-3'>
-            {departmentOptions.length === 0 ? (
-              <p className='text-sm text-muted-foreground'>暂无部门数据</p>
-            ) : (
-              <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
-                {departmentOptions.map(dept => (
-                  <label
-                    key={dept.id}
-                    className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
-                  >
-                    <Checkbox
-                      checked={editSkillVisibleTo.includes(dept.id)}
-                      onCheckedChange={checked => {
-                        setEditSkillVisibleTo(
-                          checked === true
-                            ? [...editSkillVisibleTo, dept.id]
-                            : editSkillVisibleTo.filter(id => id !== dept.id),
-                        )
-                      }}
-                    />
-                    <span>{'— '.repeat(dept.depth)}{dept.name}</span>
-                  </label>
-                ))}
+            <RadioGroup
+              value={skillVisibilityMode}
+              onValueChange={value => setSkillVisibilityMode(value as 'all' | 'departments' | 'admin')}
+            >
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="all" />
+                <label className='text-sm cursor-pointer'>全员可见</label>
               </div>
-            )}
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="departments" />
+                <label className='text-sm cursor-pointer'>指定部门可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="admin" />
+                <label className='text-sm cursor-pointer'>仅管理员可见</label>
+              </div>
+            </RadioGroup>
+            {skillVisibilityMode === 'departments' ? (
+              departmentOptions.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无部门数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {departmentOptions.map(dept => (
+                    <label
+                      key={dept.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editSkillVisibleTo.includes(dept.id)}
+                        onCheckedChange={checked => {
+                          setEditSkillVisibleTo(
+                            checked === true
+                              ? [...editSkillVisibleTo, dept.id]
+                              : editSkillVisibleTo.filter(id => id !== dept.id),
+                          )
+                        }}
+                      />
+                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant='outline' onClick={() => setEditVisibilityOpen(false)}>
@@ -1803,6 +1856,65 @@ export default function SkillStorePage() {
           event.target.value = ''
         }}
       />
+
+      <Dialog open={skillSyncProgressOpen} onOpenChange={open => { if (!open) setSkillSyncProgressOpen(false) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>技能同步进度</DialogTitle>
+            <DialogDescription>
+              {skillSyncProgress?.status === 'running'
+                ? '正在从 Hub 同步技能...'
+                : skillSyncProgress?.status === 'done'
+                  ? '同步完成'
+                  : skillSyncProgress?.status === 'error'
+                    ? '同步失败'
+                    : '等待同步...'}
+            </DialogDescription>
+          </DialogHeader>
+          {skillSyncProgress ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span>进度</span>
+                <span className="text-muted-foreground">
+                  {skillSyncProgress.processed}/{skillSyncProgress.total}
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-muted">
+                <div
+                  className="h-2 rounded-full bg-primary transition-all"
+                  style={{
+                    width: skillSyncProgress.total > 0
+                      ? `${(skillSyncProgress.processed / skillSyncProgress.total) * 100}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>新安装: <span className="font-medium">{skillSyncProgress.installed}</span></div>
+                <div>更新: <span className="font-medium">{skillSyncProgress.updated}</span></div>
+                <div>跳过: <span className="font-medium">{skillSyncProgress.skipped}</span></div>
+                <div>失败: <span className="font-medium text-destructive">{skillSyncProgress.failed}</span></div>
+              </div>
+              {skillSyncProgress.status === 'error' && skillSyncProgress.error ? (
+                <p className="text-sm text-destructive">{skillSyncProgress.error}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSkillSyncProgressOpen(false)}
+              disabled={skillSyncProgress?.status === 'running'}
+            >
+              {skillSyncProgress?.status === 'running' ? '同步中...' : '关闭'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

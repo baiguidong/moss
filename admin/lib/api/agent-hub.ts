@@ -100,6 +100,10 @@ export interface CreateAssistantRequest {
   emoji?: string
   rules: string
   skills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: InstalledAgentMeta['workflow']
 }
 
 export function getAgentHubAssistants(params: {
@@ -173,7 +177,7 @@ export function updateInstalledAgentMeta(data: {
   updates: Partial<
     Pick<
       InstalledAgentMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
     >
   >
 }): Promise<{ ok: boolean }> {
@@ -195,6 +199,32 @@ export interface BatchSyncAgentResult {
   failed: Array<{ assistantName: string; error: string }>
 }
 
-export function batchSyncAgents(): Promise<BatchSyncAgentResult> {
-  return authClient.post<BatchSyncAgentResult>('/api/v1/agents/sync')
+export function batchSyncAgents(): Promise<{ started: boolean }> {
+  return authClient.post<{ started: boolean }>('/api/v1/agents/sync-from-hub')
+}
+
+export interface AgentSyncProgress {
+  status: 'idle' | 'running' | 'done' | 'error'
+  total: number
+  processed: number
+  installed: number
+  updated: number
+  skipped: number
+  failed: number
+  error?: string
+  startedAt: number
+}
+
+export function getAgentSyncStatus(): Promise<AgentSyncProgress> {
+  return authClient.get<AgentSyncProgress>('/api/v1/agents/sync-status')
+}
+
+export function updateAgentVisibility(
+  assistantName: string,
+  visible_to: { department_ids: string[] | null } | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>('/api/v1/agents/visibility', {
+    assistantName,
+    visible_to,
+  })
 }

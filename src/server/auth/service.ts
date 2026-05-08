@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { hasScope, issueAccessToken, verifyAccessToken, type AuthContext } from './token.js'
-import { buildVisibilityFilter } from '../visibilityFilter.js'
+import { buildVisibilityFilter, getUserAncestorIds } from '../visibilityFilter.js'
 import {
   AuthCenterDb,
   type AuthCenterApiKey,
@@ -1064,6 +1064,17 @@ export class AuthService {
       auth,
       (userId, orgId) => this.db.getUserByIdAndOrg(userId, orgId),
       (orgId) => this.db.listDepartmentsByOrg(orgId),
+    )
+  }
+
+  getUserDepartmentAncestorIds(userId: string, orgId: string): Set<string> | null {
+    const user = this.db.getUserByIdAndOrg(userId, orgId)
+    if (!user || user.role === 'admin') return null
+    return getUserAncestorIds(
+      userId,
+      orgId,
+      (uid, oid) => this.db.getUserByIdAndOrg(uid, oid),
+      (oid) => this.db.listDepartmentsByOrg(oid),
     )
   }
 }
