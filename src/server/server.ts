@@ -46,6 +46,7 @@ import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
+import { isVisibleTo } from './visibilityFilter.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -948,7 +949,9 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
-        writeJson(res, 200, await getInstalledAssistants())
+        const filter = authService.buildVisibilityFilter(auth)
+        const all = await getInstalledAssistants()
+        writeJson(res, 200, all.filter(a => isVisibleTo(a.visibleTo, filter)))
         return
       }
 
@@ -1088,7 +1091,9 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
         authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await getInstalledSkills())
+        const filter = authService.buildVisibilityFilter(auth)
+        const all = await getInstalledSkills()
+        writeJson(res, 200, all.filter(s => isVisibleTo(s.visibleTo, filter)))
         return
       }
 
