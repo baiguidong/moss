@@ -45,6 +45,17 @@ export interface InstalledAgentMeta {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: {
+    trigger: 'cron' | 'webhook' | 'manual'
+    cron?: string
+    webhook_path?: string
+    output_targets?: string[]
+    output_webhook?: string
+    timeout_minutes?: number
+  } | null
   [key: string]: unknown
 }
 
@@ -66,6 +77,10 @@ export interface InstalledAgentInfo {
   skills: string[]
   enabledSkills: string[]
   meta: InstalledAgentMeta | null
+  agentType: 'chat' | 'workflow'
+  memoryMode: 'session' | 'user'
+  visibleTo: { department_ids: string[] | null } | null
+  workflow: InstalledAgentMeta['workflow']
 }
 
 export interface InstallAgentRequest {
@@ -156,7 +171,10 @@ export function createCustomAssistant(
 export function updateInstalledAgentMeta(data: {
   assistantName: string
   updates: Partial<
-    Pick<InstalledAgentMeta, 'display_name' | 'description' | 'avatar' | 'emoji'>
+    Pick<
+      InstalledAgentMeta,
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow'
+    >
   >
 }): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>('/api/v1/agents/meta', data)

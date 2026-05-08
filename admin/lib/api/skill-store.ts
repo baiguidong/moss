@@ -56,6 +56,7 @@ export interface InstalledSkillMeta {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
+  visible_to?: { department_ids: string[] | null } | null
   [key: string]: unknown
 }
 
@@ -75,6 +76,7 @@ export interface InstalledSkillInfo {
   enabled: boolean
   source: string
   meta: InstalledSkillMeta | null
+  visibleTo: { department_ids: string[] | null } | null
 }
 
 export interface InstallSkillRequest {
@@ -188,5 +190,15 @@ export interface BatchSyncResult {
 export function batchSyncSkills(tenantId?: string): Promise<BatchSyncResult> {
   return authClient.post<BatchSyncResult>('/api/v1/skills/sync', {
     tenantId: tenantId || undefined,
+  })
+}
+
+export function updateSkillVisibility(
+  skillName: string,
+  visible_to: { department_ids: string[] | null } | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>('/api/v1/skills/visibility', {
+    skillName,
+    visible_to,
   })
 }
