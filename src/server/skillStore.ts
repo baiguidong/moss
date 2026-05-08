@@ -79,6 +79,7 @@ export type SkillStoreMeta = {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
+  visible_to?: { department_ids: string[] | null } | null
   [key: string]: unknown
 }
 
@@ -98,6 +99,7 @@ export type InstalledSkillInfo = {
   enabled: boolean
   source: string
   meta: SkillStoreMeta | null
+  visibleTo: { department_ids: string[] | null } | null
 }
 
 export type FetchSkillHubSkillsParams = {
@@ -412,6 +414,7 @@ function toInstalledSkillInfo(params: {
     enabled: meta?.enabled !== false,
     source: skillDir,
     meta,
+    visibleTo: meta?.visible_to ?? null,
   }
 }
 
