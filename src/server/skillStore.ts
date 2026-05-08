@@ -17,27 +17,19 @@ import {
   SKILL_HUB_META_FILE,
   USER_SKILLS_DIR,
 } from '../utils/skills/localSkillDirectories.js'
+import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
-const HUB_AUTHORIZATION =
-  String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
-
-function normalizeHubApiBaseUrl(rawValue: unknown): string {
-  const trimmed = String(rawValue || '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!trimmed) return ''
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`
+function getHubCategoriesUrl(): string {
+  return `${getHubApiBaseUrl()}/categories`
 }
 
-const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
-  process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
-)
+function getSkillHubBaseUrl(): string {
+  return `${getHubApiBaseUrl()}/skills`
+}
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const SKILL_HUB_BASE_URL = `${HUB_API_BASE_URL}/skills`
-const SKILL_HUB_CURSOR_URL = `${SKILL_HUB_BASE_URL}/cursor`
+function getSkillHubCursorUrl(): string {
+  return `${getSkillHubBaseUrl()}/cursor`
+}
 
 export type SkillHubVersion = {
   version: string
@@ -185,7 +177,7 @@ function parseStringArray(value: unknown): string[] {
 async function fetchJson(url: string): Promise<unknown> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
     },
   })
   if (!response.ok) {
@@ -213,7 +205,7 @@ function unwrapHubResponse(result: unknown): Record<string, unknown> {
 async function downloadFileBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
       'User-Agent': 'Moss-SkillStore/1.0',
     },
   })
@@ -661,7 +653,7 @@ export async function fetchSkillHubSkills(
     searchParams.set('tenant_id', params.tenantId.trim())
   }
 
-  const result = await fetchJson(`${SKILL_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(`${getSkillHubCursorUrl()}?${searchParams}`)
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : {}
 
@@ -678,7 +670,7 @@ export async function fetchSkillHubSkills(
 }
 
 export async function fetchSkillHubCategories(): Promise<string[]> {
-  const result = await fetchJson(HUB_CATEGORIES_URL)
+  const result = await fetchJson(getHubCategoriesUrl())
   const categories = unwrapHubResponse(result).data
   return Array.isArray(categories)
     ? categories.filter((item): item is string => typeof item === 'string')
@@ -688,7 +680,7 @@ export async function fetchSkillHubCategories(): Promise<string[]> {
 export async function fetchSkillHubSkillDetail(
   skillId: string,
 ): Promise<SkillHubDetail | null> {
-  const result = await fetchJson(`${SKILL_HUB_BASE_URL}/${encodeURIComponent(skillId)}`)
+  const result = await fetchJson(`${getSkillHubBaseUrl()}/${encodeURIComponent(skillId)}`)
   const unwrapped = unwrapHubResponse(result)
   if (!isRecord(unwrapped.data)) {
     return null

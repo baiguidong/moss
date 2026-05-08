@@ -13,10 +13,7 @@ import {
   installHubSkill,
   type InstalledSkillInfo,
 } from './skillStore.js'
-
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
-const HUB_AUTHORIZATION =
-  String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
+import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
 
 // Support MOSS_HOME environment variable for Docker/container environments
 const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
@@ -50,22 +47,17 @@ const DOCUMENTATION_MARKDOWN_PATTERNS = [
   /^contributing(?:\.[^.]+)?$/i,
 ]
 
-function normalizeHubApiBaseUrl(rawValue: unknown): string {
-  const trimmed = String(rawValue || '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!trimmed) return ''
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`
+function getHubCategoriesUrl(): string {
+  return `${getHubApiBaseUrl()}/categories`
 }
 
-const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
-  process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
-)
+function getAssistantHubBaseUrl(): string {
+  return `${getHubApiBaseUrl()}/assistants`
+}
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const ASSISTANT_HUB_BASE_URL = `${HUB_API_BASE_URL}/assistants`
-const ASSISTANT_HUB_CURSOR_URL = `${ASSISTANT_HUB_BASE_URL}/cursor`
+function getAssistantHubCursorUrl(): string {
+  return `${getAssistantHubBaseUrl()}/cursor`
+}
 
 export type AgentHubAssistant = {
   id: string
@@ -230,7 +222,7 @@ async function fetchJson(
   init?: RequestInit,
 ): Promise<unknown> {
   const headers = new Headers(init?.headers)
-  headers.set('Authorization', HUB_AUTHORIZATION)
+  headers.set('Authorization', getHubAuthorization())
   if (!headers.has('User-Agent')) {
     headers.set('User-Agent', 'Moss-AgentHub/1.0')
   }
@@ -325,7 +317,7 @@ function normalizeAgentHubAssistant(rawValue: unknown): AgentHubAssistant | null
 async function downloadFileBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
       'User-Agent': 'Moss-AgentHub/1.0',
     },
   })
@@ -616,7 +608,7 @@ export async function fetchAgentHubAssistants(
   if (params.query) searchParams.set('query', params.query)
   if (params.category) searchParams.set('category', params.category)
 
-  const result = await fetchJson(`${ASSISTANT_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(`${getAssistantHubCursorUrl()}?${searchParams}`)
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : unwrapped
   const rawAssistants = Array.isArray(data.assistants) ? data.assistants : []
@@ -634,7 +626,7 @@ export async function fetchAgentHubAssistants(
 }
 
 export async function fetchAgentHubCategories(): Promise<string[]> {
-  const result = await fetchJson(`${HUB_CATEGORIES_URL}?type=1`)
+  const result = await fetchJson(`${getHubCategoriesUrl()}?type=1`)
   if (Array.isArray(result)) {
     return result.filter(
       (item): item is string =>
@@ -654,7 +646,7 @@ export async function fetchAgentHubAssistantDetail(
   assistantId: string,
 ): Promise<AgentHubDetail | null> {
   const result = await fetchJson(
-    `${ASSISTANT_HUB_BASE_URL}/${encodeURIComponent(assistantId)}`,
+    `${getAssistantHubBaseUrl()}/${encodeURIComponent(assistantId)}`,
   )
   const unwrapped = unwrapHubResponse(result)
   const rawDetail = isRecord(unwrapped.data)

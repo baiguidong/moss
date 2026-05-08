@@ -157,6 +157,8 @@ export type ServerConfig = {
   resumeOnMissingRuntime: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   auditFile?: string
+  hubApiBaseUrl?: string
+  hubAuthorization?: string
 }
 
 export type SessionStatus =
