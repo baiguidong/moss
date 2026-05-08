@@ -169,3 +169,14 @@ export function fetchAgentHubSkillDetailsByIds(
     skillIds,
   })
 }
+
+export interface BatchSyncAgentResult {
+  installed: Array<{ assistantName: string; version: string }>
+  updated: Array<{ assistantName: string; version: string }>
+  skipped: Array<{ assistantName: string; reason: string }>
+  failed: Array<{ assistantName: string; error: string }>
+}
+
+export function batchSyncAgents(): Promise<BatchSyncAgentResult> {
+  return authClient.post<BatchSyncAgentResult>('/api/v1/agents/sync')
+}

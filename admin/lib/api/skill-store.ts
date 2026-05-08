@@ -177,3 +177,16 @@ export function importSkillDirectory(data: {
     data,
   )
 }
+
+export interface BatchSyncResult {
+  installed: Array<{ skillName: string; version: string }>
+  updated: Array<{ skillName: string; version: string }>
+  skipped: Array<{ skillName: string; reason: string }>
+  failed: Array<{ skillName: string; error: string }>
+}
+
+export function batchSyncSkills(tenantId?: string): Promise<BatchSyncResult> {
+  return authClient.post<BatchSyncResult>('/api/v1/skills/sync', {
+    tenantId: tenantId || undefined,
+  })
+}
