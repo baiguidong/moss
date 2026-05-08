@@ -152,14 +152,10 @@ export class AuthService {
       throw new AuthServiceError(401, 'Invalid refresh token')
     }
 
-    this.db.revokeToken(auth.jti, auth.exp)
-
     const user = this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
     if (!user || user.status !== 'active') {
       throw new AuthServiceError(401, 'User is invalid')
     }
-
-    this.db.cleanupExpiredRevokedTokens()
 
     return this.issueToken({
       user,
