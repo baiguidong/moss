@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getSystemSettings } from '@/lib/api/settings'
 import {
+  batchSyncSkills,
   getInstalledSkills,
   getSkillHubCategories,
   getSkillHubDetail,
@@ -27,6 +28,7 @@ import {
   resolveSkillTenantId,
   setInstalledSkillEnabled,
   uninstallSkill,
+  type BatchSyncResult,
   type InstalledSkillInfo,
   type SkillHubDetail,
   type SkillHubSkill,
@@ -464,6 +466,7 @@ export default function SkillStorePage() {
   const [pendingUninstallSkill, setPendingUninstallSkill] = useState<InstalledSkillInfo | null>(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importingMode, setImportingMode] = useState<'zip' | 'directory' | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const latestVersionsRef = useRef(latestVersions)
   const requestIdRef = useRef(0)
@@ -820,6 +823,27 @@ export default function SkillStorePage() {
     await loadBootstrapData()
   }
 
+  const handleSync = useCallback(async () => {
+    setSyncing(true)
+    try {
+      const result = await batchSyncSkills(tenantId || undefined)
+      const parts: string[] = []
+      if (result.installed.length > 0) parts.push(`新安装 ${result.installed.length} 个`)
+      if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 个`)
+      if (result.failed.length > 0) parts.push(`${result.failed.length} 个失败`)
+      if (parts.length === 0) {
+        toast.info('所有技能已是最新版本')
+      } else {
+        toast.success(`同步完成：${parts.join('，')}`)
+      }
+      await fetchInstalledList()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '同步技能失败')
+    } finally {
+      setSyncing(false)
+    }
+  }, [fetchInstalledList, tenantId])
+
   const openSkillDetail = useCallback(
     async (skill: SkillHubSkill, installedSkill?: InstalledSkillInfo | null) => {
       setDetailOpen(true)
@@ -1127,10 +1151,16 @@ export default function SkillStorePage() {
               已安装 {installedList.length} 个技能
             </Badge>
           </div>
-          <Button variant="outline" onClick={() => void handleRefresh()}>
-            <RefreshCw className="mr-2 size-4" />
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => void handleSync()} disabled={syncing}>
+              {syncing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />}
+              批量同步
+            </Button>
+            <Button variant="outline" onClick={() => void handleRefresh()}>
+              <RefreshCw className="mr-2 size-4" />
+              刷新
+            </Button>
+          </div>
         </div>
 
         {loadError ? (

@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  batchSyncAgents,
   fetchAgentHubSkillDetailsByIds,
   getAgentHubCategories,
   getAgentHubDetail,
@@ -48,6 +49,7 @@ import {
   createCustomAssistant,
   type AgentHubAssistant,
   type AgentHubDetail,
+  type BatchSyncAgentResult,
   type InstalledAgentInfo,
 } from '@/lib/api/agent-hub'
 import { getSystemSettings } from '@/lib/api/settings'
@@ -428,6 +430,7 @@ export default function AgentHubPage() {
 
   const [pendingUninstallAgent, setPendingUninstallAgent] =
     useState<InstalledAgentInfo | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -912,6 +915,27 @@ export default function AgentHubPage() {
     selectedCategory,
   ])
 
+  const handleSync = useCallback(async () => {
+    setSyncing(true)
+    try {
+      const result = await batchSyncAgents()
+      const parts: string[] = []
+      if (result.installed.length > 0) parts.push(`新安装 ${result.installed.length} 个`)
+      if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 个`)
+      if (result.failed.length > 0) parts.push(`${result.failed.length} 个失败`)
+      if (parts.length === 0) {
+        toast.info('所有智能体已是最新版本')
+      } else {
+        toast.success(`同步完成：${parts.join('，')}`)
+      }
+      await fetchInstalledState(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '同步智能体失败')
+    } finally {
+      setSyncing(false)
+    }
+  }, [fetchInstalledState])
+
   if (pageLoading) {
     return (
       <DashboardLayout
@@ -944,6 +968,10 @@ export default function AgentHubPage() {
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 size-4" />
               创建智能体
+            </Button>
+            <Button variant="outline" onClick={() => void handleSync()} disabled={syncing}>
+              {syncing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />}
+              批量同步
             </Button>
             <Button variant="outline" onClick={() => void handleRefresh()}>
               <RefreshCw className="mr-2 size-4" />
