@@ -881,3 +881,77 @@ export async function setInstalledSkillEnabled(params: {
     console.warn(`[SkillStore] scode bridge sync after toggle failed: ${bridgeErr}`)
   }
 }
+
+export async function batchSyncSkills(params?: {
+  tenantId?: string
+}): Promise<{
+  installed: Array<{ skillName: string; version: string }>
+  updated: Array<{ skillName: string; version: string }>
+  skipped: Array<{ skillName: string; reason: string }>
+  failed: Array<{ skillName: string; error: string }>
+}> {
+  const installed: Array<{ skillName: string; version: string }> = []
+  const updated: Array<{ skillName: string; version: string }> = []
+  const skipped: Array<{ skillName: string; reason: string }> = []
+  const failed: Array<{ skillName: string; error: string }> = []
+
+  const installedSkills = await getInstalledSkills()
+  const byName = new Map(installedSkills.map(s => [s.name, s]))
+
+  let cursor: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const page = await fetchSkillHubSkills({
+      cursor,
+      limit: 100,
+      tenantId: params?.tenantId,
+    })
+    for (const hubSkill of page.skills) {
+      try {
+        const detail = await fetchSkillHubSkillDetail(hubSkill.id)
+        const latest = detail?.versions?.[0]
+        if (!latest?.source_url) {
+          skipped.push({ skillName: hubSkill.name, reason: 'no download URL' })
+          continue
+        }
+        const existing = byName.get(hubSkill.name)
+        if (existing) {
+          const curVer = normalizeSkillVersion(existing.version)
+          if (curVer && curVer === latest.version) {
+            skipped.push({
+              skillName: hubSkill.name,
+              reason: 'already up to date',
+            })
+            continue
+          }
+          await installHubSkill({
+            skillName: hubSkill.name,
+            sourceUrl: latest.source_url,
+            version: latest.version,
+            checksum: latest.checksum,
+            skillMeta: hubSkill,
+          })
+          updated.push({ skillName: hubSkill.name, version: latest.version })
+        } else {
+          await installHubSkill({
+            skillName: hubSkill.name,
+            sourceUrl: latest.source_url,
+            version: latest.version,
+            checksum: latest.checksum,
+            skillMeta: hubSkill,
+          })
+          installed.push({ skillName: hubSkill.name, version: latest.version })
+        }
+      } catch (error) {
+        failed.push({
+          skillName: hubSkill.name,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    cursor = page.next_cursor ?? undefined
+    hasMore = page.has_more
+  }
+
+  return { installed, updated, skipped, failed }
+}
