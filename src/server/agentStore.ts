@@ -97,6 +97,17 @@ export type AssistantStoreMeta = {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: {
+    trigger: 'cron' | 'webhook' | 'manual'
+    cron?: string
+    webhook_path?: string
+    output_targets?: string[]
+    output_webhook?: string
+    timeout_minutes?: number
+  } | null
   [key: string]: unknown
 }
 
@@ -118,6 +129,10 @@ export type InstalledAssistantInfo = {
   skills: string[]
   enabledSkills: string[]
   meta: AssistantStoreMeta | null
+  agentType: 'chat' | 'workflow'
+  memoryMode: 'session' | 'user'
+  visibleTo: { department_ids: string[] | null } | null
+  workflow: AssistantStoreMeta['workflow']
 }
 
 export type FetchAgentHubAssistantsParams = {
@@ -592,6 +607,10 @@ function toInstalledAssistantInfo(params: {
     skills: parseStringArray(meta?.skills),
     enabledSkills: parseStringArray(meta?.enabledSkills),
     meta,
+    agentType: meta?.agent_type ?? 'chat',
+    memoryMode: meta?.memory_mode ?? 'session',
+    visibleTo: meta?.visible_to ?? null,
+    workflow: meta?.workflow ?? null,
   }
 }
 
@@ -873,6 +892,26 @@ export async function installHubAssistant(params: {
     ruleFile,
     skills: selectedSkillIds,
     enabledSkills: Array.from(enabledSkillNames),
+    agent_type:
+      normalizedAssistant?.agent_type === 'chat' || normalizedAssistant?.agent_type === 'workflow'
+        ? normalizedAssistant.agent_type
+        : 'chat',
+    memory_mode:
+      normalizedAssistant?.memory_mode === 'session' || normalizedAssistant?.memory_mode === 'user'
+        ? normalizedAssistant.memory_mode
+        : 'session',
+    visible_to:
+      normalizedAssistant?.visible_to &&
+      typeof normalizedAssistant.visible_to === 'object' &&
+      'department_ids' in (normalizedAssistant.visible_to as object)
+        ? (normalizedAssistant.visible_to as AssistantStoreMeta['visible_to'])
+        : null,
+    workflow:
+      normalizedAssistant?.workflow &&
+      typeof normalizedAssistant.workflow === 'object' &&
+      'trigger' in (normalizedAssistant.workflow as object)
+        ? (normalizedAssistant.workflow as AssistantStoreMeta['workflow'])
+        : null,
   }
   await writeAssistantMeta(assistantDir, meta)
 
