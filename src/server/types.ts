@@ -116,6 +116,10 @@ export const serverFileConfigSchema = lazySchema(() =>
     }).default({
       level: 'info',
     }),
+    hub: z.object({
+      apiBaseUrl: z.string().optional(),
+      authorization: z.string().optional(),
+    }).default({}),
   }),
 )
 
