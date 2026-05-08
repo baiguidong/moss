@@ -10,7 +10,7 @@ const SessionsPage = lazy(() => import('./pages/sessions-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
 const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))
 const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
-const AdapterSettingsPage = lazy(() => import('./pages/adapter-settings-page'))
+const ChannelsPage = lazy(() => import('./pages/channels-page'))
 const SkillStorePage = lazy(() => import('./pages/skill-store-page'))
 const AgentHubPage = lazy(() => import('./pages/agent-hub-page'))
 const EnterpriseConfigPage = lazy(() => import('./pages/enterprise-config-page'))
@@ -111,10 +111,10 @@ export default function App() {
           }
         />
         <Route
-          path="/settings/adapters"
+          path="/channels"
           element={
             <SuspendedRoute>
-              <AdapterSettingsPage />
+              <ChannelsPage />
             </SuspendedRoute>
           }
         />

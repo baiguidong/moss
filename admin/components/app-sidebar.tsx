@@ -59,8 +59,8 @@ const menuItems: NavItem[] = [
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
   },
   {
-    title: 'IM 接入',
-    url: '/settings/adapters',
+    title: 'IM管理',
+    url: '/channels',
     icon: Bot,
   },
   {

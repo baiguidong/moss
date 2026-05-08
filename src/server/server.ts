@@ -35,10 +35,12 @@ import {
   type SkillHubSkill,
   uninstallSkill,
 } from './skillStore.js'
-import { createAdaptersApi } from './api/adapters.js'
 import { createEnterpriseApi } from './api/enterprise.js'
+import { createChannelsApi } from './api/channels.js'
+import { getChannelManager } from '../channels/core/ChannelManager.js'
+import { getPairingService } from '../channels/pairing/PairingService.js'
+import { MossActionExecutor } from '../channels/gateway/MossActionExecutor.js'
 import { getUserProfile } from './api/userProfile.js'
-import { adapterProcessManager } from './adapterProcessManager.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
@@ -278,69 +280,6 @@ function canAccessSession(
   )
 }
 
-function resolveAdapterTargetUserId(
-  auth: AuthContext,
-  authService: AuthService,
-  requestedUserId: string | null | undefined,
-): string {
-  const targetUserId =
-    typeof requestedUserId === 'string' ? requestedUserId.trim() : ''
-
-  if (!targetUserId || targetUserId === auth.userId) {
-    return auth.userId
-  }
-
-  if (!hasScope(auth.scopes, 'admin:settings')) {
-    throw new AuthServiceError(403, 'Missing scope: admin:settings')
-  }
-
-  if (!authService.getUserOrNull(targetUserId, auth.orgId)) {
-    throw new HttpError(404, 'Unknown user_id')
-  }
-
-  return targetUserId
-}
-
-function listAdapterProcessStatusesForUser(
-  orgId: string,
-  userId: string,
-): Record<
-  string,
-  {
-    status: 'running' | 'stopped' | 'error'
-    pid: number | null
-    error: string | null
-    startedAt: number | null
-    orgId: string
-    userId: string
-    platform: 'telegram' | 'feishu'
-  }
-> {
-  const result: Record<
-    string,
-    {
-      status: 'running' | 'stopped' | 'error'
-      pid: number | null
-      error: string | null
-      startedAt: number | null
-      orgId: string
-      userId: string
-      platform: 'telegram' | 'feishu'
-    }
-  > = {}
-
-  for (const platform of ['telegram', 'feishu'] as const) {
-    const key = `${orgId}:${userId}:${platform}`
-    result[key] = {
-      ...adapterProcessManager.getStatus(platform, orgId, userId),
-      orgId,
-      userId,
-      platform,
-    }
-  }
-
-  return result
-}
 
 function resolveAdminDistDir(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -447,8 +386,37 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
-  const adaptersApi = createAdaptersApi(runtime.store.db)
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
+
+  // Initialize ChannelManager and PairingService with database
+  // 初始化 ChannelManager 和 PairingService
+  const channelManager = getChannelManager()
+  channelManager.initialize(runtime.store)
+  getPairingService().initialize(runtime.store)
+
+  // Wire up message routing: incoming channel messages -> AI processing -> response
+  const pluginManager = channelManager.getPluginManager()
+  const sessionManager = channelManager.getSessionManager()
+  if (pluginManager && sessionManager) {
+    const mossActionExecutor = new MossActionExecutor(
+      pluginManager,
+      sessionManager,
+      getPairingService(),
+      runtime,
+      runtime.store,
+    )
+    channelManager.setMessageHandler(mossActionExecutor.getMessageHandler())
+    console.log('[Server] MossActionExecutor wired up for channel message routing')
+  }
+
+
+  // Start enabled plugins (for enterprise mode)
+  // 启动已启用的插件（企业模式）
+  channelManager.startEnabledPlugins().catch((error) => {
+    console.error('[Server] Failed to start enabled plugins:', error)
+  })
+
+  const channelsApi = createChannelsApi(runtime.store)
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -547,6 +515,162 @@ export function startServer(
         const result = await getUserProfile(auth, authService, runtime.store)
         writeJson(res, 200, result)
         return
+      }
+
+      if (pathname.startsWith('/api/v1/channels/')) {
+        const auth = authenticateRequest(req, authService)
+        if (!auth) {
+          throw new HttpError(401, 'Unauthorized')
+        }
+
+        // GET /api/v1/channels/plugins
+        if (req.method === 'GET' && pathname === '/api/v1/channels/plugins') {
+          writeJson(res, 200, await channelsApi.getPlugins(auth.orgId, auth.userId))
+          return
+        }
+
+        // POST /api/v1/channels/plugins/:id/enable
+        const enableMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)\/enable$/)
+        if (req.method === 'POST' && enableMatch) {
+          const pluginId = enableMatch[1] || ''
+          const body = await readJsonBody(req)
+          writeJson(res, 200, await channelsApi.enablePlugin(auth.orgId, auth.userId, pluginId, body))
+          return
+        }
+
+        // POST /api/v1/channels/plugins/:id/disable
+        const disableMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)\/disable$/)
+        if (req.method === 'POST' && disableMatch) {
+          const pluginId = disableMatch[1] || ''
+          writeJson(res, 200, await channelsApi.disablePlugin(auth.orgId, auth.userId, pluginId))
+          return
+        }
+
+        // POST /api/v1/channels/plugins/:id/test
+        const testMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)\/test$/)
+        if (req.method === 'POST' && testMatch) {
+          const pluginId = testMatch[1] || ''
+          const body = await readJsonBody(req)
+          writeJson(res, 200, await channelsApi.testPlugin(auth.orgId, auth.userId, pluginId, body))
+          return
+        }
+
+        // POST /api/v1/channels/plugins/:id/delete
+        const deleteMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)\/delete$/)
+        if (req.method === 'POST' && deleteMatch) {
+          const pluginId = deleteMatch[1] || ''
+          writeJson(res, 200, await channelsApi.disablePlugin(auth.orgId, auth.userId, pluginId))
+          return
+        }
+
+        // GET /api/v1/channels/pairings/pending
+        if (req.method === 'GET' && pathname === '/api/v1/channels/pairings/pending') {
+          writeJson(res, 200, await channelsApi.getPendingPairings(auth.orgId, auth.userId))
+          return
+        }
+
+        // POST /api/v1/channels/pairings/:code/approve
+        const approveMatch = pathname.match(/^\/api\/v1\/channels\/pairings\/([^/]+)\/approve$/)
+        if (req.method === 'POST' && approveMatch) {
+          const code = approveMatch[1] || ''
+          writeJson(res, 200, await channelsApi.approvePairing(auth.orgId, auth.userId, code))
+          return
+        }
+
+        // POST /api/v1/channels/pairings/:code/reject
+        const rejectMatch = pathname.match(/^\/api\/v1\/channels\/pairings\/([^/]+)\/reject$/)
+        if (req.method === 'POST' && rejectMatch) {
+          const code = rejectMatch[1] || ''
+          writeJson(res, 200, await channelsApi.rejectPairing(auth.orgId, auth.userId, code))
+          return
+        }
+
+        // GET /api/v1/channels/plugins/:id
+        const pluginMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)$/)
+        if (req.method === 'GET' && pluginMatch) {
+          const pluginId = pluginMatch[1] || ''
+          const result = await channelsApi.getPlugin(auth.orgId, auth.userId, pluginId)
+          if (!result) {
+            throw new HttpError(404, 'Plugin not found')
+          }
+          writeJson(res, 200, result)
+          return
+        }
+
+        // GET /api/v1/channels/plugins/:id/credentials
+        const credMatch = pathname.match(/^\/api\/v1\/channels\/plugins\/([^/]+)\/credentials$/)
+        if (req.method === 'GET' && credMatch) {
+          const pluginId = credMatch[1] || ''
+          const result = await channelsApi.getPluginCredentials(auth.orgId, auth.userId, pluginId)
+          if (!result) {
+            throw new HttpError(404, 'Plugin not found')
+          }
+          writeJson(res, 200, result)
+          return
+        }
+
+        // POST /api/v1/channels/settings/sync
+        if (req.method === 'POST' && pathname === '/api/v1/channels/settings/sync') {
+          const body = await readJsonBody(req)
+          writeJson(res, 200, await channelsApi.syncChannelSettings(auth.orgId, auth.userId, body))
+          return
+        }
+
+        // GET /api/v1/channels/users
+        if (req.method === 'GET' && pathname === '/api/v1/channels/users') {
+          writeJson(res, 200, await channelsApi.getUsers(auth.orgId, auth.userId))
+          return
+        }
+
+        // DELETE /api/v1/channels/users/:id
+        const userDelMatch = pathname.match(/^\/api\/v1\/channels\/users\/([^/]+)$/)
+        if (req.method === 'DELETE' && userDelMatch) {
+          const targetId = userDelMatch[1] || ''
+          writeJson(res, 200, await channelsApi.deleteUser(auth.orgId, auth.userId, targetId))
+          return
+        }
+
+        // DELETE /api/v1/channels/users?platform=xxx
+        if (req.method === 'DELETE' && pathname === '/api/v1/channels/users') {
+          const urlObj = new URL(req.url as string, `http://${req.headers.host}`)
+          const platformType = urlObj.searchParams.get('platform') || ''
+          if (!platformType) {
+            throw new HttpError(400, 'Missing platform parameter')
+          }
+          writeJson(res, 200, await channelsApi.deleteUsersByPlatform(auth.orgId, auth.userId, platformType))
+          return
+        }
+
+        // GET /api/v1/channels/sessions
+        if (req.method === 'GET' && pathname === '/api/v1/channels/sessions') {
+          writeJson(res, 200, await channelsApi.getSessions(auth.orgId, auth.userId))
+          return
+        }
+
+        // DELETE /api/v1/channels/sessions/:id
+        const sessionDelMatch = pathname.match(/^\/api\/v1\/channels\/sessions\/([^/]+)$/)
+        if (req.method === 'DELETE' && sessionDelMatch) {
+          const sessionId = sessionDelMatch[1] || ''
+          writeJson(res, 200, await channelsApi.deleteSession(auth.orgId, auth.userId, sessionId))
+          return
+        }
+
+        // POST /api/v1/channels/wechat/qr-start
+        if (req.method === 'POST' && pathname === '/api/v1/channels/wechat/qr-start') {
+          writeJson(res, 200, await channelsApi.startWechatQrLogin())
+          return
+        }
+
+        // GET /api/v1/channels/wechat/qr-poll?qrcode=xxx
+        if (req.method === 'GET' && pathname === '/api/v1/channels/wechat/qr-poll') {
+          const urlObj = new URL(req.url as string, `http://${req.headers.host}`)
+          const qrcode = urlObj.searchParams.get('qrcode') || ''
+          if (!qrcode) {
+            throw new HttpError(400, 'Missing qrcode parameter')
+          }
+          writeJson(res, 200, await channelsApi.pollWechatQrStatus(qrcode))
+          return
+        }
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/introspect') {
@@ -1094,154 +1218,6 @@ export function startServer(
         return
       }
 
-      if (pathname === '/api/v1/adapters/all') {
-        authService.requireScope(auth, 'admin:settings')
-        const rows = adaptersApi.listAll(auth.orgId)
-        writeJson(res, 200, rows)
-        return
-      }
-
-      if (pathname === '/api/v1/adapters') {
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-        if (req.method === 'GET') {
-          const result = adaptersApi.list(auth.orgId, targetUserId)
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'PUT') {
-          const body = await readJsonBody(req)
-          const {
-            platform: rawPlatform,
-            userId: _ignoredUserId,
-            ...patch
-          } = body
-          const platform =
-            rawPlatform === 'feishu' ? 'feishu' : 'telegram'
-          const result = adaptersApi.upsert(
-            auth.orgId,
-            targetUserId,
-            platform,
-            patch as Record<string, unknown>,
-          )
-          if ('error' in result) {
-            writeJson(res, 400, result)
-            return
-          }
-          writeJson(res, 200, result)
-          return
-        }
-        throw new HttpError(405, `Method ${req.method} not allowed`)
-      }
-
-      // PUT /api/v1/adapters/:platform — platform-specific upsert
-      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(telegram|feishu)$/)
-      if (adapterPlatformMatch) {
-        const platform = adapterPlatformMatch[1]!
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-
-        if (req.method === 'GET') {
-          const result = adaptersApi.list(auth.orgId, targetUserId)
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'PUT') {
-          const body = await readJsonBody(req)
-          const {
-            userId: _ignoredUserId,
-            platform: _ignoredPlatform,
-            ...patch
-          } = body
-          const result = adaptersApi.upsert(
-            auth.orgId,
-            targetUserId,
-            platform,
-            patch as Record<string, unknown>,
-          )
-          if ('error' in result) {
-            writeJson(res, 400, result)
-            return
-          }
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'DELETE') {
-          const result = adaptersApi.remove(auth.orgId, targetUserId, platform)
-          writeJson(res, 200, result)
-          return
-        }
-        throw new HttpError(405, `Method ${req.method} not allowed`)
-      }
-
-      if (pathname === '/api/v1/adapters/processes') {
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-        writeJson(
-          res,
-          200,
-          listAdapterProcessStatusesForUser(auth.orgId, targetUserId),
-        )
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/restart' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
-        }
-        await adapterProcessManager.restart(adapter as 'telegram' | 'feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/start' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
-        }
-        await adapterProcessManager.start(adapter as 'telegram' | 'feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/stop' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
-        }
-        await adapterProcessManager.stop(adapter as 'telegram' | 'feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
       if (req.method === 'GET' && pathname === '/api/v1/sessions') {
         authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
         const activeOnly = url.searchParams.get('active_only') === 'true'
@@ -1441,6 +1417,8 @@ export function startServer(
 
         const url = new URL(req.url || '/', 'http://localhost')
         const pathname = url.pathname
+
+        // Handle /ws/sessions/:sessionId for session WebSocket
         const match = pathname.match(/^\/ws\/sessions\/([^/]+)$/)
         if (!match) {
           socket.write('HTTP/1.1 404 Not Found\r\n\r\n')

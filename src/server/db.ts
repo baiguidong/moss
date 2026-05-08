@@ -199,6 +199,55 @@ export class DirectConnectStore {
         ON sessions (org_id, status, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
+
+      CREATE TABLE IF NOT EXISTS channel_plugins (
+        id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        credentials_json TEXT,
+        config_json TEXT,
+        status TEXT NOT NULL,
+        last_connected INTEGER,
+        user_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_users (
+        id TEXT PRIMARY KEY,
+        platform_user_id TEXT NOT NULL,
+        platform_type TEXT NOT NULL,
+        display_name TEXT,
+        authorized_at INTEGER NOT NULL,
+        last_active INTEGER,
+        session_id TEXT,
+        org_id TEXT,
+        user_id TEXT,
+        UNIQUE(platform_user_id, platform_type)
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        agent_type TEXT NOT NULL,
+        conversation_id TEXT,
+        workspace TEXT,
+        chat_id TEXT,
+        created_at INTEGER NOT NULL,
+        last_activity INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_pairing_requests (
+        code TEXT PRIMARY KEY,
+        platform_user_id TEXT NOT NULL,
+        platform_type TEXT NOT NULL,
+        display_name TEXT,
+        requested_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL
+      );
     `)
 
     const nowTs = now()
@@ -676,6 +725,220 @@ export class DirectConnectStore {
       SET ${sets}, updated_at = ?
       WHERE id = 'default'
     `).run(...values, ts)
+  }
+
+  // ==================== Channel Plugins ====================
+
+  listChannelPlugins(userId?: string): SqlRow[] {
+    if (userId) {
+      return this.db.prepare(`SELECT * FROM channel_plugins WHERE user_id = ? ORDER BY created_at DESC`).all(userId) as SqlRow[]
+    }
+    return this.db.prepare(`SELECT * FROM channel_plugins ORDER BY created_at DESC`).all() as SqlRow[]
+  }
+
+  getChannelPlugin(id: string, userId?: string): SqlRow | null {
+    if (userId) {
+      return (this.db.prepare(`SELECT * FROM channel_plugins WHERE id = ? AND user_id = ?`).get(id, userId) as SqlRow) ?? null
+    }
+    return (this.db.prepare(`SELECT * FROM channel_plugins WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  upsertChannelPlugin(row: {
+    id: string
+    type: string
+    name: string
+    enabled: number
+    credentials_json?: string | null
+    config_json?: string | null
+    status: string
+    last_connected?: number | null
+    user_id: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO channel_plugins (
+        id, type, name, enabled, credentials_json, config_json, status, last_connected, user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id, user_id) DO UPDATE SET
+        name = excluded.name,
+        enabled = excluded.enabled,
+        credentials_json = COALESCE(excluded.credentials_json, credentials_json),
+        config_json = COALESCE(excluded.config_json, config_json),
+        status = excluded.status,
+        last_connected = COALESCE(excluded.last_connected, last_connected),
+        updated_at = excluded.updated_at
+    `).run(
+      row.id,
+      row.type,
+      row.name,
+      row.enabled,
+      row.credentials_json ?? null,
+      row.config_json ?? null,
+      row.status,
+      row.last_connected ?? null,
+      row.user_id,
+      ts,
+      ts,
+    )
+  }
+
+  updateChannelPluginStatus(id: string, status: string, lastConnected?: number, userId?: string): void {
+    const ts = now()
+    if (userId) {
+      this.db.prepare(`
+        UPDATE channel_plugins
+        SET status = ?, last_connected = COALESCE(?, last_connected), updated_at = ?
+        WHERE id = ? AND user_id = ?
+      `).run(status, lastConnected ?? null, ts, id, userId)
+    } else {
+      this.db.prepare(`
+        UPDATE channel_plugins
+        SET status = ?, last_connected = COALESCE(?, last_connected), updated_at = ?
+        WHERE id = ?
+      `).run(status, lastConnected ?? null, ts, id)
+    }
+  }
+
+  // ==================== Channel Users ====================
+
+  listChannelUsers(): SqlRow[] {
+    return this.db.prepare(`SELECT * FROM channel_users ORDER BY authorized_at DESC`).all() as SqlRow[]
+  }
+
+  getChannelUserByPlatform(platformUserId: string, platformType: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM channel_users WHERE platform_user_id = ? AND platform_type = ?`).get(platformUserId, platformType) as SqlRow) ?? null
+  }
+
+  upsertChannelUser(row: {
+    id: string
+    platform_user_id: string
+    platform_type: string
+    display_name?: string | null
+    authorized_at: number
+    last_active?: number | null
+    session_id?: string | null
+    org_id?: string | null
+    user_id?: string | null
+  }): void {
+    this.db.prepare(`
+      INSERT INTO channel_users (
+        id, platform_user_id, platform_type, display_name, authorized_at, last_active, session_id, org_id, user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(platform_user_id, platform_type) DO UPDATE SET
+        display_name = excluded.display_name,
+        last_active = excluded.last_active,
+        session_id = excluded.session_id,
+        org_id = excluded.org_id,
+        user_id = excluded.user_id
+    `).run(
+      row.id,
+      row.platform_user_id,
+      row.platform_type,
+      row.display_name ?? null,
+      row.authorized_at,
+      row.last_active ?? null,
+      row.session_id ?? null,
+      row.org_id ?? null,
+      row.user_id ?? null,
+    )
+  }
+
+  getChannelUserById(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM channel_users WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  deleteChannelUser(id: string): void {
+    this.db.prepare(`DELETE FROM channel_users WHERE id = ?`).run(id)
+  }
+
+  deleteChannelUsersByPlatform(platformType: string, userId?: string): number {
+    if (userId) {
+      const result = this.db.prepare(`DELETE FROM channel_users WHERE platform_type = ? AND user_id = ?`).run(platformType, userId)
+      return result.changes
+    }
+    const result = this.db.prepare(`DELETE FROM channel_users WHERE platform_type = ?`).run(platformType)
+    return result.changes
+  }
+
+  // ==================== Channel Sessions ====================
+
+  listChannelSessions(): SqlRow[] {
+    return this.db.prepare(`SELECT * FROM channel_sessions ORDER BY last_activity DESC`).all() as SqlRow[]
+  }
+
+  upsertChannelSession(row: {
+    id: string
+    user_id: string
+    agent_type: string
+    conversation_id?: string | null
+    workspace?: string | null
+    chat_id?: string | null
+    created_at: number
+    last_activity: number
+  }): void {
+    this.db.prepare(`
+      INSERT INTO channel_sessions (
+        id, user_id, agent_type, conversation_id, workspace, chat_id, created_at, last_activity
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        conversation_id = excluded.conversation_id,
+        workspace = excluded.workspace,
+        chat_id = excluded.chat_id,
+        last_activity = excluded.last_activity
+    `).run(
+      row.id,
+      row.user_id,
+      row.agent_type,
+      row.conversation_id ?? null,
+      row.workspace ?? null,
+      row.chat_id ?? null,
+      row.created_at,
+      row.last_activity,
+    )
+  }
+
+  deleteChannelSession(id: string): void {
+    this.db.prepare(`DELETE FROM channel_sessions WHERE id = ?`).run(id)
+  }
+
+  // ==================== Channel Pairings ====================
+
+  listPendingPairingRequests(): SqlRow[] {
+    return this.db.prepare(`SELECT * FROM channel_pairing_requests WHERE status = 'pending' AND expires_at > ?`).all(now()) as SqlRow[]
+  }
+
+  getPairingRequest(code: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM channel_pairing_requests WHERE code = ?`).get(code) as SqlRow) ?? null
+  }
+
+  upsertPairingRequest(row: {
+    code: string
+    platform_user_id: string
+    platform_type: string
+    display_name?: string | null
+    requested_at: number
+    expires_at: number
+    status: string
+  }): void {
+    this.db.prepare(`
+      INSERT INTO channel_pairing_requests (
+        code, platform_user_id, platform_type, display_name, requested_at, expires_at, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(code) DO UPDATE SET
+        status = excluded.status
+    `).run(
+      row.code,
+      row.platform_user_id,
+      row.platform_type,
+      row.display_name ?? null,
+      row.requested_at,
+      row.expires_at,
+      row.status,
+    )
+  }
+
+  updatePairingRequestStatus(code: string, status: string): void {
+    this.db.prepare(`UPDATE channel_pairing_requests SET status = ? WHERE code = ?`).run(status, code)
   }
 }
 
