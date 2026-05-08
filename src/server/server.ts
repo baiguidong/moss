@@ -23,6 +23,7 @@ import {
   type AgentHubAssistant,
   uninstallAssistant,
   updateInstalledAssistantMeta,
+  batchSyncAssistants,
 } from './agentStore.js'
 import {
   fetchSkillHubCategories,
@@ -35,6 +36,7 @@ import {
   setInstalledSkillEnabled,
   type SkillHubSkill,
   uninstallSkill,
+  batchSyncSkills,
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
 import { createEnterpriseApi } from './api/enterprise.js'
@@ -1039,6 +1041,12 @@ export function startServer(
         return
       }
 
+      if (req.method === 'POST' && pathname === '/api/v1/agents/sync') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, await batchSyncAssistants())
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/skill-hub/categories') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, await fetchSkillHubCategories())
@@ -1173,6 +1181,15 @@ export function startServer(
             entries,
           }),
         )
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/skills/sync') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const tenantId =
+          typeof body.tenantId === 'string' ? body.tenantId : undefined
+        writeJson(res, 200, await batchSyncSkills({ tenantId }))
         return
       }
 
