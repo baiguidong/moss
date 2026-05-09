@@ -5,7 +5,7 @@ import os from 'os'
 import { join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
-import { syncAllBridgesAsync } from '../../utils/scodeBridge.js'
+import { syncAllBridgesAsync, buildDynamicAgents, buildDynamicMcpServers, buildDynamicInstructions } from '../../utils/scodeBridge.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -153,6 +153,19 @@ export class DockerBackend implements SessionBackend {
       process.stderr.write(`[DockerBackend] Failed to create dynamic sudocode.json: ${e}\n`)
     }
 
+
+    let mcpServers: any[] = []
+    let dynamicAgents: any[] = []
+    let dynamicInstructions = ""
+
+    try {
+      mcpServers = await buildDynamicMcpServers()
+      dynamicAgents = await buildDynamicAgents()
+      dynamicInstructions = await buildDynamicInstructions(mcpServers, dynamicAgents, options.assistantName || null)
+    } catch (e) {
+      process.stderr.write(`[DockerBackend] Failed to load dynamic agents/skills: ${e}\n`)
+    }
+
     const args = ['run', '--rm', '-i', '--name', containerName]
     // Add security options to allow Tokio runtime to spawn threads
     // Without this, scode fails with "OS can't spawn worker thread: Operation not permitted"
@@ -223,6 +236,9 @@ export class DockerBackend implements SessionBackend {
       cwd: safeCwd,
       model,
       transcriptPath: (options as any).transcriptPath,
+      mcpServers,
+      agents: dynamicAgents,
+      instructions: dynamicInstructions,
       runtime: runtimeInfo,
     })
 
