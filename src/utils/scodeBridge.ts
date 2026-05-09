@@ -325,24 +325,46 @@ export async function refreshInstructionsFile(configDir?: string): Promise<void>
   } = await import('../server/skillStore.js')
   const {
     getAssistantSystemPrompt,
+    getInstalledAssistants,
   } = await import('../server/agentStore.js')
 
   const installedSkills = await getInstalledSkills()
   const enabledSkills = installedSkills.filter(s => s.enabled)
 
+  const installedAssistants = await getInstalledAssistants()
+  const enabledAssistants = installedAssistants.filter(a => a.enabled)
+
   const lines: string[] = []
+
+  if (enabledAssistants.length > 0) {
+    lines.push('# Moss 已安装 Agent')
+    lines.push(
+      `调用方式：使用 Agent 工具，在 subagent_type 参数中指定标识符。需复杂规划、架构设计时主动委托给对应的智能体。`,
+    )
+    lines.push('')
+    const agentItems = enabledAssistants.map(agent => {
+      // 截短描述，避免超出 scode 的 4000 字符限制
+      let desc = agent.description ? ` — ${agent.description}` : ''
+      if (desc.length > 50) desc = desc.substring(0, 47) + '...'
+      return `- **${agent.name}**${desc}`
+    })
+    lines.push(agentItems.join('\n'))
+    lines.push('')
+  }
 
   if (enabledSkills.length > 0) {
     lines.push('# Moss 已安装技能')
-    lines.push('')
     lines.push(
-      '以下技能可通过 Skill 工具调用：使用 Skill("技能名") 或 /技能名',
+      `调用方式：Skill("技能名")。当用户需求匹配时主动调用。使用 Skill 工具或执行 /skills 命令可查详情。`,
     )
     lines.push('')
-    for (const skill of enabledSkills) {
-      const desc = skill.description ? ` - ${skill.description}` : ''
-      lines.push(`- **${skill.name}**${desc}`)
-    }
+
+    // 如果技能非常多，我们可能需要将其整理成更紧凑的列表，甚至只显示名字
+    // 由于 scode 限制 instruction files 最大 4000 字符，我们要非常精简
+    const skillNames = enabledSkills.map(s => s.name)
+    // 每行显示几个技能名称，以逗号分隔，节省行数和字符数
+    lines.push('可用技能列表（仅名称）：')
+    lines.push(skillNames.join(', '))
     lines.push('')
   }
 
@@ -505,4 +527,78 @@ export async function syncAllBridgesAsync(configDir?: string): Promise<void> {
   syncAllSkillBridges(configDir)
   syncAllAgentBridges(configDir)
   await refreshInstructionsFile(configDir)
+}
+export async function buildDynamicMcpServers(): Promise<any[]> {
+  const { getInstalledSkills } = await import('../server/skillStore.js')
+  const installedSkills = await getInstalledSkills()
+  const enabledSkills = installedSkills.filter(s => s.enabled)
+  
+  const mcpServers: any[] = []
+  
+  for (const skill of enabledSkills) {
+    const commandPath = skill.source
+    mcpServers.push({
+      name: skill.name,
+      type: "stdio",
+      command: commandPath,
+      description: skill.description || ''
+    })
+  }
+  
+  return mcpServers
+}
+
+export async function buildDynamicAgents(): Promise<any[]> {
+  const { getInstalledAssistants, getAssistantSystemPrompt } = await import('../server/agentStore.js')
+  const installedAssistants = await getInstalledAssistants()
+  const enabledAssistants = installedAssistants.filter(a => a.enabled)
+  
+  const agents: any[] = []
+  
+  for (const agent of enabledAssistants) {
+    const prompt = await getAssistantSystemPrompt(agent.name)
+    agents.push({
+      name: agent.name,
+      displayName: agent.displayName || agent.name,
+      description: agent.description || '',
+      instructions: prompt || '',
+      model: agent.meta?.model || '',
+      mcpServers: agent.meta?.enabledSkills || [],
+      enabled: true
+    })
+  }
+  
+  return agents
+}
+
+export async function buildDynamicInstructions(mcpServers: any[], agents: any[], currentAssistantName: string | null): Promise<string> {
+  const lines: string[] = []
+  
+  if (agents.length > 0) {
+    lines.push('# Moss 已安装 Agent')
+    lines.push('调用方式：使用 Agent 工具，在 subagent_type 参数中指定标识符。需复杂规划、架构设计时主动委托给对应的智能体。\n')
+    lines.push(agents.map(a => `- **${a.name}** — ${a.description.substring(0, 50)}`).join('\n'))
+    lines.push('')
+  }
+  
+  if (mcpServers.length > 0) {
+    lines.push('# Moss 已安装技能')
+    lines.push('调用方式：Skill("技能名")。当用户需求匹配时主动调用。使用 Skill 工具或执行 /skills 命令可查详情。\n')
+    lines.push('可用技能列表（仅名称）：')
+    lines.push(mcpServers.map(s => s.name).join(', '))
+    lines.push('')
+  }
+  
+  if (currentAssistantName) {
+    const agent = agents.find(a => a.name === currentAssistantName)
+    if (agent && agent.instructions) {
+      lines.push('# 当前智能体指令\n')
+      lines.push(`你正在使用 **${currentAssistantName}** 智能体。请遵循以下指令：\n`)
+      lines.push(agent.instructions)
+      lines.push('')
+    }
+  }
+  
+  const fullText = lines.join('\n')
+  return fullText.length > 3900 ? fullText.substring(0, 3900) + '... (truncated)' : fullText
 }
