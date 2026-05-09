@@ -12,6 +12,9 @@ type AcpBridgeOptions = {
   model: string
   transcriptPath?: string
   runtime: SessionRuntimeInfo
+  mcpServers?: any[]
+  agents?: any[]
+  instructions?: string
 }
 
 export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle {
@@ -159,7 +162,9 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
           process.stderr.write(`[AcpBridge] Initialization complete, creating session...\n`)
           sendRpc('session/new', {
             cwd,
-            mcpServers: [],
+            mcpServers: options.mcpServers || [],
+            agents: options.agents || [],
+            instructions: options.instructions || "",
           }, 'm-session-new')
           continue
         }
