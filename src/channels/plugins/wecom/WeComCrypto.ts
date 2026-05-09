@@ -192,7 +192,7 @@ export async function downloadAndDecryptMedia(url: string, aeskey: string, timeo
           console.log(`[WeComCrypto] Decrypted: ${data.length} bytes, signature=${data.slice(0, 4).toString('hex')}`);
         } catch (decryptError) {
           console.error('[WeComCrypto] AES decryption failed:', decryptError);
-          console.error(`[WeComCrypto] Failed: url=${url.slice(0, 100)}, aeskey=${aeskey.slice(0, 20)}..., dataSize=${data.length}`);
+          console.error(`[WeComCrypto] Failed: dataSize=${data.length}`);
           throw decryptError;
         }
       } else {

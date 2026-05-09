@@ -80,6 +80,10 @@ export class MossActionExecutor {
     const { platform, chatId, user, content } = message;
     console.log(`[MossActionExecutor] Incoming message from ${platform}: userId=${user.id}, chatId=${chatId}, type=${content.type}`);
 
+    // Resolve the moss admin userId from the running plugin instance key (format: "pluginId:userId")
+    const instanceKey = this.pluginManager.getInstanceKey(sourcePlugin);
+    const mossUserId = instanceKey?.includes(':') ? instanceKey.split(':').pop() : undefined;
+
     // Use the source plugin directly for sending responses (no lookup needed)
     const sendFn = async (msg: any) => sourcePlugin.sendMessage(chatId, msg);
     const editFn = async (msgId: string, msg: any) => sourcePlugin.editMessage(chatId, msgId, msg);
@@ -93,7 +97,7 @@ export class MossActionExecutor {
         if (platform === 'wechat' || platform === 'wecom') {
           // Auto-authorize and continue
         } else {
-          await this.handlePairingFlow(platform, user, sendFn);
+          await this.handlePairingFlow(platform, user, sendFn, mossUserId);
           return;
         }
       }
@@ -102,10 +106,10 @@ export class MossActionExecutor {
       if (!isAuthorized) {
         if (platform === 'wechat' || platform === 'wecom') {
           // Auto-authorize WeChat/WeCom users
-          this.autoAuthorizeUser(user, platform);
+          this.autoAuthorizeUser(user, platform, mossUserId);
         } else {
           // Show pairing flow for other platforms
-          await this.handlePairingFlow(platform, user, sendFn);
+          await this.handlePairingFlow(platform, user, sendFn, mossUserId);
           return;
         }
       }
@@ -161,7 +165,7 @@ export class MossActionExecutor {
     let channelUser = this.getChannelUser(user.id, platform);
     if (!channelUser) {
       // Should have been created by auto-authorize or pairing, but create as fallback
-      channelUser = this.autoAuthorizeUser(user, platform);
+      channelUser = this.autoAuthorizeUser(user, platform, mossUserId);
       if (!channelUser) {
         await sendFn({ type: 'text', text: '❌ Authorization failed. Please try again.', parseMode: 'HTML' });
         return;
@@ -222,6 +226,9 @@ export class MossActionExecutor {
     const payload = JSON.stringify({ type: 'stdin', data: `${text}\n` });
     channelState.socket!.write(`${payload}\n`);
 
+    // Update session activity timestamp
+    this.db.touchSessionActivity(channelState.sessionId);
+
     console.log(`[MossActionExecutor] Sent message to runner for ${channelUserKey}`);
 
     // Wait for response with timeout (5 min)
@@ -243,13 +250,13 @@ export class MossActionExecutor {
     // Stream response back to user with throttled edits
     let lastEditTime = 0;
     const editInterval = setInterval(() => {
-      if (channelState!.lastMsgId && channelState!.responseText) {
+      if (channelState!.isProcessing && channelState!.lastMsgId && channelState!.responseText) {
         const now = Date.now();
         if (now - lastEditTime >= MossActionExecutor.EDIT_THROTTLE_MS) {
           lastEditTime = now;
           editFn(channelState!.lastMsgId, {
             type: 'text',
-            text: channelState!.responseText + ' ⏳',
+            text: channelState!.responseText,
             parseMode: 'HTML',
           }).catch(() => {});
         }
@@ -275,6 +282,8 @@ export class MossActionExecutor {
           type: 'text',
           text: finalText,
           parseMode: 'HTML',
+          // replyMarkup signals DingTalk AI card finalization; omit for other platforms
+          ...(platform === 'dingtalk' ? { replyMarkup: {} } : {}),
         }).catch(() => {
           // Edit failed, send as new message
           void sendFn({ type: 'text', text: finalText, parseMode: 'HTML' });
@@ -302,20 +311,80 @@ export class MossActionExecutor {
   ): Promise<ChannelSessionState> {
     console.log(`[MossActionExecutor] Creating runtime session for ${channelUserKey}`);
 
-    // Clean up any existing session
+    // Clean up any existing in-memory session
     const existing = this.channelSessions.get(channelUserKey);
     if (existing?.socket) {
       existing.socket.destroy();
     }
 
-    // Create Moss runtime session
+    // Resolve the Moss platform user (channel plugin owner) so sessions are visible in the management UI
+    const pluginId = `${platform}_default`;
+    const plugin = this.db.getChannelPlugin(pluginId);
+    const mossUserId = plugin ? String(plugin.user_id) : 'channel';
+    // org_id from plugin, fall back to users table lookup
+    let mossOrgId: string | null = plugin?.org_id ? String(plugin.org_id) : null;
+    if (!mossOrgId && mossUserId !== 'channel') {
+      mossOrgId = this.db.getUserOrgId(mossUserId);
+    }
+    if (!mossOrgId) {
+      mossOrgId = 'channel';
+      console.warn(`[MossActionExecutor] Cannot determine org_id for plugin owner ${mossUserId}. Session may not appear in management UI.`);
+    }
+
+    // Try to reuse an existing DB session for this channel user
+    const existingSession = this.db.findChannelSession(platform, chatId, mossUserId);
+    const displayName = channelUser.displayName || chatId;
+
+    if (existingSession && ['creating', 'active', 'detached'].includes(existingSession.status)) {
+      // Reuse existing session — try to reconnect
+      console.log(`[MossActionExecutor] Reusing existing session ${existingSession.sessionId} for ${channelUserKey}`);
+      try {
+        const ready = await this.runtime.ensureSessionReady(existingSession.sessionId);
+        const socket = await this.runtime.connectToAttempt(ready.attempt);
+
+        const state: ChannelSessionState = {
+          sessionId: existingSession.sessionId,
+          socket,
+          buffer: '',
+          responseText: '',
+          lastMsgId: null,
+          isProcessing: false,
+        };
+
+        socket.on('data', (chunk: Buffer) => {
+          state.buffer += chunk.toString('utf8');
+          this.processSocketBuffer(state);
+        });
+
+        socket.on('close', () => {
+          console.log(`[MossActionExecutor] Runner socket closed for ${channelUserKey}`);
+          state.socket = null;
+        });
+
+        socket.on('error', (err) => {
+          console.error(`[MossActionExecutor] Runner socket error for ${channelUserKey}:`, err);
+          state.socket = null;
+        });
+
+        this.channelSessions.set(channelUserKey, state);
+        this.db.touchSessionActivity(existingSession.sessionId);
+        return state;
+      } catch (error) {
+        console.log(`[MossActionExecutor] Failed to reconnect session ${existingSession.sessionId}, creating new one:`, error);
+      }
+    }
+
+    // Create new Moss runtime session
     const created = await this.runtime.createSession({
       cwd: process.cwd(),
       dangerouslySkipPermissions: true,
-      userId: channelUser.id,
-      orgId: 'channel',
+      userId: mossUserId,
+      orgId: mossOrgId,
       role: 'user',
       scopes: ['sessions:create', 'sessions:attach:any'],
+      source: platform,
+      channelChatId: chatId,
+      assistantName: displayName,
     });
 
     const sessionId = created.sessionId;
@@ -498,6 +567,7 @@ export class MossActionExecutor {
   private autoAuthorizeUser(
     user: { id: string; displayName?: string },
     platform: string,
+    mossUserId?: string,
   ): IChannelUser | null {
     const existing = this.getChannelUser(user.id, platform);
     if (existing) return existing;
@@ -521,7 +591,7 @@ export class MossActionExecutor {
       last_active: null,
       session_id: null,
       org_id: null,
-      user_id: null,
+      user_id: mossUserId ?? null,
     });
 
     getChannelEventEmitter().emitUserAuthorized(channelUser);
@@ -537,12 +607,14 @@ export class MossActionExecutor {
     platform: string,
     user: { id: string; displayName?: string },
     sendFn: (msg: any) => Promise<string | null>,
+    mossUserId?: string,
   ): Promise<void> {
     try {
       const { code, expiresAt } = await this.pairingService.refreshPairingCode(
         user.id,
         platform,
         user.displayName,
+        mossUserId,
       );
 
       const ttlMin = Math.max(1, Math.ceil((expiresAt - Date.now()) / 60000));
@@ -550,6 +622,7 @@ export class MossActionExecutor {
         type: 'text',
         text: `🔐 <b>Authorization Required</b>\n\nPlease enter this pairing code in SudoWork to connect:\n\n<b>${code}</b>\n\n⏱️ Expires in ${ttlMin} minutes`,
         parseMode: 'HTML',
+        noStreaming: true,
       });
 
       console.log(`[MossActionExecutor] Pairing code ${code} sent to ${platform} user ${user.id}`);
@@ -559,6 +632,7 @@ export class MossActionExecutor {
         type: 'text',
         text: '❌ Failed to generate pairing code. Please try again later.',
         parseMode: 'HTML',
+        noStreaming: true,
       });
     }
   }

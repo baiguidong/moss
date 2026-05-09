@@ -84,7 +84,8 @@ class PairingService {
   async refreshPairingCode(
     platformUserId: string,
     platformType: string,
-    displayName?: string
+    displayName?: string,
+    userId?: string
   ): Promise<{ code: string; expiresAt: number }> {
     if (!this.db) {
       throw new Error('Database not initialized');
@@ -97,7 +98,7 @@ class PairingService {
     }
 
     const ttlMs = 10 * 60 * 1000;
-    const code = this.generatePairingCode(platformUserId, platformType, displayName, ttlMs);
+    const code = this.generatePairingCode(platformUserId, platformType, displayName, ttlMs, userId);
     return { code, expiresAt: Date.now() + ttlMs };
   }
 
@@ -132,19 +133,7 @@ class PairingService {
       authorizedAt: Date.now(),
     };
 
-    this.db.upsertChannelUser({
-      id: user.id,
-      platform_user_id: user.platformUserId,
-      platform_type: user.platformType,
-      display_name: user.displayName ?? null,
-      authorized_at: user.authorizedAt,
-      last_active: null,
-      session_id: null,
-      org_id: null,
-      user_id: null,
-    });
-
-    // Update pairing status
+    // Update pairing status first
     this.db.updatePairingRequestStatus(code, 'approved');
 
     // Emit user authorized event
@@ -181,7 +170,8 @@ class PairingService {
     platformUserId: string,
     platformType: string,
     displayName?: string,
-    ttlMs: number = 10 * 60 * 1000 // 10 minutes default
+    ttlMs: number = 10 * 60 * 1000, // 10 minutes default
+    userId?: string
   ): string {
     if (!this.db) {
       throw new Error('Database not initialized');
@@ -198,6 +188,7 @@ class PairingService {
       requested_at: now,
       expires_at: now + ttlMs,
       status: 'pending',
+      user_id: userId ?? null,
     });
 
     // Emit pairing requested event

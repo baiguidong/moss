@@ -130,6 +130,16 @@ export class PluginManager {
   }
 
   /**
+   * Get the instance key (e.g. "pluginId:userId") for a running plugin instance
+   */
+  getInstanceKey(plugin: BasePlugin): string | undefined {
+    for (const [key, instance] of this.plugins.entries()) {
+      if (instance === plugin) return key;
+    }
+    return undefined;
+  }
+
+  /**
    * Get all active plugins
    */
   getAllPlugins(): BasePlugin[] {

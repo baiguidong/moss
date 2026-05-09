@@ -119,7 +119,7 @@ class ChannelManager {
   /**
    * Enable a plugin
    */
-  async enablePlugin(pluginId: string, credentials: Record<string, any>, config?: Record<string, any>, userId?: string): Promise<{ success: boolean; error?: string }> {
+  async enablePlugin(pluginId: string, credentials: Record<string, any>, config?: Record<string, any>, userId?: string, orgId?: string): Promise<{ success: boolean; error?: string }> {
     if (!this.db || !this.pluginManager) {
       return { success: false, error: 'ChannelManager not initialized' };
     }
@@ -169,6 +169,7 @@ class ChannelManager {
         credentials_json: JSON.stringify(finalCredentials),
         config_json: pluginConfig.config ? JSON.stringify(pluginConfig.config) : null,
         user_id: effectiveUserId,
+        org_id: orgId || (existing?.org_id ? String(existing.org_id) : null),
       });
 
       // Start the plugin (use composite key for per-user instances)

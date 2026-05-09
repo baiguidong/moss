@@ -165,7 +165,7 @@ export class WeComPlugin extends BasePlugin {
       this.shouldReconnect = true;
       await this.connect();
       this.startEventCleanup();
-      console.log(`[WeComPlugin] Started for bot ${this.botId}`);
+      console.log(`[WeComPlugin] Started`);
     } catch (error) {
       console.error('[WeComPlugin] Failed to start:', error);
       throw error;
@@ -692,7 +692,6 @@ export class WeComPlugin extends BasePlugin {
   private handleWsMessage(msg: Record<string, unknown>): void {
     const cmd = msg.cmd as string;
     const errcode = msg.errcode as number | undefined;
-    console.log(`[WeComPlugin] handleWsMessage: cmd=${cmd || 'none'}, errcode=${errcode}, full msg=${JSON.stringify(msg).slice(0, 500)}`);
 
     // Check if this is an upload response (handled by uploader)
     if (cmd?.startsWith('aibot_upload_media_') || (errcode !== undefined && !cmd)) {
@@ -742,7 +741,6 @@ export class WeComPlugin extends BasePlugin {
       const msgType = body?.msgtype;
 
       console.log(`[WeComPlugin] handleMsgCallback: msgId=${msgId}, chattype=${chatType}, from=${userId}, msgtype=${msgType}`);
-      console.log(`[WeComPlugin] handleMsgCallback body: ${JSON.stringify(body).slice(0, 800)}`);
 
       if (!msgId) {
         console.warn('[WeComPlugin] handleMsgCallback: missing msgId, skipping');
@@ -1027,7 +1025,7 @@ export class WeComPlugin extends BasePlugin {
       ws.on('message', (data: WebSocket.Data) => {
         try {
           const msg = JSON.parse(data.toString());
-          console.log('[WeComPlugin] testConnection: received message:', JSON.stringify(msg).slice(0, 200));
+          console.log('[WeComPlugin] testConnection: received message, errcode=', msg.errcode);
           // WeCom response format: {"errcode":0,"errmsg":"ok"} or {"errcode":xxx,"errmsg":"xxx"}
           // The response may not have a "cmd" field
           if (msg.errcode !== undefined) {

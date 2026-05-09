@@ -118,7 +118,7 @@ export function createChannelsApi(db: DirectConnectStore) {
         return { ok: false, message: 'ChannelManager not initialized' }
       }
 
-      const result = await manager.enablePlugin(pluginId, body, undefined, userId)
+      const result = await manager.enablePlugin(pluginId, body, undefined, userId, orgId)
 
       if (!result.success) {
         console.error(`[ChannelsAPI] Failed to enable plugin ${pluginId}:`, result.error)
@@ -148,6 +148,13 @@ export function createChannelsApi(db: DirectConnectStore) {
         return { ok: false, message: result.error || 'Failed to disable plugin' }
       }
 
+      // Clean up pending pairing requests for this user+platform
+      const platformType = pluginId.replace(/_default$/, '')
+      db.deletePairingRequestsByUserAndPlatform(userId, platformType)
+
+      // Clean up authorized channel users for this user+platform
+      db.deleteChannelUsersByPlatform(platformType, userId)
+
       console.log(`[ChannelsAPI] Plugin ${pluginId} disabled successfully for user ${userId}`)
       return { ok: true }
     },
@@ -168,12 +175,8 @@ export function createChannelsApi(db: DirectConnectStore) {
      * GET /api/v1/channels/pairings/pending
      */
     getPendingPairings: async (orgId: string, userId: string) => {
-      const rows = db.listPendingPairingRequests()
-      // Only show pairings for plugins belonging to this user
-      const userPlugins = db.listChannelPlugins(userId)
-      const userPluginTypes = new Set(userPlugins.map(r => String(r.type)))
+      const rows = db.listPendingPairingRequests(userId)
       const pairings = rows
-        .filter(row => userPluginTypes.has(String(row.platform_type)))
         .map((row) => ({
           code: String(row.code),
           platformUserId: String(row.platform_user_id),
@@ -190,17 +193,24 @@ export function createChannelsApi(db: DirectConnectStore) {
      * POST /api/v1/channels/pairings/:code/approve
      */
     approvePairing: async (orgId: string, userId: string, code: string) => {
+      // Validate the pairing code belongs to this user
+      const pairingRow = db.getPairingRequest(code)
+      if (pairingRow && pairingRow.user_id && String(pairingRow.user_id) !== userId) {
+        return { ok: false, message: 'Forbidden' }
+      }
       const result = await getPairingService().approvePairing(code)
       if (result.success && result.user) {
         db.upsertChannelUser({
-          ...result.user,
+          id: result.user.id,
           platform_user_id: result.user.platformUserId,
           platform_type: result.user.platformType,
-          display_name: result.user.displayName,
+          display_name: result.user.displayName ?? null,
           authorized_at: result.user.authorizedAt,
+          last_active: null,
+          session_id: null,
           org_id: orgId,
           user_id: userId,
-        } as any)
+        })
       }
       return { ok: result.success }
     },
@@ -209,6 +219,11 @@ export function createChannelsApi(db: DirectConnectStore) {
      * POST /api/v1/channels/pairings/:code/reject
      */
     rejectPairing: async (orgId: string, userId: string, code: string) => {
+      // Validate the pairing code belongs to this user
+      const pairingRow = db.getPairingRequest(code)
+      if (pairingRow && pairingRow.user_id && String(pairingRow.user_id) !== userId) {
+        return { ok: false, message: 'Forbidden' }
+      }
       const result = await getPairingService().rejectPairing(code)
       return result
     },
@@ -217,9 +232,8 @@ export function createChannelsApi(db: DirectConnectStore) {
      * GET /api/v1/channels/users
      */
     getUsers: async (orgId: string, userId: string) => {
-      const rows = db.listChannelUsers()
+      const rows = db.listChannelUsers(userId)
       const users = rows
-        .filter(row => String(row.user_id) === userId)
         .map((row) => ({
           id: String(row.id),
           platformUserId: String(row.platform_user_id),
@@ -257,23 +271,22 @@ export function createChannelsApi(db: DirectConnectStore) {
      * GET /api/v1/channels/sessions
      */
     getSessions: async (orgId: string, userId: string) => {
-      const rows = db.listChannelSessions()
-      // Sessions are linked to channel_users via user_id; filter by the authenticated user
-      const channelUsers = db.listChannelUsers()
-      const channelUserIds = new Set(
-        channelUsers.filter(u => String(u.user_id) === userId).map(u => String(u.id))
-      )
-      return rows
-        .filter(row => channelUserIds.has(String(row.user_id)))
-        .map((row) => ({
-          id: String(row.id),
-          userId: String(row.user_id),
-          agentType: String(row.agent_type),
-          conversationId: row.conversation_id ? String(row.conversation_id) : undefined,
-          workspace: row.workspace ? String(row.workspace) : undefined,
-          chatId: row.chat_id ? String(row.chat_id) : undefined,
-          createdAt: Number(row.created_at),
-          lastActivity: Number(row.last_activity),
+      // Query moss sessions table for channel sessions belonging to this user
+      const CHANNEL_SOURCES = ['telegram', 'lark', 'dingtalk', 'wechat', 'wecom']
+      const sessions = db.listUserSessions(orgId, userId)
+      return sessions
+        .filter(s => s.source && CHANNEL_SOURCES.includes(s.source))
+        .map((s) => ({
+          id: s.sessionId,
+          userId: s.userId,
+          agentType: 'acp',
+          conversationId: s.transcriptSessionId,
+          workspace: s.cwd,
+          chatId: s.channelChatId,
+          source: s.source,
+          status: s.status,
+          createdAt: s.createdAt,
+          lastActivity: s.lastActiveAt,
         }))
     },
 
@@ -312,7 +325,7 @@ export function createChannelsApi(db: DirectConnectStore) {
         model?: { id: string; useModel: string }
       }
     ) => {
-      console.log(`[ChannelsAPI] syncChannelSettings called:`, JSON.stringify(body, null, 2))
+      console.log(`[ChannelsAPI] syncChannelSettings called: platform=${body.platform}`)
 
       const manager = getChannelManager()
       if (!manager.isInitialized()) {
@@ -347,6 +360,7 @@ export function createChannelsApi(db: DirectConnectStore) {
           config_json: JSON.stringify(config),
           last_connected: existing.last_connected ? Number(existing.last_connected) : null,
           user_id: userId,
+          org_id: orgId,
         })
       }
 

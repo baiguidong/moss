@@ -163,7 +163,7 @@ export class DingTalkPlugin extends BasePlugin {
       // Start event cache cleanup timer
       this.startEventCleanup();
 
-      console.log('DingTalkPlugin', `Started for client ${this.clientId}`);
+      console.log('DingTalkPlugin', `Started`);
     } catch (error) {
       console.error('DingTalkPlugin', 'Failed to start', error);
       throw error;
@@ -250,7 +250,8 @@ export class DingTalkPlugin extends BasePlugin {
     const { contentType, content, rawText } = toDingTalkSendParams(message);
 
     // Try AI Card streaming for text/markdown messages
-    if (contentType === 'markdown' && rawText !== undefined) {
+    // Skip AI Card for non-streaming messages (e.g. pairing prompts) to avoid spinning indicator
+    if (contentType === 'markdown' && rawText !== undefined && !message.noStreaming) {
       try {
         const cardMessageId = await this.createAndDeliverAICard(chatType, id, rawText);
         return cardMessageId;

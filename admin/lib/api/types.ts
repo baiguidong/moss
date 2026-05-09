@@ -210,6 +210,8 @@ export interface Session {
   status: SessionStatus
   desiredState: DesiredState
   assistantName?: string | null
+  source?: string
+  channelChatId?: string
   createdAt: number
   lastActiveAt: number
   endedAt: number | null

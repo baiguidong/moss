@@ -331,6 +331,7 @@ export interface IUnifiedOutgoingMessage {
   fileName?: string;
   replyToMessageId?: string;
   silent?: boolean;
+  noStreaming?: boolean;
 }
 
 /**

@@ -89,6 +89,9 @@ function serializeSession(session: {
   status: string
   desiredState: string
   assistantName?: string | null
+  title?: string | null
+  source?: string
+  channelChatId?: string
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -105,6 +108,9 @@ function serializeSession(session: {
     status: session.status,
     desiredState: session.desiredState,
     assistantName: session.assistantName,
+    title: session.title,
+    source: session.source,
+    channelChatId: session.channelChatId,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,

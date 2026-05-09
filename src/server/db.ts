@@ -71,6 +71,8 @@ function mapSession(row: SqlRow): SessionRecord {
     title: typeof row.title === 'string' ? row.title : null,
     summary: typeof row.summary === 'string' ? row.summary : null,
     assistantName: typeof row.assistant_name === 'string' ? row.assistant_name : null,
+    source: typeof row.source === 'string' ? row.source : undefined,
+    channelChatId: typeof row.channel_chat_id === 'string' ? row.channel_chat_id : undefined,
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -135,6 +137,8 @@ export class DirectConnectStore {
         title TEXT,
         summary TEXT,
         assistant_name TEXT,
+        source TEXT,
+        channel_chat_id TEXT,
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         ended_at INTEGER,
@@ -197,6 +201,8 @@ export class DirectConnectStore {
         ON sessions (org_id, user_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS sessions_state_idx
         ON sessions (org_id, status, last_active_at DESC);
+      CREATE INDEX IF NOT EXISTS sessions_source_chat
+        ON sessions (source, channel_chat_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
 
@@ -210,6 +216,7 @@ export class DirectConnectStore {
         status TEXT NOT NULL,
         last_connected INTEGER,
         user_id TEXT NOT NULL,
+        org_id TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (id, user_id)
@@ -225,7 +232,7 @@ export class DirectConnectStore {
         session_id TEXT,
         org_id TEXT,
         user_id TEXT,
-        UNIQUE(platform_user_id, platform_type)
+        UNIQUE(platform_user_id, platform_type, user_id)
       );
 
       CREATE TABLE IF NOT EXISTS channel_sessions (
@@ -246,7 +253,8 @@ export class DirectConnectStore {
         display_name TEXT,
         requested_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
-        status TEXT NOT NULL
+        status TEXT NOT NULL,
+        user_id TEXT
       );
     `)
 
@@ -261,6 +269,63 @@ export class DirectConnectStore {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`)
     } catch {
       // Column already exists, ignore
+    }
+
+    // Migration: add source and channel_chat_id columns if they don't exist
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN source TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN channel_chat_id TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      this.db.exec(`ALTER TABLE channel_plugins ADD COLUMN org_id TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      this.db.exec(`ALTER TABLE channel_pairing_requests ADD COLUMN user_id TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+    // Migrate channel_users UNIQUE constraint from (platform_user_id, platform_type)
+    // to (platform_user_id, platform_type, user_id) for multi-user isolation.
+    // SQLite doesn't support ALTER TABLE constraints, so recreate the table.
+    try {
+      const existingConstraint = this.db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='channel_users'`).get() as SqlRow | undefined;
+      if (existingConstraint && String(existingConstraint.sql).includes('UNIQUE(platform_user_id, platform_type)') && !String(existingConstraint.sql).includes('platform_user_id, platform_type, user_id')) {
+        this.db.exec(`
+          CREATE TABLE channel_users_new (
+            id TEXT PRIMARY KEY,
+            platform_user_id TEXT NOT NULL,
+            platform_type TEXT NOT NULL,
+            display_name TEXT,
+            authorized_at INTEGER NOT NULL,
+            last_active INTEGER,
+            session_id TEXT,
+            org_id TEXT,
+            user_id TEXT,
+            UNIQUE(platform_user_id, platform_type, user_id)
+          );
+          INSERT OR IGNORE INTO channel_users_new SELECT * FROM channel_users;
+          DROP TABLE channel_users;
+          ALTER TABLE channel_users_new RENAME TO channel_users;
+        `)
+        console.log('[DB] Migrated channel_users UNIQUE constraint to include user_id')
+      }
+    } catch (error) {
+      console.error('[DB] Failed to migrate channel_users constraint:', error)
+    }
+
+    // Create index for channel session lookup if it doesn't exist
+    try {
+      this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_source_chat ON sessions (source, channel_chat_id, last_active_at DESC)`)
+    } catch {
+      // Index already exists, ignore
     }
   }
 
@@ -322,15 +387,18 @@ export class DirectConnectStore {
     status: SessionStatus
     desiredState: DesiredSessionState
     assistantName?: string
+    source?: string
+    channelChatId?: string
   }): SessionRecord {
     const ts = now()
     this.db.prepare(`
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
         cwd, runtime_type, docker_image, docker_mode, config_dir, container_name,
-        status, desired_state, current_attempt_id, transcript_path, assistant_name,
+        status, desired_state, current_attempt_id, transcript_path, title, summary, assistant_name,
+        source, channel_chat_id,
         created_at, last_active_at, ended_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -348,6 +416,8 @@ export class DirectConnectStore {
       input.desiredState,
       input.transcriptPath,
       input.assistantName ?? null,
+      input.source ?? null,
+      input.channelChatId ?? null,
       ts,
       ts,
     )
@@ -437,6 +507,17 @@ export class DirectConnectStore {
       SET last_active_at = ?
       WHERE session_id = ?
     `).run(now(), sessionId)
+  }
+
+  findChannelSession(source: string, chatId: string, userId: string): SessionRecord | null {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM sessions
+      WHERE source = ? AND channel_chat_id = ? AND user_id = ? AND deleted_at IS NULL
+      ORDER BY last_active_at DESC
+      LIMIT 1
+    `).get(source, chatId, userId) as SqlRow | undefined
+    return row ? mapSession(row) : null
   }
 
   updateSessionTranscript(
@@ -572,6 +653,12 @@ export class DirectConnectStore {
       ORDER BY last_active_at DESC
     `).all(orgId, userId) as SqlRow[]
     return rows.map(mapSession)
+  }
+
+  /** Look up a user's org_id from the users table */
+  getUserOrgId(userId: string): string | null {
+    const row = this.db.prepare(`SELECT org_id FROM users WHERE id = ?`).get(userId) as SqlRow | undefined
+    return row?.org_id ? String(row.org_id) : null
   }
 
   listSessionsToRecover(): SessionRecord[] {
@@ -753,12 +840,13 @@ export class DirectConnectStore {
     status: string
     last_connected?: number | null
     user_id: string
+    org_id?: string | null
   }): void {
     const ts = now()
     this.db.prepare(`
       INSERT INTO channel_plugins (
-        id, type, name, enabled, credentials_json, config_json, status, last_connected, user_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, type, name, enabled, credentials_json, config_json, status, last_connected, user_id, org_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id, user_id) DO UPDATE SET
         name = excluded.name,
         enabled = excluded.enabled,
@@ -766,6 +854,7 @@ export class DirectConnectStore {
         config_json = COALESCE(excluded.config_json, config_json),
         status = excluded.status,
         last_connected = COALESCE(excluded.last_connected, last_connected),
+        org_id = COALESCE(excluded.org_id, org_id),
         updated_at = excluded.updated_at
     `).run(
       row.id,
@@ -777,6 +866,7 @@ export class DirectConnectStore {
       row.status,
       row.last_connected ?? null,
       row.user_id,
+      row.org_id ?? null,
       ts,
       ts,
     )
@@ -801,7 +891,10 @@ export class DirectConnectStore {
 
   // ==================== Channel Users ====================
 
-  listChannelUsers(): SqlRow[] {
+  listChannelUsers(userId?: string): SqlRow[] {
+    if (userId) {
+      return this.db.prepare(`SELECT * FROM channel_users WHERE user_id = ? ORDER BY authorized_at DESC`).all(userId) as SqlRow[]
+    }
     return this.db.prepare(`SELECT * FROM channel_users ORDER BY authorized_at DESC`).all() as SqlRow[]
   }
 
@@ -824,7 +917,7 @@ export class DirectConnectStore {
       INSERT INTO channel_users (
         id, platform_user_id, platform_type, display_name, authorized_at, last_active, session_id, org_id, user_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(platform_user_id, platform_type) DO UPDATE SET
+      ON CONFLICT(platform_user_id, platform_type, user_id) DO UPDATE SET
         display_name = excluded.display_name,
         last_active = excluded.last_active,
         session_id = excluded.session_id,
@@ -903,7 +996,10 @@ export class DirectConnectStore {
 
   // ==================== Channel Pairings ====================
 
-  listPendingPairingRequests(): SqlRow[] {
+  listPendingPairingRequests(userId?: string): SqlRow[] {
+    if (userId) {
+      return this.db.prepare(`SELECT * FROM channel_pairing_requests WHERE status = 'pending' AND expires_at > ? AND (user_id = ? OR user_id IS NULL)`).all(now(), userId) as SqlRow[]
+    }
     return this.db.prepare(`SELECT * FROM channel_pairing_requests WHERE status = 'pending' AND expires_at > ?`).all(now()) as SqlRow[]
   }
 
@@ -919,13 +1015,19 @@ export class DirectConnectStore {
     requested_at: number
     expires_at: number
     status: string
+    user_id?: string | null
   }): void {
     this.db.prepare(`
       INSERT INTO channel_pairing_requests (
-        code, platform_user_id, platform_type, display_name, requested_at, expires_at, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        code, platform_user_id, platform_type, display_name, requested_at, expires_at, status, user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(code) DO UPDATE SET
-        status = excluded.status
+        status = excluded.status,
+        user_id = excluded.user_id,
+        platform_type = excluded.platform_type,
+        display_name = excluded.display_name,
+        requested_at = excluded.requested_at,
+        expires_at = excluded.expires_at
     `).run(
       row.code,
       row.platform_user_id,
@@ -934,11 +1036,16 @@ export class DirectConnectStore {
       row.requested_at,
       row.expires_at,
       row.status,
+      row.user_id ?? null,
     )
   }
 
   updatePairingRequestStatus(code: string, status: string): void {
     this.db.prepare(`UPDATE channel_pairing_requests SET status = ? WHERE code = ?`).run(status, code)
+  }
+
+  deletePairingRequestsByUserAndPlatform(userId: string, platformType: string): void {
+    this.db.prepare(`DELETE FROM channel_pairing_requests WHERE user_id = ? AND platform_type = ?`).run(userId, platformType)
   }
 }
 
@@ -959,6 +1066,8 @@ export function toSessionSummary(session: SessionRecord): SessionSummary {
     status: session.status,
     desiredState: session.desiredState,
     assistantName: session.assistantName,
+    source: session.source,
+    channelChatId: session.channelChatId,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,

@@ -220,7 +220,7 @@ export class WeChatPlugin extends BasePlugin {
         item_list: [item],
       },
     };
-    console.log('[WeChatPlugin] sendMessage media item:', JSON.stringify(mediaPayload, null, 2));
+    console.log('[WeChatPlugin] sendMessage media item: type=', item.type);
     await this.apiClient.sendMessage(mediaPayload);
   }
 
@@ -427,11 +427,22 @@ export class WeChatPlugin extends BasePlugin {
         // Check for session expired (can be in either errcode or ret)
         const isSessionExpired = response.errcode === WECHAT_SESSION_EXPIRED_CODE || response.ret === WECHAT_SESSION_EXPIRED_CODE;
         if (isSessionExpired) {
-          console.warn('[WeChatPlugin] Session expired, pausing for 60 minutes');
-          this.sessionPaused = true;
-          this.setError('WeChat session expired. Will retry in 60 minutes.');
-          await this.sleep(WECHAT_SESSION_PAUSE_MS);
-          this.sessionPaused = false;
+          console.warn('[WeChatPlugin] Session expired, reconnecting with fresh session');
+          // Session expired means the iLink long-poll session is stale.
+          // We need to stop the current polling, restart the plugin to get a fresh session,
+          // and use exponential backoff to avoid tight loops if the server keeps rejecting.
+          this.reconnectAttempts++;
+          if (this.reconnectAttempts > this.maxReconnectAttempts) {
+            console.error('[WeChatPlugin] Session expired too many times, stopping');
+            this.setError('WeChat session expired repeatedly');
+            await this.stop();
+            return;
+          }
+          const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1) + Math.random() * 1000, 60000);
+          console.warn(`[WeChatPlugin] Retrying in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+          this.getUpdatesBuf = undefined;
+          this.tokenStore.clear();
+          await this.sleep(delay);
           continue;
         }
 
@@ -453,11 +464,9 @@ export class WeChatPlugin extends BasePlugin {
 
         // Process incoming messages
         const msgs = response.msgs || [];
-        console.log(`[WeChatPlugin] getUpdates: ${msgs.length} messages`);
 
         // Merge messages from same user (e.g., text + file sent together as separate messages)
         const mergedMsgs = this.mergeUserMessages(msgs);
-        console.log(`[WeChatPlugin] After merge: ${mergedMsgs.length} messages`);
 
         for (const msg of mergedMsgs) {
           void this.handleIncomingMessage(msg);
@@ -670,7 +679,7 @@ export class WeChatPlugin extends BasePlugin {
         aeskey: aesKeyHex,
       });
 
-      console.log('[WeChatPlugin] getUploadUrl response:', JSON.stringify(uploadResp));
+      console.log('[WeChatPlugin] getUploadUrl response: errcode=', uploadResp.errcode);
 
       if (uploadResp.errcode !== undefined && uploadResp.errcode !== 0) {
         console.error('[WeChatPlugin] getUploadUrl failed with errcode:', uploadResp.errcode, 'errmsg:', uploadResp.errmsg);
@@ -679,7 +688,7 @@ export class WeChatPlugin extends BasePlugin {
 
       const uploadParam = uploadResp.upload_param;
       if (!uploadParam) {
-        console.error('[WeChatPlugin] getUploadUrl missing upload_param:', uploadResp);
+        console.error('[WeChatPlugin] getUploadUrl missing upload_param, errcode=', uploadResp.errcode);
         return null;
       }
 

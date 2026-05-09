@@ -10,7 +10,7 @@ import * as path from 'path';
 
 import type { BotInfo, IChannelPluginConfig, IUnifiedIncomingMessage, IUnifiedOutgoingMessage, PluginType } from '../../types.js';
 import { BasePlugin } from '../BasePlugin.js';
-import { extractCardAction, LARK_MESSAGE_LIMIT, toLarkSendParams, toUnifiedIncomingMessage } from './LarkAdapter.js';
+import { convertHtmlToLarkMarkdown, extractCardAction, LARK_MESSAGE_LIMIT, toLarkSendParams, toUnifiedIncomingMessage } from './LarkAdapter.js';
 
 // Event deduplication settings
 const EVENT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -117,7 +117,7 @@ export class LarkPlugin extends BasePlugin {
       this.isConnected = true;
       this.startEventCleanup();
 
-      console.log(`[LarkPlugin] Started for app ${appId}`);
+      console.log(`[LarkPlugin] Started`);
     } catch (error) {
       console.error('[LarkPlugin] Failed to start:', error);
       throw error;
@@ -179,7 +179,18 @@ export class LarkPlugin extends BasePlugin {
    */
   async sendMessage(chatId: string, message: IUnifiedOutgoingMessage): Promise<string> {
     if (!this.client) {
-      throw new Error('Client not initialized');
+      const appId = this.config?.credentials?.appId;
+      const appSecret = this.config?.credentials?.appSecret;
+      if (appId && appSecret) {
+        this.client = new lark.Client({
+          appId,
+          appSecret,
+          appType: lark.AppType.SelfBuild,
+          domain: lark.Domain.Feishu,
+        });
+      } else {
+        throw new Error('Client not initialized');
+      }
     }
 
     await this.ensureAccessToken();
@@ -279,7 +290,7 @@ export class LarkPlugin extends BasePlugin {
       elements: [
         {
           tag: 'markdown',
-          content: text,
+          content: convertHtmlToLarkMarkdown(text),
         },
       ],
     };
@@ -290,7 +301,18 @@ export class LarkPlugin extends BasePlugin {
    */
   async editMessage(chatId: string, messageId: string, message: IUnifiedOutgoingMessage): Promise<void> {
     if (!this.client) {
-      throw new Error('Client not initialized');
+      const appId = this.config?.credentials?.appId;
+      const appSecret = this.config?.credentials?.appSecret;
+      if (appId && appSecret) {
+        this.client = new lark.Client({
+          appId,
+          appSecret,
+          appType: lark.AppType.SelfBuild,
+          domain: lark.Domain.Feishu,
+        });
+      } else {
+        throw new Error('Client not initialized');
+      }
     }
 
     await this.ensureAccessToken();

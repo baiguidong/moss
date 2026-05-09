@@ -147,9 +147,7 @@ export class WeChatApiClient {
   }
 
   async sendMessage(payload: IWeChatSendMessagePayload): Promise<Record<string, unknown>> {
-    console.log('[WeChatApiClient] sendMessage request:', JSON.stringify(payload));
     const response = await this.apiFetch<Record<string, unknown>>('ilink/bot/sendmessage', payload as unknown as Record<string, unknown>, WECHAT_API_TIMEOUT_MS);
-    console.log('[WeChatApiClient] sendMessage response:', JSON.stringify(response));
     return response;
   }
 
@@ -238,9 +236,7 @@ export class WeChatApiClient {
    * @returns Upload URL and optional download_param
    */
   async getUploadUrl(params: IWeChatGetUploadUrlRequest): Promise<IWeChatGetUploadUrlResponse> {
-    console.log('[WeChatApiClient] getUploadUrl request:', JSON.stringify(params));
     const response = await this.apiFetch<IWeChatGetUploadUrlResponse>('ilink/bot/getuploadurl', params as unknown as Record<string, unknown>, WECHAT_API_TIMEOUT_MS);
-    console.log('[WeChatApiClient] getUploadUrl response:', JSON.stringify(response));
     return response;
   }
 
@@ -262,7 +258,6 @@ export class WeChatApiClient {
     });
 
     console.log('[WeChatApiClient] uploadToCdn response status:', response.status);
-    console.log('[WeChatApiClient] uploadToCdn response headers:', JSON.stringify(Object.fromEntries(response.headers)));
 
     if (!response.ok) {
       const text = await response.text();
