@@ -107,7 +107,7 @@ export class DockerBackend implements SessionBackend {
 
     // Sync skill/agent bridges into the config directory so scode can discover them
     try {
-      await syncAllBridgesAsync(configDir)
+//      await syncAllBridgesAsync(configDir)
     } catch (bridgeErr) {
       process.stderr.write(`[DockerBackend] scode bridge sync warning: ${bridgeErr}\n`)
     }

@@ -15,7 +15,7 @@ export class ScodeBackend implements SessionBackend {
   async spawn(options: BackendSpawnOptions): Promise<BackendHandle> {
     // Sync skill/agent bridges so scode can discover Moss-installed skills
     try {
-      await syncAllBridgesAsync(options.runtime?.configDir)
+//      await syncAllBridgesAsync(options.runtime?.configDir)
     } catch (bridgeErr) {
       process.stderr.write(`[ScodeBackend] scode bridge sync warning: ${bridgeErr}\n`)
     }
