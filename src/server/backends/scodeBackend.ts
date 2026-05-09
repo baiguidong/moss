@@ -4,7 +4,7 @@ import {
   resolveScodeCliPath,
 } from './backendUtils.js'
 import { createAcpBridgeHandle } from './acpBridge.js'
-import { syncAllBridgesAsync } from '../../utils/scodeBridge.js'
+import { syncAllBridgesAsync, buildDynamicAgents, buildDynamicMcpServers, buildDynamicInstructions } from '../../utils/scodeBridge.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -24,6 +24,19 @@ export class ScodeBackend implements SessionBackend {
     const env = buildSessionEnv(options)
 
     const model = options.runtime?.model || process.env.MOSS_DEFAULT_MODEL || 'gemini-3-flash-preview'
+
+
+    let mcpServers: any[] = []
+    let dynamicAgents: any[] = []
+    let dynamicInstructions = ""
+
+    try {
+      mcpServers = await buildDynamicMcpServers()
+      dynamicAgents = await buildDynamicAgents()
+      dynamicInstructions = await buildDynamicInstructions(mcpServers, dynamicAgents, options.assistantName || null)
+    } catch (e) {
+      process.stderr.write(`[ScodeBackend] Failed to load dynamic agents/skills: ${e}\n`)
+    }
 
     const args = [
       'acp',
@@ -56,6 +69,9 @@ export class ScodeBackend implements SessionBackend {
       cwd: options.cwd,
       model,
       transcriptPath: (options as any).transcriptPath,
+      mcpServers,
+      agents: dynamicAgents,
+      instructions: dynamicInstructions,
       runtime: {
         type: 'host',
         engine: 'scode',
