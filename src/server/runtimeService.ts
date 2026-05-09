@@ -262,6 +262,8 @@ export class RuntimeService {
       status: 'creating',
       desiredState: 'active',
       assistantName: input.assistantName,
+      source: input.source,
+      channelChatId: input.channelChatId,
     })
 
     // Ensure config directory exists for scode sessions (which don't use session-runner which normally creates it)

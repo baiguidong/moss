@@ -41,6 +41,14 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'second
   lost: { label: '丢失', variant: 'destructive' },
 }
 
+const channelPlatforms: Record<string, string> = {
+  telegram: 'Telegram',
+  lark: '飞书',
+  dingtalk: '钉钉',
+  wechat: '微信',
+  wecom: '企业微信',
+}
+
 const DATE_RANGES = [
   { label: '今天', days: 0 },
   { label: '近7天', days: 7 },
@@ -81,10 +89,16 @@ export default function SessionsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, usersRes, agentsRes] = await Promise.all([getSessions(), getUsers(), getInstalledAgents()])
+      const [sessionsRes, agentsRes] = await Promise.all([getSessions(), getInstalledAgents()])
       setSessions(sessionsRes.sessions)
-      setUsers(usersRes.users)
       setInstalledAgents(agentsRes)
+      // getUsers requires admin:users scope; non-admin users can still view sessions
+      try {
+        const usersRes = await getUsers()
+        setUsers(usersRes.users)
+      } catch {
+        // Non-admin users: sessions show userId directly
+      }
     } catch (error) {
       console.error('Failed to fetch data:', error)
       toast.error('获取会话列表失败')
@@ -262,7 +276,14 @@ export default function SessionsPage() {
                     <TableCell>{getUserName(session.userId)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <Badge variant="secondary">{session.runtime.type}</Badge>
+                        <div className="flex items-center gap-1">
+                          <Badge variant="secondary">{session.runtime.type}</Badge>
+                          {session.source && channelPlatforms[session.source] && (
+                            <Badge variant="outline" className="text-xs text-blue-600 border-blue-300">
+                              {channelPlatforms[session.source]}
+                            </Badge>
+                          )}
+                        </div>
                         {session.runtime.dockerImage && (
                           <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={session.runtime.dockerImage}>
                             {session.runtime.dockerImage}

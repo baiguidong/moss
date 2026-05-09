@@ -196,6 +196,8 @@ export type SessionRecord = {
   title: string | null
   summary: string | null
   assistantName: string | null
+  source?: string
+  channelChatId?: string
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -260,6 +262,8 @@ export type SessionSummary = {
   status: SessionStatus
   desiredState: DesiredSessionState
   assistantName: string | null
+  source?: string
+  channelChatId?: string
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -274,6 +278,8 @@ export type SessionCreateInput = {
   scopes: string[]
   runtime?: SessionRuntimeOptions
   assistantName?: string
+  source?: string
+  channelChatId?: string
 }
 
 export type EnterpriseRecord = {

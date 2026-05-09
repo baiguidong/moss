@@ -212,6 +212,8 @@ export interface Session {
   status: SessionStatus
   desiredState: DesiredState
   assistantName?: string | null
+  source?: string
+  channelChatId?: string
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -412,54 +414,6 @@ export interface HealthResponse {
   auth_mode: string
 }
 
-// IM Adapter Types
-export interface PairedUser {
-  userId: string | number
-  displayName: string
-  pairedAt: number
-}
-
-export interface AdapterPlatformConfig {
-  enabled?: boolean
-  // Telegram
-  botToken?: string
-  allowedUsers?: Array<number | string>
-  pairedUsers?: PairedUser[]
-  defaultWorkDir?: string
-  // Feishu
-  appId?: string
-  appSecret?: string
-  encryptKey?: string
-  verificationToken?: string
-  // Feishu-only
-  streamingCard?: boolean
-}
-
-export interface AdapterConfigsResponse {
-  telegram?: AdapterPlatformConfig
-  feishu?: AdapterPlatformConfig
-}
-
-export interface AdapterProcessStatus {
-  status: 'running' | 'stopped' | 'error'
-  pid: number | null
-  error: string | null
-  startedAt: number | null
-  orgId: string
-  userId: string
-  platform: string
-}
-
-export interface AdapterConfigRow {
-  id: string
-  orgId: string
-  userId: string
-  platform: string
-  enabled: boolean
-  createdAt: number
-  updatedAt: number
-}
-
 export interface EnterpriseConfig {
   logo: string | null;
   app_name: string;
@@ -472,4 +426,52 @@ export interface EnterpriseConfig {
 export interface EnterpriseConfigResponse {
   success: boolean;
   data: EnterpriseConfig;
+}
+
+// Channels / Plugins Types
+export type ChannelPlatform = 'telegram' | 'lark' | 'dingtalk' | 'wechat' | 'wecom'
+
+export interface IChannelPluginConfig {
+  id: string
+  type: ChannelPlatform  // Changed from 'platform' to 'type' to match sudowork
+  name: string
+  enabled: boolean
+  credentials: Record<string, any>
+  config: Record<string, any>
+  status: 'created' | 'initializing' | 'ready' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
+  lastConnected?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface IChannelUser {
+  id: string
+  platformUserId: string
+  platformType: ChannelPlatform
+  displayName?: string
+  authorizedAt: number
+  lastActive?: number
+  sessionId?: string
+}
+
+export interface IChannelPendingPairing {
+  code: string
+  platformUserId: string
+  platformType: ChannelPlatform
+  displayName?: string
+  requestedAt: number
+  expiresAt: number
+  status: 'pending' | 'approved' | 'rejected' | 'expired'
+}
+
+export interface ChannelPluginsResponse {
+  plugins: IChannelPluginConfig[]
+}
+
+export interface ChannelUsersResponse {
+  users: IChannelUser[]
+}
+
+export interface ChannelPendingPairingsResponse {
+  pairings: IChannelPendingPairing[]
 }
