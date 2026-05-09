@@ -17,6 +17,9 @@ export function initHubConfig(config?: {
 }): void {
   _resolvedBaseUrl = resolveHubApiBaseUrl(config?.hubApiBaseUrl)
   _resolvedAuth = resolveHubAuthorization(config?.hubAuthorization)
+  console.info(
+    `[HubConfig] API base URL: ${_resolvedBaseUrl}`,
+  )
 }
 
 export function resolveHubApiBaseUrl(serverConfigBaseUrl?: string): string {
