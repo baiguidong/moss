@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { serverFileConfigSchema, type ServerConfig, type ServerFileConfig } from './types.js'
+import { normalizeHubApiBaseUrl } from './hubConfig.js'
 import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
 import { expandPath } from '../utils/path.js'
 
@@ -64,6 +65,7 @@ export function getDefaultServerConfig(): ServerFileConfig {
     logging: {
       level: 'info',
     },
+    hub: {},
   }
 }
 
@@ -119,6 +121,10 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     auditFile: raw.logging.auditFile
       ? normalizePath(raw.logging.auditFile)
       : undefined,
+    hubApiBaseUrl: raw.hub?.apiBaseUrl
+      ? normalizeHubApiBaseUrl(raw.hub.apiBaseUrl)
+      : undefined,
+    hubAuthorization: raw.hub?.authorization?.trim() || undefined,
   }
 }
 

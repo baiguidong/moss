@@ -40,15 +40,17 @@ export interface RoleDefinition {
 }
 
 export interface LoginRequest {
-  grant_type: 'password' | 'api_key'
+  grant_type: 'password' | 'api_key' | 'refresh_token'
   username?: string
   email?: string
   password?: string
   api_key?: string
+  refresh_token?: string
 }
 
 export interface LoginResponse {
   access_token: string
+  refresh_token: string
   token_type: 'Bearer'
   expires_in: number
   user: AuthUser

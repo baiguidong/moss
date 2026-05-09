@@ -1,4 +1,4 @@
-import { authClient, setToken, getToken, removeToken } from './client'
+import { authClient, setToken, removeToken, setRefreshToken, setTokenExpiresAt, getToken, getRefreshToken } from './client'
 import type {
   LoginRequest,
   LoginResponse,
@@ -17,6 +17,14 @@ import type {
   RolesListResponse,
 } from './types'
 
+function storeLoginResponse(response: LoginResponse): void {
+  setToken(response.access_token)
+  if (response.refresh_token) {
+    setRefreshToken(response.refresh_token)
+  }
+  setTokenExpiresAt(Date.now() + (response.expires_in || 3600) * 1000)
+}
+
 export async function login(
   username: string,
   password: string
@@ -27,7 +35,7 @@ export async function login(
     password,
   }
   const response = await authClient.post<LoginResponse>('/api/v1/auth/token', body)
-  setToken(response.access_token)
+  storeLoginResponse(response)
   return response
 }
 
@@ -37,11 +45,31 @@ export async function loginWithApiKey(apiKey: string): Promise<LoginResponse> {
     api_key: apiKey,
   }
   const response = await authClient.post<LoginResponse>('/api/v1/auth/token', body)
-  setToken(response.access_token)
+  storeLoginResponse(response)
   return response
 }
 
 export async function logout(): Promise<void> {
+  const accessToken = getToken()
+  const refreshToken = getRefreshToken()
+
+  if (accessToken) {
+    try {
+      await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          refresh_token: refreshToken || undefined,
+        }),
+      })
+    } catch {
+      // Server logout failed, still clear local tokens
+    }
+  }
+
   removeToken()
 }
 

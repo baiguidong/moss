@@ -1,3 +1,8 @@
+import {
+  bridgeAgent as bridgeAgentToScode,
+  unbridgeAgent as unbridgeAgentFromScode,
+  refreshInstructionsFile,
+} from '../utils/scodeBridge.js'
 import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
@@ -8,10 +13,7 @@ import {
   installHubSkill,
   type InstalledSkillInfo,
 } from './skillStore.js'
-
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
-const HUB_AUTHORIZATION =
-  String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
+import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
 
 // Support MOSS_HOME environment variable for Docker/container environments
 const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
@@ -45,22 +47,17 @@ const DOCUMENTATION_MARKDOWN_PATTERNS = [
   /^contributing(?:\.[^.]+)?$/i,
 ]
 
-function normalizeHubApiBaseUrl(rawValue: unknown): string {
-  const trimmed = String(rawValue || '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!trimmed) return ''
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`
+function getHubCategoriesUrl(): string {
+  return `${getHubApiBaseUrl()}/categories`
 }
 
-const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
-  process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
-)
+function getAssistantHubBaseUrl(): string {
+  return `${getHubApiBaseUrl()}/assistants`
+}
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const ASSISTANT_HUB_BASE_URL = `${HUB_API_BASE_URL}/assistants`
-const ASSISTANT_HUB_CURSOR_URL = `${ASSISTANT_HUB_BASE_URL}/cursor`
+function getAssistantHubCursorUrl(): string {
+  return `${getAssistantHubBaseUrl()}/cursor`
+}
 
 export type AgentHubAssistant = {
   id: string
@@ -91,7 +88,7 @@ export type AssistantStoreMeta = {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'custom'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -100,6 +97,17 @@ export type AssistantStoreMeta = {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: {
+    trigger: 'cron' | 'webhook' | 'manual'
+    cron?: string
+    webhook_path?: string
+    output_targets?: string[]
+    output_webhook?: string
+    timeout_minutes?: number
+  } | null
   [key: string]: unknown
 }
 
@@ -121,6 +129,10 @@ export type InstalledAssistantInfo = {
   skills: string[]
   enabledSkills: string[]
   meta: AssistantStoreMeta | null
+  agentType: 'chat' | 'workflow'
+  memoryMode: 'session' | 'user'
+  visibleTo: { department_ids: string[] | null } | null
+  workflow: AssistantStoreMeta['workflow']
 }
 
 export type FetchAgentHubAssistantsParams = {
@@ -225,7 +237,7 @@ async function fetchJson(
   init?: RequestInit,
 ): Promise<unknown> {
   const headers = new Headers(init?.headers)
-  headers.set('Authorization', HUB_AUTHORIZATION)
+  headers.set('Authorization', getHubAuthorization())
   if (!headers.has('User-Agent')) {
     headers.set('User-Agent', 'Moss-AgentHub/1.0')
   }
@@ -320,7 +332,7 @@ function normalizeAgentHubAssistant(rawValue: unknown): AgentHubAssistant | null
 async function downloadFileBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
       'User-Agent': 'Moss-AgentHub/1.0',
     },
   })
@@ -595,6 +607,10 @@ function toInstalledAssistantInfo(params: {
     skills: parseStringArray(meta?.skills),
     enabledSkills: parseStringArray(meta?.enabledSkills),
     meta,
+    agentType: meta?.agent_type ?? 'chat',
+    memoryMode: meta?.memory_mode ?? 'session',
+    visibleTo: meta?.visible_to ?? null,
+    workflow: meta?.workflow ?? null,
   }
 }
 
@@ -611,7 +627,7 @@ export async function fetchAgentHubAssistants(
   if (params.query) searchParams.set('query', params.query)
   if (params.category) searchParams.set('category', params.category)
 
-  const result = await fetchJson(`${ASSISTANT_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(`${getAssistantHubCursorUrl()}?${searchParams}`)
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : unwrapped
   const rawAssistants = Array.isArray(data.assistants) ? data.assistants : []
@@ -629,7 +645,7 @@ export async function fetchAgentHubAssistants(
 }
 
 export async function fetchAgentHubCategories(): Promise<string[]> {
-  const result = await fetchJson(`${HUB_CATEGORIES_URL}?type=1`)
+  const result = await fetchJson(`${getHubCategoriesUrl()}?type=1`)
   if (Array.isArray(result)) {
     return result.filter(
       (item): item is string =>
@@ -649,7 +665,7 @@ export async function fetchAgentHubAssistantDetail(
   assistantId: string,
 ): Promise<AgentHubDetail | null> {
   const result = await fetchJson(
-    `${ASSISTANT_HUB_BASE_URL}/${encodeURIComponent(assistantId)}`,
+    `${getAssistantHubBaseUrl()}/${encodeURIComponent(assistantId)}`,
   )
   const unwrapped = unwrapHubResponse(result)
   const rawDetail = isRecord(unwrapped.data)
@@ -876,8 +892,35 @@ export async function installHubAssistant(params: {
     ruleFile,
     skills: selectedSkillIds,
     enabledSkills: Array.from(enabledSkillNames),
+    agent_type:
+      normalizedAssistant?.agent_type === 'chat' || normalizedAssistant?.agent_type === 'workflow'
+        ? normalizedAssistant.agent_type
+        : 'chat',
+    memory_mode:
+      normalizedAssistant?.memory_mode === 'session' || normalizedAssistant?.memory_mode === 'user'
+        ? normalizedAssistant.memory_mode
+        : 'session',
+    visible_to:
+      normalizedAssistant?.visible_to &&
+      typeof normalizedAssistant.visible_to === 'object' &&
+      'department_ids' in (normalizedAssistant.visible_to as object)
+        ? (normalizedAssistant.visible_to as AssistantStoreMeta['visible_to'])
+        : null,
+    workflow:
+      normalizedAssistant?.workflow &&
+      typeof normalizedAssistant.workflow === 'object' &&
+      'trigger' in (normalizedAssistant.workflow as object)
+        ? (normalizedAssistant.workflow as AssistantStoreMeta['workflow'])
+        : null,
   }
   await writeAssistantMeta(assistantDir, meta)
+
+  try {
+    bridgeAgentToScode(assistantName, assistantDir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync failed: ${bridgeErr}`)
+  }
 
   return {
     assistantName,
@@ -885,6 +928,70 @@ export async function installHubAssistant(params: {
     installedSkills: installedSkillNames,
     failedSkills: failedSkillIds,
   }
+}
+
+export async function createCustomAssistant(params: {
+  name: string
+  displayName: string
+  description?: string
+  avatar?: string
+  emoji?: string | null
+  rules: string
+  skills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: AssistantStoreMeta['workflow']
+}): Promise<{ assistantName: string }> {
+  const assistantName = params.name.trim().replace(/\s+/g, '-')
+  if (!assistantName) throw new Error('Name is required')
+
+  // 1. Check if already exists
+  const existing = await findAssistantDir(assistantName)
+  if (existing) throw new Error(`Assistant already exists: ${assistantName}`)
+
+  // 2. Prepare directory
+  await mkdir(ASSISTANT_CUSTOM_DIR, { recursive: true })
+  const assistantDir = path.join(ASSISTANT_CUSTOM_DIR, assistantName)
+  await mkdir(assistantDir, { recursive: true })
+
+  // 3. Write instructions file
+  const ruleFile = 'instructions.md'
+  await writeFile(path.join(assistantDir, ruleFile), params.rules.trim(), 'utf8')
+
+  // 4. Write metadata
+  const meta: AssistantStoreMeta = {
+    id: assistantName,
+    name: assistantName,
+    display_name: params.displayName,
+    description: params.description || '',
+    avatar: params.avatar || '',
+    emoji: params.emoji || null,
+    source_type: 'custom',
+    tag: 'custom',
+    is_builtin: false,
+    enabled: true,
+    installed_version: '1.0.0',
+    installed_at: new Date().toISOString(),
+    ruleFile,
+    skills: params.skills || [],
+    enabledSkills: params.skills || [],
+    agent_type: params.agent_type,
+    memory_mode: params.memory_mode,
+    visible_to: params.visible_to,
+    workflow: params.workflow,
+  }
+  await writeAssistantMeta(assistantDir, meta)
+
+  // 5. Sync to scode
+  try {
+    bridgeAgentToScode(assistantName, assistantDir)
+    await refreshInstructionsFile()
+  } catch (err) {
+    console.warn(`[AgentStore] Scode bridge sync failed: ${err}`)
+  }
+
+  return { assistantName }
 }
 
 export async function uninstallAssistant(params: {
@@ -903,12 +1010,22 @@ export async function uninstallAssistant(params: {
   }
 
   await rm(sourcePath, { recursive: true, force: true })
+
+  try {
+    unbridgeAgentFromScode(params.assistantName)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after uninstall failed: ${bridgeErr}`)
+  }
 }
 
 export async function updateInstalledAssistantMeta(params: {
   assistantName: string
   updates: Partial<
-    Pick<AssistantStoreMeta, 'display_name' | 'description' | 'avatar'>
+    Pick<
+      AssistantStoreMeta,
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
+    >
   >
 }): Promise<void> {
   const result = await findAssistantDir(params.assistantName)
@@ -930,8 +1047,36 @@ export async function updateInstalledAssistantMeta(params: {
   if (typeof params.updates.avatar === 'string') {
     nextMeta.avatar = params.updates.avatar.trim()
   }
+  if (typeof params.updates.emoji === 'string') {
+    nextMeta.emoji = params.updates.emoji.trim()
+  }
+  if (params.updates.agent_type === 'chat' || params.updates.agent_type === 'workflow') {
+    nextMeta.agent_type = params.updates.agent_type
+  }
+  if (params.updates.memory_mode === 'session' || params.updates.memory_mode === 'user') {
+    nextMeta.memory_mode = params.updates.memory_mode
+  }
+  if (params.updates.visible_to !== undefined) {
+    nextMeta.visible_to = params.updates.visible_to
+  }
+  if (params.updates.workflow !== undefined) {
+    nextMeta.workflow = params.updates.workflow
+  }
+  if (Array.isArray(params.updates.enabledSkills)) {
+    nextMeta.enabledSkills = params.updates.enabledSkills
+  }
+  if (Array.isArray(params.updates.skills)) {
+    nextMeta.skills = params.updates.skills
+  }
 
   await writeAssistantMeta(result.dir, nextMeta)
+
+  try {
+    bridgeAgentToScode(params.assistantName, result.dir)
+    await refreshInstructionsFile()
+  } catch (bridgeErr) {
+    console.warn(`[AgentStore] scode bridge sync after meta update failed: ${bridgeErr}`)
+  }
 }
 
 export async function getAssistantContextSummary(
@@ -987,3 +1132,79 @@ export async function getAssistantSystemPrompt(
 }
 
 export { ASSISTANT_HUB_DIR, ASSISTANT_SEARCH_DIRS }
+
+export async function batchSyncAssistants(params?: {
+  onProgress?: (processed: number, total: number) => void
+}): Promise<{
+  installed: Array<{ assistantName: string; version: string }>
+  updated: Array<{ assistantName: string; version: string }>
+  skipped: Array<{ assistantName: string; reason: string }>
+  failed: Array<{ assistantName: string; error: string }>
+}> {
+  const installed: Array<{ assistantName: string; version: string }> = []
+  const updated: Array<{ assistantName: string; version: string }> = []
+  const skipped: Array<{ assistantName: string; reason: string }> = []
+  const failed: Array<{ assistantName: string; error: string }> = []
+
+  const installedAssistants = await getInstalledAssistants()
+  const byName = new Map(installedAssistants.map(a => [a.name, a]))
+
+  const allHubAssistants: AgentHubAssistant[] = []
+  let cursor: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const page = await fetchAgentHubAssistants({ cursor, limit: 100 })
+    allHubAssistants.push(...page.assistants)
+    cursor = page.next_cursor ?? undefined
+    hasMore = page.has_more
+  }
+
+  const total = allHubAssistants.length
+  let processed = 0
+
+  for (const hubAsst of allHubAssistants) {
+    const sourceUrl = hubAsst.sourceUrl?.trim()
+    if (!sourceUrl) {
+      skipped.push({ assistantName: hubAsst.name, reason: 'no download URL' })
+      processed++
+      params?.onProgress?.(processed, total)
+      continue
+    }
+    const existing = byName.get(hubAsst.name)
+    if (existing) {
+      skipped.push({
+        assistantName: hubAsst.name,
+        reason: 'already installed',
+      })
+      processed++
+      params?.onProgress?.(processed, total)
+      continue
+    }
+    try {
+      const detail = await fetchAgentHubAssistantDetail(hubAsst.id)
+      const ver = detail?.versions?.[0]
+      const result = await installHubAssistant({
+        assistantName: hubAsst.name,
+        sourceUrl,
+        version:
+          typeof ver?.version === 'string' ? ver.version : undefined,
+        checksum:
+          typeof ver?.checksum === 'string' ? ver.checksum : undefined,
+        assistantMeta: hubAsst,
+      })
+      installed.push({
+        assistantName: result.assistantName,
+        version: result.version,
+      })
+    } catch (error) {
+      failed.push({
+        assistantName: hubAsst.name,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    processed++
+    params?.onProgress?.(processed, total)
+  }
+
+  return { installed, updated, skipped, failed }
+}

@@ -36,7 +36,7 @@ export interface InstalledAgentMeta {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'custom'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -45,6 +45,17 @@ export interface InstalledAgentMeta {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: {
+    trigger: 'cron' | 'webhook' | 'manual'
+    cron?: string
+    webhook_path?: string
+    output_targets?: string[]
+    output_webhook?: string
+    timeout_minutes?: number
+  } | null
   [key: string]: unknown
 }
 
@@ -66,6 +77,10 @@ export interface InstalledAgentInfo {
   skills: string[]
   enabledSkills: string[]
   meta: InstalledAgentMeta | null
+  agentType: 'chat' | 'workflow'
+  memoryMode: 'session' | 'user'
+  visibleTo: { department_ids: string[] | null } | null
+  workflow: InstalledAgentMeta['workflow']
 }
 
 export interface InstallAgentRequest {
@@ -75,6 +90,20 @@ export interface InstallAgentRequest {
   checksum?: string
   assistantMeta?: AgentHubAssistant | null
   selectedSkillIds?: string[]
+}
+
+export interface CreateAssistantRequest {
+  name: string
+  displayName: string
+  description?: string
+  avatar?: string
+  emoji?: string
+  rules: string
+  skills?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: { department_ids: string[] | null } | null
+  workflow?: InstalledAgentMeta['workflow']
 }
 
 export function getAgentHubAssistants(params: {
@@ -134,10 +163,22 @@ export function uninstallAgent(data: {
   return authClient.post<{ ok: boolean }>('/api/v1/agents/uninstall', data)
 }
 
+export function createCustomAssistant(
+  data: CreateAssistantRequest,
+): Promise<{ success: boolean; data: InstalledAgentInfo }> {
+  return authClient.post<{ success: boolean; data: InstalledAgentInfo }>(
+    '/api/v1/agents/create',
+    data,
+  )
+}
+
 export function updateInstalledAgentMeta(data: {
   assistantName: string
   updates: Partial<
-    Pick<InstalledAgentMeta, 'display_name' | 'description' | 'avatar'>
+    Pick<
+      InstalledAgentMeta,
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
+    >
   >
 }): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>('/api/v1/agents/meta', data)
@@ -148,5 +189,42 @@ export function fetchAgentHubSkillDetailsByIds(
 ): Promise<SkillHubSkill[]> {
   return authClient.post<SkillHubSkill[]>('/api/v1/agent-hub/skills/by-ids', {
     skillIds,
+  })
+}
+
+export interface BatchSyncAgentResult {
+  installed: Array<{ assistantName: string; version: string }>
+  updated: Array<{ assistantName: string; version: string }>
+  skipped: Array<{ assistantName: string; reason: string }>
+  failed: Array<{ assistantName: string; error: string }>
+}
+
+export function batchSyncAgents(): Promise<{ started: boolean }> {
+  return authClient.post<{ started: boolean }>('/api/v1/agents/sync-from-hub')
+}
+
+export interface AgentSyncProgress {
+  status: 'idle' | 'running' | 'done' | 'error'
+  total: number
+  processed: number
+  installed: number
+  updated: number
+  skipped: number
+  failed: number
+  error?: string
+  startedAt: number
+}
+
+export function getAgentSyncStatus(): Promise<AgentSyncProgress> {
+  return authClient.get<AgentSyncProgress>('/api/v1/agents/sync-status')
+}
+
+export function updateAgentVisibility(
+  assistantName: string,
+  visible_to: { department_ids: string[] | null } | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>('/api/v1/agents/visibility', {
+    assistantName,
+    visible_to,
   })
 }

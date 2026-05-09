@@ -13,6 +13,7 @@ import { AuthService, AuthServiceError } from './auth/service.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import {
+  createCustomAssistant,
   fetchAgentHubAssistantDetail,
   fetchAgentHubAssistants,
   fetchAgentHubCategories,
@@ -22,6 +23,8 @@ import {
   type AgentHubAssistant,
   uninstallAssistant,
   updateInstalledAssistantMeta,
+  batchSyncAssistants,
+  type AssistantStoreMeta,
 } from './agentStore.js'
 import {
   fetchSkillHubCategories,
@@ -32,9 +35,21 @@ import {
   importLocalSkillDirectory,
   installHubSkill,
   setInstalledSkillEnabled,
+  setInstalledSkillMeta,
   type SkillHubSkill,
+  type SkillStoreMeta,
   uninstallSkill,
+  batchSyncSkills,
 } from './skillStore.js'
+import { createAdaptersApi } from './api/adapters.js'
+import {
+  getSkillSyncProgress,
+  getAgentSyncProgress,
+  updateSkillSyncProgress,
+  updateAgentSyncProgress,
+  resetSkillSyncProgress,
+  resetAgentSyncProgress,
+} from './syncProgress.js'
 import { createEnterpriseApi } from './api/enterprise.js'
 import { createChannelsApi } from './api/channels.js'
 import { getChannelManager } from '../channels/core/ChannelManager.js'
@@ -45,6 +60,7 @@ import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
+import { isVisibleTo } from './visibilityFilter.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -380,6 +396,28 @@ function writeError(
   })
 }
 
+function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const origin = req.headers.origin
+  if (!origin) return false
+
+  res.setHeader('Access-Control-Allow-Origin', origin)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Id')
+  res.setHeader('Access-Control-Allow-Credentials', 'true')
+  res.setHeader('Access-Control-Max-Age', '86400')
+  return true
+}
+
+function handleCorsPreflight(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (req.method === 'OPTIONS' && req.headers.origin) {
+    setCorsHeaders(req, res)
+    res.writeHead(204)
+    res.end()
+    return true
+  }
+  return false
+}
+
 export function startServer(
   config: ServerConfig,
   runtime: RuntimeService,
@@ -430,6 +468,16 @@ export function startServer(
       const pathname = url.pathname
       const isHead = req.method === 'HEAD'
 
+      // Handle CORS preflight for all API routes
+      if (pathname.startsWith('/api/') && handleCorsPreflight(req, res)) {
+        return
+      }
+
+      // Set CORS headers for all API routes (non-preflight)
+      if (pathname.startsWith('/api/')) {
+        setCorsHeaders(req, res)
+      }
+
       if ((req.method === 'GET' || isHead) && pathname === '/') {
         redirect(res, '/admin')
         return
@@ -472,7 +520,6 @@ export function startServer(
             : typeof body.api_key === 'string'
               ? 'api_key'
               : 'password'
-
         if (grantType === 'api_key') {
           writeJson(
             res,
@@ -497,7 +544,35 @@ export function startServer(
           return
         }
 
+        if (grantType === 'refresh_token') {
+          const refreshToken =
+            typeof body.refresh_token === 'string'
+              ? body.refresh_token.trim()
+              : ''
+          if (!refreshToken) {
+            throw new HttpError(400, 'Missing refresh_token')
+          }
+          writeJson(res, 200, authService.refreshToken(refreshToken))
+          return
+        }
+
         throw new HttpError(400, `Unsupported grant_type: ${grantType}`)
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/logout') {
+        const auth = authenticateRequest(req, authService)
+        if (!auth) {
+          throw new HttpError(401, 'Unauthorized')
+        }
+        const accessToken = getBearerToken(req)!
+        const body = await readJsonBody(req).catch(() => ({}))
+        const refreshToken =
+          typeof body.refresh_token === 'string'
+            ? body.refresh_token.trim()
+            : undefined
+        authService.logout(accessToken, refreshToken)
+        writeJson(res, 200, { ok: true })
+        return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/auth/me') {
@@ -1016,7 +1091,9 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
-        writeJson(res, 200, await getInstalledAssistants())
+        const filter = authService.buildVisibilityFilter(auth)
+        const all = await getInstalledAssistants()
+        writeJson(res, 200, all.filter(a => isVisibleTo(a.visibleTo, filter)))
         return
       }
 
@@ -1046,6 +1123,42 @@ export function startServer(
             selectedSkillIds,
           }),
         )
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agents/create') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+
+        const result = await createCustomAssistant({
+          name: typeof body.name === 'string' ? body.name : '',
+          displayName: typeof body.displayName === 'string' ? body.displayName : '',
+          description: typeof body.description === 'string' ? body.description : undefined,
+          avatar: typeof body.avatar === 'string' ? body.avatar : undefined,
+          emoji: typeof body.emoji === 'string' ? body.emoji : undefined,
+          rules: typeof body.rules === 'string' ? body.rules : '',
+          skills: Array.isArray(body.skills)
+            ? body.skills.filter((s): s is string => typeof s === 'string')
+            : undefined,
+          agent_type:
+            body.agent_type === 'chat' || body.agent_type === 'workflow'
+              ? body.agent_type
+              : undefined,
+          memory_mode:
+            body.memory_mode === 'session' || body.memory_mode === 'user'
+              ? body.memory_mode
+              : undefined,
+          visible_to:
+            body.visible_to !== undefined
+              ? (body.visible_to as AssistantStoreMeta['visible_to'])
+              : undefined,
+          workflow:
+            body.workflow !== undefined
+              ? (body.workflow as AssistantStoreMeta['workflow'])
+              : undefined,
+        })
+
+        writeJson(res, 200, { success: true, data: result })
         return
       }
 
@@ -1081,9 +1194,111 @@ export function startServer(
                 : undefined,
             avatar:
               typeof updates.avatar === 'string' ? updates.avatar : undefined,
+            emoji:
+              typeof updates.emoji === 'string' ? updates.emoji : undefined,
+            agent_type:
+              updates.agent_type === 'chat' || updates.agent_type === 'workflow'
+                ? updates.agent_type
+                : undefined,
+            memory_mode:
+              updates.memory_mode === 'session' || updates.memory_mode === 'user'
+                ? updates.memory_mode
+                : undefined,
+            visible_to:
+              updates.visible_to !== undefined
+                ? (updates.visible_to as AssistantStoreMeta['visible_to'])
+                : undefined,
+            workflow:
+              updates.workflow !== undefined
+                ? (updates.workflow as AssistantStoreMeta['workflow'])
+                : undefined,
+            enabledSkills:
+              Array.isArray(updates.enabledSkills)
+                ? updates.enabledSkills.filter((s: unknown) => typeof s === 'string')
+                : undefined,
+            skills:
+              Array.isArray(updates.skills)
+                ? updates.skills.filter((s: unknown) => typeof s === 'string')
+                : undefined,
           },
         })
         writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/agents/visibility') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        await updateInstalledAssistantMeta({
+          assistantName: typeof body.assistantName === 'string' ? body.assistantName : '',
+          updates: { visible_to: (body.visible_to ?? null) as AssistantStoreMeta['visible_to'] },
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/agents/sync-from-hub') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getAgentSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        resetAgentSyncProgress()
+        updateAgentSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncAssistants({
+          onProgress: (processed, total) => {
+            updateAgentSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateAgentSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateAgentSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      // backward compat alias
+      if (req.method === 'POST' && pathname === '/api/v1/agents/sync') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getAgentSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        resetAgentSyncProgress()
+        updateAgentSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncAssistants({
+          onProgress: (processed, total) => {
+            updateAgentSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateAgentSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateAgentSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agents/sync-status') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, getAgentSyncProgress())
         return
       }
 
@@ -1128,7 +1343,9 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
         authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await getInstalledSkills())
+        const filter = authService.buildVisibilityFilter(auth)
+        const all = await getInstalledSkills()
+        writeJson(res, 200, all.filter(s => isVisibleTo(s.visibleTo, filter)))
         return
       }
 
@@ -1221,6 +1438,240 @@ export function startServer(
             entries,
           }),
         )
+        return
+      }
+
+      if (req.method === 'PATCH' && pathname === '/api/v1/skills/visibility') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const skillName =
+          typeof body.skillName === 'string' ? body.skillName : ''
+        const visibleTo = body.visible_to ?? null
+        await setInstalledSkillMeta(skillName, {
+          visible_to: visibleTo as SkillStoreMeta['visible_to'],
+        })
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/skills/sync-from-hub') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getSkillSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        const body = await readJsonBody(req)
+        const tenantId =
+          typeof body.tenantId === 'string' ? body.tenantId : undefined
+        resetSkillSyncProgress()
+        updateSkillSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncSkills({
+          tenantId,
+          onProgress: (processed, total) => {
+            updateSkillSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateSkillSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateSkillSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      // backward compat alias
+      if (req.method === 'POST' && pathname === '/api/v1/skills/sync') {
+        authService.requireScope(auth, 'admin:settings')
+        if (getSkillSyncProgress().status === 'running') {
+          writeJson(res, 409, { error: 'Sync already in progress' })
+          return
+        }
+        const body = await readJsonBody(req)
+        const tenantId =
+          typeof body.tenantId === 'string' ? body.tenantId : undefined
+        resetSkillSyncProgress()
+        updateSkillSyncProgress({ status: 'running', startedAt: Date.now() })
+        batchSyncSkills({
+          tenantId,
+          onProgress: (processed, total) => {
+            updateSkillSyncProgress({ processed, total })
+          },
+        }).then(result => {
+          updateSkillSyncProgress({
+            status: 'done',
+            total: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            processed: result.installed.length + result.updated.length + result.skipped.length + result.failed.length,
+            installed: result.installed.length,
+            updated: result.updated.length,
+            skipped: result.skipped.length,
+            failed: result.failed.length,
+          })
+        }).catch(err => {
+          updateSkillSyncProgress({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+        })
+        writeJson(res, 200, { started: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/skills/sync-status') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, getSkillSyncProgress())
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/all') {
+        authService.requireScope(auth, 'admin:settings')
+        const rows = adaptersApi.listAll(auth.orgId)
+        writeJson(res, 200, rows)
+        return
+      }
+
+      if (pathname === '/api/v1/adapters') {
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+        if (req.method === 'GET') {
+          const result = adaptersApi.list(auth.orgId, targetUserId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          const {
+            platform: rawPlatform,
+            userId: _ignoredUserId,
+            ...patch
+          } = body
+          const platform =
+            rawPlatform === 'feishu' ? 'feishu' : 'telegram'
+          const result = adaptersApi.upsert(
+            auth.orgId,
+            targetUserId,
+            platform,
+            patch as Record<string, unknown>,
+          )
+          if ('error' in result) {
+            writeJson(res, 400, result)
+            return
+          }
+          writeJson(res, 200, result)
+          return
+        }
+        throw new HttpError(405, `Method ${req.method} not allowed`)
+      }
+
+      // PUT /api/v1/adapters/:platform — platform-specific upsert
+      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(telegram|feishu)$/)
+      if (adapterPlatformMatch) {
+        const platform = adapterPlatformMatch[1]!
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+
+        if (req.method === 'GET') {
+          const result = adaptersApi.list(auth.orgId, targetUserId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          const {
+            userId: _ignoredUserId,
+            platform: _ignoredPlatform,
+            ...patch
+          } = body
+          const result = adaptersApi.upsert(
+            auth.orgId,
+            targetUserId,
+            platform,
+            patch as Record<string, unknown>,
+          )
+          if ('error' in result) {
+            writeJson(res, 400, result)
+            return
+          }
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = adaptersApi.remove(auth.orgId, targetUserId, platform)
+          writeJson(res, 200, result)
+          return
+        }
+        throw new HttpError(405, `Method ${req.method} not allowed`)
+      }
+
+      if (pathname === '/api/v1/adapters/processes') {
+        const targetUserId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          url.searchParams.get('userId'),
+        )
+        writeJson(
+          res,
+          200,
+          listAdapterProcessStatusesForUser(auth.orgId, targetUserId),
+        )
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/restart' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.restart(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/start' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.start(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (pathname === '/api/v1/adapters/processes/stop' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
+        const userId = resolveAdapterTargetUserId(
+          auth,
+          authService,
+          typeof body.userId === 'string' ? body.userId : undefined,
+        )
+        if (adapter !== 'telegram' && adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        }
+        await adapterProcessManager.stop(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        writeJson(res, 200, { ok: true })
         return
       }
 
@@ -1410,8 +1861,27 @@ export function startServer(
     void (async () => {
       try {
         process.stderr.write(`[WS Upgrade] Incoming request: ${req.url}\n`)
-        const token = getBearerToken(req)
-        const auth = authenticateRequest(req, authService)
+        let token = getBearerToken(req)
+        let auth = token ? authService.verifyAccessToken(token) : null
+
+        // If access_token is expired, try refreshing with refresh_token from query param
+        if (token && !auth) {
+          const url = new URL(req.url || '/', 'http://localhost')
+          const refreshToken = url.searchParams.get('refresh_token')
+          if (refreshToken) {
+            try {
+              const refreshed = authService.refreshToken(refreshToken)
+              auth = authService.verifyAccessToken(refreshed.access_token)
+              if (auth) {
+                token = refreshed.access_token
+                process.stderr.write(`[WS Upgrade] Token refreshed successfully for user: ${auth.userId}\n`)
+              }
+            } catch (refreshError) {
+              process.stderr.write(`[WS Upgrade] Token refresh failed: ${refreshError}\n`)
+            }
+          }
+        }
+
         if (!auth) {
           process.stderr.write(`[WS Upgrade Auth Failed v2] Token: ${token ? (token.slice(0, 10) + '...') : 'MISSING'}, URL: ${req.url}\n`)
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')

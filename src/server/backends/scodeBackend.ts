@@ -4,6 +4,7 @@ import {
   resolveScodeCliPath,
 } from './backendUtils.js'
 import { createAcpBridgeHandle } from './acpBridge.js'
+import { syncAllBridgesAsync } from '../../utils/scodeBridge.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -12,6 +13,13 @@ import type {
 
 export class ScodeBackend implements SessionBackend {
   async spawn(options: BackendSpawnOptions): Promise<BackendHandle> {
+    // Sync skill/agent bridges so scode can discover Moss-installed skills
+    try {
+      await syncAllBridgesAsync(options.runtime?.configDir)
+    } catch (bridgeErr) {
+      process.stderr.write(`[ScodeBackend] scode bridge sync warning: ${bridgeErr}\n`)
+    }
+
     const scodePath = resolveScodeCliPath(options.runtime?.scodePath)
     const env = buildSessionEnv(options)
 

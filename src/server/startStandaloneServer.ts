@@ -7,6 +7,7 @@ import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
 import { enableConfigs } from '../utils/config.js'
+import { initHubConfig } from './hubConfig.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -23,6 +24,10 @@ export async function startStandaloneDirectConnectServer(
   stop: () => Promise<void>
 }> {
   enableConfigs()
+  initHubConfig({
+    hubApiBaseUrl: config.hubApiBaseUrl,
+    hubAuthorization: config.hubAuthorization,
+  })
   await ensureServerDirectories(config)
   const store = openDirectConnectStore(config)
   const { service: authService, bootstrap } = await createAuthService({
@@ -65,6 +70,7 @@ export async function startStandaloneDirectConnectServer(
     if (stopped) return
     stopped = true
     clearInterval(heartbeatTimer)
+    authService.destroy()
     await server.stop()
     store.stopServerInstance(instance.instanceId)
     store.close()

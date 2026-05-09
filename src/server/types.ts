@@ -116,6 +116,10 @@ export const serverFileConfigSchema = lazySchema(() =>
     }).default({
       level: 'info',
     }),
+    hub: z.object({
+      apiBaseUrl: z.string().optional(),
+      authorization: z.string().optional(),
+    }).default({}),
   }),
 )
 
@@ -153,6 +157,8 @@ export type ServerConfig = {
   resumeOnMissingRuntime: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   auditFile?: string
+  hubApiBaseUrl?: string
+  hubAuthorization?: string
 }
 
 export type SessionStatus =

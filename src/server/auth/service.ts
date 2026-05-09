@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { hasScope, issueAccessToken, verifyAccessToken, type AuthContext } from './token.js'
+import { buildVisibilityFilter, getUserAncestorIds } from '../visibilityFilter.js'
 import {
   AuthCenterDb,
   type AuthCenterApiKey,
@@ -91,14 +92,77 @@ export async function createAuthService(
   }
 }
 
+const REVOKED_TOKENS_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+
 export class AuthService {
+  private readonly cleanupTimer: ReturnType<typeof setInterval>
+
   constructor(
     private readonly db: AuthCenterDb,
     private readonly tokenTtlSec: number,
-  ) {}
+  ) {
+    this.cleanupTimer = setInterval(() => {
+      this.db.cleanupExpiredRevokedTokens()
+    }, REVOKED_TOKENS_CLEANUP_INTERVAL_MS)
+    this.cleanupTimer.unref?.()
+  }
+
+  destroy(): void {
+    clearInterval(this.cleanupTimer)
+  }
 
   verifyAccessToken(token: string): AuthContext | null {
-    return verifyAccessToken(token, this.db.getJwtSecret(), this.db.getIssuer())
+    const auth = verifyAccessToken(token, this.db.getJwtSecret(), this.db.getIssuer())
+    if (!auth) {
+      return null
+    }
+    if (this.db.isTokenRevoked(auth.jti)) {
+      return null
+    }
+    return auth
+  }
+
+  logout(accessToken: string, refreshToken?: string): void {
+    const access = verifyAccessToken(accessToken, this.db.getJwtSecret(), this.db.getIssuer(), 'access')
+    if (access) {
+      this.db.revokeToken(access.jti, access.exp)
+    }
+
+    if (refreshToken) {
+      const refresh = verifyAccessToken(refreshToken, this.db.getJwtSecret(), this.db.getIssuer(), 'refresh')
+      if (refresh) {
+        this.db.revokeToken(refresh.jti, refresh.exp)
+      }
+    }
+
+    this.db.cleanupExpiredRevokedTokens()
+  }
+
+  refreshToken(token: string): {
+    access_token: string
+    refresh_token: string
+    token_type: 'Bearer'
+    expires_in: number
+    user: SanitizedAuthCenterUser
+    organization: { id: string; name: string; createdAt: number } | null
+    scopes: string[]
+  } {
+    
+    const auth = verifyAccessToken(token, this.db.getJwtSecret(), this.db.getIssuer(), 'refresh')
+    if (!auth || this.db.isTokenRevoked(auth.jti)) {
+      throw new AuthServiceError(401, 'Invalid refresh token')
+    }
+
+    const user = this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
+    if (!user || user.status !== 'active') {
+      throw new AuthServiceError(401, 'User is invalid')
+    }
+
+    return this.issueToken({
+      user,
+      scopes: auth.scopes,
+      keyId: auth.keyId,
+    })
   }
 
   introspect(token: string): {
@@ -129,6 +193,7 @@ export class AuthService {
     password: string
   }): {
     access_token: string
+    refresh_token: string
     token_type: 'Bearer'
     expires_in: number
     user: SanitizedAuthCenterUser
@@ -162,6 +227,7 @@ export class AuthService {
 
   issueTokenFromApiKey(apiKeyValue: string): {
     access_token: string
+    refresh_token: string
     token_type: 'Bearer'
     expires_in: number
     user: SanitizedAuthCenterUser
@@ -725,13 +791,14 @@ export class AuthService {
     keyId: string
   }): {
     access_token: string
+    refresh_token: string
     token_type: 'Bearer'
     expires_in: number
     user: SanitizedAuthCenterUser
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
-    const issued = issueAccessToken(
+    const access = issueAccessToken(
       {
         iss: this.db.getIssuer(),
         sub: input.user.id,
@@ -742,12 +809,28 @@ export class AuthService {
       },
       this.db.getJwtSecret(),
       this.tokenTtlSec,
+      'access',
+    )
+
+    const refresh = issueAccessToken(
+      {
+        iss: this.db.getIssuer(),
+        sub: input.user.id,
+        org_id: input.user.orgId,
+        role: input.user.role,
+        scopes: input.scopes,
+        key_id: input.keyId,
+      },
+      this.db.getJwtSecret(),
+      7 * 24 * 60 * 60, // 7 days
+      'refresh',
     )
 
     return {
-      access_token: issued.token,
+      access_token: access.token,
+      refresh_token: refresh.token,
       token_type: 'Bearer',
-      expires_in: issued.expiresAt - Math.floor(Date.now() / 1000),
+      expires_in: access.expiresAt - Math.floor(Date.now() / 1000),
       user: sanitizeUser(input.user),
       organization: this.db.getOrganization(input.user.orgId),
       scopes: input.scopes,
@@ -970,5 +1053,24 @@ export class AuthService {
       userLimit: user.tokenLimit ?? null,
       departmentLimit,
     }
+  }
+
+  buildVisibilityFilter(auth: AuthContext): import('../visibilityFilter.js').VisibilityFilter {
+    return buildVisibilityFilter(
+      auth,
+      (userId, orgId) => this.db.getUserByIdAndOrg(userId, orgId),
+      (orgId) => this.db.listDepartmentsByOrg(orgId),
+    )
+  }
+
+  getUserDepartmentAncestorIds(userId: string, orgId: string): Set<string> | null {
+    const user = this.db.getUserByIdAndOrg(userId, orgId)
+    if (!user || user.role === 'admin') return null
+    return getUserAncestorIds(
+      userId,
+      orgId,
+      (uid, oid) => this.db.getUserByIdAndOrg(uid, oid),
+      (oid) => this.db.listDepartmentsByOrg(oid),
+    )
   }
 }
