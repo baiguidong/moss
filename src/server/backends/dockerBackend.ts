@@ -154,6 +154,9 @@ export class DockerBackend implements SessionBackend {
     }
 
     const args = ['run', '--rm', '-i', '--name', containerName]
+    // Add security options to allow Tokio runtime to spawn threads
+    // Without this, scode fails with "OS can't spawn worker thread: Operation not permitted"
+    args.push('--security-opt', 'seccomp=unconfined')
     const dockerUser = resolveDockerUser()
     if (dockerUser) {
       args.push('--user', dockerUser)
