@@ -17,27 +17,19 @@ import {
   SKILL_HUB_META_FILE,
   USER_SKILLS_DIR,
 } from '../utils/skills/localSkillDirectories.js'
+import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
-const HUB_AUTHORIZATION =
-  String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
-
-function normalizeHubApiBaseUrl(rawValue: unknown): string {
-  const trimmed = String(rawValue || '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!trimmed) return ''
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`
+function getHubCategoriesUrl(): string {
+  return `${getHubApiBaseUrl()}/categories`
 }
 
-const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
-  process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
-)
+function getSkillHubBaseUrl(): string {
+  return `${getHubApiBaseUrl()}/skills`
+}
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const SKILL_HUB_BASE_URL = `${HUB_API_BASE_URL}/skills`
-const SKILL_HUB_CURSOR_URL = `${SKILL_HUB_BASE_URL}/cursor`
+function getSkillHubCursorUrl(): string {
+  return `${getSkillHubBaseUrl()}/cursor`
+}
 
 export type SkillHubVersion = {
   version: string
@@ -87,6 +79,7 @@ export type SkillStoreMeta = {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
+  visible_to?: { department_ids: string[] | null } | null
   [key: string]: unknown
 }
 
@@ -106,6 +99,7 @@ export type InstalledSkillInfo = {
   enabled: boolean
   source: string
   meta: SkillStoreMeta | null
+  visibleTo: { department_ids: string[] | null } | null
 }
 
 export type FetchSkillHubSkillsParams = {
@@ -185,7 +179,7 @@ function parseStringArray(value: unknown): string[] {
 async function fetchJson(url: string): Promise<unknown> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
     },
   })
   if (!response.ok) {
@@ -213,7 +207,7 @@ function unwrapHubResponse(result: unknown): Record<string, unknown> {
 async function downloadFileBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url, {
     headers: {
-      Authorization: HUB_AUTHORIZATION,
+      Authorization: getHubAuthorization(),
       'User-Agent': 'Moss-SkillStore/1.0',
     },
   })
@@ -420,6 +414,7 @@ function toInstalledSkillInfo(params: {
     enabled: meta?.enabled !== false,
     source: skillDir,
     meta,
+    visibleTo: meta?.visible_to ?? null,
   }
 }
 
@@ -661,7 +656,7 @@ export async function fetchSkillHubSkills(
     searchParams.set('tenant_id', params.tenantId.trim())
   }
 
-  const result = await fetchJson(`${SKILL_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(`${getSkillHubCursorUrl()}?${searchParams}`)
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : {}
 
@@ -678,7 +673,7 @@ export async function fetchSkillHubSkills(
 }
 
 export async function fetchSkillHubCategories(): Promise<string[]> {
-  const result = await fetchJson(HUB_CATEGORIES_URL)
+  const result = await fetchJson(getHubCategoriesUrl())
   const categories = unwrapHubResponse(result).data
   return Array.isArray(categories)
     ? categories.filter((item): item is string => typeof item === 'string')
@@ -688,7 +683,7 @@ export async function fetchSkillHubCategories(): Promise<string[]> {
 export async function fetchSkillHubSkillDetail(
   skillId: string,
 ): Promise<SkillHubDetail | null> {
-  const result = await fetchJson(`${SKILL_HUB_BASE_URL}/${encodeURIComponent(skillId)}`)
+  const result = await fetchJson(`${getSkillHubBaseUrl()}/${encodeURIComponent(skillId)}`)
   const unwrapped = unwrapHubResponse(result)
   if (!isRecord(unwrapped.data)) {
     return null
@@ -888,4 +883,110 @@ export async function setInstalledSkillEnabled(params: {
   } catch (bridgeErr) {
     console.warn(`[SkillStore] scode bridge sync after toggle failed: ${bridgeErr}`)
   }
+}
+
+export async function batchSyncSkills(params?: {
+  tenantId?: string
+  onProgress?: (processed: number, total: number) => void
+}): Promise<{
+  installed: Array<{ skillName: string; version: string }>
+  updated: Array<{ skillName: string; version: string }>
+  skipped: Array<{ skillName: string; reason: string }>
+  failed: Array<{ skillName: string; error: string }>
+}> {
+  const installed: Array<{ skillName: string; version: string }> = []
+  const updated: Array<{ skillName: string; version: string }> = []
+  const skipped: Array<{ skillName: string; reason: string }> = []
+  const failed: Array<{ skillName: string; error: string }> = []
+
+  const installedSkills = await getInstalledSkills()
+  const byName = new Map(installedSkills.map(s => [s.name, s]))
+
+  const allHubSkills: SkillHubSkill[] = []
+  let cursor: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const page = await fetchSkillHubSkills({
+      cursor,
+      limit: 100,
+      tenantId: params?.tenantId,
+    })
+    allHubSkills.push(...page.skills)
+    cursor = page.next_cursor ?? undefined
+    hasMore = page.has_more
+  }
+
+  const total = allHubSkills.length
+  let processed = 0
+
+  for (const hubSkill of allHubSkills) {
+    try {
+      const detail = await fetchSkillHubSkillDetail(hubSkill.id)
+      const latest = detail?.versions?.[0]
+      if (!latest?.source_url) {
+        skipped.push({ skillName: hubSkill.name, reason: 'no download URL' })
+        continue
+      }
+      const existing = byName.get(hubSkill.name)
+      if (existing) {
+        const curVer = normalizeSkillVersion(existing.version)
+        if (curVer && curVer === latest.version) {
+          skipped.push({
+            skillName: hubSkill.name,
+            reason: 'already up to date',
+          })
+          continue
+        }
+        await installHubSkill({
+          skillName: hubSkill.name,
+          sourceUrl: latest.source_url,
+          version: latest.version,
+          checksum: latest.checksum,
+          skillMeta: hubSkill,
+        })
+        updated.push({ skillName: hubSkill.name, version: latest.version })
+      } else {
+        await installHubSkill({
+          skillName: hubSkill.name,
+          sourceUrl: latest.source_url,
+          version: latest.version,
+          checksum: latest.checksum,
+          skillMeta: hubSkill,
+        })
+        installed.push({ skillName: hubSkill.name, version: latest.version })
+      }
+    } catch (error) {
+      failed.push({
+        skillName: hubSkill.name,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    processed++
+    params?.onProgress?.(processed, total)
+  }
+
+  return { installed, updated, skipped, failed }
+}
+
+export async function setInstalledSkillMeta(
+  skillName: string,
+  updates: Partial<
+    Pick<SkillStoreMeta, 'visible_to'>
+  >,
+): Promise<void> {
+  const sourcePath = await findInstalledSkillPath(skillName)
+  if (!sourcePath) {
+    throw new Error(`Skill not found: ${skillName}`)
+  }
+
+  const meta = await readSkillMeta(sourcePath)
+  if (!meta) {
+    throw new Error(`Skill metadata not found: ${skillName}`)
+  }
+
+  if (updates.visible_to !== undefined) {
+    meta.visible_to = updates.visible_to
+  }
+
+  await writeSkillMeta(sourcePath, meta)
 }

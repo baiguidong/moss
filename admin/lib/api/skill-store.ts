@@ -56,6 +56,7 @@ export interface InstalledSkillMeta {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
+  visible_to?: { department_ids: string[] | null } | null
   [key: string]: unknown
 }
 
@@ -75,6 +76,7 @@ export interface InstalledSkillInfo {
   enabled: boolean
   source: string
   meta: InstalledSkillMeta | null
+  visibleTo: { department_ids: string[] | null } | null
 }
 
 export interface InstallSkillRequest {
@@ -176,4 +178,43 @@ export function importSkillDirectory(data: {
     '/api/v1/skills/import/directory',
     data,
   )
+}
+
+export interface BatchSyncResult {
+  installed: Array<{ skillName: string; version: string }>
+  updated: Array<{ skillName: string; version: string }>
+  skipped: Array<{ skillName: string; reason: string }>
+  failed: Array<{ skillName: string; error: string }>
+}
+
+export function batchSyncSkills(tenantId?: string): Promise<{ started: boolean }> {
+  return authClient.post<{ started: boolean }>('/api/v1/skills/sync-from-hub', {
+    tenantId: tenantId || undefined,
+  })
+}
+
+export interface SkillSyncProgress {
+  status: 'idle' | 'running' | 'done' | 'error'
+  total: number
+  processed: number
+  installed: number
+  updated: number
+  skipped: number
+  failed: number
+  error?: string
+  startedAt: number
+}
+
+export function getSkillSyncStatus(): Promise<SkillSyncProgress> {
+  return authClient.get<SkillSyncProgress>('/api/v1/skills/sync-status')
+}
+
+export function updateSkillVisibility(
+  skillName: string,
+  visible_to: { department_ids: string[] | null } | null,
+): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>('/api/v1/skills/visibility', {
+    skillName,
+    visible_to,
+  })
 }
