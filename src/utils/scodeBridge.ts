@@ -1,15 +1,5 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readlinkSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from 'fs'
+import { lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
+import { mkdir, readdir, lstat, readlink, rm, symlink } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import {
@@ -26,6 +16,252 @@ import {
   ASSISTANT_SEARCH_DIRS,
   ASSISTANT_META_FILE,
 } from '../server/agentStore.js'
+
+// ============================================================================
+// 工作空间技能同步函数 (新方案)
+// ============================================================================
+
+/**
+ * 解析工作空间技能目录路径
+ *
+ * @param workspace - 工作空间路径
+ * @returns 工作空间技能目录路径
+ */
+export function resolveWorkspaceSkillsDir(workspace: string): string {
+  return path.join(workspace, '.nexus', 'sudocode', 'skills')
+}
+
+/**
+ * 同步技能到工作空间目录
+ *
+ * 将全局安装的技能通过符号链接同步到工作空间的 .nexus/sudocode/skills/ 目录
+ *
+ * @param workspace - 工作空间路径
+ * @param enabledSkillNames - 可选，只同步指定的技能名称列表
+ */
+export async function syncWorkspaceSkills(
+  workspace: string,
+  enabledSkillNames?: string[]
+): Promise<void> {
+  const workspaceSkillsDir = resolveWorkspaceSkillsDir(workspace)
+  await mkdir(workspaceSkillsDir, { recursive: true })
+
+  // 获取所有技能源目录
+  const skillSourceDirs = [
+    MOSS_SKILLS_HUB_DIR,
+    MOSS_SKILLS_SYSTEM_DIR,
+    MOSS_SKILLS_CUSTOM_DIR,
+    USER_SKILLS_DIR,
+  ]
+
+  // 收集所有启用的技能
+  const skillTargets = new Map<string, string>() // skillName -> sourcePath
+
+  for (const sourceDir of skillSourceDirs) {
+    try {
+      const entries = await readdir(sourceDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+
+        const skillName = entry.name
+        const skillSourcePath = path.join(sourceDir, skillName)
+
+        // 检查是否有 SKILL.md
+        try {
+          await lstat(path.join(skillSourcePath, 'SKILL.md'))
+        } catch {
+          continue // 没有 SKILL.md，跳过
+        }
+
+        // 如果指定了启用列表，只同步列表中的技能
+        if (enabledSkillNames && !enabledSkillNames.includes(skillName)) {
+          continue
+        }
+
+        // 检查技能是否启用
+        if (!isSkillEnabledSync(skillSourcePath)) {
+          continue
+        }
+
+        // custom 优先级最高，然后是 hub，最后是 system
+        if (!skillTargets.has(skillName) || sourceDir === MOSS_SKILLS_CUSTOM_DIR) {
+          skillTargets.set(skillName, skillSourcePath)
+        }
+      }
+    } catch {
+      // 目录不存在，跳过
+    }
+  }
+
+  // 清理旧的符号链接
+  const existingEntries = await readdir(workspaceSkillsDir, { withFileTypes: true }).catch(() => [])
+  for (const entry of existingEntries) {
+    const entryPath = path.join(workspaceSkillsDir, entry.name)
+
+    // 只清理符号链接
+    try {
+      const stat = await lstat(entryPath)
+      if (stat.isSymbolicLink()) {
+        // 检查目标是否还在预期列表中
+        if (!skillTargets.has(entry.name)) {
+          await rm(entryPath, { force: true })
+        } else {
+          // 检查链接目标是否正确
+          const currentTarget = await readlink(entryPath)
+          const resolvedTarget = path.resolve(path.dirname(entryPath), currentTarget)
+          const expectedTarget = skillTargets.get(entry.name)
+
+          if (resolvedTarget !== expectedTarget) {
+            await rm(entryPath, { force: true })
+          } else {
+            // 链接正确，从待创建列表中移除
+            skillTargets.delete(entry.name)
+          }
+        }
+      }
+    } catch {
+      // 忽略错误
+    }
+  }
+
+  // 创建新的符号链接
+  for (const [skillName, sourcePath] of skillTargets) {
+    const linkPath = path.join(workspaceSkillsDir, skillName)
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+
+    try {
+      await symlink(sourcePath, linkPath, linkType)
+    } catch (err) {
+      console.warn(`[scodeBridge] Failed to create symlink for skill "${skillName}":`, err)
+    }
+  }
+}
+
+/**
+ * 检查技能是否启用（同步版本）
+ */
+function isSkillEnabledSync(skillDir: string): boolean {
+  const metaPath = path.join(skillDir, SKILL_HUB_META_FILE)
+  try {
+    const content = readFileSync(metaPath, 'utf8')
+    const meta = JSON.parse(content)
+    return meta.enabled !== false
+  } catch {
+    return true // 默认启用
+  }
+}
+
+// ============================================================================
+// 首次消息注入函数 (新方案)
+// ============================================================================
+
+/**
+ * 构建首次消息内容，注入技能和智能体信息
+ */
+export async function prepareFirstMessageForScode(
+  userContent: string,
+  config: {
+    assistantName?: string | null
+    workspace: string
+    enabledSkillNames?: string[]
+  }
+): Promise<string> {
+  const instructions: string[] = []
+
+  // 1. 加载智能体规则（如果有）
+  if (config.assistantName) {
+    const assistantRules = await loadAssistantRules(config.assistantName)
+    if (assistantRules) {
+      const identityBlock = buildIdentityBlock(config.assistantName)
+      instructions.push(identityBlock)
+      instructions.push(assistantRules)
+    }
+  }
+
+  // 2. 构建工作空间技能目录提示
+  const skillsHint = await buildWorkspaceSkillsHint(config.workspace, config.enabledSkillNames)
+  if (skillsHint) {
+    instructions.push(skillsHint)
+  }
+
+  if (instructions.length === 0) {
+    return userContent
+  }
+
+  const systemInstructions = instructions.join('\n\n')
+  return `[Assistant Rules - You MUST follow these instructions]\n${systemInstructions}\n\n[User Request]\n${userContent}`
+}
+
+/**
+ * 构建身份覆盖块
+ */
+export function buildIdentityBlock(assistantName: string): string {
+  return `[Identity Override - 最高优先级]
+你的身份是：${assistantName}
+当用户询问"你是谁"或类似身份问题时，必须回答："我是${assistantName}，有什么可以帮助你的吗？"
+此身份声明优先级高于默认身份声明。
+
+`
+}
+
+/**
+ * 构建工作空间技能目录提示
+ */
+async function buildWorkspaceSkillsHint(
+  workspace: string,
+  enabledSkillNames?: string[]
+): Promise<string> {
+  const workspaceSkillsDir = resolveWorkspaceSkillsDir(workspace)
+
+  // 获取工作空间中已链接的技能
+  let linkedSkills: string[] = []
+  try {
+    const entries = await readdir(workspaceSkillsDir, { withFileTypes: true })
+    linkedSkills = entries
+      .filter(e => e.isSymbolicLink() || e.isDirectory())
+      .map(e => e.name)
+      .sort()
+  } catch {
+    // 目录不存在或无法读取
+  }
+
+  if (linkedSkills.length === 0) {
+    return ''
+  }
+
+  // 获取技能描述
+  const { getInstalledSkills } = await import('../server/skillStore.js')
+  const installedSkills = await getInstalledSkills()
+  const skillDescMap = new Map(installedSkills.map(s => [s.name, s.description]))
+
+  const skillLines = linkedSkills.map(name => {
+    const desc = skillDescMap.get(name)
+    return desc
+      ? `- **${name}** (${desc}): ${workspaceSkillsDir}/${name}/SKILL.md`
+      : `- **${name}**: ${workspaceSkillsDir}/${name}/SKILL.md`
+  })
+
+  return `[Skills Directory]
+Skills are installed at: ${workspaceSkillsDir}
+Each skill has a SKILL.md file containing detailed instructions. When a user request matches a skill's description, you MUST read that skill's SKILL.md and follow its instructions INSTEAD OF using any native tool for that capability.
+
+Available workspace skills:
+${skillLines.join('\n')}
+
+When skill instructions reference relative paths like "skills/{name}/scripts/...", resolve them as "${workspaceSkillsDir}/{name}/scripts/...".`
+}
+
+/**
+ * 加载智能体规则
+ */
+async function loadAssistantRules(assistantName: string): Promise<string | null> {
+  const { getAssistantSystemPrompt } = await import('../server/agentStore.js')
+  return await getAssistantSystemPrompt(assistantName)
+}
+
+// ============================================================================
+// 旧方案函数 (将被废弃，暂时保留以兼容)
+// ============================================================================
 
 function getNexusSudocodeDir(configDir?: string): string {
   if (configDir) {
@@ -222,6 +458,9 @@ const SKILL_SEARCH_DIRS = [
   USER_SKILLS_DIR,
 ]
 
+/**
+ * @deprecated 使用 syncWorkspaceSkills 替代
+ */
 export function bridgeSkill(
   skillName: string,
   sourcePath: string,
@@ -265,8 +504,9 @@ export function bridgeSkill(
   symlinkSync(sourcePath, linkPath)
 }
 
-
-
+/**
+ * @deprecated 使用 syncWorkspaceSkills 替代
+ */
 export function unbridgeSkill(skillName: string, configDir?: string): void {
   const bridgeDir = getSkillBridgeDir(configDir)
   const linkPath = path.join(bridgeDir, skillName)
@@ -283,6 +523,9 @@ export function unbridgeSkill(skillName: string, configDir?: string): void {
   }
 }
 
+/**
+ * @deprecated 不再需要，智能体规则通过首次消息注入
+ */
 export function bridgeAgent(
   assistantName: string,
   sourcePath: string,
@@ -306,6 +549,9 @@ export function bridgeAgent(
   writeFileSync(tomlPath, tomlContent, 'utf8')
 }
 
+/**
+ * @deprecated 不再需要
+ */
 export function unbridgeAgent(assistantName: string, configDir?: string): void {
   const bridgeDir = getAgentBridgeDir(configDir)
   const tomlPath = path.join(bridgeDir, `${assistantName}.toml`)
@@ -319,30 +565,53 @@ export function unbridgeAgent(assistantName: string, configDir?: string): void {
   }
 }
 
+/**
+ * @deprecated 使用 prepareFirstMessageForScode 替代
+ */
 export async function refreshInstructionsFile(configDir?: string): Promise<void> {
   const {
     getInstalledSkills,
   } = await import('../server/skillStore.js')
   const {
     getAssistantSystemPrompt,
+    getInstalledAssistants,
   } = await import('../server/agentStore.js')
 
   const installedSkills = await getInstalledSkills()
   const enabledSkills = installedSkills.filter(s => s.enabled)
 
+  const installedAssistants = await getInstalledAssistants()
+  const enabledAssistants = installedAssistants.filter(a => a.enabled)
+
   const lines: string[] = []
+
+  if (enabledAssistants.length > 0) {
+    lines.push('# Moss 已安装 Agent')
+    lines.push(
+      `调用方式：使用 Agent 工具，在 subagent_type 参数中指定标识符。需复杂规划、架构设计时主动委托给对应的智能体。`,
+    )
+    lines.push('')
+    const agentItems = enabledAssistants.map(agent => {
+      // 截短描述，避免超出 scode 的 4000 字符限制
+      let desc = agent.description ? ` — ${agent.description}` : ''
+      if (desc.length > 50) desc = desc.substring(0, 47) + '...'
+      return `- **${agent.name}**${desc}`
+    })
+    lines.push(agentItems.join('\n'))
+    lines.push('')
+  }
 
   if (enabledSkills.length > 0) {
     lines.push('# Moss 已安装技能')
-    lines.push('')
     lines.push(
-      '以下技能可通过 Skill 工具调用：使用 Skill("技能名") 或 /技能名',
+      `调用方式：Skill("技能名")。当用户需求匹配时主动调用。使用 Skill 工具或执行 /skills 命令可查详情。`,
     )
     lines.push('')
-    for (const skill of enabledSkills) {
-      const desc = skill.description ? ` - ${skill.description}` : ''
-      lines.push(`- **${skill.name}**${desc}`)
-    }
+
+    // 由于 scode 限制 instruction files 最大 4000 字符，我们要非常精简
+    const skillNames = enabledSkills.map(s => s.name)
+    lines.push('可用技能列表（仅名称）：')
+    lines.push(skillNames.join(', '))
     lines.push('')
   }
 
@@ -375,6 +644,9 @@ export async function refreshInstructionsFile(configDir?: string): Promise<void>
   }
 }
 
+/**
+ * @deprecated 使用 syncWorkspaceSkills 替代
+ */
 export function syncAllSkillBridges(configDir?: string): void {
   const bridgeDir = getSkillBridgeDir(configDir)
   ensureDir(bridgeDir)
@@ -437,6 +709,9 @@ export function syncAllSkillBridges(configDir?: string): void {
   }
 }
 
+/**
+ * @deprecated 不再需要，智能体规则通过首次消息注入
+ */
 export function syncAllAgentBridges(configDir?: string): void {
   const bridgeDir = getAgentBridgeDir(configDir)
   ensureDir(bridgeDir)
@@ -494,15 +769,153 @@ export function syncAllAgentBridges(configDir?: string): void {
   }
 }
 
+/**
+ * @deprecated 使用 syncWorkspaceSkills 替代
+ */
 export function syncAllBridges(configDir?: string): void {
   syncAllSkillBridges(configDir)
   syncAllAgentBridges(configDir)
-  // refreshInstructionsFile is async, but we need to call it for the initial sync
-  // It will be called separately or via the async version below
 }
 
+/**
+ * @deprecated 使用 syncWorkspaceSkills 替代
+ */
 export async function syncAllBridgesAsync(configDir?: string): Promise<void> {
   syncAllSkillBridges(configDir)
   syncAllAgentBridges(configDir)
   await refreshInstructionsFile(configDir)
+  await writeMcpServersToConfig(configDir)
+}
+
+/**
+ * @deprecated 不再需要，MCP 服务器通过首次消息注入路径提示
+ */
+export async function writeMcpServersToConfig(configDir?: string): Promise<void> {
+  const { getInstalledSkills } = await import('../server/skillStore.js')
+  const installedSkills = await getInstalledSkills()
+  const enabledSkills = installedSkills.filter(s => s.enabled)
+
+  const nexusDir = getNexusSudocodeDir(configDir)
+  ensureDir(nexusDir)
+  const settingsPath = path.join(nexusDir, 'settings.json')
+
+  // Read existing settings if present
+  let existingSettings: Record<string, any> = {}
+  try {
+    const content = readFileSync(settingsPath, 'utf8')
+    existingSettings = JSON.parse(content)
+  } catch {
+    // File doesn't exist or invalid JSON, start fresh
+  }
+
+  // Build mcpServers object for Scode config
+  const mcpServers: Record<string, any> = {}
+  for (const skill of enabledSkills) {
+    mcpServers[skill.name] = {
+      command: skill.source,
+      args: [],
+      env: {}
+    }
+  }
+
+  // Merge with existing settings
+  const newSettings = {
+    ...existingSettings,
+    mcpServers
+  }
+
+  writeFileSync(settingsPath, JSON.stringify(newSettings, null, 2), 'utf8')
+}
+
+/**
+ * @deprecated 不再需要，通过首次消息注入路径提示
+ */
+export async function buildDynamicMcpServers(): Promise<any[]> {
+  const { getInstalledSkills } = await import('../server/skillStore.js')
+  const installedSkills = await getInstalledSkills()
+  const enabledSkills = installedSkills.filter(s => s.enabled)
+
+  const mcpServers: any[] = []
+
+  for (const skill of enabledSkills) {
+    mcpServers.push({
+      name: skill.name,
+      command: skill.source,
+      args: [],
+      env: []
+    })
+  }
+
+  return mcpServers
+}
+
+/**
+ * @deprecated 不再需要，通过首次消息注入
+ */
+export async function buildDynamicAgents(): Promise<any[]> {
+  const { getInstalledAssistants, getAssistantSystemPrompt } = await import('../server/agentStore.js')
+  const installedAssistants = await getInstalledAssistants()
+  const enabledAssistants = installedAssistants.filter(a => a.enabled)
+
+  const agents: any[] = []
+
+  for (const agent of enabledAssistants) {
+    const prompt = await getAssistantSystemPrompt(agent.name)
+    agents.push({
+      name: agent.name,
+      displayName: agent.displayName || agent.name,
+      description: agent.description || '',
+      instructions: prompt || '',
+      model: agent.meta?.model || '',
+      mcpServers: agent.meta?.enabledSkills || [],
+      enabled: true
+    })
+  }
+
+  return agents
+}
+
+/**
+ * @deprecated 使用 prepareFirstMessageForScode 替代
+ */
+export async function buildDynamicInstructions(mcpServers: any[], agents: any[], currentAssistantName: string | null): Promise<string> {
+  const lines: string[] = []
+
+  if (agents.length > 0) {
+    lines.push('# Moss 已安装 Agent')
+    lines.push('调用方式：使用 Agent 工具，在 subagent_type 参数中指定标识符。需复杂规划、架构设计时主动委托给对应的智能体。\n')
+    lines.push(agents.map(a => `- **${a.name}** — ${a.description.substring(0, 50)}`).join('\n'))
+    lines.push('')
+  }
+
+  if (mcpServers.length > 0) {
+    lines.push('# Moss 已安装技能')
+    lines.push('调用方式：Skill("技能名")。当用户需求匹配时主动调用。使用 Skill 工具或执行 /skills 命令可查详情。\n')
+    lines.push('可用技能列表（仅名称）：')
+    lines.push(mcpServers.map(s => s.name).join(', '))
+    lines.push('')
+  }
+
+  if (currentAssistantName) {
+    const agent = agents.find(a => a.name === currentAssistantName)
+    if (agent && agent.instructions) {
+      lines.push('# 当前智能体指令\n')
+      lines.push(`你正在使用 **${currentAssistantName}** 智能体。请遵循以下指令：\n`)
+      lines.push(agent.instructions)
+      lines.push('')
+    }
+  }
+
+  const fullText = lines.join('\n')
+  return fullText.length > 3900 ? fullText.substring(0, 3900) + '... (truncated)' : fullText
+}
+
+// Helper to check if path exists (avoiding fs/promises for sync operations)
+function existsSync(p: string): boolean {
+  try {
+    lstatSync(p)
+    return true
+  } catch {
+    return false
+  }
 }

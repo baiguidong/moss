@@ -5,7 +5,7 @@ import os from 'os'
 import { join } from 'path'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
-import { syncAllBridgesAsync } from '../../utils/scodeBridge.js'
+import { syncWorkspaceSkills } from '../../utils/scodeBridge.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -78,11 +78,16 @@ export class DockerBackend implements SessionBackend {
     const scodePath = '/usr/local/bin/scode'
 
     const safeCwd = options.cwd === '/' ? os.homedir() : options.cwd
-    const mounts = uniqueMounts([
-      safeCwd,
-      configDir,
-      MOSS_HOME,
-    ]).filter(p => p !== '/')
+
+    // 同步技能到工作空间目录（新方案）
+    // 在工作空间的 .nexus/sudocode/skills/ 目录创建符号链接
+    // Docker 会挂载工作空间，所以容器内可以访问这些符号链接
+    try {
+      await syncWorkspaceSkills(safeCwd, options.enabledSkillNames)
+      process.stderr.write(`[DockerBackend] Workspace skills synced to ${safeCwd}/.nexus/sudocode/skills/\n`)
+    } catch (err) {
+      process.stderr.write(`[DockerBackend] Workspace skills sync warning: ${err}\n`)
+    }
 
     const containerName =
       runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
@@ -104,13 +109,6 @@ export class DockerBackend implements SessionBackend {
 
     const dotNexusDir = join(configDir, '.nexus', 'sudocode')
     await mkdir(dotNexusDir, { recursive: true })
-
-    // Sync skill/agent bridges into the config directory so scode can discover them
-    try {
-      await syncAllBridgesAsync(configDir)
-    } catch (bridgeErr) {
-      process.stderr.write(`[DockerBackend] scode bridge sync warning: ${bridgeErr}\n`)
-    }
 
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
 
@@ -153,6 +151,19 @@ export class DockerBackend implements SessionBackend {
       process.stderr.write(`[DockerBackend] Failed to create dynamic sudocode.json: ${e}\n`)
     }
 
+    // 挂载列表：工作空间、配置目录、Moss 安装目录
+    // MOSS_HOME 需要挂载，因为符号链接指向这里
+    const mounts = uniqueMounts([
+      safeCwd,
+      configDir,
+      MOSS_HOME,
+    ]).filter(p => p !== '/')
+
+    let model = runtime?.model || env.MOSS_DEFAULT_MODEL || 'gemini-3-flash-preview'
+    if (model && !model.includes('/') && !['opus', 'sonnet', 'haiku', 'claude-opus', 'claude-sonnet', 'claude-haiku'].includes(model)) {
+      model = `proxy/${model}`
+    }
+
     const args = ['run', '--rm', '-i', '--name', containerName]
     // Add security options to allow Tokio runtime to spawn threads
     // Without this, scode fails with "OS can't spawn worker thread: Operation not permitted"
@@ -180,11 +191,6 @@ export class DockerBackend implements SessionBackend {
     args.push('-e', `HOME=${configDir}`)
     args.push('-e', `MOSS_HOME=${MOSS_HOME}`)
 
-    let model = runtime?.model || env.MOSS_DEFAULT_MODEL || 'gemini-3-flash-preview'
-    if (model && !model.includes('/') && !['opus', 'sonnet', 'haiku', 'claude-opus', 'claude-sonnet', 'claude-haiku'].includes(model)) {
-      model = `proxy/${model}`
-    }
-
     args.push(
       image,
       scodePath,
@@ -199,7 +205,10 @@ export class DockerBackend implements SessionBackend {
     process.stderr.write(`  Image: ${image}\n`)
     process.stderr.write(`  scode: ${scodePath}\n`)
     process.stderr.write(`  CWD: ${safeCwd}\n`)
-    process.stderr.write(`  Model: ${model}\n\n`)
+    process.stderr.write(`  Model: ${model}\n`)
+    process.stderr.write(`  Assistant: ${options.assistantName || 'default'}\n`)
+    process.stderr.write(`  Enabled Skills: ${options.enabledSkillNames?.join(', ') || 'all'}\n`)
+    process.stderr.write(`  Mounts: ${mounts.join(', ')}\n\n`)
 
     const child = spawn('docker', args, {
       cwd: safeCwd,
@@ -223,6 +232,9 @@ export class DockerBackend implements SessionBackend {
       cwd: safeCwd,
       model,
       transcriptPath: (options as any).transcriptPath,
+      // 新方案：传递智能体名称和启用的技能列表
+      assistantName: options.assistantName,
+      enabledSkillNames: options.enabledSkillNames,
       runtime: runtimeInfo,
     })
 

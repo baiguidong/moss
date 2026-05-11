@@ -1,10 +1,4 @@
 import {
-  bridgeSkill as bridgeSkillToScode,
-  unbridgeSkill as unbridgeSkillFromScode,
-  syncAllSkillBridges,
-  refreshInstructionsFile,
-} from '../utils/scodeBridge.js'
-import {
   createHash } from 'crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -768,12 +762,7 @@ export async function installHubSkill(params: {
 
   await writeSkillMeta(skillDir, meta)
 
-  try {
-    bridgeSkillToScode(params.skillName, skillDir)
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[SkillStore] scode bridge sync failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，技能通过工作空间符号链接和首次消息注入，不再需要 bridge 同步
 
   return {
     skillName: params.skillName,
@@ -791,12 +780,7 @@ export async function uninstallSkill(params: {
   }
   await rm(sourcePath, { recursive: true, force: true })
 
-  try {
-    unbridgeSkillFromScode(params.skillName)
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[SkillStore] scode bridge sync failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，不再需要 unbridge 操作
 }
 
 export async function importLocalSkillArchive(
@@ -811,15 +795,7 @@ export async function importLocalSkillArchive(
     await extractSkillZip(Buffer.from(payload.archiveBase64, 'base64'), tempDir)
     const result = await installImportedSkillFromTemp(tempDir, payload.fileName)
 
-    try {
-      const installedPath = await findInstalledSkillPath(result.skillName)
-      if (installedPath) {
-        bridgeSkillToScode(result.skillName, installedPath)
-        await refreshInstructionsFile()
-      }
-    } catch (bridgeErr) {
-      console.warn(`[SkillStore] scode bridge sync after import failed: ${bridgeErr}`)
-    }
+    // Note: 在新方案中，技能通过工作空间符号链接和首次消息注入，不再需要 bridge 同步
 
     return result
   } finally {
@@ -839,15 +815,7 @@ export async function importLocalSkillDirectory(
     await writeDirectoryEntries(tempDir, payload.entries)
     const result = await installImportedSkillFromTemp(tempDir)
 
-    try {
-      const installedPath = await findInstalledSkillPath(result.skillName)
-      if (installedPath) {
-        bridgeSkillToScode(result.skillName, installedPath)
-        await refreshInstructionsFile()
-      }
-    } catch (bridgeErr) {
-      console.warn(`[SkillStore] scode bridge sync after import failed: ${bridgeErr}`)
-    }
+    // Note: 在新方案中，技能通过工作空间符号链接和首次消息注入，不再需要 bridge 同步
 
     return result
   } finally {
@@ -873,16 +841,7 @@ export async function setInstalledSkillEnabled(params: {
   meta.enabled = params.enabled
   await writeSkillMeta(sourcePath, meta)
 
-  try {
-    if (params.enabled) {
-      bridgeSkillToScode(params.skillName, sourcePath)
-    } else {
-      unbridgeSkillFromScode(params.skillName)
-    }
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[SkillStore] scode bridge sync after toggle failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，技能通过工作空间符号链接和首次消息注入，不再需要 bridge 同步
 }
 
 export async function batchSyncSkills(params?: {

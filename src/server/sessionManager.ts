@@ -49,6 +49,7 @@ export type BackendSpawnOptions = {
   scopes?: string[]
   runtime?: SessionRuntimeOptions
   assistantName?: string
+  enabledSkillNames?: string[]
 }
 
 export type BackendHandle = {

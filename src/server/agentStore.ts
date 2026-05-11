@@ -1,8 +1,3 @@
-import {
-  bridgeAgent as bridgeAgentToScode,
-  unbridgeAgent as unbridgeAgentFromScode,
-  refreshInstructionsFile,
-} from '../utils/scodeBridge.js'
 import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
@@ -915,12 +910,7 @@ export async function installHubAssistant(params: {
   }
   await writeAssistantMeta(assistantDir, meta)
 
-  try {
-    bridgeAgentToScode(assistantName, assistantDir)
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[AgentStore] scode bridge sync failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，智能体信息通过首次消息注入，不再需要 bridge 同步
 
   return {
     assistantName,
@@ -983,13 +973,7 @@ export async function createCustomAssistant(params: {
   }
   await writeAssistantMeta(assistantDir, meta)
 
-  // 5. Sync to scode
-  try {
-    bridgeAgentToScode(assistantName, assistantDir)
-    await refreshInstructionsFile()
-  } catch (err) {
-    console.warn(`[AgentStore] Scode bridge sync failed: ${err}`)
-  }
+  // Note: 在新方案中，智能体信息通过首次消息注入，不再需要 bridge 同步
 
   return { assistantName }
 }
@@ -1011,12 +995,7 @@ export async function uninstallAssistant(params: {
 
   await rm(sourcePath, { recursive: true, force: true })
 
-  try {
-    unbridgeAgentFromScode(params.assistantName)
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[AgentStore] scode bridge sync after uninstall failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，不再需要 unbridge 操作
 }
 
 export async function updateInstalledAssistantMeta(params: {
@@ -1071,12 +1050,7 @@ export async function updateInstalledAssistantMeta(params: {
 
   await writeAssistantMeta(result.dir, nextMeta)
 
-  try {
-    bridgeAgentToScode(params.assistantName, result.dir)
-    await refreshInstructionsFile()
-  } catch (bridgeErr) {
-    console.warn(`[AgentStore] scode bridge sync after meta update failed: ${bridgeErr}`)
-  }
+  // Note: 在新方案中，智能体信息通过首次消息注入，不再需要 bridge 同步
 }
 
 export async function getAssistantContextSummary(

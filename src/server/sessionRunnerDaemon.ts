@@ -71,6 +71,7 @@ export class SessionRunnerDaemon {
   #idleTimer: NodeJS.Timeout | null = null
   #finalized = false
   #recentStderr: string[] = []
+  #pendingStdin: string[] = []  // Buffer for messages arriving before handle is ready
 
   constructor(private readonly manifest: RunnerManifest) {
     this.#store = new DirectConnectStore(manifest.config.dbPath)
@@ -130,6 +131,16 @@ export class SessionRunnerDaemon {
       this.#handle = handle
       this.manifest.session.runtime.containerName = handle.runtime.containerName
       this.manifest.session.runtime.configDir = handle.runtime.configDir
+
+      // Flush any pending stdin messages that arrived before handle was ready
+      if (this.#pendingStdin.length > 0) {
+        process.stderr.write(`[SessionRunnerDaemon] Flushing ${this.#pendingStdin.length} pending stdin messages\n`)
+        for (const data of this.#pendingStdin) {
+          this.#handle.writeStdin(data)
+        }
+        this.#pendingStdin = []
+      }
+
       this.#state = 'running'
       this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId, 'running')
       this.#store.setSessionLifecycle(
@@ -319,8 +330,12 @@ export class SessionRunnerDaemon {
       return
     }
     if (parsed.type === 'stdin') {
+      process.stderr.write(`[SessionRunnerDaemon] RECEIVED STDIN: ${parsed.data?.slice(0, 100)}...\n`)
       if (this.#handle) {
         this.#handle.writeStdin(parsed.data)
+      } else {
+        process.stderr.write(`[SessionRunnerDaemon] Handle not ready, buffering message (${this.#pendingStdin.length} pending)\n`)
+        this.#pendingStdin.push(parsed.data)
       }
     }
   }
