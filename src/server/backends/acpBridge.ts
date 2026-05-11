@@ -4,6 +4,7 @@ import { dirname } from 'path'
 import { randomUUID } from 'crypto'
 import type { ChildProcess } from 'child_process'
 import type { BackendHandle, SessionRuntimeInfo } from '../sessionManager.js'
+import { prepareFirstMessageForScode, buildIdentityBlock } from '../../utils/scodeBridge.js'
 
 type AcpBridgeOptions = {
   child: ChildProcess
@@ -12,6 +13,10 @@ type AcpBridgeOptions = {
   model: string
   transcriptPath?: string
   runtime: SessionRuntimeInfo
+  // 新增参数：首次消息注入
+  assistantName?: string
+  enabledSkillNames?: string[]
+  // 旧参数（已废弃，保留兼容）
   mcpServers?: any[]
   agents?: any[]
   instructions?: string
@@ -37,6 +42,9 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
   let lastPersistedUuid: string | null = null
   let isHandshakeComplete = false
   let currentTurnAssistantUuid: string | null = null
+
+  // 新增：首次消息标记
+  let isFirstMessage = true
 
   const writeTranscript = async (event: any) => {
     if (!transcriptPath) return
@@ -71,7 +79,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     }
   }
 
-  const processUserMessage = (data: string) => {
+  const processUserMessage = async (data: string) => {
     let cleanText = data
     let userUuid = randomUUID()
     try {
@@ -91,6 +99,26 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
     const trimmedText = typeof cleanText === 'string' ? cleanText.trim() : String(cleanText)
 
+    // 首次消息注入：注入技能和智能体信息
+    let finalText = trimmedText
+    if (isFirstMessage) {
+      try {
+        finalText = await prepareFirstMessageForScode(trimmedText, {
+          assistantName: options.assistantName,
+          workspace: cwd,
+          enabledSkillNames: options.enabledSkillNames,
+        })
+        process.stderr.write(`[AcpBridge] First message prepared with skills/assistant injection\n`)
+      } catch (err) {
+        process.stderr.write(`[AcpBridge] Failed to prepare first message: ${err}\n`)
+      }
+      isFirstMessage = false
+    } else if (options.assistantName) {
+      // 后续消息：只注入身份声明
+      const identityBlock = buildIdentityBlock(options.assistantName)
+      finalText = `${identityBlock}[User Request]\n${trimmedText}`
+    }
+
     const userEvent = {
       type: 'user',
       sessionId,
@@ -103,7 +131,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
       version: 'unknown',
       message: {
         role: 'user',
-        content: trimmedText,
+        content: finalText,
       },
     }
     void writeTranscript(userEvent)
@@ -111,7 +139,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
     sendRpc('session/prompt', {
       sessionId: acpSessionId,
-      prompt: [{ type: 'text', text: trimmedText }],
+      prompt: [{ type: 'text', text: finalText }],
     })
   }
 
@@ -160,17 +188,20 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
         if (parsed.id === 'm-init') {
           process.stderr.write(`[AcpBridge] Initialization complete, creating session...\n`)
-          sendRpc('session/new', {
+          const sessionParams: any = {
             cwd,
-            mcpServers: options.mcpServers || [],
-            agents: options.agents || [],
-            instructions: options.instructions || "",
-          }, 'm-session-new')
+            // Scode ACP 要求 mcpServers 字段，即使为空数组
+            mcpServers: [],
+          }
+          // 技能和智能体信息通过首次消息注入
+          process.stderr.write(`[AcpBridge] session/new params: cwd=${cwd}, mcpServers=[]\n`)
+          sendRpc('session/new', sessionParams, 'm-session-new')
           continue
         }
 
         if (parsed.id === 'm-session-new') {
-          acpSessionId = parsed.result?.sessionId
+          process.stderr.write(`[AcpBridge] session/new response: ${JSON.stringify(parsed)}\n`)
+          acpSessionId = parsed.result?.sessionId || parsed.result?.id || parsed.result?.session_id
           process.stderr.write(`[AcpBridge] ACP Session Ready: ${acpSessionId}\n`)
           isHandshakeComplete = true
           process.stderr.write(`[AcpBridge] Handshake complete, flushing buffers (Stdout: ${pendingStdout.length}, Stdin: ${pendingStdin.length})\n`)
@@ -332,7 +363,11 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     workDir: cwd,
     runtime,
     writeStdin(data: string) {
-      if (child.stdin?.destroyed) return
+      process.stderr.write(`[AcpBridge] writeStdin called: ${data?.slice(0, 100)}...\n`)
+      if (child.stdin?.destroyed) {
+        process.stderr.write(`[AcpBridge] writeStdin: stdin destroyed, ignoring\n`)
+        return
+      }
 
       if (!acpSessionId) {
         process.stderr.write(`[AcpBridge] Session not ready, buffering message...\n`)
@@ -340,6 +375,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
         return
       }
 
+      process.stderr.write(`[AcpBridge] Calling processUserMessage...\n`)
       processUserMessage(data)
     },
     onStdoutLine(l) { stdoutListeners.add(l); return () => stdoutListeners.delete(l) },
