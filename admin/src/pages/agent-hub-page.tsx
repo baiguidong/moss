@@ -71,8 +71,8 @@ import {
   type InstalledSkillInfo,
   type SkillHubSkill,
 } from '@/lib/api/skill-store'
-import type { AuthDepartment } from '@/lib/api/types'
-import { getDepartments } from '@/lib/api/auth'
+import type { AuthDepartment, AuthUser } from '@/lib/api/types'
+import { getDepartments, getUsers } from '@/lib/api/auth'
 import type { SystemSettings } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 import {
@@ -454,8 +454,9 @@ export default function AgentHubPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [editAgentType, setEditAgentType] = useState<'chat' | 'workflow'>('chat')
   const [editMemoryMode, setEditMemoryMode] = useState<'session' | 'user'>('session')
-  const [editVisibilityMode, setEditVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [editVisibilityMode, setEditVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editVisibleTo, setEditVisibleTo] = useState<string[]>([])
+  const [editVisibleUserIds, setEditVisibleUserIds] = useState<string[]>([])
   const [editWorkflowTrigger, setEditWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
   const [editWorkflowCron, setEditWorkflowCron] = useState('')
   const [editWorkflowWebhookPath, setEditWorkflowWebhookPath] = useState('')
@@ -463,11 +464,13 @@ export default function AgentHubPage() {
   const [editWorkflowTimeout, setEditWorkflowTimeout] = useState('')
   const [editWorkflowOutputTargets, setEditWorkflowOutputTargets] = useState<string[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [users, setUsers] = useState<AuthUser[]>([])
 
   const [agentVisibilityOpen, setAgentVisibilityOpen] = useState(false)
   const [editingVisibilityAgent, setEditingVisibilityAgent] = useState<InstalledAgentInfo | null>(null)
-  const [agentVisibilityMode, setAgentVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [agentVisibilityMode, setAgentVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editAgentVisibleTo, setEditAgentVisibleTo] = useState<string[]>([])
+  const [editAgentVisibleUserIds, setEditAgentVisibleUserIds] = useState<string[]>([])
   const [savingAgentVisibility, setSavingAgentVisibility] = useState(false)
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -479,8 +482,9 @@ export default function AgentHubPage() {
   const [createRules, setCreateRules] = useState('')
   const [createAgentType, setCreateAgentType] = useState<'chat' | 'workflow'>('chat')
   const [createMemoryMode, setCreateMemoryMode] = useState<'session' | 'user'>('session')
-  const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [createVisibleTo, setCreateVisibleTo] = useState<string[]>([])
+  const [createVisibleUserIds, setCreateVisibleUserIds] = useState<string[]>([])
   const [createWorkflowTrigger, setCreateWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
   const [createWorkflowCron, setCreateWorkflowCron] = useState('')
   const [createWorkflowWebhookPath, setCreateWorkflowWebhookPath] = useState('')
@@ -636,6 +640,11 @@ export default function AgentHubPage() {
     try {
       const deptResult = await getDepartments()
       setDepartments(deptResult.departments)
+    } catch { /* non-critical */ }
+
+    try {
+      const userResult = await getUsers()
+      setUsers(userResult.users)
     } catch { /* non-critical */ }
 
     setPageLoading(false)
@@ -844,12 +853,25 @@ export default function AgentHubPage() {
     setEditAgentType(agent.agentType || agent.meta?.agent_type || 'chat')
     setEditMemoryMode(agent.memoryMode || agent.meta?.memory_mode || 'session')
     setEditVisibleTo(agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids ?? [])
+    setEditVisibleUserIds(agent.visibleTo?.user_ids ?? agent.meta?.visible_to?.user_ids ?? [])
+
+    // Determine visibility mode
     const deptIds = agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids
-    setEditVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const userIds = agent.visibleTo?.user_ids ?? agent.meta?.visible_to?.user_ids
+
+    if (deptIds === null && userIds === null) {
+      setEditVisibilityMode('all')
+    } else if ((deptIds?.length === 0 && (userIds === null || userIds?.length === 0)) ||
+               (userIds?.length === 0 && (deptIds === null || deptIds?.length === 0))) {
+      setEditVisibilityMode('admin')
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      setEditVisibilityMode('users')
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      setEditVisibilityMode('departments')
+    } else {
+      setEditVisibilityMode('all')
+    }
+
     setEditWorkflowTrigger(agent.workflow?.trigger || agent.meta?.workflow?.trigger || 'manual')
     setEditWorkflowCron(agent.workflow?.cron || agent.meta?.workflow?.cron || '')
     setEditWorkflowWebhookPath(agent.workflow?.webhook_path || agent.meta?.workflow?.webhook_path || '')
@@ -982,10 +1004,12 @@ export default function AgentHubPage() {
           skills: editSkills.map(s => s.id || s.name),
           enabledSkills: editEnabledSkills,
           visible_to: editVisibilityMode === 'admin'
-            ? { department_ids: [] }
+            ? { department_ids: [], user_ids: [] }
             : editVisibilityMode === 'departments'
-              ? (editVisibleTo.length > 0 ? { department_ids: editVisibleTo } : null)
-              : null,
+              ? { department_ids: editVisibleTo.length > 0 ? editVisibleTo : null, user_ids: null }
+              : editVisibilityMode === 'users'
+                ? { department_ids: null, user_ids: editVisibleUserIds.length > 0 ? editVisibleUserIds : null }
+                : null,
           workflow: editAgentType === 'workflow'
             ? {
                 trigger: editWorkflowTrigger,
@@ -1006,7 +1030,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim()
@@ -1036,10 +1060,12 @@ export default function AgentHubPage() {
         agent_type: createAgentType,
         memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
         visible_to: createVisibilityMode === 'admin'
-          ? { department_ids: [] }
+          ? { department_ids: [], user_ids: [] }
           : createVisibilityMode === 'departments'
-            ? (createVisibleTo.length > 0 ? { department_ids: createVisibleTo } : null)
-            : null,
+            ? { department_ids: createVisibleTo.length > 0 ? createVisibleTo : null, user_ids: null }
+            : createVisibilityMode === 'users'
+              ? { department_ids: null, user_ids: createVisibleUserIds.length > 0 ? createVisibleUserIds : null }
+              : null,
         workflow: createAgentType === 'workflow'
           ? {
               trigger: createWorkflowTrigger,
@@ -1063,6 +1089,7 @@ export default function AgentHubPage() {
       setCreateMemoryMode('session')
       setCreateVisibilityMode('all')
       setCreateVisibleTo([])
+      setCreateVisibleUserIds([])
       setCreateWorkflowTrigger('manual')
       setCreateWorkflowCron('')
       setCreateWorkflowOutputTargets([])
@@ -1108,12 +1135,24 @@ export default function AgentHubPage() {
   const openAgentVisibility = useCallback((agent: InstalledAgentInfo) => {
     setEditingVisibilityAgent(agent)
     const deptIds = agent.visibleTo?.department_ids
-    setAgentVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const userIds = agent.visibleTo?.user_ids
+
+    // Determine visibility mode
+    if (deptIds === null && userIds === null) {
+      setAgentVisibilityMode('all')
+    } else if ((deptIds?.length === 0 && (userIds === null || userIds?.length === 0)) ||
+               (userIds?.length === 0 && (deptIds === null || deptIds?.length === 0))) {
+      setAgentVisibilityMode('admin')
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      setAgentVisibilityMode('users')
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      setAgentVisibilityMode('departments')
+    } else {
+      setAgentVisibilityMode('all')
+    }
+
     setEditAgentVisibleTo(deptIds ?? [])
+    setEditAgentVisibleUserIds(userIds ?? [])
     setAgentVisibilityOpen(true)
   }, [])
 
@@ -1125,10 +1164,12 @@ export default function AgentHubPage() {
         assistantName: editingVisibilityAgent.name,
         updates: {
           visible_to: agentVisibilityMode === 'admin'
-            ? { department_ids: [] }
+            ? { department_ids: [], user_ids: [] }
             : agentVisibilityMode === 'departments'
-              ? (editAgentVisibleTo.length > 0 ? { department_ids: editAgentVisibleTo } : null)
-              : null,
+              ? { department_ids: editAgentVisibleTo.length > 0 ? editAgentVisibleTo : null, user_ids: null }
+              : agentVisibilityMode === 'users'
+                ? { department_ids: null, user_ids: editAgentVisibleUserIds.length > 0 ? editAgentVisibleUserIds : null }
+                : null,
         },
       })
       toast.success('可见性已更新')
@@ -1139,7 +1180,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingAgentVisibility(false)
     }
-  }, [editingVisibilityAgent, agentVisibilityMode, editAgentVisibleTo, fetchInstalledState])
+  }, [editingVisibilityAgent, agentVisibilityMode, editAgentVisibleTo, editAgentVisibleUserIds, fetchInstalledState])
 
   const departmentNameMap = useMemo(
     () => new Map(departments.map(dept => [dept.id, dept.name])),
@@ -1844,7 +1885,7 @@ export default function AgentHubPage() {
               </div>
               <RadioGroup
                 value={editVisibilityMode}
-                onValueChange={value => setEditVisibilityMode(value as 'all' | 'departments' | 'admin')}
+                onValueChange={value => setEditVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
               >
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="all" />
@@ -1853,6 +1894,10 @@ export default function AgentHubPage() {
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="departments" />
                   <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="users" />
+                  <label className="text-sm cursor-pointer">指定人员可见</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="admin" />
@@ -1880,6 +1925,31 @@ export default function AgentHubPage() {
                           }}
                         />
                         <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : editVisibilityMode === 'users' ? (
+                users.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无用户数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {users.map(user => (
+                      <label
+                        key={user.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={editVisibleUserIds.includes(user.id)}
+                          onCheckedChange={checked => {
+                            setEditVisibleUserIds(
+                              checked === true
+                                ? [...editVisibleUserIds, user.id]
+                                : editVisibleUserIds.filter(id => id !== user.id),
+                            )
+                          }}
+                        />
+                        <span>{user.name || user.email}</span>
                       </label>
                     ))}
                   </div>
@@ -2344,7 +2414,7 @@ export default function AgentHubPage() {
               </div>
               <RadioGroup
                 value={createVisibilityMode}
-                onValueChange={value => setCreateVisibilityMode(value as 'all' | 'departments' | 'admin')}
+                onValueChange={value => setCreateVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
               >
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="all" />
@@ -2353,6 +2423,10 @@ export default function AgentHubPage() {
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="departments" />
                   <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="users" />
+                  <label className="text-sm cursor-pointer">指定人员可见</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="admin" />
@@ -2380,6 +2454,31 @@ export default function AgentHubPage() {
                           }}
                         />
                         <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : createVisibilityMode === 'users' ? (
+                users.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无用户数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {users.map(user => (
+                      <label
+                        key={user.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={createVisibleUserIds.includes(user.id)}
+                          onCheckedChange={checked => {
+                            setCreateVisibleUserIds(
+                              checked === true
+                                ? [...createVisibleUserIds, user.id]
+                                : createVisibleUserIds.filter(id => id !== user.id),
+                            )
+                          }}
+                        />
+                        <span>{user.name || user.email}</span>
                       </label>
                     ))}
                   </div>
@@ -2547,7 +2646,7 @@ export default function AgentHubPage() {
           <div className="space-y-3">
             <RadioGroup
               value={agentVisibilityMode}
-              onValueChange={value => setAgentVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              onValueChange={value => setAgentVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
             >
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="all" />
@@ -2556,6 +2655,10 @@ export default function AgentHubPage() {
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="departments" />
                 <label className="text-sm cursor-pointer">指定部门可见</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="users" />
+                <label className="text-sm cursor-pointer">指定人员可见</label>
               </div>
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="admin" />
@@ -2583,6 +2686,31 @@ export default function AgentHubPage() {
                         }}
                       />
                       <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : agentVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className="text-xs text-muted-foreground">暂无用户数据</p>
+              ) : (
+                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                    >
+                      <Checkbox
+                        checked={editAgentVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditAgentVisibleUserIds(
+                            checked === true
+                              ? [...editAgentVisibleUserIds, user.id]
+                              : editAgentVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name || user.email}</span>
                     </label>
                   ))}
                 </div>

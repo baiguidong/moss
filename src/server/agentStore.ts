@@ -9,6 +9,7 @@ import {
   type InstalledSkillInfo,
 } from './skillStore.js'
 import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
+import type { VisibleTo } from './visibilityFilter.js'
 
 // Support MOSS_HOME environment variable for Docker/container environments
 const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
@@ -94,7 +95,7 @@ export type AssistantStoreMeta = {
   enabledSkills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   workflow?: {
     trigger: 'cron' | 'webhook' | 'manual'
     cron?: string
@@ -126,7 +127,7 @@ export type InstalledAssistantInfo = {
   meta: AssistantStoreMeta | null
   agentType: 'chat' | 'workflow'
   memoryMode: 'session' | 'user'
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo
   workflow: AssistantStoreMeta['workflow']
 }
 
@@ -719,12 +720,19 @@ export async function fetchAgentHubSkillDetailsByIds(
       try {
         const detail = await fetchSkillHubSkillDetail(skillId)
         if (!detail) return null
+        const iconUrl = typeof detail.icon === 'string' && detail.icon
+          ? (detail.icon.startsWith('http')
+              ? detail.icon
+              : detail.icon.includes('skill-hub/')
+                ? `https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/${detail.icon.replace(/^\/+/, '')}`
+                : detail.icon)
+          : null
         return {
           id: detail.id,
           name: detail.name,
           display_name: detail.display_name,
           description: detail.description,
-          icon: detail.icon,
+          icon: iconUrl,
           emoji: detail.emoji ?? null,
           category: detail.category,
           categories: detail.categories,
@@ -735,7 +743,7 @@ export async function fetchAgentHubSkillDetailsByIds(
     }),
   )
 
-  return details.filter((detail): detail is Record<string, unknown> => detail !== null)
+  return details.filter((detail): detail is NonNullable<typeof detail> => detail !== null) as Array<Record<string, unknown>>
 }
 
 export async function installHubAssistant(params: {
@@ -849,7 +857,11 @@ export async function installHubAssistant(params: {
           typeof latestVersion.version === 'string'
             ? latestVersion.version
             : '',
-        icon: detail.icon || '',
+        icon: detail.icon?.startsWith('http')
+          ? detail.icon
+          : detail.icon?.includes('skill-hub/')
+            ? `https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/${detail.icon?.replace(/^\/+/, '') || ''}`
+            : detail.icon || '',
         emoji: detail.emoji || '',
         category: detail.category || '',
         categories: detail.categories || [],
@@ -930,7 +942,7 @@ export async function createCustomAssistant(params: {
   skills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   workflow?: AssistantStoreMeta['workflow']
 }): Promise<{ assistantName: string }> {
   const assistantName = params.name.trim().replace(/\s+/g, '-')

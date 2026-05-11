@@ -1,4 +1,5 @@
 import { authClient } from './client'
+import type { VisibleTo } from './agent-hub'
 
 export type SkillStoreTab = 'store' | 'exclusive' | 'installed'
 
@@ -56,7 +57,7 @@ export interface InstalledSkillMeta {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo | null
   [key: string]: unknown
 }
 
@@ -76,7 +77,7 @@ export interface InstalledSkillInfo {
   enabled: boolean
   source: string
   meta: InstalledSkillMeta | null
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo | null
 }
 
 export interface InstallSkillRequest {
@@ -211,7 +212,7 @@ export function getSkillSyncStatus(): Promise<SkillSyncProgress> {
 
 export function updateSkillVisibility(
   skillName: string,
-  visible_to: { department_ids: string[] | null } | null,
+  visible_to: VisibleTo | null,
 ): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>('/api/v1/skills/visibility', {
     skillName,

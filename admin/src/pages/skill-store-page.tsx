@@ -39,9 +39,9 @@ import {
   type SkillStoreTab,
   type SkillSyncProgress,
 } from '@/lib/api/skill-store'
-import type { SystemSettings } from '@/lib/api/types'
+import type { SystemSettings, AuthUser } from '@/lib/api/types'
 import type { AuthDepartment } from '@/lib/api/types'
-import { getDepartments } from '@/lib/api/auth'
+import { getDepartments, getUsers } from '@/lib/api/auth'
 import { updateSkillVisibility } from '@/lib/api/skill-store'
 import { cn } from '@/lib/utils'
 import {
@@ -286,6 +286,7 @@ type InstalledSkillCardProps = {
   onUpdate: (skill: InstalledSkillInfo) => void
   onEditVisibility: (skill: InstalledSkillInfo) => void
   departmentNameMap: Map<string, string>
+  users: AuthUser[]
 }
 
 function InstalledSkillCard({
@@ -301,6 +302,7 @@ function InstalledSkillCard({
   onUpdate,
   onEditVisibility,
   departmentNameMap,
+  users,
 }: InstalledSkillCardProps) {
   const canManage = !skill.isBuiltin
 
@@ -371,7 +373,14 @@ function InstalledSkillCard({
           {latestVersion && hasUpdate ? <span>最新 {latestVersion.version}</span> : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {(skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids)?.length ? (
+          {(skill.visibleTo?.user_ids ?? skill.meta?.visible_to?.user_ids)?.length ? (
+            (skill.visibleTo?.user_ids ?? skill.meta?.visible_to?.user_ids ?? []).map(userId => {
+              const user = users.find(u => u.id === userId)
+              return user ? (
+                <Badge key={userId} variant="outline" className="text-[10px]">{user.name}</Badge>
+              ) : null
+            })
+          ) : (skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids)?.length ? (
             (skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids ?? []).map(deptId => {
               const name = departmentNameMap.get(deptId)
               return name ? (
@@ -502,10 +511,12 @@ export default function SkillStorePage() {
   const [skillSyncProgressOpen, setSkillSyncProgressOpen] = useState(false)
   const [skillSyncProgress, setSkillSyncProgress] = useState<SkillSyncProgress | null>(null)
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [users, setUsers] = useState<AuthUser[]>([])
   const [editVisibilityOpen, setEditVisibilityOpen] = useState(false)
   const [editingSkillName, setEditingSkillName] = useState('')
-  const [skillVisibilityMode, setSkillVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [skillVisibilityMode, setSkillVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editSkillVisibleTo, setEditSkillVisibleTo] = useState<string[]>([])
+  const [editSkillVisibleUserIds, setEditSkillVisibleUserIds] = useState<string[]>([])
   const [savingVisibility, setSavingVisibility] = useState(false)
 
   const latestVersionsRef = useRef(latestVersions)
@@ -705,8 +716,12 @@ export default function SkillStorePage() {
     setPageLoading(false)
 
     try {
-      const deptResult = await getDepartments()
+      const [deptResult, userResult] = await Promise.all([
+        getDepartments(),
+        getUsers(),
+      ])
       setDepartments(deptResult.departments)
+      setUsers(userResult.users)
     } catch { /* non-critical */ }
   }, [])
 
@@ -1120,13 +1135,25 @@ export default function SkillStorePage() {
 
   const handleOpenVisibilityEdit = useCallback((skill: InstalledSkillInfo) => {
     setEditingSkillName(skill.name)
-    const deptIds = skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids
-    setSkillVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const visibleTo = skill.visibleTo ?? skill.meta?.visible_to
+    const deptIds = visibleTo?.department_ids
+    const userIds = visibleTo?.user_ids
+
+    // Determine mode based on visible_to
+    let mode: 'all' | 'departments' | 'users' | 'admin' = 'all'
+    if (visibleTo === null || visibleTo === undefined) {
+      mode = 'all'
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length === 0 && (userIds === null || userIds === undefined || userIds.length === 0)) {
+      mode = 'admin'
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      mode = 'users'
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      mode = 'departments'
+    }
+
+    setSkillVisibilityMode(mode)
     setEditSkillVisibleTo(deptIds ?? [])
+    setEditSkillVisibleUserIds(userIds ?? [])
     setEditVisibilityOpen(true)
   }, [])
 
@@ -1136,10 +1163,12 @@ export default function SkillStorePage() {
       await updateSkillVisibility(
         editingSkillName,
         skillVisibilityMode === 'admin'
-          ? { department_ids: [] }
+          ? { department_ids: [], user_ids: [] }
           : skillVisibilityMode === 'departments'
-            ? (editSkillVisibleTo.length > 0 ? { department_ids: editSkillVisibleTo } : null)
-            : null,
+            ? { department_ids: editSkillVisibleTo.length > 0 ? editSkillVisibleTo : null, user_ids: null }
+            : skillVisibilityMode === 'users'
+              ? { department_ids: null, user_ids: editSkillVisibleUserIds.length > 0 ? editSkillVisibleUserIds : null }
+              : null,
       )
       toast.success('可见性已更新')
       setEditVisibilityOpen(false)
@@ -1149,7 +1178,7 @@ export default function SkillStorePage() {
     } finally {
       setSavingVisibility(false)
     }
-  }, [editingSkillName, skillVisibilityMode, editSkillVisibleTo, fetchInstalledList])
+  }, [editingSkillName, skillVisibilityMode, editSkillVisibleTo, editSkillVisibleUserIds, fetchInstalledList])
 
   const departmentNameMap = useMemo(
     () => new Map(departments.map(dept => [dept.id, dept.name])),
@@ -1186,6 +1215,7 @@ export default function SkillStorePage() {
           }}
           onEditVisibility={handleOpenVisibilityEdit}
           departmentNameMap={departmentNameMap}
+          users={users}
         />
       )
     },
@@ -1200,6 +1230,7 @@ export default function SkillStorePage() {
       pendingUninstallSkill,
       togglingSkillName,
       updatingSkillId,
+      users,
     ],
   )
 
@@ -1768,13 +1799,13 @@ export default function SkillStorePage() {
           <DialogHeader>
             <DialogTitle>编辑技能可见性</DialogTitle>
             <DialogDescription>
-              设置哪些部门可以看到此技能。
+              设置哪些用户或部门可以看到此技能。
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-3'>
             <RadioGroup
               value={skillVisibilityMode}
-              onValueChange={value => setSkillVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              onValueChange={value => setSkillVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
             >
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="all" />
@@ -1783,6 +1814,10 @@ export default function SkillStorePage() {
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="departments" />
                 <label className='text-sm cursor-pointer'>指定部门可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="users" />
+                <label className='text-sm cursor-pointer'>指定人员可见</label>
               </div>
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="admin" />
@@ -1810,6 +1845,32 @@ export default function SkillStorePage() {
                         }}
                       />
                       <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+            {skillVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无用户数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editSkillVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditSkillVisibleUserIds(
+                            checked === true
+                              ? [...editSkillVisibleUserIds, user.id]
+                              : editSkillVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name}</span>
                     </label>
                   ))}
                 </div>

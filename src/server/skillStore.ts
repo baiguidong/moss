@@ -3,6 +3,7 @@ import {
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
+import type { VisibleTo } from './visibilityFilter.js'
 import {
   MANAGED_SKILL_SEARCH_DIRS,
   MOSS_SKILLS_CUSTOM_DIR,
@@ -73,7 +74,7 @@ export type SkillStoreMeta = {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   [key: string]: unknown
 }
 
@@ -93,7 +94,7 @@ export type InstalledSkillInfo = {
   enabled: boolean
   source: string
   meta: SkillStoreMeta | null
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo
 }
 
 export type FetchSkillHubSkillsParams = {
@@ -682,7 +683,20 @@ export async function fetchSkillHubSkillDetail(
   if (!isRecord(unwrapped.data)) {
     return null
   }
-  return unwrapped.data as SkillHubDetail
+
+  // Hub API 返回 { skill: {...}, versions: [...] }
+  // 需要将 skill 和 versions 合并
+  const skillData = isRecord(unwrapped.data.skill) ? unwrapped.data.skill : null
+  const versionsData = Array.isArray(unwrapped.data.versions) ? unwrapped.data.versions : []
+
+  if (!skillData) {
+    return null
+  }
+
+  return {
+    ...skillData,
+    versions: versionsData,
+  } as SkillHubDetail
 }
 
 export async function getInstalledSkills(): Promise<InstalledSkillInfo[]> {
@@ -731,7 +745,13 @@ export async function installHubSkill(params: {
       typeof params.skillMeta?.description === 'string'
         ? params.skillMeta.description
         : '',
-    icon: typeof params.skillMeta?.icon === 'string' ? params.skillMeta.icon : '',
+    icon: typeof params.skillMeta?.icon === 'string'
+      ? (params.skillMeta.icon.startsWith('http')
+          ? params.skillMeta.icon
+          : params.skillMeta.icon.includes('skill-hub/')
+            ? `https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/${params.skillMeta.icon.replace(/^\/+/, '')}`
+            : params.skillMeta.icon)
+      : '',
     emoji:
       typeof params.skillMeta?.emoji === 'string' ? params.skillMeta.emoji : null,
     category:

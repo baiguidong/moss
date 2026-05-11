@@ -274,12 +274,14 @@ export class DirectConnectStore {
     // Migration: add source and channel_chat_id columns if they don't exist
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN source TEXT`)
-    } catch {
+      console.log('[DB] Added source column to sessions')
+    } catch (error) {
       // Column already exists, ignore
     }
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN channel_chat_id TEXT`)
-    } catch {
+      console.log('[DB] Added channel_chat_id column to sessions')
+    } catch (error) {
       // Column already exists, ignore
     }
     try {
@@ -325,7 +327,7 @@ export class DirectConnectStore {
     try {
       this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_source_chat ON sessions (source, channel_chat_id, last_active_at DESC)`)
     } catch {
-      // Index already exists, ignore
+      // Index creation failed, ignore
     }
   }
 
