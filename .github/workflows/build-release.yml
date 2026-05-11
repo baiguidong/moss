@@ -49,39 +49,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 安装 Bun 并构建后端
+      # 1. 安装 Bun 并构建 (build:node 已包含前端构建)
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Install Admin Dependencies
-        working-directory: admin
-        run: bun install
-
-      - name: Build Backend
+      - name: Install Dependencies
         run: |
           bun install
-          bun run build:node
+          cd admin && bun install && cd ..
 
-      # 2. 构建前端
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Build All (Backend + Frontend)
+        run: bun run build:node
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Build Admin Frontend
-        working-directory: admin
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-
-      # 3. 下载 scode
+      # 2. 下载 scode
       - name: Get scode version
         id: scode-version
         run: |
