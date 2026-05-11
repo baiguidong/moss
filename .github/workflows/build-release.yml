@@ -67,11 +67,17 @@ jobs:
       - name: Get scode version
         id: scode-version
         run: |
-          if [ "${{ github.event.inputs.scode_version }}" = "" ] || [ "${{ github.event.inputs.scode_version }}" = "latest" ]; then
-            VERSION=$(curl -s https://api.github.com/repos/sudoprivacy/sudocode/releases/latest | jq -r '.tag_name')
-          else
+          if [ "${{ github.event.inputs.scode_version }}" != "" ] && [ "${{ github.event.inputs.scode_version }}" != "latest" ]; then
             VERSION="${{ github.event.inputs.scode_version }}"
+          else
+            # 使用 GitHub API 获取最新 release，兼容无 jq 的情况
+            VERSION=$(curl -sI "https://github.com/sudoprivacy/sudocode/releases/latest" | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
+            if [ -z "$VERSION" ]; then
+              # 备用方案：使用 API + grep
+              VERSION=$(curl -s https://api.github.com/repos/sudoprivacy/sudocode/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+            fi
           fi
+          echo "Detected scode version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download scode
