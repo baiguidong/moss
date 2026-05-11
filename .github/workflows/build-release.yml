@@ -29,21 +29,7 @@ env:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux-x64
-            node_pkg: node-v24.15.0-linux-x64.tar.xz
-            scode_pkg: scode-linux-x64.tar.gz
-            scode_dir: scode-linux-x64
-          - os: macos-latest
-            platform: macos-arm64
-            node_pkg: node-v24.15.0-darwin-arm64.tar.xz
-            scode_pkg: scode-macos-arm64.tar.gz
-            scode_dir: scode-macos-arm64
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -70,10 +56,8 @@ jobs:
           if [ "${{ github.event.inputs.scode_version }}" != "" ] && [ "${{ github.event.inputs.scode_version }}" != "latest" ]; then
             VERSION="${{ github.event.inputs.scode_version }}"
           else
-            # 使用 GitHub API 获取最新 release，兼容无 jq 的情况
             VERSION=$(curl -sI "https://github.com/sudoprivacy/sudocode/releases/latest" | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
             if [ -z "$VERSION" ]; then
-              # 备用方案：使用 API + grep
               VERSION=$(curl -s https://api.github.com/repos/sudoprivacy/sudocode/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
             fi
           fi
@@ -84,25 +68,20 @@ jobs:
         env:
           SCODE_VERSION: ${{ steps.scode-version.outputs.version }}
         run: |
-          echo "Downloading scode $SCODE_VERSION for ${{ matrix.platform }}"
+          echo "Downloading scode $SCODE_VERSION for linux-x64"
 
-          DOWNLOAD_URL="https://github.com/sudoprivacy/sudocode/releases/download/$SCODE_VERSION/${{ matrix.scode_pkg }}"
+          DOWNLOAD_URL="https://github.com/sudoprivacy/sudocode/releases/download/$SCODE_VERSION/scode-linux-x64.tar.gz"
           echo "Downloading from: $DOWNLOAD_URL"
           curl -L -o scode.tar.gz "$DOWNLOAD_URL"
 
-          # 解压 (结构: scode-{platform}/scode)
           tar -xzf scode.tar.gz
-
-          # 移动到 bin/scode
-          mv ${{ matrix.scode_dir }}/scode bin/scode
+          mv scode-linux-x64/scode bin/scode
           chmod +x bin/scode
-
-          # 清理
-          rm -rf ${{ matrix.scode_dir }} scode.tar.gz
+          rm -rf scode-linux-x64 scode.tar.gz
 
           echo "scode ready: $(ls -la bin/scode)"
 
-      # 4. 构建 Docker 镜像
+      # 3. 构建 Docker 镜像
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -112,59 +91,48 @@ jobs:
           docker save my-moss-runtime:v1 | gzip > my-moss-runtime.tar.gz
           echo "Docker image size: $(ls -lh my-moss-runtime.tar.gz)"
 
-      # 5. 下载 Node.js 运行时
+      # 4. 下载 Node.js 运行时
       - name: Download Node.js Runtime
         run: |
-          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/${{ matrix.node_pkg }}
+          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-linux-x64.tar.xz
 
-      # 6. 组装部署包
+      # 5. 组装部署包
       - name: Assemble Release Package
         run: |
-          # 创建部署目录结构
           mkdir -p release/moss/admin/dist
           mkdir -p release/moss/bin
 
-          # 复制前端构建产物
           cp -r admin/dist/* release/moss/admin/dist/
-
-          # 复制后端文件 (bun build:node 的产物)
           cp -r bin/* release/moss/bin/
 
-          # 复制配置和脚本
           cp deploy/server.json release/moss/
           cp start.sh release/moss/
           cp shutdown.sh release/moss/
           cp deploy/runtime/Dockerfile release/moss/
-
-          # 复制 Docker 镜像
           cp my-moss-runtime.tar.gz release/moss/
+          cp node-v${{ env.NODE_VERSION }}-linux-x64.tar.xz release/moss/
 
-          # 复制 Node.js 运行时
-          cp ${{ matrix.node_pkg }} release/moss/
-
-          # 设置权限
           chmod +x release/moss/start.sh
           chmod +x release/moss/shutdown.sh
           chmod +x release/moss/bin/scode
 
-          # 打包
           VERSION="${GITHUB_SHA:0:7}"
           if [ "${{ github.ref_type }}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME}"
           fi
 
           cd release
-          tar -czvf ../moss-${{ matrix.platform }}-${VERSION}.tar.gz moss
+          tar -czvf ../moss-linux-x64-${VERSION}.tar.gz moss
           cd ..
 
-          echo "Package ready: $(ls -lh moss-${{ matrix.platform }}-*.tar.gz)"
+          echo "Package ready: $(ls -lh moss-linux-x64-*.tar.gz)"
 
-      # 7. 上传构建产物
+      # 6. 上传构建产物
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: moss-${{ matrix.platform }}-${{ github.sha }}
-          path: moss-${{ matrix.platform }}-*.tar.gz
+          name: moss-linux-x64-${{ github.sha }}
+          path: moss-linux-x64-*.tar.gz
           retention-days: 30
 
   # 创建 GitHub Release（当打 tag 时）
