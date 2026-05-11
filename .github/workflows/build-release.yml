@@ -1,0 +1,197 @@
+# ---------------------------------------------------------
+# Moss Release Package Builder
+# 触发条件:
+#   - dev 分支推送
+#   - 手动触发 (可指定 scode 版本)
+#   - tag 推送 (创建 GitHub Release)
+#
+# 产出物:
+#   - moss-linux-x64-{version}.tar.gz
+#   - moss-macos-arm64-{version}.tar.gz
+# ---------------------------------------------------------
+
+name: Build Moss Release Package
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      scode_version:
+        description: 'scode release version (e.g., v0.1.0)'
+        required: false
+        default: 'latest'
+
+env:
+  BUN_VERSION: '1.2'
+  NODE_VERSION: '24.15.0'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            node_pkg: node-v24.15.0-linux-x64.tar.xz
+            scode_pkg: scode-linux-x64.tar.gz
+            scode_dir: scode-linux-x64
+          - os: macos-latest
+            platform: macos-arm64
+            node_pkg: node-v24.15.0-darwin-arm64.tar.xz
+            scode_pkg: scode-macos-arm64.tar.gz
+            scode_dir: scode-macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 安装 Bun 并构建后端
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Build Backend
+        run: |
+          bun install
+          bun run build:node
+
+      # 2. 构建前端
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Build Admin Frontend
+        working-directory: admin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # 3. 下载 scode
+      - name: Get scode version
+        id: scode-version
+        run: |
+          if [ "${{ github.event.inputs.scode_version }}" = "" ] || [ "${{ github.event.inputs.scode_version }}" = "latest" ]; then
+            VERSION=$(curl -s https://api.github.com/repos/sudoprivacy/sudocode/releases/latest | jq -r '.tag_name')
+          else
+            VERSION="${{ github.event.inputs.scode_version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download scode
+        env:
+          SCODE_VERSION: ${{ steps.scode-version.outputs.version }}
+        run: |
+          echo "Downloading scode $SCODE_VERSION for ${{ matrix.platform }}"
+
+          DOWNLOAD_URL="https://github.com/sudoprivacy/sudocode/releases/download/$SCODE_VERSION/${{ matrix.scode_pkg }}"
+          echo "Downloading from: $DOWNLOAD_URL"
+          curl -L -o scode.tar.gz "$DOWNLOAD_URL"
+
+          # 解压 (结构: scode-{platform}/scode)
+          tar -xzf scode.tar.gz
+
+          # 移动到 bin/scode
+          mv ${{ matrix.scode_dir }}/scode bin/scode
+          chmod +x bin/scode
+
+          # 清理
+          rm -rf ${{ matrix.scode_dir }} scode.tar.gz
+
+          echo "scode ready: $(ls -la bin/scode)"
+
+      # 4. 构建 Docker 镜像
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-moss-runtime:v1 -f deploy/runtime/Dockerfile .
+          docker save my-moss-runtime:v1 | gzip > my-moss-runtime.tar.gz
+          echo "Docker image size: $(ls -lh my-moss-runtime.tar.gz)"
+
+      # 5. 下载 Node.js 运行时
+      - name: Download Node.js Runtime
+        run: |
+          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/${{ matrix.node_pkg }}
+
+      # 6. 组装部署包
+      - name: Assemble Release Package
+        run: |
+          # 创建部署目录结构
+          mkdir -p release/moss/admin/dist
+          mkdir -p release/moss/bin
+
+          # 复制前端构建产物
+          cp -r admin/dist/* release/moss/admin/dist/
+
+          # 复制后端文件 (bun build:node 的产物)
+          cp -r bin/* release/moss/bin/
+
+          # 复制配置和脚本
+          cp deploy/server.json release/moss/
+          cp start.sh release/moss/
+          cp shutdown.sh release/moss/
+          cp deploy/runtime/Dockerfile release/moss/
+
+          # 复制 Docker 镜像
+          cp my-moss-runtime.tar.gz release/moss/
+
+          # 复制 Node.js 运行时
+          cp ${{ matrix.node_pkg }} release/moss/
+
+          # 设置权限
+          chmod +x release/moss/start.sh
+          chmod +x release/moss/shutdown.sh
+          chmod +x release/moss/bin/scode
+
+          # 打包
+          VERSION="${GITHUB_SHA:0:7}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+
+          cd release
+          tar -czvf ../moss-${{ matrix.platform }}-${VERSION}.tar.gz moss
+          cd ..
+
+          echo "Package ready: $(ls -lh moss-${{ matrix.platform }}-*.tar.gz)"
+
+      # 7. 上传构建产物
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: moss-${{ matrix.platform }}-${{ github.sha }}
+          path: moss-${{ matrix.platform }}-*.tar.gz
+          retention-days: 30
+
+  # 创建 GitHub Release（当打 tag 时）
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -name "*.tar.gz"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/moss-*.tar.gz
+          generate_release_notes: true
