@@ -55,6 +55,10 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Install Admin Dependencies
+        working-directory: admin
+        run: bun install
+
       - name: Build Backend
         run: |
           bun install
