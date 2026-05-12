@@ -73,6 +73,7 @@ import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
 import { isVisibleTo, type VisibleTo } from './visibilityFilter.js'
 import { MOSS_SKILLS_CUSTOM_DIR, MOSS_SKILLS_TENANT_DIR } from '../utils/skills/localSkillDirectories.js'
+import { DocumentStore } from './documentStore.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -492,6 +493,7 @@ export function startServer(
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
+  const documentStore = new DocumentStore(runtime.store)
 
   // Initialize ChannelManager and PairingService with database
   // 初始化 ChannelManager 和 PairingService
@@ -897,6 +899,411 @@ export function startServer(
             departmentId,
           }),
         )
+        return
+      }
+
+      // ============================================================
+      // Document Center (P0): /api/v1/documents/* + /api/v1/wikis/*
+      // ============================================================
+
+      // ---- Tree nodes ----
+      if (req.method === 'GET' && pathname === '/api/v1/documents/tree') {
+        authService.requireScope(auth, 'admin:documents')
+        writeJson(res, 200, { nodes: documentStore.listTree(auth.orgId) })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/documents/tree/nodes') {
+        authService.requireScope(auth, 'admin:documents')
+        const body = await readJsonBody(req)
+        try {
+          const node = documentStore.createNode({
+            orgId: auth.orgId,
+            parentId:
+              body.parent_id === null
+                ? null
+                : typeof body.parent_id === 'string'
+                  ? body.parent_id
+                  : null,
+            name: typeof body.name === 'string' ? body.name.trim() : '',
+            description: typeof body.description === 'string' ? body.description : undefined,
+            sortOrder: typeof body.sort_order === 'number' ? body.sort_order : undefined,
+          })
+          if (!node.name) {
+            writeJson(res, 400, { error: { code: 'invalid_payload', message: 'name is required' } })
+            return
+          }
+          writeJson(res, 200, node)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'create_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      const documentNodeMatch = pathname.match(/^\/api\/v1\/documents\/tree\/nodes\/([^/]+)$/)
+      if (req.method === 'PATCH' && documentNodeMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const nodeId = documentNodeMatch[1] || ''
+        const body = await readJsonBody(req)
+        try {
+          const updated = documentStore.updateNode(nodeId, auth.orgId, {
+            parentId:
+              body.parent_id === undefined
+                ? undefined
+                : body.parent_id === null
+                  ? null
+                  : typeof body.parent_id === 'string'
+                    ? body.parent_id
+                    : undefined,
+            name: typeof body.name === 'string' ? body.name : undefined,
+            description:
+              body.description === null
+                ? null
+                : typeof body.description === 'string'
+                  ? body.description
+                  : undefined,
+            sortOrder: typeof body.sort_order === 'number' ? body.sort_order : undefined,
+          })
+          writeJson(res, 200, updated)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'update_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      if (req.method === 'DELETE' && documentNodeMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const nodeId = documentNodeMatch[1] || ''
+        await documentStore.deleteNode(nodeId, auth.orgId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // ---- Documents (uploads) ----
+      const documentsByNodeMatch = pathname.match(/^\/api\/v1\/documents\/tree\/nodes\/([^/]+)\/documents$/)
+      if (req.method === 'GET' && documentsByNodeMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const nodeId = documentsByNodeMatch[1] || ''
+        writeJson(res, 200, { documents: documentStore.listDocumentsForNode(nodeId, auth.orgId) })
+        return
+      }
+
+      if (req.method === 'POST' && documentsByNodeMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const nodeId = documentsByNodeMatch[1] || ''
+        const body = await readJsonBody(req)
+        const fileName = typeof body.file_name === 'string' ? body.file_name : ''
+        const mimeType = typeof body.mime_type === 'string' ? body.mime_type : 'application/octet-stream'
+        const contentB64 = typeof body.content_base64 === 'string' ? body.content_base64 : ''
+        if (!fileName || !contentB64) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'file_name and content_base64 are required' } })
+          return
+        }
+        let content: Buffer
+        try {
+          content = Buffer.from(contentB64, 'base64')
+        } catch {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'content_base64 is not valid base64' } })
+          return
+        }
+        // Size limit: 50MB per file
+        const MAX_DOC_SIZE = 50 * 1024 * 1024
+        if (content.byteLength > MAX_DOC_SIZE) {
+          writeJson(res, 413, { error: { code: 'payload_too_large', message: `document exceeds 50MB limit` } })
+          return
+        }
+        try {
+          const doc = await documentStore.uploadDocument({
+            orgId: auth.orgId,
+            nodeId,
+            fileName,
+            mimeType,
+            content,
+            uploadedBy: auth.userId,
+          })
+          writeJson(res, 200, doc)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'upload_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      const documentItemMatch = pathname.match(/^\/api\/v1\/documents\/([^/]+)$/)
+      if (req.method === 'DELETE' && documentItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const docId = documentItemMatch[1] || ''
+        await documentStore.deleteDocument(docId, auth.orgId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // ---- Wikis ----
+      if (req.method === 'GET' && pathname === '/api/v1/wikis') {
+        authService.requireScope(auth, 'admin:documents')
+        const url = new URL(req.url ?? '', 'http://localhost')
+        const nodeId = url.searchParams.get('node_id') ?? undefined
+        const buildStatus = url.searchParams.get('build_status') ?? undefined
+        writeJson(res, 200, {
+          wikis: documentStore.listWikis(auth.orgId, {
+            nodeId,
+            buildStatus: buildStatus as any,
+          }),
+        })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/wikis') {
+        authService.requireScope(auth, 'admin:documents')
+        const body = await readJsonBody(req)
+        const name = typeof body.name === 'string' ? body.name.trim() : ''
+        if (!name) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'name is required' } })
+          return
+        }
+        const sourceDocumentIds = Array.isArray(body.source_document_ids)
+          ? body.source_document_ids.filter((v: unknown) => typeof v === 'string')
+          : []
+        try {
+          const wiki = await documentStore.createWiki({
+            orgId: auth.orgId,
+            nodeId:
+              body.node_id === null
+                ? null
+                : typeof body.node_id === 'string'
+                  ? body.node_id
+                  : null,
+            name,
+            description: typeof body.description === 'string' ? body.description : undefined,
+            sourceDocumentIds,
+            createdBy: auth.userId,
+          })
+          writeJson(res, 200, wiki)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'create_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      const wikiItemMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)$/)
+      if (req.method === 'GET' && wikiItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiItemMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        writeJson(res, 200, wiki)
+        return
+      }
+
+      if (req.method === 'PATCH' && wikiItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiItemMatch[1] || ''
+        const body = await readJsonBody(req)
+        try {
+          const wiki = documentStore.updateWiki(wikiId, auth.orgId, {
+            name: typeof body.name === 'string' ? body.name : undefined,
+            description:
+              body.description === null
+                ? null
+                : typeof body.description === 'string'
+                  ? body.description
+                  : undefined,
+            nodeId:
+              body.node_id === undefined
+                ? undefined
+                : body.node_id === null
+                  ? null
+                  : typeof body.node_id === 'string'
+                    ? body.node_id
+                    : undefined,
+            sourceDocumentIds: Array.isArray(body.source_document_ids)
+              ? body.source_document_ids.filter((v: unknown) => typeof v === 'string')
+              : undefined,
+          })
+          writeJson(res, 200, wiki)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'update_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      if (req.method === 'DELETE' && wikiItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiItemMatch[1] || ''
+        await documentStore.deleteWiki(wikiId, auth.orgId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // ---- Wiki Build ----
+      const wikiBuildMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)\/build$/)
+      if (req.method === 'POST' && wikiBuildMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiBuildMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        // P0: queue a build job. The actual worker (D5) will pick it up
+        // and call RuntimeService.createSession. For now we just persist
+        // the job; the placeholder build worker will be wired in next step.
+        const job = documentStore.createBuildJob({
+          wikiId,
+          triggeredBy: auth.userId,
+        })
+        documentStore.setWikiBuildResult(wikiId, { status: 'pending' })
+        writeJson(res, 200, { job_id: job.id, wiki_id: wikiId })
+        return
+      }
+
+      const wikiBuildStatusMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)\/build-status$/)
+      if (req.method === 'GET' && wikiBuildStatusMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiBuildStatusMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        const latestJob = documentStore.getLatestBuildJob(wikiId)
+        writeJson(res, 200, {
+          wiki_build_status: wiki.buildStatus,
+          last_built_at: wiki.lastBuiltAt,
+          last_build_error: wiki.lastBuildError,
+          latest_job: latestJob,
+        })
+        return
+      }
+
+      // TODO: SSE endpoint for live build progress will be added in D7.
+
+      // ---- Agent-facing wiki endpoints (called by wikiCli from inside scode container) ----
+      // P0: scope check is admin:documents; later this will be replaced by SESSION_TOKEN auth.
+      // TODO(D6): replace scope check with SESSION_TOKEN-based assistant_id resolution.
+      if (req.method === 'GET' && pathname === '/api/v1/agent/wikis') {
+        authService.requireScope(auth, 'admin:documents')
+        // For P0 placeholder: list all wikis in the org. D6 will filter by
+        // the assistant_id embedded in SESSION_TOKEN and the assistant's
+        // enabledWikis array from _moss_meta.json.
+        writeJson(res, 200, { wikis: documentStore.listWikis(auth.orgId) })
+        return
+      }
+
+      const agentWikiFilesMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/files$/)
+      if (req.method === 'GET' && agentWikiFilesMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = agentWikiFilesMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        // List files in the wiki directory (P0: shallow only)
+        try {
+          const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+          const files = entries
+            .filter(e => e.isFile() && (e.name.endsWith('.md') || e.name === '_moss_meta.json'))
+            .map(e => e.name)
+          writeJson(res, 200, { wiki_id: wikiId, files })
+        } catch (err) {
+          writeJson(res, 200, { wiki_id: wikiId, files: [] })
+        }
+        return
+      }
+
+      const agentWikiFileMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/files\/(.+)$/)
+      if (req.method === 'GET' && agentWikiFileMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = agentWikiFileMatch[1] || ''
+        const filePath = agentWikiFileMatch[2] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        // Path traversal guard
+        const resolved = resolve(wiki.storagePath, filePath)
+        if (!resolved.startsWith(resolve(wiki.storagePath) + sep) && resolved !== resolve(wiki.storagePath)) {
+          writeJson(res, 400, { error: { code: 'invalid_path', message: 'path escapes wiki dir' } })
+          return
+        }
+        try {
+          const content = await readFile(resolved, 'utf-8')
+          writeJson(res, 200, { wiki_id: wikiId, path: filePath, content })
+        } catch {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'file not found' } })
+        }
+        return
+      }
+
+      const agentWikiSearchMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/search$/)
+      if (req.method === 'GET' && agentWikiSearchMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = agentWikiSearchMatch[1] || ''
+        const url = new URL(req.url ?? '', 'http://localhost')
+        const query = url.searchParams.get('q') ?? ''
+        if (!query) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'q is required' } })
+          return
+        }
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        // P0: simple grep across .md files in wiki dir
+        try {
+          const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+          const matches: Array<{ file: string; line_no: number; line: string }> = []
+          const qLower = query.toLowerCase()
+          for (const e of entries) {
+            if (!e.isFile() || !e.name.endsWith('.md')) continue
+            const content = await readFile(resolve(wiki.storagePath, e.name), 'utf-8')
+            const lines = content.split(/\r?\n/)
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].toLowerCase().includes(qLower)) {
+                matches.push({ file: e.name, line_no: i + 1, line: lines[i] })
+                if (matches.length >= 100) break
+              }
+            }
+            if (matches.length >= 100) break
+          }
+          writeJson(res, 200, { wiki_id: wikiId, query, matches })
+        } catch (err) {
+          writeJson(res, 200, { wiki_id: wikiId, query, matches: [] })
+        }
+        return
+      }
+
+      const agentWikiMetaMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/metadata$/)
+      if (req.method === 'GET' && agentWikiMetaMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = agentWikiMetaMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        // Count chunk files
+        let chunkCount = 0
+        try {
+          const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+          chunkCount = entries.filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'WIKI.md').length
+        } catch {
+          // dir not built yet
+        }
+        writeJson(res, 200, {
+          wiki_id: wikiId,
+          name: wiki.name,
+          description: wiki.description,
+          build_status: wiki.buildStatus,
+          last_built_at: wiki.lastBuiltAt,
+          source_document_count: wiki.sourceDocumentIds.length,
+          chunk_count: chunkCount,
+        })
         return
       }
 
