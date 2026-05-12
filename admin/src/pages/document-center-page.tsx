@@ -57,6 +57,7 @@ import {
   getWikiBuildStatus,
   listDocumentsForNode,
   listWikis,
+  subscribeWikiBuildEvents,
   triggerWikiBuild,
   updateDocumentTreeNode,
   uploadDocument,
@@ -331,29 +332,72 @@ export default function DocumentCenterPage() {
   const handleBuildWiki = async (wiki: WikiRecord) => {
     try {
       await triggerWikiBuild(wiki.id)
-      toast.success('Build 任务已入队，请稍后刷新查看进度')
+      toast.success('Build 任务已入队')
       // Optimistic: mark pending so UI shows "构建中"
       setWikis(prev => prev.map(w => (w.id === wiki.id ? { ...w, buildStatus: 'pending' } : w)))
-      // Poll once after a short delay (D7 will switch to SSE)
-      window.setTimeout(async () => {
-        try {
-          const status = await getWikiBuildStatus(wiki.id)
+      // Live progress via SSE (auto-stops on done/failed)
+      const unsubscribe = subscribeWikiBuildEvents(wiki.id, {
+        onProgress: (data) => {
           setWikis(prev =>
             prev.map(w =>
               w.id === wiki.id
                 ? {
                     ...w,
-                    buildStatus: status.wiki_build_status,
-                    lastBuiltAt: status.last_built_at,
-                    lastBuildError: status.last_build_error,
+                    buildStatus:
+                      data.wiki_build_status === 'unknown'
+                        ? w.buildStatus
+                        : (data.wiki_build_status as WikiRecord['buildStatus']),
+                    lastBuiltAt: data.last_built_at,
+                    lastBuildError: data.last_build_error,
                   }
                 : w,
             ),
           )
-        } catch {
-          // ignore
-        }
-      }, 3000)
+        },
+        onDone: () => {
+          // Fetch once more to capture final state authoritatively.
+          void getWikiBuildStatus(wiki.id).then((status) => {
+            setWikis(prev =>
+              prev.map(w =>
+                w.id === wiki.id
+                  ? {
+                      ...w,
+                      buildStatus: status.wiki_build_status,
+                      lastBuiltAt: status.last_built_at,
+                      lastBuildError: status.last_build_error,
+                    }
+                  : w,
+              ),
+            )
+            if (status.wiki_build_status === 'succeeded') {
+              toast.success(`Wiki「${wiki.name}」构建完成`)
+            } else if (status.wiki_build_status === 'failed') {
+              toast.error(`Wiki「${wiki.name}」构建失败：${status.last_build_error ?? '未知错误'}`)
+            }
+          })
+        },
+        onError: () => {
+          // SSE may close on its own when the server-side build finishes.
+          // Treat errors as a fallback by polling once.
+          void getWikiBuildStatus(wiki.id).then((status) => {
+            setWikis(prev =>
+              prev.map(w =>
+                w.id === wiki.id
+                  ? {
+                      ...w,
+                      buildStatus: status.wiki_build_status,
+                      lastBuiltAt: status.last_built_at,
+                      lastBuildError: status.last_build_error,
+                    }
+                  : w,
+              ),
+            )
+          })
+        },
+      })
+      // Safety net: if SSE doesn't get a terminal event in 10 minutes,
+      // cut the subscription. Build worker also has a 30-min hard cap.
+      window.setTimeout(unsubscribe, 10 * 60_000)
     } catch (err) {
       toast.error(`Build 触发失败：${err instanceof Error ? err.message : String(err)}`)
     }

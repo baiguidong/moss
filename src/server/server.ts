@@ -1185,7 +1185,72 @@ export function startServer(
         return
       }
 
-      // TODO: SSE endpoint for live build progress will be added in D7.
+      // SSE: stream wiki build progress.
+      // Simple poll-based implementation — checks the latest job row every
+      // 2s and pushes a `progress` event whenever the snapshot changes.
+      // Stops on terminal status (succeeded/failed/cancelled) or client
+      // disconnect.
+      const wikiBuildEventsMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)\/build-events$/)
+      if (req.method === 'GET' && wikiBuildEventsMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiBuildEventsMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+        res.flushHeaders?.()
+        // Initial event: current snapshot
+        let lastSnapshot = ''
+        const push = (event: string, data: unknown) => {
+          try {
+            res.write(`event: ${event}\n`)
+            res.write(`data: ${JSON.stringify(data)}\n\n`)
+          } catch {
+            // socket gone
+          }
+        }
+        const tick = () => {
+          const w = documentStore.getWiki(wikiId, auth.orgId)
+          const latestJob = documentStore.getLatestBuildJob(wikiId)
+          const payload = {
+            wiki_build_status: w?.buildStatus ?? 'unknown',
+            last_built_at: w?.lastBuiltAt ?? null,
+            last_build_error: w?.lastBuildError ?? null,
+            latest_job: latestJob,
+          }
+          const snapshot = JSON.stringify(payload)
+          if (snapshot !== lastSnapshot) {
+            lastSnapshot = snapshot
+            push('progress', payload)
+          }
+          if (
+            payload.wiki_build_status === 'succeeded' ||
+            payload.wiki_build_status === 'failed' ||
+            (latestJob &&
+              (latestJob.status === 'succeeded' ||
+                latestJob.status === 'failed' ||
+                latestJob.status === 'cancelled'))
+          ) {
+            push('done', payload)
+            clearInterval(timer)
+            res.end()
+          }
+        }
+        tick()
+        const timer = setInterval(tick, 2_000)
+        req.on('close', () => {
+          clearInterval(timer)
+        })
+        return
+      }
+
 
       // ---- Agent-facing wiki endpoints (called by wikiCli from inside scode container) ----
       // Auth model:

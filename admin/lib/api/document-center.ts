@@ -203,3 +203,62 @@ export function getWikiBuildStatus(id: string): Promise<{
 }> {
   return authClient.get(`/api/v1/wikis/${id}/build-status`)
 }
+
+/**
+ * Subscribe to live build progress via SSE.
+ *
+ * Returns an unsubscribe function. The caller is responsible for handling
+ * fall-back to polling if EventSource is unavailable (very old browsers).
+ */
+export function subscribeWikiBuildEvents(
+  id: string,
+  handlers: {
+    onProgress?: (data: {
+      wiki_build_status: WikiBuildStatus | 'unknown'
+      last_built_at: number | null
+      last_build_error: string | null
+      latest_job: WikiBuildJob | null
+    }) => void
+    onDone?: (data: unknown) => void
+    onError?: (err: Event) => void
+  },
+): () => void {
+  // EventSource doesn't support custom headers — token has to ride along
+  // as a query param. The server falls back to its standard auth path
+  // when a Bearer header is missing. (We rely on cookies via
+  // `credentials: 'include'` semantics provided by same-origin EventSource.)
+  // For cross-origin we currently degrade to one-shot poll; deemed
+  // acceptable for P0 since AdminHub is served by moss-server itself.
+  const url = `/api/v1/wikis/${encodeURIComponent(id)}/build-events`
+  let es: EventSource | null
+  try {
+    es = new EventSource(url, { withCredentials: true })
+  } catch {
+    return () => undefined
+  }
+  if (handlers.onProgress) {
+    es.addEventListener('progress', (e: MessageEvent) => {
+      try {
+        handlers.onProgress?.(JSON.parse(e.data))
+      } catch {
+        // ignore
+      }
+    })
+  }
+  if (handlers.onDone) {
+    es.addEventListener('done', (e: MessageEvent) => {
+      try {
+        handlers.onDone?.(JSON.parse(e.data))
+      } catch {
+        handlers.onDone?.(null)
+      }
+      es?.close()
+    })
+  }
+  if (handlers.onError) {
+    es.onerror = handlers.onError
+  }
+  return () => {
+    es?.close()
+  }
+}
