@@ -1398,25 +1398,90 @@ export default function AgentHubPage() {
     })
   }, [installedAgents])
 
-  // Filter tenant assistants by search query
+  // Filter tenant assistants by search query, type and visibility
   const filteredTenantAssistants = useMemo(() => {
-    if (!searchQuery.trim()) return tenantAssistants
-    const query = searchQuery.toLowerCase()
-    return tenantAssistants.filter(assistant =>
-      (assistant.display_name || assistant.name).toLowerCase().includes(query) ||
-      (assistant.description || '').toLowerCase().includes(query)
-    )
-  }, [tenantAssistants, searchQuery])
+    return tenantAssistants.filter(assistant => {
+      // Search filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        if (!(assistant.display_name || assistant.name).toLowerCase().includes(query) &&
+            !(assistant.description || '').toLowerCase().includes(query)) {
+          return false
+        }
+      }
+      // Type filter
+      if (installedFilterAgentType !== 'all') {
+        if (assistant.agent_type !== installedFilterAgentType) return false
+      }
+      // Visibility filter
+      if (installedFilterVisibility !== 'all') {
+        const deptIds = assistant.visible_to?.department_ids
+        if (installedFilterVisibility === 'public' && deptIds !== null && deptIds !== undefined) return false
+        if (installedFilterVisibility === 'restricted' && (deptIds === null || deptIds === undefined || deptIds.length === 0)) return false
+        if (installedFilterVisibility === 'admin-only' && (deptIds === null || deptIds === undefined || deptIds.length > 0)) return false
+      }
+      return true
+    })
+  }, [tenantAssistants, searchQuery, installedFilterAgentType, installedFilterVisibility])
 
-  // Filter custom agents by search query
+  // Filter custom agents by search query, type and visibility
   const filteredCustomAgents = useMemo(() => {
-    if (!searchQuery.trim()) return customAgents
-    const query = searchQuery.toLowerCase()
-    return customAgents.filter(agent =>
-      (agent.displayName || agent.name).toLowerCase().includes(query) ||
-      (agent.description || '').toLowerCase().includes(query)
-    )
-  }, [customAgents, searchQuery])
+    return customAgents.filter(agent => {
+      // Search filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        if (!(agent.displayName || agent.name).toLowerCase().includes(query) &&
+            !(agent.description || '').toLowerCase().includes(query)) {
+          return false
+        }
+      }
+      // Type filter
+      if (installedFilterAgentType !== 'all') {
+        const type = agent.agentType || agent.meta?.agent_type
+        if (type !== installedFilterAgentType) return false
+      }
+      // Visibility filter
+      if (installedFilterVisibility !== 'all') {
+        const deptIds = agent.visibleTo?.department_ids
+        if (installedFilterVisibility === 'public' && deptIds !== null && deptIds !== undefined) return false
+        if (installedFilterVisibility === 'restricted' && (deptIds === null || deptIds === undefined || deptIds.length === 0)) return false
+        if (installedFilterVisibility === 'admin-only' && (deptIds === null || deptIds === undefined || deptIds.length > 0)) return false
+      }
+      return true
+    })
+  }, [customAgents, searchQuery, installedFilterAgentType, installedFilterVisibility])
+
+  // Filter store assistants by visibility (based on installed agents)
+  const filteredStoreAssistants = useMemo(() => {
+    // If visibility filter is 'all', return all assistants
+    if (installedFilterVisibility === 'all') return assistants
+
+    // Otherwise, only show installed agents that match the visibility filter
+    return assistants.filter(agent => {
+      const installed =
+        installedAgentLookup.has(agent.id) ||
+        installedAgentLookup.has(agent.name)
+
+      if (!installed) return false
+
+      // Find the installed agent info
+      const installedAgentInfo = installedAgents.find(
+        a =>
+          (a.isHubInstalled || a.meta?.source_type === 'hub') &&
+          (a.name === agent.name || a.meta?.id === agent.id)
+      )
+
+      if (!installedAgentInfo) return false
+
+      // Check visibility
+      const deptIds = installedAgentInfo.visibleTo?.department_ids
+      if (installedFilterVisibility === 'public' && deptIds !== null && deptIds !== undefined) return false
+      if (installedFilterVisibility === 'restricted' && (deptIds === null || deptIds === undefined || deptIds.length === 0)) return false
+      if (installedFilterVisibility === 'admin-only' && (deptIds === null || deptIds === undefined || deptIds.length > 0)) return false
+
+      return true
+    })
+  }, [assistants, installedAgents, installedAgentLookup, installedFilterVisibility])
 
   const handleRefresh = useCallback(async () => {
     await loadBootstrapData()
@@ -1583,7 +1648,8 @@ export default function AgentHubPage() {
             </div>
 
             {activeTab === 'store' ? (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Category filter */}
                 {[{ key: 'all', label: '全部' }, ...categories.map(item => ({ key: item, label: item }))].map(item => (
                   <button
                     key={item.key}
@@ -1597,6 +1663,23 @@ export default function AgentHubPage() {
                     )}
                   >
                     {item.label}
+                  </button>
+                ))}
+                {/* Visibility filter for installed agents */}
+                <span className="text-sm text-muted-foreground ml-3 mr-1">可见性</span>
+                {([['all', '全部'], ['public', '全员可见'], ['restricted', '指定部门'], ['admin-only', '仅管理员']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setInstalledFilterVisibility(key)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-sm transition-colors',
+                      installedFilterVisibility === key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                    )}
+                  >
+                    {label}
                   </button>
                 ))}
               </div>
@@ -1651,7 +1734,7 @@ export default function AgentHubPage() {
 
                 {storeLoading ? (
                   <LoadingSkeleton />
-                ) : assistants.length === 0 ? (
+                ) : filteredStoreAssistants.length === 0 ? (
                   <Empty className="rounded-xl border bg-muted/20">
                     <EmptyHeader>
                       <EmptyMedia variant="icon">
@@ -1665,7 +1748,7 @@ export default function AgentHubPage() {
                   </Empty>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
-                    {assistants.map(agent => {
+                    {filteredStoreAssistants.map(agent => {
                       const installed =
                         installedAgentLookup.has(agent.id) ||
                         installedAgentLookup.has(agent.name)
@@ -1713,10 +1796,14 @@ export default function AgentHubPage() {
                         <Shield className="size-5" />
                       </EmptyMedia>
                       <EmptyTitle>
-                        {searchQuery.trim() ? '未找到匹配的专属智能体' : '暂无专属智能体'}
+                        {searchQuery.trim() || installedFilterAgentType !== 'all' || installedFilterVisibility !== 'all'
+                          ? '未找到匹配的专属智能体'
+                          : '暂无专属智能体'}
                       </EmptyTitle>
                       <EmptyDescription>
-                        {searchQuery.trim() ? '请尝试其他搜索关键词。' : '审批通过的专属智能体会在这里展示。'}
+                        {searchQuery.trim() || installedFilterAgentType !== 'all' || installedFilterVisibility !== 'all'
+                          ? '请尝试调整筛选条件。'
+                          : '审批通过的专属智能体会在这里展示。'}
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
@@ -1882,10 +1969,14 @@ export default function AgentHubPage() {
                         <Package className="size-5" />
                       </EmptyMedia>
                       <EmptyTitle>
-                        {searchQuery.trim() ? '未找到匹配的自定义智能体' : '暂无自定义智能体'}
+                        {searchQuery.trim() || installedFilterAgentType !== 'all' || installedFilterVisibility !== 'all'
+                          ? '未找到匹配的自定义智能体'
+                          : '暂无自定义智能体'}
                       </EmptyTitle>
                       <EmptyDescription>
-                        {searchQuery.trim() ? '请尝试其他搜索关键词。' : '通过前端创建或上传的自定义智能体会在这里展示。'}
+                        {searchQuery.trim() || installedFilterAgentType !== 'all' || installedFilterVisibility !== 'all'
+                          ? '请尝试调整筛选条件。'
+                          : '通过前端创建或上传的自定义智能体会在这里展示。'}
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>

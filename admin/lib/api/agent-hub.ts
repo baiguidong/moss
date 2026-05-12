@@ -250,6 +250,7 @@ export interface TenantAssistantInfo {
   file_path?: string
   enabled_skills?: string[]
   memory_mode?: 'session' | 'user'
+  agent_type?: 'chat' | 'workflow'
   publish_note?: string
   review_note?: string
   reviewed_by?: string
