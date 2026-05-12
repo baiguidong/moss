@@ -13,6 +13,7 @@ import {
   Sparkles,
   Wallet,
   Building2,
+  BookText,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -74,6 +75,12 @@ const menuItems: NavItem[] = [
     url: '/settings/skill',
     icon: Sparkles,
     requiredScope: 'admin:settings',
+  },
+  {
+    title: '文档中心',
+    url: '/document-center',
+    icon: BookText,
+    requiredAnyScopes: ['admin:documents', 'admin:settings'],
   },
 ]
 
