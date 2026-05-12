@@ -27,6 +27,7 @@ export async function startStandaloneDirectConnectServer(
   initHubConfig({
     hubApiBaseUrl: config.hubApiBaseUrl,
     hubAuthorization: config.hubAuthorization,
+    cosBaseUrl: config.cosBaseUrl,
   })
   await ensureServerDirectories(config)
   const store = openDirectConnectStore(config)

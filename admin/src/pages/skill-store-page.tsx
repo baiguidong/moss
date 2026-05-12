@@ -31,6 +31,8 @@ import {
   setInstalledSkillEnabled,
   uninstallSkill,
   getSkillSyncStatus,
+  getTenantSkills,
+  type TenantSkillInfo,
   type BatchSyncResult,
   type InstalledSkillInfo,
   type SkillHubDetail,
@@ -39,10 +41,10 @@ import {
   type SkillStoreTab,
   type SkillSyncProgress,
 } from '@/lib/api/skill-store'
-import type { SystemSettings } from '@/lib/api/types'
+import type { SystemSettings, AuthUser } from '@/lib/api/types'
 import type { AuthDepartment } from '@/lib/api/types'
-import { getDepartments } from '@/lib/api/auth'
-import { updateSkillVisibility } from '@/lib/api/skill-store'
+import { getDepartments, getUsers } from '@/lib/api/auth'
+import { updateSkillVisibility, approveTenantSkill, deleteTenantSkill, updateTenantSkillMeta } from '@/lib/api/skill-store'
 import { cn } from '@/lib/utils'
 import {
   CheckCircle2,
@@ -172,24 +174,38 @@ function LoadingSkeleton() {
 type SkillCardProps = {
   skill: SkillHubSkill
   installed: boolean
+  installedSkill?: InstalledSkillInfo | null
   hasUpdate: boolean
   latestVersion?: SkillHubVersion
   busy: boolean
+  toggling?: boolean
+  uninstalling?: boolean
   onInstall: (skillId: string) => void
   onUpdate: (skillId: string) => void
   onOpen: (skill: SkillHubSkill) => void
+  onToggleEnabled?: (skill: InstalledSkillInfo, enabled: boolean) => void
+  onEditVisibility?: (skill: InstalledSkillInfo) => void
+  onRequestUninstall?: (skill: InstalledSkillInfo) => void
 }
 
 function SkillCard({
   skill,
   installed,
+  installedSkill,
   hasUpdate,
   latestVersion,
   busy,
+  toggling,
+  uninstalling,
   onInstall,
   onUpdate,
   onOpen,
+  onToggleEnabled,
+  onEditVisibility,
+  onRequestUninstall,
 }: SkillCardProps) {
+  const canManage = installedSkill && !installedSkill.isBuiltin
+
   return (
     <div
       role="button"
@@ -201,7 +217,10 @@ function SkillCard({
           onOpen(skill)
         }
       }}
-      className="group relative flex w-full items-start gap-4 overflow-hidden rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30"
+      className={cn(
+        'group relative flex w-full items-start gap-4 overflow-hidden rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30',
+        installedSkill && !installedSkill.enabled && 'opacity-65',
+      )}
     >
       <div className="flex w-14 shrink-0 flex-col items-center gap-2">
         <div className="flex size-12 items-center justify-center overflow-hidden rounded-xl bg-muted text-xl">
@@ -229,9 +248,14 @@ function SkillCard({
         ) : null}
       </div>
 
-      <div className="min-w-0 flex-1 pr-20">
+      <div className="min-w-0 flex-1 pr-28">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{skill.display_name}</span>
+          {hasUpdate ? (
+            <Badge variant="outline" className="text-[11px]">
+              可更新
+            </Badge>
+          ) : null}
         </div>
         <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
           {skill.description || '暂无描述'}
@@ -244,13 +268,55 @@ function SkillCard({
       </div>
 
       <div
-        className="absolute top-4 right-4"
+        className="absolute top-4 right-4 flex items-center gap-2"
         onClick={event => event.stopPropagation()}
       >
         {busy ? (
           <div className="w-20">
             <Progress value={85} />
           </div>
+        ) : installed && canManage ? (
+          <>
+            {onEditVisibility && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onEditVisibility(installedSkill!)}
+              >
+                <Shield className="size-4" />
+              </Button>
+            )}
+            {onToggleEnabled && (
+              <Switch
+                checked={installedSkill!.enabled}
+                disabled={toggling}
+                onCheckedChange={checked => onToggleEnabled(installedSkill!, checked)}
+              />
+            )}
+            {hasUpdate && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onUpdate(skill.id)}
+              >
+                更新
+              </Button>
+            )}
+            {onRequestUninstall && (
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={uninstalling}
+                onClick={() => onRequestUninstall(installedSkill!)}
+              >
+                {uninstalling ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+              </Button>
+            )}
+          </>
         ) : installed && hasUpdate ? (
           <Button
             size="sm"
@@ -286,6 +352,7 @@ type InstalledSkillCardProps = {
   onUpdate: (skill: InstalledSkillInfo) => void
   onEditVisibility: (skill: InstalledSkillInfo) => void
   departmentNameMap: Map<string, string>
+  users: AuthUser[]
 }
 
 function InstalledSkillCard({
@@ -301,6 +368,7 @@ function InstalledSkillCard({
   onUpdate,
   onEditVisibility,
   departmentNameMap,
+  users,
 }: InstalledSkillCardProps) {
   const canManage = !skill.isBuiltin
 
@@ -371,7 +439,14 @@ function InstalledSkillCard({
           {latestVersion && hasUpdate ? <span>最新 {latestVersion.version}</span> : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {(skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids)?.length ? (
+          {(skill.visibleTo?.user_ids ?? skill.meta?.visible_to?.user_ids)?.length ? (
+            (skill.visibleTo?.user_ids ?? skill.meta?.visible_to?.user_ids ?? []).map(userId => {
+              const user = users.find(u => u.id === userId)
+              return user ? (
+                <Badge key={userId} variant="outline" className="text-[10px]">{user.name}</Badge>
+              ) : null
+            })
+          ) : (skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids)?.length ? (
             (skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids ?? []).map(deptId => {
               const name = departmentNameMap.get(deptId)
               return name ? (
@@ -502,11 +577,28 @@ export default function SkillStorePage() {
   const [skillSyncProgressOpen, setSkillSyncProgressOpen] = useState(false)
   const [skillSyncProgress, setSkillSyncProgress] = useState<SkillSyncProgress | null>(null)
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [users, setUsers] = useState<AuthUser[]>([])
   const [editVisibilityOpen, setEditVisibilityOpen] = useState(false)
   const [editingSkillName, setEditingSkillName] = useState('')
-  const [skillVisibilityMode, setSkillVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [skillVisibilityMode, setSkillVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editSkillVisibleTo, setEditSkillVisibleTo] = useState<string[]>([])
+  const [editSkillVisibleUserIds, setEditSkillVisibleUserIds] = useState<string[]>([])
   const [savingVisibility, setSavingVisibility] = useState(false)
+  const [tenantSkills, setTenantSkills] = useState<TenantSkillInfo[]>([])
+  const [tenantSkillsLoading, setTenantSkillsLoading] = useState(false)
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
+  const [approvingSkill, setApprovingSkill] = useState<TenantSkillInfo | null>(null)
+  const [approvalNote, setApprovalNote] = useState('')
+  const [approving, setApproving] = useState(false)
+  const [togglingTenantSkillId, setTogglingTenantSkillId] = useState<string | null>(null)
+  const [deletingTenantSkillId, setDeletingTenantSkillId] = useState<string | null>(null)
+  const [tenantVisibilityOpen, setTenantVisibilityOpen] = useState(false)
+  const [editingTenantSkill, setEditingTenantSkill] = useState<TenantSkillInfo | null>(null)
+  const [tenantVisibilityMode, setTenantVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
+  const [editTenantVisibleTo, setEditTenantVisibleTo] = useState<string[]>([])
+  const [editTenantVisibleUserIds, setEditTenantVisibleUserIds] = useState<string[]>([])
+  const [savingTenantVisibility, setSavingTenantVisibility] = useState(false)
+  const [tenantSkillDetail, setTenantSkillDetail] = useState<TenantSkillInfo | null>(null)
 
   const latestVersionsRef = useRef(latestVersions)
   const requestIdRef = useRef(0)
@@ -596,6 +688,26 @@ export default function SkillStorePage() {
     }
   }, [installedList])
 
+  // Filter tenant skills by search query
+  const filteredTenantSkills = useMemo(() => {
+    if (!searchQuery.trim()) return tenantSkills
+    const query = searchQuery.toLowerCase()
+    return tenantSkills.filter(skill =>
+      (skill.display_name || skill.name).toLowerCase().includes(query) ||
+      (skill.description || '').toLowerCase().includes(query)
+    )
+  }, [tenantSkills, searchQuery])
+
+  // Filter custom skills by search query
+  const filteredCustomSkills = useMemo(() => {
+    if (!searchQuery.trim()) return groupedInstalledSkills.custom
+    const query = searchQuery.toLowerCase()
+    return groupedInstalledSkills.custom.filter(skill =>
+      (skill.displayName || skill.name).toLowerCase().includes(query) ||
+      (skill.description || '').toLowerCase().includes(query)
+    )
+  }, [groupedInstalledSkills.custom, searchQuery])
+
   const fetchInstalledList = useCallback(async () => {
     setInstalledLoading(true)
     try {
@@ -607,6 +719,20 @@ export default function SkillStorePage() {
       )
     } finally {
       setInstalledLoading(false)
+    }
+  }, [])
+
+  const fetchTenantSkills = useCallback(async () => {
+    setTenantSkillsLoading(true)
+    try {
+      const response = await getTenantSkills()
+      setTenantSkills(response)
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : '读取专属技能失败',
+      )
+    } finally {
+      setTenantSkillsLoading(false)
     }
   }, [])
 
@@ -665,11 +791,12 @@ export default function SkillStorePage() {
     setPageLoading(true)
     setLoadError('')
 
-    const [settingsResult, categoriesResult, installedResult] =
+    const [settingsResult, categoriesResult, installedResult, tenantSkillsResult] =
       await Promise.allSettled([
         getSystemSettings(),
         getSkillHubCategories(),
         getInstalledSkills(),
+        getTenantSkills(),
       ])
 
     if (settingsResult.status === 'fulfilled') {
@@ -702,11 +829,25 @@ export default function SkillStorePage() {
       )
     }
 
+    if (tenantSkillsResult.status === 'fulfilled') {
+      setTenantSkills(tenantSkillsResult.value)
+    } else if (settingsResult.status === 'fulfilled') {
+      toast.error(
+        tenantSkillsResult.reason instanceof Error
+          ? tenantSkillsResult.reason.message
+          : '读取专属技能失败',
+      )
+    }
+
     setPageLoading(false)
 
     try {
-      const deptResult = await getDepartments()
+      const [deptResult, userResult] = await Promise.all([
+        getDepartments(),
+        getUsers(),
+      ])
       setDepartments(deptResult.departments)
+      setUsers(userResult.users)
     } catch { /* non-critical */ }
   }, [])
 
@@ -779,7 +920,7 @@ export default function SkillStorePage() {
   )
 
   useEffect(() => {
-    if (!settings || activeTab === 'installed') {
+    if (!settings || activeTab === 'custom') {
       return
     }
 
@@ -790,7 +931,8 @@ export default function SkillStorePage() {
     setNextCursor(null)
     setHasMore(false)
 
-    if (activeTab === 'exclusive' && !exclusiveTenantId) {
+    // 专属技能页签不再从 Hub 获取数据，改为从后端获取
+    if (activeTab === 'exclusive') {
       setLoading(false)
       setLoadingMore(false)
       setStoreError('')
@@ -830,7 +972,7 @@ export default function SkillStorePage() {
       loadingMore ||
       !hasMore ||
       !nextCursor ||
-      activeTab === 'installed'
+      activeTab === 'custom'
     ) {
       return
     }
@@ -858,7 +1000,7 @@ export default function SkillStorePage() {
 
   useEffect(() => {
     const sentinel = sentinelRef.current
-    if (!sentinel || !hasMore || activeTab === 'installed') {
+    if (!sentinel || !hasMore || activeTab === 'custom') {
       return
     }
 
@@ -939,7 +1081,9 @@ export default function SkillStorePage() {
   const openInstalledSkillDetail = useCallback(
     (skill: InstalledSkillInfo) => {
       const hubSkill = installedToHubSkill(skill)
-      if (!skill.meta?.id) {
+      // For custom/uploaded/tenant skills, don't fetch from hub - show local info directly
+      const sourceType = skill.meta?.source_type
+      if (!skill.meta?.id || sourceType === 'upload' || sourceType === 'custom' || sourceType === 'tenant') {
         setDetailOpen(true)
         setDetailSkill(hubSkill)
         setDetailInstalledSkill(skill)
@@ -1120,13 +1264,25 @@ export default function SkillStorePage() {
 
   const handleOpenVisibilityEdit = useCallback((skill: InstalledSkillInfo) => {
     setEditingSkillName(skill.name)
-    const deptIds = skill.visibleTo?.department_ids ?? skill.meta?.visible_to?.department_ids
-    setSkillVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const visibleTo = skill.visibleTo ?? skill.meta?.visible_to
+    const deptIds = visibleTo?.department_ids
+    const userIds = visibleTo?.user_ids
+
+    // Determine mode based on visible_to
+    let mode: 'all' | 'departments' | 'users' | 'admin' = 'all'
+    if (visibleTo === null || visibleTo === undefined) {
+      mode = 'all'
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length === 0 && (userIds === null || userIds === undefined || userIds.length === 0)) {
+      mode = 'admin'
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      mode = 'users'
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      mode = 'departments'
+    }
+
+    setSkillVisibilityMode(mode)
     setEditSkillVisibleTo(deptIds ?? [])
+    setEditSkillVisibleUserIds(userIds ?? [])
     setEditVisibilityOpen(true)
   }, [])
 
@@ -1136,10 +1292,12 @@ export default function SkillStorePage() {
       await updateSkillVisibility(
         editingSkillName,
         skillVisibilityMode === 'admin'
-          ? { department_ids: [] }
+          ? { department_ids: [], user_ids: [] }
           : skillVisibilityMode === 'departments'
-            ? (editSkillVisibleTo.length > 0 ? { department_ids: editSkillVisibleTo } : null)
-            : null,
+            ? { department_ids: editSkillVisibleTo.length > 0 ? editSkillVisibleTo : null, user_ids: null }
+            : skillVisibilityMode === 'users'
+              ? { department_ids: null, user_ids: editSkillVisibleUserIds.length > 0 ? editSkillVisibleUserIds : null }
+              : null,
       )
       toast.success('可见性已更新')
       setEditVisibilityOpen(false)
@@ -1149,7 +1307,114 @@ export default function SkillStorePage() {
     } finally {
       setSavingVisibility(false)
     }
-  }, [editingSkillName, skillVisibilityMode, editSkillVisibleTo, fetchInstalledList])
+  }, [editingSkillName, skillVisibilityMode, editSkillVisibleTo, editSkillVisibleUserIds, fetchInstalledList])
+
+  const handleApproveTenantSkill = useCallback(async (approved: boolean) => {
+    if (!approvingSkill) return
+    setApproving(true)
+    try {
+      await approveTenantSkill(approvingSkill.id, approved, approvalNote || undefined)
+      toast.success(approved ? '已通过审批' : '已拒绝审批')
+      setApprovalDialogOpen(false)
+      setApprovingSkill(null)
+      setApprovalNote('')
+      await fetchTenantSkills()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '审批失败')
+    } finally {
+      setApproving(false)
+    }
+  }, [approvingSkill, approvalNote, fetchTenantSkills])
+
+  const handleDeleteTenantSkill = useCallback(async (skill: TenantSkillInfo) => {
+    try {
+      await deleteTenantSkill(skill.id)
+      toast.success('已删除')
+      await fetchTenantSkills()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除失败')
+    }
+  }, [fetchTenantSkills])
+
+  const handleToggleTenantSkillEnabled = useCallback(async (skill: TenantSkillInfo, enabled: boolean) => {
+    setTogglingTenantSkillId(skill.id)
+    try {
+      await updateTenantSkillMeta({ id: skill.id, enabled })
+      toast.success(enabled ? '已启用' : '已禁用')
+      await fetchTenantSkills()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '操作失败')
+    } finally {
+      setTogglingTenantSkillId(null)
+    }
+  }, [fetchTenantSkills])
+
+  const handleOpenTenantVisibilityEdit = useCallback((skill: TenantSkillInfo) => {
+    setEditingTenantSkill(skill)
+    const visibleTo = skill.visible_to
+    if (!visibleTo || (!visibleTo.department_ids && !visibleTo.user_ids)) {
+      setTenantVisibilityMode('all')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.user_ids?.length === 1 && visibleTo.user_ids[0] === 'admin') {
+      setTenantVisibilityMode('admin')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.department_ids?.length) {
+      setTenantVisibilityMode('departments')
+      setEditTenantVisibleTo(visibleTo.department_ids)
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.user_ids?.length) {
+      setTenantVisibilityMode('users')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds(visibleTo.user_ids)
+    } else {
+      setTenantVisibilityMode('all')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    }
+    setTenantVisibilityOpen(true)
+  }, [])
+
+  const handleSaveTenantVisibility = useCallback(async () => {
+    if (!editingTenantSkill) return
+    setSavingTenantVisibility(true)
+    try {
+      let visible_to: { department_ids: string[] | null; user_ids: string[] | null } | null = null
+      if (tenantVisibilityMode === 'admin') {
+        visible_to = { department_ids: null, user_ids: ['admin'] }
+      } else if (tenantVisibilityMode === 'departments') {
+        visible_to = { department_ids: editTenantVisibleTo.length > 0 ? editTenantVisibleTo : null, user_ids: null }
+      } else if (tenantVisibilityMode === 'users') {
+        visible_to = { department_ids: null, user_ids: editTenantVisibleUserIds.length > 0 ? editTenantVisibleUserIds : null }
+      }
+      await updateTenantSkillMeta({ id: editingTenantSkill.id, visible_to })
+      toast.success('可见性已更新')
+      setTenantVisibilityOpen(false)
+      setEditingTenantSkill(null)
+      await fetchTenantSkills()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存失败')
+    } finally {
+      setSavingTenantVisibility(false)
+    }
+  }, [editingTenantSkill, tenantVisibilityMode, editTenantVisibleTo, editTenantVisibleUserIds, fetchTenantSkills])
+
+  const handleConfirmDeleteTenantSkill = useCallback(async () => {
+    if (!editingTenantSkill) return
+    setDeletingTenantSkillId(editingTenantSkill.id)
+    try {
+      await deleteTenantSkill(editingTenantSkill.id)
+      toast.success('已删除')
+      setTenantVisibilityOpen(false)
+      setEditingTenantSkill(null)
+      await fetchTenantSkills()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除失败')
+    } finally {
+      setDeletingTenantSkillId(null)
+    }
+  }, [editingTenantSkill, fetchTenantSkills])
 
   const departmentNameMap = useMemo(
     () => new Map(departments.map(dept => [dept.id, dept.name])),
@@ -1186,6 +1451,7 @@ export default function SkillStorePage() {
           }}
           onEditVisibility={handleOpenVisibilityEdit}
           departmentNameMap={departmentNameMap}
+          users={users}
         />
       )
     },
@@ -1200,6 +1466,7 @@ export default function SkillStorePage() {
       pendingUninstallSkill,
       togglingSkillName,
       updatingSkillId,
+      users,
     ],
   )
 
@@ -1257,9 +1524,9 @@ export default function SkillStorePage() {
       <div className="space-y-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={tenantId ? 'secondary' : 'outline'}>
+            {/* <Badge variant={tenantId ? 'secondary' : 'outline'}>
               {tenantId ? `专属租户: ${tenantId}` : '未配置专属租户 ID'}
-            </Badge>
+            </Badge> */}
             <Badge variant="secondary">
               已安装 {installedList.length} 个技能
             </Badge>
@@ -1293,25 +1560,34 @@ export default function SkillStorePage() {
                 className="gap-0"
               >
                 <TabsList>
-                  <TabsTrigger value="store">技能库</TabsTrigger>
-                  <TabsTrigger value="exclusive">专属技能</TabsTrigger>
-                  <TabsTrigger value="installed">
-                    我的技能
-                    {installedList.length > 0 ? (
+                  <TabsTrigger value="store">
+                    技能库
+                    {groupedInstalledSkills.hub.length > 0 ? (
                       <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
-                        {installedList.length}
+                        {groupedInstalledSkills.hub.length}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                  <TabsTrigger value="exclusive">
+                    专属技能
+                    {tenantSkills.filter(t => t.status === 'approved').length > 0 ? (
+                      <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
+                        {tenantSkills.filter(t => t.status === 'approved').length}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                  <TabsTrigger value="custom">
+                    自定义技能
+                    {groupedInstalledSkills.custom.length > 0 ? (
+                      <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
+                        {groupedInstalledSkills.custom.length}
                       </span>
                     ) : null}
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
 
-              <div
-                className={cn(
-                  'min-w-0 flex-1 transition-opacity',
-                  activeTab === 'installed' && 'pointer-events-none opacity-0',
-                )}
-              >
+              <div className="min-w-0 flex-1">
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1323,7 +1599,7 @@ export default function SkillStorePage() {
                 </div>
               </div>
 
-              {activeTab === 'installed' ? (
+              {activeTab === 'custom' ? (
                 <Button onClick={() => setImportDialogOpen(true)}>
                   <Upload className="mr-2 size-4" />
                   上传技能
@@ -1331,9 +1607,9 @@ export default function SkillStorePage() {
               ) : null}
             </div>
 
-            {activeTab !== 'installed' ? (
+            {activeTab !== 'custom' ? (
               <div className="flex flex-wrap gap-2">
-                {[{ key: 'all', label: '精选' }, ...categories.map(item => ({ key: item, label: item }))].map(item => (
+                {[{ key: 'all', label: '全部' }, ...categories.map(item => ({ key: item, label: item }))].map(item => (
                   <button
                     key={item.key}
                     type="button"
@@ -1383,20 +1659,35 @@ export default function SkillStorePage() {
                         !!latestVersion &&
                         (!installedVersion || latestVersion.version !== installedVersion)
 
+                      // Find the installed skill info for this skill
+                      const installedSkillInfo = installed
+                        ? installedList.find(
+                            s =>
+                              (s.isHubInstalled || s.meta?.source_type === 'hub') &&
+                              (s.name === skill.name || s.meta?.id === skill.id)
+                          ) || null
+                        : null
+
                       return (
                         <SkillCard
                           key={skill.id}
                           skill={skill}
                           installed={installed}
+                          installedSkill={installedSkillInfo}
                           hasUpdate={hasUpdate}
                           latestVersion={latestVersion}
                           busy={
                             installingSkillId === skill.id ||
                             updatingSkillId === skill.id
                           }
+                          toggling={installedSkillInfo ? togglingSkillName === installedSkillInfo.name : false}
+                          uninstalling={installedSkillInfo ? pendingUninstallSkill?.name === installedSkillInfo.name : false}
                           onInstall={handleInstall}
                           onUpdate={skillId => void handleUpdate(skillId)}
                           onOpen={item => void openSkillDetail(item)}
+                          onToggleEnabled={handleToggleEnabled}
+                          onEditVisibility={handleOpenVisibilityEdit}
+                          onRequestUninstall={setPendingUninstallSkill}
                         />
                       )
                     })}
@@ -1407,100 +1698,177 @@ export default function SkillStorePage() {
               </TabsContent>
 
               <TabsContent value="exclusive" className="space-y-4">
-                {!exclusiveTenantId ? (
-                  <Alert>
-                    <Shield className="size-4" />
-                    <AlertTitle>未配置专属技能租户 ID</AlertTitle>
-                    <AlertDescription>
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <span>当前无法加载专属技能，请先在系统设置中填写租户 ID。</span>
-                        <Button asChild size="sm" variant="outline">
-                          <Link to="/settings">前往系统设置</Link>
-                        </Button>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                ) : storeError ? (
-                  <Alert variant="destructive">
-                    <TriangleAlert className="size-4" />
-                    <AlertTitle>读取专属技能失败</AlertTitle>
-                    <AlertDescription>{storeError}</AlertDescription>
-                  </Alert>
-                ) : loading ? (
+                {tenantSkillsLoading ? (
                   <LoadingSkeleton />
-                ) : skills.length === 0 ? (
+                ) : filteredTenantSkills.length === 0 ? (
                   <div className="rounded-xl border border-dashed bg-muted/30 px-6 py-12 text-center text-muted-foreground">
-                    <Cloud className="mx-auto mb-3 size-8 opacity-50" />
-                    当前租户暂无专属技能
+                    <Shield className="mx-auto mb-3 size-8 opacity-50" />
+                    {searchQuery.trim() ? '未找到匹配的专属技能' : '暂无专属技能'}
                   </div>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
-                    {skills.map(skill => {
-                      const installedVersion =
-                        installedVersionLookup.get(skill.id) ||
-                        installedVersionLookup.get(skill.name) ||
-                        ''
-                      const latestVersion = latestVersions.get(skill.id)
-                      const installed = Boolean(installedVersion)
-                      const hasUpdate =
-                        installed &&
-                        !!latestVersion &&
-                        (!installedVersion || latestVersion.version !== installedVersion)
-
-                      return (
-                        <SkillCard
-                          key={skill.id}
-                          skill={skill}
-                          installed={installed}
-                          hasUpdate={hasUpdate}
-                          latestVersion={latestVersion}
-                          busy={
-                            installingSkillId === skill.id ||
-                            updatingSkillId === skill.id
+                    {filteredTenantSkills.map(skill => (
+                      <div
+                        key={skill.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setTenantSkillDetail(skill)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setTenantSkillDetail(skill)
                           }
-                          onInstall={handleInstall}
-                          onUpdate={skillId => void handleUpdate(skillId)}
-                          onOpen={item => void openSkillDetail(item)}
-                        />
-                      )
-                    })}
+                        }}
+                        className="rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="flex size-12 items-center justify-center rounded-xl bg-muted text-xl">
+                            <span>📦</span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {skill.display_name || skill.name}
+                              </span>
+                              <Badge
+                                variant={
+                                  skill.status === 'approved'
+                                    ? 'default'
+                                    : skill.status === 'pending'
+                                      ? 'secondary'
+                                      : 'destructive'
+                                }
+                                className="text-[10px]"
+                              >
+                                {skill.status === 'approved'
+                                  ? '已通过'
+                                  : skill.status === 'pending'
+                                    ? '待审批'
+                                    : '已拒绝'}
+                              </Badge>
+                              {skill.status === 'approved' && skill.enabled ? (
+                                <Badge variant="outline" className="text-[10px]">已启用</Badge>
+                              ) : skill.status === 'approved' ? (
+                                <Badge variant="outline" className="text-[10px]">已禁用</Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                              {skill.description || '暂无描述'}
+                            </p>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {skill.author_name || skill.author_id}
+                              {' · '}
+                              {new Date(skill.created_at).toLocaleDateString()}
+                            </div>
+                            {skill.status === 'approved' && skill.visible_to ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {skill.visible_to.user_ids?.length ? (
+                                  skill.visible_to.user_ids.map(userId => {
+                                    const user = users.find(u => u.id === userId)
+                                    return user ? (
+                                      <Badge key={userId} variant="outline" className="text-[10px]">{user.name}</Badge>
+                                    ) : null
+                                  })
+                                ) : skill.visible_to.department_ids?.length ? (
+                                  skill.visible_to.department_ids.map(deptId => {
+                                    const name = departmentNameMap.get(deptId)
+                                    return name ? (
+                                      <Badge key={deptId} variant="outline" className="text-[10px]">{name}</Badge>
+                                    ) : null
+                                  })
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground">全员可见</span>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2" onClick={e => e.stopPropagation()}>
+                            {skill.status === 'pending' ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setApprovingSkill(skill)
+                                    setApprovalDialogOpen(true)
+                                  }}
+                                >
+                                  审批
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={deletingTenantSkillId === skill.id}
+                                  onClick={() => void handleDeleteTenantSkill(skill)}
+                                >
+                                  {deletingTenantSkillId === skill.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-4" />
+                                  )}
+                                </Button>
+                              </>
+                            ) : skill.status === 'approved' ? (
+                              <>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleOpenTenantVisibilityEdit(skill)}
+                                >
+                                  <Shield className="size-4" />
+                                </Button>
+                                <Switch
+                                  checked={skill.enabled === 1}
+                                  disabled={togglingTenantSkillId === skill.id}
+                                  onCheckedChange={checked => void handleToggleTenantSkillEnabled(skill, checked)}
+                                />
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  disabled={deletingTenantSkillId === skill.id}
+                                  onClick={() => void handleDeleteTenantSkill(skill)}
+                                >
+                                  {deletingTenantSkillId === skill.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-4" />
+                                  )}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={deletingTenantSkillId === skill.id}
+                                onClick={() => void handleDeleteTenantSkill(skill)}
+                              >
+                                {deletingTenantSkillId === skill.id ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="size-4" />
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
-                {loadingMore ? <LoadingSkeleton /> : null}
-                {hasMore ? <div ref={sentinelRef} className="h-1" /> : null}
               </TabsContent>
 
-              <TabsContent value="installed" className="space-y-6">
+              <TabsContent value="custom" className="space-y-6">
                 {installedLoading ? (
                   <LoadingSkeleton />
-                ) : installedList.length === 0 ? (
+                ) : filteredCustomSkills.length === 0 ? (
                   <div className="rounded-xl border border-dashed bg-muted/30 px-6 py-12 text-center text-muted-foreground">
                     <Package className="mx-auto mb-3 size-8 opacity-50" />
-                    暂无已安装技能
+                    {searchQuery.trim() ? '未找到匹配的自定义技能' : '暂无自定义技能'}
                   </div>
                 ) : (
-                  <>
-                    <InstalledSkillSection
-                      title="自定义技能"
-                      skills={groupedInstalledSkills.custom}
-                      renderCard={renderInstalledCard}
-                    />
-                    <InstalledSkillSection
-                      title="Hub 技能"
-                      skills={groupedInstalledSkills.hub}
-                      renderCard={renderInstalledCard}
-                    />
-                    <InstalledSkillSection
-                      title="内置技能"
-                      skills={groupedInstalledSkills.builtin}
-                      renderCard={renderInstalledCard}
-                    />
-                    <InstalledSkillSection
-                      title="本地技能"
-                      skills={groupedInstalledSkills.local}
-                      renderCard={renderInstalledCard}
-                    />
-                  </>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {filteredCustomSkills.map(renderInstalledCard)}
+                  </div>
                 )}
               </TabsContent>
             </Tabs>
@@ -1768,13 +2136,13 @@ export default function SkillStorePage() {
           <DialogHeader>
             <DialogTitle>编辑技能可见性</DialogTitle>
             <DialogDescription>
-              设置哪些部门可以看到此技能。
+              设置哪些用户或部门可以看到此技能。
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-3'>
             <RadioGroup
               value={skillVisibilityMode}
-              onValueChange={value => setSkillVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              onValueChange={value => setSkillVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
             >
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="all" />
@@ -1783,6 +2151,10 @@ export default function SkillStorePage() {
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="departments" />
                 <label className='text-sm cursor-pointer'>指定部门可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="users" />
+                <label className='text-sm cursor-pointer'>指定人员可见</label>
               </div>
               <div className='flex items-center gap-2'>
                 <RadioGroupItem value="admin" />
@@ -1810,6 +2182,32 @@ export default function SkillStorePage() {
                         }}
                       />
                       <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+            {skillVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无用户数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editSkillVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditSkillVisibleUserIds(
+                            checked === true
+                              ? [...editSkillVisibleUserIds, user.id]
+                              : editSkillVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name}</span>
                     </label>
                   ))}
                 </div>
@@ -1911,6 +2309,269 @@ export default function SkillStorePage() {
               disabled={skillSyncProgress?.status === 'running'}
             >
               {skillSyncProgress?.status === 'running' ? '同步中...' : '关闭'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={approvalDialogOpen} onOpenChange={open => { if (!open) setApprovalDialogOpen(false) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>审批专属技能</DialogTitle>
+            <DialogDescription>
+              {approvingSkill ? `审批技能: ${approvingSkill.display_name || approvingSkill.name}` : '审批专属技能发布申请'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm">
+              <p className="font-medium">发布说明</p>
+              <p className="mt-1 text-muted-foreground">{approvingSkill?.publish_note || '无发布说明'}</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">审批备注</label>
+              <Input
+                value={approvalNote}
+                onChange={e => setApprovalNote(e.target.value)}
+                placeholder="可选，填写审批说明"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApprovalDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={approving}
+              onClick={() => void handleApproveTenantSkill(false)}
+            >
+              {approving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              拒绝
+            </Button>
+            <Button
+              disabled={approving}
+              onClick={() => void handleApproveTenantSkill(true)}
+            >
+              {approving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              通过
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tenantVisibilityOpen} onOpenChange={open => { if (!open) setTenantVisibilityOpen(false) }}>
+        <DialogContent className='max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>编辑专属技能可见性</DialogTitle>
+            <DialogDescription>
+              {editingTenantSkill ? `设置 ${editingTenantSkill.display_name || editingTenantSkill.name} 的可见范围` : '设置专属技能的可见范围'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-3'>
+            <RadioGroup
+              value={tenantVisibilityMode}
+              onValueChange={value => setTenantVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
+            >
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="all" />
+                <label className='text-sm cursor-pointer'>全员可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="departments" />
+                <label className='text-sm cursor-pointer'>指定部门可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="users" />
+                <label className='text-sm cursor-pointer'>指定人员可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="admin" />
+                <label className='text-sm cursor-pointer'>仅管理员可见</label>
+              </div>
+            </RadioGroup>
+            {tenantVisibilityMode === 'departments' ? (
+              departmentOptions.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无部门数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {departmentOptions.map(dept => (
+                    <label
+                      key={dept.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editTenantVisibleTo.includes(dept.id)}
+                        onCheckedChange={checked => {
+                          setEditTenantVisibleTo(
+                            checked === true
+                              ? [...editTenantVisibleTo, dept.id]
+                              : editTenantVisibleTo.filter(id => id !== dept.id),
+                          )
+                        }}
+                      />
+                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+            {tenantVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无用户数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editTenantVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditTenantVisibleUserIds(
+                            checked === true
+                              ? [...editTenantVisibleUserIds, user.id]
+                              : editTenantVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setTenantVisibilityOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant='destructive'
+              disabled={deletingTenantSkillId !== null}
+              onClick={() => void handleConfirmDeleteTenantSkill()}
+            >
+              {deletingTenantSkillId !== null ? <Loader2 className='mr-2 size-4 animate-spin' /> : null}
+              删除
+            </Button>
+            <Button disabled={savingTenantVisibility} onClick={() => void handleSaveTenantVisibility()}>
+              {savingTenantVisibility ? (
+                <>
+                  <Loader2 className='mr-2 size-4 animate-spin' />
+                  保存中
+                </>
+              ) : (
+                '保存'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 专属技能详情对话框 */}
+      <Dialog open={tenantSkillDetail !== null} onOpenChange={open => { if (!open) setTenantSkillDetail(null) }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{tenantSkillDetail?.display_name || tenantSkillDetail?.name || '专属技能详情'}</DialogTitle>
+            <DialogDescription>
+              查看专属技能详细信息。
+            </DialogDescription>
+          </DialogHeader>
+          {tenantSkillDetail && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    tenantSkillDetail.status === 'approved'
+                      ? 'default'
+                      : tenantSkillDetail.status === 'pending'
+                        ? 'secondary'
+                        : 'destructive'
+                  }
+                >
+                  {tenantSkillDetail.status === 'approved'
+                    ? '已通过'
+                    : tenantSkillDetail.status === 'pending'
+                      ? '待审批'
+                      : '已拒绝'}
+                </Badge>
+                {tenantSkillDetail.status === 'approved' && (
+                  <Badge variant="outline">
+                    {tenantSkillDetail.enabled ? '已启用' : '已禁用'}
+                  </Badge>
+                )}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-medium text-muted-foreground mb-1">描述</h4>
+                <p className="text-sm">{tenantSkillDetail.description || '暂无描述'}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">版本</h4>
+                  <p className="text-sm">{tenantSkillDetail.version || '未知'}</p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">作者</h4>
+                  <p className="text-sm">{tenantSkillDetail.author_name || tenantSkillDetail.author_id}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">创建时间</h4>
+                  <p className="text-sm">{new Date(tenantSkillDetail.created_at).toLocaleString()}</p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">更新时间</h4>
+                  <p className="text-sm">{new Date(tenantSkillDetail.updated_at).toLocaleString()}</p>
+                </div>
+              </div>
+
+              {tenantSkillDetail.publish_note && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">发布说明</h4>
+                  <p className="text-sm">{tenantSkillDetail.publish_note}</p>
+                </div>
+              )}
+
+              {tenantSkillDetail.review_note && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">审批备注</h4>
+                  <p className="text-sm">{tenantSkillDetail.review_note}</p>
+                </div>
+              )}
+
+              {tenantSkillDetail.status === 'approved' && tenantSkillDetail.visible_to && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">可见范围</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {tenantSkillDetail.visible_to.user_ids?.length ? (
+                      tenantSkillDetail.visible_to.user_ids.map(userId => {
+                        const user = users.find(u => u.id === userId)
+                        return user ? (
+                          <Badge key={userId} variant="outline">{user.name}</Badge>
+                        ) : null
+                      })
+                    ) : tenantSkillDetail.visible_to.department_ids?.length ? (
+                      tenantSkillDetail.visible_to.department_ids.map(deptId => {
+                        const name = departmentNameMap.get(deptId)
+                        return name ? (
+                          <Badge key={deptId} variant="outline">{name}</Badge>
+                        ) : null
+                      })
+                    ) : (
+                      <span className="text-sm text-muted-foreground">全员可见</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTenantSkillDetail(null)}>
+              关闭
             </Button>
           </DialogFooter>
         </DialogContent>

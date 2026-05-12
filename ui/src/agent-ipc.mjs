@@ -28,7 +28,7 @@ const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
 const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');
-const ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_my-custom-assistant');
+const ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'custom');
 const ASSISTANT_SEARCH_DIRS = [ASSISTANT_CUSTOM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_SYSTEM_DIR];
 
 async function verifyChecksum(buffer, expectedChecksum) {

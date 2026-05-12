@@ -1,24 +1,55 @@
 import type { AuthContext } from './auth/token.js'
 import { hasScope } from './auth/token.js'
 
+export type VisibleTo = {
+  department_ids: string[] | null
+  user_ids: string[] | null
+} | null
+
 export type VisibilityFilter = {
   isAdmin: boolean
+  userId: string
   departmentId: string | null
   visibleDepartmentIds: Set<string> | null
 }
 
 export function isVisibleTo(
-  visibleTo: { department_ids: string[] | null } | null | undefined,
+  visibleTo: VisibleTo | null | undefined,
   filter: VisibilityFilter,
 ): boolean {
+  // 1. 管理员始终可见
   if (filter.isAdmin) return true
-  if (!visibleTo || visibleTo.department_ids === null) return true
-  if (visibleTo.department_ids.length === 0) return false
-  if (!filter.departmentId) return false
-  const allowedSet = new Set(visibleTo.department_ids)
-  for (const deptId of filter.visibleDepartmentIds ?? new Set()) {
-    if (allowedSet.has(deptId)) return true
+
+  // 2. visible_to 为 null → 所有人可见
+  if (!visibleTo) return true
+
+  // 3. 检查用户白名单
+  const userIds = visibleTo.user_ids
+  if (userIds !== null) {
+    if (userIds.length === 0) {
+      // 空数组表示仅管理员可见
+      return false
+    }
+    if (userIds.includes(filter.userId)) {
+      return true
+    }
   }
+
+  // 4. 检查部门白名单
+  const departmentIds = visibleTo.department_ids
+  if (departmentIds !== null) {
+    if (departmentIds.length === 0) {
+      // 空数组表示仅管理员可见
+      return false
+    }
+    if (!filter.departmentId) {
+      return false
+    }
+    for (const deptId of filter.visibleDepartmentIds ?? new Set()) {
+      if (departmentIds.includes(deptId)) return true
+    }
+  }
+
   return false
 }
 
@@ -34,7 +65,7 @@ export function buildVisibilityFilter(
 ): VisibilityFilter {
   const isAdmin = auth.role === 'admin' || hasScope(auth.scopes, '*')
   if (isAdmin) {
-    return { isAdmin: true, departmentId: null, visibleDepartmentIds: null }
+    return { isAdmin: true, userId: auth.userId, departmentId: null, visibleDepartmentIds: null }
   }
 
   const user = getUserByIdAndOrg(auth.userId, auth.orgId)
@@ -46,7 +77,7 @@ export function buildVisibilityFilter(
     listDepartmentsByOrg,
   )
 
-  return { isAdmin: false, departmentId, visibleDepartmentIds }
+  return { isAdmin: false, userId: auth.userId, departmentId, visibleDepartmentIds }
 }
 
 export function getUserAncestorIds(

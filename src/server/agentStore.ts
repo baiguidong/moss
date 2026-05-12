@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import {
@@ -8,7 +8,8 @@ import {
   installHubSkill,
   type InstalledSkillInfo,
 } from './skillStore.js'
-import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
+import { getHubApiBaseUrl, getHubAuthorization, getCosBaseUrl } from './hubConfig.js'
+import type { VisibleTo } from './visibilityFilter.js'
 
 // Support MOSS_HOME environment variable for Docker/container environments
 const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
@@ -17,12 +18,14 @@ const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub')
 const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system')
 const ASSISTANT_CUSTOM_DIR = path.join(
   MOSS_ASSISTANTS_DIR,
-  '_my-custom-assistant',
+  'custom',
 )
+const ASSISTANT_TENANT_DIR = path.join(MOSS_ASSISTANTS_DIR, 'tenant')
 const ASSISTANT_SEARCH_DIRS = [
   ASSISTANT_CUSTOM_DIR,
   ASSISTANT_HUB_DIR,
   ASSISTANT_SYSTEM_DIR,
+  ASSISTANT_TENANT_DIR,
 ]
 
 export const ASSISTANT_META_FILE = '_moss_meta.json'
@@ -83,7 +86,7 @@ export type AssistantStoreMeta = {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload' | 'custom'
+  source_type?: 'hub' | 'upload' | 'custom' | 'tenant'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -94,7 +97,7 @@ export type AssistantStoreMeta = {
   enabledSkills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   workflow?: {
     trigger: 'cron' | 'webhook' | 'manual'
     cron?: string
@@ -126,7 +129,7 @@ export type InstalledAssistantInfo = {
   meta: AssistantStoreMeta | null
   agentType: 'chat' | 'workflow'
   memoryMode: 'session' | 'user'
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo
   workflow: AssistantStoreMeta['workflow']
 }
 
@@ -139,7 +142,7 @@ export type FetchAgentHubAssistantsParams = {
 
 type AssistantSearchResult = {
   dir: string
-  category: 'custom' | 'hub' | 'system'
+  category: 'custom' | 'hub' | 'system' | 'tenant'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -416,7 +419,7 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function readAssistantMeta(
+export async function readAssistantMeta(
   assistantDir: string,
 ): Promise<AssistantStoreMeta | null> {
   try {
@@ -431,7 +434,7 @@ async function readAssistantMeta(
   }
 }
 
-async function writeAssistantMeta(
+export async function writeAssistantMeta(
   assistantDir: string,
   meta: AssistantStoreMeta,
 ): Promise<void> {
@@ -507,7 +510,7 @@ async function scanAssistantDirs(baseDir: string): Promise<string[]> {
   }
 }
 
-async function findAssistantDir(
+export async function findAssistantDir(
   assistantName: string,
 ): Promise<AssistantSearchResult | null> {
   const normalizedAssistantName = String(assistantName || '').trim()
@@ -676,7 +679,7 @@ export async function fetchAgentHubAssistantDetail(
 export async function getInstalledAssistants(): Promise<InstalledAssistantInfo[]> {
   const results: InstalledAssistantInfo[] = []
 
-  for (const baseDir of [ASSISTANT_SYSTEM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_CUSTOM_DIR]) {
+  for (const baseDir of [ASSISTANT_SYSTEM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_CUSTOM_DIR, ASSISTANT_TENANT_DIR]) {
     const assistantDirs = await scanAssistantDirs(baseDir)
     for (const assistantDir of assistantDirs) {
       const dirName = path.basename(assistantDir)
@@ -686,7 +689,9 @@ export async function getInstalledAssistants(): Promise<InstalledAssistantInfo[]
         ? 'system'
         : assistantDir.startsWith(ASSISTANT_HUB_DIR)
           ? 'hub'
-          : 'custom'
+          : assistantDir.startsWith(ASSISTANT_TENANT_DIR)
+            ? 'tenant'  // Tenant assistants are managed like hub assistants
+            : 'custom'
 
       const meta = await readAssistantMeta(assistantDir)
       results.push(
@@ -719,12 +724,19 @@ export async function fetchAgentHubSkillDetailsByIds(
       try {
         const detail = await fetchSkillHubSkillDetail(skillId)
         if (!detail) return null
+        const iconUrl = typeof detail.icon === 'string' && detail.icon
+          ? (detail.icon.startsWith('http')
+              ? detail.icon
+              : detail.icon.includes('skill-hub/')
+                ? `${getCosBaseUrl()}/${detail.icon.replace(/^\/+/, '')}`
+                : detail.icon)
+          : null
         return {
           id: detail.id,
           name: detail.name,
           display_name: detail.display_name,
           description: detail.description,
-          icon: detail.icon,
+          icon: iconUrl,
           emoji: detail.emoji ?? null,
           category: detail.category,
           categories: detail.categories,
@@ -735,7 +747,7 @@ export async function fetchAgentHubSkillDetailsByIds(
     }),
   )
 
-  return details.filter((detail): detail is Record<string, unknown> => detail !== null)
+  return details.filter((detail): detail is NonNullable<typeof detail> => detail !== null) as Array<Record<string, unknown>>
 }
 
 export async function installHubAssistant(params: {
@@ -849,7 +861,11 @@ export async function installHubAssistant(params: {
           typeof latestVersion.version === 'string'
             ? latestVersion.version
             : '',
-        icon: detail.icon || '',
+        icon: detail.icon?.startsWith('http')
+          ? detail.icon
+          : detail.icon?.includes('skill-hub/')
+            ? `${getCosBaseUrl()}/${detail.icon?.replace(/^\/+/, '') || ''}`
+            : detail.icon || '',
         emoji: detail.emoji || '',
         category: detail.category || '',
         categories: detail.categories || [],
@@ -930,7 +946,7 @@ export async function createCustomAssistant(params: {
   skills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   workflow?: AssistantStoreMeta['workflow']
 }): Promise<{ assistantName: string }> {
   const assistantName = params.name.trim().replace(/\s+/g, '-')
@@ -1181,4 +1197,138 @@ export async function batchSyncAssistants(params?: {
   }
 
   return { installed, updated, skipped, failed }
+}
+
+/**
+ * Upload a custom assistant from a zip buffer.
+ * The assistant will be installed to the custom directory with visibility set to the uploader only.
+ */
+export async function uploadCustomAssistant(params: {
+  file: Buffer
+  name: string
+  displayName: string
+  description?: string
+  version?: string
+  enabledSkills?: string[]
+  memoryMode?: 'session' | 'user'
+  userId: string
+}): Promise<{ id: string; name: string; version: string }> {
+  const assistantName = params.name.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '-')
+  if (!assistantName) {
+    throw new Error('Invalid assistant name')
+  }
+
+  // Check if assistant already exists
+  const existing = await findAssistantDir(assistantName)
+  if (existing) {
+    throw new Error(`Assistant already exists: ${assistantName}`)
+  }
+
+  // Extract to temp directory first
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moss-assistant-upload-'))
+  try {
+    await extractAssistantZip(params.file, tempDir)
+
+    // Install to custom directory
+    const targetDir = path.join(ASSISTANT_CUSTOM_DIR, assistantName)
+    await mkdir(ASSISTANT_CUSTOM_DIR, { recursive: true })
+    await rm(targetDir, { recursive: true, force: true })
+
+    // Find the assistant directory (might be nested)
+    let assistantDir = tempDir
+    const entries = await readdir(tempDir, { withFileTypes: true })
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      assistantDir = path.join(tempDir, entries[0].name)
+    }
+
+    // Copy to target directory
+    await copyDirectoryRecursive(assistantDir, targetDir)
+
+    // Create or update metadata with visibility set to uploader only
+    const existingMeta = await readAssistantMeta(targetDir)
+    const version = params.version || '1.0.0'
+    const meta: AssistantStoreMeta = {
+      ...existingMeta,
+      id: assistantName,
+      name: assistantName,
+      display_name: params.displayName || existingMeta?.display_name || assistantName,
+      description: params.description || existingMeta?.description || '',
+      source_type: 'upload',
+      is_builtin: false,
+      enabled: true,
+      installed_version: version,
+      installed_at: new Date().toISOString(),
+      skills: params.enabledSkills || existingMeta?.skills || [],
+      enabledSkills: params.enabledSkills || existingMeta?.enabledSkills || [],
+      agent_type: existingMeta?.agent_type || 'chat',
+      memory_mode: params.memoryMode || existingMeta?.memory_mode || 'session',
+      visible_to: {
+        user_ids: [params.userId],
+        department_ids: null,
+      },
+    }
+    await writeAssistantMeta(targetDir, meta)
+
+    return {
+      id: assistantName,
+      name: assistantName,
+      version,
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Package an assistant as a zip buffer for download.
+ */
+export async function packageAssistantZip(assistantName: string): Promise<Buffer> {
+  const result = await findAssistantDir(assistantName)
+  if (!result) {
+    throw new Error(`Assistant not found: ${assistantName}`)
+  }
+
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+
+  await addDirectoryToZip(zip, result.dir, '')
+
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+
+async function copyDirectoryRecursive(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
+  await mkdir(targetDir, { recursive: true })
+  const entries = await readdir(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name)
+    const targetPath = path.join(targetDir, entry.name)
+    if (entry.isDirectory()) {
+      await copyDirectoryRecursive(sourcePath, targetPath)
+    } else if (entry.isFile()) {
+      await mkdir(path.dirname(targetPath), { recursive: true })
+      await writeFile(targetPath, await readFile(sourcePath))
+    }
+  }
+}
+
+async function addDirectoryToZip(
+  zip: import('jszip'),
+  dirPath: string,
+  zipPath: string,
+): Promise<void> {
+  const entries = await readdir(dirPath, { withFileTypes: true })
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name)
+    const entryZipPath = zipPath ? `${zipPath}/${entry.name}` : entry.name
+
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zip, fullPath, entryZipPath)
+    } else if (entry.isFile()) {
+      const content = await readFile(fullPath)
+      zip.file(entryZipPath, content)
+    }
+  }
 }

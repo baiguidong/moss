@@ -3,6 +3,7 @@ import {
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
+import type { VisibleTo } from './visibilityFilter.js'
 import {
   MANAGED_SKILL_SEARCH_DIRS,
   MOSS_SKILLS_CUSTOM_DIR,
@@ -11,7 +12,7 @@ import {
   SKILL_HUB_META_FILE,
   USER_SKILLS_DIR,
 } from '../utils/skills/localSkillDirectories.js'
-import { getHubApiBaseUrl, getHubAuthorization } from './hubConfig.js'
+import { getHubApiBaseUrl, getHubAuthorization, getCosBaseUrl } from './hubConfig.js'
 
 function getHubCategoriesUrl(): string {
   return `${getHubApiBaseUrl()}/categories`
@@ -68,12 +69,12 @@ export type SkillStoreMeta = {
   core_features?: unknown
   homepage?: string | null
   author_id?: string
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'tenant'
   is_builtin?: boolean
   enabled?: boolean
   installed_version?: string
   installed_at?: string
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo
   [key: string]: unknown
 }
 
@@ -93,7 +94,7 @@ export type InstalledSkillInfo = {
   enabled: boolean
   source: string
   meta: SkillStoreMeta | null
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo
 }
 
 export type FetchSkillHubSkillsParams = {
@@ -247,7 +248,7 @@ function resolveSafeEntryPath(
   return isPathInsideDir(targetDir, fullPath) ? fullPath : null
 }
 
-async function readSkillMeta(skillDir: string): Promise<SkillStoreMeta | null> {
+export async function readSkillMeta(skillDir: string): Promise<SkillStoreMeta | null> {
   try {
     const raw = await readFile(path.join(skillDir, SKILL_HUB_META_FILE), 'utf8')
     const parsed = JSON.parse(raw)
@@ -257,7 +258,7 @@ async function readSkillMeta(skillDir: string): Promise<SkillStoreMeta | null> {
   }
 }
 
-async function writeSkillMeta(
+export async function writeSkillMeta(
   skillDir: string,
   meta: SkillStoreMeta,
 ): Promise<void> {
@@ -268,7 +269,7 @@ async function writeSkillMeta(
   )
 }
 
-async function readSkillVersion(skillDir: string): Promise<string> {
+export async function readSkillVersion(skillDir: string): Promise<string> {
   try {
     return normalizeSkillVersion(
       await readFile(path.join(skillDir, 'version.txt'), 'utf8'),
@@ -620,7 +621,7 @@ async function installImportedSkillFromTemp(
   }
 }
 
-async function findInstalledSkillPath(
+export async function findInstalledSkillPath(
   skillName: string,
 ): Promise<string | null> {
   for (const baseDir of MANAGED_SKILL_SEARCH_DIRS) {
@@ -682,7 +683,20 @@ export async function fetchSkillHubSkillDetail(
   if (!isRecord(unwrapped.data)) {
     return null
   }
-  return unwrapped.data as SkillHubDetail
+
+  // Hub API 返回 { skill: {...}, versions: [...] }
+  // 需要将 skill 和 versions 合并
+  const skillData = isRecord(unwrapped.data.skill) ? unwrapped.data.skill : null
+  const versionsData = Array.isArray(unwrapped.data.versions) ? unwrapped.data.versions : []
+
+  if (!skillData) {
+    return null
+  }
+
+  return {
+    ...skillData,
+    versions: versionsData,
+  } as SkillHubDetail
 }
 
 export async function getInstalledSkills(): Promise<InstalledSkillInfo[]> {
@@ -731,7 +745,13 @@ export async function installHubSkill(params: {
       typeof params.skillMeta?.description === 'string'
         ? params.skillMeta.description
         : '',
-    icon: typeof params.skillMeta?.icon === 'string' ? params.skillMeta.icon : '',
+    icon: typeof params.skillMeta?.icon === 'string'
+      ? (params.skillMeta.icon.startsWith('http')
+          ? params.skillMeta.icon
+          : params.skillMeta.icon.includes('skill-hub/')
+            ? `${getCosBaseUrl()}/${params.skillMeta.icon.replace(/^\/+/, '')}`
+            : params.skillMeta.icon)
+      : '',
     emoji:
       typeof params.skillMeta?.emoji === 'string' ? params.skillMeta.emoji : null,
     category:
@@ -948,4 +968,119 @@ export async function setInstalledSkillMeta(
   }
 
   await writeSkillMeta(sourcePath, meta)
+}
+
+/**
+ * Upload a custom skill from a zip buffer.
+ * The skill will be installed to the custom directory with visibility set to the uploader only.
+ */
+export async function uploadCustomSkill(params: {
+  file: Buffer
+  name: string
+  displayName: string
+  description?: string
+  version?: string
+  userId: string
+}): Promise<{ id: string; name: string; version: string }> {
+  const skillName = params.name.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '-')
+  if (!skillName) {
+    throw new Error('Invalid skill name')
+  }
+
+  // Check if skill already exists
+  const existingPath = await findInstalledSkillPath(skillName)
+  if (existingPath) {
+    throw new Error(`Skill already exists: ${skillName}`)
+  }
+
+  // Extract to temp directory first
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'moss-skill-upload-'))
+  try {
+    await extractSkillZip(params.file, tempDir)
+
+    // Find the skill directory with SKILL.md
+    const skillDir = await findSkillDirWithSkillMd(tempDir)
+    if (!skillDir) {
+      throw new Error('未找到 SKILL.md，无法识别技能目录')
+    }
+
+    // Read frontmatter for metadata
+    const frontmatter = await readSkillFrontmatter(skillDir)
+    if (!frontmatter) {
+      throw new Error('SKILL.md 读取失败')
+    }
+
+    // Install to custom directory
+    const targetDir = path.join(MOSS_SKILLS_CUSTOM_DIR, skillName)
+    await mkdir(MOSS_SKILLS_CUSTOM_DIR, { recursive: true })
+    await rm(targetDir, { recursive: true, force: true })
+    await copyDirectoryRecursive(skillDir, targetDir)
+
+    // Create metadata with visibility set to uploader only
+    const version = params.version || frontmatter.version || '1.0.0'
+    const meta: SkillStoreMeta = {
+      id: skillName,
+      name: skillName,
+      display_name: params.displayName || frontmatter.name || frontmatter.displayName || skillName,
+      description: params.description || frontmatter.description || '',
+      icon: frontmatter.icon || '',
+      emoji: frontmatter.emoji || null,
+      category: frontmatter.category || '',
+      categories: frontmatter.category ? [frontmatter.category] : [],
+      source_type: 'upload',
+      is_builtin: false,
+      enabled: true,
+      installed_version: version,
+      installed_at: new Date().toISOString(),
+      visible_to: {
+        user_ids: [params.userId],
+        department_ids: null,
+      },
+    }
+    await writeSkillMeta(targetDir, meta)
+
+    return {
+      id: skillName,
+      name: skillName,
+      version,
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Package a skill as a zip buffer for download.
+ */
+export async function packageSkillZip(skillName: string): Promise<Buffer> {
+  const skillPath = await findInstalledSkillPath(skillName)
+  if (!skillPath) {
+    throw new Error(`Skill not found: ${skillName}`)
+  }
+
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+
+  await addDirectoryToZip(zip, skillPath, '')
+
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+
+async function addDirectoryToZip(
+  zip: import('jszip'),
+  dirPath: string,
+  zipPath: string,
+): Promise<void> {
+  const entries = await readdir(dirPath, { withFileTypes: true })
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name)
+    const entryZipPath = zipPath ? `${zipPath}/${entry.name}` : entry.name
+
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zip, fullPath, entryZipPath)
+    } else if (entry.isFile()) {
+      const content = await readFile(fullPath)
+      zip.file(entryZipPath, content)
+    }
+  }
 }

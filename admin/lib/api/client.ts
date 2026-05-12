@@ -242,6 +242,44 @@ export class ApiClient {
       method: 'DELETE',
     })
   }
+
+  async getBlob(path: string): Promise<Blob> {
+    const token = getToken()
+    const headers = new Headers()
+
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+
+    let response = await fetch(`${this.baseUrl}${path}`, {
+      headers,
+      credentials: 'include',
+    })
+
+    if (response.status === 401 && token) {
+      const newToken = await ensureValidToken()
+      if (newToken) {
+        const retryHeaders = new Headers()
+        retryHeaders.set('Authorization', `Bearer ${newToken}`)
+        response = await fetch(`${this.baseUrl}${path}`, {
+          headers: retryHeaders,
+          credentials: 'include',
+        })
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        removeToken()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+        }
+      }
+      throw new ApiRequestError(response.status, response.statusText)
+    }
+
+    return response.blob()
+  }
 }
 
 // Direct backend API calls

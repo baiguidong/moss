@@ -27,6 +27,11 @@ export interface AgentHubListResponse {
   has_more: boolean
 }
 
+export interface VisibleTo {
+  department_ids: string[] | null
+  user_ids: string[] | null
+}
+
 export interface InstalledAgentMeta {
   id?: string
   name?: string
@@ -47,7 +52,7 @@ export interface InstalledAgentMeta {
   enabledSkills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo | null
   workflow?: {
     trigger: 'cron' | 'webhook' | 'manual'
     cron?: string
@@ -79,7 +84,7 @@ export interface InstalledAgentInfo {
   meta: InstalledAgentMeta | null
   agentType: 'chat' | 'workflow'
   memoryMode: 'session' | 'user'
-  visibleTo: { department_ids: string[] | null } | null
+  visibleTo: VisibleTo | null
   workflow: InstalledAgentMeta['workflow']
 }
 
@@ -102,7 +107,7 @@ export interface CreateAssistantRequest {
   skills?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
-  visible_to?: { department_ids: string[] | null } | null
+  visible_to?: VisibleTo | null
   workflow?: InstalledAgentMeta['workflow']
 }
 
@@ -221,10 +226,77 @@ export function getAgentSyncStatus(): Promise<AgentSyncProgress> {
 
 export function updateAgentVisibility(
   assistantName: string,
-  visible_to: { department_ids: string[] | null } | null,
+  visible_to: VisibleTo | null,
 ): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>('/api/v1/agents/visibility', {
     assistantName,
     visible_to,
   })
+}
+
+// ==================== Tenant Assistants ====================
+
+export interface TenantAssistantInfo {
+  id: string
+  name: string
+  display_name?: string
+  description?: string
+  version?: string
+  author_id: string
+  author_name?: string
+  status: 'pending' | 'approved' | 'rejected'
+  source_url?: string
+  checksum?: string
+  file_path?: string
+  enabled_skills?: string[]
+  memory_mode?: 'session' | 'user'
+  publish_note?: string
+  review_note?: string
+  reviewed_by?: string
+  reviewed_at?: number
+  enabled: number
+  visible_to?: VisibleTo | null
+  created_at: number
+  updated_at: number
+}
+
+export function getTenantAssistants(status?: string): Promise<TenantAssistantInfo[]> {
+  const queryString = status ? `?status=${encodeURIComponent(status)}` : ''
+  return authClient.get<TenantAssistantInfo[]>(`/api/v1/agents/tenant${queryString}`)
+}
+
+export function approveTenantAssistant(
+  id: string,
+  approved: boolean,
+  reviewNote?: string,
+): Promise<{ id: string; status: string }> {
+  return authClient.post<{ id: string; status: string }>(
+    `/api/v1/admin/agents/tenant/${encodeURIComponent(id)}/approve`,
+    { approved, reviewNote },
+  )
+}
+
+export function updateTenantAssistantMeta(params: {
+  id: string
+  enabled?: boolean
+  visible_to?: VisibleTo | null
+  enabledSkills?: string[]
+}): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>(
+    `/api/v1/agents/tenant/${encodeURIComponent(params.id)}`,
+    params,
+  )
+}
+
+export function deleteTenantAssistant(id: string): Promise<{ ok: boolean }> {
+  return authClient.delete<{ ok: boolean }>(
+    `/api/v1/agents/tenant/${encodeURIComponent(id)}`,
+  )
+}
+
+export function downloadAssistant(assistantId: string, type: 'installed' | 'tenant'): Promise<Blob> {
+  const path = type === 'installed'
+    ? `/api/v1/agents/installed/${encodeURIComponent(assistantId)}/download`
+    : `/api/v1/agents/tenant/${encodeURIComponent(assistantId)}/download`
+  return authClient.getBlob(path)
 }

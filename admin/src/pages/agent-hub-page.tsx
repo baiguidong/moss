@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -57,6 +58,11 @@ import {
   updateInstalledAgentMeta,
   createCustomAssistant,
   getAgentSyncStatus,
+  getTenantAssistants,
+  approveTenantAssistant,
+  deleteTenantAssistant,
+  updateTenantAssistantMeta,
+  type TenantAssistantInfo,
   type AgentHubAssistant,
   type AgentHubDetail,
   type BatchSyncAgentResult,
@@ -71,9 +77,10 @@ import {
   type InstalledSkillInfo,
   type SkillHubSkill,
 } from '@/lib/api/skill-store'
-import type { AuthDepartment } from '@/lib/api/types'
-import { getDepartments } from '@/lib/api/auth'
+import type { AuthDepartment, AuthUser } from '@/lib/api/types'
+import { getDepartments, getUsers } from '@/lib/api/auth'
 import type { SystemSettings } from '@/lib/api/types'
+import { resolveIconUrl } from '@/lib/config'
 import { cn } from '@/lib/utils'
 import {
   Bot,
@@ -90,7 +97,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-type AgentHubTab = 'store' | 'installed'
+type AgentHubTab = 'store' | 'exclusive' | 'custom'
 
 type CoreFeature = {
   title: string
@@ -194,19 +201,28 @@ function LoadingSkeleton() {
 type StoreAgentCardProps = {
   agent: AgentHubAssistant
   installed: boolean
+  installedAgent?: InstalledAgentInfo | null
   busy: boolean
   onOpen: (agent: AgentHubAssistant) => void
   onInstall: (agent: AgentHubAssistant, skillIds: string[]) => void
+  onOpenEdit?: (agent: InstalledAgentInfo) => void
+  onOpenVisibility?: (agent: InstalledAgentInfo) => void
+  onRequestUninstall?: (agent: InstalledAgentInfo) => void
 }
 
 function StoreAgentCard({
   agent,
   installed,
+  installedAgent,
   busy,
   onOpen,
   onInstall,
+  onOpenEdit,
+  onOpenVisibility,
+  onRequestUninstall,
 }: StoreAgentCardProps) {
   const skillIds = agent.skills || []
+  const canManage = installedAgent && !installedAgent.isBuiltin
 
   return (
     <div
@@ -219,7 +235,10 @@ function StoreAgentCard({
           onOpen(agent)
         }
       }}
-      className="group relative flex w-full items-start gap-4 overflow-hidden rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30"
+      className={cn(
+        'group relative flex w-full items-start gap-4 overflow-hidden rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30',
+        installedAgent && !installedAgent.enabled && 'opacity-65',
+      )}
     >
       <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted text-xl">
         {agent.avatar ? (
@@ -259,12 +278,42 @@ function StoreAgentCard({
         ) : null}
       </div>
 
-      <div className="shrink-0">
+      <div className="shrink-0 flex items-center gap-2" onClick={event => event.stopPropagation()}>
         {busy ? (
           <Button size="sm" disabled>
             <Loader2 className="mr-2 size-4 animate-spin" />
             安装中
           </Button>
+        ) : installed && canManage ? (
+          <>
+            {onOpenVisibility && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onOpenVisibility(installedAgent!)}
+              >
+                <Shield className="size-4" />
+              </Button>
+            )}
+            {onOpenEdit && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onOpenEdit(installedAgent!)}
+              >
+                编辑
+              </Button>
+            )}
+            {onRequestUninstall && (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => onRequestUninstall(installedAgent!)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </>
         ) : installed ? (
           <Button size="sm" variant="outline" disabled>
             已安装
@@ -454,8 +503,9 @@ export default function AgentHubPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [editAgentType, setEditAgentType] = useState<'chat' | 'workflow'>('chat')
   const [editMemoryMode, setEditMemoryMode] = useState<'session' | 'user'>('session')
-  const [editVisibilityMode, setEditVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [editVisibilityMode, setEditVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editVisibleTo, setEditVisibleTo] = useState<string[]>([])
+  const [editVisibleUserIds, setEditVisibleUserIds] = useState<string[]>([])
   const [editWorkflowTrigger, setEditWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
   const [editWorkflowCron, setEditWorkflowCron] = useState('')
   const [editWorkflowWebhookPath, setEditWorkflowWebhookPath] = useState('')
@@ -463,11 +513,13 @@ export default function AgentHubPage() {
   const [editWorkflowTimeout, setEditWorkflowTimeout] = useState('')
   const [editWorkflowOutputTargets, setEditWorkflowOutputTargets] = useState<string[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [users, setUsers] = useState<AuthUser[]>([])
 
   const [agentVisibilityOpen, setAgentVisibilityOpen] = useState(false)
   const [editingVisibilityAgent, setEditingVisibilityAgent] = useState<InstalledAgentInfo | null>(null)
-  const [agentVisibilityMode, setAgentVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [agentVisibilityMode, setAgentVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [editAgentVisibleTo, setEditAgentVisibleTo] = useState<string[]>([])
+  const [editAgentVisibleUserIds, setEditAgentVisibleUserIds] = useState<string[]>([])
   const [savingAgentVisibility, setSavingAgentVisibility] = useState(false)
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -479,8 +531,9 @@ export default function AgentHubPage() {
   const [createRules, setCreateRules] = useState('')
   const [createAgentType, setCreateAgentType] = useState<'chat' | 'workflow'>('chat')
   const [createMemoryMode, setCreateMemoryMode] = useState<'session' | 'user'>('session')
-  const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'admin'>('all')
+  const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
   const [createVisibleTo, setCreateVisibleTo] = useState<string[]>([])
+  const [createVisibleUserIds, setCreateVisibleUserIds] = useState<string[]>([])
   const [createWorkflowTrigger, setCreateWorkflowTrigger] = useState<'cron' | 'webhook' | 'manual'>('manual')
   const [createWorkflowCron, setCreateWorkflowCron] = useState('')
   const [createWorkflowWebhookPath, setCreateWorkflowWebhookPath] = useState('')
@@ -495,6 +548,21 @@ export default function AgentHubPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncProgressOpen, setSyncProgressOpen] = useState(false)
   const [syncProgress, setSyncProgress] = useState<AgentSyncProgress | null>(null)
+  const [tenantAssistants, setTenantAssistants] = useState<TenantAssistantInfo[]>([])
+  const [tenantAssistantsLoading, setTenantAssistantsLoading] = useState(false)
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
+  const [approvingAssistant, setApprovingAssistant] = useState<TenantAssistantInfo | null>(null)
+  const [approvalNote, setApprovalNote] = useState('')
+  const [approving, setApproving] = useState(false)
+  const [togglingTenantAssistantId, setTogglingTenantAssistantId] = useState<string | null>(null)
+  const [deletingTenantAssistantId, setDeletingTenantAssistantId] = useState<string | null>(null)
+  const [tenantVisibilityOpen, setTenantVisibilityOpen] = useState(false)
+  const [editingTenantAssistant, setEditingTenantAssistant] = useState<TenantAssistantInfo | null>(null)
+  const [tenantVisibilityMode, setTenantVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
+  const [editTenantVisibleTo, setEditTenantVisibleTo] = useState<string[]>([])
+  const [editTenantVisibleUserIds, setEditTenantVisibleUserIds] = useState<string[]>([])
+  const [savingTenantVisibility, setSavingTenantVisibility] = useState(false)
+  const [tenantAssistantDetail, setTenantAssistantDetail] = useState<TenantAssistantInfo | null>(null)
 
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -598,11 +666,12 @@ export default function AgentHubPage() {
     setPageLoading(true)
     setPageError('')
 
-    const [settingsResult, categoriesResult, installedResult] =
+    const [settingsResult, categoriesResult, installedResult, tenantAssistantsResult] =
       await Promise.allSettled([
         getSystemSettings(),
         getAgentHubCategories(),
         fetchInstalledState(false),
+        getTenantAssistants(),
       ])
 
     if (settingsResult.status === 'fulfilled') {
@@ -633,9 +702,18 @@ export default function AgentHubPage() {
       setPageError(current => current || message)
     }
 
+    if (tenantAssistantsResult.status === 'fulfilled') {
+      setTenantAssistants(tenantAssistantsResult.value)
+    }
+
     try {
       const deptResult = await getDepartments()
       setDepartments(deptResult.departments)
+    } catch { /* non-critical */ }
+
+    try {
+      const userResult = await getUsers()
+      setUsers(userResult.users)
     } catch { /* non-critical */ }
 
     setPageLoading(false)
@@ -803,7 +881,7 @@ export default function AgentHubPage() {
                 name: local.name.trim(),
                 display_name: local.displayName,
                 description: local.description,
-                icon: local.icon,
+                icon: resolveIconUrl(local.icon),
                 emoji: local.emoji,
                 category: local.category,
                 categories: local.categories,
@@ -844,12 +922,25 @@ export default function AgentHubPage() {
     setEditAgentType(agent.agentType || agent.meta?.agent_type || 'chat')
     setEditMemoryMode(agent.memoryMode || agent.meta?.memory_mode || 'session')
     setEditVisibleTo(agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids ?? [])
+    setEditVisibleUserIds(agent.visibleTo?.user_ids ?? agent.meta?.visible_to?.user_ids ?? [])
+
+    // Determine visibility mode
     const deptIds = agent.visibleTo?.department_ids ?? agent.meta?.visible_to?.department_ids
-    setEditVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const userIds = agent.visibleTo?.user_ids ?? agent.meta?.visible_to?.user_ids
+
+    if (deptIds === null && userIds === null) {
+      setEditVisibilityMode('all')
+    } else if ((deptIds?.length === 0 && (userIds === null || userIds?.length === 0)) ||
+               (userIds?.length === 0 && (deptIds === null || deptIds?.length === 0))) {
+      setEditVisibilityMode('admin')
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      setEditVisibilityMode('users')
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      setEditVisibilityMode('departments')
+    } else {
+      setEditVisibilityMode('all')
+    }
+
     setEditWorkflowTrigger(agent.workflow?.trigger || agent.meta?.workflow?.trigger || 'manual')
     setEditWorkflowCron(agent.workflow?.cron || agent.meta?.workflow?.cron || '')
     setEditWorkflowWebhookPath(agent.workflow?.webhook_path || agent.meta?.workflow?.webhook_path || '')
@@ -887,7 +978,7 @@ export default function AgentHubPage() {
             name: local.name.trim(),
             display_name: local.displayName,
             description: local.description,
-            icon: local.icon,
+            icon: resolveIconUrl(local.icon),
             emoji: local.emoji,
             category: local.category,
             categories: local.categories,
@@ -982,10 +1073,12 @@ export default function AgentHubPage() {
           skills: editSkills.map(s => s.id || s.name),
           enabledSkills: editEnabledSkills,
           visible_to: editVisibilityMode === 'admin'
-            ? { department_ids: [] }
+            ? { department_ids: [], user_ids: [] }
             : editVisibilityMode === 'departments'
-              ? (editVisibleTo.length > 0 ? { department_ids: editVisibleTo } : null)
-              : null,
+              ? { department_ids: editVisibleTo.length > 0 ? editVisibleTo : null, user_ids: null }
+              : editVisibilityMode === 'users'
+                ? { department_ids: null, user_ids: editVisibleUserIds.length > 0 ? editVisibleUserIds : null }
+                : null,
           workflow: editAgentType === 'workflow'
             ? {
                 trigger: editWorkflowTrigger,
@@ -1006,7 +1099,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim()
@@ -1036,10 +1129,12 @@ export default function AgentHubPage() {
         agent_type: createAgentType,
         memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
         visible_to: createVisibilityMode === 'admin'
-          ? { department_ids: [] }
+          ? { department_ids: [], user_ids: [] }
           : createVisibilityMode === 'departments'
-            ? (createVisibleTo.length > 0 ? { department_ids: createVisibleTo } : null)
-            : null,
+            ? { department_ids: createVisibleTo.length > 0 ? createVisibleTo : null, user_ids: null }
+            : createVisibilityMode === 'users'
+              ? { department_ids: null, user_ids: createVisibleUserIds.length > 0 ? createVisibleUserIds : null }
+              : null,
         workflow: createAgentType === 'workflow'
           ? {
               trigger: createWorkflowTrigger,
@@ -1063,6 +1158,7 @@ export default function AgentHubPage() {
       setCreateMemoryMode('session')
       setCreateVisibilityMode('all')
       setCreateVisibleTo([])
+      setCreateVisibleUserIds([])
       setCreateWorkflowTrigger('manual')
       setCreateWorkflowCron('')
       setCreateWorkflowOutputTargets([])
@@ -1108,12 +1204,24 @@ export default function AgentHubPage() {
   const openAgentVisibility = useCallback((agent: InstalledAgentInfo) => {
     setEditingVisibilityAgent(agent)
     const deptIds = agent.visibleTo?.department_ids
-    setAgentVisibilityMode(
-      deptIds === null || deptIds === undefined ? 'all'
-        : deptIds.length === 0 ? 'admin'
-        : 'departments'
-    )
+    const userIds = agent.visibleTo?.user_ids
+
+    // Determine visibility mode
+    if (deptIds === null && userIds === null) {
+      setAgentVisibilityMode('all')
+    } else if ((deptIds?.length === 0 && (userIds === null || userIds?.length === 0)) ||
+               (userIds?.length === 0 && (deptIds === null || deptIds?.length === 0))) {
+      setAgentVisibilityMode('admin')
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      setAgentVisibilityMode('users')
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      setAgentVisibilityMode('departments')
+    } else {
+      setAgentVisibilityMode('all')
+    }
+
     setEditAgentVisibleTo(deptIds ?? [])
+    setEditAgentVisibleUserIds(userIds ?? [])
     setAgentVisibilityOpen(true)
   }, [])
 
@@ -1125,10 +1233,12 @@ export default function AgentHubPage() {
         assistantName: editingVisibilityAgent.name,
         updates: {
           visible_to: agentVisibilityMode === 'admin'
-            ? { department_ids: [] }
+            ? { department_ids: [], user_ids: [] }
             : agentVisibilityMode === 'departments'
-              ? (editAgentVisibleTo.length > 0 ? { department_ids: editAgentVisibleTo } : null)
-              : null,
+              ? { department_ids: editAgentVisibleTo.length > 0 ? editAgentVisibleTo : null, user_ids: null }
+              : agentVisibilityMode === 'users'
+                ? { department_ids: null, user_ids: editAgentVisibleUserIds.length > 0 ? editAgentVisibleUserIds : null }
+                : null,
         },
       })
       toast.success('可见性已更新')
@@ -1139,7 +1249,126 @@ export default function AgentHubPage() {
     } finally {
       setSavingAgentVisibility(false)
     }
-  }, [editingVisibilityAgent, agentVisibilityMode, editAgentVisibleTo, fetchInstalledState])
+  }, [editingVisibilityAgent, agentVisibilityMode, editAgentVisibleTo, editAgentVisibleUserIds, fetchInstalledState])
+
+  const fetchTenantAssistants = useCallback(async () => {
+    setTenantAssistantsLoading(true)
+    try {
+      const data = await getTenantAssistants()
+      setTenantAssistants(data)
+    } catch {
+      toast.error('获取专属智能体列表失败')
+    } finally {
+      setTenantAssistantsLoading(false)
+    }
+  }, [])
+
+  const handleApproveTenantAssistant = useCallback(async (approved: boolean) => {
+    if (!approvingAssistant) return
+    setApproving(true)
+    try {
+      await approveTenantAssistant(approvingAssistant.id, approved, approvalNote || undefined)
+      toast.success(approved ? '已通过审批' : '已拒绝审批')
+      setApprovalDialogOpen(false)
+      setApprovingAssistant(null)
+      setApprovalNote('')
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '审批失败')
+    } finally {
+      setApproving(false)
+    }
+  }, [approvingAssistant, approvalNote, fetchTenantAssistants])
+
+  const handleDeleteTenantAssistant = useCallback(async (assistant: TenantAssistantInfo) => {
+    try {
+      await deleteTenantAssistant(assistant.id)
+      toast.success('已删除')
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除失败')
+    }
+  }, [fetchTenantAssistants])
+
+  const handleToggleTenantAssistantEnabled = useCallback(async (assistant: TenantAssistantInfo, enabled: boolean) => {
+    setTogglingTenantAssistantId(assistant.id)
+    try {
+      await updateTenantAssistantMeta({ id: assistant.id, enabled })
+      toast.success(enabled ? '已启用' : '已禁用')
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '操作失败')
+    } finally {
+      setTogglingTenantAssistantId(null)
+    }
+  }, [fetchTenantAssistants])
+
+  const handleOpenTenantVisibilityEdit = useCallback((assistant: TenantAssistantInfo) => {
+    setEditingTenantAssistant(assistant)
+    const visibleTo = assistant.visible_to
+    if (!visibleTo || (!visibleTo.department_ids && !visibleTo.user_ids)) {
+      setTenantVisibilityMode('all')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.user_ids?.length === 1 && visibleTo.user_ids[0] === 'admin') {
+      setTenantVisibilityMode('admin')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.department_ids?.length) {
+      setTenantVisibilityMode('departments')
+      setEditTenantVisibleTo(visibleTo.department_ids)
+      setEditTenantVisibleUserIds([])
+    } else if (visibleTo.user_ids?.length) {
+      setTenantVisibilityMode('users')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds(visibleTo.user_ids)
+    } else {
+      setTenantVisibilityMode('all')
+      setEditTenantVisibleTo([])
+      setEditTenantVisibleUserIds([])
+    }
+    setTenantVisibilityOpen(true)
+  }, [])
+
+  const handleSaveTenantVisibility = useCallback(async () => {
+    if (!editingTenantAssistant) return
+    setSavingTenantVisibility(true)
+    try {
+      let visible_to: { department_ids: string[] | null; user_ids: string[] | null } | null = null
+      if (tenantVisibilityMode === 'admin') {
+        visible_to = { department_ids: null, user_ids: ['admin'] }
+      } else if (tenantVisibilityMode === 'departments') {
+        visible_to = { department_ids: editTenantVisibleTo.length > 0 ? editTenantVisibleTo : null, user_ids: null }
+      } else if (tenantVisibilityMode === 'users') {
+        visible_to = { department_ids: null, user_ids: editTenantVisibleUserIds.length > 0 ? editTenantVisibleUserIds : null }
+      }
+      await updateTenantAssistantMeta({ id: editingTenantAssistant.id, visible_to })
+      toast.success('可见性已更新')
+      setTenantVisibilityOpen(false)
+      setEditingTenantAssistant(null)
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存失败')
+    } finally {
+      setSavingTenantVisibility(false)
+    }
+  }, [editingTenantAssistant, tenantVisibilityMode, editTenantVisibleTo, editTenantVisibleUserIds, fetchTenantAssistants])
+
+  const handleConfirmDeleteTenantAssistant = useCallback(async () => {
+    if (!editingTenantAssistant) return
+    setDeletingTenantAssistantId(editingTenantAssistant.id)
+    try {
+      await deleteTenantAssistant(editingTenantAssistant.id)
+      toast.success('已删除')
+      setTenantVisibilityOpen(false)
+      setEditingTenantAssistant(null)
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除失败')
+    } finally {
+      setDeletingTenantAssistantId(null)
+    }
+  }, [editingTenantAssistant, fetchTenantAssistants])
 
   const departmentNameMap = useMemo(
     () => new Map(departments.map(dept => [dept.id, dept.name])),
@@ -1161,6 +1390,33 @@ export default function AgentHubPage() {
       return true
     })
   }, [installedAgents, installedFilterAgentType, installedFilterVisibility])
+
+  const customAgents = useMemo(() => {
+    return installedAgents.filter(agent => {
+      const sourceType = agent.meta?.source_type
+      return sourceType === 'upload' || sourceType === 'custom'
+    })
+  }, [installedAgents])
+
+  // Filter tenant assistants by search query
+  const filteredTenantAssistants = useMemo(() => {
+    if (!searchQuery.trim()) return tenantAssistants
+    const query = searchQuery.toLowerCase()
+    return tenantAssistants.filter(assistant =>
+      (assistant.display_name || assistant.name).toLowerCase().includes(query) ||
+      (assistant.description || '').toLowerCase().includes(query)
+    )
+  }, [tenantAssistants, searchQuery])
+
+  // Filter custom agents by search query
+  const filteredCustomAgents = useMemo(() => {
+    if (!searchQuery.trim()) return customAgents
+    const query = searchQuery.toLowerCase()
+    return customAgents.filter(agent =>
+      (agent.displayName || agent.name).toLowerCase().includes(query) ||
+      (agent.description || '').toLowerCase().includes(query)
+    )
+  }, [customAgents, searchQuery])
 
   const handleRefresh = useCallback(async () => {
     await loadBootstrapData()
@@ -1247,9 +1503,9 @@ export default function AgentHubPage() {
       <div className="space-y-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={tenantId ? 'secondary' : 'outline'}>
+            {/* <Badge variant={tenantId ? 'secondary' : 'outline'}>
               {tenantId ? `专属技能租户: ${tenantId}` : '未配置专属技能租户 ID'}
-            </Badge>
+            </Badge> */}
             <Badge variant="secondary">已安装 {installedAgents.length} 个智能体</Badge>
           </div>
 
@@ -1286,24 +1542,34 @@ export default function AgentHubPage() {
                 className="gap-0"
               >
                 <TabsList>
-                  <TabsTrigger value="store">智能体库</TabsTrigger>
-                  <TabsTrigger value="installed">
-                    已安装
-                    {installedAgents.length > 0 ? (
+                  <TabsTrigger value="store">
+                    智能体库
+                    {installedAgents.filter(a => a.isHubInstalled).length > 0 ? (
                       <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
-                        {installedAgents.length}
+                        {installedAgents.filter(a => a.isHubInstalled).length}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                  <TabsTrigger value="exclusive">
+                    专属智能体
+                    {tenantAssistants.filter(t => t.status === 'approved').length > 0 ? (
+                      <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
+                        {tenantAssistants.filter(t => t.status === 'approved').length}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                  <TabsTrigger value="custom">
+                    自定义智能体
+                    {customAgents.length > 0 ? (
+                      <span className="rounded-full bg-primary px-1.5 py-0 text-[10px] leading-4 text-primary-foreground">
+                        {customAgents.length}
                       </span>
                     ) : null}
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
 
-              <div
-                className={cn(
-                  'min-w-0 flex-1 transition-opacity',
-                  activeTab === 'installed' && 'pointer-events-none opacity-0',
-                )}
-              >
+              <div className="min-w-0 flex-1">
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1318,7 +1584,7 @@ export default function AgentHubPage() {
 
             {activeTab === 'store' ? (
               <div className="flex flex-wrap gap-2">
-                {[{ key: 'all', label: '精选' }, ...categories.map(item => ({ key: item, label: item }))].map(item => (
+                {[{ key: 'all', label: '全部' }, ...categories.map(item => ({ key: item, label: item }))].map(item => (
                   <button
                     key={item.key}
                     type="button"
@@ -1404,16 +1670,29 @@ export default function AgentHubPage() {
                         installedAgentLookup.has(agent.id) ||
                         installedAgentLookup.has(agent.name)
 
+                      // Find the installed agent info
+                      const installedAgentInfo = installed
+                        ? installedAgents.find(
+                            a =>
+                              (a.isHubInstalled || a.meta?.source_type === 'hub') &&
+                              (a.name === agent.name || a.meta?.id === agent.id)
+                          ) || null
+                        : null
+
                       return (
                         <StoreAgentCard
                           key={agent.id}
                           agent={agent}
                           installed={installed}
+                          installedAgent={installedAgentInfo}
                           busy={installingAssistantId === agent.id}
                           onOpen={item => void openDetail(item)}
                           onInstall={(item, skillIds) =>
                             void handleInstall(item, skillIds)
                           }
+                          onOpenEdit={openEdit}
+                          onOpenVisibility={openAgentVisibility}
+                          onRequestUninstall={setPendingUninstallAgent}
                         />
                       )
                     })}
@@ -1424,24 +1703,195 @@ export default function AgentHubPage() {
                 {hasMore ? <div ref={sentinelRef} className="h-1" /> : null}
               </TabsContent>
 
-              <TabsContent value="installed" className="space-y-4">
-                {installedLoading ? (
+              <TabsContent value="exclusive" className="space-y-4">
+                {tenantAssistantsLoading ? (
                   <LoadingSkeleton />
-                ) : installedAgents.length === 0 ? (
+                ) : filteredTenantAssistants.length === 0 ? (
                   <Empty className="rounded-xl border bg-muted/20">
                     <EmptyHeader>
                       <EmptyMedia variant="icon">
-                        <Package className="size-5" />
+                        <Shield className="size-5" />
                       </EmptyMedia>
-                      <EmptyTitle>暂无已安装智能体</EmptyTitle>
+                      <EmptyTitle>
+                        {searchQuery.trim() ? '未找到匹配的专属智能体' : '暂无专属智能体'}
+                      </EmptyTitle>
                       <EmptyDescription>
-                        从智能体库安装后，这里会展示 server 上当前已部署的智能体。
+                        {searchQuery.trim() ? '请尝试其他搜索关键词。' : '审批通过的专属智能体会在这里展示。'}
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
-                    {filteredInstalledAgents.map(agent => (
+                    {filteredTenantAssistants.map(assistant => (
+                      <div
+                        key={assistant.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setTenantAssistantDetail(assistant)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setTenantAssistantDetail(assistant)
+                          }
+                        }}
+                        className="rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="flex size-12 items-center justify-center rounded-xl bg-muted text-xl">
+                            <Bot className="size-6" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {assistant.display_name || assistant.name}
+                              </span>
+                              <Badge
+                                variant={
+                                  assistant.status === 'approved'
+                                    ? 'default'
+                                    : assistant.status === 'pending'
+                                      ? 'secondary'
+                                      : 'destructive'
+                                }
+                                className="text-[10px]"
+                              >
+                                {assistant.status === 'approved'
+                                  ? '已通过'
+                                  : assistant.status === 'pending'
+                                    ? '待审批'
+                                    : '已拒绝'}
+                              </Badge>
+                              {assistant.status === 'approved' && assistant.enabled ? (
+                                <Badge variant="outline" className="text-[10px]">已启用</Badge>
+                              ) : assistant.status === 'approved' ? (
+                                <Badge variant="outline" className="text-[10px]">已禁用</Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                              {assistant.description || '暂无描述'}
+                            </p>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {assistant.author_name || assistant.author_id}
+                              {' · '}
+                              {new Date(assistant.created_at).toLocaleDateString()}
+                            </div>
+                            {assistant.status === 'approved' && assistant.visible_to ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {assistant.visible_to.user_ids?.length ? (
+                                  assistant.visible_to.user_ids.map(userId => {
+                                    const user = users.find(u => u.id === userId)
+                                    return user ? (
+                                      <Badge key={userId} variant="outline" className="text-[10px]">{user.name}</Badge>
+                                    ) : null
+                                  })
+                                ) : assistant.visible_to.department_ids?.length ? (
+                                  assistant.visible_to.department_ids.map(deptId => {
+                                    const name = departmentNameMap.get(deptId)
+                                    return name ? (
+                                      <Badge key={deptId} variant="outline" className="text-[10px]">{name}</Badge>
+                                    ) : null
+                                  })
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground">全员可见</span>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2" onClick={e => e.stopPropagation()}>
+                            {assistant.status === 'pending' ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setApprovingAssistant(assistant)
+                                    setApprovalDialogOpen(true)
+                                  }}
+                                >
+                                  审批
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={deletingTenantAssistantId === assistant.id}
+                                  onClick={() => void handleDeleteTenantAssistant(assistant)}
+                                >
+                                  {deletingTenantAssistantId === assistant.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-4" />
+                                  )}
+                                </Button>
+                              </>
+                            ) : assistant.status === 'approved' ? (
+                              <>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleOpenTenantVisibilityEdit(assistant)}
+                                >
+                                  <Shield className="size-4" />
+                                </Button>
+                                <Switch
+                                  checked={assistant.enabled === 1}
+                                  disabled={togglingTenantAssistantId === assistant.id}
+                                  onCheckedChange={checked => void handleToggleTenantAssistantEnabled(assistant, checked)}
+                                />
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  disabled={deletingTenantAssistantId === assistant.id}
+                                  onClick={() => void handleDeleteTenantAssistant(assistant)}
+                                >
+                                  {deletingTenantAssistantId === assistant.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-4" />
+                                  )}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={deletingTenantAssistantId === assistant.id}
+                                onClick={() => void handleDeleteTenantAssistant(assistant)}
+                              >
+                                {deletingTenantAssistantId === assistant.id ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="size-4" />
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="custom" className="space-y-4">
+                {installedLoading ? (
+                  <LoadingSkeleton />
+                ) : filteredCustomAgents.length === 0 ? (
+                  <Empty className="rounded-xl border bg-muted/20">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <Package className="size-5" />
+                      </EmptyMedia>
+                      <EmptyTitle>
+                        {searchQuery.trim() ? '未找到匹配的自定义智能体' : '暂无自定义智能体'}
+                      </EmptyTitle>
+                      <EmptyDescription>
+                        {searchQuery.trim() ? '请尝试其他搜索关键词。' : '通过前端创建或上传的自定义智能体会在这里展示。'}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {filteredCustomAgents.map(agent => (
                       <InstalledAgentCard
                         key={`${agent.source}:${agent.name}`}
                         agent={agent}
@@ -1844,7 +2294,7 @@ export default function AgentHubPage() {
               </div>
               <RadioGroup
                 value={editVisibilityMode}
-                onValueChange={value => setEditVisibilityMode(value as 'all' | 'departments' | 'admin')}
+                onValueChange={value => setEditVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
               >
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="all" />
@@ -1853,6 +2303,10 @@ export default function AgentHubPage() {
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="departments" />
                   <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="users" />
+                  <label className="text-sm cursor-pointer">指定人员可见</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="admin" />
@@ -1880,6 +2334,31 @@ export default function AgentHubPage() {
                           }}
                         />
                         <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : editVisibilityMode === 'users' ? (
+                users.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无用户数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {users.map(user => (
+                      <label
+                        key={user.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={editVisibleUserIds.includes(user.id)}
+                          onCheckedChange={checked => {
+                            setEditVisibleUserIds(
+                              checked === true
+                                ? [...editVisibleUserIds, user.id]
+                                : editVisibleUserIds.filter(id => id !== user.id),
+                            )
+                          }}
+                        />
+                        <span>{user.name || user.email}</span>
                       </label>
                     ))}
                   </div>
@@ -2344,7 +2823,7 @@ export default function AgentHubPage() {
               </div>
               <RadioGroup
                 value={createVisibilityMode}
-                onValueChange={value => setCreateVisibilityMode(value as 'all' | 'departments' | 'admin')}
+                onValueChange={value => setCreateVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
               >
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="all" />
@@ -2353,6 +2832,10 @@ export default function AgentHubPage() {
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="departments" />
                   <label className="text-sm cursor-pointer">指定部门可见</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="users" />
+                  <label className="text-sm cursor-pointer">指定人员可见</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="admin" />
@@ -2380,6 +2863,31 @@ export default function AgentHubPage() {
                           }}
                         />
                         <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              ) : createVisibilityMode === 'users' ? (
+                users.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无用户数据</p>
+                ) : (
+                  <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                    {users.map(user => (
+                      <label
+                        key={user.id}
+                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={createVisibleUserIds.includes(user.id)}
+                          onCheckedChange={checked => {
+                            setCreateVisibleUserIds(
+                              checked === true
+                                ? [...createVisibleUserIds, user.id]
+                                : createVisibleUserIds.filter(id => id !== user.id),
+                            )
+                          }}
+                        />
+                        <span>{user.name || user.email}</span>
                       </label>
                     ))}
                   </div>
@@ -2547,7 +3055,7 @@ export default function AgentHubPage() {
           <div className="space-y-3">
             <RadioGroup
               value={agentVisibilityMode}
-              onValueChange={value => setAgentVisibilityMode(value as 'all' | 'departments' | 'admin')}
+              onValueChange={value => setAgentVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
             >
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="all" />
@@ -2556,6 +3064,10 @@ export default function AgentHubPage() {
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="departments" />
                 <label className="text-sm cursor-pointer">指定部门可见</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="users" />
+                <label className="text-sm cursor-pointer">指定人员可见</label>
               </div>
               <div className="flex items-center gap-2">
                 <RadioGroupItem value="admin" />
@@ -2587,6 +3099,31 @@ export default function AgentHubPage() {
                   ))}
                 </div>
               )
+            ) : agentVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className="text-xs text-muted-foreground">暂无用户数据</p>
+              ) : (
+                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                    >
+                      <Checkbox
+                        checked={editAgentVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditAgentVisibleUserIds(
+                            checked === true
+                              ? [...editAgentVisibleUserIds, user.id]
+                              : editAgentVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name || user.email}</span>
+                    </label>
+                  ))}
+                </div>
+              )
             ) : null}
           </div>
           <DialogFooter>
@@ -2602,6 +3139,280 @@ export default function AgentHubPage() {
               ) : (
                 '保存'
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={approvalDialogOpen} onOpenChange={open => { if (!open) setApprovalDialogOpen(false) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>审批专属智能体</DialogTitle>
+            <DialogDescription>
+              {approvingAssistant ? `审批智能体: ${approvingAssistant.display_name || approvingAssistant.name}` : '审批专属智能体发布申请'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm">
+              <p className="font-medium">发布说明</p>
+              <p className="mt-1 text-muted-foreground">{approvingAssistant?.publish_note || '无发布说明'}</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">审批备注</label>
+              <Input
+                value={approvalNote}
+                onChange={e => setApprovalNote(e.target.value)}
+                placeholder="可选，填写审批说明"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApprovalDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={approving}
+              onClick={() => void handleApproveTenantAssistant(false)}
+            >
+              {approving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              拒绝
+            </Button>
+            <Button
+              disabled={approving}
+              onClick={() => void handleApproveTenantAssistant(true)}
+            >
+              {approving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              通过
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tenantVisibilityOpen} onOpenChange={open => { if (!open) setTenantVisibilityOpen(false) }}>
+        <DialogContent className='max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>编辑专属智能体可见性</DialogTitle>
+            <DialogDescription>
+              {editingTenantAssistant ? `设置 ${editingTenantAssistant.display_name || editingTenantAssistant.name} 的可见范围` : '设置专属智能体的可见范围'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-3'>
+            <RadioGroup
+              value={tenantVisibilityMode}
+              onValueChange={value => setTenantVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
+            >
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="all" />
+                <label className='text-sm cursor-pointer'>全员可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="departments" />
+                <label className='text-sm cursor-pointer'>指定部门可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="users" />
+                <label className='text-sm cursor-pointer'>指定人员可见</label>
+              </div>
+              <div className='flex items-center gap-2'>
+                <RadioGroupItem value="admin" />
+                <label className='text-sm cursor-pointer'>仅管理员可见</label>
+              </div>
+            </RadioGroup>
+            {tenantVisibilityMode === 'departments' ? (
+              departmentOptions.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无部门数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {departmentOptions.map(dept => (
+                    <label
+                      key={dept.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editTenantVisibleTo.includes(dept.id)}
+                        onCheckedChange={checked => {
+                          setEditTenantVisibleTo(
+                            checked === true
+                              ? [...editTenantVisibleTo, dept.id]
+                              : editTenantVisibleTo.filter(id => id !== dept.id),
+                          )
+                        }}
+                      />
+                      <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+            {tenantVisibilityMode === 'users' ? (
+              users.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>暂无用户数据</p>
+              ) : (
+                <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-64 overflow-y-auto'>
+                  {users.map(user => (
+                    <label
+                      key={user.id}
+                      className='flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1'
+                    >
+                      <Checkbox
+                        checked={editTenantVisibleUserIds.includes(user.id)}
+                        onCheckedChange={checked => {
+                          setEditTenantVisibleUserIds(
+                            checked === true
+                              ? [...editTenantVisibleUserIds, user.id]
+                              : editTenantVisibleUserIds.filter(id => id !== user.id),
+                          )
+                        }}
+                      />
+                      <span>{user.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setTenantVisibilityOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant='destructive'
+              disabled={deletingTenantAssistantId !== null}
+              onClick={() => void handleConfirmDeleteTenantAssistant()}
+            >
+              {deletingTenantAssistantId !== null ? <Loader2 className='mr-2 size-4 animate-spin' /> : null}
+              删除
+            </Button>
+            <Button disabled={savingTenantVisibility} onClick={() => void handleSaveTenantVisibility()}>
+              {savingTenantVisibility ? (
+                <>
+                  <Loader2 className='mr-2 size-4 animate-spin' />
+                  保存中
+                </>
+              ) : (
+                '保存'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 专属智能体详情对话框 */}
+      <Dialog open={tenantAssistantDetail !== null} onOpenChange={open => { if (!open) setTenantAssistantDetail(null) }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{tenantAssistantDetail?.display_name || tenantAssistantDetail?.name || '专属智能体详情'}</DialogTitle>
+            <DialogDescription>
+              查看专属智能体详细信息。
+            </DialogDescription>
+          </DialogHeader>
+          {tenantAssistantDetail && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    tenantAssistantDetail.status === 'approved'
+                      ? 'default'
+                      : tenantAssistantDetail.status === 'pending'
+                        ? 'secondary'
+                        : 'destructive'
+                  }
+                >
+                  {tenantAssistantDetail.status === 'approved'
+                    ? '已通过'
+                    : tenantAssistantDetail.status === 'pending'
+                      ? '待审批'
+                      : '已拒绝'}
+                </Badge>
+                {tenantAssistantDetail.status === 'approved' && (
+                  <Badge variant="outline">
+                    {tenantAssistantDetail.enabled ? '已启用' : '已禁用'}
+                  </Badge>
+                )}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-medium text-muted-foreground mb-1">描述</h4>
+                <p className="text-sm">{tenantAssistantDetail.description || '暂无描述'}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">版本</h4>
+                  <p className="text-sm">{tenantAssistantDetail.version || '未知'}</p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">作者</h4>
+                  <p className="text-sm">{tenantAssistantDetail.author_name || tenantAssistantDetail.author_id}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">创建时间</h4>
+                  <p className="text-sm">{new Date(tenantAssistantDetail.created_at).toLocaleString()}</p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">更新时间</h4>
+                  <p className="text-sm">{new Date(tenantAssistantDetail.updated_at).toLocaleString()}</p>
+                </div>
+              </div>
+
+              {tenantAssistantDetail.enabled_skills && parseStringArray(tenantAssistantDetail.enabled_skills).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">关联技能</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {parseStringArray(tenantAssistantDetail.enabled_skills).map(skillId => (
+                      <Badge key={skillId} variant="outline">{skillId}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {tenantAssistantDetail.publish_note && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">发布说明</h4>
+                  <p className="text-sm">{tenantAssistantDetail.publish_note}</p>
+                </div>
+              )}
+
+              {tenantAssistantDetail.review_note && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">审批备注</h4>
+                  <p className="text-sm">{tenantAssistantDetail.review_note}</p>
+                </div>
+              )}
+
+              {tenantAssistantDetail.status === 'approved' && tenantAssistantDetail.visible_to && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">可见范围</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {tenantAssistantDetail.visible_to.user_ids?.length ? (
+                      tenantAssistantDetail.visible_to.user_ids.map(userId => {
+                        const user = users.find(u => u.id === userId)
+                        return user ? (
+                          <Badge key={userId} variant="outline">{user.name}</Badge>
+                        ) : null
+                      })
+                    ) : tenantAssistantDetail.visible_to.department_ids?.length ? (
+                      tenantAssistantDetail.visible_to.department_ids.map(deptId => {
+                        const name = departmentNameMap.get(deptId)
+                        return name ? (
+                          <Badge key={deptId} variant="outline">{name}</Badge>
+                        ) : null
+                      })
+                    ) : (
+                      <span className="text-sm text-muted-foreground">全员可见</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTenantAssistantDetail(null)}>
+              关闭
             </Button>
           </DialogFooter>
         </DialogContent>
