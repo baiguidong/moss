@@ -1453,6 +1453,7 @@ export function startServer(
           version: meta?.installed_version || undefined,
           enabled_skills: meta?.enabledSkills || meta?.skills ? JSON.stringify(meta?.enabledSkills || meta?.skills) : null,
           memory_mode: meta?.memory_mode || 'session',
+          agent_type: meta?.agent_type || 'chat',
           publish_note: publishNote,
           author_id: auth.userId,
           author_name: authorName,

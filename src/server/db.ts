@@ -374,6 +374,7 @@ export class DirectConnectStore {
         file_path TEXT,
         enabled_skills TEXT,
         memory_mode TEXT DEFAULT 'session',
+        agent_type TEXT DEFAULT 'chat',
         publish_note TEXT,
         review_note TEXT,
         reviewed_by TEXT,
@@ -387,6 +388,12 @@ export class DirectConnectStore {
       CREATE INDEX IF NOT EXISTS idx_tenant_assistants_author ON tenant_assistants (author_id);
       CREATE INDEX IF NOT EXISTS idx_tenant_assistants_status ON tenant_assistants (status);
     `)
+
+    // Migration: Add agent_type column to tenant_assistants if it doesn't exist
+    const columns = this.db.prepare(`PRAGMA table_info(tenant_assistants)`).all() as { name: string }[]
+    if (!columns.some(col => col.name === 'agent_type')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN agent_type TEXT DEFAULT 'chat'`)
+    }
   }
 
   close(): void {
@@ -1242,6 +1249,7 @@ export class DirectConnectStore {
     file_path?: string | null
     enabled_skills?: string | null
     memory_mode?: string
+    agent_type?: string
     publish_note?: string | null
     enabled?: number
     visible_to?: string | null
@@ -1250,8 +1258,8 @@ export class DirectConnectStore {
     this.db.prepare(`
       INSERT INTO tenant_assistants (
         id, name, display_name, description, version, author_id, author_name, status,
-        source_url, checksum, file_path, enabled_skills, memory_mode, publish_note, enabled, visible_to, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_url, checksum, file_path, enabled_skills, memory_mode, agent_type, publish_note, enabled, visible_to, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id,
       row.name,
@@ -1266,6 +1274,7 @@ export class DirectConnectStore {
       row.file_path ?? null,
       row.enabled_skills ?? null,
       row.memory_mode ?? 'session',
+      row.agent_type ?? 'chat',
       row.publish_note ?? null,
       row.enabled ?? 1,
       row.visible_to ?? null,
