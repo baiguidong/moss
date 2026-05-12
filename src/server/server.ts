@@ -1684,6 +1684,10 @@ export function startServer(
               Array.isArray(updates.enabledSkills)
                 ? updates.enabledSkills.filter((s: unknown) => typeof s === 'string')
                 : undefined,
+            enabledWikis:
+              Array.isArray(updates.enabledWikis)
+                ? updates.enabledWikis.filter((s: unknown) => typeof s === 'string')
+                : undefined,
             skills:
               Array.isArray(updates.skills)
                 ? updates.skills.filter((s: unknown) => typeof s === 'string')
