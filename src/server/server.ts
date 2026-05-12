@@ -1188,21 +1188,64 @@ export function startServer(
       // TODO: SSE endpoint for live build progress will be added in D7.
 
       // ---- Agent-facing wiki endpoints (called by wikiCli from inside scode container) ----
-      // P0: scope check is admin:documents; later this will be replaced by SESSION_TOKEN auth.
-      // TODO(D6): replace scope check with SESSION_TOKEN-based assistant_id resolution.
+      // Auth model:
+      //   1. If the token was issued for an in-container scode session
+      //      (auth.assistantId is set), filter by that assistant's
+      //      `enabledWikis` from its `_moss_meta.json`.
+      //   2. Otherwise require admin:documents scope (used by admins
+      //      poking at the endpoint and by the AdminHub during dev).
+      //
+      // Helper that resolves which wiki IDs the current caller is
+      // authorised to access. Returns:
+      //   - Set<string> with wiki IDs → "filter to this set"
+      //   - null                       → "no restriction" (admin path)
+      //   - undefined                  → "denied" (caller should 403)
+      const resolveAgentWikiAccess = async (): Promise<Set<string> | null | undefined> => {
+        if (typeof auth.assistantId === 'string' && auth.assistantId.length > 0) {
+          try {
+            const dir = await findAssistantDir(auth.assistantId)
+            if (!dir) return new Set()
+            const meta = await readAssistantMeta(dir.dir)
+            const ids = Array.isArray((meta as { enabledWikis?: unknown } | null)?.enabledWikis)
+              ? ((meta as { enabledWikis: unknown[] }).enabledWikis.filter(
+                  (v): v is string => typeof v === 'string',
+                ))
+              : []
+            return new Set(ids)
+          } catch {
+            return new Set()
+          }
+        }
+        if (hasScope(auth.scopes, 'admin:documents')) {
+          return null
+        }
+        return undefined
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/agent/wikis') {
-        authService.requireScope(auth, 'admin:documents')
-        // For P0 placeholder: list all wikis in the org. D6 will filter by
-        // the assistant_id embedded in SESSION_TOKEN and the assistant's
-        // enabledWikis array from _moss_meta.json.
-        writeJson(res, 200, { wikis: documentStore.listWikis(auth.orgId) })
+        const access = await resolveAgentWikiAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const all = documentStore.listWikis(auth.orgId)
+        const filtered = access === null ? all : all.filter(w => access.has(w.id))
+        writeJson(res, 200, { wikis: filtered })
         return
       }
 
       const agentWikiFilesMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/files$/)
       if (req.method === 'GET' && agentWikiFilesMatch) {
-        authService.requireScope(auth, 'admin:documents')
+        const access = await resolveAgentWikiAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
         const wikiId = agentWikiFilesMatch[1] || ''
+        if (access !== null && !access.has(wikiId)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'wiki not authorised for this assistant' } })
+          return
+        }
         const wiki = documentStore.getWiki(wikiId, auth.orgId)
         if (!wiki) {
           writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
@@ -1223,8 +1266,16 @@ export function startServer(
 
       const agentWikiFileMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/files\/(.+)$/)
       if (req.method === 'GET' && agentWikiFileMatch) {
-        authService.requireScope(auth, 'admin:documents')
+        const access = await resolveAgentWikiAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
         const wikiId = agentWikiFileMatch[1] || ''
+        if (access !== null && !access.has(wikiId)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'wiki not authorised for this assistant' } })
+          return
+        }
         const filePath = agentWikiFileMatch[2] || ''
         const wiki = documentStore.getWiki(wikiId, auth.orgId)
         if (!wiki) {
@@ -1248,8 +1299,16 @@ export function startServer(
 
       const agentWikiSearchMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/search$/)
       if (req.method === 'GET' && agentWikiSearchMatch) {
-        authService.requireScope(auth, 'admin:documents')
+        const access = await resolveAgentWikiAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
         const wikiId = agentWikiSearchMatch[1] || ''
+        if (access !== null && !access.has(wikiId)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'wiki not authorised for this assistant' } })
+          return
+        }
         const url = new URL(req.url ?? '', 'http://localhost')
         const query = url.searchParams.get('q') ?? ''
         if (!query) {
@@ -1287,8 +1346,16 @@ export function startServer(
 
       const agentWikiMetaMatch = pathname.match(/^\/api\/v1\/agent\/wikis\/([^/]+)\/metadata$/)
       if (req.method === 'GET' && agentWikiMetaMatch) {
-        authService.requireScope(auth, 'admin:documents')
+        const access = await resolveAgentWikiAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
         const wikiId = agentWikiMetaMatch[1] || ''
+        if (access !== null && !access.has(wikiId)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'wiki not authorised for this assistant' } })
+          return
+        }
         const wiki = documentStore.getWiki(wikiId, auth.orgId)
         if (!wiki) {
           writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })

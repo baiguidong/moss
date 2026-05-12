@@ -54,6 +54,16 @@ export function buildSessionEnv(
     || process.env.ANTHROPIC_API_KEY
     || process.env.ANTHROPIC_AUTH_TOKEN
 
+  // Document Center: in-container scode talks back to moss-server through
+  // the `wiki` CLI. The CLI refuses to run unless these two env vars are
+  // set. MOSS_SERVER_URL defaults to the local moss process; SESSION_TOKEN
+  // is provided by the caller (RuntimeService / WikiJobExecutor) via the
+  // `overrides` map — buildSessionEnv itself does not sign tokens.
+  const inferredServerUrl =
+    process.env.MOSS_SERVER_URL
+      || (settings as { serverUrl?: string }).serverUrl
+      || ''
+
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     MOSS_HOME,
@@ -73,6 +83,7 @@ export function buildSessionEnv(
     ...(options.assistantName
       ? { MOSS_ASSISTANT_NAME: options.assistantName }
       : {}),
+    ...(inferredServerUrl ? { MOSS_SERVER_URL: inferredServerUrl } : {}),
     MOSS_DEFAULT_MODEL: settings.model || process.env.MOSS_DEFAULT_MODEL || 'gemini-3-flash-preview',
     ...Object.fromEntries(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
