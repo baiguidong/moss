@@ -329,6 +329,64 @@ export class DirectConnectStore {
     } catch {
       // Index creation failed, ignore
     }
+
+    // Create tenant_skills table for enterprise exclusive skills
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        description TEXT,
+        version TEXT,
+        author_id TEXT NOT NULL,
+        author_name TEXT,
+        status TEXT DEFAULT 'pending',
+        source_url TEXT,
+        checksum TEXT,
+        file_path TEXT,
+        publish_note TEXT,
+        review_note TEXT,
+        reviewed_by TEXT,
+        reviewed_at INTEGER,
+        enabled INTEGER DEFAULT 1,
+        visible_to TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tenant_skills_author ON tenant_skills (author_id);
+      CREATE INDEX IF NOT EXISTS idx_tenant_skills_status ON tenant_skills (status);
+    `)
+
+    // Create tenant_assistants table for enterprise exclusive assistants
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_assistants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        description TEXT,
+        version TEXT,
+        author_id TEXT NOT NULL,
+        author_name TEXT,
+        status TEXT DEFAULT 'pending',
+        source_url TEXT,
+        checksum TEXT,
+        file_path TEXT,
+        enabled_skills TEXT,
+        memory_mode TEXT DEFAULT 'session',
+        publish_note TEXT,
+        review_note TEXT,
+        reviewed_by TEXT,
+        reviewed_at INTEGER,
+        enabled INTEGER DEFAULT 1,
+        visible_to TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tenant_assistants_author ON tenant_assistants (author_id);
+      CREATE INDEX IF NOT EXISTS idx_tenant_assistants_status ON tenant_assistants (status);
+    `)
   }
 
   close(): void {
@@ -1048,6 +1106,218 @@ export class DirectConnectStore {
 
   deletePairingRequestsByUserAndPlatform(userId: string, platformType: string): void {
     this.db.prepare(`DELETE FROM channel_pairing_requests WHERE user_id = ? AND platform_type = ?`).run(userId, platformType)
+  }
+
+  // ==================== Tenant Skills ====================
+
+  listTenantSkills(status?: string): SqlRow[] {
+    if (status) {
+      return this.db.prepare(`SELECT * FROM tenant_skills WHERE status = ? ORDER BY created_at DESC`).all(status) as SqlRow[]
+    }
+    return this.db.prepare(`SELECT * FROM tenant_skills ORDER BY created_at DESC`).all() as SqlRow[]
+  }
+
+  getTenantSkill(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM tenant_skills WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  getTenantSkillByName(name: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM tenant_skills WHERE name = ?`).get(name) as SqlRow) ?? null
+  }
+
+  createTenantSkill(row: {
+    id: string
+    name: string
+    display_name?: string | null
+    description?: string | null
+    version?: string | null
+    author_id: string
+    author_name?: string | null
+    status?: string
+    source_url?: string | null
+    checksum?: string | null
+    file_path?: string | null
+    publish_note?: string | null
+    enabled?: number
+    visible_to?: string | null
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO tenant_skills (
+        id, name, display_name, description, version, author_id, author_name, status,
+        source_url, checksum, file_path, publish_note, enabled, visible_to, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.name,
+      row.display_name ?? null,
+      row.description ?? null,
+      row.version ?? null,
+      row.author_id,
+      row.author_name ?? null,
+      row.status ?? 'pending',
+      row.source_url ?? null,
+      row.checksum ?? null,
+      row.file_path ?? null,
+      row.publish_note ?? null,
+      row.enabled ?? 1,
+      row.visible_to ?? null,
+      ts,
+      ts,
+    )
+  }
+
+  updateTenantSkillStatus(id: string, status: string, reviewedBy: string, reviewNote?: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_skills
+      SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
+      WHERE id = ?
+    `).run(status, reviewedBy, ts, reviewNote ?? null, ts, id)
+  }
+
+  updateTenantSkillMeta(id: string, updates: {
+    display_name?: string
+    description?: string
+    enabled?: number
+    visible_to?: string | null
+  }): void {
+    const ts = now()
+    const existing = this.getTenantSkill(id)
+    if (!existing) return
+
+    const displayName = updates.display_name ?? existing.display_name
+    const description = updates.description ?? existing.description
+    const enabled = updates.enabled ?? existing.enabled
+    const visibleTo = updates.visible_to !== undefined ? updates.visible_to : existing.visible_to
+
+    this.db.prepare(`
+      UPDATE tenant_skills
+      SET display_name = ?, description = ?, enabled = ?, visible_to = ?, updated_at = ?
+      WHERE id = ?
+    `).run(displayName as string, description as string, enabled as number, visibleTo as string | null, ts, id)
+  }
+
+  updateTenantSkillFilePath(id: string, filePath: string, sourceUrl: string, checksum: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_skills
+      SET file_path = ?, source_url = ?, checksum = ?, updated_at = ?
+      WHERE id = ?
+    `).run(filePath, sourceUrl, checksum, ts, id)
+  }
+
+  deleteTenantSkill(id: string): void {
+    this.db.prepare(`DELETE FROM tenant_skills WHERE id = ?`).run(id)
+  }
+
+  // ==================== Tenant Assistants ====================
+
+  listTenantAssistants(status?: string): SqlRow[] {
+    if (status) {
+      return this.db.prepare(`SELECT * FROM tenant_assistants WHERE status = ? ORDER BY created_at DESC`).all(status) as SqlRow[]
+    }
+    return this.db.prepare(`SELECT * FROM tenant_assistants ORDER BY created_at DESC`).all() as SqlRow[]
+  }
+
+  getTenantAssistant(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM tenant_assistants WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  getTenantAssistantByName(name: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM tenant_assistants WHERE name = ?`).get(name) as SqlRow) ?? null
+  }
+
+  createTenantAssistant(row: {
+    id: string
+    name: string
+    display_name?: string | null
+    description?: string | null
+    version?: string | null
+    author_id: string
+    author_name?: string | null
+    status?: string
+    source_url?: string | null
+    checksum?: string | null
+    file_path?: string | null
+    enabled_skills?: string | null
+    memory_mode?: string
+    publish_note?: string | null
+    enabled?: number
+    visible_to?: string | null
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO tenant_assistants (
+        id, name, display_name, description, version, author_id, author_name, status,
+        source_url, checksum, file_path, enabled_skills, memory_mode, publish_note, enabled, visible_to, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.name,
+      row.display_name ?? null,
+      row.description ?? null,
+      row.version ?? null,
+      row.author_id,
+      row.author_name ?? null,
+      row.status ?? 'pending',
+      row.source_url ?? null,
+      row.checksum ?? null,
+      row.file_path ?? null,
+      row.enabled_skills ?? null,
+      row.memory_mode ?? 'session',
+      row.publish_note ?? null,
+      row.enabled ?? 1,
+      row.visible_to ?? null,
+      ts,
+      ts,
+    )
+  }
+
+  updateTenantAssistantStatus(id: string, status: string, reviewedBy: string, reviewNote?: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_assistants
+      SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
+      WHERE id = ?
+    `).run(status, reviewedBy, ts, reviewNote ?? null, ts, id)
+  }
+
+  updateTenantAssistantMeta(id: string, updates: {
+    display_name?: string
+    description?: string
+    enabled?: number
+    visible_to?: string | null
+    enabled_skills?: string | null
+  }): void {
+    const ts = now()
+    const existing = this.getTenantAssistant(id)
+    if (!existing) return
+
+    const displayName = updates.display_name ?? existing.display_name
+    const description = updates.description ?? existing.description
+    const enabled = updates.enabled ?? existing.enabled
+    const visibleTo = updates.visible_to !== undefined ? updates.visible_to : existing.visible_to
+    const enabledSkills = updates.enabled_skills ?? existing.enabled_skills
+
+    this.db.prepare(`
+      UPDATE tenant_assistants
+      SET display_name = ?, description = ?, enabled = ?, visible_to = ?, enabled_skills = ?, updated_at = ?
+      WHERE id = ?
+    `).run(displayName as string, description as string, enabled as number, visibleTo as string | null, enabledSkills as string | null, ts, id)
+  }
+
+  updateTenantAssistantFilePath(id: string, filePath: string, sourceUrl: string, checksum: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_assistants
+      SET file_path = ?, source_url = ?, checksum = ?, updated_at = ?
+      WHERE id = ?
+    `).run(filePath, sourceUrl, checksum, ts, id)
+  }
+
+  deleteTenantAssistant(id: string): void {
+    this.db.prepare(`DELETE FROM tenant_assistants WHERE id = ?`).run(id)
   }
 }
 

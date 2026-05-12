@@ -1,7 +1,7 @@
 import http from 'http'
 import net from 'net'
-import { existsSync } from 'fs'
-import { readFile, stat, mkdir, writeFile } from 'fs/promises'
+import { existsSync, cpSync, rmSync } from 'fs'
+import { readFile, stat, mkdir, writeFile, readdir } from 'fs/promises'
 import os from 'os'
 import { dirname, extname, join, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
@@ -25,6 +25,11 @@ import {
   updateInstalledAssistantMeta,
   batchSyncAssistants,
   type AssistantStoreMeta,
+  uploadCustomAssistant,
+  packageAssistantZip,
+  readAssistantMeta,
+  findAssistantDir,
+  writeAssistantMeta,
 } from './agentStore.js'
 import {
   fetchSkillHubCategories,
@@ -40,6 +45,12 @@ import {
   type SkillStoreMeta,
   uninstallSkill,
   batchSyncSkills,
+  uploadCustomSkill,
+  packageSkillZip,
+  findInstalledSkillPath,
+  readSkillMeta,
+  readSkillVersion,
+  writeSkillMeta,
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
 import {
@@ -61,6 +72,7 @@ import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
 import { isVisibleTo } from './visibilityFilter.js'
+import { MOSS_SKILLS_CUSTOM_DIR, MOSS_SKILLS_TENANT_DIR } from '../utils/skills/localSkillDirectories.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -187,6 +199,55 @@ async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
     throw new HttpError(400, 'JSON body must be an object')
   }
   return parsed
+}
+
+async function copySkillToTenantDir(skillName: string): Promise<void> {
+  const sourceDir = join(MOSS_SKILLS_CUSTOM_DIR, skillName)
+  const targetDir = join(MOSS_SKILLS_TENANT_DIR, skillName)
+
+  if (!existsSync(sourceDir)) {
+    throw new HttpError(404, `Skill directory not found: ${skillName}`)
+  }
+
+  // Ensure tenant directory exists
+  await mkdir(MOSS_SKILLS_TENANT_DIR, { recursive: true })
+
+  // Copy the skill directory
+  cpSync(sourceDir, targetDir, { recursive: true })
+
+  // Update metadata to set source_type to 'tenant'
+  const meta = await readSkillMeta(targetDir)
+  if (meta) {
+    meta.source_type = 'tenant'
+    await writeSkillMeta(targetDir, meta)
+  }
+}
+
+async function copyAssistantToTenantDir(assistantName: string): Promise<void> {
+  const MOSS_HOME = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+  const MOSS_ASSISTANTS_DIR = join(MOSS_HOME, 'assistants')
+  const ASSISTANT_CUSTOM_DIR = join(MOSS_ASSISTANTS_DIR, 'custom')
+  const ASSISTANT_TENANT_DIR = join(MOSS_ASSISTANTS_DIR, 'tenant')
+
+  const sourceDir = join(ASSISTANT_CUSTOM_DIR, assistantName)
+  const targetDir = join(ASSISTANT_TENANT_DIR, assistantName)
+
+  if (!existsSync(sourceDir)) {
+    throw new HttpError(404, `Assistant directory not found: ${assistantName}`)
+  }
+
+  // Ensure tenant directory exists
+  await mkdir(ASSISTANT_TENANT_DIR, { recursive: true })
+
+  // Copy the assistant directory
+  cpSync(sourceDir, targetDir, { recursive: true })
+
+  // Update metadata to set source_type to 'tenant'
+  const meta = await readAssistantMeta(targetDir)
+  if (meta) {
+    meta.source_type = 'tenant'
+    await writeAssistantMeta(targetDir, meta)
+  }
 }
 
 function getBearerToken(req: http.IncomingMessage): string | null {
@@ -1302,6 +1363,198 @@ export function startServer(
         return
       }
 
+      // POST /api/v1/agents/custom - Upload custom assistant
+      if (req.method === 'POST' && pathname === '/api/v1/agents/custom') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const fileBase64 = typeof body.file === 'string' ? body.file : ''
+        const fileBuffer = Buffer.from(fileBase64, 'base64')
+        const enabledSkills = Array.isArray(body.enabledSkills)
+          ? body.enabledSkills.filter((s: unknown) => typeof s === 'string')
+          : []
+        const result = await uploadCustomAssistant({
+          file: fileBuffer,
+          name: typeof body.name === 'string' ? body.name : '',
+          displayName: typeof body.displayName === 'string' ? body.displayName : '',
+          description: typeof body.description === 'string' ? body.description : undefined,
+          version: typeof body.version === 'string' ? body.version : undefined,
+          enabledSkills,
+          memoryMode: body.memoryMode === 'user' ? 'user' : 'session',
+          userId: auth.userId,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // GET /api/v1/agents/tenant - List tenant assistants
+      if (req.method === 'GET' && pathname === '/api/v1/agents/tenant') {
+        const status = url.searchParams.get('status') || undefined
+        const allRows = runtime.store.listTenantAssistants(status)
+        // Filter by visibility for non-admin users
+        const filter = authService.buildVisibilityFilter(auth)
+        const isAdmin = hasScope(auth.scopes, 'admin:settings')
+        const rows = allRows.filter((row: Record<string, unknown>) => {
+          // Pending records are only visible to admins
+          if (row.status === 'pending' && !isAdmin) return false
+          // Approved records are filtered by visibility
+          if (row.status === 'approved') {
+            const visibleTo = typeof row.visible_to === 'string' ? JSON.parse(row.visible_to) : null
+            return isVisibleTo(visibleTo, filter)
+          }
+          return true
+        })
+        writeJson(res, 200, rows)
+        return
+      }
+
+      // GET /api/v1/agents/installed/:id/download - Download installed assistant
+      const agentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/installed\/([^/]+)\/download$/)
+      if (req.method === 'GET' && agentDownloadMatch) {
+        const assistantId = agentDownloadMatch[1] || ''
+        try {
+          const zipBuffer = await packageAssistantZip(assistantId)
+          res.setHeader('Content-Type', 'application/zip')
+          res.setHeader('Content-Disposition', `attachment; filename="${assistantId}.zip"`)
+          res.end(zipBuffer)
+        } catch (error) {
+          throw new HttpError(404, `Assistant not found: ${assistantId}`)
+        }
+        return
+      }
+
+      // POST /api/v1/agents/tenant/publish - Publish tenant assistant request
+      if (req.method === 'POST' && pathname === '/api/v1/agents/tenant/publish') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const assistantName = typeof body.assistantName === 'string' ? body.assistantName : ''
+        const assistantId = typeof body.assistantId === 'string' ? body.assistantId : assistantName
+        const publishNote = typeof body.publishNote === 'string' ? body.publishNote : undefined
+
+        // Check if assistant exists
+        const assistantResult = await findAssistantDir(assistantId)
+        if (!assistantResult) {
+          throw new HttpError(404, `Assistant not found: ${assistantId}`)
+        }
+
+        // Read assistant metadata
+        const meta = await readAssistantMeta(assistantResult.dir)
+
+        // Get author name from user info
+        const authorUser = authService.getUserOrNull(auth.userId, auth.orgId, auth)
+        const authorName = authorUser?.name || undefined
+
+        // Create tenant assistant record with metadata from source assistant
+        const id = `tenant-assistant-${Date.now()}`
+        runtime.store.createTenantAssistant({
+          id,
+          name: assistantId,
+          display_name: meta?.display_name || assistantId,
+          description: meta?.description || undefined,
+          version: meta?.installed_version || undefined,
+          enabled_skills: meta?.enabledSkills || meta?.skills ? JSON.stringify(meta?.enabledSkills || meta?.skills) : null,
+          memory_mode: meta?.memory_mode || 'session',
+          publish_note: publishNote,
+          author_id: auth.userId,
+          author_name: authorName,
+          status: 'pending',
+        })
+        writeJson(res, 200, { id, assistantId, status: 'pending', message: '发布申请已提交，等待管理员审批' })
+        return
+      }
+
+      // POST /api/v1/admin/agents/tenant/:id/approve - Approve tenant assistant
+      const agentApproveMatch = pathname.match(/^\/api\/v1\/admin\/agents\/tenant\/([^/]+)\/approve$/)
+      if (req.method === 'POST' && agentApproveMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantAssistantId = agentApproveMatch[1] || ''
+        const body = await readJsonBody(req)
+        const approved = body.approved === true
+        const reviewNote = typeof body.reviewNote === 'string' ? body.reviewNote : undefined
+
+        const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
+        if (!tenantAssistant) {
+          throw new HttpError(404, `Tenant assistant not found: ${tenantAssistantId}`)
+        }
+
+        if (approved) {
+          // Update status to approved
+          runtime.store.updateTenantAssistantStatus(tenantAssistantId, 'approved', auth.userId, reviewNote)
+          // Set visibility to all users (null)
+          runtime.store.updateTenantAssistantMeta(tenantAssistantId, { visible_to: null })
+          // Copy assistant to tenant directory
+          const assistantName = tenantAssistant.name as string
+          await copyAssistantToTenantDir(assistantName)
+        } else {
+          runtime.store.updateTenantAssistantStatus(tenantAssistantId, 'rejected', auth.userId, reviewNote)
+        }
+
+        writeJson(res, 200, { id: tenantAssistantId, status: approved ? 'approved' : 'rejected' })
+        return
+      }
+
+      // PATCH /api/v1/agents/tenant/:id - Update tenant assistant meta
+      const agentTenantPatchMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)$/)
+      if (req.method === 'PATCH' && agentTenantPatchMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantAssistantId = agentTenantPatchMatch[1] || ''
+        const body = await readJsonBody(req)
+
+        const updates: { enabled?: number; visible_to?: string | null; enabled_skills?: string | null } = {}
+        if (typeof body.enabled === 'boolean') {
+          updates.enabled = body.enabled ? 1 : 0
+        }
+        if (body.visible_to !== undefined) {
+          updates.visible_to = body.visible_to ? JSON.stringify(body.visible_to) : null
+        }
+        if (Array.isArray(body.enabledSkills)) {
+          updates.enabled_skills = JSON.stringify(body.enabledSkills.filter((s: unknown) => typeof s === 'string'))
+        }
+
+        runtime.store.updateTenantAssistantMeta(tenantAssistantId, updates)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // DELETE /api/v1/agents/tenant/:id - Delete tenant assistant
+      if (req.method === 'DELETE' && agentTenantPatchMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantAssistantId = agentTenantPatchMatch[1] || ''
+        const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
+        if (tenantAssistant) {
+          const assistantName = tenantAssistant.name as string
+          // Delete from tenant directory if exists
+          const MOSS_HOME = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+          const ASSISTANT_TENANT_DIR = join(MOSS_HOME, 'assistants', 'tenant')
+          const assistantDir = join(ASSISTANT_TENANT_DIR, assistantName)
+          if (existsSync(assistantDir)) {
+            rmSync(assistantDir, { recursive: true, force: true })
+          }
+        }
+        runtime.store.deleteTenantAssistant(tenantAssistantId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // GET /api/v1/agents/tenant/:id/download - Download tenant assistant
+      const tenantAgentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)\/download$/)
+      if (req.method === 'GET' && tenantAgentDownloadMatch) {
+        const tenantAssistantId = tenantAgentDownloadMatch[1] || ''
+        const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
+        if (!tenantAssistant || tenantAssistant.status !== 'approved') {
+          throw new HttpError(404, `Tenant assistant not found or not approved: ${tenantAssistantId}`)
+        }
+        const assistantName = tenantAssistant.name as string
+        try {
+          const zipBuffer = await packageAssistantZip(assistantName)
+          res.setHeader('Content-Type', 'application/zip')
+          res.setHeader('Content-Disposition', `attachment; filename="${assistantName}.zip"`)
+          res.end(zipBuffer)
+        } catch (error) {
+          throw new HttpError(404, `Assistant not found: ${assistantName}`)
+        }
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/skill-hub/categories') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, await fetchSkillHubCategories())
@@ -1524,6 +1777,187 @@ export function startServer(
       if (req.method === 'GET' && pathname === '/api/v1/skills/sync-status') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, getSkillSyncProgress())
+        return
+      }
+
+      // POST /api/v1/skills/custom - Upload custom skill
+      if (req.method === 'POST' && pathname === '/api/v1/skills/custom') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const fileBase64 = typeof body.file === 'string' ? body.file : ''
+        const fileBuffer = Buffer.from(fileBase64, 'base64')
+        const result = await uploadCustomSkill({
+          file: fileBuffer,
+          name: typeof body.name === 'string' ? body.name : '',
+          displayName: typeof body.displayName === 'string' ? body.displayName : '',
+          description: typeof body.description === 'string' ? body.description : undefined,
+          version: typeof body.version === 'string' ? body.version : undefined,
+          userId: auth.userId,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // GET /api/v1/skills/tenant - List tenant skills
+      if (req.method === 'GET' && pathname === '/api/v1/skills/tenant') {
+        const status = url.searchParams.get('status') || undefined
+        const allRows = runtime.store.listTenantSkills(status)
+        // Filter by visibility for non-admin users
+        const filter = authService.buildVisibilityFilter(auth)
+        const isAdmin = hasScope(auth.scopes, 'admin:settings')
+        const rows = allRows.filter((row: Record<string, unknown>) => {
+          // Pending records are only visible to admins
+          if (row.status === 'pending' && !isAdmin) return false
+          // Approved records are filtered by visibility
+          if (row.status === 'approved') {
+            const visibleTo = typeof row.visible_to === 'string' ? JSON.parse(row.visible_to) : null
+            return isVisibleTo(visibleTo, filter)
+          }
+          return true
+        })
+        writeJson(res, 200, rows)
+        return
+      }
+
+      // GET /api/v1/skills/installed/:id/download - Download installed skill
+      const skillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/installed\/([^/]+)\/download$/)
+      if (req.method === 'GET' && skillDownloadMatch) {
+        const skillId = skillDownloadMatch[1] || ''
+        try {
+          const zipBuffer = await packageSkillZip(skillId)
+          res.setHeader('Content-Type', 'application/zip')
+          res.setHeader('Content-Disposition', `attachment; filename="${skillId}.zip"`)
+          res.end(zipBuffer)
+        } catch (error) {
+          throw new HttpError(404, `Skill not found: ${skillId}`)
+        }
+        return
+      }
+
+      // POST /api/v1/skills/tenant/publish - Publish tenant skill request
+      if (req.method === 'POST' && pathname === '/api/v1/skills/tenant/publish') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const skillName = typeof body.skillName === 'string' ? body.skillName : ''
+        const skillId = typeof body.skillId === 'string' ? body.skillId : skillName
+        const publishNote = typeof body.publishNote === 'string' ? body.publishNote : undefined
+
+        // Check if skill exists in custom directory
+        const skillPath = await findInstalledSkillPath(skillId)
+        if (!skillPath) {
+          throw new HttpError(404, `Skill not found: ${skillId}`)
+        }
+
+        // Read skill metadata
+        const meta = await readSkillMeta(skillPath)
+        const version = await readSkillVersion(skillPath)
+
+        // Get author name from user info
+        const authorUser = authService.getUserOrNull(auth.userId, auth.orgId, auth)
+        const authorName = authorUser?.name || undefined
+
+        // Create tenant skill record with metadata from source skill
+        const id = `tenant-skill-${Date.now()}`
+        runtime.store.createTenantSkill({
+          id,
+          name: skillId,
+          display_name: meta?.display_name || skillId,
+          description: meta?.description || undefined,
+          version: version || meta?.installed_version || undefined,
+          publish_note: publishNote,
+          author_id: auth.userId,
+          author_name: authorName,
+          status: 'pending',
+        })
+        writeJson(res, 200, { id, skillId, status: 'pending', message: '发布申请已提交，等待管理员审批' })
+        return
+      }
+
+      // POST /api/v1/admin/skills/tenant/:id/approve - Approve tenant skill
+      const skillApproveMatch = pathname.match(/^\/api\/v1\/admin\/skills\/tenant\/([^/]+)\/approve$/)
+      if (req.method === 'POST' && skillApproveMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantSkillId = skillApproveMatch[1] || ''
+        const body = await readJsonBody(req)
+        const approved = body.approved === true
+        const reviewNote = typeof body.reviewNote === 'string' ? body.reviewNote : undefined
+
+        const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
+        if (!tenantSkill) {
+          throw new HttpError(404, `Tenant skill not found: ${tenantSkillId}`)
+        }
+
+        if (approved) {
+          // Update status to approved
+          runtime.store.updateTenantSkillStatus(tenantSkillId, 'approved', auth.userId, reviewNote)
+          // Set visibility to all users (null)
+          runtime.store.updateTenantSkillMeta(tenantSkillId, { visible_to: null })
+          // Copy skill to tenant directory
+          const skillName = tenantSkill.name as string
+          await copySkillToTenantDir(skillName)
+        } else {
+          runtime.store.updateTenantSkillStatus(tenantSkillId, 'rejected', auth.userId, reviewNote)
+        }
+
+        writeJson(res, 200, { id: tenantSkillId, status: approved ? 'approved' : 'rejected' })
+        return
+      }
+
+      // PATCH /api/v1/skills/tenant/:id - Update tenant skill meta
+      const skillTenantPatchMatch = pathname.match(/^\/api\/v1\/skills\/tenant\/([^/]+)$/)
+      if (req.method === 'PATCH' && skillTenantPatchMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantSkillId = skillTenantPatchMatch[1] || ''
+        const body = await readJsonBody(req)
+
+        const updates: { enabled?: number; visible_to?: string | null } = {}
+        if (typeof body.enabled === 'boolean') {
+          updates.enabled = body.enabled ? 1 : 0
+        }
+        if (body.visible_to !== undefined) {
+          updates.visible_to = body.visible_to ? JSON.stringify(body.visible_to) : null
+        }
+
+        runtime.store.updateTenantSkillMeta(tenantSkillId, updates)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // DELETE /api/v1/skills/tenant/:id - Delete tenant skill
+      if (req.method === 'DELETE' && skillTenantPatchMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantSkillId = skillTenantPatchMatch[1] || ''
+        const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
+        if (tenantSkill) {
+          const skillName = tenantSkill.name as string
+          // Delete from tenant directory if exists
+          const skillDir = join(MOSS_SKILLS_TENANT_DIR, skillName)
+          if (existsSync(skillDir)) {
+            rmSync(skillDir, { recursive: true, force: true })
+          }
+        }
+        runtime.store.deleteTenantSkill(tenantSkillId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // GET /api/v1/skills/tenant/:id/download - Download tenant skill
+      const tenantSkillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/tenant\/([^/]+)\/download$/)
+      if (req.method === 'GET' && tenantSkillDownloadMatch) {
+        const tenantSkillId = tenantSkillDownloadMatch[1] || ''
+        const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
+        if (!tenantSkill || tenantSkill.status !== 'approved') {
+          throw new HttpError(404, `Tenant skill not found or not approved: ${tenantSkillId}`)
+        }
+        const skillName = tenantSkill.name as string
+        try {
+          const zipBuffer = await packageSkillZip(skillName)
+          res.setHeader('Content-Type', 'application/zip')
+          res.setHeader('Content-Disposition', `attachment; filename="${skillName}.zip"`)
+          res.end(zipBuffer)
+        } catch (error) {
+          throw new HttpError(404, `Skill not found: ${skillName}`)
+        }
         return
       }
 

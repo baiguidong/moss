@@ -1,7 +1,7 @@
 import { authClient } from './client'
 import type { VisibleTo } from './agent-hub'
 
-export type SkillStoreTab = 'store' | 'exclusive' | 'installed'
+export type SkillStoreTab = 'store' | 'exclusive' | 'custom'
 
 export interface SkillHubVersion {
   version: string
@@ -218,4 +218,68 @@ export function updateSkillVisibility(
     skillName,
     visible_to,
   })
+}
+
+// ==================== Tenant Skills ====================
+
+export interface TenantSkillInfo {
+  id: string
+  name: string
+  display_name?: string
+  description?: string
+  version?: string
+  author_id: string
+  author_name?: string
+  status: 'pending' | 'approved' | 'rejected'
+  source_url?: string
+  checksum?: string
+  file_path?: string
+  publish_note?: string
+  review_note?: string
+  reviewed_by?: string
+  reviewed_at?: number
+  enabled: number
+  visible_to?: VisibleTo | null
+  created_at: number
+  updated_at: number
+}
+
+export function getTenantSkills(status?: string): Promise<TenantSkillInfo[]> {
+  const queryString = status ? `?status=${encodeURIComponent(status)}` : ''
+  return authClient.get<TenantSkillInfo[]>(`/api/v1/skills/tenant${queryString}`)
+}
+
+export function approveTenantSkill(
+  id: string,
+  approved: boolean,
+  reviewNote?: string,
+): Promise<{ id: string; status: string }> {
+  return authClient.post<{ id: string; status: string }>(
+    `/api/v1/admin/skills/tenant/${encodeURIComponent(id)}/approve`,
+    { approved, reviewNote },
+  )
+}
+
+export function updateTenantSkillMeta(params: {
+  id: string
+  enabled?: boolean
+  visible_to?: VisibleTo | null
+}): Promise<{ ok: boolean }> {
+  return authClient.patch<{ ok: boolean }>(
+    `/api/v1/skills/tenant/${encodeURIComponent(params.id)}`,
+    params,
+  )
+}
+
+export function deleteTenantSkill(id: string): Promise<{ ok: boolean }> {
+  return authClient.delete<{ ok: boolean }>(
+    `/api/v1/skills/tenant/${encodeURIComponent(id)}`,
+  )
+}
+
+export function downloadSkill(skillId: string, type: 'installed' | 'tenant'): Promise<Blob> {
+  const path = type === 'installed'
+    ? `/api/v1/skills/installed/${encodeURIComponent(skillId)}/download`
+    : `/api/v1/skills/tenant/${encodeURIComponent(skillId)}/download`
+  return authClient.getBlob(path)
 }

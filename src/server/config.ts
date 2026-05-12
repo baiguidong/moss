@@ -125,6 +125,7 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       ? normalizeHubApiBaseUrl(raw.hub.apiBaseUrl)
       : undefined,
     hubAuthorization: raw.hub?.authorization?.trim() || undefined,
+    cosBaseUrl: raw.hub?.cosBaseUrl?.trim() || undefined,
   }
 }
 
