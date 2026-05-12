@@ -66,6 +66,7 @@ import { createChannelsApi } from './api/channels.js'
 import { getChannelManager } from '../channels/core/ChannelManager.js'
 import { getPairingService } from '../channels/pairing/PairingService.js'
 import { MossActionExecutor } from '../channels/gateway/MossActionExecutor.js'
+import { WikiJobExecutor } from '../channels/gateway/WikiJobExecutor.js'
 import { getUserProfile } from './api/userProfile.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -494,6 +495,12 @@ export function startServer(
   const wss = new WebSocketServer({ noServer: true })
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
   const documentStore = new DocumentStore(runtime.store)
+
+  // Document Center: start the wiki build worker. Polls wiki_build_jobs
+  // and runs each queued job through RuntimeService with the system
+  // `wiki-builder` assistant.
+  const wikiJobExecutor = new WikiJobExecutor(runtime, documentStore, runtime.store)
+  wikiJobExecutor.start()
 
   // Initialize ChannelManager and PairingService with database
   // 初始化 ChannelManager 和 PairingService
@@ -2907,6 +2914,7 @@ export function startServer(
     port: null,
     ready,
     stop: async () => {
+      wikiJobExecutor.stop()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {
