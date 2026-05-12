@@ -14,6 +14,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 5174,
     proxy: {
       '/healthz': apiTarget,
       '/readyz': apiTarget,

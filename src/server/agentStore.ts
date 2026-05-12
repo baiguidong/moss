@@ -572,6 +572,8 @@ function toInstalledAssistantInfo(params: {
   category: AssistantSearchResult['category']
 }): InstalledAssistantInfo {
   const { assistantDir, dirName, meta, category } = params
+  // Trim directory name to avoid leading/trailing spaces
+  const trimmedDirName = dirName.trim()
   const categories = parseStringArray(meta?.categories)
   const normalizedCategory =
     typeof meta?.category === 'string' ? meta.category : categories[0] || ''
@@ -580,14 +582,14 @@ function toInstalledAssistantInfo(params: {
     id: typeof meta?.id === 'string' ? meta.id : '',
     name:
       typeof meta?.name === 'string' && meta.name.trim()
-        ? meta.name
-        : dirName,
+        ? meta.name.trim()
+        : trimmedDirName,
     displayName:
       typeof meta?.display_name === 'string' && meta.display_name.trim()
         ? meta.display_name
         : typeof meta?.name === 'string' && meta.name.trim()
-          ? meta.name
-          : dirName,
+          ? meta.name.trim()
+          : trimmedDirName,
     description: typeof meta?.description === 'string' ? meta.description : '',
     avatar: typeof meta?.avatar === 'string' ? meta.avatar : '',
     emoji: typeof meta?.emoji === 'string' ? meta.emoji : '',

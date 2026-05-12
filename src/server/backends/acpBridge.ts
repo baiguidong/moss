@@ -1,5 +1,5 @@
 import { createInterface } from 'readline'
-import { appendFile, mkdir } from 'fs/promises'
+import { appendFile, mkdir, rm } from 'fs/promises'
 import { dirname } from 'path'
 import { randomUUID } from 'crypto'
 import type { ChildProcess } from 'child_process'
@@ -384,6 +384,13 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     destroy(force = false) {
       if (child.killed) return
       child.kill(force ? 'SIGKILL' : 'SIGTERM')
+
+      // Host 模式 Session 模式清理 configDir
+      if (runtime.type === 'host' && runtime.hostMode === 'session' && runtime.configDir) {
+        rm(runtime.configDir, { recursive: true, force: true }).catch(() => {
+          // 忽略清理错误
+        })
+      }
     },
   }
 }

@@ -1407,16 +1407,24 @@ export function startServer(
         return
       }
 
-      // GET /api/v1/agents/installed/:id/download - Download installed assistant
+      // GET /api/v1/agents/installed/:id/download - Download installed assistant by ID
       const agentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && agentDownloadMatch) {
         const assistantId = agentDownloadMatch[1] || ''
         try {
-          const zipBuffer = await packageAssistantZip(assistantId)
+          // Find assistant by ID in installed assistants list
+          const installedAssistants = await getInstalledAssistants()
+          const assistant = installedAssistants.find(a => a.id === assistantId)
+          if (!assistant) {
+            throw new HttpError(404, `Assistant not found: ${assistantId}`)
+          }
+          // Use assistant name for packaging (directory lookup)
+          const zipBuffer = await packageAssistantZip(assistant.name)
           res.setHeader('Content-Type', 'application/zip')
           res.setHeader('Content-Disposition', `attachment; filename="${assistantId}.zip"`)
           res.end(zipBuffer)
         } catch (error) {
+          if (error instanceof HttpError) throw error
           throw new HttpError(404, `Assistant not found: ${assistantId}`)
         }
         return
@@ -1844,16 +1852,24 @@ export function startServer(
         return
       }
 
-      // GET /api/v1/skills/installed/:id/download - Download installed skill
+      // GET /api/v1/skills/installed/:id/download - Download installed skill by ID
       const skillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && skillDownloadMatch) {
         const skillId = skillDownloadMatch[1] || ''
         try {
-          const zipBuffer = await packageSkillZip(skillId)
+          // Find skill by ID in installed skills list
+          const installedSkills = await getInstalledSkills()
+          const skill = installedSkills.find(s => s.id === skillId)
+          if (!skill) {
+            throw new HttpError(404, `Skill not found: ${skillId}`)
+          }
+          // Use skill name for packaging (directory lookup)
+          const zipBuffer = await packageSkillZip(skill.name)
           res.setHeader('Content-Type', 'application/zip')
           res.setHeader('Content-Disposition', `attachment; filename="${skillId}.zip"`)
           res.end(zipBuffer)
         } catch (error) {
+          if (error instanceof HttpError) throw error
           throw new HttpError(404, `Skill not found: ${skillId}`)
         }
         return

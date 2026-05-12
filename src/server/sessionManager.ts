@@ -14,6 +14,7 @@ export type SessionRuntimeOptions = {
   dockerMode?: 'session' | 'user'
   configDir?: string
   containerName?: string
+  hostMode?: 'session' | 'user'
 }
 
 export type SessionRuntimeInfo = {
@@ -24,6 +25,7 @@ export type SessionRuntimeInfo = {
   dockerMode?: 'session' | 'user'
   containerName?: string
   configDir?: string
+  hostMode?: 'session' | 'user'
 }
 
 export type SessionCreateOptions = {

@@ -369,12 +369,14 @@ function toInstalledSkillInfo(params: {
   frontmatter: Record<string, string> | null
 }): InstalledSkillInfo {
   const { skillDir, skillName, meta, version, frontmatter } = params
+  // Trim skill name to avoid leading/trailing spaces
+  const trimmedSkillName = skillName.trim()
   const displayName =
     meta?.display_name ||
     meta?.name ||
     frontmatter?.name ||
     frontmatter?.displayName ||
-    skillName
+    trimmedSkillName
   const categories = parseStringArray(meta?.categories).length
     ? parseStringArray(meta?.categories)
     : frontmatter?.category
@@ -383,7 +385,7 @@ function toInstalledSkillInfo(params: {
 
   return {
     id: typeof meta?.id === 'string' ? meta.id : '',
-    name: typeof meta?.name === 'string' && meta.name ? meta.name : skillName,
+    name: typeof meta?.name === 'string' && meta.name ? meta.name.trim() : trimmedSkillName,
     displayName,
     description:
       typeof meta?.description === 'string'

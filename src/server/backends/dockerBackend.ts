@@ -1,9 +1,8 @@
 import { spawn } from 'child_process'
 import { writeFileSync } from 'fs'
-import { mkdir } from 'fs/promises'
+import { mkdir, rm } from 'fs/promises'
 import os from 'os'
 import { join } from 'path'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
 import { syncWorkspaceSkills } from '../../utils/scodeBridge.js'
 import type {
@@ -14,6 +13,9 @@ import type {
 } from '../sessionManager.js'
 import {
   buildSessionEnv,
+  buildConfigDir,
+  getAssistantRuntimeConfig,
+  createSkillSymlinks,
 } from './backendUtils.js'
 import { createAcpBridgeHandle } from './acpBridge.js'
 
@@ -35,26 +37,6 @@ function resolveDockerUser(): string | null {
   return `${process.getuid()}:${process.getgid()}`
 }
 
-function buildConfigDir(
-  options: BackendSpawnOptions,
-  mode: 'session' | 'user',
-): string {
-  if (mode === 'user' && options.userId) {
-    return join(
-      getClaudeConfigHomeDir(),
-      'direct-connect-runtime',
-      'users',
-      options.userId,
-    )
-  }
-  return join(
-    getClaudeConfigHomeDir(),
-    'direct-connect-runtime',
-    'sessions',
-    options.sessionId,
-  )
-}
-
 export class DockerBackend implements SessionBackend {
   constructor(private readonly defaults: DockerBackendDefaults = {}) {}
 
@@ -65,12 +47,21 @@ export class DockerBackend implements SessionBackend {
 
     const runtime = options.runtime
     const image = runtime?.dockerImage || this.defaults.image
-    const mode = runtime?.dockerMode || this.defaults.mode || 'session'
+
     if (!image) {
       throw new Error(
         'Docker runtime requested but no docker image was configured',
       )
     }
+
+    // 读取 assistant 配置
+    const assistantConfig = await getAssistantRuntimeConfig(options.assistantName)
+
+    // 根据 memory_mode 决定 mode
+    const mode = runtime?.dockerMode
+      || (assistantConfig.memoryMode === 'user' ? 'user' : undefined)
+      || this.defaults.mode
+      || 'session'
 
     const configDir = runtime?.configDir || buildConfigDir(options, mode)
     await mkdir(configDir, { recursive: true })
@@ -109,6 +100,16 @@ export class DockerBackend implements SessionBackend {
 
     const dotNexusDir = join(configDir, '.nexus', 'sudocode')
     await mkdir(dotNexusDir, { recursive: true })
+
+    // Sync skill/agent bridges into the config directory so scode can discover them
+    try {
+      await syncAllBridgesAsync(configDir)
+    } catch (bridgeErr) {
+      process.stderr.write(`[DockerBackend] scode bridge sync warning: ${bridgeErr}\n`)
+    }
+
+    // 创建 skill symlinks
+    await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
 
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
 
@@ -205,9 +206,10 @@ export class DockerBackend implements SessionBackend {
     process.stderr.write(`  Image: ${image}\n`)
     process.stderr.write(`  scode: ${scodePath}\n`)
     process.stderr.write(`  CWD: ${safeCwd}\n`)
+    process.stderr.write(`  configDir: ${configDir}\n`)
+    process.stderr.write(`  mode: ${mode}\n`)
+    process.stderr.write(`  enabledSkills: ${assistantConfig.enabledSkills.join(', ') || 'none'}\n`)
     process.stderr.write(`  Model: ${model}\n`)
-    process.stderr.write(`  Assistant: ${options.assistantName || 'default'}\n`)
-    process.stderr.write(`  Enabled Skills: ${options.enabledSkillNames?.join(', ') || 'all'}\n`)
     process.stderr.write(`  Mounts: ${mounts.join(', ')}\n\n`)
 
     const child = spawn('docker', args, {
@@ -240,6 +242,7 @@ export class DockerBackend implements SessionBackend {
 
     const originalDestroy = handle.destroy.bind(handle)
     handle.destroy = (force = false) => {
+      // 先执行原有销毁逻辑（停止容器）
       if (force) {
         const cleanup = spawn('docker', ['rm', '-f', containerName], {
           stdio: 'ignore',
@@ -248,6 +251,13 @@ export class DockerBackend implements SessionBackend {
         cleanup.unref()
       }
       originalDestroy(force)
+
+      // Session 模式下异步清理 configDir
+      if (mode === 'session' && configDir) {
+        rm(configDir, { recursive: true, force: true }).catch(() => {
+          // 忽略清理错误
+        })
+      }
     }
 
     return handle
