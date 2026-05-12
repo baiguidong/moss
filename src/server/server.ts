@@ -71,7 +71,7 @@ import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
-import { isVisibleTo } from './visibilityFilter.js'
+import { isVisibleTo, type VisibleTo } from './visibilityFilter.js'
 import { MOSS_SKILLS_CUSTOM_DIR, MOSS_SKILLS_TENANT_DIR } from '../utils/skills/localSkillDirectories.js'
 
 type JsonBody = Record<string, unknown>
@@ -1511,6 +1511,31 @@ export function startServer(
         }
 
         runtime.store.updateTenantAssistantMeta(tenantAssistantId, updates)
+
+        // Sync enabled/visible_to/enabledSkills to file metadata
+        const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
+        if (tenantAssistant && tenantAssistant.status === 'approved') {
+          const assistantName = tenantAssistant.name as string
+          const MOSS_HOME_LOCAL = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+          const ASSISTANT_TENANT_DIR = join(MOSS_HOME_LOCAL, 'assistants', 'tenant')
+          const assistantDir = join(ASSISTANT_TENANT_DIR, assistantName)
+          if (existsSync(assistantDir)) {
+            const meta = await readAssistantMeta(assistantDir)
+            if (meta) {
+              if (updates.enabled !== undefined) {
+                meta.enabled = updates.enabled === 1
+              }
+              if (body.visible_to !== undefined) {
+                meta.visible_to = body.visible_to as VisibleTo | null
+              }
+              if (body.enabledSkills !== undefined) {
+                meta.enabledSkills = body.enabledSkills as string[]
+              }
+              await writeAssistantMeta(assistantDir, meta)
+            }
+          }
+        }
+
         writeJson(res, 200, { ok: true })
         return
       }
@@ -1919,6 +1944,26 @@ export function startServer(
         }
 
         runtime.store.updateTenantSkillMeta(tenantSkillId, updates)
+
+        // Sync enabled/visible_to to file metadata
+        const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
+        if (tenantSkill && tenantSkill.status === 'approved') {
+          const skillName = tenantSkill.name as string
+          const skillDir = join(MOSS_SKILLS_TENANT_DIR, skillName)
+          if (existsSync(skillDir)) {
+            const meta = await readSkillMeta(skillDir)
+            if (meta) {
+              if (updates.enabled !== undefined) {
+                meta.enabled = updates.enabled === 1
+              }
+              if (body.visible_to !== undefined) {
+                meta.visible_to = body.visible_to || null
+              }
+              await writeSkillMeta(skillDir, meta)
+            }
+          }
+        }
+
         writeJson(res, 200, { ok: true })
         return
       }
