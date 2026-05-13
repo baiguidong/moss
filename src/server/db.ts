@@ -334,7 +334,7 @@ export class DirectConnectStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tenant_skills (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         display_name TEXT,
         description TEXT,
         version TEXT,
@@ -362,7 +362,7 @@ export class DirectConnectStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tenant_assistants (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         display_name TEXT,
         description TEXT,
         version TEXT,

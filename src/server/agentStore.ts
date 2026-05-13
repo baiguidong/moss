@@ -710,6 +710,30 @@ export async function getInstalledAssistants(): Promise<InstalledAssistantInfo[]
   return results
 }
 
+/**
+ * Get only hub-installed assistants (installed by admin from Hub).
+ * Used by /api/v1/agents/installed endpoint for client sync.
+ */
+export async function getHubInstalledAssistants(): Promise<InstalledAssistantInfo[]> {
+  const results: InstalledAssistantInfo[] = []
+
+  const assistantDirs = await scanAssistantDirs(ASSISTANT_HUB_DIR)
+  for (const assistantDir of assistantDirs) {
+    const dirName = path.basename(assistantDir)
+    const meta = await readAssistantMeta(assistantDir)
+    results.push(
+      toInstalledAssistantInfo({
+        assistantDir,
+        dirName,
+        meta,
+        category: 'hub',
+      }),
+    )
+  }
+
+  return results
+}
+
 export async function fetchAgentHubSkillDetailsByIds(
   skillIds: string[],
 ): Promise<Array<Record<string, unknown>>> {
@@ -1249,11 +1273,13 @@ export async function uploadCustomAssistant(params: {
     // Create or update metadata with visibility set to uploader only
     const existingMeta = await readAssistantMeta(targetDir)
     const version = params.version || '1.0.0'
+    // Use displayName as the actual name, assistantName (UUID) as directory name/id
+    const actualName = params.displayName || existingMeta?.display_name || assistantName
     const meta: AssistantStoreMeta = {
       ...existingMeta,
       id: assistantName,
-      name: assistantName,
-      display_name: params.displayName || existingMeta?.display_name || assistantName,
+      name: actualName,
+      display_name: params.displayName || existingMeta?.display_name || actualName,
       description: params.description || existingMeta?.description || '',
       source_type: 'upload',
       is_builtin: false,
@@ -1273,7 +1299,7 @@ export async function uploadCustomAssistant(params: {
 
     return {
       id: assistantName,
-      name: assistantName,
+      name: actualName,
       version,
     }
   } finally {

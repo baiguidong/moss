@@ -708,6 +708,14 @@ export async function getInstalledSkills(): Promise<InstalledSkillInfo[]> {
   return groups.flat()
 }
 
+/**
+ * Get only hub-installed skills (installed by admin from Hub).
+ * Used by /api/v1/skills/installed endpoint for client sync.
+ */
+export async function getHubInstalledSkills(): Promise<InstalledSkillInfo[]> {
+  return collectInstalledSkillsFromDir(MOSS_SKILLS_HUB_DIR)
+}
+
 export async function installHubSkill(params: {
   skillName: string
   sourceUrl: string
