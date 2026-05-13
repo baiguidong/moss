@@ -531,6 +531,20 @@ export class AuthService {
     return { ok: true }
   }
 
+  setLocalAuth(input: {
+    orgId: string
+    userId: string
+    localAuth: boolean
+  }, auth: AuthContext): { ok: true; local_auth: boolean } {
+    const user = this.db.getUserByIdAndOrg(input.userId, input.orgId)
+    if (!user) {
+      throw new AuthServiceError(404, 'Unknown user_id')
+    }
+    this.assertCanManageExistingUser(user, auth)
+    this.db.setLocalAuth(input.userId, input.localAuth)
+    return { ok: true, local_auth: input.localAuth }
+  }
+
   setDepartmentTokenLimit(input: {
     orgId: string
     departmentId: string

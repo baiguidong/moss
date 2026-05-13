@@ -286,6 +286,25 @@ function writeJson(
   res.end(payload)
 }
 
+/**
+ * Attach sudocode.json fields (sudorouter_key, model_service_url, models)
+ * to the login response only when the user has local authorization.
+ * Format matches sudowork-server for sudowork code reuse.
+ */
+function attachSudocodeFields<T extends Record<string, unknown>>(
+  tokenResult: T,
+): T {
+  const user = tokenResult.user as { localAuth?: boolean } | undefined
+  if (!user?.localAuth) return tokenResult
+  const settings = getSystemSettings()
+  return {
+    ...tokenResult,
+    sudorouter_key: settings.apiKey || null,
+    model_service_url: settings.url || 'https://hk.sudorouter.ai/v1',
+    models: [settings.model],
+  }
+}
+
 function redirect(
   res: http.ServerResponse,
   location: string,
@@ -591,26 +610,20 @@ export function startServer(
               ? 'api_key'
               : 'password'
         if (grantType === 'api_key') {
-          writeJson(
-            res,
-            200,
-            authService.issueTokenFromApiKey(
-              typeof body.api_key === 'string' ? body.api_key : '',
-            ),
+          const result = authService.issueTokenFromApiKey(
+            typeof body.api_key === 'string' ? body.api_key : '',
           )
+          writeJson(res, 200, attachSudocodeFields(result))
           return
         }
 
         if (grantType === 'password') {
-          writeJson(
-            res,
-            200,
-            authService.issueTokenFromPassword({
-              username: typeof body.username === 'string' ? body.username : '',
-              email: typeof body.email === 'string' ? body.email : '',
-              password: typeof body.password === 'string' ? body.password : '',
-            }),
-          )
+          const result = authService.issueTokenFromPassword({
+            username: typeof body.username === 'string' ? body.username : '',
+            email: typeof body.email === 'string' ? body.email : '',
+            password: typeof body.password === 'string' ? body.password : '',
+          })
+          writeJson(res, 200, attachSudocodeFields(result))
           return
         }
 
@@ -622,7 +635,8 @@ export function startServer(
           if (!refreshToken) {
             throw new HttpError(400, 'Missing refresh_token')
           }
-          writeJson(res, 200, authService.refreshToken(refreshToken))
+          const result = authService.refreshToken(refreshToken)
+          writeJson(res, 200, attachSudocodeFields(result))
           return
         }
 
@@ -1527,6 +1541,24 @@ export function startServer(
             orgId: auth.orgId,
             userId,
             tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null,
+          }, auth),
+        )
+        return
+      }
+
+      const userLocalAuthMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/local-auth$/)
+      if (req.method === 'PUT' && userLocalAuthMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const userId = userLocalAuthMatch[1] || ''
+        const body = await readJsonBody(req)
+        const localAuth = body.local_auth === true
+        writeJson(
+          res,
+          200,
+          authService.setLocalAuth({
+            orgId: auth.orgId,
+            userId,
+            localAuth,
           }, auth),
         )
         return

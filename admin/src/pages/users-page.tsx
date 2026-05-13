@@ -12,6 +12,7 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  MonitorSmartphone,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -106,6 +107,7 @@ import {
   resetPassword,
   revokeApiKey,
   setDepartmentTokenLimit,
+  setUserLocalAuth,
   setUserTokenLimit,
   updateDepartment,
   updateUser,
@@ -520,6 +522,8 @@ export default function UsersPage() {
     { type: 'user'; data: AuthUser } | { type: 'department'; data: AuthDepartment } | null
   >(null)
   const [isSubmittingTokenLimit, setIsSubmittingTokenLimit] = useState(false)
+  const [localAuthTarget, setLocalAuthTarget] = useState<{ userId: string; userName: string; currentAuth: boolean } | null>(null)
+  const [isSubmittingLocalAuth, setIsSubmittingLocalAuth] = useState(false)
   const [isSubmittingUser, setIsSubmittingUser] = useState(false)
   const [isSubmittingDepartment, setIsSubmittingDepartment] = useState(false)
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
@@ -1197,6 +1201,19 @@ export default function UsersPage() {
                                     <Coins className="mr-2 size-4" />
                                     设置 Token 限额
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setLocalAuthTarget({ userId: user.id, userName: user.name, currentAuth: user.localAuth ?? false })}>
+                                    {user.localAuth ? (
+                                      <>
+                                        <MonitorSmartphone className="mr-2 size-4" />
+                                        取消Local授权
+                                      </>
+                                    ) : (
+                                      <>
+                                        <MonitorSmartphone className="mr-2 size-4" />
+                                        Local授权
+                                      </>
+                                    )}
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => void handleToggleUserStatus(user)}>
                                     {user.status === 'active' ? (
                                       <>
@@ -1772,6 +1789,52 @@ export default function UsersPage() {
                 <Loader2 className="mr-2 size-4 animate-spin" />
               ) : null}
               确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!localAuthTarget}
+        onOpenChange={(open) => !open && setLocalAuthTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {localAuthTarget?.currentAuth ? '取消Local授权' : 'Local授权'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {localAuthTarget?.currentAuth
+                ? `取消授权${localAuthTarget.userName}的Local模式`
+                : `确认授权${localAuthTarget?.userName ?? ''}Local模式`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSubmittingLocalAuth}
+              onClick={(event) => {
+                event.preventDefault()
+                if (!localAuthTarget) return
+                setIsSubmittingLocalAuth(true)
+                setUserLocalAuth(localAuthTarget.userId, !localAuthTarget.currentAuth)
+                  .then(() => {
+                    toast.success(localAuthTarget.currentAuth ? '已取消Local授权' : '已授予Local授权')
+                    setLocalAuthTarget(null)
+                    void fetchData()
+                  })
+                  .catch((err: Error) => {
+                    toast.error(err.message || '操作失败')
+                  })
+                  .finally(() => {
+                    setIsSubmittingLocalAuth(false)
+                  })
+              }}
+            >
+              {isSubmittingLocalAuth ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              确认
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

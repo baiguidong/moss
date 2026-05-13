@@ -153,6 +153,13 @@ export async function setUserTokenLimit(
   return authClient.patch<{ ok: boolean }>(`/api/v1/users/${userId}/token-limit`, { tokenLimit })
 }
 
+export async function setUserLocalAuth(
+  userId: string,
+  localAuth: boolean,
+): Promise<{ ok: boolean; local_auth: boolean }> {
+  return authClient.put<{ ok: boolean; local_auth: boolean }>(`/api/v1/users/${userId}/local-auth`, { local_auth: localAuth })
+}
+
 export async function setDepartmentTokenLimit(
   departmentId: string,
   tokenLimit: number | null,

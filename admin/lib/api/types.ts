@@ -9,6 +9,7 @@ export interface AuthUser {
   departmentId: string | null
   role: UserRole
   status: 'active' | 'disabled'
+  localAuth: boolean
   tokenLimit: number | null
   createdAt: number
   passwordUpdatedAt: number | null
