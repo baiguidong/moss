@@ -1532,6 +1532,24 @@ export function startServer(
         return
       }
 
+      const userLocalAuthMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/local-auth$/)
+      if (req.method === 'PUT' && userLocalAuthMatch) {
+        authService.requireScope(auth, 'admin:users')
+        const userId = userLocalAuthMatch[1] || ''
+        const body = await readJsonBody(req)
+        const localAuth = body.local_auth === true
+        writeJson(
+          res,
+          200,
+          authService.setLocalAuth({
+            orgId: auth.orgId,
+            userId,
+            localAuth,
+          }, auth),
+        )
+        return
+      }
+
       const departmentTokenLimitMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)\/token-limit$/)
       if (req.method === 'PATCH' && departmentTokenLimitMatch) {
         authService.requireScope(auth, 'admin:users')

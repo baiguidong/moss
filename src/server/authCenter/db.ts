@@ -28,6 +28,7 @@ export type AuthCenterUser = {
   departmentId: string | null
   role: string
   status: 'active' | 'disabled'
+  localAuth: boolean
   tokenLimit: number | null
   createdAt: number
   passwordHash: string | null
@@ -132,6 +133,7 @@ function mapUser(row: SqlRow): AuthCenterUser {
     departmentId: row.department_id == null ? null : String(row.department_id),
     role: String(row.role),
     status: String(row.status) as 'active' | 'disabled',
+    localAuth: Boolean(row.local_auth),
     tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     passwordHash: row.password_hash == null ? null : String(row.password_hash),
@@ -269,6 +271,11 @@ export class AuthCenterDb {
       'departments',
       'token_limit',
       'ALTER TABLE departments ADD COLUMN token_limit INTEGER',
+    )
+    this.ensureColumn(
+      'users',
+      'local_auth',
+      'ALTER TABLE users ADD COLUMN local_auth INTEGER NOT NULL DEFAULT 0',
     )
     this.db.exec(`
       UPDATE users
@@ -519,6 +526,12 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE users SET token_limit = ? WHERE id = ?
     `).run(tokenLimit, id)
+  }
+
+  setLocalAuth(id: string, localAuth: boolean): void {
+    this.db.prepare(`
+      UPDATE users SET local_auth = ? WHERE id = ?
+    `).run(localAuth ? 1 : 0, id)
   }
 
   setDepartmentTokenLimit(id: string, tokenLimit: number | null): void {
