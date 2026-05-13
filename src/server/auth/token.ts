@@ -22,6 +22,8 @@ export type AuthContext = {
   keyId: string
   jti: string
   exp: number
+  /** Document Center: set when the token was issued for an in-container scode session. */
+  assistantId?: string | null
 }
 
 function base64UrlEncode(input: string | Buffer): string {
@@ -68,6 +70,59 @@ export function issueAccessToken(
   const encodedPayload = base64UrlEncode(JSON.stringify(payload))
   const signingInput = `${encodedHeader}.${encodedPayload}`
   const signature = signHs256(signingInput, secret)
+
+  return {
+    token: `${signingInput}.${signature}`,
+    expiresAt,
+  }
+}
+
+/**
+ * Document Center: sign a short-lived bearer token that moss-server injects
+ * into the scode container via SESSION_TOKEN env var. The wikiCli reads it
+ * and forwards as `Authorization: Bearer ...` on every /api/v1/agent/wikis
+ * call.
+ *
+ * The token claims include an extra `assistant_id` field on top of the
+ * standard AccessTokenClaims; the server-side handler will use it to
+ * restrict which wikis are visible (see admin scope check + assistant
+ * `enabledWikis` filter in `/api/v1/agent/wikis*` handlers).
+ *
+ * Default TTL: 24h — aligned with typical session length. Caller may
+ * override.
+ */
+export function issueWikiSessionToken(params: {
+  secret: string
+  issuer: string
+  userId: string
+  orgId: string
+  role: string
+  scopes: string[]
+  keyId: string
+  assistantName: string | null
+  expiresInSec?: number
+}): { token: string; expiresAt: number } {
+  const issuedAt = Math.floor(Date.now() / 1000)
+  const expiresAt = issuedAt + (params.expiresInSec ?? 24 * 60 * 60)
+  const header = { alg: 'HS256', typ: 'JWT' }
+  const payload: AccessTokenClaims & { assistant_id: string | null } = {
+    iss: params.issuer,
+    sub: params.userId,
+    org_id: params.orgId,
+    role: params.role,
+    scopes: params.scopes,
+    key_id: params.keyId,
+    jti: randomUUID(),
+    type: 'access',
+    iat: issuedAt,
+    exp: expiresAt,
+    assistant_id: params.assistantName,
+  }
+
+  const encodedHeader = base64UrlEncode(JSON.stringify(header))
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload))
+  const signingInput = `${encodedHeader}.${encodedPayload}`
+  const signature = signHs256(signingInput, params.secret)
 
   return {
     token: `${signingInput}.${signature}`,
@@ -150,6 +205,12 @@ export function verifyAccessToken(
     keyId: payload.key_id,
     jti: payload.jti,
     exp: payload.exp,
+    assistantId:
+      typeof (payload as AccessTokenClaims & { assistant_id?: unknown }).assistant_id === 'string'
+        ? (payload as AccessTokenClaims & { assistant_id: string }).assistant_id
+        : (payload as AccessTokenClaims & { assistant_id?: unknown }).assistant_id === null
+          ? null
+          : undefined,
   }
 }
 

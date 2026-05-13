@@ -95,6 +95,8 @@ export type AssistantStoreMeta = {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  /** Document Center: Wiki IDs this assistant is authorised to query via wikiCli. */
+  enabledWikis?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo
@@ -1019,7 +1021,7 @@ export async function updateInstalledAssistantMeta(params: {
   updates: Partial<
     Pick<
       AssistantStoreMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
     >
   >
 }): Promise<void> {
@@ -1059,6 +1061,9 @@ export async function updateInstalledAssistantMeta(params: {
   }
   if (Array.isArray(params.updates.enabledSkills)) {
     nextMeta.enabledSkills = params.updates.enabledSkills
+  }
+  if (Array.isArray(params.updates.enabledWikis)) {
+    nextMeta.enabledWikis = params.updates.enabledWikis
   }
   if (Array.isArray(params.updates.skills)) {
     nextMeta.skills = params.updates.skills

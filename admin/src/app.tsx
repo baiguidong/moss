@@ -14,6 +14,7 @@ const ChannelsPage = lazy(() => import('./pages/channels-page'))
 const SkillStorePage = lazy(() => import('./pages/skill-store-page'))
 const AgentHubPage = lazy(() => import('./pages/agent-hub-page'))
 const EnterpriseConfigPage = lazy(() => import('./pages/enterprise-config-page'))
+const DocumentCenterPage = lazy(() => import('./pages/document-center-page'))
 const SessionDetailPage = lazy(() =>
   import('./pages/session-detail-page').then((module) => ({
     default: module.SessionDetailPage,
@@ -139,6 +140,14 @@ export default function App() {
           element={
             <SuspendedRoute>
               <EnterpriseConfigPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/document-center"
+          element={
+            <SuspendedRoute>
+              <DocumentCenterPage />
             </SuspendedRoute>
           }
         />

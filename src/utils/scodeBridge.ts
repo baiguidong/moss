@@ -164,6 +164,16 @@ export async function prepareFirstMessageForScode(
     assistantName?: string | null
     workspace: string
     enabledSkillNames?: string[]
+    /**
+     * Document Center: wikis the current Assistant is authorised to query.
+     * When non-empty, an `[Available Wikis]` block is prepended to the
+     * system instructions so the LLM knows the knowledge bases it can
+     * pull from via the in-container `wiki` CLI.
+     *
+     * Pass only `{ id, name, description }` — the full content is
+     * fetched on-demand by the agent calling `wiki read|search`.
+     */
+    availableWikis?: Array<{ id: string; name: string; description?: string | null }>
   }
 ): Promise<string> {
   const instructions: string[] = []
@@ -182,6 +192,28 @@ export async function prepareFirstMessageForScode(
   const skillsHint = await buildWorkspaceSkillsHint(config.workspace, config.enabledSkillNames)
   if (skillsHint) {
     instructions.push(skillsHint)
+  }
+
+  // 3. Document Center: available wikis hint
+  if (config.availableWikis && config.availableWikis.length > 0) {
+    const lines: string[] = []
+    lines.push('[Available Wikis]')
+    lines.push(
+      'You have access to the following knowledge bases. Use the `wiki` CLI inside your shell to query them — DO NOT make up answers when these wikis can be searched first.',
+    )
+    lines.push('')
+    for (const w of config.availableWikis) {
+      const desc = (w.description ?? '').trim() || '(no description)'
+      lines.push(`- ${w.id} — ${w.name}: ${desc}`)
+    }
+    lines.push('')
+    lines.push('Commands:')
+    lines.push('  wiki list                          # refresh the list above')
+    lines.push('  wiki read <wikiId>                 # read WIKI.md (overview + chunk index)')
+    lines.push('  wiki read <wikiId> --file <path>   # read a specific chunk')
+    lines.push('  wiki search <wikiId> <query>       # full-text grep (recommended for large wikis)')
+    lines.push('  wiki metadata <wikiId>             # build time / chunk count / etc.')
+    instructions.push(lines.join('\n'))
   }
 
   if (instructions.length === 0) {

@@ -50,6 +50,8 @@ export interface InstalledAgentMeta {
   ruleFile?: string
   skills?: string[]
   enabledSkills?: string[]
+  /** Document Center: Wiki IDs this assistant is authorised to query via wikiCli. */
+  enabledWikis?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
@@ -182,7 +184,7 @@ export function updateInstalledAgentMeta(data: {
   updates: Partial<
     Pick<
       InstalledAgentMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
     >
   >
 }): Promise<{ ok: boolean }> {

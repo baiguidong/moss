@@ -498,6 +498,8 @@ export default function AgentHubPage() {
   const [editSkills, setEditSkills] = useState<SkillHubSkill[]>([])
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
   const [editEnabledSkills, setEditEnabledSkills] = useState<string[]>([])
+  const [editEnabledWikis, setEditEnabledWikis] = useState<string[]>([])
+  const [availableWikis, setAvailableWikis] = useState<Array<{ id: string; name: string; description: string | null; buildStatus: string }>>([])
   const [editAddSkillOpen, setEditAddSkillOpen] = useState(false)
   const [editAddSkillSelection, setEditAddSkillSelection] = useState<string[]>([])
   const [savingEdit, setSavingEdit] = useState(false)
@@ -952,6 +954,24 @@ export default function AgentHubPage() {
     const rawEnabled = agent.enabledSkills || agent.meta?.enabledSkills || agent.skills || []
     const normalizedEnabled = [...new Set(rawEnabled.map(s => s.trim()).filter(Boolean))]
     setEditEnabledSkills(normalizedEnabled)
+    // Document Center: load assistant.enabledWikis + list of available wikis
+    const rawWikis = (agent.meta as { enabledWikis?: unknown } | undefined)?.enabledWikis
+    setEditEnabledWikis(Array.isArray(rawWikis) ? rawWikis.filter((v): v is string => typeof v === 'string') : [])
+    // Fetch available wikis (best-effort; fail-silent so the dialog still opens)
+    void (async () => {
+      try {
+        const { listWikis } = await import('@/lib/api/document-center')
+        const list = await listWikis()
+        setAvailableWikis(list.map(w => ({
+          id: w.id,
+          name: w.name,
+          description: w.description,
+          buildStatus: w.buildStatus,
+        })))
+      } catch {
+        setAvailableWikis([])
+      }
+    })()
     setEditOpen(true)
 
     if (agent.skills.length === 0) {
@@ -1072,6 +1092,8 @@ export default function AgentHubPage() {
           memory_mode: editAgentType === 'chat' ? editMemoryMode : undefined,
           skills: editSkills.map(s => s.id || s.name),
           enabledSkills: editEnabledSkills,
+          // Document Center: persist Wiki associations (string[] of wiki IDs)
+          enabledWikis: editEnabledWikis,
           visible_to: editVisibilityMode === 'admin'
             ? { department_ids: [], user_ids: [] }
             : editVisibilityMode === 'departments'
@@ -2639,6 +2661,65 @@ export default function AgentHubPage() {
                     )
                   })()}
                 </>
+              )}
+            </div>
+
+            {/* ---------- Document Center: Wiki associations ---------- */}
+            <div className="space-y-2 pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">关联 Wiki（来自文档中心）</div>
+                <Badge variant="outline">{editEnabledWikis.length} / {availableWikis.length} 已关联</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                勾选 Wiki 即可让该助手在对话中按需调用知识库回答用户问题。仅显示已构建的 Wiki。
+              </p>
+              {availableWikis.length === 0 ? (
+                <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                  暂无可用 Wiki。请先在「文档中心」上传文档并构建 Wiki。
+                </div>
+              ) : (
+                <div className="max-h-48 space-y-1 overflow-auto rounded-md border p-2">
+                  {availableWikis.map(wiki => {
+                    const isEnabled = editEnabledWikis.includes(wiki.id)
+                    const isBuilt = wiki.buildStatus === 'succeeded'
+                    return (
+                      <label
+                        key={wiki.id}
+                        className={cn(
+                          'flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent cursor-pointer',
+                          !isBuilt && 'opacity-60',
+                        )}
+                      >
+                        <Checkbox
+                          checked={isEnabled}
+                          onCheckedChange={(checked) => {
+                            setEditEnabledWikis(prev =>
+                              checked
+                                ? Array.from(new Set([...prev, wiki.id]))
+                                : prev.filter(id => id !== wiki.id),
+                            )
+                          }}
+                          className="mt-0.5"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{wiki.name}</span>
+                            {!isBuilt && (
+                              <Badge variant="outline" className="text-xs">
+                                {wiki.buildStatus === 'running' ? '构建中' : wiki.buildStatus === 'failed' ? '构建失败' : '未构建'}
+                              </Badge>
+                            )}
+                          </div>
+                          {wiki.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-1">
+                              {wiki.description}
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
               )}
             </div>
 

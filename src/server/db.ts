@@ -394,6 +394,82 @@ export class DirectConnectStore {
     if (!columns.some(col => col.name === 'agent_type')) {
       this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN agent_type TEXT DEFAULT 'chat'`)
     }
+
+    // ============================================================
+    // Document Center (P0): document tree, documents, wikis, build jobs
+    // Assistant ↔ Wiki association lives in assistant `_moss_meta.json` (enabledWikis: string[]),
+    // not in a join table, to follow the existing enabledSkills pattern.
+    // ============================================================
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS document_tree_nodes (
+        id          TEXT PRIMARY KEY,
+        org_id      TEXT NOT NULL,
+        parent_id   TEXT REFERENCES document_tree_nodes(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        description TEXT,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS document_tree_nodes_parent_idx
+        ON document_tree_nodes (parent_id);
+      CREATE INDEX IF NOT EXISTS document_tree_nodes_org_idx
+        ON document_tree_nodes (org_id, sort_order);
+
+      CREATE TABLE IF NOT EXISTS documents (
+        id           TEXT PRIMARY KEY,
+        org_id       TEXT NOT NULL,
+        node_id      TEXT NOT NULL REFERENCES document_tree_nodes(id) ON DELETE CASCADE,
+        file_name    TEXT NOT NULL,
+        mime_type    TEXT NOT NULL,
+        size_bytes   INTEGER NOT NULL,
+        storage_path TEXT NOT NULL,
+        uploaded_by  TEXT NOT NULL,
+        uploaded_at  INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS documents_node_idx ON documents (node_id);
+      CREATE INDEX IF NOT EXISTS documents_org_idx  ON documents (org_id);
+
+      CREATE TABLE IF NOT EXISTS wikis (
+        id                     TEXT PRIMARY KEY,
+        org_id                 TEXT NOT NULL,
+        node_id                TEXT REFERENCES document_tree_nodes(id) ON DELETE SET NULL,
+        name                   TEXT NOT NULL,
+        description            TEXT,
+        storage_path           TEXT NOT NULL,
+        build_status           TEXT NOT NULL DEFAULT 'pending',  -- pending|running|succeeded|failed
+        source_document_ids    TEXT NOT NULL DEFAULT '[]',       -- JSON array of document IDs
+        last_built_at          INTEGER,
+        last_build_error       TEXT,
+        created_by             TEXT NOT NULL,
+        created_at             INTEGER NOT NULL,
+        updated_at             INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS wikis_org_idx  ON wikis (org_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS wikis_node_idx ON wikis (node_id);
+
+      CREATE TABLE IF NOT EXISTS wiki_build_jobs (
+        id              TEXT PRIMARY KEY,
+        wiki_id         TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
+        status          TEXT NOT NULL DEFAULT 'queued',  -- queued|running|succeeded|failed|cancelled
+        progress        INTEGER NOT NULL DEFAULT 0,      -- 0-100
+        current_step    TEXT,
+        error_message   TEXT,
+        session_id      TEXT,                            -- moss session_id created by RuntimeService
+        triggered_by    TEXT NOT NULL,
+        queued_at       INTEGER NOT NULL,
+        started_at      INTEGER,
+        finished_at     INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS wiki_build_jobs_wiki_idx
+        ON wiki_build_jobs (wiki_id, queued_at DESC);
+      CREATE INDEX IF NOT EXISTS wiki_build_jobs_status_idx
+        ON wiki_build_jobs (status, queued_at);
+    `)
   }
 
   close(): void {
@@ -1327,6 +1403,291 @@ export class DirectConnectStore {
 
   deleteTenantAssistant(id: string): void {
     this.db.prepare(`DELETE FROM tenant_assistants WHERE id = ?`).run(id)
+  }
+
+  // ==================== Document Center: Tree Nodes ====================
+
+  listDocumentTreeNodes(orgId: string): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM document_tree_nodes WHERE org_id = ? ORDER BY sort_order, created_at`)
+      .all(orgId) as SqlRow[]
+  }
+
+  getDocumentTreeNode(id: string, orgId: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM document_tree_nodes WHERE id = ? AND org_id = ?`).get(id, orgId) as SqlRow) ?? null
+  }
+
+  createDocumentTreeNode(row: {
+    id: string
+    org_id: string
+    parent_id: string | null
+    name: string
+    description?: string | null
+    sort_order?: number
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO document_tree_nodes (id, org_id, parent_id, name, description, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.org_id,
+      row.parent_id ?? null,
+      row.name,
+      row.description ?? null,
+      row.sort_order ?? 0,
+      ts,
+      ts,
+    )
+  }
+
+  updateDocumentTreeNode(id: string, orgId: string, updates: {
+    parent_id?: string | null
+    name?: string
+    description?: string | null
+    sort_order?: number
+  }): void {
+    const ts = now()
+    const existing = this.getDocumentTreeNode(id, orgId)
+    if (!existing) return
+    this.db.prepare(`
+      UPDATE document_tree_nodes
+      SET parent_id = ?, name = ?, description = ?, sort_order = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(
+      updates.parent_id !== undefined ? updates.parent_id : (existing.parent_id as string | null),
+      updates.name ?? (existing.name as string),
+      updates.description !== undefined ? updates.description : (existing.description as string | null),
+      updates.sort_order ?? (existing.sort_order as number),
+      ts,
+      id,
+      orgId,
+    )
+  }
+
+  deleteDocumentTreeNode(id: string, orgId: string): void {
+    // ON DELETE CASCADE will remove child nodes and their documents
+    this.db.prepare(`DELETE FROM document_tree_nodes WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ==================== Document Center: Documents ====================
+
+  listDocumentsByNode(nodeId: string, orgId: string): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM documents WHERE node_id = ? AND org_id = ? ORDER BY uploaded_at DESC`)
+      .all(nodeId, orgId) as SqlRow[]
+  }
+
+  getDocument(id: string, orgId: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM documents WHERE id = ? AND org_id = ?`).get(id, orgId) as SqlRow) ?? null
+  }
+
+  createDocument(row: {
+    id: string
+    org_id: string
+    node_id: string
+    file_name: string
+    mime_type: string
+    size_bytes: number
+    storage_path: string
+    uploaded_by: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO documents (id, org_id, node_id, file_name, mime_type, size_bytes, storage_path, uploaded_by, uploaded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.org_id,
+      row.node_id,
+      row.file_name,
+      row.mime_type,
+      row.size_bytes,
+      row.storage_path,
+      row.uploaded_by,
+      ts,
+    )
+  }
+
+  deleteDocument(id: string, orgId: string): void {
+    this.db.prepare(`DELETE FROM documents WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ==================== Document Center: Wikis ====================
+
+  listWikis(orgId: string, filter?: { nodeId?: string; buildStatus?: string }): SqlRow[] {
+    const conditions = ['org_id = ?']
+    const params: unknown[] = [orgId]
+    if (filter?.nodeId) {
+      conditions.push('node_id = ?')
+      params.push(filter.nodeId)
+    }
+    if (filter?.buildStatus) {
+      conditions.push('build_status = ?')
+      params.push(filter.buildStatus)
+    }
+    return this.db
+      .prepare(`SELECT * FROM wikis WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC`)
+      .all(...params) as SqlRow[]
+  }
+
+  getWiki(id: string, orgId: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM wikis WHERE id = ? AND org_id = ?`).get(id, orgId) as SqlRow) ?? null
+  }
+
+  /** Cross-org getter for runtime / build worker use. */
+  getWikiById(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM wikis WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  createWiki(row: {
+    id: string
+    org_id: string
+    node_id?: string | null
+    name: string
+    description?: string | null
+    storage_path: string
+    source_document_ids?: string[]
+    created_by: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO wikis (
+        id, org_id, node_id, name, description, storage_path,
+        build_status, source_document_ids, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.org_id,
+      row.node_id ?? null,
+      row.name,
+      row.description ?? null,
+      row.storage_path,
+      JSON.stringify(row.source_document_ids ?? []),
+      row.created_by,
+      ts,
+      ts,
+    )
+  }
+
+  updateWiki(id: string, orgId: string, updates: {
+    name?: string
+    description?: string | null
+    node_id?: string | null
+    source_document_ids?: string[]
+  }): void {
+    const ts = now()
+    const existing = this.getWiki(id, orgId)
+    if (!existing) return
+    this.db.prepare(`
+      UPDATE wikis
+      SET name = ?, description = ?, node_id = ?, source_document_ids = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(
+      updates.name ?? (existing.name as string),
+      updates.description !== undefined ? updates.description : (existing.description as string | null),
+      updates.node_id !== undefined ? updates.node_id : (existing.node_id as string | null),
+      updates.source_document_ids !== undefined
+        ? JSON.stringify(updates.source_document_ids)
+        : (existing.source_document_ids as string),
+      ts,
+      id,
+      orgId,
+    )
+  }
+
+  updateWikiBuildResult(id: string, result: {
+    build_status: 'pending' | 'running' | 'succeeded' | 'failed'
+    last_built_at?: number
+    last_build_error?: string | null
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE wikis
+      SET build_status = ?, last_built_at = ?, last_build_error = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      result.build_status,
+      result.last_built_at ?? null,
+      result.last_build_error ?? null,
+      ts,
+      id,
+    )
+  }
+
+  deleteWiki(id: string, orgId: string): void {
+    this.db.prepare(`DELETE FROM wikis WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ==================== Document Center: Build Jobs ====================
+
+  listWikiBuildJobs(wikiId: string, limit = 20): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM wiki_build_jobs WHERE wiki_id = ? ORDER BY queued_at DESC LIMIT ?`)
+      .all(wikiId, limit) as SqlRow[]
+  }
+
+  getWikiBuildJob(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM wiki_build_jobs WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  getLatestWikiBuildJob(wikiId: string): SqlRow | null {
+    return (this.db
+      .prepare(`SELECT * FROM wiki_build_jobs WHERE wiki_id = ? ORDER BY queued_at DESC LIMIT 1`)
+      .get(wikiId) as SqlRow) ?? null
+  }
+
+  countRunningWikiBuildJobs(): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM wiki_build_jobs WHERE status IN ('queued', 'running')`)
+      .get() as { c: number } | undefined
+    return row ? Number(row.c) : 0
+  }
+
+  listQueuedWikiBuildJobs(limit = 10): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM wiki_build_jobs WHERE status = 'queued' ORDER BY queued_at LIMIT ?`)
+      .all(limit) as SqlRow[]
+  }
+
+  createWikiBuildJob(row: {
+    id: string
+    wiki_id: string
+    triggered_by: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO wiki_build_jobs (id, wiki_id, status, progress, triggered_by, queued_at)
+      VALUES (?, ?, 'queued', 0, ?, ?)
+    `).run(row.id, row.wiki_id, row.triggered_by, ts)
+  }
+
+  updateWikiBuildJob(id: string, updates: {
+    status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+    progress?: number
+    current_step?: string | null
+    error_message?: string | null
+    session_id?: string | null
+    started_at?: number
+    finished_at?: number
+  }): void {
+    const existing = this.getWikiBuildJob(id)
+    if (!existing) return
+    this.db.prepare(`
+      UPDATE wiki_build_jobs
+      SET status = ?, progress = ?, current_step = ?, error_message = ?,
+          session_id = ?, started_at = ?, finished_at = ?
+      WHERE id = ?
+    `).run(
+      updates.status ?? (existing.status as string),
+      updates.progress !== undefined ? updates.progress : (existing.progress as number),
+      updates.current_step !== undefined ? updates.current_step : (existing.current_step as string | null),
+      updates.error_message !== undefined ? updates.error_message : (existing.error_message as string | null),
+      updates.session_id !== undefined ? updates.session_id : (existing.session_id as string | null),
+      updates.started_at ?? (existing.started_at as number | null),
+      updates.finished_at ?? (existing.finished_at as number | null),
+      id,
+    )
   }
 }
 
