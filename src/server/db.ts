@@ -470,6 +470,95 @@ export class DirectConnectStore {
       CREATE INDEX IF NOT EXISTS wiki_build_jobs_status_idx
         ON wiki_build_jobs (status, queued_at);
     `)
+
+    // ============================================================
+    // Document Center v2: external sources + connector abstraction
+    // Adds support for pulling documents from external systems
+    // (WeCom Drive, filesystem mounts, etc.) and mirroring them into
+    // the document tree as `auto_managed` nodes. See
+    // docs/document-center-v2-multi-source-design.md.
+    // ============================================================
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS external_sources (
+        id                       TEXT PRIMARY KEY,
+        org_id                   TEXT NOT NULL,
+        type                     TEXT NOT NULL,                 -- 'wecom_drive' | 'filesystem'
+        name                     TEXT NOT NULL,
+        config_json              TEXT NOT NULL,                  -- {rootPath, mountedNodeId, ...}
+        credentials_secret_key   TEXT,                            -- ref to tenant_secrets row
+        sync_interval_sec        INTEGER NOT NULL DEFAULT 3600,
+        auto_build_enabled       INTEGER NOT NULL DEFAULT 0,
+        enabled                  INTEGER NOT NULL DEFAULT 1,
+        last_sync_at             INTEGER,
+        last_sync_status         TEXT,                            -- 'success' | 'failed' | 'running'
+        last_sync_error          TEXT,
+        created_by               TEXT NOT NULL,
+        created_at               INTEGER NOT NULL,
+        updated_at               INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS external_sources_org_idx
+        ON external_sources (org_id);
+      CREATE INDEX IF NOT EXISTS external_sources_enabled_idx
+        ON external_sources (enabled, last_sync_at);
+    `)
+
+    // Incremental migration: add v2 columns to existing P0 tables.
+    // Uses the moss-standard try/catch ALTER TABLE pattern.
+    const v2NodeColumns: Array<[string, string]> = [
+      ['source_id', 'TEXT'],
+      ['source_path', 'TEXT'],
+      ['auto_managed', 'INTEGER DEFAULT 0'],
+      ['alias', 'TEXT'],
+      ['last_synced_at', 'INTEGER'],
+      ['deleted_at', 'INTEGER'],
+    ]
+    for (const [col, decl] of v2NodeColumns) {
+      try {
+        this.db.exec(`ALTER TABLE document_tree_nodes ADD COLUMN ${col} ${decl}`)
+      } catch {
+        // already exists
+      }
+    }
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS document_tree_nodes_source_idx
+          ON document_tree_nodes (source_id, source_path)
+      `)
+    } catch {
+      // ignore
+    }
+
+    const v2DocColumns: Array<[string, string]> = [
+      ['source_id', 'TEXT'],
+      ['external_id', 'TEXT'],
+      ['external_etag', 'TEXT'],
+      ['content_sha256', 'TEXT'],
+      ['deleted_at', 'INTEGER'],
+    ]
+    for (const [col, decl] of v2DocColumns) {
+      try {
+        this.db.exec(`ALTER TABLE documents ADD COLUMN ${col} ${decl}`)
+      } catch {
+        // already exists
+      }
+    }
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS documents_sha_idx
+          ON documents (org_id, content_sha256);
+        CREATE INDEX IF NOT EXISTS documents_external_idx
+          ON documents (source_id, external_id);
+      `)
+    } catch {
+      // ignore
+    }
+
+    try {
+      this.db.exec(`ALTER TABLE wikis ADD COLUMN needs_rebuild INTEGER DEFAULT 0`)
+    } catch {
+      // already exists
+    }
   }
 
   close(): void {
@@ -1688,6 +1777,261 @@ export class DirectConnectStore {
       updates.finished_at ?? (existing.finished_at as number | null),
       id,
     )
+  }
+
+  // ==================== Document Center v2: External Sources ====================
+
+  listExternalSources(orgId: string, opts?: { enabledOnly?: boolean }): SqlRow[] {
+    if (opts?.enabledOnly) {
+      return this.db
+        .prepare(`SELECT * FROM external_sources WHERE org_id = ? AND enabled = 1 ORDER BY created_at`)
+        .all(orgId) as SqlRow[]
+    }
+    return this.db
+      .prepare(`SELECT * FROM external_sources WHERE org_id = ? ORDER BY created_at`)
+      .all(orgId) as SqlRow[]
+  }
+
+  /** Cross-org: used by the sync worker which has no caller context. */
+  listAllEnabledExternalSources(): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM external_sources WHERE enabled = 1 ORDER BY last_sync_at`)
+      .all() as SqlRow[]
+  }
+
+  getExternalSource(id: string, orgId: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM external_sources WHERE id = ? AND org_id = ?`).get(id, orgId) as SqlRow) ?? null
+  }
+
+  /** Cross-org getter for the sync worker. */
+  getExternalSourceById(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM external_sources WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  createExternalSource(row: {
+    id: string
+    org_id: string
+    type: string
+    name: string
+    config_json: string
+    credentials_secret_key?: string | null
+    sync_interval_sec?: number
+    auto_build_enabled?: number
+    created_by: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO external_sources (
+        id, org_id, type, name, config_json, credentials_secret_key,
+        sync_interval_sec, auto_build_enabled, enabled, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      row.id,
+      row.org_id,
+      row.type,
+      row.name,
+      row.config_json,
+      row.credentials_secret_key ?? null,
+      row.sync_interval_sec ?? 3600,
+      row.auto_build_enabled ?? 0,
+      row.created_by,
+      ts,
+      ts,
+    )
+  }
+
+  updateExternalSource(id: string, orgId: string, updates: {
+    name?: string
+    config_json?: string
+    credentials_secret_key?: string | null
+    sync_interval_sec?: number
+    auto_build_enabled?: number
+    enabled?: number
+  }): void {
+    const existing = this.getExternalSource(id, orgId)
+    if (!existing) return
+    const ts = now()
+    this.db.prepare(`
+      UPDATE external_sources
+      SET name = ?, config_json = ?, credentials_secret_key = ?,
+          sync_interval_sec = ?, auto_build_enabled = ?, enabled = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(
+      updates.name ?? (existing.name as string),
+      updates.config_json ?? (existing.config_json as string),
+      updates.credentials_secret_key !== undefined
+        ? updates.credentials_secret_key
+        : (existing.credentials_secret_key as string | null),
+      updates.sync_interval_sec ?? (existing.sync_interval_sec as number),
+      updates.auto_build_enabled !== undefined ? updates.auto_build_enabled : (existing.auto_build_enabled as number),
+      updates.enabled !== undefined ? updates.enabled : (existing.enabled as number),
+      ts,
+      id,
+      orgId,
+    )
+  }
+
+  updateExternalSourceSyncStatus(id: string, status: {
+    last_sync_at?: number
+    last_sync_status?: 'success' | 'failed' | 'running'
+    last_sync_error?: string | null
+  }): void {
+    const existing = this.getExternalSourceById(id)
+    if (!existing) return
+    this.db.prepare(`
+      UPDATE external_sources
+      SET last_sync_at = ?, last_sync_status = ?, last_sync_error = ?
+      WHERE id = ?
+    `).run(
+      status.last_sync_at ?? (existing.last_sync_at as number | null),
+      status.last_sync_status ?? (existing.last_sync_status as string | null),
+      status.last_sync_error !== undefined ? status.last_sync_error : (existing.last_sync_error as string | null),
+      id,
+    )
+  }
+
+  deleteExternalSource(id: string, orgId: string): void {
+    // Note: documents and tree nodes with this source_id are NOT cascade-deleted;
+    // the next sync sweep will soft-delete them. Keep DB referential integrity loose.
+    this.db.prepare(`DELETE FROM external_sources WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ==================== Document Center v2: Soft-delete helpers ====================
+
+  /** Soft-delete a document by setting deleted_at. */
+  softDeleteDocument(id: string): void {
+    const ts = now()
+    this.db.prepare(`UPDATE documents SET deleted_at = ? WHERE id = ?`).run(ts, id)
+  }
+
+  /** Undelete (restore from soft-delete). */
+  undeleteDocument(id: string): void {
+    this.db.prepare(`UPDATE documents SET deleted_at = NULL WHERE id = ?`).run(id)
+  }
+
+  softDeleteTreeNode(id: string): void {
+    const ts = now()
+    this.db.prepare(`UPDATE document_tree_nodes SET deleted_at = ? WHERE id = ?`).run(ts, id)
+  }
+
+  undeleteTreeNode(id: string): void {
+    this.db.prepare(`UPDATE document_tree_nodes SET deleted_at = NULL WHERE id = ?`).run(id)
+  }
+
+  /** Hard-delete docs/nodes that have been soft-deleted for longer than `cutoffTs`. */
+  purgeOldSoftDeletes(cutoffTs: number): { documents: number; nodes: number } {
+    const docResult = this.db
+      .prepare(`DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at < ?`)
+      .run(cutoffTs)
+    const nodeResult = this.db
+      .prepare(`DELETE FROM document_tree_nodes WHERE deleted_at IS NOT NULL AND deleted_at < ?`)
+      .run(cutoffTs)
+    return {
+      documents: Number(docResult.changes ?? 0),
+      nodes: Number(nodeResult.changes ?? 0),
+    }
+  }
+
+  // ==================== Document Center v2: Source-aware lookups ====================
+
+  /** Find a tree node by (source_id, source_path). Used by the sync diff. */
+  findTreeNodeBySource(sourceId: string, sourcePath: string): SqlRow | null {
+    return (this.db
+      .prepare(`SELECT * FROM document_tree_nodes WHERE source_id = ? AND source_path = ? LIMIT 1`)
+      .get(sourceId, sourcePath) as SqlRow) ?? null
+  }
+
+  /** Find a document by (source_id, external_id). Used by the sync diff. */
+  findDocumentBySource(sourceId: string, externalId: string): SqlRow | null {
+    return (this.db
+      .prepare(`SELECT * FROM documents WHERE source_id = ? AND external_id = ? LIMIT 1`)
+      .get(sourceId, externalId) as SqlRow) ?? null
+  }
+
+  /** Find a non-deleted document by content hash within an org (for dedup). */
+  findDocumentByHash(orgId: string, sha256: string): SqlRow | null {
+    return (this.db
+      .prepare(`SELECT * FROM documents WHERE org_id = ? AND content_sha256 = ? AND deleted_at IS NULL LIMIT 1`)
+      .get(orgId, sha256) as SqlRow) ?? null
+  }
+
+  /** All non-deleted documents/nodes for a source, for the reverse sweep. */
+  listDocumentsBySource(sourceId: string): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM documents WHERE source_id = ? AND deleted_at IS NULL`)
+      .all(sourceId) as SqlRow[]
+  }
+
+  listTreeNodesBySource(sourceId: string): SqlRow[] {
+    return this.db
+      .prepare(`SELECT * FROM document_tree_nodes WHERE source_id = ? AND deleted_at IS NULL`)
+      .all(sourceId) as SqlRow[]
+  }
+
+  /** Document Center v2: update an existing document row's content (sha/etag/path). */
+  updateDocumentContent(id: string, updates: {
+    external_etag?: string | null
+    content_sha256?: string | null
+    storage_path?: string
+    size_bytes?: number
+  }): void {
+    const existing = this.db.prepare(`SELECT * FROM documents WHERE id = ?`).get(id) as SqlRow | undefined
+    if (!existing) return
+    this.db.prepare(`
+      UPDATE documents
+      SET external_etag = ?, content_sha256 = ?, storage_path = ?, size_bytes = ?
+      WHERE id = ?
+    `).run(
+      updates.external_etag !== undefined ? updates.external_etag : (existing.external_etag as string | null),
+      updates.content_sha256 !== undefined ? updates.content_sha256 : (existing.content_sha256 as string | null),
+      updates.storage_path ?? (existing.storage_path as string),
+      updates.size_bytes ?? (existing.size_bytes as number),
+      id,
+    )
+  }
+
+  /** Update tree node position/name (used by sync diff on rename/move). */
+  updateTreeNodeSourceLocation(id: string, updates: {
+    parent_id?: string | null
+    name?: string
+    source_path?: string
+    last_synced_at?: number
+  }): void {
+    const existing = this.db.prepare(`SELECT * FROM document_tree_nodes WHERE id = ?`).get(id) as SqlRow | undefined
+    if (!existing) return
+    const ts = now()
+    this.db.prepare(`
+      UPDATE document_tree_nodes
+      SET parent_id = ?, name = ?, source_path = ?, last_synced_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      updates.parent_id !== undefined ? updates.parent_id : (existing.parent_id as string | null),
+      updates.name ?? (existing.name as string),
+      updates.source_path ?? (existing.source_path as string | null),
+      updates.last_synced_at ?? ts,
+      ts,
+      id,
+    )
+  }
+
+  /** Document Center v2: list wikis whose source_document_ids contains this doc id. */
+  findWikisReferencingDocument(docId: string): SqlRow[] {
+    // SQLite has no native JSON contains; use LIKE on the canonical JSON form.
+    // source_document_ids is stored as JSON array of strings, e.g. ["abc","def"]
+    return this.db
+      .prepare(`SELECT * FROM wikis WHERE source_document_ids LIKE ?`)
+      .all(`%"${docId}"%`) as SqlRow[]
+  }
+
+  markWikiNeedsRebuild(wikiId: string, needs: boolean): void {
+    this.db.prepare(`UPDATE wikis SET needs_rebuild = ? WHERE id = ?`).run(needs ? 1 : 0, wikiId)
+  }
+
+  /** Set node alias (Q2: source-managed nodes can't be renamed, but admins can set a display alias). */
+  setTreeNodeAlias(id: string, orgId: string, alias: string | null): void {
+    this.db
+      .prepare(`UPDATE document_tree_nodes SET alias = ?, updated_at = ? WHERE id = ? AND org_id = ?`)
+      .run(alias, now(), id, orgId)
   }
 }
 
