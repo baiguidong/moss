@@ -307,18 +307,23 @@ export class WikiJobExecutor {
   }
 
   /**
-   * Convert original uploaded documents (docx/pdf/md) to plain markdown
-   * and stage them under `<cwd>/input/` so the agent can read them via its
-   * built-in file tools.
+   * Convert original uploaded documents (docx/pdf/xlsx/pptx/md/txt) to
+   * plain markdown and stage them under `<cwd>/input/` so the wiki-
+   * builder agent can read them via its built-in file tools.
    *
-   * P0: only .md / .txt are passed through directly; .docx / .pdf fall back
-   * to a TODO stub (we copy raw bytes to input/ with original extension).
-   * The wiki-builder agent has tools to handle them itself, but a proper
-   * mammoth/libreoffice pipeline will be added in a follow-up iteration.
+   * Conversion strategy (see sources/docParsers.ts):
+   *   - .md / .txt          → pass through
+   *   - .docx               → mammoth (preserves headings/lists)
+   *   - .pdf                → pdf-parse
+   *   - everything else     → libreoffice --convert-to txt (if available)
+   *   - parser failure / no parser found → raw bytes copied with original
+   *     name as a last resort, so the agent can at least see the file
    */
   private async prepareInputs(wiki: WikiRecord): Promise<void> {
     const inputDir = path.join(wiki.storagePath, 'input')
     await mkdir(inputDir, { recursive: true })
+
+    const { parseAndWrite } = await import('../../server/sources/docParsers.js')
 
     for (const docId of wiki.sourceDocumentIds) {
       // Cross-org lookup: build runs as system, document still has org_id
@@ -328,21 +333,22 @@ export class WikiJobExecutor {
         continue
       }
       const doc = mapDocumentRow(docRow)
-      const ext = path.extname(doc.fileName).toLowerCase()
       const safeName = path.basename(doc.fileName)
-      const targetPath = path.join(inputDir, safeName)
 
       try {
-        if (ext === '.md' || ext === '.txt' || ext === '.markdown') {
-          // Copy through as-is
-          const content = await readFile(doc.storagePath)
-          await writeFile(targetPath, content)
+        const parsed = await parseAndWrite(doc.storagePath, safeName, inputDir)
+        if (parsed) {
+          console.log(
+            `[WikiJobExecutor] staged ${safeName} via ${parsed.via}`,
+          )
         } else {
-          // P0 fallback: copy raw bytes; agent's read_file may not handle
-          // binary, but at least the file is present. Proper conversion
-          // pipeline (mammoth/libreoffice) is the next iteration.
+          // No parser worked. Copy raw bytes so at least the file is
+          // present and the agent can pick it up via its read_file tool.
           const content = await readFile(doc.storagePath)
-          await writeFile(targetPath, content)
+          await writeFile(path.join(inputDir, safeName), content)
+          console.warn(
+            `[WikiJobExecutor] no parser for ${safeName}; copied raw bytes`,
+          )
         }
       } catch (err) {
         console.warn(`[WikiJobExecutor] failed to stage source doc ${docId}:`, err)
