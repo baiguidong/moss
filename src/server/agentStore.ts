@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { existsSync } from 'fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
@@ -1231,7 +1232,8 @@ export async function batchSyncAssistants(params?: {
  */
 export async function uploadCustomAssistant(params: {
   file: Buffer
-  name: string
+  name: string // User-visible assistant name (e.g., "微信公众号运营助手")
+  id?: string // UUID from client (e.g., "fb11954c-a848-41a2-967f-e1ef5e711fe6")
   displayName: string
   description?: string
   version?: string
@@ -1239,15 +1241,16 @@ export async function uploadCustomAssistant(params: {
   memoryMode?: 'session' | 'user'
   userId: string
 }): Promise<{ id: string; name: string; version: string }> {
-  const assistantName = params.name.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '-')
-  if (!assistantName) {
-    throw new Error('Invalid assistant name')
+  // Use provided id (UUID) as directory name, fallback to sanitized name
+  const assistantId = params.id || params.name.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '-')
+  if (!assistantId) {
+    throw new Error('Invalid assistant id')
   }
 
-  // Check if assistant already exists
-  const existing = await findAssistantDir(assistantName)
+  // Check if assistant already exists by id (directory name)
+  const existing = await findAssistantDir(assistantId)
   if (existing) {
-    throw new Error(`Assistant already exists: ${assistantName}`)
+    throw new Error(`Assistant already exists: ${assistantId}`)
   }
 
   // Extract to temp directory first
@@ -1255,8 +1258,8 @@ export async function uploadCustomAssistant(params: {
   try {
     await extractAssistantZip(params.file, tempDir)
 
-    // Install to custom directory
-    const targetDir = path.join(ASSISTANT_CUSTOM_DIR, assistantName)
+    // Install to custom directory using UUID as directory name
+    const targetDir = path.join(ASSISTANT_CUSTOM_DIR, assistantId)
     await mkdir(ASSISTANT_CUSTOM_DIR, { recursive: true })
     await rm(targetDir, { recursive: true, force: true })
 
@@ -1273,11 +1276,11 @@ export async function uploadCustomAssistant(params: {
     // Create or update metadata with visibility set to uploader only
     const existingMeta = await readAssistantMeta(targetDir)
     const version = params.version || '1.0.0'
-    // Use displayName as the actual name, assistantName (UUID) as directory name/id
-    const actualName = params.displayName || existingMeta?.display_name || assistantName
+    // Use displayName as the actual name, assistantId (UUID) as directory name/id
+    const actualName = params.displayName || params.name || existingMeta?.display_name || assistantId
     const meta: AssistantStoreMeta = {
       ...existingMeta,
-      id: assistantName,
+      id: assistantId,
       name: actualName,
       display_name: params.displayName || existingMeta?.display_name || actualName,
       description: params.description || existingMeta?.description || '',
@@ -1298,7 +1301,7 @@ export async function uploadCustomAssistant(params: {
     await writeAssistantMeta(targetDir, meta)
 
     return {
-      id: assistantName,
+      id: assistantId,
       name: actualName,
       version,
     }
@@ -1320,6 +1323,22 @@ export async function packageAssistantZip(assistantName: string): Promise<Buffer
   const zip = new JSZip()
 
   await addDirectoryToZip(zip, result.dir, '')
+
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+
+/**
+ * Package an assistant as a zip buffer from a specific directory path.
+ */
+export async function packageAssistantZipByDir(assistantDir: string): Promise<Buffer> {
+  if (!existsSync(assistantDir)) {
+    throw new Error(`Assistant directory not found: ${assistantDir}`)
+  }
+
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+
+  await addDirectoryToZip(zip, assistantDir, '')
 
   return zip.generateAsync({ type: 'nodebuffer' })
 }

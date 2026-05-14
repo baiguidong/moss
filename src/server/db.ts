@@ -1316,6 +1316,18 @@ export class DirectConnectStore {
     `).run(filePath, sourceUrl, checksum, ts, id)
   }
 
+  /**
+   * Update tenant assistant file_path only (used after approval to point to tenant directory)
+   */
+  updateTenantAssistantPath(id: string, filePath: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_assistants
+      SET file_path = ?, updated_at = ?
+      WHERE id = ?
+    `).run(filePath, ts, id)
+  }
+
   deleteTenantAssistant(id: string): void {
     this.db.prepare(`DELETE FROM tenant_assistants WHERE id = ?`).run(id)
   }
