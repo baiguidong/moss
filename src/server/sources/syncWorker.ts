@@ -235,7 +235,7 @@ export class SourceSyncWorker {
           ? config.mountedNodeId
           : null
 
-      for await (const node of connector.walkTree(config.rootPath ?? '')) {
+      for await (const node of connector.walkTree('')) {
         const parentDbId =
           node.parentExternalId == null
             ? rootParentDbId
