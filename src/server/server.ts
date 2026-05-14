@@ -71,6 +71,7 @@ import { SourceSyncWorker } from './sources/syncWorker.js'
 import { storeSecret, deleteSecret } from './sources/secrets.js'
 // Connector implementations register themselves on import.
 import './sources/filesystem.js'
+import './sources/wecomDrive.js'
 import { randomUUID } from 'crypto'
 import { getUserProfile } from './api/userProfile.js'
 import { loadBudgetStats } from './budgetStats.js'
