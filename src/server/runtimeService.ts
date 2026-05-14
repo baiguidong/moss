@@ -27,6 +27,7 @@ import {
   getTranscriptPath,
 } from './runtimePaths.js'
 import { errorMessage } from '../utils/errors.js'
+import { getSystemSettings } from './systemSettings.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -466,13 +467,30 @@ export class RuntimeService {
     const manifestPath = join(attemptDir, 'manifest.json')
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
+    // Build environment for runner from system settings
+    const systemSettings = getSystemSettings()
+    const runnerEnv: Record<string, string> = {
+      ...process.env as Record<string, string>,
+    }
+    // Pass settings.json env vars to runner
+    if (systemSettings.url) {
+      runnerEnv.ANTHROPIC_BASE_URL = systemSettings.url
+    }
+    if (systemSettings.apiKey) {
+      runnerEnv.ANTHROPIC_AUTH_TOKEN = systemSettings.apiKey
+    }
+    if (systemSettings.model) {
+      runnerEnv.ANTHROPIC_MODEL = systemSettings.model
+    }
+
     const runnerPath = resolveRunnerPath()
     const cwd = (existsSync(session.cwd) ? session.cwd : process.cwd())
     const safeCwd = cwd === '/' ? os.homedir() : cwd
     const child = spawn(process.execPath, [runnerPath, manifestPath], {
       detached: true,
-      stdio: 'inherit',
-      cwd: safeCwd,
+      stdio: 'ignore',
+      cwd: session.cwd,
+      env: runnerEnv,
     })
     child.unref()
     if (!child.pid) {

@@ -3,7 +3,7 @@ import net from 'net'
 import { existsSync, cpSync, rmSync } from 'fs'
 import { readFile, stat, mkdir, writeFile, readdir } from 'fs/promises'
 import os from 'os'
-import { dirname, extname, join, resolve, sep } from 'path'
+import { basename, dirname, extname, join, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
@@ -19,6 +19,7 @@ import {
   fetchAgentHubCategories,
   fetchAgentHubSkillDetailsByIds,
   getInstalledAssistants,
+  getHubInstalledAssistants,
   installHubAssistant,
   type AgentHubAssistant,
   uninstallAssistant,
@@ -27,6 +28,7 @@ import {
   type AssistantStoreMeta,
   uploadCustomAssistant,
   packageAssistantZip,
+  packageAssistantZipByDir,
   readAssistantMeta,
   findAssistantDir,
   writeAssistantMeta,
@@ -36,6 +38,7 @@ import {
   fetchSkillHubSkillDetail,
   fetchSkillHubSkills,
   getInstalledSkills,
+  getHubInstalledSkills,
   importLocalSkillArchive,
   importLocalSkillDirectory,
   installHubSkill,
@@ -236,6 +239,37 @@ async function copyAssistantToTenantDir(assistantName: string): Promise<void> {
 
   if (!existsSync(sourceDir)) {
     throw new HttpError(404, `Assistant directory not found: ${assistantName}`)
+  }
+
+  // Ensure tenant directory exists
+  await mkdir(ASSISTANT_TENANT_DIR, { recursive: true })
+
+  // Copy the assistant directory
+  cpSync(sourceDir, targetDir, { recursive: true })
+
+  // Update metadata to set source_type to 'tenant'
+  const meta = await readAssistantMeta(targetDir)
+  if (meta) {
+    meta.source_type = 'tenant'
+    await writeAssistantMeta(targetDir, meta)
+  }
+}
+
+/**
+ * Copy assistant to tenant directory by source path
+ * Used when file_path is stored in tenant_assistants table
+ */
+async function copyAssistantToTenantDirByPath(sourceDir: string): Promise<void> {
+  const MOSS_HOME = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+  const MOSS_ASSISTANTS_DIR = join(MOSS_HOME, 'assistants')
+  const ASSISTANT_TENANT_DIR = join(MOSS_ASSISTANTS_DIR, 'tenant')
+
+  // Use directory name from source path
+  const dirName = basename(sourceDir)
+  const targetDir = join(ASSISTANT_TENANT_DIR, dirName)
+
+  if (!existsSync(sourceDir)) {
+    throw new HttpError(404, `Assistant directory not found: ${sourceDir}`)
   }
 
   // Ensure tenant directory exists
@@ -1731,6 +1765,7 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
         const filter = authService.buildVisibilityFilter(auth)
+        // Return all installed assistants: hub, tenant, and custom
         const all = await getInstalledAssistants()
         writeJson(res, 200, all.filter(a => isVisibleTo(a.visibleTo, filter)))
         return
@@ -1949,14 +1984,27 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/agents/custom') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
+        console.log('[Upload Assistant] Received upload request, name:', body.name, 'id:', body.id, 'displayName:', body.displayName)
         const fileBase64 = typeof body.file === 'string' ? body.file : ''
         const fileBuffer = Buffer.from(fileBase64, 'base64')
-        const enabledSkills = Array.isArray(body.enabledSkills)
-          ? body.enabledSkills.filter((s: unknown) => typeof s === 'string')
-          : []
+        // Parse enabledSkills - can be array or JSON string
+        let enabledSkills: string[] = []
+        if (Array.isArray(body.enabledSkills)) {
+          enabledSkills = body.enabledSkills.filter((s: unknown) => typeof s === 'string')
+        } else if (typeof body.enabledSkills === 'string') {
+          try {
+            const parsed = JSON.parse(body.enabledSkills)
+            if (Array.isArray(parsed)) {
+              enabledSkills = parsed.filter((s: unknown) => typeof s === 'string')
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
         const result = await uploadCustomAssistant({
           file: fileBuffer,
           name: typeof body.name === 'string' ? body.name : '',
+          id: typeof body.id === 'string' ? body.id : undefined,
           displayName: typeof body.displayName === 'string' ? body.displayName : '',
           description: typeof body.description === 'string' ? body.description : undefined,
           version: typeof body.version === 'string' ? body.version : undefined,
@@ -1964,6 +2012,7 @@ export function startServer(
           memoryMode: body.memoryMode === 'user' ? 'user' : 'session',
           userId: auth.userId,
         })
+        console.log('[Upload Assistant] Upload result:', JSON.stringify(result))
         writeJson(res, 200, result)
         return
       }
@@ -1989,16 +2038,24 @@ export function startServer(
         return
       }
 
-      // GET /api/v1/agents/installed/:id/download - Download installed assistant
+      // GET /api/v1/agents/installed/:id/download - Download installed assistant by ID
       const agentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && agentDownloadMatch) {
         const assistantId = agentDownloadMatch[1] || ''
         try {
-          const zipBuffer = await packageAssistantZip(assistantId)
+          // Find assistant by ID in installed assistants list
+          const installedAssistants = await getInstalledAssistants()
+          const assistant = installedAssistants.find(a => a.id === assistantId)
+          if (!assistant) {
+            throw new HttpError(404, `Assistant not found: ${assistantId}`)
+          }
+          // Use assistant name for packaging (directory lookup)
+          const zipBuffer = await packageAssistantZip(assistant.name)
           res.setHeader('Content-Type', 'application/zip')
           res.setHeader('Content-Disposition', `attachment; filename="${assistantId}.zip"`)
           res.end(zipBuffer)
         } catch (error) {
+          if (error instanceof HttpError) throw error
           throw new HttpError(404, `Assistant not found: ${assistantId}`)
         }
         return
@@ -2008,9 +2065,12 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/agents/tenant/publish') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
-        const assistantName = typeof body.assistantName === 'string' ? body.assistantName : ''
-        const assistantId = typeof body.assistantId === 'string' ? body.assistantId : assistantName
+        const assistantId = typeof body.assistantId === 'string' ? body.assistantId : ''
         const publishNote = typeof body.publishNote === 'string' ? body.publishNote : undefined
+
+        if (!assistantId) {
+          throw new HttpError(400, `assistantId is required`)
+        }
 
         // Check if assistant exists
         const assistantResult = await findAssistantDir(assistantId)
@@ -2021,16 +2081,18 @@ export function startServer(
         // Read assistant metadata
         const meta = await readAssistantMeta(assistantResult.dir)
 
+        // Use actual assistant name from metadata or directory name
+        const actualAssistantName = typeof meta?.name === 'string' && meta.name.trim() ? meta.name.trim() : assistantId
+
         // Get author name from user info
         const authorUser = authService.getUserOrNull(auth.userId, auth.orgId, auth)
         const authorName = authorUser?.name || undefined
 
-        // Create tenant assistant record with metadata from source assistant
-        const id = `tenant-assistant-${Date.now()}`
+        // Create tenant assistant record with UUID as id
         runtime.store.createTenantAssistant({
-          id,
-          name: assistantId,
-          display_name: meta?.display_name || assistantId,
+          id: assistantId, // Use UUID as id
+          name: actualAssistantName,
+          display_name: meta?.display_name || actualAssistantName,
           description: meta?.description || undefined,
           version: meta?.installed_version || undefined,
           enabled_skills: meta?.enabledSkills || meta?.skills ? JSON.stringify(meta?.enabledSkills || meta?.skills) : null,
@@ -2040,8 +2102,9 @@ export function startServer(
           author_id: auth.userId,
           author_name: authorName,
           status: 'pending',
+          file_path: assistantResult.dir, // Store source directory path for approval
         })
-        writeJson(res, 200, { id, assistantId, status: 'pending', message: '发布申请已提交，等待管理员审批' })
+        writeJson(res, 200, { id: assistantId, status: 'pending', message: '发布申请已提交，等待管理员审批' })
         return
       }
 
@@ -2064,9 +2127,17 @@ export function startServer(
           runtime.store.updateTenantAssistantStatus(tenantAssistantId, 'approved', auth.userId, reviewNote)
           // Set visibility to all users (null)
           runtime.store.updateTenantAssistantMeta(tenantAssistantId, { visible_to: null })
-          // Copy assistant to tenant directory
-          const assistantName = tenantAssistant.name as string
-          await copyAssistantToTenantDir(assistantName)
+          // Copy assistant to tenant directory using stored file_path
+          const sourcePath = tenantAssistant.file_path as string | undefined
+          if (sourcePath && existsSync(sourcePath)) {
+            await copyAssistantToTenantDirByPath(sourcePath)
+            // Update file_path to point to tenant directory after copy
+            const MOSS_HOME = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+            const tenantPath = join(MOSS_HOME, 'assistants', 'tenant', tenantAssistantId)
+            runtime.store.updateTenantAssistantPath(tenantAssistantId, tenantPath)
+          } else {
+            throw new HttpError(404, `Source assistant directory not found: ${sourcePath}`)
+          }
         } else {
           runtime.store.updateTenantAssistantStatus(tenantAssistantId, 'rejected', auth.userId, reviewNote)
         }
@@ -2151,14 +2222,28 @@ export function startServer(
         if (!tenantAssistant || tenantAssistant.status !== 'approved') {
           throw new HttpError(404, `Tenant assistant not found or not approved: ${tenantAssistantId}`)
         }
-        const assistantName = tenantAssistant.name as string
+
+        // file_path should point to tenant directory after approval
+        const tenantPath = tenantAssistant.file_path as string | undefined
+        if (!tenantPath) {
+          throw new HttpError(404, `Tenant assistant file_path not found: ${tenantAssistantId}`)
+        }
+
+        if (!existsSync(tenantPath)) {
+          throw new HttpError(404, `Assistant not found at: ${tenantPath}. This indicates the approval process did not copy the assistant correctly.`)
+        }
+
         try {
-          const zipBuffer = await packageAssistantZip(assistantName)
+          // Package from the tenant directory
+          const zipBuffer = await packageAssistantZipByDir(tenantPath)
+          const downloadName = tenantAssistant.display_name || tenantAssistant.name || 'assistant'
+          // Use UUID as filename to avoid encoding issues with Chinese characters
+          const safeFilename = `${tenantAssistantId}.zip`
           res.setHeader('Content-Type', 'application/zip')
-          res.setHeader('Content-Disposition', `attachment; filename="${assistantName}.zip"`)
+          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`)
           res.end(zipBuffer)
         } catch (error) {
-          throw new HttpError(404, `Assistant not found: ${assistantName}`)
+          throw new HttpError(404, `Failed to package assistant: ${error}`)
         }
         return
       }
@@ -2205,7 +2290,7 @@ export function startServer(
       if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
         authService.requireScope(auth, 'admin:settings')
         const filter = authService.buildVisibilityFilter(auth)
-        const all = await getInstalledSkills()
+        const all = await getHubInstalledSkills()
         writeJson(res, 200, all.filter(s => isVisibleTo(s.visibleTo, filter)))
         return
       }
@@ -2427,16 +2512,24 @@ export function startServer(
         return
       }
 
-      // GET /api/v1/skills/installed/:id/download - Download installed skill
+      // GET /api/v1/skills/installed/:id/download - Download installed skill by ID
       const skillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && skillDownloadMatch) {
         const skillId = skillDownloadMatch[1] || ''
         try {
-          const zipBuffer = await packageSkillZip(skillId)
+          // Find skill by ID in installed skills list
+          const installedSkills = await getInstalledSkills()
+          const skill = installedSkills.find(s => s.id === skillId)
+          if (!skill) {
+            throw new HttpError(404, `Skill not found: ${skillId}`)
+          }
+          // Use skill name for packaging (directory lookup)
+          const zipBuffer = await packageSkillZip(skill.name)
           res.setHeader('Content-Type', 'application/zip')
           res.setHeader('Content-Disposition', `attachment; filename="${skillId}.zip"`)
           res.end(zipBuffer)
         } catch (error) {
+          if (error instanceof HttpError) throw error
           throw new HttpError(404, `Skill not found: ${skillId}`)
         }
         return
@@ -2459,6 +2552,10 @@ export function startServer(
         // Read skill metadata
         const meta = await readSkillMeta(skillPath)
         const version = await readSkillVersion(skillPath)
+        const dirName = basename(skillPath)
+
+        // Use actual skill name from metadata or directory name
+        const actualSkillName = typeof meta?.name === 'string' && meta.name.trim() ? meta.name.trim() : dirName
 
         // Get author name from user info
         const authorUser = authService.getUserOrNull(auth.userId, auth.orgId, auth)
@@ -2468,8 +2565,8 @@ export function startServer(
         const id = `tenant-skill-${Date.now()}`
         runtime.store.createTenantSkill({
           id,
-          name: skillId,
-          display_name: meta?.display_name || skillId,
+          name: actualSkillName,
+          display_name: meta?.display_name || actualSkillName,
           description: meta?.description || undefined,
           version: version || meta?.installed_version || undefined,
           publish_note: publishNote,
@@ -2577,14 +2674,19 @@ export function startServer(
         if (!tenantSkill || tenantSkill.status !== 'approved') {
           throw new HttpError(404, `Tenant skill not found or not approved: ${tenantSkillId}`)
         }
+        // name is the actual skill name (e.g., "my-skill"), use it to find the directory
         const skillName = tenantSkill.name as string
+        const skillPath = await findInstalledSkillPath(skillName)
+        if (!skillPath) {
+          throw new HttpError(404, `Skill not found: ${skillName}`)
+        }
         try {
           const zipBuffer = await packageSkillZip(skillName)
           res.setHeader('Content-Type', 'application/zip')
           res.setHeader('Content-Disposition', `attachment; filename="${skillName}.zip"`)
           res.end(zipBuffer)
         } catch (error) {
-          throw new HttpError(404, `Skill not found: ${skillName}`)
+          throw new HttpError(404, `Failed to package skill: ${skillName}`)
         }
         return
       }
@@ -2890,10 +2992,28 @@ export function startServer(
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const runtimeOptions = parseRuntimeOptions(body)
-        const assistantName =
+        const rawAssistantName =
           typeof body.assistant_name === 'string' && body.assistant_name.trim()
             ? body.assistant_name.trim()
             : undefined
+
+        // Resolve assistant display name from UUID or name
+        // The assistant_name from client may be UUID, we need to find the actual display name
+        let assistantDisplayName = rawAssistantName
+        if (rawAssistantName) {
+          try {
+            const installedAssistants = await getInstalledAssistants()
+            // Try to find by id (UUID) first, then by name (directory name)
+            const assistant = installedAssistants.find(a => a.id === rawAssistantName) ||
+              installedAssistants.find(a => a.name === rawAssistantName)
+            if (assistant && assistant.displayName) {
+              assistantDisplayName = assistant.displayName
+            }
+          } catch {
+            // If lookup fails, use the raw name
+          }
+        }
+
         const created = await runtime.createSession({
           cwd,
           dangerouslySkipPermissions,
@@ -2902,7 +3022,7 @@ export function startServer(
           role: auth.role,
           scopes: auth.scopes,
           runtime: runtimeOptions,
-          assistantName,
+          assistantName: assistantDisplayName,
         })
         writeJson(res, 200, {
           session_id: created.sessionId,

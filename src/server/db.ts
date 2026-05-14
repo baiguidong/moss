@@ -334,7 +334,7 @@ export class DirectConnectStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tenant_skills (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         display_name TEXT,
         description TEXT,
         version TEXT,
@@ -362,7 +362,7 @@ export class DirectConnectStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tenant_assistants (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         display_name TEXT,
         description TEXT,
         version TEXT,
@@ -1399,6 +1399,18 @@ export class DirectConnectStore {
       SET file_path = ?, source_url = ?, checksum = ?, updated_at = ?
       WHERE id = ?
     `).run(filePath, sourceUrl, checksum, ts, id)
+  }
+
+  /**
+   * Update tenant assistant file_path only (used after approval to point to tenant directory)
+   */
+  updateTenantAssistantPath(id: string, filePath: string): void {
+    const ts = now()
+    this.db.prepare(`
+      UPDATE tenant_assistants
+      SET file_path = ?, updated_at = ?
+      WHERE id = ?
+    `).run(filePath, ts, id)
   }
 
   deleteTenantAssistant(id: string): void {
