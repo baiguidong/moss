@@ -15,7 +15,7 @@
  *   to that dir before spawning scode, which has full write access there)
  */
 
-import { readFile, mkdir, writeFile } from 'fs/promises'
+import { readFile, mkdir, readdir, writeFile } from 'fs/promises'
 import path from 'path'
 import { RuntimeService } from '../../server/runtimeService.js'
 import { DocumentStore, type DocumentRecord, type WikiBuildJob, type WikiRecord } from '../../server/documentStore.js'
@@ -43,10 +43,25 @@ const WIKI_BUILDER_PROMPT = `你是一个 Wiki 构建专家。你的任务是把
 2. 按业务主题(流程 / SOP / FAQ / 异常处理 / 术语 等)切分成多个 chunk md
 3. 每个 chunk:
    - 文件名格式 \`chunk-NNN-<topic-slug>.md\`,NNN 从 001 开始
+   - **必须**以 YAML frontmatter 开头,夹在两行 \`---\` 之间:
+       \`\`\`
+       ---
+       title: 这是这一节的人类可读标题
+       type: chunk
+       topic: <topic-slug>
+       ---
+       \`\`\`
    - 保留原文图片引用(input 中的 ![](images/...) 路径)
    - 单个 chunk 不超过 5000 字
    - 不要编造原文没有的内容
 4. WIKI.md 必须包含:
+   - frontmatter:
+       \`\`\`
+       ---
+       title: <Wiki 总览的人类可读标题>
+       type: index
+       ---
+       \`\`\`
    - 概述(2-3 句话总结这个 Wiki 涵盖什么 — 这段会展示给 Agent 看,影响它何时调用本 Wiki)
    - 文件清单(每个 chunk 一句话描述)
    - 关键术语表(可选,有就写)
@@ -187,6 +202,16 @@ export class WikiJobExecutor {
         throw new Error('build finished but WIKI.md was not produced')
       }
 
+      // Stage 5: write _moss_meta.json so wikiCli and tooling can
+      // inspect the wiki without re-scanning the directory each time.
+      // Includes the page list (WIKI.md + chunk-*.md) with type/title.
+      try {
+        await this.writeWikiMeta(wiki)
+      } catch (err) {
+        console.error('[WikiJobExecutor] failed to write _moss_meta.json:', err)
+        // Non-fatal — wiki is still usable via wikiCli's directory scan.
+      }
+
       this.docStore.updateBuildJob(job.id, {
         status: 'succeeded',
         progress: 100,
@@ -206,6 +231,79 @@ export class WikiJobExecutor {
       console.error(`[WikiJobExecutor] job ${job.id} failed:`, message)
       this.failJob(job.id, job.wikiId, message)
     }
+  }
+
+  /**
+   * Document Center v2: write `_moss_meta.json` summarizing the built
+   * wiki. Format:
+   *   {
+   *     version: 1,
+   *     wikiId, name, description,
+   *     builtAt (epoch ms),
+   *     sourceDocumentIds: [...],
+   *     pages: [{ file, type: 'index'|'chunk', title }]
+   *   }
+   *
+   * Title is extracted from each markdown's first `# ` heading; falls
+   * back to the file name (sans `.md`). wikiCli reads this file to
+   * give the agent a structured table of contents without re-parsing
+   * every chunk on each request.
+   */
+  private async writeWikiMeta(wiki: WikiRecord): Promise<void> {
+    const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+    const mdFiles = entries
+      .filter((e) => e.isFile() && e.name.endsWith('.md'))
+      .map((e) => e.name)
+      .sort()
+
+    type Page = { file: string; type: 'index' | 'chunk'; title: string; topic?: string }
+    const pages: Page[] = []
+    for (const file of mdFiles) {
+      let title = file.replace(/\.md$/, '')
+      let type: 'index' | 'chunk' = file === 'WIKI.md' ? 'index' : 'chunk'
+      let topic: string | undefined
+      try {
+        const content = await readFile(path.join(wiki.storagePath, file), 'utf-8')
+        // Try YAML frontmatter first (preferred, set by wiki-builder prompt)
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
+        if (fmMatch && fmMatch[1]) {
+          const lines = fmMatch[1].split('\n')
+          for (const line of lines) {
+            const kv = line.match(/^(\w+):\s*(.+?)\s*$/)
+            if (!kv) continue
+            const key = kv[1]
+            const value = (kv[2] ?? '').replace(/^['"]|['"]$/g, '').trim()
+            if (key === 'title' && value) title = value
+            else if (key === 'topic' && value) topic = value
+            else if (key === 'type' && (value === 'index' || value === 'chunk')) {
+              type = value
+            }
+          }
+        } else {
+          // Fall back to first H1
+          const m = content.match(/^\s*#\s+(.+?)\s*$/m)
+          if (m && m[1]) title = m[1].trim()
+        }
+      } catch {
+        // ignore — fall back to filename
+      }
+      pages.push({ file, type, title, ...(topic ? { topic } : {}) })
+    }
+
+    const meta = {
+      version: 1 as const,
+      wikiId: wiki.id,
+      name: wiki.name,
+      description: wiki.description,
+      builtAt: Date.now(),
+      sourceDocumentIds: wiki.sourceDocumentIds,
+      pages,
+    }
+    await writeFile(
+      path.join(wiki.storagePath, '_moss_meta.json'),
+      JSON.stringify(meta, null, 2),
+      'utf-8',
+    )
   }
 
   /**
