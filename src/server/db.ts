@@ -1513,11 +1513,19 @@ export class DirectConnectStore {
     name: string
     description?: string | null
     sort_order?: number
+    source_id?: string | null
+    source_path?: string | null
+    auto_managed?: number
+    alias?: string | null
+    last_synced_at?: number | null
   }): void {
     const ts = now()
     this.db.prepare(`
-      INSERT INTO document_tree_nodes (id, org_id, parent_id, name, description, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO document_tree_nodes (
+        id, org_id, parent_id, name, description, sort_order, created_at, updated_at,
+        source_id, source_path, auto_managed, alias, last_synced_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id,
       row.org_id,
@@ -1527,6 +1535,11 @@ export class DirectConnectStore {
       row.sort_order ?? 0,
       ts,
       ts,
+      row.source_id ?? null,
+      row.source_path ?? null,
+      row.auto_managed ?? 0,
+      row.alias ?? null,
+      row.last_synced_at ?? null,
     )
   }
 
@@ -1580,11 +1593,19 @@ export class DirectConnectStore {
     size_bytes: number
     storage_path: string
     uploaded_by: string
+    source_id?: string | null
+    external_id?: string | null
+    external_etag?: string | null
+    content_sha256?: string | null
   }): void {
     const ts = now()
     this.db.prepare(`
-      INSERT INTO documents (id, org_id, node_id, file_name, mime_type, size_bytes, storage_path, uploaded_by, uploaded_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (
+        id, org_id, node_id, file_name, mime_type, size_bytes, storage_path,
+        uploaded_by, uploaded_at,
+        source_id, external_id, external_etag, content_sha256
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id,
       row.org_id,
@@ -1595,6 +1616,10 @@ export class DirectConnectStore {
       row.storage_path,
       row.uploaded_by,
       ts,
+      row.source_id ?? null,
+      row.external_id ?? null,
+      row.external_etag ?? null,
+      row.content_sha256 ?? null,
     )
   }
 
