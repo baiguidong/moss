@@ -27,17 +27,15 @@
 
 import { createHash, randomUUID } from 'crypto'
 import { mkdir, rm, writeFile } from 'fs/promises'
-import path from 'path'
 import type { DirectConnectStore } from '../db.js'
 import type { DocumentStore } from '../documentStore.js'
-import { MOSS_DOCS_DIR, getDocumentDir, getDocumentStoragePath } from '../../utils/wikis/localWikiDirectories.js'
+import { getDocumentDir, getDocumentStoragePath } from '../../utils/wikis/localWikiDirectories.js'
 import { createConnector } from './types.js'
 import type { ExternalFileNode, ExternalSourceConfig, ExternalSourceCredentials } from './types.js'
 
 const TICK_INTERVAL_MS = 30_000
 const SOFT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60_000
 const DAILY_CLEANUP_INTERVAL_MS = 24 * 60 * 60_000
-const SECRETS_DIR_ENV = 'MOSS_SECRETS_DIR'
 
 type ExternalSourceRow = {
   id: string
@@ -568,25 +566,14 @@ export class SourceSyncWorker {
   }
 
   /**
-   * Resolve credentials for the source. P0 implementation reads from a
-   * file under $MOSS_SECRETS_DIR/<key>.json (created by the AdminHub
-   * route handler when the source is configured). Phase 2 will migrate
-   * to an in-DB encrypted store.
+   * Resolve credentials for the source via the AES-256-GCM secret store
+   * (see ./secrets.ts). Returns an empty object on missing key / failure.
    */
   private async loadCredentials(source: ExternalSourceRow): Promise<ExternalSourceCredentials> {
     if (!source.credentials_secret_key) return {}
     try {
-      const dir = process.env[SECRETS_DIR_ENV] || path.join(MOSS_DOCS_DIR, '..', 'secrets')
-      const file = path.join(dir, `${source.credentials_secret_key}.json`)
-      const { readFile } = await import('fs/promises')
-      const content = await readFile(file, 'utf8')
-      const parsed = JSON.parse(content) as unknown
-      if (!parsed || typeof parsed !== 'object') return {}
-      const out: ExternalSourceCredentials = {}
-      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof v === 'string') out[k] = v
-      }
-      return out
+      const { readSecret } = await import('./secrets.js')
+      return await readSecret(source.credentials_secret_key)
     } catch (err) {
       console.error(
         `[SourceSyncWorker] failed to load credentials for ${source.id}:`,

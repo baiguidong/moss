@@ -67,6 +67,11 @@ import { getChannelManager } from '../channels/core/ChannelManager.js'
 import { getPairingService } from '../channels/pairing/PairingService.js'
 import { MossActionExecutor } from '../channels/gateway/MossActionExecutor.js'
 import { WikiJobExecutor } from '../channels/gateway/WikiJobExecutor.js'
+import { SourceSyncWorker } from './sources/syncWorker.js'
+import { storeSecret, deleteSecret } from './sources/secrets.js'
+// Connector implementations register themselves on import.
+import './sources/filesystem.js'
+import { randomUUID } from 'crypto'
 import { getUserProfile } from './api/userProfile.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -144,6 +149,33 @@ function serializeSession(session: {
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
+  }
+}
+
+function serializeExternalSource(row: Record<string, unknown>) {
+  let configParsed: Record<string, unknown> = {}
+  try {
+    configParsed = JSON.parse(String(row.config_json ?? '{}')) as Record<string, unknown>
+  } catch {
+    configParsed = {}
+  }
+  return {
+    id: String(row.id),
+    orgId: String(row.org_id),
+    type: String(row.type),
+    name: String(row.name),
+    config: configParsed,
+    // Never return the credential blob — just whether one is set.
+    hasCredentials: typeof row.credentials_secret_key === 'string' && row.credentials_secret_key.length > 0,
+    syncIntervalSec: Number(row.sync_interval_sec ?? 3600),
+    autoBuildEnabled: Number(row.auto_build_enabled ?? 0) === 1,
+    enabled: Number(row.enabled ?? 0) === 1,
+    lastSyncAt: row.last_sync_at == null ? null : Number(row.last_sync_at),
+    lastSyncStatus: typeof row.last_sync_status === 'string' ? row.last_sync_status : null,
+    lastSyncError: typeof row.last_sync_error === 'string' ? row.last_sync_error : null,
+    createdBy: String(row.created_by),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
   }
 }
 
@@ -520,6 +552,32 @@ export function startServer(
   // `wiki-builder` assistant.
   const wikiJobExecutor = new WikiJobExecutor(runtime, documentStore, runtime.store)
   wikiJobExecutor.start()
+
+  // Document Center v2: start the external source sync worker. Polls
+  // enabled external_sources at their configured interval and mirrors
+  // their trees into document_tree_nodes + documents. Marks wikis as
+  // needs_rebuild when source content changes. See sources/syncWorker.ts.
+  const sourceSyncWorker = new SourceSyncWorker(
+    runtime.store,
+    documentStore,
+    (wikiId, _orgId, _sourceId) => {
+      // Auto-build path: enqueue a build job. The WikiJobExecutor will
+      // pick it up on its next tick. Only fires when the source has
+      // auto_build_enabled = 1.
+      try {
+        const wiki = documentStore.getWikiById(wikiId)
+        if (!wiki) return
+        runtime.store.createWikiBuildJob({
+          id: randomUUID(),
+          wiki_id: wikiId,
+          triggered_by: 'source-sync',
+        })
+      } catch (err) {
+        console.error('[server] failed to enqueue auto-build:', err)
+      }
+    },
+  )
+  sourceSyncWorker.start()
 
   // Initialize ChannelManager and PairingService with database
   // 初始化 ChannelManager 和 PairingService
@@ -1262,6 +1320,202 @@ export function startServer(
         req.on('close', () => {
           clearInterval(timer)
         })
+        return
+      }
+
+
+      // ============================================================
+      // Document Center v2: /api/v1/external-sources/*
+      // ============================================================
+
+      if (req.method === 'GET' && pathname === '/api/v1/external-sources') {
+        authService.requireScope(auth, 'admin:documents')
+        const rows = runtime.store.listExternalSources(auth.orgId)
+        writeJson(res, 200, { sources: rows.map(serializeExternalSource) })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/external-sources/connector-types') {
+        authService.requireScope(auth, 'admin:documents')
+        const { listConnectorTypes } = await import('./sources/types.js')
+        writeJson(res, 200, { types: listConnectorTypes() })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/external-sources') {
+        authService.requireScope(auth, 'admin:documents')
+        const body = await readJsonBody(req)
+        const type = typeof body.type === 'string' ? body.type : ''
+        const name = typeof body.name === 'string' ? body.name.trim() : ''
+        const config = body.config && typeof body.config === 'object' ? body.config as Record<string, unknown> : {}
+        const credentials = body.credentials && typeof body.credentials === 'object'
+          ? body.credentials as Record<string, unknown>
+          : {}
+        const syncIntervalSec = typeof body.sync_interval_sec === 'number'
+          ? Math.max(60, Math.floor(body.sync_interval_sec))
+          : 3600
+        const autoBuildEnabled = body.auto_build_enabled === true ? 1 : 0
+
+        if (!type || !name) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'type and name are required' } })
+          return
+        }
+
+        let secretKey: string | null = null
+        if (Object.keys(credentials).length > 0) {
+          const stringOnly: Record<string, string> = {}
+          for (const [k, v] of Object.entries(credentials)) {
+            if (typeof v === 'string') stringOnly[k] = v
+          }
+          secretKey = await storeSecret(stringOnly)
+        }
+
+        const id = randomUUID()
+        try {
+          runtime.store.createExternalSource({
+            id,
+            org_id: auth.orgId,
+            type,
+            name,
+            config_json: JSON.stringify(config),
+            credentials_secret_key: secretKey,
+            sync_interval_sec: syncIntervalSec,
+            auto_build_enabled: autoBuildEnabled,
+            created_by: auth.userId,
+          })
+          const row = runtime.store.getExternalSource(id, auth.orgId)
+          writeJson(res, 200, row ? serializeExternalSource(row) : { id })
+        } catch (err) {
+          if (secretKey) await deleteSecret(secretKey).catch(() => {})
+          writeJson(res, 400, {
+            error: { code: 'create_failed', message: err instanceof Error ? err.message : String(err) },
+          })
+        }
+        return
+      }
+
+      const externalSourceItemMatch = pathname.match(/^\/api\/v1\/external-sources\/([^/]+)$/)
+      if (req.method === 'GET' && externalSourceItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const id = externalSourceItemMatch[1] || ''
+        const row = runtime.store.getExternalSource(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'external source not found' } })
+          return
+        }
+        writeJson(res, 200, serializeExternalSource(row))
+        return
+      }
+
+      if (req.method === 'PATCH' && externalSourceItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const id = externalSourceItemMatch[1] || ''
+        const existing = runtime.store.getExternalSource(id, auth.orgId)
+        if (!existing) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'external source not found' } })
+          return
+        }
+        const body = await readJsonBody(req)
+        const updates: {
+          name?: string
+          config_json?: string
+          credentials_secret_key?: string | null
+          sync_interval_sec?: number
+          auto_build_enabled?: number
+          enabled?: number
+        } = {}
+        if (typeof body.name === 'string') updates.name = body.name.trim()
+        if (body.config && typeof body.config === 'object') {
+          updates.config_json = JSON.stringify(body.config)
+        }
+        if (typeof body.sync_interval_sec === 'number') {
+          updates.sync_interval_sec = Math.max(60, Math.floor(body.sync_interval_sec))
+        }
+        if (body.auto_build_enabled !== undefined) {
+          updates.auto_build_enabled = body.auto_build_enabled === true ? 1 : 0
+        }
+        if (body.enabled !== undefined) {
+          updates.enabled = body.enabled === true ? 1 : 0
+        }
+        // Credential rotation: if `credentials` provided, store new secret and replace.
+        if (body.credentials && typeof body.credentials === 'object') {
+          const stringOnly: Record<string, string> = {}
+          for (const [k, v] of Object.entries(body.credentials as Record<string, unknown>)) {
+            if (typeof v === 'string') stringOnly[k] = v
+          }
+          if (Object.keys(stringOnly).length > 0) {
+            const newKey = await storeSecret(stringOnly)
+            const oldKey = (existing as Record<string, unknown>).credentials_secret_key
+            updates.credentials_secret_key = newKey
+            if (typeof oldKey === 'string' && oldKey) {
+              await deleteSecret(oldKey).catch(() => {})
+            }
+          }
+        }
+        runtime.store.updateExternalSource(id, auth.orgId, updates)
+        const row = runtime.store.getExternalSource(id, auth.orgId)
+        writeJson(res, 200, row ? serializeExternalSource(row) : { id })
+        return
+      }
+
+      if (req.method === 'DELETE' && externalSourceItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const id = externalSourceItemMatch[1] || ''
+        const existing = runtime.store.getExternalSource(id, auth.orgId)
+        if (existing) {
+          const oldKey = (existing as Record<string, unknown>).credentials_secret_key
+          if (typeof oldKey === 'string' && oldKey) {
+            await deleteSecret(oldKey).catch(() => {})
+          }
+          runtime.store.deleteExternalSource(id, auth.orgId)
+        }
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      const externalSourceTestMatch = pathname.match(/^\/api\/v1\/external-sources\/([^/]+)\/test$/)
+      if (req.method === 'POST' && externalSourceTestMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const id = externalSourceTestMatch[1] || ''
+        const row = runtime.store.getExternalSource(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'external source not found' } })
+          return
+        }
+        try {
+          const { createConnector } = await import('./sources/types.js')
+          const { readSecret } = await import('./sources/secrets.js')
+          const r = row as Record<string, unknown>
+          const config = JSON.parse(String(r.config_json)) as Record<string, unknown>
+          const credentials = typeof r.credentials_secret_key === 'string' && r.credentials_secret_key
+            ? await readSecret(r.credentials_secret_key)
+            : {}
+          const connector = createConnector(String(r.type))
+          await connector.init(config as { rootPath: string }, credentials)
+          const result = await connector.testConnection()
+          writeJson(res, 200, result)
+        } catch (err) {
+          writeJson(res, 200, {
+            ok: false,
+            message: err instanceof Error ? err.message : String(err),
+          })
+        }
+        return
+      }
+
+      const externalSourceSyncMatch = pathname.match(/^\/api\/v1\/external-sources\/([^/]+)\/sync$/)
+      if (req.method === 'POST' && externalSourceSyncMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const id = externalSourceSyncMatch[1] || ''
+        const row = runtime.store.getExternalSource(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'external source not found' } })
+          return
+        }
+        sourceSyncWorker
+          .syncSourceNow(id)
+          .catch((err) => console.error('[server] manual sync failed:', err))
+        writeJson(res, 202, { ok: true, message: 'sync started' })
         return
       }
 
@@ -3079,6 +3333,7 @@ export function startServer(
     ready,
     stop: async () => {
       wikiJobExecutor.stop()
+      sourceSyncWorker.stop()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {
