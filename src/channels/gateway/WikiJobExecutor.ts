@@ -198,6 +198,8 @@ export class WikiJobExecutor {
         lastBuiltAt: Date.now(),
         lastBuildError: null,
       })
+      // Document Center v2: clear needs_rebuild on successful build.
+      this.db.markWikiNeedsRebuild(job.wikiId, false)
       console.log(`[WikiJobExecutor] job ${job.id} succeeded`)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

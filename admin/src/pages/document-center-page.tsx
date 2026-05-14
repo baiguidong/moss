@@ -5,6 +5,7 @@ import {
   FileText,
   FolderTree,
   Loader2,
+  Lock,
   Pencil,
   Plus,
   Trash2,
@@ -57,6 +58,7 @@ import {
   getWikiBuildStatus,
   listDocumentsForNode,
   listWikis,
+  setDocumentTreeNodeAlias,
   subscribeWikiBuildEvents,
   triggerWikiBuild,
   updateDocumentTreeNode,
@@ -115,6 +117,11 @@ export default function DocumentCenterPage() {
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentTreeNode | null>(null)
+
+  // v2: alias dialog for auto_managed nodes.
+  const [aliasOpen, setAliasOpen] = useState(false)
+  const [aliasTarget, setAliasTarget] = useState<DocumentTreeNode | null>(null)
+  const [aliasValue, setAliasValue] = useState('')
 
   const [createWikiOpen, setCreateWikiOpen] = useState(false)
   const [wikiName, setWikiName] = useState('')
@@ -244,6 +251,25 @@ export default function DocumentCenterPage() {
   const handleOpenDelete = (node: DocumentTreeNode) => {
     setDeleteTarget(node)
     setDeleteOpen(true)
+  }
+
+  const handleOpenSetAlias = (node: DocumentTreeNode) => {
+    setAliasTarget(node)
+    setAliasValue(node.alias ?? '')
+    setAliasOpen(true)
+  }
+
+  const handleSetAlias = async () => {
+    if (!aliasTarget) return
+    try {
+      const next = aliasValue.trim()
+      await setDocumentTreeNodeAlias(aliasTarget.id, next || null)
+      setAliasOpen(false)
+      await refresh()
+      toast.success('已更新别名')
+    } catch (err) {
+      toast.error(`更新失败:${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const handleDeleteNode = async () => {
@@ -462,6 +488,7 @@ export default function DocumentCenterPage() {
                     onCreateChild={handleOpenCreateChild}
                     onRename={handleOpenRename}
                     onDelete={handleOpenDelete}
+                    onSetAlias={handleOpenSetAlias}
                   />
                 ))}
               </ul>
@@ -583,7 +610,18 @@ export default function DocumentCenterPage() {
                           <CardContent className="space-y-2 p-4">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-sm font-medium">{wiki.name}</p>
-                              <WikiStatusBadge status={wiki.buildStatus} />
+                              <div className="flex items-center gap-1.5">
+                                {wiki.needsRebuild && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="bg-amber-100 text-amber-700 border-amber-200"
+                                    title="源文档已更新,建议重新构建以获取最新内容"
+                                  >
+                                    建议重建
+                                  </Badge>
+                                )}
+                                <WikiStatusBadge status={wiki.buildStatus} />
+                              </div>
                             </div>
                             {wiki.description && (
                               <p className="text-xs text-muted-foreground">{wiki.description}</p>
@@ -693,6 +731,34 @@ export default function DocumentCenterPage() {
         </DialogContent>
       </Dialog>
 
+      {/* v2: Alias dialog (auto_managed nodes) */}
+      <Dialog open={aliasOpen} onOpenChange={setAliasOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>设置显示别名</DialogTitle>
+            <DialogDescription>
+              「{aliasTarget?.name}」由外部数据源同步,原名不可改。在此设置一个仅用于展示的别名,清空则恢复原名。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1 py-2">
+            <Label htmlFor="alias-input">别名</Label>
+            <Input
+              id="alias-input"
+              value={aliasValue}
+              onChange={e => setAliasValue(e.target.value)}
+              placeholder="例如:运营 SOP(锐锢)"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAliasOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={() => void handleSetAlias()}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete confirm */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
@@ -790,6 +856,7 @@ function TreeRow({
   onCreateChild,
   onRename,
   onDelete,
+  onSetAlias,
 }: {
   branch: DocTreeBranch
   depth: number
@@ -800,10 +867,13 @@ function TreeRow({
   onCreateChild: (n: DocumentTreeNode) => void
   onRename: (n: DocumentTreeNode) => void
   onDelete: (n: DocumentTreeNode) => void
+  onSetAlias: (n: DocumentTreeNode) => void
 }) {
   const hasChildren = branch.children.length > 0
   const isExpanded = expanded.has(branch.id)
   const isSelected = selectedId === branch.id
+  const isAuto = branch.autoManaged === true
+  const displayName = isAuto && branch.alias ? `${branch.alias} (${branch.name})` : branch.name
 
   return (
     <li>
@@ -811,6 +881,7 @@ function TreeRow({
         className={cn(
           'group flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer hover:bg-accent',
           isSelected && 'bg-primary/10 text-primary',
+          isAuto && 'opacity-90',
         )}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={() => onSelect(branch.id)}
@@ -830,49 +901,74 @@ function TreeRow({
             <span className="inline-block size-4" />
           )}
         </button>
-        <span className="flex-1 truncate text-sm">{branch.name}</span>
+        {isAuto && (
+          <Lock
+            className="size-3 text-muted-foreground shrink-0"
+            aria-label="自动同步节点(不可改名/删除)"
+          />
+        )}
+        <span className="flex-1 truncate text-sm">{displayName}</span>
         {hasChildren && (
           <Badge variant="outline" className="ml-1">
             {branch.children.length}
           </Badge>
         )}
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={(e) => {
-              e.stopPropagation()
-              onCreateChild(branch)
-            }}
-            title="新建子节点"
-          >
-            <Plus className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={(e) => {
-              e.stopPropagation()
-              onRename(branch)
-            }}
-            title="重命名"
-          >
-            <Pencil className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(branch)
-            }}
-            title="删除"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+          {!isAuto && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={(e) => {
+                e.stopPropagation()
+                onCreateChild(branch)
+              }}
+              title="新建子节点"
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          )}
+          {isAuto ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSetAlias(branch)
+              }}
+              title="设置显示别名"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRename(branch)
+              }}
+              title="重命名"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          )}
+          {!isAuto && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete(branch)
+              }}
+              title="删除"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
         </div>
       </div>
       {hasChildren && isExpanded && (
@@ -889,6 +985,7 @@ function TreeRow({
               onCreateChild={onCreateChild}
               onRename={onRename}
               onDelete={onDelete}
+              onSetAlias={onSetAlias}
             />
           ))}
         </ul>

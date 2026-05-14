@@ -24,6 +24,12 @@ export type DocumentTreeNode = {
   sortOrder: number
   createdAt: number
   updatedAt: number
+  // Document Center v2: source-managed metadata.
+  sourceId: string | null
+  sourcePath: string | null
+  autoManaged: boolean
+  alias: string | null
+  lastSyncedAt: number | null
 }
 
 export type DocumentRecord = {
@@ -52,6 +58,8 @@ export type WikiRecord = {
   createdBy: string
   createdAt: number
   updatedAt: number
+  // Document Center v2: set by SourceSyncWorker when a source doc changes.
+  needsRebuild: boolean
 }
 
 export type WikiBuildJob = {
@@ -84,6 +92,11 @@ function mapTreeNode(row: SqlRow): DocumentTreeNode {
     sortOrder: Number(row.sort_order ?? 0),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    sourceId: typeof row.source_id === 'string' ? row.source_id : null,
+    sourcePath: typeof row.source_path === 'string' ? row.source_path : null,
+    autoManaged: Number(row.auto_managed ?? 0) === 1,
+    alias: typeof row.alias === 'string' ? row.alias : null,
+    lastSyncedAt: row.last_synced_at == null ? null : Number(row.last_synced_at),
   }
 }
 
@@ -129,6 +142,7 @@ function mapWiki(row: SqlRow): WikiRecord {
     createdBy: String(row.created_by),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    needsRebuild: Number(row.needs_rebuild ?? 0) === 1,
   }
 }
 

@@ -1024,6 +1024,18 @@ export function startServer(
         authService.requireScope(auth, 'admin:documents')
         const nodeId = documentNodeMatch[1] || ''
         const body = await readJsonBody(req)
+        // v2: auto_managed nodes cannot be renamed/moved/described by admins —
+        // only their alias (via /alias endpoint below). Sync worker owns name.
+        const existingNode = documentStore.getNode(nodeId, auth.orgId)
+        if (existingNode?.autoManaged) {
+          writeJson(res, 400, {
+            error: {
+              code: 'auto_managed',
+              message: '该节点由外部数据源管理,无法直接修改。请使用「设置别名」或修改源后等待同步。',
+            },
+          })
+          return
+        }
         try {
           const updated = documentStore.updateNode(nodeId, auth.orgId, {
             parentId:
@@ -1053,8 +1065,39 @@ export function startServer(
       if (req.method === 'DELETE' && documentNodeMatch) {
         authService.requireScope(auth, 'admin:documents')
         const nodeId = documentNodeMatch[1] || ''
+        // v2: auto_managed nodes can only be removed by deleting the
+        // source or by sync's reverse-sweep. Admins delete the SOURCE,
+        // not individual mirrored nodes.
+        const existing = documentStore.getNode(nodeId, auth.orgId)
+        if (existing?.autoManaged) {
+          writeJson(res, 400, {
+            error: {
+              code: 'auto_managed',
+              message: '该节点由外部数据源管理,无法直接删除。请在「外部数据源」中删除整个源,或在源系统中删除原文件后等待同步。',
+            },
+          })
+          return
+        }
         await documentStore.deleteNode(nodeId, auth.orgId)
         writeJson(res, 200, { ok: true })
+        return
+      }
+
+      // v2: PATCH alias on auto_managed nodes. (No-op on non-auto_managed
+      // since rename is the regular path for those.)
+      const aliasMatch = pathname.match(/^\/api\/v1\/documents\/tree\/nodes\/([^/]+)\/alias$/)
+      if (req.method === 'PATCH' && aliasMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const nodeId = aliasMatch[1] || ''
+        const body = await readJsonBody(req)
+        const alias = typeof body.alias === 'string'
+          ? (body.alias.trim() || null)
+          : body.alias === null
+            ? null
+            : null
+        runtime.store.setTreeNodeAlias(nodeId, auth.orgId, alias)
+        const updated = documentStore.getNode(nodeId, auth.orgId)
+        writeJson(res, 200, updated ?? { ok: true })
         return
       }
 

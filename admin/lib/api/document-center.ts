@@ -14,6 +14,13 @@ export type DocumentTreeNode = {
   sortOrder: number
   createdAt: number
   updatedAt: number
+  // Document Center v2: source-managed metadata (optional — admin-created
+  // nodes leave these blank).
+  sourceId?: string | null
+  sourcePath?: string | null
+  autoManaged?: boolean
+  alias?: string | null
+  lastSyncedAt?: number | null
 }
 
 export type DocumentRecord = {
@@ -44,6 +51,9 @@ export type WikiRecord = {
   createdBy: string
   createdAt: number
   updatedAt: number
+  // Document Center v2: set to true by SourceSyncWorker when a referenced
+  // document's sha256 changes. Shown as "建议重建" badge in AdminHub.
+  needsRebuild?: boolean
 }
 
 export type WikiBuildJob = {
@@ -92,6 +102,20 @@ export function updateDocumentTreeNode(
 
 export function deleteDocumentTreeNode(id: string): Promise<{ ok: boolean }> {
   return authClient.delete(`/api/v1/documents/tree/nodes/${id}`)
+}
+
+/**
+ * Document Center v2: set or clear the display alias for an
+ * auto_managed node. Real `name` is fixed by the upstream source;
+ * `alias` is shown to humans without affecting sync.
+ */
+export function setDocumentTreeNodeAlias(
+  id: string,
+  alias: string | null,
+): Promise<DocumentTreeNode> {
+  return authClient.patch<DocumentTreeNode>(`/api/v1/documents/tree/nodes/${id}/alias`, {
+    alias,
+  })
 }
 
 // ============================================================
