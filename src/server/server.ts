@@ -653,8 +653,11 @@ export function startServer(
   // Document Center v2: seed builtin system assistants (wiki-builder etc.)
   // from the repo into $MOSS_HOME/assistants/system/ if not already present.
   // Customers can override by editing files in place — subsequent boots
-  // skip existing dirs.
-  await seedBuiltinSystemAssistants()
+  // skip existing dirs. Fire-and-forget (best-effort) — boot must not
+  // block on this, and failures don't affect server health.
+  seedBuiltinSystemAssistants().catch((err) => {
+    console.warn('[seedBuiltinSystemAssistants] background seed failed:', err)
+  })
 
   // Document Center: start the wiki build worker. Polls wiki_build_jobs
   // and runs each queued job through RuntimeService with the system
