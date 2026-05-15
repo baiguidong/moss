@@ -319,6 +319,118 @@ async function copyAssistantToTenantDirByPath(sourceDir: string): Promise<void> 
   }
 }
 
+/**
+ * Seed builtin system assistants from the repo (`assistants/<name>/`) to
+ * `$MOSS_HOME/assistants/system/<name>/` on server boot.
+ *
+ * Behavior:
+ *   - Only copies dirs that don't already exist on disk (so client edits
+ *     to `wiki-builder.md` etc. survive server restarts).
+ *   - Source dir search order: cwd/assistants → server-bundle-relative
+ *     ../assistants → ../../assistants. Allows both dev (cwd in repo root)
+ *     and packaged (`bin/moss-server.mjs` + `assistants/` next to it)
+ *     deployments to find the source.
+ *   - Best-effort: failures log a warning but never abort startup.
+ */
+async function seedBuiltinSystemAssistants(): Promise<void> {
+  const currentDir = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    resolve(process.cwd(), 'assistants'),
+    resolve(currentDir, '..', 'assistants'),
+    resolve(currentDir, '..', '..', 'assistants'),
+  ]
+  let sourceRoot: string | null = null
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      sourceRoot = candidate
+      break
+    }
+  }
+  if (!sourceRoot) {
+    console.log('[seedBuiltinSystemAssistants] no assistants/ source dir found, skipping')
+    return
+  }
+
+  const mossHome = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+  const systemDir = join(mossHome, 'assistants', 'system')
+  await mkdir(systemDir, { recursive: true })
+
+  let entries
+  try {
+    entries = await readdir(sourceRoot, { withFileTypes: true })
+  } catch (err) {
+    console.warn('[seedBuiltinSystemAssistants] readdir failed:', err)
+    return
+  }
+
+  let seeded = 0
+  let skipped = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const sourceDir = join(sourceRoot, entry.name)
+    const targetDir = join(systemDir, entry.name)
+    if (existsSync(targetDir)) {
+      skipped++
+      continue
+    }
+    try {
+      cpSync(sourceDir, targetDir, { recursive: true })
+      seeded++
+    } catch (err) {
+      console.warn(`[seedBuiltinSystemAssistants] copy failed for ${entry.name}:`, err)
+    }
+  }
+  if (seeded > 0 || skipped > 0) {
+    console.log(
+      `[seedBuiltinSystemAssistants] seeded ${seeded} new, ${skipped} already present at ${systemDir}`,
+    )
+  }
+}
+
+/**
+ * Boot-time sanity check on `$MOSS_HOME/settings.json`.
+ *
+ * settings.json drives the model / API URL / API key the build worker
+ * uses to talk to the LLM provider. If it's missing / empty / has no
+ * model or apiKey, wiki builds will hang silently in "Agent 正在阅读
+ * 文档" with no obvious error — past experience: 2 hours debugged once.
+ *
+ * This warns loudly on boot so the operator sees the problem immediately.
+ * Non-fatal — server still starts, since (a) settings can be set later
+ * via AdminHub, (b) non-build features don't depend on these fields.
+ */
+function checkSettingsOnBoot(): void {
+  const settings = getSystemSettings()
+  const banner = '━'.repeat(60)
+  if (!settings.settingsExists) {
+    console.warn(banner)
+    console.warn('[settings] ⚠  $MOSS_HOME/settings.json does NOT exist.')
+    console.warn('[settings]    Open AdminHub → 系统设置 and click 保存 to create one,')
+    console.warn('[settings]    otherwise wiki build sessions will not have a model/API key configured.')
+    console.warn(banner)
+    return
+  }
+  if (!settings.settingsLoaded) {
+    console.warn(banner)
+    console.warn(`[settings] ⚠  $MOSS_HOME/settings.json failed to parse: ${settings.settingsParseError || 'unknown error'}`)
+    console.warn('[settings]    File is being treated as empty. Wiki builds will silently fail.')
+    console.warn('[settings]    Open AdminHub → 系统设置 and click 保存 to rewrite it.')
+    console.warn(banner)
+    return
+  }
+  const missing: string[] = []
+  if (!settings.model || !settings.model.trim()) missing.push('model')
+  if (!settings.url || !settings.url.trim()) missing.push('url')
+  if (!settings.apiKey || !settings.apiKey.trim()) missing.push('apiKey')
+  if (missing.length > 0) {
+    console.warn(banner)
+    console.warn(`[settings] ⚠  $MOSS_HOME/settings.json is missing critical fields: ${missing.join(', ')}`)
+    console.warn('[settings]    Wiki build sessions will hang silently when invoked.')
+    console.warn('[settings]    Set them in AdminHub → 系统设置.')
+    console.warn(banner)
+  }
+}
+
 function getBearerToken(req: http.IncomingMessage): string | null {
   const header = req.headers.authorization
   if (typeof header !== 'string') {
@@ -581,6 +693,20 @@ export function startServer(
   const wss = new WebSocketServer({ noServer: true })
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
   const documentStore = new DocumentStore(runtime.store)
+
+  // Document Center v2: seed builtin system assistants (wiki-builder etc.)
+  // from the repo into $MOSS_HOME/assistants/system/ if not already present.
+  // Customers can override by editing files in place — subsequent boots
+  // skip existing dirs. Fire-and-forget (best-effort) — boot must not
+  // block on this, and failures don't affect server health.
+  seedBuiltinSystemAssistants().catch((err) => {
+    console.warn('[seedBuiltinSystemAssistants] background seed failed:', err)
+  })
+
+  // Boot-time settings.json sanity check — warns if model/url/apiKey
+  // are missing so the operator doesn't discover it the hard way
+  // (wiki builds hanging silently for minutes).
+  checkSettingsOnBoot()
 
   // Document Center: start the wiki build worker. Polls wiki_build_jobs
   // and runs each queued job through RuntimeService with the system
@@ -946,7 +1072,24 @@ export function startServer(
         return
       }
 
-      const auth = authenticateRequest(req, authService)
+      // Document Center v2: SSE build-events route accepts ?token=xxx as
+      // a fallback because browser EventSource can't send custom headers.
+      // Scope: only this single route; getBearerToken stays header-only
+      // everywhere else.
+      let auth = authenticateRequest(req, authService)
+      if (!auth && req.method === 'GET') {
+        const isSseBuildEvents = /^\/api\/v1\/wikis\/[^/]+\/build-events$/.test(pathname)
+        if (isSseBuildEvents) {
+          const queryToken = url.searchParams.get('token')
+          if (queryToken) {
+            try {
+              auth = authService.verifyAccessToken(queryToken)
+            } catch {
+              // fall through to 401 below
+            }
+          }
+        }
+      }
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }

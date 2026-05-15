@@ -1,4 +1,4 @@
-import { authClient } from './client'
+import { authClient, getToken } from './client'
 
 // ============================================================
 // Document Center API types — mirror server-side DocumentStore types
@@ -247,13 +247,14 @@ export function subscribeWikiBuildEvents(
     onError?: (err: Event) => void
   },
 ): () => void {
-  // EventSource doesn't support custom headers — token has to ride along
-  // as a query param. The server falls back to its standard auth path
-  // when a Bearer header is missing. (We rely on cookies via
-  // `credentials: 'include'` semantics provided by same-origin EventSource.)
-  // For cross-origin we currently degrade to one-shot poll; deemed
-  // acceptable for P0 since AdminHub is served by moss-server itself.
-  const url = `/api/v1/wikis/${encodeURIComponent(id)}/build-events`
+  // EventSource doesn't support custom headers, so the bearer token is
+  // appended as a `?token=` query param. The server has a route-scoped
+  // fallback for /api/v1/wikis/:id/build-events that accepts it; no
+  // other route honors this query param.
+  const token = getToken()
+  const url = `/api/v1/wikis/${encodeURIComponent(id)}/build-events${
+    token ? `?token=${encodeURIComponent(token)}` : ''
+  }`
   let es: EventSource | null
   try {
     es = new EventSource(url, { withCredentials: true })

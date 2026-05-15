@@ -38,14 +38,67 @@ export type ParseResult = {
 }
 
 /**
+ * Sniff the first 8 bytes of a file to detect binary formats whose
+ * extension was lying — e.g. a docx renamed to `.md`. Returns the
+ * format hint or null if it's plain text / unknown.
+ *
+ * Magic numbers:
+ *   ZIP / docx / xlsx / pptx / odt — `50 4B 03 04` (`PK..`)
+ *   PDF                            — `25 50 44 46` (`%PDF`)
+ *   OLE / legacy .doc              — `D0 CF 11 E0`
+ */
+async function sniffMagic(filePath: string): Promise<'zip' | 'pdf' | 'ole' | null> {
+  try {
+    const handle = await import('fs/promises').then((m) => m.open(filePath, 'r'))
+    try {
+      const buf = Buffer.alloc(8)
+      const { bytesRead } = await handle.read(buf, 0, 8, 0)
+      if (bytesRead < 4) return null
+      if (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) return 'zip'
+      if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'pdf'
+      if (buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0) return 'ole'
+      return null
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Convert a document to markdown. Returns null if no available parser
  * recognises the extension or if conversion failed.
+ *
+ * Note: before falling into the .md/.txt passthrough we sniff the
+ * first few bytes — files whose extension lies (e.g. a docx renamed
+ * `.md` for sloppy convenience, common in shared drives) get routed
+ * to mammoth/pdf-parse/libreoffice based on actual content, not the
+ * misleading extension.
  */
 export async function parseDocument(
   filePath: string,
   fileName: string,
 ): Promise<ParseResult | null> {
   const ext = path.extname(fileName).toLowerCase()
+
+  // Content sniff overrides extension when they disagree.
+  const magic = await sniffMagic(filePath)
+  if (magic === 'zip') {
+    // Try mammoth first (.docx), fall through to libreoffice for xlsx/pptx
+    const r = await parseDocxWithMammoth(filePath).catch(() => null)
+    if (r) return r
+    return parseWithLibreOffice(filePath, fileName).catch(() => null)
+  }
+  if (magic === 'pdf') {
+    const r = await parsePdfWithPdfParse(filePath).catch(() => null)
+    if (r) return r
+    return parseWithLibreOffice(filePath, fileName).catch(() => null)
+  }
+  if (magic === 'ole') {
+    // legacy .doc / .xls / .ppt — libreoffice handles
+    return parseWithLibreOffice(filePath, fileName).catch(() => null)
+  }
 
   if (ext === '.md' || ext === '.markdown' || ext === '.txt') {
     const content = await readFile(filePath, 'utf8').catch(() => null)

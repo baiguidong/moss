@@ -90,13 +90,17 @@ export class DockerBackend implements SessionBackend {
       'MOSS_SESSION_SCOPES',
       'MOSS_ASSISTANT_NAME',
       'MOSS_DEFAULT_MODEL',
+      'MOSS_SERVER_URL',
+      'SESSION_TOKEN',
       'ANTHROPIC_API_KEY',
       'ANTHROPIC_BASE_URL',
       'ANTHROPIC_AUTH_TOKEN',
       'PROXY_AUTH_TOKEN',
     ]
 
-    const env = buildSessionEnv(options)
+    const env = buildSessionEnv(options, {
+      ...(options.sessionToken ? { SESSION_TOKEN: options.sessionToken } : {}),
+    })
 
     const dotNexusDir = join(configDir, '.nexus', 'sudocode')
     await mkdir(dotNexusDir, { recursive: true })

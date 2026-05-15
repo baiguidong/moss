@@ -52,6 +52,13 @@ export type BackendSpawnOptions = {
   runtime?: SessionRuntimeOptions
   assistantName?: string
   enabledSkillNames?: string[]
+  /**
+   * Document Center v2: pre-signed JWT (signed by RuntimeService via
+   * authService.issueWikiSession) for the in-container `wiki` CLI.
+   * Threaded by SessionRunnerDaemon -> backend -> buildSessionEnv as
+   * SESSION_TOKEN env var.
+   */
+  sessionToken?: string
 }
 
 export type BackendHandle = {

@@ -311,6 +311,14 @@ export type RunnerManifest = {
     dangerouslySkipPermissions: boolean
     runtime: SessionRuntimeInfo
     assistantName?: string
+    /**
+     * Document Center v2: pre-signed JWT for the in-container `wiki` CLI
+     * to call /api/v1/agent/wikis*. Carries `assistant_id` so server-side
+     * filtering by enabledWikis works. RuntimeService signs it via
+     * `authService.issueWikiSession` before spawning the runner; runner
+     * threads it into `SESSION_TOKEN` env via `buildSessionEnv` overrides.
+     */
+    sessionToken?: string
   }
   attempt: {
     attemptId: string

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { hasScope, issueAccessToken, verifyAccessToken, type AuthContext } from './token.js'
+import { hasScope, issueAccessToken, issueWikiSessionToken, verifyAccessToken, type AuthContext } from './token.js'
 import { buildVisibilityFilter, getUserAncestorIds } from '../visibilityFilter.js'
 import {
   AuthCenterDb,
@@ -849,6 +849,38 @@ export class AuthService {
       organization: this.db.getOrganization(input.user.orgId),
       scopes: input.scopes,
     }
+  }
+
+  /**
+   * Document Center v2: sign a short-lived JWT for in-container scode
+   * sessions to call /api/v1/agent/wikis* via the `wiki` CLI.
+   *
+   * The token carries an `assistant_id` claim (= `assistantName`) so the
+   * server-side handler can filter wikis by the assistant's
+   * `enabledWikis` field in `_moss_meta.json`.
+   *
+   * Caller (`RuntimeService.spawnAttempt`) wires the result into
+   * `SESSION_TOKEN` env in the spawned runner / container.
+   */
+  issueWikiSession(input: {
+    userId: string
+    orgId: string
+    role: string
+    scopes: string[]
+    assistantName: string | null
+    expiresInSec?: number
+  }): { token: string; expiresAt: number } {
+    return issueWikiSessionToken({
+      secret: this.db.getJwtSecret(),
+      issuer: this.db.getIssuer(),
+      userId: input.userId,
+      orgId: input.orgId,
+      role: input.role,
+      scopes: input.scopes,
+      keyId: randomUUID(),
+      assistantName: input.assistantName,
+      expiresInSec: input.expiresInSec,
+    })
   }
 
   private getUniqueUserByName(name: string): AuthCenterUser | null {
