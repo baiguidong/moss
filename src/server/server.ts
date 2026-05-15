@@ -319,6 +319,74 @@ async function copyAssistantToTenantDirByPath(sourceDir: string): Promise<void> 
   }
 }
 
+/**
+ * Seed builtin system assistants from the repo (`assistants/<name>/`) to
+ * `$MOSS_HOME/assistants/system/<name>/` on server boot.
+ *
+ * Behavior:
+ *   - Only copies dirs that don't already exist on disk (so client edits
+ *     to `wiki-builder.md` etc. survive server restarts).
+ *   - Source dir search order: cwd/assistants → server-bundle-relative
+ *     ../assistants → ../../assistants. Allows both dev (cwd in repo root)
+ *     and packaged (`bin/moss-server.mjs` + `assistants/` next to it)
+ *     deployments to find the source.
+ *   - Best-effort: failures log a warning but never abort startup.
+ */
+async function seedBuiltinSystemAssistants(): Promise<void> {
+  const currentDir = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    resolve(process.cwd(), 'assistants'),
+    resolve(currentDir, '..', 'assistants'),
+    resolve(currentDir, '..', '..', 'assistants'),
+  ]
+  let sourceRoot: string | null = null
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      sourceRoot = candidate
+      break
+    }
+  }
+  if (!sourceRoot) {
+    console.log('[seedBuiltinSystemAssistants] no assistants/ source dir found, skipping')
+    return
+  }
+
+  const mossHome = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+  const systemDir = join(mossHome, 'assistants', 'system')
+  await mkdir(systemDir, { recursive: true })
+
+  let entries
+  try {
+    entries = await readdir(sourceRoot, { withFileTypes: true })
+  } catch (err) {
+    console.warn('[seedBuiltinSystemAssistants] readdir failed:', err)
+    return
+  }
+
+  let seeded = 0
+  let skipped = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const sourceDir = join(sourceRoot, entry.name)
+    const targetDir = join(systemDir, entry.name)
+    if (existsSync(targetDir)) {
+      skipped++
+      continue
+    }
+    try {
+      cpSync(sourceDir, targetDir, { recursive: true })
+      seeded++
+    } catch (err) {
+      console.warn(`[seedBuiltinSystemAssistants] copy failed for ${entry.name}:`, err)
+    }
+  }
+  if (seeded > 0 || skipped > 0) {
+    console.log(
+      `[seedBuiltinSystemAssistants] seeded ${seeded} new, ${skipped} already present at ${systemDir}`,
+    )
+  }
+}
+
 function getBearerToken(req: http.IncomingMessage): string | null {
   const header = req.headers.authorization
   if (typeof header !== 'string') {
@@ -581,6 +649,12 @@ export function startServer(
   const wss = new WebSocketServer({ noServer: true })
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
   const documentStore = new DocumentStore(runtime.store)
+
+  // Document Center v2: seed builtin system assistants (wiki-builder etc.)
+  // from the repo into $MOSS_HOME/assistants/system/ if not already present.
+  // Customers can override by editing files in place — subsequent boots
+  // skip existing dirs.
+  await seedBuiltinSystemAssistants()
 
   // Document Center: start the wiki build worker. Polls wiki_build_jobs
   // and runs each queued job through RuntimeService with the system
@@ -946,7 +1020,24 @@ export function startServer(
         return
       }
 
-      const auth = authenticateRequest(req, authService)
+      // Document Center v2: SSE build-events route accepts ?token=xxx as
+      // a fallback because browser EventSource can't send custom headers.
+      // Scope: only this single route; getBearerToken stays header-only
+      // everywhere else.
+      let auth = authenticateRequest(req, authService)
+      if (!auth && req.method === 'GET') {
+        const isSseBuildEvents = /^\/api\/v1\/wikis\/[^/]+\/build-events$/.test(pathname)
+        if (isSseBuildEvents) {
+          const queryToken = url.searchParams.get('token')
+          if (queryToken) {
+            try {
+              auth = authService.verifyAccessToken(queryToken)
+            } catch {
+              // fall through to 401 below
+            }
+          }
+        }
+      }
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
