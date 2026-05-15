@@ -451,6 +451,46 @@ export class RuntimeService {
       )
     }
 
+    // Document Center v2: resolve `enabledWikis` from the bound assistant's
+    // meta + look up wiki name/description so acpBridge can inject an
+    // `[Available Wikis]` block into the first user message. Without this,
+    // even though SESSION_TOKEN is set the agent has no idea it can use
+    // the `wiki` CLI.
+    let availableWikis: Array<{ id: string; name: string; description?: string | null }> | undefined
+    if (options.assistantName) {
+      try {
+        const { findAssistantDir, readAssistantMeta } = await import('./agentStore.js')
+        const found = await findAssistantDir(options.assistantName)
+        if (found) {
+          const meta = await readAssistantMeta(found.dir)
+          const ids = Array.isArray(meta?.enabledWikis)
+            ? meta.enabledWikis.filter((v: unknown): v is string => typeof v === 'string')
+            : []
+          if (ids.length > 0) {
+            const { DocumentStore } = await import('./documentStore.js')
+            const docStore = new DocumentStore(this.store)
+            const collected: Array<{ id: string; name: string; description?: string | null }> = []
+            for (const wid of ids) {
+              const wiki = docStore.getWikiById(wid)
+              if (wiki && wiki.orgId === session.orgId) {
+                collected.push({
+                  id: wiki.id,
+                  name: wiki.name,
+                  description: wiki.description,
+                })
+              }
+            }
+            if (collected.length > 0) availableWikis = collected
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[RuntimeService] failed to resolve availableWikis for ${options.assistantName}:`,
+          err,
+        )
+      }
+    }
+
     const manifest: RunnerManifest = {
       config: this.options.config,
       session: {
@@ -468,6 +508,7 @@ export class RuntimeService {
           options.dangerouslySkipPermissions === true,
         assistantName: options.assistantName,
         sessionToken,
+        availableWikis,
         runtime: {
           ...session.runtime,
           containerName:

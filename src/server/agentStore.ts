@@ -556,7 +556,11 @@ export async function findAssistantDir(
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue
         const candidateDir = path.join(dir, entry.name)
         const meta = await readAssistantMeta(candidateDir)
-        if (meta?.name === normalizedAssistantName) {
+        if (
+          meta?.name === normalizedAssistantName ||
+          (typeof meta?.display_name === 'string' &&
+            meta.display_name === normalizedAssistantName)
+        ) {
           return { dir: candidateDir, category }
         }
       }

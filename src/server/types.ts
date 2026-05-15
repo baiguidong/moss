@@ -319,6 +319,13 @@ export type RunnerManifest = {
      * threads it into `SESSION_TOKEN` env via `buildSessionEnv` overrides.
      */
     sessionToken?: string
+    /**
+     * Document Center v2: wikis this assistant is authorized to query.
+     * Resolved by RuntimeService.spawnAttempt from assistant meta +
+     * DocumentStore; surfaced to agent via acpBridge first-message
+     * `[Available Wikis]` block so scode actually knows to use `wiki` CLI.
+     */
+    availableWikis?: Array<{ id: string; name: string; description?: string | null }>
   }
   attempt: {
     attemptId: string

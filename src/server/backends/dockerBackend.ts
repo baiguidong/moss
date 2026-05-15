@@ -241,6 +241,7 @@ export class DockerBackend implements SessionBackend {
       // 新方案：传递智能体名称和启用的技能列表
       assistantName: options.assistantName,
       enabledSkillNames: options.enabledSkillNames,
+      availableWikis: options.availableWikis,
       runtime: runtimeInfo,
     })
 

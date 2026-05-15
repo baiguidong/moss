@@ -16,6 +16,13 @@ type AcpBridgeOptions = {
   // 新增参数：首次消息注入
   assistantName?: string
   enabledSkillNames?: string[]
+  /**
+   * Document Center v2: wikis this assistant is authorized to query.
+   * Threaded by RuntimeService.spawnAttempt -> backend -> here, and
+   * surfaced in the first user message as an `[Available Wikis]` block
+   * so scode learns it can use the `wiki` CLI.
+   */
+  availableWikis?: Array<{ id: string; name: string; description?: string | null }>
   // 旧参数（已废弃，保留兼容）
   mcpServers?: any[]
   agents?: any[]
@@ -107,6 +114,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
           assistantName: options.assistantName,
           workspace: cwd,
           enabledSkillNames: options.enabledSkillNames,
+          availableWikis: options.availableWikis,
         })
         process.stderr.write(`[AcpBridge] First message prepared with skills/assistant injection\n`)
       } catch (err) {
