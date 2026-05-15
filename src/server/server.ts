@@ -387,6 +387,50 @@ async function seedBuiltinSystemAssistants(): Promise<void> {
   }
 }
 
+/**
+ * Boot-time sanity check on `$MOSS_HOME/settings.json`.
+ *
+ * settings.json drives the model / API URL / API key the build worker
+ * uses to talk to the LLM provider. If it's missing / empty / has no
+ * model or apiKey, wiki builds will hang silently in "Agent 正在阅读
+ * 文档" with no obvious error — past experience: 2 hours debugged once.
+ *
+ * This warns loudly on boot so the operator sees the problem immediately.
+ * Non-fatal — server still starts, since (a) settings can be set later
+ * via AdminHub, (b) non-build features don't depend on these fields.
+ */
+function checkSettingsOnBoot(): void {
+  const settings = getSystemSettings()
+  const banner = '━'.repeat(60)
+  if (!settings.settingsExists) {
+    console.warn(banner)
+    console.warn('[settings] ⚠  $MOSS_HOME/settings.json does NOT exist.')
+    console.warn('[settings]    Open AdminHub → 系统设置 and click 保存 to create one,')
+    console.warn('[settings]    otherwise wiki build sessions will not have a model/API key configured.')
+    console.warn(banner)
+    return
+  }
+  if (!settings.settingsLoaded) {
+    console.warn(banner)
+    console.warn(`[settings] ⚠  $MOSS_HOME/settings.json failed to parse: ${settings.settingsParseError || 'unknown error'}`)
+    console.warn('[settings]    File is being treated as empty. Wiki builds will silently fail.')
+    console.warn('[settings]    Open AdminHub → 系统设置 and click 保存 to rewrite it.')
+    console.warn(banner)
+    return
+  }
+  const missing: string[] = []
+  if (!settings.model || !settings.model.trim()) missing.push('model')
+  if (!settings.url || !settings.url.trim()) missing.push('url')
+  if (!settings.apiKey || !settings.apiKey.trim()) missing.push('apiKey')
+  if (missing.length > 0) {
+    console.warn(banner)
+    console.warn(`[settings] ⚠  $MOSS_HOME/settings.json is missing critical fields: ${missing.join(', ')}`)
+    console.warn('[settings]    Wiki build sessions will hang silently when invoked.')
+    console.warn('[settings]    Set them in AdminHub → 系统设置.')
+    console.warn(banner)
+  }
+}
+
 function getBearerToken(req: http.IncomingMessage): string | null {
   const header = req.headers.authorization
   if (typeof header !== 'string') {
@@ -658,6 +702,11 @@ export function startServer(
   seedBuiltinSystemAssistants().catch((err) => {
     console.warn('[seedBuiltinSystemAssistants] background seed failed:', err)
   })
+
+  // Boot-time settings.json sanity check — warns if model/url/apiKey
+  // are missing so the operator doesn't discover it the hard way
+  // (wiki builds hanging silently for minutes).
+  checkSettingsOnBoot()
 
   // Document Center: start the wiki build worker. Polls wiki_build_jobs
   // and runs each queued job through RuntimeService with the system

@@ -46,7 +46,9 @@ export class ScodeBackend implements SessionBackend {
     await mkdir(dotNexusDir, { recursive: true })
 
     const scodePath = resolveScodeCliPath(options.runtime?.scodePath)
-    const env = buildSessionEnv(options)
+    const env = buildSessionEnv(options, {
+      ...(options.sessionToken ? { SESSION_TOKEN: options.sessionToken } : {}),
+    })
 
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
     try {

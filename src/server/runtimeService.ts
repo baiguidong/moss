@@ -429,6 +429,28 @@ export class RuntimeService {
     session.runtime.engine = this.options.config.engine
     session.runtime.scodePath = this.options.config.scodePath
 
+    // Document Center v2: pre-sign a wiki session token so the
+    // in-container `wiki` CLI can authenticate to /api/v1/agent/wikis*.
+    // Token TTL matches typical session length (24h default). Best-effort:
+    // if signing fails we still spawn (other features don't need this
+    // token), but log so it's visible.
+    let sessionToken: string | undefined
+    try {
+      const signed = this.authService.issueWikiSession({
+        userId: session.userId,
+        orgId: session.orgId,
+        role: session.role,
+        scopes: session.scopes,
+        assistantName: options.assistantName ?? null,
+      })
+      sessionToken = signed.token
+    } catch (err) {
+      console.warn(
+        `[RuntimeService] failed to sign wiki session token (session=${session.sessionId}):`,
+        err,
+      )
+    }
+
     const manifest: RunnerManifest = {
       config: this.options.config,
       session: {
@@ -445,6 +467,7 @@ export class RuntimeService {
         dangerouslySkipPermissions:
           options.dangerouslySkipPermissions === true,
         assistantName: options.assistantName,
+        sessionToken,
         runtime: {
           ...session.runtime,
           containerName:
