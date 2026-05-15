@@ -14,6 +14,7 @@ import {
   Wallet,
   Building2,
   BookText,
+  Plug,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -80,6 +81,12 @@ const menuItems: NavItem[] = [
     title: '文档中心',
     url: '/document-center',
     icon: BookText,
+    requiredAnyScopes: ['admin:documents', 'admin:settings'],
+  },
+  {
+    title: '外部数据源',
+    url: '/document-center/sources',
+    icon: Plug,
     requiredAnyScopes: ['admin:documents', 'admin:settings'],
   },
 ]

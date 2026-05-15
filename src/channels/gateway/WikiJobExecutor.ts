@@ -15,7 +15,7 @@
  *   to that dir before spawning scode, which has full write access there)
  */
 
-import { readFile, mkdir, writeFile } from 'fs/promises'
+import { readFile, mkdir, readdir, writeFile } from 'fs/promises'
 import path from 'path'
 import { RuntimeService } from '../../server/runtimeService.js'
 import { DocumentStore, type DocumentRecord, type WikiBuildJob, type WikiRecord } from '../../server/documentStore.js'
@@ -43,10 +43,25 @@ const WIKI_BUILDER_PROMPT = `你是一个 Wiki 构建专家。你的任务是把
 2. 按业务主题(流程 / SOP / FAQ / 异常处理 / 术语 等)切分成多个 chunk md
 3. 每个 chunk:
    - 文件名格式 \`chunk-NNN-<topic-slug>.md\`,NNN 从 001 开始
+   - **必须**以 YAML frontmatter 开头,夹在两行 \`---\` 之间:
+       \`\`\`
+       ---
+       title: 这是这一节的人类可读标题
+       type: chunk
+       topic: <topic-slug>
+       ---
+       \`\`\`
    - 保留原文图片引用(input 中的 ![](images/...) 路径)
    - 单个 chunk 不超过 5000 字
    - 不要编造原文没有的内容
 4. WIKI.md 必须包含:
+   - frontmatter:
+       \`\`\`
+       ---
+       title: <Wiki 总览的人类可读标题>
+       type: index
+       ---
+       \`\`\`
    - 概述(2-3 句话总结这个 Wiki 涵盖什么 — 这段会展示给 Agent 看,影响它何时调用本 Wiki)
    - 文件清单(每个 chunk 一句话描述)
    - 关键术语表(可选,有就写)
@@ -187,6 +202,16 @@ export class WikiJobExecutor {
         throw new Error('build finished but WIKI.md was not produced')
       }
 
+      // Stage 5: write _moss_meta.json so wikiCli and tooling can
+      // inspect the wiki without re-scanning the directory each time.
+      // Includes the page list (WIKI.md + chunk-*.md) with type/title.
+      try {
+        await this.writeWikiMeta(wiki)
+      } catch (err) {
+        console.error('[WikiJobExecutor] failed to write _moss_meta.json:', err)
+        // Non-fatal — wiki is still usable via wikiCli's directory scan.
+      }
+
       this.docStore.updateBuildJob(job.id, {
         status: 'succeeded',
         progress: 100,
@@ -198,6 +223,8 @@ export class WikiJobExecutor {
         lastBuiltAt: Date.now(),
         lastBuildError: null,
       })
+      // Document Center v2: clear needs_rebuild on successful build.
+      this.db.markWikiNeedsRebuild(job.wikiId, false)
       console.log(`[WikiJobExecutor] job ${job.id} succeeded`)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -207,18 +234,96 @@ export class WikiJobExecutor {
   }
 
   /**
-   * Convert original uploaded documents (docx/pdf/md) to plain markdown
-   * and stage them under `<cwd>/input/` so the agent can read them via its
-   * built-in file tools.
+   * Document Center v2: write `_moss_meta.json` summarizing the built
+   * wiki. Format:
+   *   {
+   *     version: 1,
+   *     wikiId, name, description,
+   *     builtAt (epoch ms),
+   *     sourceDocumentIds: [...],
+   *     pages: [{ file, type: 'index'|'chunk', title }]
+   *   }
    *
-   * P0: only .md / .txt are passed through directly; .docx / .pdf fall back
-   * to a TODO stub (we copy raw bytes to input/ with original extension).
-   * The wiki-builder agent has tools to handle them itself, but a proper
-   * mammoth/libreoffice pipeline will be added in a follow-up iteration.
+   * Title is extracted from each markdown's first `# ` heading; falls
+   * back to the file name (sans `.md`). wikiCli reads this file to
+   * give the agent a structured table of contents without re-parsing
+   * every chunk on each request.
+   */
+  private async writeWikiMeta(wiki: WikiRecord): Promise<void> {
+    const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+    const mdFiles = entries
+      .filter((e) => e.isFile() && e.name.endsWith('.md'))
+      .map((e) => e.name)
+      .sort()
+
+    type Page = { file: string; type: 'index' | 'chunk'; title: string; topic?: string }
+    const pages: Page[] = []
+    for (const file of mdFiles) {
+      let title = file.replace(/\.md$/, '')
+      let type: 'index' | 'chunk' = file === 'WIKI.md' ? 'index' : 'chunk'
+      let topic: string | undefined
+      try {
+        const content = await readFile(path.join(wiki.storagePath, file), 'utf-8')
+        // Try YAML frontmatter first (preferred, set by wiki-builder prompt)
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
+        if (fmMatch && fmMatch[1]) {
+          const lines = fmMatch[1].split('\n')
+          for (const line of lines) {
+            const kv = line.match(/^(\w+):\s*(.+?)\s*$/)
+            if (!kv) continue
+            const key = kv[1]
+            const value = (kv[2] ?? '').replace(/^['"]|['"]$/g, '').trim()
+            if (key === 'title' && value) title = value
+            else if (key === 'topic' && value) topic = value
+            else if (key === 'type' && (value === 'index' || value === 'chunk')) {
+              type = value
+            }
+          }
+        } else {
+          // Fall back to first H1
+          const m = content.match(/^\s*#\s+(.+?)\s*$/m)
+          if (m && m[1]) title = m[1].trim()
+        }
+      } catch {
+        // ignore — fall back to filename
+      }
+      pages.push({ file, type, title, ...(topic ? { topic } : {}) })
+    }
+
+    const meta = {
+      version: 1 as const,
+      wikiId: wiki.id,
+      name: wiki.name,
+      description: wiki.description,
+      builtAt: Date.now(),
+      sourceDocumentIds: wiki.sourceDocumentIds,
+      pages,
+    }
+    await writeFile(
+      path.join(wiki.storagePath, '_moss_meta.json'),
+      JSON.stringify(meta, null, 2),
+      'utf-8',
+    )
+  }
+
+  /**
+   * Convert original uploaded documents (docx/pdf/xlsx/pptx/md/txt) to
+   * plain markdown and stage them under `<cwd>/input/` so the wiki-
+   * builder agent can read them via its built-in file tools.
+   *
+   * Conversion strategy (see sources/docParsers.ts):
+   *   - .md / .txt          → pass through
+   *   - .docx               → mammoth (preserves headings/lists)
+   *   - .pdf                → pdf-parse
+   *   - everything else     → libreoffice --convert-to txt (if available)
+   *   - parser failure / no parser found → raw bytes copied with original
+   *     name as a last resort, so the agent can at least see the file
    */
   private async prepareInputs(wiki: WikiRecord): Promise<void> {
     const inputDir = path.join(wiki.storagePath, 'input')
     await mkdir(inputDir, { recursive: true })
+
+    const { parseAndWrite } = await import('../../server/sources/docParsers.js')
 
     for (const docId of wiki.sourceDocumentIds) {
       // Cross-org lookup: build runs as system, document still has org_id
@@ -228,21 +333,22 @@ export class WikiJobExecutor {
         continue
       }
       const doc = mapDocumentRow(docRow)
-      const ext = path.extname(doc.fileName).toLowerCase()
       const safeName = path.basename(doc.fileName)
-      const targetPath = path.join(inputDir, safeName)
 
       try {
-        if (ext === '.md' || ext === '.txt' || ext === '.markdown') {
-          // Copy through as-is
-          const content = await readFile(doc.storagePath)
-          await writeFile(targetPath, content)
+        const parsed = await parseAndWrite(doc.storagePath, safeName, inputDir)
+        if (parsed) {
+          console.log(
+            `[WikiJobExecutor] staged ${safeName} via ${parsed.via}`,
+          )
         } else {
-          // P0 fallback: copy raw bytes; agent's read_file may not handle
-          // binary, but at least the file is present. Proper conversion
-          // pipeline (mammoth/libreoffice) is the next iteration.
+          // No parser worked. Copy raw bytes so at least the file is
+          // present and the agent can pick it up via its read_file tool.
           const content = await readFile(doc.storagePath)
-          await writeFile(targetPath, content)
+          await writeFile(path.join(inputDir, safeName), content)
+          console.warn(
+            `[WikiJobExecutor] no parser for ${safeName}; copied raw bytes`,
+          )
         }
       } catch (err) {
         console.warn(`[WikiJobExecutor] failed to stage source doc ${docId}:`, err)
