@@ -3629,7 +3629,18 @@ export function startServer(
     server.once('listening', () => {
       server.off('error', onError)
       const address = server.address()
-      resolvePort(typeof address === 'object' && address ? address.port : null)
+      const port = typeof address === 'object' && address ? address.port : null
+      // Document Center v2: export MOSS_SERVER_URL into process.env so
+      // every scode child process spawned by RuntimeService inherits it.
+      // wiki CLI requires this env var to know where to call back to.
+      // Use 127.0.0.1 so it works in local/dev; production deployments
+      // can override via MOSS_SERVER_URL env before launching moss-server.
+      if (!process.env.MOSS_SERVER_URL && port) {
+        const host = config.host && config.host !== '0.0.0.0' ? config.host : '127.0.0.1'
+        process.env.MOSS_SERVER_URL = `http://${host}:${port}`
+        console.log(`[server] MOSS_SERVER_URL set to ${process.env.MOSS_SERVER_URL} for scode children`)
+      }
+      resolvePort(port)
     })
   })
 
