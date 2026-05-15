@@ -59,6 +59,14 @@ export type BackendSpawnOptions = {
    * SESSION_TOKEN env var.
    */
   sessionToken?: string
+  /**
+   * Document Center v2: list of wikis the bound assistant is authorized
+   * to query. Resolved by RuntimeService from `_moss_meta.enabledWikis`
+   * + DocumentStore lookup. Injected by acpBridge into the first user
+   * message as an `[Available Wikis]` block so scode learns it can use
+   * the `wiki` CLI.
+   */
+  availableWikis?: Array<{ id: string; name: string; description?: string | null }>
 }
 
 export type BackendHandle = {
