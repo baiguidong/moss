@@ -1121,7 +1121,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editSkills, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editSkills, editingAgent, fetchInstalledState])
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim()
@@ -2706,17 +2706,12 @@ export default function AgentHubPage() {
                           !isBuilt && 'opacity-60',
                         )}
                       >
+                        {/* Display-only Checkbox; click handled by parent div */}
                         <Checkbox
                           checked={isEnabled}
-                          onCheckedChange={(checked) => {
-                            setEditEnabledWikis(prev =>
-                              checked
-                                ? Array.from(new Set([...prev, wiki.id]))
-                                : prev.filter(id => id !== wiki.id),
-                            )
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="mt-0.5"
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          className="mt-0.5 pointer-events-none"
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
