@@ -549,6 +549,13 @@ export async function findAssistantDir(
     }
   }
 
+  // Accept "moss:<assistantId>" form used by SudoWork desktop when the
+  // user picks an assistant from the dropdown — strip the prefix and
+  // match against meta.id below.
+  const idCandidate = normalizedAssistantName.startsWith('moss:')
+    ? normalizedAssistantName.slice('moss:'.length)
+    : normalizedAssistantName
+
   for (const { dir, category } of searchDirs) {
     try {
       const entries = await readdir(dir, { withFileTypes: true })
@@ -559,7 +566,8 @@ export async function findAssistantDir(
         if (
           meta?.name === normalizedAssistantName ||
           (typeof meta?.display_name === 'string' &&
-            meta.display_name === normalizedAssistantName)
+            meta.display_name === normalizedAssistantName) ||
+          (typeof meta?.id === 'string' && meta.id === idCandidate)
         ) {
           return { dir: candidateDir, category }
         }
