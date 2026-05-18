@@ -33,6 +33,29 @@ export function resolveScodeCliPath(configPath?: string): string {
   return 'scode'
 }
 
+/**
+ * Document Center v2: locate the `bin/` directory that contains the
+ * wiki CLI binary (built by scripts/build.js into bin/wiki). The scode
+ * subprocess gets this dir prepended to PATH so `wiki list / read`
+ * resolves without manual install. Returns null if no binary found.
+ */
+function resolveMossBinDir(): string | null {
+  const dirname = path.dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    // dev: cwd is repo root
+    path.join(process.cwd(), 'bin'),
+    // packaged: bin/ next to moss-server.mjs
+    path.join(dirname, '..', 'bin'),
+    path.join(dirname, '..', '..', 'bin'),
+  ]
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'wiki'))) {
+      return dir
+    }
+  }
+  return null
+}
+
 export function buildSessionEnv(
   options: BackendSpawnOptions,
   overrides: Record<string, string | undefined> = {},
@@ -91,6 +114,17 @@ export function buildSessionEnv(
     ...Object.fromEntries(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
     ),
+  }
+
+  // Document Center v2: prepend bin/ to PATH so scode can find the wiki
+  // CLI without manual installation. Falls back silently if bin/wiki
+  // wasn't built (Go missing on build host).
+  const mossBinDir = resolveMossBinDir()
+  if (mossBinDir) {
+    const currentPath = (overrides.PATH ?? process.env.PATH) || ''
+    env.PATH = currentPath
+      ? `${mossBinDir}${path.delimiter}${currentPath}`
+      : mossBinDir
   }
 
   return env
