@@ -2682,9 +2682,25 @@ export default function AgentHubPage() {
                   {availableWikis.map(wiki => {
                     const isEnabled = editEnabledWikis.includes(wiki.id)
                     const isBuilt = wiki.buildStatus === 'succeeded'
+                    const toggle = () => {
+                      setEditEnabledWikis(prev =>
+                        prev.includes(wiki.id)
+                          ? prev.filter(id => id !== wiki.id)
+                          : Array.from(new Set([...prev, wiki.id])),
+                      )
+                    }
                     return (
-                      <label
+                      <div
                         key={wiki.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={toggle}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault()
+                            toggle()
+                          }
+                        }}
                         className={cn(
                           'flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent cursor-pointer',
                           !isBuilt && 'opacity-60',
@@ -2699,6 +2715,7 @@ export default function AgentHubPage() {
                                 : prev.filter(id => id !== wiki.id),
                             )
                           }}
+                          onClick={(e) => e.stopPropagation()}
                           className="mt-0.5"
                         />
                         <div className="min-w-0 flex-1">
@@ -2716,7 +2733,7 @@ export default function AgentHubPage() {
                             </p>
                           )}
                         </div>
-                      </label>
+                      </div>
                     )
                   })}
                 </div>
