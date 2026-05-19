@@ -16,19 +16,21 @@
 //
 //	MOSS_SERVER_URL — base URL, e.g. http://moss-internal:43127
 //	SESSION_TOKEN   — bearer token; embeds assistant_id + user_id + org_id
+//
+// The transport and formatting logic lives in the importable sub-package
+// github.com/sudoprivacy/moss/cli/wiki/client — this file is only the
+// moss-specific CLI shell around it.
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
-	"time"
+
+	"github.com/sudoprivacy/moss/cli/wiki/client"
 )
 
 const (
@@ -85,103 +87,20 @@ Environment:
                    (set by moss-server when it spawns scode)`)
 }
 
-// ============================================================
-// HTTP helper
-// ============================================================
-
-type apiClient struct {
-	baseURL string
-	token   string
-	http    *http.Client
-}
-
-func newClient() (*apiClient, error) {
-	base := strings.TrimRight(os.Getenv(envServerURL), "/")
-	if base == "" {
+// newClient bootstraps a wiki client from the moss-provided env vars. The
+// error messages are intentionally moss-specific — they direct the operator
+// back to moss-server, which is responsible for spawning scode with these
+// vars set.
+func newClient() (*client.Client, error) {
+	base := os.Getenv(envServerURL)
+	if strings.TrimRight(base, "/") == "" {
 		return nil, errors.New(envServerURL + " is not set; wiki CLI must be launched by moss-server")
 	}
 	token := os.Getenv(envToken)
 	if token == "" {
 		return nil, errors.New(envToken + " is not set; wiki CLI cannot authenticate")
 	}
-	return &apiClient{
-		baseURL: base,
-		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second},
-	}, nil
-}
-
-func (c *apiClient) get(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
-}
-
-// ============================================================
-// Response types — mirror server JSON
-// ============================================================
-
-type wikiSummary struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	BuildStatus string `json:"buildStatus"`
-}
-
-type wikisListResp struct {
-	Wikis []wikiSummary `json:"wikis"`
-}
-
-type wikiFilesResp struct {
-	WikiID string   `json:"wiki_id"`
-	Files  []string `json:"files"`
-}
-
-type wikiFileResp struct {
-	WikiID  string `json:"wiki_id"`
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-type searchMatch struct {
-	File   string `json:"file"`
-	LineNo int    `json:"line_no"`
-	Line   string `json:"line"`
-}
-
-type searchResp struct {
-	WikiID  string        `json:"wiki_id"`
-	Query   string        `json:"query"`
-	Matches []searchMatch `json:"matches"`
-}
-
-type metadataResp struct {
-	WikiID              string `json:"wiki_id"`
-	Name                string `json:"name"`
-	Description         string `json:"description"`
-	BuildStatus         string `json:"build_status"`
-	LastBuiltAt         *int64 `json:"last_built_at"`
-	SourceDocumentCount int    `json:"source_document_count"`
-	ChunkCount          int    `json:"chunk_count"`
+	return client.New(base, token), nil
 }
 
 // ============================================================
@@ -198,28 +117,17 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	var resp wikisListResp
-	if err := c.get("/api/v1/agent/wikis", &resp); err != nil {
+	wikis, err := c.ListWikis()
+	if err != nil {
 		return err
 	}
 	if *jsonOut {
-		b, _ := json.MarshalIndent(resp.Wikis, "", "  ")
-		fmt.Println(string(b))
+		// Match original behavior: marshal error is silently swallowed (the
+		// fixed schema cannot fail to marshal in practice).
+		_ = client.FormatWikiListJSON(os.Stdout, wikis)
 		return nil
 	}
-	if len(resp.Wikis) == 0 {
-		fmt.Println("(no wikis available to this assistant)")
-		return nil
-	}
-	// Plain-text table for LLM consumption
-	fmt.Printf("%-36s  %-30s  %s\n", "ID", "NAME", "DESCRIPTION")
-	for _, w := range resp.Wikis {
-		desc := w.Description
-		if len(desc) > 80 {
-			desc = desc[:77] + "..."
-		}
-		fmt.Printf("%-36s  %-30s  %s\n", w.ID, truncate(w.Name, 30), desc)
-	}
+	client.FormatWikiList(os.Stdout, wikis)
 	return nil
 }
 
@@ -243,18 +151,17 @@ func runRead(args []string) error {
 		return err
 	}
 	if *listFiles {
-		var resp wikiFilesResp
-		if err := c.get("/api/v1/agent/wikis/"+url.PathEscape(wikiID)+"/files", &resp); err != nil {
+		files, err := c.ListFiles(wikiID)
+		if err != nil {
 			return err
 		}
-		for _, f := range resp.Files {
+		for _, f := range files {
 			fmt.Println(f)
 		}
 		return nil
 	}
-	var resp wikiFileResp
-	endpoint := "/api/v1/agent/wikis/" + url.PathEscape(wikiID) + "/files/" + escapePath(*filePath)
-	if err := c.get(endpoint, &resp); err != nil {
+	resp, err := c.ReadFile(wikiID, *filePath)
+	if err != nil {
 		return err
 	}
 	fmt.Print(resp.Content)
@@ -284,20 +191,11 @@ func runSearch(args []string) error {
 	if err != nil {
 		return err
 	}
-	q := url.Values{}
-	q.Set("q", query)
-	endpoint := "/api/v1/agent/wikis/" + url.PathEscape(wikiID) + "/search?" + q.Encode()
-	var resp searchResp
-	if err := c.get(endpoint, &resp); err != nil {
+	resp, err := c.Search(wikiID, query)
+	if err != nil {
 		return err
 	}
-	if len(resp.Matches) == 0 {
-		fmt.Println("(no matches)")
-		return nil
-	}
-	for _, m := range resp.Matches {
-		fmt.Printf("%s:%d: %s\n", m.File, m.LineNo, strings.TrimRight(m.Line, "\r"))
-	}
+	client.FormatSearchMatches(os.Stdout, resp.Matches)
 	return nil
 }
 
@@ -314,46 +212,10 @@ func runMetadata(args []string) error {
 	if err != nil {
 		return err
 	}
-	var resp metadataResp
-	if err := c.get("/api/v1/agent/wikis/"+url.PathEscape(wikiID)+"/metadata", &resp); err != nil {
+	resp, err := c.Metadata(wikiID)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Wiki ID:           %s\n", resp.WikiID)
-	fmt.Printf("Name:              %s\n", resp.Name)
-	if resp.Description != "" {
-		fmt.Printf("Description:       %s\n", resp.Description)
-	}
-	fmt.Printf("Build status:      %s\n", resp.BuildStatus)
-	if resp.LastBuiltAt != nil {
-		fmt.Printf("Last built at:     %s\n", time.UnixMilli(*resp.LastBuiltAt).Format(time.RFC3339))
-	} else {
-		fmt.Println("Last built at:     never")
-	}
-	fmt.Printf("Source documents:  %d\n", resp.SourceDocumentCount)
-	fmt.Printf("Chunks:            %d\n", resp.ChunkCount)
+	client.FormatMetadata(os.Stdout, resp)
 	return nil
-}
-
-// ============================================================
-// helpers
-// ============================================================
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return "."
-	}
-	return s[:n-1] + "…"
-}
-
-// escapePath encodes each path segment but keeps "/" — so users can pass
-// nested paths like `images/fig-001.png` without losing the structure.
-func escapePath(p string) string {
-	parts := strings.Split(p, "/")
-	for i, seg := range parts {
-		parts[i] = url.PathEscape(seg)
-	}
-	return strings.Join(parts, "/")
 }
