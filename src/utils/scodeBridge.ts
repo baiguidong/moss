@@ -7,6 +7,7 @@ import {
   MOSS_SKILLS_HUB_DIR,
   MOSS_SKILLS_SYSTEM_DIR,
   MOSS_SKILLS_CUSTOM_DIR,
+  MOSS_SKILLS_TENANT_DIR,
   USER_SKILLS_DIR,
   SKILL_HUB_META_FILE,
 } from './skills/localSkillDirectories.js'
@@ -51,6 +52,7 @@ export async function syncWorkspaceSkills(
     MOSS_SKILLS_HUB_DIR,
     MOSS_SKILLS_SYSTEM_DIR,
     MOSS_SKILLS_CUSTOM_DIR,
+    MOSS_SKILLS_TENANT_DIR,
     USER_SKILLS_DIR,
   ]
 
@@ -73,8 +75,9 @@ export async function syncWorkspaceSkills(
           continue // 没有 SKILL.md，跳过
         }
 
-        // 如果指定了启用列表，只同步列表中的技能
-        if (enabledSkillNames && !enabledSkillNames.includes(skillName)) {
+        // 如果指定了启用列表（非空数组），只同步列表中的技能
+        // 空数组或 undefined 表示同步所有启用的技能
+        if (enabledSkillNames && enabledSkillNames.length > 0 && !enabledSkillNames.includes(skillName)) {
           continue
         }
 

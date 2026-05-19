@@ -3548,6 +3548,10 @@ export function startServer(
           scopes: auth.scopes,
           runtime: runtimeOptions,
           assistantName: assistantDisplayName,
+          // 新增: 从请求体获取 enabled_skills
+          enabledSkills: Array.isArray(body.enabled_skills)
+            ? body.enabled_skills.filter((s: unknown) => typeof s === 'string')
+            : undefined,
         })
         writeJson(res, 200, {
           session_id: created.sessionId,

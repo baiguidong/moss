@@ -128,6 +128,7 @@ export class SessionRunnerDaemon {
         assistantName: this.manifest.session.assistantName,
         sessionToken: this.manifest.session.sessionToken,
         availableWikis: this.manifest.session.availableWikis,
+        enabledSkillNames: this.manifest.session.enabledSkills,
       })
 
       this.#handle = handle

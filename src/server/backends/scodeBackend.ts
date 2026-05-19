@@ -23,6 +23,15 @@ export class ScodeBackend implements SessionBackend {
     // 读取 assistant 配置
     const assistantConfig = await getAssistantRuntimeConfig(options.assistantName)
 
+    // 确定最终使用的 enabledSkills
+    // 优先级（与个人模式一致）：
+    // 1. 如果指定了助手，使用助手的 enabledSkills（助手配置优先）
+    // 2. 如果没有指定助手，使用客户端传递的 enabledSkillNames
+    // 3. 如果都没有，使用所有可用 skills（已在 getAssistantRuntimeConfig 中处理）
+    const enabledSkills = options.assistantName
+      ? assistantConfig.enabledSkills
+      : (options.enabledSkillNames ?? assistantConfig.enabledSkills)
+
     // 根据 memory_mode 决定 mode
     const mode = options.runtime?.hostMode
       || (assistantConfig.memoryMode === 'user' ? 'user' : 'session')
@@ -39,7 +48,9 @@ export class ScodeBackend implements SessionBackend {
     }
 
     // 创建 skill symlinks
-    await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
+    if (enabledSkills.length > 0) {
+      await createSkillSymlinks(configDir, enabledSkills)
+    }
 
     // 创建 .nexus/sudocode/sudocode.json 配置文件
     // scode 需要 HOME 环境变量指向的目录下有这个配置文件来获取认证信息
@@ -99,9 +110,10 @@ export class ScodeBackend implements SessionBackend {
 
     // 同步技能到工作空间目录（新方案）
     // 在工作空间的 .nexus/sudocode/skills/ 目录创建符号链接
+    // enabledSkills: 客户端传递 > 助手配置 > 默认（所有可用 skills）
     try {
-      await syncWorkspaceSkills(options.cwd, options.enabledSkillNames)
-      process.stderr.write(`[ScodeBackend] Workspace skills synced to ${options.cwd}/.nexus/sudocode/skills/\n`)
+      await syncWorkspaceSkills(options.cwd, enabledSkills)
+      process.stderr.write(`[ScodeBackend] Workspace skills synced to ${options.cwd}/.nexus/sudocode/skills/ with ${enabledSkills.length} skills: ${enabledSkills.join(', ') || 'none'}\n`)
     } catch (err) {
       process.stderr.write(`[ScodeBackend] Workspace skills sync warning: ${err}\n`)
     }
@@ -119,7 +131,7 @@ export class ScodeBackend implements SessionBackend {
     process.stderr.write(`  CWD: ${options.cwd}\n`)
     process.stderr.write(`  configDir: ${configDir}\n`)
     process.stderr.write(`  mode: ${mode}\n`)
-    process.stderr.write(`  enabledSkills: ${assistantConfig.enabledSkills.join(', ') || 'none'}\n`)
+    process.stderr.write(`  enabledSkills: ${enabledSkills.join(', ') || 'none'}\n`)
     process.stderr.write(`  Base URL: ${env.ANTHROPIC_BASE_URL}\n`)
     process.stderr.write(`  Auth: ${env.ANTHROPIC_API_KEY ? 'Present' : 'MISSING'}\n\n`)
 
