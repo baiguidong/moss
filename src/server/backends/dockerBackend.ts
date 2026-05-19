@@ -74,9 +74,10 @@ export class DockerBackend implements SessionBackend {
     // 同步技能到工作空间目录（新方案）
     // 在工作空间的 .nexus/sudocode/skills/ 目录创建符号链接
     // Docker 会挂载工作空间，所以容器内可以访问这些符号链接
+    // enabledSkills: 由 getAssistantRuntimeConfig 统一处理
     try {
-      await syncWorkspaceSkills(safeCwd, options.enabledSkillNames)
-      process.stderr.write(`[DockerBackend] Workspace skills synced to ${safeCwd}/.nexus/sudocode/skills/\n`)
+      await syncWorkspaceSkills(safeCwd, assistantConfig.enabledSkills)
+      process.stderr.write(`[DockerBackend] Workspace skills synced to ${safeCwd}/.nexus/sudocode/skills/ with ${assistantConfig.enabledSkills.length} skills\n`)
     } catch (err) {
       process.stderr.write(`[DockerBackend] Workspace skills sync warning: ${err}\n`)
     }
@@ -114,7 +115,9 @@ export class DockerBackend implements SessionBackend {
     }
 
     // 创建 skill symlinks
-    await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
+    if (assistantConfig.enabledSkills.length > 0) {
+      await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
+    }
 
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
 
