@@ -127,6 +127,8 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
       finalText = `${identityBlock}[User Request]\n${trimmedText}`
     }
 
+    // 写入 transcript 时只保存原始用户消息（trimmedText），不包含系统提示词
+    // 系统提示词是给 agent 的，不应该出现在用户可见的历史记录中
     const userEvent = {
       type: 'user',
       sessionId,
@@ -139,12 +141,13 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
       version: 'unknown',
       message: {
         role: 'user',
-        content: finalText,
+        content: trimmedText, // 保存原始用户消息，不包含注入的系统提示词
       },
     }
     void writeTranscript(userEvent)
     lastPersistedUuid = userUuid
 
+    // 发送给 agent 的是包含系统提示词的 finalText
     sendRpc('session/prompt', {
       sessionId: acpSessionId,
       prompt: [{ type: 'text', text: finalText }],
