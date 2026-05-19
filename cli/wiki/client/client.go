@@ -1,11 +1,11 @@
-// Package client is a transport-only Go client for the wiki/Document Center
-// HTTP API. It speaks the same JSON contract the moss-server agent endpoints
-// expose, but knows nothing about moss itself: no env-var lookups, no help
-// text, no os.Exit. Callers pass a base URL and bearer token in, and get
-// typed responses back.
+// Package client is a Go client + CLI entry point for the wiki/Document
+// Center HTTP API. It speaks the same JSON contract the moss-server agent
+// endpoints expose, but knows nothing about moss itself: no env-var lookups,
+// no os.Exit, no moss-specific help text.
 //
-// The CLI in cli/wiki uses this package; other Go projects can import it as
-// github.com/sudoprivacy/moss/cli/wiki/client and drive the same endpoints.
+// Other Go projects can import it as github.com/sudoprivacy/moss/cli/wiki/client
+// and either drive the typed API directly or build a `wiki` binary by calling
+// Run from a tiny main.go.
 package client
 
 import (
@@ -34,8 +34,9 @@ type Client struct {
 	HTTP       *http.Client
 }
 
-// New returns a Client with sane defaults: trailing-slash-trimmed BaseURL,
-// DefaultPathPrefix, and a 30-second HTTP timeout.
+// New returns a Client that sends Authorization: Bearer <token> on every
+// request. Defaults: trailing-slash-trimmed BaseURL, DefaultPathPrefix, and
+// a 30-second HTTP timeout.
 func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -45,13 +46,21 @@ func New(baseURL, token string) *Client {
 	}
 }
 
+// NewNoAuth returns a Client that sends no Authorization header. Use this
+// against wiki servers that don't require authentication.
+func NewNoAuth(baseURL string) *Client {
+	return New(baseURL, "")
+}
+
 func (c *Client) get(path string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Accept", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
