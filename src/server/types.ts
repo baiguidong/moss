@@ -282,6 +282,8 @@ export type SessionCreateInput = {
   assistantName?: string
   source?: string
   channelChatId?: string
+  /** Enabled skill names (optional, for non-assistant sessions) */
+  enabledSkills?: string[]
 }
 
 export type EnterpriseRecord = {
@@ -326,6 +328,8 @@ export type RunnerManifest = {
      * `[Available Wikis]` block so scode actually knows to use `wiki` CLI.
      */
     availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+    /** Enabled skill names (from client or assistant config) */
+    enabledSkills?: string[]
   }
   attempt: {
     attemptId: string
