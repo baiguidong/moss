@@ -1,4 +1,5 @@
 import http from 'http'
+import { randomUUID } from 'crypto'
 import net from 'net'
 import { existsSync, cpSync, rmSync } from 'fs'
 import { readFile, stat, mkdir, writeFile, readdir } from 'fs/promises'
@@ -10,6 +11,7 @@ import type { ServerConfig, SessionRecord } from './types.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
+import { isUserActive, invalidateUserStatusCache } from './auth/userStatusCache.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import {
@@ -77,6 +79,9 @@ import './sources/filesystem.js'
 import './sources/wecomDrive.js'
 import { randomUUID } from 'crypto'
 import { getUserProfile } from './api/userProfile.js'
+import { createConfigItemsApi } from './api/configItems.js'
+import { createSecretsApi } from './api/secrets.js'
+import type { NexusClient } from './nexus/nexusClient.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
@@ -455,6 +460,7 @@ function authenticateRequest(
   if (token && !auth) {
     process.stderr.write(`[authenticateRequest] Verification failed for token: ${token.slice(0, 10)}...\n`)
   }
+  if (auth && !isUserActive(auth.userId, authService)) return null
   return auth
 }
 
@@ -574,6 +580,7 @@ function resolveAdminDistDir(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [
     resolve(process.cwd(), 'admin', 'dist'),
+    resolve(currentDir, '..', 'admin', 'dist'),
     resolve(currentDir, '..', '..', 'admin', 'dist'),
     resolve(currentDir, 'admin', 'dist'),
   ]
@@ -690,6 +697,7 @@ export function startServer(
   runtime: RuntimeService,
   authService: AuthService,
   logger: ServerLogger = createServerLogger(),
+  nexusClient?: NexusClient,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -698,6 +706,32 @@ export function startServer(
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
   const enterpriseApi = createEnterpriseApi(runtime.store, config.runtimeDir)
+  const configItemsApi = createConfigItemsApi(runtime.store)
+  const secretsApi = nexusClient ? createSecretsApi(runtime.store, nexusClient, (userId: string) => {
+    try {
+      return authService.getUserName(userId)
+    } catch { return undefined }
+  }) : null
+
+  function refreshAuthProxyRules() {
+    const ap = runtime.authProxy
+    if (!ap) return
+    const items = runtime.store.getAllActiveConfigItems()
+    ap.updateRules(items.map(item => ({
+      configItemId: item.id as number,
+      name: item.name as string,
+      urlPattern: (item.url_pattern as string) || '',
+      scheme: (item.scheme as string) || '',
+      bearerPrefix: (item.bearer_prefix as string) || '',
+      secretNamespace: item.scope === 'user' ? `user:{userId}:${item.pinyin}` : `system:${item.pinyin}`,
+      entries: (runtime.store.getConfigEntries(item.id as number) || []).map((e: any) => ({
+        configKey: e.config_key as string,
+        name: e.name as string,
+        required: (e.required as number) === 1,
+      })),
+    })))
+  }
+
   const documentStore = new DocumentStore(runtime.store)
 
   // Initialize user model preference store with the database
@@ -896,6 +930,9 @@ export function startServer(
         if (!auth) {
           throw new HttpError(401, 'Invalid access token')
         }
+        if (!isUserActive(auth.userId, authService)) {
+          throw new HttpError(401, 'User account is disabled')
+        }
         writeJson(res, 200, authService.getMe(auth))
         return
       }
@@ -1078,6 +1115,14 @@ export function startServer(
 
       if ((req.method === 'GET' || isHead) && pathname === '/api/v1/tenant/config') {
         writeJson(res, 200, await enterpriseApi.getConfig())
+        return
+      }
+
+      // Public: Config Items (JWT auth, no admin scope)
+      if (req.method === 'GET' && pathname === '/api/v1/config/items') {
+        const auth = authenticateRequest(req, authService)
+        if (!auth) throw new HttpError(401, 'Unauthorized')
+        writeJson(res, 200, configItemsApi.listPublic())
         return
       }
 
@@ -1976,22 +2021,45 @@ export function startServer(
         authService.requireScope(auth, 'admin:users')
         const userId = userMatch[1] || ''
         const body = await readJsonBody(req)
-        writeJson(
-          res,
-          200,
-          authService.updateUser({
-            orgId: auth.orgId,
-            userId,
-            name: typeof body.name === 'string' ? body.name : undefined,
-            departmentId:
-              body.department_id === null || typeof body.department_id === 'string'
-                ? body.department_id
-                : undefined,
-            role: typeof body.role === 'string' ? body.role : undefined,
-            status:
-              typeof body.status === 'string' ? body.status : undefined,
-          }, auth),
-        )
+        const result = authService.updateUser({
+          orgId: auth.orgId,
+          userId,
+          name: typeof body.name === 'string' ? body.name : undefined,
+          departmentId:
+            body.department_id === null || typeof body.department_id === 'string'
+              ? body.department_id
+              : undefined,
+          role: typeof body.role === 'string' ? body.role : undefined,
+          status:
+            typeof body.status === 'string' ? body.status : undefined,
+        }, auth)
+
+        // User disable cascade: disable Nexus secrets + terminate sessions + revoke Auth Proxy tokens
+        if (typeof body.status === 'string' && body.status === 'disabled') {
+          invalidateUserStatusCache(userId)
+          // Disable all user.* secrets in Nexus
+          if (nexusClient) {
+            try {
+              const userSecrets = await nexusClient.listSecrets(`user.${userId}`)
+              for (const secret of userSecrets) {
+                try { await nexusClient.disableSecret(secret.namespace, secret.key, `user:${userId}`) } catch { /* best effort */ }
+              }
+            } catch { /* best effort */ }
+          }
+          // Terminate all active sessions for this user
+          try {
+            const sessions = runtime.listSessionRecords({ orgId: auth.orgId, userId, activeOnly: true })
+            for (const session of sessions) {
+              try { await runtime.terminateSession(session.sessionId) } catch { /* best effort */ }
+            }
+          } catch { /* best effort */ }
+        }
+        // Invalidate cache on any status change
+        if (typeof body.status === 'string') {
+          invalidateUserStatusCache(userId)
+        }
+
+        writeJson(res, 200, result)
         return
       }
 
@@ -2188,6 +2256,258 @@ export function startServer(
         const keyId = apiKeyMatch[1] || ''
         writeJson(res, 200, authService.revokeApiKey({ orgId: auth.orgId, keyId }, auth))
         return
+      }
+
+      // ==================== Config Items (Secrets Management) ====================
+
+      if (req.method === 'GET' && pathname === '/api/v1/config-items') {
+        authService.requireScope(auth, 'admin:secrets')
+        const urlObj = new URL(req.url as string, `http://${req.headers.host}`)
+        writeJson(res, 200, configItemsApi.list(auth.orgId, auth.userId, {
+          page: Number(urlObj.searchParams.get('page')) || undefined,
+          page_size: Number(urlObj.searchParams.get('page_size')) || undefined,
+          name: urlObj.searchParams.get('name') || undefined,
+          scope: urlObj.searchParams.get('scope') || undefined,
+          status: urlObj.searchParams.get('status') || undefined,
+        }))
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/config-items') {
+        authService.requireScope(auth, 'admin:secrets:write')
+        const body = await readJsonBody(req)
+        const result = configItemsApi.create(auth.orgId, auth.userId, body)
+        if (result.success) refreshAuthProxyRules()
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      const configItemMatch = pathname.match(/^\/api\/v1\/config-items\/(\d+)$/)
+      if (configItemMatch) {
+        const itemId = Number(configItemMatch[1])
+        if (req.method === 'GET') {
+          authService.requireScope(auth, 'admin:secrets')
+          writeJson(res, 200, configItemsApi.get(auth.orgId, auth.userId, itemId))
+          return
+        }
+        if (req.method === 'PUT') {
+          authService.requireScope(auth, 'admin:secrets:write')
+          const body = await readJsonBody(req)
+          const result = configItemsApi.update(auth.orgId, auth.userId, itemId, body)
+          refreshAuthProxyRules()
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          authService.requireScope(auth, 'admin:secrets:write')
+          const result = configItemsApi.delete(auth.orgId, auth.userId, itemId)
+          refreshAuthProxyRules()
+          writeJson(res, 200, result)
+          return
+        }
+      }
+
+      const configItemStatusMatch = pathname.match(/^\/api\/v1\/config-items\/(\d+)\/status$/)
+      if (req.method === 'PUT' && configItemStatusMatch) {
+        authService.requireScope(auth, 'admin:secrets:write')
+        const itemId = Number(configItemStatusMatch[1])
+        const body = await readJsonBody(req)
+        const result = configItemsApi.updateStatus(auth.orgId, auth.userId, itemId, Number(body.status))
+        refreshAuthProxyRules()
+        writeJson(res, 200, result)
+        return
+      }
+
+      const configItemEntriesMatch = pathname.match(/^\/api\/v1\/config-items\/(\d+)\/entries$/)
+      if (req.method === 'PUT' && configItemEntriesMatch) {
+        authService.requireScope(auth, 'admin:secrets:write')
+        const itemId = Number(configItemEntriesMatch[1])
+        const body = await readJsonBody(req)
+        writeJson(res, 200, configItemsApi.update(auth.orgId, auth.userId, itemId, { entries: body.entries }))
+        return
+      }
+
+      // Config item icon upload
+      if (req.method === 'POST' && pathname === '/api/v1/config-items/icon') {
+        authService.requireScope(auth, 'admin:secrets:write')
+        const chunks: Buffer[] = []
+        for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+        const raw = Buffer.concat(chunks)
+        const contentType = req.headers['content-type'] || 'image/png'
+        const base64 = raw.toString('base64')
+        const icon = `data:${contentType};base64,${base64}`
+        writeJson(res, 200, { success: true, icon })
+        return
+      }
+
+      // ==================== Secrets (requires Nexus) ====================
+      if (secretsApi) {
+        // Enterprise secrets: list
+        if (req.method === 'GET' && pathname === '/api/v1/secrets') {
+          authService.requireScope(auth, 'admin:secrets')
+          writeJson(res, 200, await secretsApi.listEnterpriseSecrets(auth.orgId, auth.userId))
+          return
+        }
+
+        // Secret metadata: list + update
+        if (req.method === 'GET' && pathname === '/api/v1/secret-metadata') {
+          authService.requireScope(auth, 'admin:secrets')
+          writeJson(res, 200, secretsApi.listMetadata(auth.orgId, auth.userId))
+          return
+        }
+        const metadataMatch = pathname.match(/^\/api\/v1\/secret-metadata\/(\d+)$/)
+        if (req.method === 'PUT' && metadataMatch) {
+          authService.requireScope(auth, 'admin:secrets:write')
+          const body = await readJsonBody(req)
+          writeJson(res, 200, secretsApi.updateMetadata(auth.orgId, auth.userId, Number(metadataMatch[1]), body.expires_at ?? null))
+          return
+        }
+
+        // Department policies
+        const deptPolicyMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)\/secret-policies$/)
+        if (deptPolicyMatch) {
+          const deptId = deptPolicyMatch[1]
+          if (req.method === 'GET') {
+            authService.requireScope(auth, 'admin:secrets')
+            writeJson(res, 200, secretsApi.getDepartmentPolicies(auth.orgId, auth.userId, deptId))
+            return
+          }
+          if (req.method === 'PUT') {
+            authService.requireScope(auth, 'admin:secrets:write')
+            const body = await readJsonBody(req)
+            writeJson(res, 200, secretsApi.updateDepartmentPolicies(auth.orgId, auth.userId, deptId, body.config_item_ids ?? []))
+            return
+          }
+        }
+
+        // Audit log
+        if (req.method === 'GET' && pathname === '/api/v1/secrets-audit') {
+          authService.requireScope(auth, 'admin:secrets')
+          const urlObj = new URL(req.url as string, `http://${req.headers.host}`)
+          writeJson(res, 200, secretsApi.listAuditLog(auth.orgId, auth.userId, {
+            actor_id: urlObj.searchParams.get('actor_id') || undefined,
+            config_item_id: urlObj.searchParams.get('config_item_id') ? Number(urlObj.searchParams.get('config_item_id')) : undefined,
+            action: urlObj.searchParams.get('action') || undefined,
+            since: urlObj.searchParams.get('since') ? Number(urlObj.searchParams.get('since')) : undefined,
+            until: urlObj.searchParams.get('until') ? Number(urlObj.searchParams.get('until')) : undefined,
+            page: Number(urlObj.searchParams.get('page')) || undefined,
+            page_size: Number(urlObj.searchParams.get('page_size')) || undefined,
+          }))
+          return
+        }
+
+        // Rotation alerts
+        if (req.method === 'GET' && pathname === '/api/v1/secret-rotation/alerts') {
+          authService.requireScope(auth, 'admin:secrets')
+          writeJson(res, 200, secretsApi.listRotationAlerts(auth.orgId, auth.userId))
+          return
+        }
+
+        // Auth Proxy token management (admin only, for testing/session support)
+        if (pathname === '/api/v1/auth-proxy/register-test-token' && req.method === 'POST') {
+          authService.requireScope(auth, 'admin:secrets:write')
+          const body = await readJsonBody(req)
+          const ap = runtime.authProxy
+          if (!ap) { writeJson(res, 503, { success: false, error: { code: 'auth_proxy_unavailable' } }); return }
+          const testToken = body?.token || randomUUID()
+          const testUserId = body?.user_id || auth.userId
+          ap.registerToken(testToken, testUserId, body?.department_id || null, null)
+          writeJson(res, 200, { success: true, token: testToken })
+          return
+        }
+        if (pathname === '/api/v1/auth-proxy/revoke-token' && req.method === 'POST') {
+          authService.requireScope(auth, 'admin:secrets:write')
+          const body = await readJsonBody(req)
+          const ap = runtime.authProxy
+          if (ap && body?.token) ap.revokeToken(body.token)
+          writeJson(res, 200, { success: true })
+          return
+        }
+
+        // Individual secret CRUD (enterprise + user)
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined
+        const secretMatch = pathname.match(/^\/api\/v1\/secrets\/([^/]+)\/([^/]+)(?:\/(enable|disable))?$/)
+        if (secretMatch) {
+          const namespace = decodeURIComponent(secretMatch[1])
+          const key = decodeURIComponent(secretMatch[2])
+          const action = secretMatch[3]
+          if (action === 'enable' && req.method === 'POST') {
+            authService.requireScope(auth, 'admin:secrets:write')
+            writeJson(res, 200, await secretsApi.enableSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (action === 'disable' && req.method === 'POST') {
+            authService.requireScope(auth, 'admin:secrets:write')
+            writeJson(res, 200, await secretsApi.disableSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (req.method === 'GET') {
+            authService.requireScope(auth, 'admin:secrets')
+            writeJson(res, 200, await secretsApi.getSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (req.method === 'PUT') {
+            authService.requireScope(auth, 'admin:secrets:write')
+            const body = await readJsonBody(req)
+            writeJson(res, 200, await secretsApi.putSecret(auth.orgId, auth.userId, namespace, key, body.value ?? '', undefined, clientIp))
+            return
+          }
+          if (req.method === 'DELETE') {
+            authService.requireScope(auth, 'admin:secrets:write')
+            writeJson(res, 200, await secretsApi.deleteSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+        }
+
+        // User secrets (me endpoints)
+        if (req.method === 'GET' && pathname === '/api/v1/me/secrets') {
+          writeJson(res, 200, await secretsApi.listUserSecrets(auth.orgId, auth.userId))
+          return
+        }
+        if (req.method === 'GET' && pathname === '/api/v1/me/authorized-system-configs') {
+          const allItems = runtime.store.getAllActiveConfigItems().filter(i => (i.scope as string) === 'system')
+          try {
+            const user = authService.getUserById(auth.userId)
+            const deptId = user?.departmentId ?? null
+            if (deptId) {
+              const policies = runtime.store.getDepartmentPolicies(deptId)
+              const authorizedIds = new Set(policies.map(p => p.config_item_id as number))
+              writeJson(res, 200, { success: true, data: allItems.filter(i => authorizedIds.has(i.id as number)) })
+            } else {
+              writeJson(res, 200, { success: true, data: [] })
+            }
+          } catch {
+            writeJson(res, 200, { success: true, data: [] })
+          }
+          return
+        }
+        const meSecretMatch = pathname.match(/^\/api\/v1\/me\/secrets\/([^/]+)\/([^/]+)(?:\/(enable|disable))?$/)
+        if (meSecretMatch) {
+          const namespace = decodeURIComponent(meSecretMatch[1])
+          const key = decodeURIComponent(meSecretMatch[2])
+          const action = meSecretMatch[3]
+          if (action === 'enable' && req.method === 'POST') {
+            writeJson(res, 200, await secretsApi.enableUserSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (action === 'disable' && req.method === 'POST') {
+            writeJson(res, 200, await secretsApi.disableUserSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (req.method === 'GET') {
+            writeJson(res, 200, await secretsApi.getUserSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+          if (req.method === 'PUT') {
+            const body = await readJsonBody(req)
+            writeJson(res, 200, await secretsApi.putUserSecret(auth.orgId, auth.userId, namespace, key, body.value ?? '', clientIp))
+            return
+          }
+          if (req.method === 'DELETE') {
+            writeJson(res, 200, await secretsApi.deleteUserSecret(auth.orgId, auth.userId, namespace, key, clientIp))
+            return
+          }
+        }
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/settings/system') {
@@ -3595,6 +3915,13 @@ export function startServer(
 
         if (!auth) {
           process.stderr.write(`[WS Upgrade Auth Failed v2] Token: ${token ? (token.slice(0, 10) + '...') : 'MISSING'}, URL: ${req.url}\n`)
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+          socket.destroy()
+          return
+        }
+
+        if (!isUserActive(auth.userId, authService)) {
+          process.stderr.write(`[WS Upgrade] User ${auth.userId} is disabled\n`)
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
           socket.destroy()
           return

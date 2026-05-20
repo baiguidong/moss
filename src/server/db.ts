@@ -201,8 +201,6 @@ export class DirectConnectStore {
         ON sessions (org_id, user_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS sessions_state_idx
         ON sessions (org_id, status, last_active_at DESC);
-      CREATE INDEX IF NOT EXISTS sessions_source_chat
-        ON sessions (source, channel_chat_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
 
@@ -559,6 +557,97 @@ export class DirectConnectStore {
     } catch {
       // already exists
     }
+
+    // ============================================================
+    // Secrets Management Tables
+    // ============================================================
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS config_items (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT NOT NULL UNIQUE,
+        description   TEXT,
+        icon          TEXT,
+        pinyin        TEXT UNIQUE,
+        scope         TEXT NOT NULL DEFAULT 'system',
+        url_pattern   TEXT,
+        scheme        TEXT,
+        bearer_prefix TEXT,
+        status        INTEGER DEFAULT 1,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_config_items_scope_status
+        ON config_items (scope, status);
+      CREATE INDEX IF NOT EXISTS idx_config_items_status
+        ON config_items (status);
+
+      CREATE TABLE IF NOT EXISTS config_entries (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_item_id INTEGER NOT NULL,
+        config_key     TEXT NOT NULL,
+        name           TEXT NOT NULL,
+        config_desc    TEXT,
+        required       INTEGER DEFAULT 0,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        FOREIGN KEY (config_item_id) REFERENCES config_items(id) ON DELETE CASCADE,
+        UNIQUE(config_item_id, config_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_config_entries_item
+        ON config_entries (config_item_id);
+
+      CREATE TABLE IF NOT EXISTS secret_metadata (
+        id              TEXT PRIMARY KEY,
+        config_item_id  INTEGER NOT NULL UNIQUE,
+        expires_at      INTEGER,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        FOREIGN KEY (config_item_id) REFERENCES config_items(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_secret_metadata_expires
+        ON secret_metadata (expires_at);
+
+      CREATE TABLE IF NOT EXISTS department_secret_policies (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        department_id  TEXT NOT NULL,
+        config_item_id INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL,
+        FOREIGN KEY (config_item_id) REFERENCES config_items(id) ON DELETE CASCADE,
+        UNIQUE(department_id, config_item_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dept_policies_dept
+        ON department_secret_policies (department_id);
+      CREATE INDEX IF NOT EXISTS idx_dept_policies_config
+        ON department_secret_policies (config_item_id);
+
+      CREATE TABLE IF NOT EXISTS secret_audit_log (
+        id              TEXT PRIMARY KEY,
+        actor_id        TEXT NOT NULL,
+        actor_name      TEXT,
+        action          TEXT NOT NULL,
+        config_item_id  INTEGER,
+        namespace       TEXT NOT NULL,
+        key             TEXT NOT NULL,
+        detail          TEXT,
+        ip_address      TEXT,
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_audit_created
+        ON secret_audit_log (created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_actor_time
+        ON secret_audit_log (actor_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_config_item_time
+        ON secret_audit_log (config_item_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_action_time
+        ON secret_audit_log (action, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_namespace
+        ON secret_audit_log (namespace, key);
+    `)
   }
 
   close(): void {
@@ -2069,6 +2158,278 @@ export class DirectConnectStore {
     this.db
       .prepare(`UPDATE document_tree_nodes SET alias = ?, updated_at = ? WHERE id = ? AND org_id = ?`)
       .run(alias, now(), id, orgId)
+  }
+
+  // ==================== Secrets Management ====================
+
+  // --- Config Items ---
+
+  listConfigItems(opts: {
+    name?: string
+    scope?: string
+    status?: string
+    page?: number
+    pageSize?: number
+  }): { items: SqlRow[]; total: number } {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.name) {
+      conditions.push('(name LIKE ? OR pinyin LIKE ?)')
+      params.push(`%${opts.name}%`, `%${opts.name}%`)
+    }
+    if (opts.scope) {
+      conditions.push('scope = ?')
+      params.push(opts.scope)
+    }
+    if (opts.status !== undefined && opts.status !== '') {
+      conditions.push('status = ?')
+      params.push(Number(opts.status))
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const countRow = this.db.prepare(`SELECT COUNT(*) AS c FROM config_items ${where}`).get(...params) as { c: number }
+    const total = countRow.c
+    const page = opts.page ?? 1
+    const pageSize = opts.pageSize ?? 20
+    const offset = (page - 1) * pageSize
+    const items = this.db.prepare(
+      `SELECT * FROM config_items ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+    ).all(...params, pageSize, offset) as SqlRow[]
+    return { items, total }
+  }
+
+  getConfigItem(id: number): SqlRow | null {
+    return (this.db.prepare('SELECT * FROM config_items WHERE id = ?').get(id) as SqlRow) ?? null
+  }
+
+  getConfigItemByPinyin(pinyin: string): SqlRow | null {
+    return (this.db.prepare('SELECT * FROM config_items WHERE pinyin = ?').get(pinyin) as SqlRow) ?? null
+  }
+
+  getConfigItemsByScope(scope: string, status?: number): SqlRow[] {
+    if (status !== undefined) {
+      return this.db.prepare('SELECT * FROM config_items WHERE scope = ? AND status = ?').all(scope, status) as SqlRow[]
+    }
+    return this.db.prepare('SELECT * FROM config_items WHERE scope = ?').all(scope) as SqlRow[]
+  }
+
+  getAllActiveConfigItems(): SqlRow[] {
+    return this.db.prepare('SELECT * FROM config_items WHERE status = 1').all() as SqlRow[]
+  }
+
+  createConfigItem(row: {
+    name: string
+    description?: string
+    icon?: string
+    pinyin: string
+    scope: string
+    url_pattern?: string
+    scheme?: string
+    bearer_prefix?: string
+    status?: number
+  }): number {
+    const ts = now()
+    const result = this.db.prepare(`
+      INSERT INTO config_items (name, description, icon, pinyin, scope, url_pattern, scheme, bearer_prefix, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.name,
+      row.description ?? null,
+      row.icon ?? null,
+      row.pinyin,
+      row.scope,
+      row.url_pattern ?? null,
+      row.scheme ?? null,
+      row.bearer_prefix ?? null,
+      row.status ?? 1,
+      ts, ts,
+    )
+    return Number(result.lastInsertRowid)
+  }
+
+  updateConfigItem(id: number, updates: {
+    name?: string
+    description?: string
+    icon?: string
+    pinyin?: string
+    scope?: string
+    url_pattern?: string
+    scheme?: string
+    bearer_prefix?: string
+    status?: number
+  }): void {
+    const existing = this.getConfigItem(id)
+    if (!existing) return
+    const ts = now()
+    this.db.prepare(`
+      UPDATE config_items
+      SET name = ?, description = ?, icon = ?, pinyin = ?, scope = ?,
+          url_pattern = ?, scheme = ?, bearer_prefix = ?, status = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      updates.name ?? (existing.name as string),
+      updates.description !== undefined ? updates.description : (existing.description as string | null),
+      updates.icon !== undefined ? updates.icon : (existing.icon as string | null),
+      updates.pinyin ?? (existing.pinyin as string),
+      updates.scope ?? (existing.scope as string),
+      updates.url_pattern !== undefined ? updates.url_pattern : (existing.url_pattern as string | null),
+      updates.scheme !== undefined ? updates.scheme : (existing.scheme as string | null),
+      updates.bearer_prefix !== undefined ? updates.bearer_prefix : (existing.bearer_prefix as string | null),
+      updates.status !== undefined ? updates.status : (existing.status as number),
+      ts, id,
+    )
+  }
+
+  deleteConfigItem(id: number): void {
+    this.db.prepare('DELETE FROM config_items WHERE id = ?').run(id)
+  }
+
+  // --- Config Entries ---
+
+  getConfigEntries(configItemId: number): SqlRow[] {
+    return this.db.prepare('SELECT * FROM config_entries WHERE config_item_id = ?').all(configItemId) as SqlRow[]
+  }
+
+  replaceConfigEntries(configItemId: number, entries: {
+    config_key: string
+    name: string
+    config_desc?: string
+    required?: boolean
+  }[]): void {
+    const ts = now()
+    this.db.prepare('DELETE FROM config_entries WHERE config_item_id = ?').run(configItemId)
+    const stmt = this.db.prepare(`
+      INSERT INTO config_entries (config_item_id, config_key, name, config_desc, required, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const e of entries) {
+      stmt.run(configItemId, e.config_key, e.name, e.config_desc ?? null, e.required ? 1 : 0, ts, ts)
+    }
+  }
+
+  // --- Secret Metadata ---
+
+  getSecretMetadata(configItemId: number): SqlRow | null {
+    return (this.db.prepare('SELECT * FROM secret_metadata WHERE config_item_id = ?').get(configItemId) as SqlRow) ?? null
+  }
+
+  getAllSecretMetadata(): SqlRow[] {
+    return this.db.prepare('SELECT * FROM secret_metadata').all() as SqlRow[]
+  }
+
+  upsertSecretMetadata(configItemId: number, expiresAt: number | null): void {
+    const ts = now()
+    const existing = this.getSecretMetadata(configItemId)
+    if (existing) {
+      this.db.prepare('UPDATE secret_metadata SET expires_at = ?, updated_at = ? WHERE config_item_id = ?')
+        .run(expiresAt, ts, configItemId)
+    } else {
+      this.db.prepare(`
+        INSERT INTO secret_metadata (id, config_item_id, expires_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(randomUUID(), configItemId, expiresAt, ts, ts)
+    }
+  }
+
+  getExpiringSecretMetadata(beforeTs: number): SqlRow[] {
+    return this.db.prepare(
+      'SELECT * FROM secret_metadata WHERE expires_at IS NOT NULL AND expires_at < ?',
+    ).all(beforeTs) as SqlRow[]
+  }
+
+  // --- Department Secret Policies ---
+
+  getDepartmentPolicies(departmentId: string): SqlRow[] {
+    return this.db.prepare(
+      'SELECT * FROM department_secret_policies WHERE department_id = ?',
+    ).all(departmentId) as SqlRow[]
+  }
+
+  replaceDepartmentPolicies(departmentId: string, configItemIds: number[]): void {
+    const ts = now()
+    this.db.prepare('DELETE FROM department_secret_policies WHERE department_id = ?').run(departmentId)
+    const stmt = this.db.prepare(`
+      INSERT INTO department_secret_policies (department_id, config_item_id, created_at)
+      VALUES (?, ?, ?)
+    `)
+    for (const cid of configItemIds) {
+      stmt.run(departmentId, cid, ts)
+    }
+  }
+
+  getConfigItemAuthorizedDepartments(configItemId: number): SqlRow[] {
+    return this.db.prepare(
+      'SELECT * FROM department_secret_policies WHERE config_item_id = ?',
+    ).all(configItemId) as SqlRow[]
+  }
+
+  deleteDepartmentPoliciesByConfigItem(configItemId: number): void {
+    this.db.prepare('DELETE FROM department_secret_policies WHERE config_item_id = ?').run(configItemId)
+  }
+
+  // --- Secret Audit Log ---
+
+  insertAuditLog(row: {
+    id: string
+    actor_id: string
+    actor_name?: string
+    action: string
+    config_item_id?: number
+    namespace: string
+    key: string
+    detail?: string
+    ip_address?: string
+  }): void {
+    this.db.prepare(`
+      INSERT INTO secret_audit_log (id, actor_id, actor_name, action, config_item_id, namespace, key, detail, ip_address, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id, row.actor_id, row.actor_name ?? null, row.action,
+      row.config_item_id ?? null, row.namespace, row.key,
+      row.detail ?? null, row.ip_address ?? null, now(),
+    )
+  }
+
+  queryAuditLog(opts: {
+    actor_id?: string
+    config_item_id?: number
+    action?: string
+    since?: number
+    until?: number
+    page?: number
+    pageSize?: number
+  }): { items: SqlRow[]; total: number } {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.actor_id) {
+      conditions.push('actor_id = ?')
+      params.push(opts.actor_id)
+    }
+    if (opts.config_item_id) {
+      conditions.push('config_item_id = ?')
+      params.push(opts.config_item_id)
+    }
+    if (opts.action) {
+      conditions.push('action = ?')
+      params.push(opts.action)
+    }
+    if (opts.since) {
+      conditions.push('created_at >= ?')
+      params.push(opts.since)
+    }
+    if (opts.until) {
+      conditions.push('created_at <= ?')
+      params.push(opts.until)
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const countRow = this.db.prepare(`SELECT COUNT(*) AS c FROM secret_audit_log ${where}`).get(...params) as { c: number }
+    const total = countRow.c
+    const page = opts.page ?? 1
+    const pageSize = opts.pageSize ?? 20
+    const offset = (page - 1) * pageSize
+    const items = this.db.prepare(
+      `SELECT * FROM secret_audit_log ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    ).all(...params, pageSize, offset) as SqlRow[]
+    return { items, total }
   }
 }
 

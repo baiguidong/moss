@@ -16,6 +16,12 @@ const AgentHubPage = lazy(() => import('./pages/agent-hub-page'))
 const EnterpriseConfigPage = lazy(() => import('./pages/enterprise-config-page'))
 const DocumentCenterPage = lazy(() => import('./pages/document-center-page'))
 const ExternalSourcesPage = lazy(() => import('./pages/external-sources-page'))
+const ConfigItemsPage = lazy(() => import('./pages/secrets/config-items-page'))
+const EnterpriseSecretsPage = lazy(() => import('./pages/secrets/enterprise-secrets-page'))
+const DepartmentPoliciesPage = lazy(() => import('./pages/secrets/department-policies-page'))
+const UserCredentialsPage = lazy(() => import('./pages/secrets/user-credentials-page'))
+const AuditLogPage = lazy(() => import('./pages/secrets/audit-log-page'))
+const RotationAlertsPage = lazy(() => import('./pages/secrets/rotation-alerts-page'))
 const SessionDetailPage = lazy(() =>
   import('./pages/session-detail-page').then((module) => ({
     default: module.SessionDetailPage,
@@ -157,6 +163,55 @@ export default function App() {
           element={
             <SuspendedRoute>
               <ExternalSourcesPage />
+            </SuspendedRoute>
+          }
+        />
+        {/* Secrets Management */}
+        <Route
+          path="/secrets/config-items"
+          element={
+            <SuspendedRoute>
+              <ConfigItemsPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/secrets/enterprise"
+          element={
+            <SuspendedRoute>
+              <EnterpriseSecretsPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/secrets/department-policies"
+          element={
+            <SuspendedRoute>
+              <DepartmentPoliciesPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/secrets/user-credentials"
+          element={
+            <SuspendedRoute>
+              <UserCredentialsPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/secrets/audit-log"
+          element={
+            <SuspendedRoute>
+              <AuditLogPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/secrets/rotation-alerts"
+          element={
+            <SuspendedRoute>
+              <RotationAlertsPage />
             </SuspendedRoute>
           }
         />
