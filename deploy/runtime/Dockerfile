@@ -9,6 +9,7 @@ WORKDIR /src
 COPY ./cli/wiki/go.mod ./
 # go.sum intentionally absent — wiki CLI has zero external deps
 COPY ./cli/wiki/*.go ./
+COPY ./cli/wiki/client/*.go ./client/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/wiki .
 
 # Stage 2: runtime image
