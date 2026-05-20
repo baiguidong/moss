@@ -12,6 +12,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/root/.moss/server
+      - ./nexus-data:/root/.moss/nexus
       - .:/workspace
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

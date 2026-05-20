@@ -196,7 +196,8 @@ export class ApiClient {
       }
 
       const error = await response.json().catch(() => ({ error: response.statusText }))
-      const message = (error as ApiErrorResponse).error || 'Request failed'
+      const raw = (error as any).error
+      const message = typeof raw === 'string' ? raw : (raw?.message || (error as any).message || 'Request failed')
       throw new ApiRequestError(response.status, message)
     }
 

@@ -12,3 +12,4 @@ data/
 sudocode/
 .scode/
 ui/electron-direct.mjs
+tests/

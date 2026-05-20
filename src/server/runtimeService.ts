@@ -29,6 +29,7 @@ import {
 import { errorMessage } from '../utils/errors.js'
 import { getSystemSettings } from './systemSettings.js'
 import { getUserModelPreference } from './userModelPreference.js'
+import type { AuthProxyServer } from './authProxy/authProxyServer.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -154,6 +155,8 @@ export class RuntimeService {
   readonly store: DirectConnectStore
   readonly authService: AuthService
   private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
+  private readonly sessionTokens = new Map<string, { token: string; pid: number }>()
+  authProxy: AuthProxyServer | null = null
 
   constructor(private readonly options: RuntimeServiceOptions) {
     this.store = options.store ?? openDirectConnectStore(options.config)
@@ -319,6 +322,14 @@ export class RuntimeService {
     const session = this.store.getSession(sessionId)
     if (!session) return
     const attempt = this.store.getCurrentAttempt(sessionId)
+    // Revoke auth proxy token
+    if (this.authProxy) {
+      const tokenEntry = this.sessionTokens.get(sessionId)
+      if (tokenEntry) {
+        this.authProxy.revokeToken(tokenEntry.token)
+        this.sessionTokens.delete(sessionId)
+      }
+    }
     this.store.setSessionLifecycle(sessionId, 'terminated', 'terminated')
     this.store.addEvent(sessionId, attempt?.attemptId ?? null, 'session_terminate_requested', {})
     if (attempt?.runnerPid) {
@@ -567,6 +578,15 @@ export class RuntimeService {
       runnerEnv.ANTHROPIC_MODEL = systemSettings.model
     }
 
+    // Inject Auth Proxy token for scode process
+    if (this.authProxy) {
+      const authToken = randomUUID()
+      runnerEnv.SUDOWORK_AUTH_PROXY_URL = 'http://localhost:12013'
+      runnerEnv.SUDOWORK_AUTH_PROXY_TOKEN = authToken
+      // Token will be registered after spawn (needs pid)
+      this.sessionTokens.set(session.sessionId, { token: authToken, pid: -1 })
+    }
+
     const runnerPath = resolveRunnerPath()
     const cwd = (existsSync(session.cwd) ? session.cwd : process.cwd())
     const safeCwd = cwd === '/' ? os.homedir() : cwd
@@ -585,6 +605,16 @@ export class RuntimeService {
     if (!child.pid) {
       throw new Error('Failed to spawn session runner')
     }
+
+    // Register auth proxy token with pid
+    if (this.authProxy) {
+      const entry = this.sessionTokens.get(session.sessionId)
+      if (entry) {
+        entry.pid = child.pid
+        this.authProxy.registerToken(entry.token, session.userId, null, child.pid)
+      }
+    }
+
     this.store.updateAttemptRunner(attempt.attemptId, child.pid)
     await waitForRunnerReady(attachPath, statusPath, stderrLogPath, 5_000)
     this.store.setSessionLifecycle(session.sessionId, 'active', 'active')

@@ -49,6 +49,7 @@ function defaultScopesForRole(role: string): string[] {
       'sessions:list',
       'admin:users',
       'admin:api_keys',
+      'admin:secrets',
     ]
   }
   return ['sessions:create', 'sessions:attach', 'sessions:list']
@@ -359,6 +360,18 @@ export class AuthService {
       return null
     }
     return sanitizeUser(user)
+  }
+
+  /** Get user status by userId only (no orgId or permission check). Used by userStatusCache. */
+  getUserById(userId: string): { status: string; departmentId: string | null } | null {
+    const user = this.db.getUserById(userId)
+    if (!user) return null
+    return { status: user.status || 'active', departmentId: user.departmentId ?? null }
+  }
+
+  getUserName(userId: string): string | undefined {
+    const user = this.db.getUserById(userId)
+    return user?.name
   }
 
   createUser(input: {

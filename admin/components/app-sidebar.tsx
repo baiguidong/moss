@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { ComponentType } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -15,12 +16,16 @@ import {
   Building2,
   BookText,
   Plug,
+  KeyRound,
+  ChevronRight,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { hasAnyScope, hasScope } from '@/lib/api/client'
+import { cn } from '@/lib/utils'
 
 type NavItem = {
   title: string
@@ -28,6 +33,7 @@ type NavItem = {
   icon: ComponentType<{ className?: string }>
   requiredScope?: string
   requiredAnyScopes?: string[]
+  children?: NavItem[]
 }
 
 const roleLabels: Record<string, string> = {
@@ -89,6 +95,20 @@ const menuItems: NavItem[] = [
     icon: Plug,
     requiredAnyScopes: ['admin:documents', 'admin:settings'],
   },
+  {
+    title: '凭据中心',
+    url: '/secrets',
+    icon: KeyRound,
+    requiredScope: 'admin:secrets',
+    children: [
+      { title: '配置项列表', url: '/secrets/config-items', icon: KeyRound },
+      { title: '企业凭据', url: '/secrets/enterprise', icon: KeyRound },
+      { title: '部门授权', url: '/secrets/department-policies', icon: KeyRound },
+      { title: '用户凭据', url: '/secrets/user-credentials', icon: KeyRound },
+      { title: '审计日志', url: '/secrets/audit-log', icon: KeyRound },
+      { title: '轮换告警', url: '/secrets/rotation-alerts', icon: KeyRound },
+    ],
+  },
 ]
 
 const systemItems: NavItem[] = [
@@ -110,6 +130,7 @@ export function AppSidebar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, scopes, logout } = useAuth()
+  const [expandedMenu, setExpandedMenu] = useState<string | null>(null)
 
   const visibleMenuItems = menuItems.filter((item) => {
     if ('requiredScope' in item && item.requiredScope) {
@@ -136,6 +157,87 @@ export function AppSidebar() {
     navigate('/login', { replace: true })
   }
 
+  const isItemActive = (url: string) => {
+    if (url === '/') return pathname === '/'
+    return pathname === url || pathname.startsWith(`${url}/`)
+  }
+
+  const renderNavItem = (item: NavItem) => {
+    // Parent menu with children
+    if (item.children) {
+      const visibleChildren = item.children.filter(() => {
+        // Children inherit parent's scope requirement; if parent is visible, children are too
+        return true
+      })
+      if (visibleChildren.length === 0) return null
+
+      const isAnyChildActive = visibleChildren.some(child => isItemActive(child.url))
+      const isExpanded = expandedMenu === item.title || isAnyChildActive
+
+      return (
+        <li key={item.title}>
+          <Collapsible
+            open={isExpanded}
+            onOpenChange={(open) => setExpandedMenu(open ? item.title : null)}
+          >
+            <CollapsibleTrigger className={cn(
+              'flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full transition-colors text-left',
+              isAnyChildActive
+                ? 'bg-primary/10 text-primary font-medium'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            )}>
+              <item.icon className="size-4" />
+              <span className="flex-1">{item.title}</span>
+              <ChevronRight className={cn('size-3.5 transition-transform', isExpanded && 'rotate-90')} />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <ul className="space-y-0.5 mt-1 ml-4">
+                {visibleChildren.map(child => {
+                  const isActive = isItemActive(child.url)
+                  return (
+                    <li key={child.title}>
+                      <Link
+                        to={child.url}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors',
+                          isActive
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        )}
+                      >
+                        <span className="w-1 h-1 rounded-full bg-current opacity-40" />
+                        <span>{child.title}</span>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </CollapsibleContent>
+          </Collapsible>
+        </li>
+      )
+    }
+
+    // Regular menu item (no children)
+    const isActive = isItemActive(item.url)
+    return (
+      <li key={item.title}>
+        <Link
+          to={item.url}
+          className={cn(
+            'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+            isActive
+              ? 'bg-primary/10 text-primary font-medium'
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+          )}
+        >
+          <item.icon className="size-4" />
+          <span>{item.title}</span>
+        </Link>
+      </li>
+    )
+  }
+
   return (
     <aside className="w-64 border-r bg-card flex flex-col h-full">
       {/* Header */}
@@ -149,58 +251,18 @@ export function AppSidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4">
+      <nav className="flex-1 p-4 overflow-y-auto">
         <div className="mb-6">
           <p className="text-xs font-medium text-muted-foreground mb-2 px-3">主菜单</p>
           <ul className="space-y-1">
-            {visibleMenuItems.map((item) => {
-              const isActive =
-                item.url === '/'
-                  ? pathname === '/'
-                  : pathname === item.url || pathname.startsWith(`${item.url}/`)
-              return (
-                <li key={item.title}>
-                  <Link
-                    to={item.url}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                      isActive
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
-                  >
-                    <item.icon className="size-4" />
-                    <span>{item.title}</span>
-                  </Link>
-                </li>
-              )
-            })}
+            {visibleMenuItems.map(renderNavItem)}
           </ul>
         </div>
 
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-2 px-3">系统</p>
           <ul className="space-y-1">
-            {visibleSystemItems.map((item) => {
-              const isActive =
-                item.url === '/settings'
-                  ? pathname === item.url
-                  : pathname === item.url || pathname.startsWith(`${item.url}/`)
-              return (
-                <li key={item.title}>
-                  <Link
-                    to={item.url}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                      isActive
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
-                  >
-                    <item.icon className="size-4" />
-                    <span>{item.title}</span>
-                  </Link>
-                </li>
-              )
-            })}
+            {visibleSystemItems.map(renderNavItem)}
           </ul>
         </div>
       </nav>
