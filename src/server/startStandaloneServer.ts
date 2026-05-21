@@ -10,7 +10,9 @@ import { enableConfigs } from '../utils/config.js'
 import { initHubConfig } from './hubConfig.js'
 import { NexusManager } from './nexus/nexusManager.js'
 import { NexusClient } from './nexus/nexusClient.js'
+import { InMemorySecretsStore } from './nexus/inMemorySecretsStore.js'
 import { AuthProxyServer } from './authProxy/authProxyServer.js'
+import type { NexusClient as NexusClientType } from './nexus/nexusClient.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -34,26 +36,42 @@ export async function startStandaloneDirectConnectServer(
   })
   await ensureServerDirectories(config)
 
-  // Start Nexus subprocess for secrets storage
+  // Start Nexus subprocess for secrets storage (optional, falls back to in-memory store)
   const nexusManager = new NexusManager()
-  let nexusClient: NexusClient | undefined
+  let nexusClient: NexusClientType | undefined
+  let inMemoryStore: InMemorySecretsStore | undefined
+
+  // Create a wrapper that mimics NexusClient interface for in-memory store
+  const createInMemoryClient = (store: InMemorySecretsStore): NexusClientType => ({
+    putSecret: store.putSecret.bind(store),
+    getSecret: store.getSecret.bind(store),
+    deleteSecret: store.deleteSecret.bind(store),
+    enableSecret: store.enableSecret.bind(store),
+    disableSecret: store.disableSecret.bind(store),
+    listSecrets: store.listSecrets.bind(store),
+  })
+
   try {
     await nexusManager.start()
     nexusClient = new NexusClient(nexusManager.baseUrl)
+    console.log('[Startup] Nexus started successfully for secrets management')
   } catch (error) {
-    console.error('[Startup] Failed to start Nexus:', error instanceof Error ? error.message : error)
-    console.error('[Startup] Moss Server requires Nexus for secrets management. Exiting.')
-    process.exit(1)
+    console.warn('[Startup] Nexus not available, falling back to in-memory secrets store:', error instanceof Error ? error.message : error)
+    console.warn('[Startup] Note: Secrets will NOT persist across server restarts')
+    inMemoryStore = new InMemorySecretsStore()
+    nexusClient = createInMemoryClient(inMemoryStore)
   }
 
   // Start Auth Proxy (create instance, will load rules after DB is ready)
   const authProxy = new AuthProxyServer()
-  authProxy.setNexusClient(nexusClient)
+  if (nexusClient) {
+    authProxy.setNexusClient(nexusClient)
+  }
   try {
     await authProxy.start()
   } catch (error) {
     console.error('[Startup] Failed to start Auth Proxy:', error instanceof Error ? error.message : error)
-    await nexusManager.stop()
+    await nexusManager.stop().catch(() => {})
     process.exit(1)
   }
 
@@ -123,7 +141,10 @@ export async function startStandaloneDirectConnectServer(
     authService.destroy()
     await server.stop()
     await authProxy.stop()
-    await nexusManager.stop()
+    // Only stop nexusManager if it was started (not in fallback mode)
+    if (nexusManager && nexusManager['child'] !== null) {
+      await nexusManager.stop()
+    }
     store.stopServerInstance(instance.instanceId)
     store.close()
   }
