@@ -393,6 +393,24 @@ export class DirectConnectStore {
       this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN agent_type TEXT DEFAULT 'chat'`)
     }
 
+    // Migration: Add new columns to tenant_assistants for exclusive agent editing feature
+    const assistantColumns = this.db.prepare(`PRAGMA table_info(tenant_assistants)`).all() as { name: string }[]
+    if (!assistantColumns.some(col => col.name === 'avatar')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN avatar TEXT`)
+    }
+    if (!assistantColumns.some(col => col.name === 'emoji')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN emoji TEXT`)
+    }
+    if (!assistantColumns.some(col => col.name === 'skills')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN skills TEXT`)
+    }
+    if (!assistantColumns.some(col => col.name === 'enabled_wikis')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN enabled_wikis TEXT`)
+    }
+    if (!assistantColumns.some(col => col.name === 'workflow')) {
+      this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN workflow TEXT`)
+    }
+
     // ============================================================
     // Document Center (P0): document tree, documents, wikis, build jobs
     // Assistant ↔ Wiki association lives in assistant `_moss_meta.json` (enabledWikis: string[]),
@@ -1502,6 +1520,7 @@ export class DirectConnectStore {
     checksum?: string | null
     file_path?: string | null
     enabled_skills?: string | null
+    skills?: string | null
     memory_mode?: string
     agent_type?: string
     publish_note?: string | null
@@ -1512,8 +1531,8 @@ export class DirectConnectStore {
     this.db.prepare(`
       INSERT INTO tenant_assistants (
         id, name, display_name, description, version, author_id, author_name, status,
-        source_url, checksum, file_path, enabled_skills, memory_mode, agent_type, publish_note, enabled, visible_to, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_url, checksum, file_path, enabled_skills, skills, memory_mode, agent_type, publish_note, enabled, visible_to, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id,
       row.name,
@@ -1527,6 +1546,7 @@ export class DirectConnectStore {
       row.checksum ?? null,
       row.file_path ?? null,
       row.enabled_skills ?? null,
+      row.skills ?? null,
       row.memory_mode ?? 'session',
       row.agent_type ?? 'chat',
       row.publish_note ?? null,
@@ -1552,6 +1572,13 @@ export class DirectConnectStore {
     enabled?: number
     visible_to?: string | null
     enabled_skills?: string | null
+    avatar?: string | null
+    emoji?: string | null
+    agent_type?: string
+    memory_mode?: string
+    enabled_wikis?: string | null
+    skills?: string | null
+    workflow?: string | null
   }): void {
     const ts = now()
     const existing = this.getTenantAssistant(id)
@@ -1562,12 +1589,36 @@ export class DirectConnectStore {
     const enabled = updates.enabled ?? existing.enabled
     const visibleTo = updates.visible_to !== undefined ? updates.visible_to : existing.visible_to
     const enabledSkills = updates.enabled_skills ?? existing.enabled_skills
+    const avatar = updates.avatar !== undefined ? updates.avatar : (existing.avatar as string | null)
+    const emoji = updates.emoji !== undefined ? updates.emoji : (existing.emoji as string | null)
+    const agentType = updates.agent_type ?? existing.agent_type
+    const memoryMode = updates.memory_mode ?? existing.memory_mode
+    const enabledWikis = updates.enabled_wikis !== undefined ? updates.enabled_wikis : (existing.enabled_wikis as string | null)
+    const skills = updates.skills !== undefined ? updates.skills : (existing.skills as string | null)
+    const workflow = updates.workflow !== undefined ? updates.workflow : (existing.workflow as string | null)
 
     this.db.prepare(`
       UPDATE tenant_assistants
-      SET display_name = ?, description = ?, enabled = ?, visible_to = ?, enabled_skills = ?, updated_at = ?
+      SET display_name = ?, description = ?, enabled = ?, visible_to = ?, enabled_skills = ?,
+          avatar = ?, emoji = ?, agent_type = ?, memory_mode = ?, enabled_wikis = ?, skills = ?, workflow = ?,
+          updated_at = ?
       WHERE id = ?
-    `).run(displayName as string, description as string, enabled as number, visibleTo as string | null, enabledSkills as string | null, ts, id)
+    `).run(
+      displayName as string,
+      description as string,
+      enabled as number,
+      visibleTo as string | null,
+      enabledSkills as string | null,
+      avatar,
+      emoji,
+      agentType as string,
+      memoryMode as string,
+      enabledWikis,
+      skills,
+      workflow,
+      ts,
+      id
+    )
   }
 
   updateTenantAssistantFilePath(id: string, filePath: string, sourceUrl: string, checksum: string): void {
@@ -2226,11 +2277,22 @@ export class DirectConnectStore {
     scheme?: string
     bearer_prefix?: string
     status?: number
+    auth_type?: string
+    auth_url?: string
+    token_url?: string
+    client_id?: string
+    client_secret_key?: string
+    refresh_token_key?: string
+    default_scopes?: string
   }): number {
     const ts = now()
     const result = this.db.prepare(`
-      INSERT INTO config_items (name, description, icon, pinyin, scope, url_pattern, scheme, bearer_prefix, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO config_items (
+        name, description, icon, pinyin, scope, url_pattern, scheme, bearer_prefix, status,
+        auth_type, auth_url, token_url, client_id, client_secret_key, refresh_token_key, default_scopes,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.name,
       row.description ?? null,
@@ -2241,6 +2303,13 @@ export class DirectConnectStore {
       row.scheme ?? null,
       row.bearer_prefix ?? null,
       row.status ?? 1,
+      row.auth_type ?? null,
+      row.auth_url ?? null,
+      row.token_url ?? null,
+      row.client_id ?? null,
+      row.client_secret_key ?? null,
+      row.refresh_token_key ?? null,
+      row.default_scopes ?? null,
       ts, ts,
     )
     return Number(result.lastInsertRowid)
@@ -2256,6 +2325,13 @@ export class DirectConnectStore {
     scheme?: string
     bearer_prefix?: string
     status?: number
+    auth_type?: string
+    auth_url?: string
+    token_url?: string
+    client_id?: string
+    client_secret_key?: string | null
+    refresh_token_key?: string | null
+    default_scopes?: string
   }): void {
     const existing = this.getConfigItem(id)
     if (!existing) return
@@ -2263,7 +2339,10 @@ export class DirectConnectStore {
     this.db.prepare(`
       UPDATE config_items
       SET name = ?, description = ?, icon = ?, pinyin = ?, scope = ?,
-          url_pattern = ?, scheme = ?, bearer_prefix = ?, status = ?, updated_at = ?
+          url_pattern = ?, scheme = ?, bearer_prefix = ?, status = ?,
+          auth_type = ?, auth_url = ?, token_url = ?, client_id = ?,
+          client_secret_key = ?, refresh_token_key = ?, default_scopes = ?,
+          updated_at = ?
       WHERE id = ?
     `).run(
       updates.name ?? (existing.name as string),
@@ -2275,6 +2354,13 @@ export class DirectConnectStore {
       updates.scheme !== undefined ? updates.scheme : (existing.scheme as string | null),
       updates.bearer_prefix !== undefined ? updates.bearer_prefix : (existing.bearer_prefix as string | null),
       updates.status !== undefined ? updates.status : (existing.status as number),
+      updates.auth_type !== undefined ? updates.auth_type : (existing.auth_type as string | null),
+      updates.auth_url !== undefined ? updates.auth_url : (existing.auth_url as string | null),
+      updates.token_url !== undefined ? updates.token_url : (existing.token_url as string | null),
+      updates.client_id !== undefined ? updates.client_id : (existing.client_id as string | null),
+      updates.client_secret_key !== undefined ? updates.client_secret_key : (existing.client_secret_key as string | null),
+      updates.refresh_token_key !== undefined ? updates.refresh_token_key : (existing.refresh_token_key as string | null),
+      updates.default_scopes !== undefined ? updates.default_scopes : (existing.default_scopes as string | null),
       ts, id,
     )
   }

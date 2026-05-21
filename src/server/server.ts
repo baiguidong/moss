@@ -2827,7 +2827,6 @@ export function startServer(
 
       // POST /api/v1/agents/custom - Upload custom assistant
       if (req.method === 'POST' && pathname === '/api/v1/agents/custom') {
-        authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         console.log('[Upload Assistant] Received upload request, name:', body.name, 'id:', body.id, 'displayName:', body.displayName)
         const fileBase64 = typeof body.file === 'string' ? body.file : ''
@@ -2878,6 +2877,16 @@ export function startServer(
             return isVisibleTo(visibleTo, filter)
           }
           return true
+        }).map((row: Record<string, unknown>) => {
+          // Parse JSON fields for frontend consumption
+          return {
+            ...row,
+            skills: typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills ?? [],
+            enabled_skills: typeof row.enabled_skills === 'string' ? JSON.parse(row.enabled_skills) : row.enabled_skills ?? [],
+            enabled_wikis: typeof row.enabled_wikis === 'string' ? JSON.parse(row.enabled_wikis) : row.enabled_wikis ?? [],
+            workflow: typeof row.workflow === 'string' ? JSON.parse(row.workflow) : row.workflow ?? null,
+            visible_to: typeof row.visible_to === 'string' ? JSON.parse(row.visible_to) : row.visible_to ?? null,
+          }
         })
         writeJson(res, 200, rows)
         return
@@ -2906,9 +2915,89 @@ export function startServer(
         return
       }
 
+      // POST /api/v1/agents/tenant/create - Create tenant assistant directly (admin only)
+      if (req.method === 'POST' && pathname === '/api/v1/agents/tenant/create') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+
+        // Validate required fields
+        const name = typeof body.name === 'string' ? body.name.trim() : ''
+        const displayName = typeof body.display_name === 'string' ? body.display_name.trim() : name
+
+        if (!name) {
+          throw new HttpError(400, 'name is required')
+        }
+
+        // Check if name already exists
+        const existingAssistant = runtime.store.getTenantAssistantByName(name)
+        if (existingAssistant) {
+          throw new HttpError(400, `智能体名称 "${name}" 已存在，请使用其他名称`)
+        }
+
+        // Generate UUID for the assistant
+        const assistantId = randomUUID()
+
+        // Get author info
+        const authorUser = authService.getUserOrNull(auth.userId, auth.orgId, auth)
+        const authorName = authorUser?.name || undefined
+
+        // Create assistant directory in tenant folder using name (not UUID)
+        const MOSS_HOME = process.env.MOSS_HOME || join(os.homedir(), '.moss')
+        const ASSISTANT_TENANT_DIR = join(MOSS_HOME, 'assistants', 'tenant')
+        const assistantDir = join(ASSISTANT_TENANT_DIR, name)
+
+        await mkdir(assistantDir, { recursive: true })
+
+        // Create metadata
+        const meta: AssistantStoreMeta = {
+          id: assistantId,
+          name,
+          display_name: displayName,
+          description: typeof body.description === 'string' ? body.description : undefined,
+          avatar: typeof body.avatar === 'string' ? body.avatar : undefined,
+          emoji: typeof body.emoji === 'string' ? body.emoji : undefined,
+          source_type: 'tenant',
+          enabled: true,
+          skills: Array.isArray(body.skills) ? body.skills : [],
+          enabledSkills: Array.isArray(body.enabled_skills) ? body.enabled_skills : [],
+          enabledWikis: Array.isArray(body.enabled_wikis) ? body.enabled_wikis : [],
+          agent_type: body.agent_type || 'chat',
+          memory_mode: body.memory_mode || 'session',
+          visible_to: body.visible_to || null,
+          workflow: body.workflow || null,
+        }
+
+        await writeAssistantMeta(assistantDir, meta)
+
+        // Create default rules file
+        const rulesContent = `# ${displayName}\n\n${typeof body.description === 'string' ? body.description : '这是一个专属智能体。'}\n`
+        await writeFile(join(assistantDir, 'system.md'), rulesContent)
+
+        // Create database record with approved status
+        runtime.store.createTenantAssistant({
+          id: assistantId,
+          name,
+          display_name: displayName,
+          description: meta.description,
+          author_id: auth.userId,
+          author_name: authorName,
+          status: 'approved',
+          file_path: assistantDir,
+          skills: meta.skills && meta.skills.length > 0 ? JSON.stringify(meta.skills) : null,
+          enabled_skills: meta.enabledSkills && meta.enabledSkills.length > 0 ? JSON.stringify(meta.enabledSkills) : null,
+          agent_type: meta.agent_type,
+          memory_mode: meta.memory_mode,
+          visible_to: meta.visible_to ? JSON.stringify(meta.visible_to) : null,
+          enabled: 1,
+        })
+
+        const result = runtime.store.getTenantAssistant(assistantId)
+        writeJson(res, 200, { success: true, data: result })
+        return
+      }
+
       // POST /api/v1/agents/tenant/publish - Publish tenant assistant request
       if (req.method === 'POST' && pathname === '/api/v1/agents/tenant/publish') {
-        authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         const assistantId = typeof body.assistantId === 'string' ? body.assistantId : ''
         const publishNote = typeof body.publishNote === 'string' ? body.publishNote : undefined
@@ -2940,7 +3029,8 @@ export function startServer(
           display_name: meta?.display_name || actualAssistantName,
           description: meta?.description || undefined,
           version: meta?.installed_version || undefined,
-          enabled_skills: meta?.enabledSkills || meta?.skills ? JSON.stringify(meta?.enabledSkills || meta?.skills) : null,
+          skills: meta?.skills ? JSON.stringify(meta.skills) : null,
+          enabled_skills: meta?.enabledSkills ? JSON.stringify(meta.enabledSkills) : null,
           memory_mode: meta?.memory_mode || 'session',
           agent_type: meta?.agent_type || 'chat',
           publish_note: publishNote,
@@ -2998,7 +3088,25 @@ export function startServer(
         const tenantAssistantId = agentTenantPatchMatch[1] || ''
         const body = await readJsonBody(req)
 
-        const updates: { enabled?: number; visible_to?: string | null; enabled_skills?: string | null } = {}
+        const updates: Record<string, unknown> = {}
+        if (typeof body.display_name === 'string') {
+          updates.display_name = body.display_name
+        }
+        if (typeof body.description === 'string') {
+          updates.description = body.description
+        }
+        if (typeof body.avatar === 'string') {
+          updates.avatar = body.avatar
+        }
+        if (typeof body.emoji === 'string') {
+          updates.emoji = body.emoji
+        }
+        if (typeof body.agent_type === 'string') {
+          updates.agent_type = body.agent_type
+        }
+        if (typeof body.memory_mode === 'string') {
+          updates.memory_mode = body.memory_mode
+        }
         if (typeof body.enabled === 'boolean') {
           updates.enabled = body.enabled ? 1 : 0
         }
@@ -3008,10 +3116,19 @@ export function startServer(
         if (Array.isArray(body.enabledSkills)) {
           updates.enabled_skills = JSON.stringify(body.enabledSkills.filter((s: unknown) => typeof s === 'string'))
         }
+        if (Array.isArray(body.enabledWikis)) {
+          updates.enabled_wikis = JSON.stringify(body.enabledWikis.filter((s: unknown) => typeof s === 'string'))
+        }
+        if (Array.isArray(body.skills)) {
+          updates.skills = JSON.stringify(body.skills.filter((s: unknown) => typeof s === 'string'))
+        }
+        if (body.workflow !== undefined) {
+          updates.workflow = body.workflow ? JSON.stringify(body.workflow) : null
+        }
 
         runtime.store.updateTenantAssistantMeta(tenantAssistantId, updates)
 
-        // Sync enabled/visible_to/enabledSkills to file metadata
+        // Sync to file metadata if approved
         const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
         if (tenantAssistant && tenantAssistant.status === 'approved') {
           const assistantName = tenantAssistant.name as string
@@ -3021,15 +3138,18 @@ export function startServer(
           if (existsSync(assistantDir)) {
             const meta = await readAssistantMeta(assistantDir)
             if (meta) {
-              if (updates.enabled !== undefined) {
-                meta.enabled = updates.enabled === 1
-              }
-              if (body.visible_to !== undefined) {
-                meta.visible_to = body.visible_to as VisibleTo | null
-              }
-              if (body.enabledSkills !== undefined) {
-                meta.enabledSkills = body.enabledSkills as string[]
-              }
+              if (updates.display_name !== undefined) meta.display_name = updates.display_name as string
+              if (updates.description !== undefined) meta.description = updates.description as string
+              if (updates.avatar !== undefined) meta.avatar = updates.avatar as string
+              if (updates.emoji !== undefined) meta.emoji = updates.emoji as string
+              if (updates.agent_type !== undefined) meta.agent_type = updates.agent_type as 'chat' | 'workflow'
+              if (updates.memory_mode !== undefined) meta.memory_mode = updates.memory_mode as 'session' | 'user'
+              if (updates.enabled !== undefined) meta.enabled = updates.enabled === 1
+              if (body.visible_to !== undefined) meta.visible_to = body.visible_to as VisibleTo | null
+              if (body.enabledSkills !== undefined) meta.enabledSkills = body.enabledSkills as string[]
+              if (body.enabledWikis !== undefined) meta.enabledWikis = body.enabledWikis as string[]
+              if (body.skills !== undefined) meta.skills = body.skills as string[]
+              if (body.workflow !== undefined) meta.workflow = body.workflow as AssistantStoreMeta['workflow']
               await writeAssistantMeta(assistantDir, meta)
             }
           }
@@ -3133,7 +3253,6 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
-        authService.requireScope(auth, 'admin:settings')
         const filter = authService.buildVisibilityFilter(auth)
         const all = await getHubInstalledSkills()
         writeJson(res, 200, all.filter(s => isVisibleTo(s.visibleTo, filter)))
@@ -3320,7 +3439,6 @@ export function startServer(
 
       // POST /api/v1/skills/custom - Upload custom skill
       if (req.method === 'POST' && pathname === '/api/v1/skills/custom') {
-        authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         const fileBase64 = typeof body.file === 'string' ? body.file : ''
         const fileBuffer = Buffer.from(fileBase64, 'base64')
@@ -3382,7 +3500,6 @@ export function startServer(
 
       // POST /api/v1/skills/tenant/publish - Publish tenant skill request
       if (req.method === 'POST' && pathname === '/api/v1/skills/tenant/publish') {
-        authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         const skillName = typeof body.skillName === 'string' ? body.skillName : ''
         const skillId = typeof body.skillId === 'string' ? body.skillId : skillName

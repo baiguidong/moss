@@ -243,6 +243,8 @@ export interface TenantAssistantInfo {
   name: string
   display_name?: string
   description?: string
+  avatar?: string
+  emoji?: string
   version?: string
   author_id: string
   author_name?: string
@@ -250,7 +252,9 @@ export interface TenantAssistantInfo {
   source_url?: string
   checksum?: string
   file_path?: string
+  skills?: string[]
   enabled_skills?: string[]
+  enabled_wikis?: string[]
   memory_mode?: 'session' | 'user'
   agent_type?: 'chat' | 'workflow'
   publish_note?: string
@@ -259,6 +263,14 @@ export interface TenantAssistantInfo {
   reviewed_at?: number
   enabled: number
   visible_to?: VisibleTo | null
+  workflow?: {
+    trigger?: 'cron' | 'webhook' | 'manual'
+    cron?: string
+    webhook_path?: string
+    output_webhook?: string
+    timeout_minutes?: number
+    output_targets?: string[]
+  } | null
   created_at: number
   updated_at: number
 }
@@ -279,11 +291,44 @@ export function approveTenantAssistant(
   )
 }
 
+export interface CreateTenantAssistantRequest {
+  name: string
+  display_name: string
+  description?: string
+  avatar?: string
+  emoji?: string
+  skills?: string[]
+  enabled_skills?: string[]
+  enabled_wikis?: string[]
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
+  visible_to?: VisibleTo | null
+  workflow?: TenantAssistantInfo['workflow']
+}
+
+export function createTenantAssistant(
+  data: CreateTenantAssistantRequest,
+): Promise<{ success: boolean; data: TenantAssistantInfo }> {
+  return authClient.post<{ success: boolean; data: TenantAssistantInfo }>(
+    '/api/v1/agents/tenant/create',
+    data,
+  )
+}
+
 export function updateTenantAssistantMeta(params: {
   id: string
-  enabled?: boolean
+  display_name?: string
+  description?: string
+  avatar?: string
+  emoji?: string
+  agent_type?: 'chat' | 'workflow'
+  memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
+  workflow?: TenantAssistantInfo['workflow']
+  enabled?: boolean
   enabledSkills?: string[]
+  enabledWikis?: string[]
+  skills?: string[]
 }): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>(
     `/api/v1/agents/tenant/${encodeURIComponent(params.id)}`,

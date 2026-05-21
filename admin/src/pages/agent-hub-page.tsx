@@ -57,6 +57,7 @@ import {
   uninstallAgent,
   updateInstalledAgentMeta,
   createCustomAssistant,
+  createTenantAssistant,
   getAgentSyncStatus,
   getTenantAssistants,
   approveTenantAssistant,
@@ -530,7 +531,6 @@ export default function AgentHubPage() {
   const [createDescription, setCreateDescription] = useState('')
   const [createAvatar, setCreateAvatar] = useState('')
   const [createEmoji, setCreateEmoji] = useState('')
-  const [createRules, setCreateRules] = useState('')
   const [createAgentType, setCreateAgentType] = useState<'chat' | 'workflow'>('chat')
   const [createMemoryMode, setCreateMemoryMode] = useState<'session' | 'user'>('session')
   const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
@@ -565,6 +565,28 @@ export default function AgentHubPage() {
   const [editTenantVisibleUserIds, setEditTenantVisibleUserIds] = useState<string[]>([])
   const [savingTenantVisibility, setSavingTenantVisibility] = useState(false)
   const [tenantAssistantDetail, setTenantAssistantDetail] = useState<TenantAssistantInfo | null>(null)
+
+  // Tenant assistant edit states
+  const [tenantEditOpen, setTenantEditOpen] = useState(false)
+  const [editingTenantAgent, setEditingTenantAgent] = useState<TenantAssistantInfo | null>(null)
+  const [tenantEditName, setTenantEditName] = useState('')
+  const [tenantEditDescription, setTenantEditDescription] = useState('')
+  const [tenantEditAvatar, setTenantEditAvatar] = useState('')
+  const [tenantEditEmoji, setTenantEditEmoji] = useState('')
+  const [tenantEditAgentType, setTenantEditAgentType] = useState<'chat' | 'workflow'>('chat')
+  const [tenantEditMemoryMode, setTenantEditMemoryMode] = useState<'session' | 'user'>('session')
+  const [tenantEditVisibilityMode, setTenantEditVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
+  const [tenantEditVisibleTo, setTenantEditVisibleTo] = useState<string[]>([])
+  const [tenantEditVisibleUserIds, setTenantEditVisibleUserIds] = useState<string[]>([])
+  const [tenantEditSkills, setTenantEditSkills] = useState<string[]>([])
+  const [tenantEditEnabledSkills, setTenantEditEnabledSkills] = useState<string[]>([])
+  const [tenantEditEnabledWikis, setTenantEditEnabledWikis] = useState<string[]>([])
+  const [tenantEditWorkflow, setTenantEditWorkflow] = useState<TenantAssistantInfo['workflow']>(null)
+  const [savingTenantEdit, setSavingTenantEdit] = useState(false)
+  const [tenantEditSkillsDetails, setTenantEditSkillsDetails] = useState<SkillHubSkill[]>([])
+  const [tenantEditSkillsLoading, setTenantEditSkillsLoading] = useState(false)
+  const [tenantEditAddSkillOpen, setTenantEditAddSkillOpen] = useState(false)
+  const [tenantEditAddSkillSelection, setTenantEditAddSkillSelection] = useState<string[]>([])
 
   const requestIdRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -1123,76 +1145,6 @@ export default function AgentHubPage() {
     }
   }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editSkills, editingAgent, fetchInstalledState])
 
-  const handleCreate = useCallback(async () => {
-    const name = createName.trim()
-    const displayName = createDisplayName.trim()
-    const rules = createRules.trim()
-
-    if (!name || !displayName) {
-      toast.error('名称和显示名称为必填项')
-      return
-    }
-
-    if (!rules) {
-      toast.error('系统指令为必填项')
-      return
-    }
-
-    setCreatingAssistant(true)
-    try {
-      await createCustomAssistant({
-        name,
-        displayName,
-        description: createDescription.trim() || undefined,
-        avatar: createAvatar.trim() || undefined,
-        emoji: createEmoji.trim() || undefined,
-        rules,
-        skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
-        agent_type: createAgentType,
-        memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
-        visible_to: createVisibilityMode === 'admin'
-          ? { department_ids: [], user_ids: [] }
-          : createVisibilityMode === 'departments'
-            ? { department_ids: createVisibleTo.length > 0 ? createVisibleTo : null, user_ids: null }
-            : createVisibilityMode === 'users'
-              ? { department_ids: null, user_ids: createVisibleUserIds.length > 0 ? createVisibleUserIds : null }
-              : null,
-        workflow: createAgentType === 'workflow'
-          ? {
-              trigger: createWorkflowTrigger,
-              cron: createWorkflowTrigger === 'cron' ? createWorkflowCron.trim() || undefined : undefined,
-              webhook_path: createWorkflowTrigger === 'webhook' ? createWorkflowWebhookPath.trim() || undefined : undefined,
-              output_targets: createWorkflowOutputTargets.length > 0 ? createWorkflowOutputTargets : undefined,
-              output_webhook: createWorkflowOutputWebhook.trim() || undefined,
-              timeout_minutes: createWorkflowTimeout ? Number(createWorkflowTimeout) || undefined : undefined,
-            }
-          : null,
-      })
-      toast.success(`已创建智能体 ${displayName}`)
-      setCreateOpen(false)
-      setCreateName('')
-      setCreateDisplayName('')
-      setCreateDescription('')
-      setCreateAvatar('')
-      setCreateEmoji('')
-      setCreateRules('')
-      setCreateAgentType('chat')
-      setCreateMemoryMode('session')
-      setCreateVisibilityMode('all')
-      setCreateVisibleTo([])
-      setCreateVisibleUserIds([])
-      setCreateWorkflowTrigger('manual')
-      setCreateWorkflowCron('')
-      setCreateWorkflowOutputTargets([])
-      setCreateSelectedSkills([])
-      await fetchInstalledState(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '创建智能体失败')
-    } finally {
-      setCreatingAssistant(false)
-    }
-  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, fetchInstalledState])
-
   const handleConfirmUninstall = useCallback(async () => {
     if (!pendingUninstallAgent) {
       return
@@ -1285,6 +1237,76 @@ export default function AgentHubPage() {
     }
   }, [])
 
+  const handleCreate = useCallback(async () => {
+    const name = createName.trim()
+    const displayName = createDisplayName.trim()
+
+    if (!name || !displayName) {
+      toast.error('名称和显示名称为必填项')
+      return
+    }
+
+    setCreatingAssistant(true)
+    try {
+      const visible_to = createVisibilityMode === 'admin'
+        ? { department_ids: [], user_ids: [] }
+        : createVisibilityMode === 'departments'
+          ? { department_ids: createVisibleTo.length > 0 ? createVisibleTo : null, user_ids: null }
+          : createVisibilityMode === 'users'
+            ? { department_ids: null, user_ids: createVisibleUserIds.length > 0 ? createVisibleUserIds : null }
+            : null
+
+      const workflow = createAgentType === 'workflow'
+        ? {
+            trigger: createWorkflowTrigger,
+            cron: createWorkflowTrigger === 'cron' ? createWorkflowCron.trim() || undefined : undefined,
+            webhook_path: createWorkflowTrigger === 'webhook' ? createWorkflowWebhookPath.trim() || undefined : undefined,
+            output_targets: createWorkflowOutputTargets.length > 0 ? createWorkflowOutputTargets : undefined,
+            output_webhook: createWorkflowOutputWebhook.trim() || undefined,
+            timeout_minutes: createWorkflowTimeout ? Number(createWorkflowTimeout) || undefined : undefined,
+          }
+        : null
+
+      await createTenantAssistant({
+        name,
+        display_name: displayName,
+        description: createDescription.trim() || undefined,
+        avatar: createAvatar.trim() || undefined,
+        emoji: createEmoji.trim() || undefined,
+        skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
+        enabled_skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
+        agent_type: createAgentType,
+        memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
+        visible_to,
+        workflow,
+      })
+      toast.success(`已创建智能体 ${displayName}`)
+      setCreateOpen(false)
+      setCreateName('')
+      setCreateDisplayName('')
+      setCreateDescription('')
+      setCreateAvatar('')
+      setCreateEmoji('')
+      setCreateAgentType('chat')
+      setCreateMemoryMode('session')
+      setCreateVisibilityMode('all')
+      setCreateVisibleTo([])
+      setCreateVisibleUserIds([])
+      setCreateWorkflowTrigger('manual')
+      setCreateWorkflowCron('')
+      setCreateWorkflowWebhookPath('')
+      setCreateWorkflowOutputWebhook('')
+      setCreateWorkflowTimeout('')
+      setCreateWorkflowOutputTargets([])
+      setCreateSelectedSkills([])
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '创建智能体失败')
+    } finally {
+      setCreatingAssistant(false)
+    }
+  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createVisibleUserIds, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, fetchTenantAssistants])
+
   const handleApproveTenantAssistant = useCallback(async (approved: boolean) => {
     if (!approvingAssistant) return
     setApproving(true)
@@ -1351,6 +1373,160 @@ export default function AgentHubPage() {
     }
     setTenantVisibilityOpen(true)
   }, [])
+
+  const openTenantEdit = useCallback((assistant: TenantAssistantInfo) => {
+    setEditingTenantAgent(assistant)
+    setTenantEditName(assistant.display_name || assistant.name)
+    setTenantEditDescription(assistant.description || '')
+    setTenantEditAvatar(assistant.avatar || '')
+    setTenantEditEmoji(assistant.emoji || '')
+    setTenantEditAgentType(assistant.agent_type || 'chat')
+    setTenantEditMemoryMode(assistant.memory_mode || 'session')
+    setTenantEditSkills(assistant.skills || [])
+    setTenantEditEnabledSkills(assistant.enabled_skills || [])
+    setTenantEditEnabledWikis(assistant.enabled_wikis || [])
+    setTenantEditWorkflow(assistant.workflow || null)
+    // Reset skill-related states
+    setTenantEditSkillsDetails([])
+    setTenantEditSkillsLoading(false)
+    setTenantEditAddSkillOpen(false)
+    setTenantEditAddSkillSelection([])
+
+    // Set visibility
+    const deptIds = assistant.visible_to?.department_ids
+    const userIds = assistant.visible_to?.user_ids
+
+    if (deptIds === null && userIds === null) {
+      setTenantEditVisibilityMode('all')
+    } else if ((deptIds?.length === 0 && (userIds === null || userIds?.length === 0)) ||
+               (userIds?.length === 0 && (deptIds === null || deptIds?.length === 0))) {
+      setTenantEditVisibilityMode('admin')
+    } else if (userIds !== null && userIds !== undefined && userIds.length > 0) {
+      setTenantEditVisibilityMode('users')
+    } else if (deptIds !== null && deptIds !== undefined && deptIds.length > 0) {
+      setTenantEditVisibilityMode('departments')
+    } else {
+      setTenantEditVisibilityMode('all')
+    }
+
+    setTenantEditVisibleTo(deptIds || [])
+    setTenantEditVisibleUserIds(userIds || [])
+
+    // Load available wikis
+    void (async () => {
+      try {
+        const { listWikis } = await import('@/lib/api/document-center')
+        const list = await listWikis()
+        setAvailableWikis(list.map(w => ({
+          id: w.id,
+          name: w.name,
+          description: w.description,
+          buildStatus: w.buildStatus,
+        })))
+      } catch {
+        setAvailableWikis([])
+      }
+    })()
+
+    // Fetch skill details if there are skills
+    const skillRefs = assistant.skills || []
+    if (skillRefs.length === 0) {
+      setTenantEditSkillsLoading(false)
+    } else {
+      setTenantEditSkillsLoading(true)
+      void (async () => {
+        try {
+          const allInstalled = installedSkills
+          const localSkills: SkillHubSkill[] = []
+          const missingIds: string[] = []
+
+          for (const skillRef of skillRefs) {
+            const trimmed = skillRef.trim()
+            const local = allInstalled.find(
+              s => s.id.trim() === trimmed || s.name.trim() === trimmed || (s.meta?.id || '').trim() === trimmed,
+            )
+            if (local) {
+              localSkills.push({
+                id: (local.meta?.id || local.id).trim(),
+                name: local.name.trim(),
+                display_name: local.displayName,
+                description: local.description,
+                icon: resolveIconUrl(local.icon),
+                emoji: local.emoji,
+                category: local.category,
+                categories: local.categories,
+              })
+            } else {
+              missingIds.push(trimmed)
+            }
+          }
+
+          // Fetch missing skill details from Hub API
+          if (missingIds.length > 0) {
+            try {
+              const hubSkills = await fetchAgentHubSkillDetailsByIds(missingIds)
+              localSkills.push(...hubSkills)
+            } catch {
+              for (const mid of missingIds) {
+                localSkills.push({ id: mid, name: mid, display_name: mid })
+              }
+            }
+          }
+
+          setTenantEditSkillsDetails(localSkills)
+        } catch {
+          // Fallback: create placeholder skills from IDs
+          setTenantEditSkillsDetails(skillRefs.map(id => ({ id: id.trim(), name: id.trim(), display_name: id.trim() })))
+        } finally {
+          setTenantEditSkillsLoading(false)
+        }
+      })()
+    }
+
+    setTenantEditOpen(true)
+  }, [installedSkills])
+
+  const handleSaveTenantEdit = useCallback(async () => {
+    if (!editingTenantAgent) return
+    setSavingTenantEdit(true)
+
+    try {
+      const visible_to = tenantEditVisibilityMode === 'all'
+        ? null
+        : tenantEditVisibilityMode === 'admin'
+          ? { department_ids: [], user_ids: [] }
+          : tenantEditVisibilityMode === 'departments'
+            ? { department_ids: tenantEditVisibleTo, user_ids: null }
+            : { department_ids: null, user_ids: tenantEditVisibleUserIds }
+
+      await updateTenantAssistantMeta({
+        id: editingTenantAgent.id,
+        display_name: tenantEditName,
+        description: tenantEditDescription,
+        avatar: tenantEditAvatar,
+        emoji: tenantEditEmoji,
+        agent_type: tenantEditAgentType,
+        memory_mode: tenantEditMemoryMode,
+        visible_to,
+        enabledSkills: tenantEditEnabledSkills,
+        enabledWikis: tenantEditEnabledWikis,
+        skills: tenantEditSkills,
+        workflow: tenantEditWorkflow,
+      })
+
+      toast.success('保存成功')
+      setTenantEditOpen(false)
+      setEditingTenantAgent(null)
+      await fetchTenantAssistants()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存失败')
+    } finally {
+      setSavingTenantEdit(false)
+    }
+  }, [editingTenantAgent, tenantEditName, tenantEditDescription, tenantEditAvatar, tenantEditEmoji,
+      tenantEditAgentType, tenantEditMemoryMode, tenantEditVisibilityMode, tenantEditVisibleTo,
+      tenantEditVisibleUserIds, tenantEditEnabledSkills, tenantEditEnabledWikis, tenantEditSkills,
+      tenantEditWorkflow, fetchTenantAssistants])
 
   const handleSaveTenantVisibility = useCallback(async () => {
     if (!editingTenantAssistant) return
@@ -1836,11 +2012,11 @@ export default function AgentHubPage() {
                         key={assistant.id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setTenantAssistantDetail(assistant)}
+                        onClick={() => openTenantEdit(assistant)}
                         onKeyDown={event => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault()
-                            setTenantAssistantDetail(assistant)
+                            openTenantEdit(assistant)
                           }
                         }}
                         className="rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent/30"
@@ -2802,13 +2978,16 @@ export default function AgentHubPage() {
             setCreateDescription('')
             setCreateAvatar('')
             setCreateEmoji('')
-            setCreateRules('')
             setCreateAgentType('chat')
             setCreateMemoryMode('session')
             setCreateVisibilityMode('all')
             setCreateVisibleTo([])
+            setCreateVisibleUserIds([])
             setCreateWorkflowTrigger('manual')
             setCreateWorkflowCron('')
+            setCreateWorkflowWebhookPath('')
+            setCreateWorkflowOutputWebhook('')
+            setCreateWorkflowTimeout('')
             setCreateWorkflowOutputTargets([])
             setCreateSelectedSkills([])
           }
@@ -3079,21 +3258,6 @@ export default function AgentHubPage() {
               ) : null}
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                系统指令 <span className="text-destructive">*</span>
-              </label>
-              <Textarea
-                value={createRules}
-                onChange={event => setCreateRules(event.target.value)}
-                rows={8}
-                placeholder="输入智能体的系统指令（System Prompt），定义智能体的行为和角色..."
-              />
-              <p className="text-xs text-muted-foreground">
-                系统指令将写入 instructions.md 文件，作为智能体的核心行为定义
-              </p>
-            </div>
-
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium">关联技能</div>
@@ -3153,7 +3317,7 @@ export default function AgentHubPage() {
               取消
             </Button>
             <Button
-              disabled={creatingAssistant || !createName.trim() || !createDisplayName.trim() || !createRules.trim()}
+              disabled={creatingAssistant || !createName.trim() || !createDisplayName.trim()}
               onClick={() => void handleCreate()}
             >
               {creatingAssistant ? (
@@ -3597,6 +3761,478 @@ export default function AgentHubPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setTenantAssistantDetail(null)}>
               关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 专属智能体编辑对话框 */}
+      <Dialog
+        open={tenantEditOpen}
+        onOpenChange={open => {
+          setTenantEditOpen(open)
+          if (!open) {
+            setEditingTenantAgent(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>编辑专属智能体</DialogTitle>
+            <DialogDescription>
+              修改专属智能体的展示信息和配置。
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[65vh] pr-4">
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">显示名称</label>
+                <Input
+                  value={tenantEditName}
+                  onChange={event => setTenantEditName(event.target.value)}
+                  placeholder="输入智能体显示名称"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">头像地址</label>
+                <Input
+                  value={tenantEditAvatar}
+                  onChange={event => setTenantEditAvatar(event.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Emoji</label>
+                <Input
+                  value={tenantEditEmoji}
+                  onChange={event => setTenantEditEmoji(event.target.value)}
+                  placeholder="🚀"
+                  className="w-32"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">描述</label>
+                <Textarea
+                  value={tenantEditDescription}
+                  onChange={event => setTenantEditDescription(event.target.value)}
+                  rows={4}
+                  placeholder="输入智能体描述"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">工作模式</label>
+                <Select value={tenantEditAgentType} onValueChange={value => setTenantEditAgentType(value as 'chat' | 'workflow')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="chat">对话助手</SelectItem>
+                    <SelectItem value="workflow">业务流程</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {tenantEditAgentType === 'chat' ? (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">记忆模式</label>
+                  <Select value={tenantEditMemoryMode} onValueChange={value => setTenantEditMemoryMode(value as 'session' | 'user')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="session">会话独立</SelectItem>
+                      <SelectItem value="user">跨会话共享</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    会话独立模式下每次对话互不影响；跨会话共享模式会保留用户历史记忆。
+                  </p>
+                </div>
+              ) : null}
+
+              {tenantEditAgentType === 'workflow' && tenantEditWorkflow ? (
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="text-sm font-medium">工作流配置</div>
+                  {tenantEditWorkflow.trigger ? (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">触发方式：</span>
+                      <span className="text-sm">
+                        {tenantEditWorkflow.trigger === 'manual' ? '手动' :
+                         tenantEditWorkflow.trigger === 'cron' ? '定时' : 'Webhook'}
+                      </span>
+                    </div>
+                  ) : null}
+                  {tenantEditWorkflow.cron ? (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">Cron 表达式：</span>
+                      <code className="text-sm bg-muted px-1 rounded">{tenantEditWorkflow.cron}</code>
+                    </div>
+                  ) : null}
+                  {tenantEditWorkflow.webhook_path ? (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">Webhook 路径：</span>
+                      <code className="text-sm bg-muted px-1 rounded">{tenantEditWorkflow.webhook_path}</code>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium">可见范围</label>
+                </div>
+                <RadioGroup
+                  value={tenantEditVisibilityMode}
+                  onValueChange={value => setTenantEditVisibilityMode(value as 'all' | 'departments' | 'users' | 'admin')}
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="all" />
+                    <label className="text-sm cursor-pointer">全员可见</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="departments" />
+                    <label className="text-sm cursor-pointer">指定部门可见</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="users" />
+                    <label className="text-sm cursor-pointer">指定人员可见</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="admin" />
+                    <label className="text-sm cursor-pointer">仅管理员可见</label>
+                  </div>
+                </RadioGroup>
+                {tenantEditVisibilityMode === 'departments' ? (
+                  departmentOptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">暂无部门数据</p>
+                  ) : (
+                    <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                      {departmentOptions.map(dept => (
+                        <label
+                          key={dept.id}
+                          className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                        >
+                          <Checkbox
+                            checked={tenantEditVisibleTo.includes(dept.id)}
+                            onCheckedChange={checked => {
+                              setTenantEditVisibleTo(
+                                checked === true
+                                  ? [...tenantEditVisibleTo, dept.id]
+                                  : tenantEditVisibleTo.filter(id => id !== dept.id),
+                              )
+                            }}
+                          />
+                          <span>{'— '.repeat(dept.depth)}{dept.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )
+                ) : tenantEditVisibilityMode === 'users' ? (
+                  users.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">暂无用户数据</p>
+                  ) : (
+                    <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 max-h-48 overflow-y-auto">
+                      {users.map(user => (
+                        <label
+                          key={user.id}
+                          className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/30 rounded px-2 py-1"
+                        >
+                          <Checkbox
+                            checked={tenantEditVisibleUserIds.includes(user.id)}
+                            onCheckedChange={checked => {
+                              setTenantEditVisibleUserIds(
+                                checked === true
+                                  ? [...tenantEditVisibleUserIds, user.id]
+                                  : tenantEditVisibleUserIds.filter(id => id !== user.id),
+                              )
+                            }}
+                          />
+                          <span>{user.name || user.email}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )
+                ) : null}
+              </div>
+
+              {/* Skills management section */}
+              <div className="space-y-3 pt-4 border-t">
+                <div>
+                  <div className="text-sm font-medium">关联技能</div>
+                  <p className="text-sm text-muted-foreground">
+                    管理该智能体关联的技能，可勾选启用、添加或移除。
+                  </p>
+                </div>
+
+                {tenantEditSkillsLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : (
+                  <>
+                    {/* Current associated skills */}
+                    {tenantEditSkillsDetails.length > 0 ? (
+                      <div className="space-y-2">
+                        {tenantEditSkillsDetails.map(skill => {
+                          const skillId = skill.id || skill.name
+                          const isInstalled = installedSkillLookup.has(skill.id?.trim()) || installedSkillLookup.has(skill.name?.trim())
+                          const isEnabled = tenantEditEnabledSkills.includes(skillId) || tenantEditEnabledSkills.includes(skill.name?.trim())
+                          return (
+                            <div
+                              key={`tenant-edit-skill:${skillId}`}
+                              className="flex items-center gap-3 rounded-lg border px-3 py-2 hover:bg-accent/30"
+                            >
+                              <Checkbox
+                                checked={isEnabled}
+                                onCheckedChange={checked => {
+                                  setTenantEditEnabledSkills(
+                                    checked === true
+                                      ? [...tenantEditEnabledSkills, skill.name?.trim() || skillId]
+                                      : tenantEditEnabledSkills.filter(s => s !== skillId && s !== skill.name?.trim()),
+                                  )
+                                }}
+                              />
+                              <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background text-lg">
+                                {skill.icon ? (
+                                  <img src={skill.icon} alt={skill.display_name} className="size-full object-cover" />
+                                ) : skill.emoji ? (
+                                  <span>{skill.emoji}</span>
+                                ) : (
+                                  <Package className="size-4 text-muted-foreground" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium">{skill.display_name || skill.name}</div>
+                                {skill.description ? (
+                                  <div className="line-clamp-1 text-xs text-muted-foreground">{skill.description}</div>
+                                ) : null}
+                              </div>
+                              {isInstalled ? (
+                                <Badge variant="secondary">已安装</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={async () => {
+                                    try {
+                                      const detail = await getSkillHubDetail(skillId)
+                                      const latestVersion = detail?.versions?.[0]
+                                      if (!latestVersion?.source_url) {
+                                        toast.error('该技能暂不支持安装')
+                                        return
+                                      }
+                                      await installSkill({
+                                        skillName: skill.name?.trim() || skillId,
+                                        sourceUrl: latestVersion.source_url,
+                                        version: typeof latestVersion.version === 'string' ? latestVersion.version : undefined,
+                                        checksum: typeof latestVersion.checksum === 'string' ? latestVersion.checksum : undefined,
+                                        skillMeta: skill,
+                                      })
+                                      toast.success(`已安装技能 ${skill.display_name || skill.name}`)
+                                      await fetchInstalledState(false)
+                                    } catch (err) {
+                                      toast.error(err instanceof Error ? err.message : '安装技能失败')
+                                    }
+                                  }}
+                                >
+                                  安装
+                                </Button>
+                              )}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="size-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => {
+                                  setTenantEditSkills(prev => prev.filter(s => s !== skillId && s !== skill.name?.trim()))
+                                  setTenantEditSkillsDetails(prev => prev.filter(s => (s.id || s.name) !== skillId))
+                                  setTenantEditEnabledSkills(prev => prev.filter(s => s !== skillId && s !== skill.name?.trim()))
+                                }}
+                                title="移除关联"
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                        该智能体暂无关联技能，点击下方按钮添加。
+                      </div>
+                    )}
+
+                    {/* Add skill from installed skills */}
+                    {(() => {
+                      const associatedNames = new Set(tenantEditSkills.map(s => s.trim()))
+                      const availableToAdd = installedSkills.filter(s => !associatedNames.has(s.name.trim()))
+                      if (availableToAdd.length === 0) return null
+                      return (
+                        <div className="space-y-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setTenantEditAddSkillOpen(!tenantEditAddSkillOpen)}
+                          >
+                            <Plus className="mr-1 size-4" />
+                            添加已安装技能
+                          </Button>
+                          {tenantEditAddSkillOpen ? (
+                            <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border p-2">
+                              {availableToAdd.map(skill => (
+                                <label
+                                  key={`tenant-add-skill:${skill.name}`}
+                                  className="flex items-center gap-3 rounded-lg px-2 py-1.5 cursor-pointer hover:bg-accent/30"
+                                >
+                                  <Checkbox
+                                    checked={tenantEditAddSkillSelection.includes(skill.name.trim())}
+                                    onCheckedChange={checked => {
+                                      const name = skill.name.trim()
+                                      setTenantEditAddSkillSelection(
+                                        checked === true
+                                          ? [...tenantEditAddSkillSelection, name]
+                                          : tenantEditAddSkillSelection.filter(n => n !== name),
+                                      )
+                                    }}
+                                  />
+                                  <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background">
+                                    {skill.icon ? (
+                                      <img src={resolveIconUrl(skill.icon)} alt={skill.displayName} className="size-full object-cover" />
+                                    ) : skill.emoji ? (
+                                      <span className="text-sm">{skill.emoji}</span>
+                                    ) : (
+                                      <Package className="size-3.5 text-muted-foreground" />
+                                    )}
+                                  </div>
+                                  <span className="text-sm">{skill.displayName}</span>
+                                </label>
+                              ))}
+                            </div>
+                          ) : null}
+                          {tenantEditAddSkillSelection.length > 0 ? (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                const newSkillNames = tenantEditAddSkillSelection
+                                const newSkillDetails = tenantEditAddSkillSelection
+                                  .map(name => installedSkills.find(s => s.name.trim() === name))
+                                  .filter(Boolean)
+                                  .map(s => ({
+                                    id: (s!.meta?.id || s!.id).trim(),
+                                    name: s!.name.trim(),
+                                    display_name: s!.displayName,
+                                    description: s!.description,
+                                    icon: resolveIconUrl(s!.icon),
+                                    emoji: s!.emoji,
+                                    category: s!.category,
+                                    categories: s!.categories,
+                                  }))
+                                setTenantEditSkills(prev => [...prev, ...newSkillNames])
+                                setTenantEditSkillsDetails(prev => [...prev, ...newSkillDetails])
+                                setTenantEditEnabledSkills(prev => [...prev, ...newSkillNames])
+                                setTenantEditAddSkillSelection([])
+                                setTenantEditAddSkillOpen(false)
+                              }}
+                            >
+                              确认添加 ({tenantEditAddSkillSelection.length})
+                            </Button>
+                          ) : null}
+                        </div>
+                      )
+                    })()}
+                  </>
+                )}
+              </div>
+
+              <div className="space-y-2 pt-4 border-t">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">关联 Wiki（来自文档中心）</div>
+                  <Badge variant="outline">{tenantEditEnabledWikis.length} / {availableWikis.length} 已关联</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  勾选 Wiki 即可让该助手在对话中按需调用知识库回答用户问题。仅显示已构建的 Wiki。
+                </p>
+                {availableWikis.length === 0 ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                    暂无可用 Wiki。请先在「文档中心」上传文档并构建 Wiki。
+                  </div>
+                ) : (
+                  <div className="max-h-48 space-y-1 overflow-auto rounded-md border p-2">
+                    {availableWikis.map(wiki => {
+                      const isEnabled = tenantEditEnabledWikis.includes(wiki.id)
+                      const isBuilt = wiki.buildStatus === 'succeeded'
+                      const toggle = () => {
+                        setTenantEditEnabledWikis(prev =>
+                          prev.includes(wiki.id)
+                            ? prev.filter(id => id !== wiki.id)
+                            : Array.from(new Set([...prev, wiki.id])),
+                        )
+                      }
+                      return (
+                        <div
+                          key={wiki.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={toggle}
+                          onKeyDown={(e) => {
+                            if (e.key === ' ' || e.key === 'Enter') {
+                              e.preventDefault()
+                              toggle()
+                            }
+                          }}
+                          className={cn(
+                            'flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent cursor-pointer',
+                            !isBuilt && 'opacity-60',
+                          )}
+                        >
+                          <Checkbox
+                            checked={isEnabled}
+                            tabIndex={-1}
+                            aria-hidden="true"
+                            className="mt-0.5 pointer-events-none"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate">{wiki.name}</span>
+                              {!isBuilt && (
+                                <Badge variant="outline" className="text-xs">
+                                  {wiki.buildStatus === 'running' ? '构建中' : wiki.buildStatus === 'failed' ? '构建失败' : '未构建'}
+                                </Badge>
+                              )}
+                            </div>
+                            {wiki.description && (
+                              <p className="text-xs text-muted-foreground line-clamp-1">
+                                {wiki.description}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTenantEditOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={savingTenantEdit || !editingTenantAgent} onClick={() => void handleSaveTenantEdit()}>
+              {savingTenantEdit ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  保存中
+                </>
+              ) : (
+                '保存'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
