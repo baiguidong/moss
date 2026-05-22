@@ -67,6 +67,7 @@ function resolveRunnerPath(): string {
 async function readRunnerFailure(
   statusPath: string,
   stderrLogPath: string,
+  includeStderrWithoutStatusError = false,
 ): Promise<string | null> {
   let statusError: string | null = null
   try {
@@ -103,7 +104,10 @@ async function readRunnerFailure(
   if (statusError && stderrTail) {
     return `${statusError}\n${stderrTail}`
   }
-  return statusError || stderrTail || null
+  if (statusError) {
+    return statusError
+  }
+  return includeStderrWithoutStatusError ? stderrTail : null
 }
 
 async function waitForRunnerReady(
@@ -124,7 +128,7 @@ async function waitForRunnerReady(
     }
     await wait(100)
   }
-  const failure = await readRunnerFailure(statusPath, stderrLogPath)
+  const failure = await readRunnerFailure(statusPath, stderrLogPath, true)
   if (failure) {
     throw new Error(failure)
   }
