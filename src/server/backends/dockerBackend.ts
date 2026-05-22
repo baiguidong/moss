@@ -27,6 +27,45 @@ type DockerBackendDefaults = {
   labels?: Record<string, string>
 }
 
+/**
+ * 将容器内路径转换为宿主机路径
+ * 用于 moss-server 运行在 Docker 容器中时，正确挂载目录到会话容器
+ *
+ * 环境变量 MOSS_HOST_PATH_MAP 格式: JSON 对象，key 为宿主机路径，value 为容器内路径
+ * 例如: MOSS_HOST_PATH_MAP='{"./data":"/app/data","./workspace":"/workspace"}'
+ *
+ * 注意：key 是宿主机路径（可以是相对路径或绝对路径），value 是容器内路径
+ */
+function toHostPath(containerPath: string): string {
+  const mapJson = process.env.MOSS_HOST_PATH_MAP
+  if (!mapJson) return containerPath
+
+  let hostPathMap: Record<string, string>
+  try {
+    hostPathMap = JSON.parse(mapJson)
+  } catch {
+    process.stderr.write(`[DockerBackend] Invalid MOSS_HOST_PATH_MAP: ${mapJson}\n`)
+    return containerPath
+  }
+
+  // 找到最长的匹配路径前缀
+  let bestMatch = ''
+  let bestHostPath = ''
+  for (const [hostPrefix, containerPrefix] of Object.entries(hostPathMap)) {
+    if (containerPath.startsWith(containerPrefix) && containerPrefix.length > bestMatch.length) {
+      bestMatch = containerPrefix
+      bestHostPath = hostPrefix
+    }
+  }
+
+  if (bestMatch) {
+    const result = containerPath.replace(bestMatch, bestHostPath)
+    process.stderr.write(`[DockerBackend] Path mapping: ${containerPath} -> ${result}\n`)
+    return result
+  }
+  return containerPath
+}
+
 function uniqueMounts(paths: string[]): string[] {
   return [...new Set(paths)]
 }
@@ -67,7 +106,8 @@ export class DockerBackend implements SessionBackend {
     const configDir = runtime?.configDir || buildConfigDir(options, mode)
     await mkdir(configDir, { recursive: true })
 
-    const scodePath = '/usr/local/bin/scode'
+    // scodePath: use runtime config or fallback to default
+    const scodePath = runtime?.scodePath || '/usr/local/bin/scode'
 
     const safeCwd = options.cwd === '/' ? os.homedir() : options.cwd
 
@@ -177,7 +217,8 @@ export class DockerBackend implements SessionBackend {
       args.push('--label', `${key}=${value}`)
     }
     for (const mount of mounts) {
-      args.push('-v', `${mount}:${mount}`)
+      const hostPath = toHostPath(mount)
+      args.push('-v', `${hostPath}:${mount}`)
     }
 
     args.push('-w', safeCwd)

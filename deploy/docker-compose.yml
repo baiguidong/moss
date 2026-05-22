@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  moss-server:
+    image: my-moss-server:${MOSS_IMAGE_TAG:-v1}
+    container_name: moss-server
+    restart: always
+    ports:
+      - "${MOSS_PORT:-43127}:43127"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.moss:/root/.moss
+      - ./data:/app/data
+      - ./server.json:/app/server.json:ro
+    environment:
+      - MOSS_SERVER_CONFIG=/app/server.json
+      - MOSS_HOST_PATH_MAP={"./data":"/app/data"}
+    networks:
+      - moss-network
+
+networks:
+  moss-network:
+    name: moss-network

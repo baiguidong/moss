@@ -1,49 +1,91 @@
-# --- 第一阶段：构建 (Build) ---
-FROM oven/bun:latest AS builder
-WORKDIR /app
-COPY package.json bun.lock ./
-RUN bun install
-COPY . .
-RUN bun run build:node
-
-# --- 第二阶段：运行 (Runtime) ---
-FROM node:20-slim AS runner
-
-# 安装 Docker CLI (以便 Moss Server 能够控制宿主机的 Docker)
+FROM node:22.14.0-slim
+# 安装 Docker CLI + LibreOffice 依赖
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     gnupg \
     lsb-release \
     unzip \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb-release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    # LibreOffice 依赖
+    libxinerama1 \
+    libcairo2 \
+    libcups2 \
+    libxrandr2 \
+    libxdamage1 \
+    libxtst6 \
+    libgtk-3-0 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libice6 \
+    libxrender1 \
+    libfontconfig1 \
+    libdbus-1-3 \
+    libxi6 \
+    # LibreOffice 26.2 需要 OpenSSL 3 和 NSS
+    libssl3 \
+    libnss3 \
+    libnspr4 \
+    # LibreOffice looks for libssl3.so, but Debian provides libssl.so.3
+    && ln -sf /lib/x86_64-linux-gnu/libssl.so.3 /lib/x86_64-linux-gnu/libssl3.so \
+    && ln -sf /lib/x86_64-linux-gnu/libcrypto.so.3 /lib/x86_64-linux-gnu/libcrypto3.so \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Docker CLI (使用重试 + 国内镜像备用)
+RUN for i in 1 2 3; do \
+        if curl -fsSL --connect-timeout 30 https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg 2>/dev/null; then \
+            echo "Downloaded Docker GPG key from official source"; \
+            break; \
+        elif curl -fsSL --connect-timeout 30 https://mirrors.aliyun.com/docker-ce/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg 2>/dev/null; then \
+            echo "Downloaded Docker GPG key from Aliyun mirror"; \
+            break; \
+        else \
+            echo "Retry $i: Failed to download Docker GPG key, waiting..."; \
+            sleep 5; \
+        fi; \
+    done \
+    && if [ ! -f /usr/share/keyrings/docker-archive-keyring.gpg ]; then \
+        echo "ERROR: Failed to download Docker GPG key from all sources"; \
+        exit 1; \
+    fi \
+    && DISTRO_CODENAME=$(/usr/bin/lsb_release -cs) \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian ${DISTRO_CODENAME} stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
     && apt-get update && apt-get install -y docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# 下载 Nexus cluster 二进制（自包含 Python 打包产物）
-ARG NEXUS_VERSION=0.9.43
-RUN mkdir -p /root/.moss/nexus/bin \
-    && ARCH=$(dpkg --print-architecture) \
-    && if [ "$ARCH" = "amd64" ]; then NEXUS_ARCH="x64"; elif [ "$ARCH" = "arm64" ]; then NEXUS_ARCH="arm64"; else NEXUS_ARCH="$ARCH"; fi \
-    && curl -fSL -o /tmp/nexus.zip "https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/v${NEXUS_VERSION}/nexus-cluster-linux-${NEXUS_ARCH}.zip" \
-    && unzip -o /tmp/nexus.zip -d /tmp/nexus-extracted \
-    && mv /tmp/nexus-extracted/nexusd /root/.moss/nexus/bin/nexusd \
-    && chmod +x /root/.moss/nexus/bin/nexusd \
-    && echo "${NEXUS_VERSION}" > /root/.moss/nexus/bin/.nexus-bin-ready \
-    && rm -rf /tmp/nexus.zip /tmp/nexus-extracted
+# 下载 scode
+# 下载 LibreOffice
+# 下载 LibreOffice (使用 dpkg -x 解压，不安装到系统)
+ARG LIBREOFFICE_VERSION=26.2.1
+RUN LIBREOFFICE_URL="https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/sudoclaw/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz" \
+    && curl -fSL -o /tmp/libreoffice.tar.gz "$LIBREOFFICE_URL" \
+    && tar -xzf /tmp/libreoffice.tar.gz -C /tmp \
+    && EXTRACT_DIR=$(ls -d /tmp/LibreOffice_*_Linux_x86-64_deb | head -1) \
+    && mkdir -p /app/bin/libreoffice \
+    && cd "$EXTRACT_DIR/DEBS" \
+    && for deb in *.deb; do dpkg -x "$deb" /app/bin/libreoffice/; done \
+    && cd /app \
+    && SOFFICE_PATH=$(find /app/bin/libreoffice/opt -name "soffice" -path "*/program/soffice" | head -1) \
+    && SOFFICE_REL_PATH="${SOFFICE_PATH#/app/bin/}" \
+    && ln -sf "$SOFFICE_REL_PATH" /app/bin/soffice \
+    && chmod +x "$SOFFICE_PATH" \
+    && rm -rf /tmp/libreoffice.tar.gz "$EXTRACT_DIR"
+
 
 WORKDIR /app
 
-# 从构建阶段复制必要的文件和编译产物
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/bin ./bin
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/admin/dist ./admin/dist
+# 复制本地构建产物
+COPY bin/scode bin/
+COPY bin/wiki bin/
+COPY bin/moss-server.mjs ./bin/
+COPY bin/direct-connect-session-runner.mjs ./bin/
+COPY admin/dist/ ./admin/dist/
 
-# 暴露端口（仅 Moss Server，Nexus 12012 仅限容器内部访问）
+# 复制 wiki (从 Go 构建阶段)
+RUN chmod +x ./bin/wiki
+RUN chmod +x ./bin/scode
+
+
 EXPOSE 43127
 
-# 使用标准的 node 启动编译后的文件
 CMD ["node", "bin/moss-server.mjs", "start"]

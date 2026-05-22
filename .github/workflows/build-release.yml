@@ -6,8 +6,14 @@
 #   - tag 推送 (创建 GitHub Release)
 #
 # 产出物:
-#   - moss-linux-x64-{version}.tar.gz
-#   - moss-macos-arm64-{version}.tar.gz
+#   - moss-deploy-{commit8}.tar.gz
+#   包含:
+#     - my-moss-runtime-{tag}.tar.gz (会话容器镜像)
+#     - my-moss-server-{tag}.tar.gz (主服务镜像)
+#     - server.json
+#     - docker-compose.yml
+#     - start.sh
+#     - shutdown.sh
 # ---------------------------------------------------------
 
 name: Build Moss Release Package
@@ -25,7 +31,6 @@ on:
 
 env:
   BUN_VERSION: '1.3'
-  NODE_VERSION: '24.15.0'
 
 jobs:
   build:
@@ -35,7 +40,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 安装 Bun 并构建 (build:node 已包含前端构建)
+      # 1. 设置镜像 tag (git commit 前 8 位)
+      - name: Set image tag
+        id: tag
+        run: |
+          TAG=$(echo $GITHUB_SHA | cut -c1-8)
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "Image tag: $TAG"
+
+      # 2. 安装 Bun 并构建 (build:node 已包含前端构建)
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -49,7 +62,7 @@ jobs:
       - name: Build All (Backend + Frontend)
         run: bun run build:node
 
-      # 2. 下载 scode
+      # 3. 下载 scode
       - name: Get scode version
         id: scode-version
         run: |
@@ -81,102 +94,73 @@ jobs:
 
           echo "scode ready: $(ls -la bin/scode)"
 
-      # 3. 下载 LibreOffice (用于文档转换)
-      - name: Download LibreOffice
-        run: |
-          LIBREOFFICE_VERSION="26.2.1"
-          LIBREOFFICE_URL="https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/sudoclaw/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz"
-
-          echo "Downloading LibreOffice ${LIBREOFFICE_VERSION}..."
-          curl -L -o libreoffice.tar.gz "$LIBREOFFICE_URL"
-
-          # 解压 tar.gz
-          tar -xzf libreoffice.tar.gz
-
-          # 解压所有 deb 包到 bin/libreoffice/
-          # 使用通配符匹配目录名（版本号可能有细微差异如 26.2.1.2）
-          mkdir -p bin/libreoffice
-          EXTRACT_DIR=$(ls -d LibreOffice_*_Linux_x86-64_deb | head -1)
-          echo "Found extract directory: $EXTRACT_DIR"
-          cd "$EXTRACT_DIR/DEBS"
-          for deb in *.deb; do
-            dpkg -x "$deb" ../../bin/libreoffice/
-          done
-          cd ../..
-
-          # 创建符号链接，让代码能通过 bin/soffice 找到
-          # soffice 实际路径是 opt/libreoffice26.2/program/soffice
-          SOFFICE_PATH=$(find bin/libreoffice/opt -name "soffice" -path "*/program/soffice" | head -1)
-          if [ -n "$SOFFICE_PATH" ]; then
-            # 获取相对于 bin/ 目录的路径，用于创建符号链接
-            SOFFICE_REL_PATH="${SOFFICE_PATH#bin/}"
-            ln -sf "$SOFFICE_REL_PATH" bin/soffice
-            echo "Created symlink: bin/soffice -> $SOFFICE_REL_PATH"
-            # 验证符号链接有效
-            ls -la bin/soffice
-          else
-            echo "ERROR: soffice not found!"
-            exit 1
-          fi
-
-          # 清理
-          rm -rf "$EXTRACT_DIR" libreoffice.tar.gz
-
-          echo "LibreOffice ready: $(ls -la bin/soffice)"
-          echo "LibreOffice size: $(du -sh bin/libreoffice)"
-
-      # 4. 构建 Docker 镜像
+      # 4. 设置 Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker Image
+      # 5. 构建 Runtime 镜像 (会话容器)
+      - name: Build Runtime Docker Image
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.IMAGE_TAG }}
         run: |
-          docker build -t my-moss-runtime:v1 -f deploy/runtime/Dockerfile .
-          docker save my-moss-runtime:v1 | gzip > my-moss-runtime.tar.gz
-          echo "Docker image size: $(ls -lh my-moss-runtime.tar.gz)"
+          echo "Building runtime image with tag: $IMAGE_TAG"
+          docker build -t my-moss-runtime:$IMAGE_TAG -f deploy/runtime/Dockerfile .
+          docker save my-moss-runtime:$IMAGE_TAG | gzip > my-moss-runtime-$IMAGE_TAG.tar.gz
+          echo "Runtime image size: $(ls -lh my-moss-runtime-$IMAGE_TAG.tar.gz)"
 
-      # 4. 下载 Node.js 运行时
-      - name: Download Node.js Runtime
+      # 6. 构建 Server 镜像 (主服务)
+      - name: Build Server Docker Image
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.IMAGE_TAG }}
         run: |
-          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-linux-x64.tar.xz
+          echo "Building server image with tag: $IMAGE_TAG"
+          docker build -t my-moss-server:$IMAGE_TAG -f deploy/server.Dockerfile .
+          docker save my-moss-server:$IMAGE_TAG | gzip > my-moss-server-$IMAGE_TAG.tar.gz
+          echo "Server image size: $(ls -lh my-moss-server-$IMAGE_TAG.tar.gz)"
 
-      # 5. 组装部署包
+      # 7. 组装部署包
       - name: Assemble Release Package
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.IMAGE_TAG }}
         run: |
-          mkdir -p release/moss/admin/dist
-          mkdir -p release/moss/bin
+          mkdir -p release/moss
 
-          cp -r admin/dist/* release/moss/admin/dist/
-          cp -r bin/* release/moss/bin/
+          # 复制镜像文件
+          cp my-moss-runtime-$IMAGE_TAG.tar.gz release/moss/
+          cp my-moss-server-$IMAGE_TAG.tar.gz release/moss/
 
+          # 复制配置文件，并更新镜像 tag
           cp deploy/server.json release/moss/
-          cp start.sh release/moss/
-          cp shutdown.sh release/moss/
-          cp deploy/runtime/Dockerfile release/moss/
-          cp my-moss-runtime.tar.gz release/moss/
-          cp node-v${{ env.NODE_VERSION }}-linux-x64.tar.xz release/moss/
+          sed -i "s/my-moss-runtime:v1/my-moss-runtime:$IMAGE_TAG/g" release/moss/server.json
+          cp deploy/docker-compose.yml release/moss/
 
+          # 复制启动脚本
+          cp deploy/start.sh release/moss/
+          cp deploy/shutdown.sh release/moss/
           chmod +x release/moss/start.sh
           chmod +x release/moss/shutdown.sh
-          chmod +x release/moss/bin/scode
 
-          VERSION="${GITHUB_SHA:0:7}"
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME}"
-          fi
+          # 复制说明文档
+          cp deploy/README.md release/moss/
 
+          # 打包
           cd release
-          tar -czvf ../moss-linux-x64-${VERSION}.tar.gz moss
+          tar -czvf ../moss-deploy-$IMAGE_TAG.tar.gz moss
           cd ..
 
-          echo "Package ready: $(ls -lh moss-linux-x64-*.tar.gz)"
+          echo "Package ready: $(ls -lh moss-deploy-$IMAGE_TAG.tar.gz)"
+          echo "Package contents:"
+          tar -tzvf moss-deploy-$IMAGE_TAG.tar.gz
+          echo ""
+          echo "server.json dockerImage config:"
+          grep "dockerImage" release/moss/server.json
 
-      # 6. 上传构建产物
+      # 8. 上传构建产物
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: moss-linux-x64-${{ github.sha }}
-          path: moss-linux-x64-*.tar.gz
+          name: moss-deploy-${{ steps.tag.outputs.IMAGE_TAG }}
+          path: moss-deploy-*.tar.gz
           retention-days: 30
 
   # 创建 GitHub Release（当打 tag 时）
