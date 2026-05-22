@@ -3,6 +3,10 @@ import { join } from 'path'
 import { sanitizePath } from '../utils/sessionStoragePortable.js'
 import type { ServerConfig } from './types.js'
 
+export function isNamedPipePath(path: string): boolean {
+  return path.startsWith('\\\\.\\pipe\\')
+}
+
 export function getAttemptDir(
   config: ServerConfig,
   sessionId: string,
@@ -22,9 +26,12 @@ export function getAttachPath(
   generation: number,
 ): string {
   const name = createHash('sha1')
-    .update(`${sessionId}:${generation}`)
+    .update(`${config.runtimeDir}:${sessionId}:${generation}`)
     .digest('hex')
     .slice(0, 16)
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\moss-session-${name}`
+  }
   return join(config.runtimeDir, 'sock', `${name}.sock`)
 }
 
