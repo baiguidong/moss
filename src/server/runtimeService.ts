@@ -52,7 +52,9 @@ function resolveRunnerPath(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [
     join(currentDir, 'direct-connect-session-runner.mjs'),
+    join(currentDir, '..', '..', 'bin', 'direct-connect-session-runner.mjs'),
     join(process.cwd(), 'direct-connect-session-runner.mjs'),
+    join(process.cwd(), 'bin', 'direct-connect-session-runner.mjs'),
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
