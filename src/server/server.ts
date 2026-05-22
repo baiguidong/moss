@@ -34,6 +34,7 @@ import {
   readAssistantMeta,
   findAssistantDir,
   writeAssistantMeta,
+  getAssistantSystemPrompt,
 } from './agentStore.js'
 import {
   fetchSkillHubCategories,
@@ -79,7 +80,6 @@ import { storeSecret, deleteSecret } from './sources/secrets.js'
 // Connector implementations register themselves on import.
 import './sources/filesystem.js'
 import './sources/wecomDrive.js'
-import { randomUUID } from 'crypto'
 import { getUserProfile } from './api/userProfile.js'
 import { createConfigItemsApi } from './api/configItems.js'
 import { createSecretsApi } from './api/secrets.js'
@@ -2695,6 +2695,18 @@ export function startServer(
         return
       }
 
+      const installedAgentRulesMatch = pathname.match(/^\/api\/v1\/agents\/installed\/([^/]+)\/rules$/)
+      if (req.method === 'GET' && installedAgentRulesMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const assistantName = decodeURIComponent(installedAgentRulesMatch[1] || '')
+        const rules = await getAssistantSystemPrompt(assistantName)
+        if (rules === null) {
+          throw new HttpError(404, `Assistant rules not found: ${assistantName}`)
+        }
+        writeJson(res, 200, { rules })
+        return
+      }
+
       if (req.method === 'POST' && pathname === '/api/v1/agents/install') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
@@ -2737,6 +2749,9 @@ export function startServer(
           rules: typeof body.rules === 'string' ? body.rules : '',
           skills: Array.isArray(body.skills)
             ? body.skills.filter((s): s is string => typeof s === 'string')
+            : undefined,
+          enabledWikis: Array.isArray(body.enabledWikis)
+            ? body.enabledWikis.filter((s): s is string => typeof s === 'string')
             : undefined,
           agent_type:
             body.agent_type === 'chat' || body.agent_type === 'workflow'
@@ -2794,6 +2809,8 @@ export function startServer(
               typeof updates.avatar === 'string' ? updates.avatar : undefined,
             emoji:
               typeof updates.emoji === 'string' ? updates.emoji : undefined,
+            rules:
+              typeof updates.rules === 'string' ? updates.rules : undefined,
             agent_type:
               updates.agent_type === 'chat' || updates.agent_type === 'workflow'
                 ? updates.agent_type
@@ -3028,6 +3045,7 @@ export function startServer(
         await mkdir(assistantDir, { recursive: true })
 
         // Create metadata
+        const rules = typeof body.rules === 'string' ? body.rules : ''
         const meta: AssistantStoreMeta = {
           id: assistantId,
           name,
@@ -3037,6 +3055,7 @@ export function startServer(
           emoji: typeof body.emoji === 'string' ? body.emoji : undefined,
           source_type: 'tenant',
           enabled: true,
+          ruleFile: 'system.md',
           skills: Array.isArray(body.skills) ? body.skills : [],
           enabledSkills: Array.isArray(body.enabled_skills) ? body.enabled_skills : [],
           enabledWikis: Array.isArray(body.enabled_wikis) ? body.enabled_wikis : [],
@@ -3048,8 +3067,10 @@ export function startServer(
 
         await writeAssistantMeta(assistantDir, meta)
 
-        // Create default rules file
-        const rulesContent = `# ${displayName}\n\n${typeof body.description === 'string' ? body.description : '这是一个专属智能体。'}\n`
+        // Create rules file
+        const rulesContent = rules.trim()
+          ? rules
+          : `# ${displayName}\n\n${typeof body.description === 'string' ? body.description : '这是一个专属智能体。'}\n`
         await writeFile(join(assistantDir, 'system.md'), rulesContent)
 
         // Create database record with approved status
@@ -3064,6 +3085,7 @@ export function startServer(
           file_path: assistantDir,
           skills: meta.skills && meta.skills.length > 0 ? JSON.stringify(meta.skills) : null,
           enabled_skills: meta.enabledSkills && meta.enabledSkills.length > 0 ? JSON.stringify(meta.enabledSkills) : null,
+          enabled_wikis: meta.enabledWikis && meta.enabledWikis.length > 0 ? JSON.stringify(meta.enabledWikis) : null,
           agent_type: meta.agent_type,
           memory_mode: meta.memory_mode,
           visible_to: meta.visible_to ? JSON.stringify(meta.visible_to) : null,
@@ -3072,6 +3094,35 @@ export function startServer(
 
         const result = runtime.store.getTenantAssistant(assistantId)
         writeJson(res, 200, { success: true, data: result })
+        return
+      }
+
+      const tenantAgentRulesMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)\/rules$/)
+      if (req.method === 'GET' && tenantAgentRulesMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const tenantAssistantId = tenantAgentRulesMatch[1] || ''
+        const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
+        if (!tenantAssistant) {
+          throw new HttpError(404, `Tenant assistant not found: ${tenantAssistantId}`)
+        }
+
+        const filePath = typeof tenantAssistant.file_path === 'string' ? tenantAssistant.file_path : ''
+        const assistantDir = filePath && existsSync(filePath)
+          ? filePath
+          : join(process.env.MOSS_HOME || join(os.homedir(), '.moss'), 'assistants', 'tenant', tenantAssistant.name as string)
+        const rules = await getAssistantSystemPrompt(String(tenantAssistant.name || ''))
+
+        if (rules === null && !existsSync(assistantDir)) {
+          throw new HttpError(404, `Tenant assistant rules not found: ${tenantAssistantId}`)
+        }
+
+        if (rules !== null) {
+          writeJson(res, 200, { rules })
+          return
+        }
+
+        const fallback = await readFile(join(assistantDir, 'system.md'), 'utf8').catch(() => '')
+        writeJson(res, 200, { rules: fallback })
         return
       }
 
@@ -3198,6 +3249,9 @@ export function startServer(
         if (Array.isArray(body.enabledWikis)) {
           updates.enabled_wikis = JSON.stringify(body.enabledWikis.filter((s: unknown) => typeof s === 'string'))
         }
+        if (typeof body.rules === 'string') {
+          updates.rules = body.rules
+        }
         if (Array.isArray(body.skills)) {
           updates.skills = JSON.stringify(body.skills.filter((s: unknown) => typeof s === 'string'))
         }
@@ -3229,6 +3283,11 @@ export function startServer(
               if (body.enabledWikis !== undefined) meta.enabledWikis = body.enabledWikis as string[]
               if (body.skills !== undefined) meta.skills = body.skills as string[]
               if (body.workflow !== undefined) meta.workflow = body.workflow as AssistantStoreMeta['workflow']
+              if (typeof body.rules === 'string') {
+                const ruleFile = meta.ruleFile || 'system.md'
+                await writeFile(join(assistantDir, ruleFile), body.rules, 'utf8')
+                meta.ruleFile = ruleFile
+              }
               await writeAssistantMeta(assistantDir, meta)
             }
           }

@@ -51,8 +51,10 @@ import {
   fetchAgentHubSkillDetailsByIds,
   getAgentHubCategories,
   getAgentHubDetail,
+  getInstalledAgentRules,
   getAgentHubAssistants,
   getInstalledAgents,
+  getTenantAssistantRules,
   installAgent,
   uninstallAgent,
   updateInstalledAgentMeta,
@@ -500,6 +502,7 @@ export default function AgentHubPage() {
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
   const [editEnabledSkills, setEditEnabledSkills] = useState<string[]>([])
   const [editEnabledWikis, setEditEnabledWikis] = useState<string[]>([])
+  const [editRules, setEditRules] = useState('')
   const [availableWikis, setAvailableWikis] = useState<Array<{ id: string; name: string; description: string | null; buildStatus: string }>>([])
   const [editAddSkillOpen, setEditAddSkillOpen] = useState(false)
   const [editAddSkillSelection, setEditAddSkillSelection] = useState<string[]>([])
@@ -531,6 +534,7 @@ export default function AgentHubPage() {
   const [createDescription, setCreateDescription] = useState('')
   const [createAvatar, setCreateAvatar] = useState('')
   const [createEmoji, setCreateEmoji] = useState('')
+  const [createRules, setCreateRules] = useState('')
   const [createAgentType, setCreateAgentType] = useState<'chat' | 'workflow'>('chat')
   const [createMemoryMode, setCreateMemoryMode] = useState<'session' | 'user'>('session')
   const [createVisibilityMode, setCreateVisibilityMode] = useState<'all' | 'departments' | 'users' | 'admin'>('all')
@@ -543,6 +547,7 @@ export default function AgentHubPage() {
   const [createWorkflowTimeout, setCreateWorkflowTimeout] = useState('')
   const [createWorkflowOutputTargets, setCreateWorkflowOutputTargets] = useState<string[]>([])
   const [createSelectedSkills, setCreateSelectedSkills] = useState<string[]>([])
+  const [createSelectedWikis, setCreateSelectedWikis] = useState<string[]>([])
   const [creatingAssistant, setCreatingAssistant] = useState(false)
 
   const [pendingUninstallAgent, setPendingUninstallAgent] =
@@ -581,6 +586,7 @@ export default function AgentHubPage() {
   const [tenantEditSkills, setTenantEditSkills] = useState<string[]>([])
   const [tenantEditEnabledSkills, setTenantEditEnabledSkills] = useState<string[]>([])
   const [tenantEditEnabledWikis, setTenantEditEnabledWikis] = useState<string[]>([])
+  const [tenantEditRules, setTenantEditRules] = useState('')
   const [tenantEditWorkflow, setTenantEditWorkflow] = useState<TenantAssistantInfo['workflow']>(null)
   const [savingTenantEdit, setSavingTenantEdit] = useState(false)
   const [tenantEditSkillsDetails, setTenantEditSkillsDetails] = useState<SkillHubSkill[]>([])
@@ -683,6 +689,21 @@ export default function AgentHubPage() {
       if (showLoader) {
         setInstalledLoading(false)
       }
+    }
+  }, [])
+
+  const loadAvailableWikis = useCallback(async () => {
+    try {
+      const { listWikis } = await import('@/lib/api/document-center')
+      const list = await listWikis()
+      setAvailableWikis(list.map(w => ({
+        id: w.id,
+        name: w.name,
+        description: w.description,
+        buildStatus: w.buildStatus,
+      })))
+    } catch {
+      setAvailableWikis([])
     }
   }, [])
 
@@ -979,22 +1000,16 @@ export default function AgentHubPage() {
     // Document Center: load assistant.enabledWikis + list of available wikis
     const rawWikis = (agent.meta as { enabledWikis?: unknown } | undefined)?.enabledWikis
     setEditEnabledWikis(Array.isArray(rawWikis) ? rawWikis.filter((v): v is string => typeof v === 'string') : [])
-    // Fetch available wikis (best-effort; fail-silent so the dialog still opens)
-    void (async () => {
-      try {
-        const { listWikis } = await import('@/lib/api/document-center')
-        const list = await listWikis()
-        setAvailableWikis(list.map(w => ({
-          id: w.id,
-          name: w.name,
-          description: w.description,
-          buildStatus: w.buildStatus,
-        })))
-      } catch {
-        setAvailableWikis([])
-      }
-    })()
+    setEditRules('')
+    void loadAvailableWikis()
     setEditOpen(true)
+
+    try {
+      const { rules } = await getInstalledAgentRules(agent.name)
+      setEditRules(rules)
+    } catch {
+      setEditRules('')
+    }
 
     if (agent.skills.length === 0) {
       setEditSkillsLoading(false)
@@ -1048,7 +1063,7 @@ export default function AgentHubPage() {
     } finally {
       setEditSkillsLoading(false)
     }
-  }, [installedSkills])
+  }, [installedSkills, loadAvailableWikis])
 
   const handleInstall = useCallback(
     async (agent: AgentHubAssistant, skillIds: string[]) => {
@@ -1110,6 +1125,7 @@ export default function AgentHubPage() {
           description: editDescription.trim(),
           avatar: editAvatar.trim(),
           emoji: editEmoji.trim(),
+          rules: editRules,
           agent_type: editAgentType,
           memory_mode: editAgentType === 'chat' ? editMemoryMode : undefined,
           skills: editSkills.map(s => s.id || s.name),
@@ -1143,7 +1159,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editSkills, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editRules, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editSkills, editingAgent, fetchInstalledState])
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!pendingUninstallAgent) {
@@ -1246,6 +1262,11 @@ export default function AgentHubPage() {
       return
     }
 
+    if (!createRules.trim()) {
+      toast.error('Markdown 规则为必填项')
+      return
+    }
+
     setCreatingAssistant(true)
     try {
       const visible_to = createVisibilityMode === 'admin'
@@ -1273,8 +1294,10 @@ export default function AgentHubPage() {
         description: createDescription.trim() || undefined,
         avatar: createAvatar.trim() || undefined,
         emoji: createEmoji.trim() || undefined,
+        rules: createRules,
         skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
         enabled_skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
+        enabled_wikis: createSelectedWikis.length > 0 ? createSelectedWikis : undefined,
         agent_type: createAgentType,
         memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
         visible_to,
@@ -1287,6 +1310,7 @@ export default function AgentHubPage() {
       setCreateDescription('')
       setCreateAvatar('')
       setCreateEmoji('')
+      setCreateRules('')
       setCreateAgentType('chat')
       setCreateMemoryMode('session')
       setCreateVisibilityMode('all')
@@ -1299,13 +1323,14 @@ export default function AgentHubPage() {
       setCreateWorkflowTimeout('')
       setCreateWorkflowOutputTargets([])
       setCreateSelectedSkills([])
+      setCreateSelectedWikis([])
       await fetchTenantAssistants()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建智能体失败')
     } finally {
       setCreatingAssistant(false)
     }
-  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createVisibleUserIds, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, fetchTenantAssistants])
+  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createVisibleUserIds, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, createSelectedWikis, fetchTenantAssistants])
 
   const handleApproveTenantAssistant = useCallback(async (approved: boolean) => {
     if (!approvingAssistant) return
@@ -1385,6 +1410,7 @@ export default function AgentHubPage() {
     setTenantEditSkills(assistant.skills || [])
     setTenantEditEnabledSkills(assistant.enabled_skills || [])
     setTenantEditEnabledWikis(assistant.enabled_wikis || [])
+    setTenantEditRules('')
     setTenantEditWorkflow(assistant.workflow || null)
     // Reset skill-related states
     setTenantEditSkillsDetails([])
@@ -1412,19 +1438,14 @@ export default function AgentHubPage() {
     setTenantEditVisibleTo(deptIds || [])
     setTenantEditVisibleUserIds(userIds || [])
 
-    // Load available wikis
+    void loadAvailableWikis()
+
     void (async () => {
       try {
-        const { listWikis } = await import('@/lib/api/document-center')
-        const list = await listWikis()
-        setAvailableWikis(list.map(w => ({
-          id: w.id,
-          name: w.name,
-          description: w.description,
-          buildStatus: w.buildStatus,
-        })))
+        const { rules } = await getTenantAssistantRules(assistant.id)
+        setTenantEditRules(rules)
       } catch {
-        setAvailableWikis([])
+        setTenantEditRules('')
       }
     })()
 
@@ -1484,7 +1505,7 @@ export default function AgentHubPage() {
     }
 
     setTenantEditOpen(true)
-  }, [installedSkills])
+  }, [installedSkills, loadAvailableWikis])
 
   const handleSaveTenantEdit = useCallback(async () => {
     if (!editingTenantAgent) return
@@ -1505,6 +1526,7 @@ export default function AgentHubPage() {
         description: tenantEditDescription,
         avatar: tenantEditAvatar,
         emoji: tenantEditEmoji,
+        rules: tenantEditRules,
         agent_type: tenantEditAgentType,
         memory_mode: tenantEditMemoryMode,
         visible_to,
@@ -1523,7 +1545,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingTenantEdit(false)
     }
-  }, [editingTenantAgent, tenantEditName, tenantEditDescription, tenantEditAvatar, tenantEditEmoji,
+  }, [editingTenantAgent, tenantEditName, tenantEditDescription, tenantEditAvatar, tenantEditEmoji, tenantEditRules,
       tenantEditAgentType, tenantEditMemoryMode, tenantEditVisibilityMode, tenantEditVisibleTo,
       tenantEditVisibleUserIds, tenantEditEnabledSkills, tenantEditEnabledWikis, tenantEditSkills,
       tenantEditWorkflow, fetchTenantAssistants])
@@ -2401,15 +2423,16 @@ export default function AgentHubPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={editOpen}
-        onOpenChange={open => {
-          setEditOpen(open)
-          if (!open) {
-            setEditingAgent(null)
-          }
-        }}
-      >
+        <Dialog
+          open={editOpen}
+          onOpenChange={open => {
+            setEditOpen(open)
+            if (!open) {
+              setEditingAgent(null)
+              setEditRules('')
+            }
+          }}
+        >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>编辑智能体</DialogTitle>
@@ -2456,6 +2479,20 @@ export default function AgentHubPage() {
                 rows={4}
                 placeholder="输入智能体描述"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Markdown 规则</label>
+              <Textarea
+                value={editRules}
+                onChange={event => setEditRules(event.target.value)}
+                rows={10}
+                placeholder="# 角色\n\n在这里输入智能体规则"
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                这里的 Markdown 内容会作为智能体指令文件保存。
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -2978,6 +3015,7 @@ export default function AgentHubPage() {
             setCreateDescription('')
             setCreateAvatar('')
             setCreateEmoji('')
+            setCreateRules('')
             setCreateAgentType('chat')
             setCreateMemoryMode('session')
             setCreateVisibilityMode('all')
@@ -2990,6 +3028,9 @@ export default function AgentHubPage() {
             setCreateWorkflowTimeout('')
             setCreateWorkflowOutputTargets([])
             setCreateSelectedSkills([])
+            setCreateSelectedWikis([])
+          } else {
+            void loadAvailableWikis()
           }
         }}
       >
@@ -3059,6 +3100,22 @@ export default function AgentHubPage() {
                 rows={2}
                 placeholder="输入智能体描述"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Markdown 规则 <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                value={createRules}
+                onChange={event => setCreateRules(event.target.value)}
+                rows={10}
+                placeholder="# 角色\n\n在这里输入智能体规则"
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                使用 Markdown 编写系统规则，创建后会保存为该智能体的指令文件。
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -3304,6 +3361,71 @@ export default function AgentHubPage() {
                           ) : null}
                         </div>
                       </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">关联 Wiki（来自文档中心）</div>
+                <Badge variant="outline">{createSelectedWikis.length} / {availableWikis.length} 已关联</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                创建时即可绑定 Wiki，让智能体可直接查询这些知识库。
+              </p>
+              {availableWikis.length === 0 ? (
+                <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                  暂无可用 Wiki。请先在「文档中心」上传文档并构建 Wiki。
+                </div>
+              ) : (
+                <div className="max-h-48 space-y-1 overflow-auto rounded-md border p-2">
+                  {availableWikis.map(wiki => {
+                    const isEnabled = createSelectedWikis.includes(wiki.id)
+                    const toggle = () => {
+                      setCreateSelectedWikis(prev =>
+                        prev.includes(wiki.id)
+                          ? prev.filter(id => id !== wiki.id)
+                          : Array.from(new Set([...prev, wiki.id])),
+                      )
+                    }
+                    return (
+                      <div
+                        key={wiki.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={toggle}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault()
+                            toggle()
+                          }
+                        }}
+                        className="flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={isEnabled}
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          className="mt-0.5 pointer-events-none"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{wiki.name}</span>
+                            {wiki.buildStatus !== 'succeeded' && (
+                              <Badge variant="outline" className="text-xs">
+                                {wiki.buildStatus === 'running' ? '构建中' : wiki.buildStatus === 'failed' ? '构建失败' : '未构建'}
+                              </Badge>
+                            )}
+                          </div>
+                          {wiki.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-1">
+                              {wiki.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     )
                   })}
                 </div>
@@ -3773,6 +3895,7 @@ export default function AgentHubPage() {
           setTenantEditOpen(open)
           if (!open) {
             setEditingTenantAgent(null)
+            setTenantEditRules('')
           }
         }}
       >
@@ -3822,6 +3945,20 @@ export default function AgentHubPage() {
                   rows={4}
                   placeholder="输入智能体描述"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Markdown 规则</label>
+                <Textarea
+                  value={tenantEditRules}
+                  onChange={event => setTenantEditRules(event.target.value)}
+                  rows={10}
+                  placeholder="# 角色\n\n在这里输入智能体规则"
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  这里的 Markdown 内容会同步到专属智能体的规则文件。
+                </p>
               </div>
 
               <div className="space-y-2">

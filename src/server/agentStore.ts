@@ -985,6 +985,7 @@ export async function createCustomAssistant(params: {
   emoji?: string | null
   rules: string
   skills?: string[]
+  enabledWikis?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo
@@ -1023,6 +1024,7 @@ export async function createCustomAssistant(params: {
     ruleFile,
     skills: params.skills || [],
     enabledSkills: params.skills || [],
+    enabledWikis: params.enabledWikis || [],
     agent_type: params.agent_type,
     memory_mode: params.memory_mode,
     visible_to: params.visible_to,
@@ -1060,9 +1062,9 @@ export async function updateInstalledAssistantMeta(params: {
   updates: Partial<
     Pick<
       AssistantStoreMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'ruleFile' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
     >
-  >
+  > & { rules?: string }
 }): Promise<void> {
   const result = await findAssistantDir(params.assistantName)
   if (!result) {
@@ -1085,6 +1087,12 @@ export async function updateInstalledAssistantMeta(params: {
   }
   if (typeof params.updates.emoji === 'string') {
     nextMeta.emoji = params.updates.emoji.trim()
+  }
+  if (typeof params.updates.rules === 'string') {
+    const ruleFile = await resolveAssistantRuleFile(result.dir, params.assistantName, existingMeta.ruleFile)
+    const nextRuleFile = ruleFile || normalizeAssistantRelativePath(existingMeta.ruleFile) || 'instructions.md'
+    await writeFile(path.join(result.dir, nextRuleFile), params.updates.rules, 'utf8')
+    nextMeta.ruleFile = nextRuleFile
   }
   if (params.updates.agent_type === 'chat' || params.updates.agent_type === 'workflow') {
     nextMeta.agent_type = params.updates.agent_type

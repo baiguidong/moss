@@ -1525,19 +1525,21 @@ export class DirectConnectStore {
     checksum?: string | null
     file_path?: string | null
     enabled_skills?: string | null
+    enabled_wikis?: string | null
     skills?: string | null
     memory_mode?: string
     agent_type?: string
     publish_note?: string | null
     enabled?: number
     visible_to?: string | null
+    workflow?: string | null
   }): void {
     const ts = now()
     this.db.prepare(`
       INSERT INTO tenant_assistants (
         id, name, display_name, description, version, author_id, author_name, status,
-        source_url, checksum, file_path, enabled_skills, skills, memory_mode, agent_type, publish_note, enabled, visible_to, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_url, checksum, file_path, enabled_skills, skills, memory_mode, agent_type, publish_note, enabled, visible_to, enabled_wikis, workflow, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id,
       row.name,
@@ -1557,6 +1559,8 @@ export class DirectConnectStore {
       row.publish_note ?? null,
       row.enabled ?? 1,
       row.visible_to ?? null,
+      row.enabled_wikis ?? null,
+      row.workflow ?? null,
       ts,
       ts,
     )
