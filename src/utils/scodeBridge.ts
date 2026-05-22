@@ -78,9 +78,8 @@ export async function syncWorkspaceSkills(
           continue // 没有 SKILL.md，跳过
         }
 
-        // 如果指定了启用列表（非空数组），只同步列表中的技能
-        // 空数组或 undefined 表示同步所有启用的技能
-        if (enabledSkillNames && enabledSkillNames.length > 0 && !enabledSkillNames.includes(skillName)) {
+        // undefined 表示同步所有启用的技能；显式数组（包括空数组）表示严格按列表同步
+        if (Array.isArray(enabledSkillNames) && !enabledSkillNames.includes(skillName)) {
           continue
         }
 

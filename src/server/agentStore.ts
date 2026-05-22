@@ -528,6 +528,7 @@ export async function findAssistantDir(
     { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
     { dir: ASSISTANT_HUB_DIR, category: 'hub' },
     { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
+    { dir: ASSISTANT_TENANT_DIR, category: 'tenant' },
   ]
 
   const candidateNames = [normalizedAssistantName]

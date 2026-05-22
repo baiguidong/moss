@@ -116,10 +116,14 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
   const processUserMessage = async (data: string) => {
     let cleanText = data
     let userUuid = randomUUID()
+    let structuredContent: any[] | null = null
     try {
       const parsed = JSON.parse(data)
       if (parsed.type === 'user') {
         const content = parsed.message?.content || data
+        if (Array.isArray(content)) {
+          structuredContent = content
+        }
         if (Array.isArray(content)) {
           cleanText = content.map((c: any) => c.text || '').join('\n')
         } else {
@@ -132,6 +136,18 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
     }
 
     const trimmedText = typeof cleanText === 'string' ? cleanText.trim() : String(cleanText)
+
+    const hasToolResult =
+      Array.isArray(structuredContent)
+      && structuredContent.some(block => block?.type === 'tool_result')
+
+    if (hasToolResult) {
+      sendRpc('session/prompt', {
+        sessionId: acpSessionId,
+        prompt: structuredContent,
+      })
+      return
+    }
 
     if (
       options.assistantName &&
