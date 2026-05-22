@@ -5,6 +5,10 @@ import { randomUUID } from 'crypto'
 import type { ChildProcess } from 'child_process'
 import type { BackendHandle, SessionRuntimeInfo } from '../sessionManager.js'
 import { prepareFirstMessageForScode, buildIdentityBlock } from '../../utils/scodeBridge.js'
+import {
+  appendSharedAgentMemory,
+  extractRememberableUserFact,
+} from '../sharedAgentMemory.js'
 
 type AcpBridgeOptions = {
   child: ChildProcess
@@ -23,6 +27,7 @@ type AcpBridgeOptions = {
    * so scode learns it can use the `wiki` CLI.
    */
   availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+  sharedMemory?: string | null
   // 旧参数（已废弃，保留兼容）
   mcpServers?: any[]
   agents?: any[]
@@ -128,6 +133,26 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
     const trimmedText = typeof cleanText === 'string' ? cleanText.trim() : String(cleanText)
 
+    if (
+      options.assistantName &&
+      runtime.configDir &&
+      (runtime.hostMode === 'user' || runtime.dockerMode === 'user')
+    ) {
+      const memoryFact = extractRememberableUserFact(trimmedText)
+      if (memoryFact) {
+        void appendSharedAgentMemory({
+          configDir: runtime.configDir,
+          assistantName: options.assistantName,
+          content: memoryFact.content,
+          source: memoryFact.source,
+        }).catch(err => {
+          process.stderr.write(
+            `[AcpBridge] Failed to persist shared memory: ${String(err)}\n`,
+          )
+        })
+      }
+    }
+
     // 首次消息注入：注入技能和智能体信息
     let finalText = trimmedText
     if (isFirstMessage) {
@@ -136,6 +161,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
           assistantName: options.assistantName,
           workspace: cwd,
           enabledSkillNames: options.enabledSkillNames,
+          sharedMemory: options.sharedMemory,
           availableWikis: options.availableWikis,
         })
         process.stderr.write(`[AcpBridge] First message prepared with skills/assistant injection\n`)

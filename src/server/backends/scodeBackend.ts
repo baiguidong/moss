@@ -40,13 +40,6 @@ export class ScodeBackend implements SessionBackend {
     const configDir = options.runtime?.configDir || buildConfigDir(options, mode)
     await mkdir(configDir, { recursive: true })
 
-    // Sync skill/agent bridges so scode can discover Moss-installed skills
-    try {
-      await syncAllBridgesAsync(configDir)
-    } catch (bridgeErr) {
-      process.stderr.write(`[ScodeBackend] scode bridge sync warning: ${bridgeErr}\n`)
-    }
-
     // 创建 skill symlinks
     if (enabledSkills.length > 0) {
       await createSkillSymlinks(configDir, enabledSkills)
@@ -141,6 +134,8 @@ export class ScodeBackend implements SessionBackend {
       env: {
         ...env,
         HOME: configDir,
+        CLAUDE_CONFIG_DIR: configDir,
+        CLAUDE_CODE_REMOTE_MEMORY_DIR: configDir,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -156,6 +151,7 @@ export class ScodeBackend implements SessionBackend {
       assistantName: options.assistantName,
       enabledSkillNames: options.enabledSkillNames,
       availableWikis: options.availableWikis,
+      sharedMemory: options.sharedMemory,
       runtime: {
         type: 'host',
         engine: 'scode',

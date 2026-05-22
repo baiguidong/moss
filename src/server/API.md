@@ -419,7 +419,8 @@ API key 登录：
   "cwd": "/abs/path/project",
   "dangerously_skip_permissions": true,
   "runtime": {
-    "type": "host"
+    "type": "host",
+    "hostMode": "user"
   }
 }
 ```
@@ -443,7 +444,7 @@ API key 登录：
   "work_dir": "/abs/path/project",
   "runtime": {
     "type": "host",
-    "dockerMode": "session",
+    "hostMode": "user",
     "configDir": "/abs/path/config"
   }
 }

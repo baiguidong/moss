@@ -10,7 +10,6 @@ import { loadBudgetStats } from './budgetStats.js'
 import { DirectConnectStore, mergeRuntime, openDirectConnectStore, toSessionSummary } from './db.js'
 import { AuthService } from './auth/service.js'
 import { hasScope } from './auth/token.js'
-import { getUserAncestorIds } from './visibilityFilter.js'
 import type {
   AttemptRecord,
   RunnerManifest,
@@ -33,6 +32,12 @@ import { errorMessage } from '../utils/errors.js'
 import { getSystemSettings } from './systemSettings.js'
 import { getUserModelPreference } from './userModelPreference.js'
 import type { AuthProxyServer } from './authProxy/authProxyServer.js'
+import {
+  appendSharedAgentMemory,
+  buildUserProfileMemory,
+  readSharedAgentMemory,
+  writeAssistantOverrideAgentsMd,
+} from './sharedAgentMemory.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -243,14 +248,57 @@ export class RuntimeService {
     }
 
     const sessionId = randomUUID()
-    const runtime = mergeRuntime(this.options.config, input.runtime)
+    let runtimeInput = input.runtime
+    const runtimeType = input.runtime?.type || this.options.config.defaultRuntime
+
+    // Let assistant memory_mode decide the initial dockerMode/configDir when the
+    // caller did not explicitly choose one. Otherwise the global default
+    // dockerMode=session gets baked into the session too early and overrides
+    // memory_mode=user.
+    if (input.assistantName) {
+      try {
+        const { getAssistantRuntimeConfig } = await import(
+          './backends/backendUtils.js'
+        )
+        const assistantRuntime = await getAssistantRuntimeConfig(
+          input.assistantName,
+        )
+        if (
+          runtimeType === 'docker' &&
+          input.runtime?.dockerMode === undefined
+        ) {
+          runtimeInput = {
+            ...runtimeInput,
+            dockerMode: assistantRuntime.memoryMode,
+          }
+        }
+        if (
+          runtimeType === 'host' &&
+          input.runtime?.hostMode === undefined
+        ) {
+          runtimeInput = {
+            ...runtimeInput,
+            hostMode: assistantRuntime.memoryMode,
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[RuntimeService] failed to resolve assistant memory_mode for ${input.assistantName}:`,
+          error,
+        )
+      }
+    }
+
+    const runtime = mergeRuntime(this.options.config, runtimeInput)
     runtime.configDir =
       runtime.configDir ||
       getSessionConfigDir(
         this.options.config,
         sessionId,
         input.userId,
-        runtime.type === 'docker' ? runtime.dockerMode : 'session',
+        runtime.type === 'docker'
+          ? runtime.dockerMode
+          : runtime.hostMode || 'session',
       )
     const transcriptPath = getTranscriptPath(
       this.options.config.transcriptDir || runtime.configDir,
@@ -474,6 +522,7 @@ export class RuntimeService {
     // even though SESSION_TOKEN is set the agent has no idea it can use
     // the `wiki` CLI.
     let availableWikis: Array<{ id: string; name: string; description?: string | null }> | undefined
+    let sharedMemory: string | null = null
     if (options.assistantName) {
       try {
         const { findAssistantDir, readAssistantMeta } = await import('./agentStore.js')
@@ -499,6 +548,56 @@ export class RuntimeService {
             }
             if (collected.length > 0) availableWikis = collected
           }
+
+          if (
+            meta?.memory_mode === 'user' &&
+            session.runtime.configDir &&
+            session.userId
+          ) {
+            const user = this.authService.getUserOrNull(
+              session.userId,
+              session.orgId,
+            )
+            const departmentName = user?.departmentId
+              ? this.authService
+                  .listDepartments(session.orgId)
+                  .departments.find(d => d.id === user.departmentId)?.name ?? null
+              : null
+            const userProfileMemory = buildUserProfileMemory({
+              userName: user?.name ?? null,
+              role: user?.role ?? null,
+              departmentName,
+              email: user?.email ?? null,
+            })
+            if (userProfileMemory) {
+              await appendSharedAgentMemory({
+                configDir: session.runtime.configDir,
+                assistantName: options.assistantName,
+                content: userProfileMemory,
+                source: 'profile',
+              }).catch(() => {})
+            }
+            sharedMemory = await readSharedAgentMemory(
+              session.runtime.configDir,
+              options.assistantName,
+            )
+          }
+
+          if (session.runtime.configDir) {
+            await writeAssistantOverrideAgentsMd({
+              configDir: session.runtime.configDir,
+              assistantName: options.assistantName,
+              assistantRules: await import('./agentStore.js').then(m =>
+                m.getAssistantSystemPrompt(options.assistantName!),
+              ),
+              sharedMemory,
+            }).catch(err => {
+              console.warn(
+                `[RuntimeService] failed to write assistant override AGENTS.md for ${options.assistantName}:`,
+                err,
+              )
+            })
+          }
         }
       } catch (err) {
         console.warn(
@@ -517,12 +616,11 @@ export class RuntimeService {
       } else {
         const user = this.authService.getUserOrNull(session.userId, session.orgId)
         const departmentId = user?.departmentId ?? null
-        const visibleDepartmentIds = getUserAncestorIds(
-          session.userId,
-          session.orgId,
-          (userId, orgId) => this.authService.getUserOrNull(userId, orgId),
-          (orgId) => this.authService.listDepartmentsByOrg(orgId),
-        )
+        const visibleDepartmentIds =
+          this.authService.getUserDepartmentAncestorIds(
+            session.userId,
+            session.orgId,
+          ) ?? new Set()
         visibilityFilter = { isAdmin: false, userId: session.userId, departmentId, visibleDepartmentIds }
       }
     }
@@ -545,6 +643,7 @@ export class RuntimeService {
         assistantName: options.assistantName,
         sessionToken,
         availableWikis,
+        sharedMemory,
         enabledSkills: options.enabledSkills,
         visibilityFilter: visibilityFilter ? {
           isAdmin: visibilityFilter.isAdmin,

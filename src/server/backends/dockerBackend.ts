@@ -108,13 +108,6 @@ export class DockerBackend implements SessionBackend {
     const dotNexusDir = join(configDir, '.nexus', 'sudocode')
     await mkdir(dotNexusDir, { recursive: true })
 
-    // Sync skill/agent bridges into the config directory so scode can discover them
-    try {
-      await syncAllBridgesAsync(configDir)
-    } catch (bridgeErr) {
-      process.stderr.write(`[DockerBackend] scode bridge sync warning: ${bridgeErr}\n`)
-    }
-
     // 创建 skill symlinks
     if (assistantConfig.enabledSkills.length > 0) {
       await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
@@ -195,6 +188,8 @@ export class DockerBackend implements SessionBackend {
     }
     args.push('-e', `HOME=${configDir}`)
     args.push('-e', `MOSS_HOME=${MOSS_HOME}`)
+    args.push('-e', `CLAUDE_CONFIG_DIR=${configDir}`)
+    args.push('-e', `CLAUDE_CODE_REMOTE_MEMORY_DIR=${configDir}`)
 
     args.push(
       image,
@@ -242,6 +237,7 @@ export class DockerBackend implements SessionBackend {
       assistantName: options.assistantName,
       enabledSkillNames: options.enabledSkillNames,
       availableWikis: options.availableWikis,
+      sharedMemory: options.sharedMemory,
       runtime: runtimeInfo,
     })
 

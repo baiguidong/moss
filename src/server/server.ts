@@ -518,6 +518,12 @@ function parseRuntimeOptions(body: JsonBody) {
           : body.docker_mode === 'session'
             ? 'session'
             : undefined,
+      hostMode:
+        body.host_mode === 'user'
+          ? 'user'
+          : body.host_mode === 'session'
+            ? 'session'
+            : undefined,
     }
   }
   if (!isJsonBody(body.runtime)) {
@@ -543,6 +549,12 @@ function parseRuntimeOptions(body: JsonBody) {
       runtime.dockerMode === 'user'
         ? 'user'
         : runtime.dockerMode === 'session'
+          ? 'session'
+          : undefined,
+    hostMode:
+      runtime.hostMode === 'user' || runtime.host_mode === 'user'
+        ? 'user'
+        : runtime.hostMode === 'session' || runtime.host_mode === 'session'
           ? 'session'
           : undefined,
   }

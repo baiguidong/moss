@@ -9,6 +9,7 @@ export const runtimeInfoSchema = lazySchema(() =>
     scodePath: z.string().optional(),
     dockerImage: z.string().optional(),
     dockerMode: z.enum(['session', 'user']).optional(),
+    hostMode: z.enum(['session', 'user']).optional(),
     containerName: z.string().optional(),
     configDir: z.string().optional(),
   }),
@@ -328,6 +329,7 @@ export type RunnerManifest = {
      * `[Available Wikis]` block so scode actually knows to use `wiki` CLI.
      */
     availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+    sharedMemory?: string | null
     /** Enabled skill names (from client or assistant config) */
     enabledSkills?: string[]
     /**

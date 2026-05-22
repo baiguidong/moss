@@ -37,19 +37,22 @@ function parseJsonArray(value: unknown): string[] {
 }
 
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
+  const type = String(row.runtime_type) === 'docker' ? 'docker' : 'host'
+  const mode =
+    row.docker_mode === 'user'
+      ? 'user'
+      : row.docker_mode === 'session'
+        ? 'session'
+        : undefined
   return {
-    type: String(row.runtime_type) === 'docker' ? 'docker' : 'host',
+    type,
     engine: String(row.engine) === 'scode' ? 'scode' : 'scode',
     dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
-    dockerMode:
-      row.docker_mode === 'user'
-        ? 'user'
-        : row.docker_mode === 'session'
-          ? 'session'
-          : undefined,
-    container_name:
+    dockerMode: type === 'docker' ? mode : undefined,
+    containerName:
       typeof row.container_name === 'string' ? row.container_name : undefined,
-    config_dir: typeof row.config_dir === 'string' ? row.config_dir : undefined,
+    configDir: typeof row.config_dir === 'string' ? row.config_dir : undefined,
+    hostMode: type === 'host' ? mode : undefined,
   }
 }
 
@@ -748,7 +751,9 @@ export class DirectConnectStore {
       input.cwd,
       input.runtime.type,
       input.runtime.dockerImage ?? null,
-      input.runtime.dockerMode ?? null,
+      (input.runtime.type === 'docker'
+        ? input.runtime.dockerMode
+        : input.runtime.hostMode) ?? null,
       input.runtime.configDir ?? null,
       input.runtime.containerName ?? null,
       input.status,
@@ -2610,12 +2615,16 @@ export function mergeRuntime(
   runtime?: SessionCreateInput['runtime'],
 ): SessionRuntimeInfo {
   const type = runtime?.type || config.defaultRuntime
+  const dockerMode =
+    type === 'docker' ? runtime?.dockerMode || config.dockerMode : undefined
+  const hostMode = type === 'host' ? runtime?.hostMode : undefined
   return {
     type,
     engine: runtime?.engine || config.engine || 'scode',
     dockerImage: runtime?.dockerImage || config.dockerImage,
-    dockerMode: runtime?.dockerMode || config.dockerMode,
+    dockerMode,
     configDir: runtime?.configDir,
     scodePath: runtime?.scodePath || config.scodePath,
+    hostMode,
   }
 }

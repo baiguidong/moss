@@ -77,6 +77,7 @@ export type BackendSpawnOptions = {
    * the `wiki` CLI.
    */
   availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+  sharedMemory?: string | null
   /**
    * 可见性过滤上下文，用于过滤用户有权访问的技能
    */
@@ -198,6 +199,8 @@ export class SessionManager {
         type: entry.runtime.type,
         dockerImage: entry.runtime.dockerImage,
         dockerMode: entry.runtime.dockerMode,
+        hostMode: entry.runtime.hostMode,
+        configDir: entry.runtime.configDir,
       },
       createdAt: entry.createdAt,
       lastActiveAt: entry.lastActiveAt,

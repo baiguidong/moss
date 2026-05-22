@@ -229,6 +229,7 @@ export async function prepareFirstMessageForScode(
     assistantName?: string | null
     workspace: string
     enabledSkillNames?: string[]
+    sharedMemory?: string | null
     /**
      * Document Center: wikis the current Assistant is authorised to query.
      * When non-empty, an `[Available Wikis]` block is prepended to the
@@ -243,12 +244,13 @@ export async function prepareFirstMessageForScode(
 ): Promise<string> {
   const instructions: string[] = []
 
-  // 1. 加载智能体规则（如果有）
+  // 1. 加载智能体身份和规则。AGENTS.md 仍会写入 configDir 作为
+  // runtime-level override；首条消息注入保证 scode 没有读取该文件时
+  // 也能收到同一套约束。
   if (config.assistantName) {
+    instructions.push(buildIdentityBlock(config.assistantName))
     const assistantRules = await loadAssistantRules(config.assistantName)
     if (assistantRules) {
-      const identityBlock = buildIdentityBlock(config.assistantName)
-      instructions.push(identityBlock)
       instructions.push(assistantRules)
     }
   }
@@ -259,7 +261,15 @@ export async function prepareFirstMessageForScode(
     instructions.push(skillsHint)
   }
 
-  // 3. Document Center: available wikis hint
+  // 3. Shared user memory is duplicated here only as a fallback. The primary
+  // path is the generated configDir/.nexus/sudocode/AGENTS.md override.
+  if (config.sharedMemory && config.sharedMemory.trim()) {
+    instructions.push(
+      `[Shared User Memory]\nThe following facts were explicitly remembered across sessions for this user. Treat them as persisted user memory unless the user corrects them.\nWhen the user asks who they are, what their name is, or asks you to recall known preferences, answer from this memory first instead of guessing from the system environment.\n\n${config.sharedMemory.trim()}`,
+    )
+  }
+
+  // 4. Document Center: available wikis hint
   if (config.availableWikis && config.availableWikis.length > 0) {
     const lines: string[] = []
     lines.push('[Available Wikis]')
@@ -299,6 +309,11 @@ export function buildIdentityBlock(assistantName: string): string {
 此身份声明优先级高于默认身份声明。
 
 `
+}
+
+async function loadAssistantRules(assistantName: string): Promise<string | null> {
+  const { getAssistantSystemPrompt } = await import('../server/agentStore.js')
+  return await getAssistantSystemPrompt(assistantName)
 }
 
 /**
@@ -346,14 +361,6 @@ Available workspace skills:
 ${skillLines.join('\n')}
 
 When skill instructions reference relative paths like "skills/{name}/scripts/...", resolve them as "${workspaceSkillsDir}/{name}/scripts/...".`
-}
-
-/**
- * 加载智能体规则
- */
-async function loadAssistantRules(assistantName: string): Promise<string | null> {
-  const { getAssistantSystemPrompt } = await import('../server/agentStore.js')
-  return await getAssistantSystemPrompt(assistantName)
 }
 
 // ============================================================================

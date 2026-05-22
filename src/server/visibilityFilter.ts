@@ -2,8 +2,8 @@ import type { AuthContext } from './auth/token.js'
 import { hasScope } from './auth/token.js'
 
 export type VisibleTo = {
-  department_ids: string[] | null
-  user_ids: string[] | null
+  department_ids?: string[] | null
+  user_ids?: string[] | null
 } | null
 
 export type VisibilityFilter = {
@@ -24,7 +24,7 @@ export function isVisibleTo(
   if (!visibleTo) return true
 
   // 3. 检查用户白名单
-  const userIds = visibleTo.user_ids
+  const userIds = visibleTo.user_ids ?? null
   if (userIds !== null) {
     if (userIds.length === 0) {
       // 空数组表示仅管理员可见
@@ -36,7 +36,7 @@ export function isVisibleTo(
   }
 
   // 4. 检查部门白名单
-  const departmentIds = visibleTo.department_ids
+  const departmentIds = visibleTo.department_ids ?? null
   if (departmentIds !== null) {
     if (departmentIds.length === 0) {
       // 空数组表示仅管理员可见
