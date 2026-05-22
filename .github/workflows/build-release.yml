@@ -94,8 +94,11 @@ jobs:
           tar -xzf libreoffice.tar.gz
 
           # 解压所有 deb 包到 bin/libreoffice/
+          # 使用通配符匹配目录名（版本号可能有细微差异如 26.2.1.2）
           mkdir -p bin/libreoffice
-          cd LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb/DEBS
+          EXTRACT_DIR=$(ls -d LibreOffice_*_Linux_x86-64_deb | head -1)
+          echo "Found extract directory: $EXTRACT_DIR"
+          cd "$EXTRACT_DIR/DEBS"
           for deb in *.deb; do
             dpkg -x "$deb" ../../bin/libreoffice/
           done
@@ -106,7 +109,7 @@ jobs:
           chmod +x bin/soffice
 
           # 清理
-          rm -rf LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb libreoffice.tar.gz
+          rm -rf "$EXTRACT_DIR" libreoffice.tar.gz
 
           echo "LibreOffice ready: $(ls -la bin/soffice)"
           echo "LibreOffice size: $(du -sh bin/libreoffice)"
