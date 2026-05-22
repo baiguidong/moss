@@ -133,6 +133,31 @@ export async function parseDocument(
   return parseWithLibreOffice(filePath, fileName).catch(() => null)
 }
 
+function docImageExtension(contentType: string | undefined): string {
+  switch (String(contentType || '').toLowerCase()) {
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/png':
+      return 'png'
+    case 'image/gif':
+      return 'gif'
+    case 'image/svg+xml':
+      return 'svg'
+    case 'image/tiff':
+      return 'tiff'
+    case 'image/webp':
+      return 'webp'
+    default:
+      return 'bin'
+  }
+}
+
+function docImageBaseName(filePath: string): string {
+  const baseName = path.basename(filePath, path.extname(filePath)).trim()
+  const sanitized = baseName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-').replace(/\s+/g, '-').trim()
+  return sanitized || 'image'
+}
+
 async function parseDocxWithMammoth(filePath: string): Promise<ParseResult | null> {
   let mammoth: typeof import('mammoth') | null
   try {
@@ -142,11 +167,36 @@ async function parseDocxWithMammoth(filePath: string): Promise<ParseResult | nul
   }
   if (!mammoth) return null
 
+  const attachments: Array<{ name: string; bytes: Buffer }> = []
+  const imageBaseName = docImageBaseName(filePath)
+  let imageIndex = 0
+
   // convertToMarkdown returns { value, messages }
-  const result = await mammoth.convertToMarkdown({ path: filePath })
+  const result = await mammoth.convertToMarkdown(
+    { path: filePath },
+    {
+      convertImage: mammoth.images.imgElement(async (image) => {
+        imageIndex += 1
+        const ext = docImageExtension(image.contentType)
+        const imageName = path.posix.join(
+          'images',
+          `${imageBaseName}-${String(imageIndex).padStart(3, '0')}.${ext}`,
+        )
+        attachments.push({
+          name: imageName,
+          bytes: await image.readAsBuffer(),
+        })
+        return { src: imageName }
+      }),
+    },
+  )
   const markdown = String(result?.value ?? '').trim()
   if (!markdown) return null
-  return { markdown, via: 'mammoth' }
+  return {
+    markdown,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    via: 'mammoth',
+  }
 }
 
 async function parsePdfWithPdfParse(filePath: string): Promise<ParseResult | null> {
@@ -273,7 +323,9 @@ export async function parseAndWrite(
 
   if (parsed.attachments) {
     for (const a of parsed.attachments) {
-      await writeFile(path.join(outDir, a.name), a.bytes)
+      const attachmentPath = path.join(outDir, a.name)
+      await mkdir(path.dirname(attachmentPath), { recursive: true })
+      await writeFile(attachmentPath, a.bytes)
     }
   }
 
