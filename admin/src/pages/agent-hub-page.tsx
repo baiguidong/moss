@@ -59,7 +59,6 @@ import {
   uninstallAgent,
   updateInstalledAgentMeta,
   createCustomAssistant,
-  createTenantAssistant,
   getAgentSyncStatus,
   getTenantAssistants,
   approveTenantAssistant,
@@ -1288,16 +1287,15 @@ export default function AgentHubPage() {
           }
         : null
 
-      await createTenantAssistant({
+      await createCustomAssistant({
         name,
-        display_name: displayName,
+        displayName,
         description: createDescription.trim() || undefined,
         avatar: createAvatar.trim() || undefined,
         emoji: createEmoji.trim() || undefined,
         rules: createRules,
         skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
-        enabled_skills: createSelectedSkills.length > 0 ? createSelectedSkills : undefined,
-        enabled_wikis: createSelectedWikis.length > 0 ? createSelectedWikis : undefined,
+        enabledWikis: createSelectedWikis.length > 0 ? createSelectedWikis : undefined,
         agent_type: createAgentType,
         memory_mode: createAgentType === 'chat' ? createMemoryMode : undefined,
         visible_to,
@@ -1324,13 +1322,14 @@ export default function AgentHubPage() {
       setCreateWorkflowOutputTargets([])
       setCreateSelectedSkills([])
       setCreateSelectedWikis([])
-      await fetchTenantAssistants()
+      setActiveTab('custom')
+      await fetchInstalledState(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建智能体失败')
     } finally {
       setCreatingAssistant(false)
     }
-  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createVisibleUserIds, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, createSelectedWikis, fetchTenantAssistants])
+  }, [createAvatar, createDescription, createDisplayName, createEmoji, createName, createRules, createAgentType, createMemoryMode, createVisibilityMode, createVisibleTo, createVisibleUserIds, createWorkflowTrigger, createWorkflowCron, createWorkflowWebhookPath, createWorkflowOutputWebhook, createWorkflowTimeout, createWorkflowOutputTargets, createSelectedSkills, createSelectedWikis, fetchInstalledState])
 
   const handleApproveTenantAssistant = useCallback(async (approved: boolean) => {
     if (!approvingAssistant) return
