@@ -23,6 +23,7 @@ import type { VisibilityFilterContext } from './sessionManager.js'
 import {
   getAttachPath,
   getAttemptDir,
+  isNamedPipePath,
   getRuntimeStatusPath,
   getRuntimeStderrLogPath,
   getRuntimeStdoutLogPath,
@@ -106,7 +107,8 @@ async function waitForRunnerReady(
 ): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    if (existsSync(attachPath)) {
+    const remainingMs = timeoutMs - (Date.now() - start)
+    if (await probeAttachPath(attachPath, Math.max(100, Math.min(remainingMs, 250)))) {
       return
     }
     const failure = await readRunnerFailure(statusPath, stderrLogPath)
@@ -126,7 +128,7 @@ export async function probeAttachPath(
   attachPath: string,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (!existsSync(attachPath)) {
+  if (!isNamedPipePath(attachPath) && !existsSync(attachPath)) {
     return false
   }
   return await new Promise<boolean>(resolve => {

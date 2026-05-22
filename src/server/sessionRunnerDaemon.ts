@@ -3,7 +3,7 @@ import { appendFile, mkdir, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { RuntimeBackend } from './backends/runtimeBackend.js'
 import { DirectConnectStore } from './db.js'
-import { getTranscriptPath } from './runtimePaths.js'
+import { getTranscriptPath, isNamedPipePath } from './runtimePaths.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
 import type { RunnerClientMessage, RunnerServerMessage } from './runnerProtocol.js'
 import type { RunnerManifest } from './types.js'
@@ -14,6 +14,9 @@ type SocketWithBuffer = net.Socket & {
 }
 
 async function safeUnlink(path: string): Promise<void> {
+  if (isNamedPipePath(path)) {
+    return
+  }
   try {
     await unlink(path)
   } catch {}
@@ -95,7 +98,9 @@ export class SessionRunnerDaemon {
   async start(): Promise<void> {
     try {
       await mkdir(this.manifest.attempt.runtimeDir, { recursive: true })
-      await mkdir(dirname(this.manifest.attempt.attachPath), { recursive: true })
+      if (!isNamedPipePath(this.manifest.attempt.attachPath)) {
+        await mkdir(dirname(this.manifest.attempt.attachPath), { recursive: true })
+      }
       await safeUnlink(this.manifest.attempt.attachPath)
       await writeStatus(this.manifest.attempt.statusPath, {
         state: 'starting',
