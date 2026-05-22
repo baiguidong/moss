@@ -76,6 +76,13 @@ export type WikiBuildJob = {
   finishedAt: number | null
 }
 
+export type WikiBuildJobListItem = WikiBuildJob & {
+  wikiName: string
+  wikiNodeId: string | null
+  wikiBuildStatus: WikiRecord['buildStatus']
+  wikiNeedsRebuild: boolean
+}
+
 type SqlRow = Record<string, unknown>
 
 // ============================================================
@@ -162,6 +169,20 @@ function mapBuildJob(row: SqlRow): WikiBuildJob {
     queuedAt: Number(row.queued_at),
     startedAt: row.started_at == null ? null : Number(row.started_at),
     finishedAt: row.finished_at == null ? null : Number(row.finished_at),
+  }
+}
+
+function mapBuildJobListItem(row: SqlRow): WikiBuildJobListItem {
+  const job = mapBuildJob(row)
+  const wikiStatus = String(row.wiki_build_status)
+  return {
+    ...job,
+    wikiName: String(row.wiki_name ?? ''),
+    wikiNodeId: typeof row.wiki_node_id === 'string' ? row.wiki_node_id : null,
+    wikiBuildStatus: (['pending', 'running', 'succeeded', 'failed'].includes(wikiStatus)
+      ? wikiStatus
+      : 'pending') as WikiRecord['buildStatus'],
+    wikiNeedsRebuild: Number(row.wiki_needs_rebuild ?? 0) === 1,
   }
 }
 
@@ -457,6 +478,24 @@ export class DocumentStore {
 
   listBuildJobs(wikiId: string, limit?: number): WikiBuildJob[] {
     return this.store.listWikiBuildJobs(wikiId, limit).map(mapBuildJob)
+  }
+
+  listBuildJobsForOrg(orgId: string, filter?: {
+    status?: WikiBuildJob['status']
+    wikiId?: string
+    limit?: number
+    offset?: number
+  }): { items: WikiBuildJobListItem[]; total: number } {
+    const result = this.store.listWikiBuildJobsForOrg(orgId, filter)
+    return {
+      items: result.items.map(mapBuildJobListItem),
+      total: result.total,
+    }
+  }
+
+  getBuildJobForOrg(id: string, orgId: string): WikiBuildJobListItem | null {
+    const row = this.store.getWikiBuildJobForOrg(id, orgId)
+    return row ? mapBuildJobListItem(row) : null
   }
 
   getBuildJob(id: string): WikiBuildJob | null {

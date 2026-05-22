@@ -25,8 +25,19 @@ import { readFile, writeFile, rm, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
 import { randomUUID } from 'crypto'
+import { fileURLToPath } from 'url'
 
 const execFileAsync = promisify(execFile)
+
+let libreOfficeBinPromise: Promise<string | null> | null = null
+
+function currentModuleDir(): string | null {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url))
+  } catch {
+    return null
+  }
+}
 
 export type ParseResult = {
   /** UTF-8 markdown content suitable for direct write into wiki input/ */
@@ -158,6 +169,38 @@ async function parsePdfWithPdfParse(filePath: string): Promise<ParseResult | nul
   return { markdown: text, via: 'pdf-parse' }
 }
 
+async function resolveLibreOfficeBin(): Promise<string | null> {
+  if (!libreOfficeBinPromise) {
+    libreOfficeBinPromise = (async () => {
+      const moduleDir = currentModuleDir()
+      const candidates = [
+        process.env.LIBREOFFICE_BIN,
+        moduleDir ? path.join(moduleDir, 'soffice') : null,
+        moduleDir ? path.join(moduleDir, 'libreoffice') : null,
+        path.join(process.cwd(), 'bin', 'soffice'),
+        path.join(process.cwd(), 'bin', 'libreoffice'),
+        path.join(path.dirname(process.execPath), 'soffice'),
+        path.join(path.dirname(process.execPath), 'libreoffice'),
+        '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+        '/Applications/OpenOffice.app/Contents/MacOS/soffice',
+        'soffice',
+        'libreoffice',
+      ].filter((v): v is string => typeof v === 'string' && v.length > 0)
+
+      for (const candidate of candidates) {
+        try {
+          await execFileAsync(candidate, ['--version'], { timeout: 5_000 })
+          return candidate
+        } catch {
+          // try next candidate
+        }
+      }
+      return null
+    })()
+  }
+  return libreOfficeBinPromise
+}
+
 async function parseWithLibreOffice(
   filePath: string,
   fileName: string,
@@ -165,7 +208,8 @@ async function parseWithLibreOffice(
   // LibreOffice can convert to markdown directly on modern releases; we
   // ask for txt for max compatibility, then prepend a single H1 derived
   // from the file name so chunks have at least one heading.
-  const sofficeBin = process.env.LIBREOFFICE_BIN || 'soffice'
+  const sofficeBin = await resolveLibreOfficeBin()
+  if (!sofficeBin) return null
 
   // Make a temp work dir so concurrent jobs don't collide on output names.
   const workDir = path.join(tmpdir(), `moss-conv-${randomUUID()}`)

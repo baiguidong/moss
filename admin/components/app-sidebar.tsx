@@ -18,6 +18,7 @@ import {
   Plug,
   KeyRound,
   ChevronRight,
+  ListChecks,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -88,12 +89,11 @@ const menuItems: NavItem[] = [
     url: '/document-center',
     icon: BookText,
     requiredAnyScopes: ['admin:documents', 'admin:settings'],
-  },
-  {
-    title: '外部数据源',
-    url: '/document-center/sources',
-    icon: Plug,
-    requiredAnyScopes: ['admin:documents', 'admin:settings'],
+    children: [
+      { title: '知识树管理', url: '/document-center/tree', icon: BookText },
+      { title: '外部数据源', url: '/document-center/sources', icon: Plug },
+      { title: '构建任务', url: '/document-center/build-jobs', icon: ListChecks },
+    ],
   },
   {
     title: '凭据中心',

@@ -16,6 +16,7 @@ const AgentHubPage = lazy(() => import('./pages/agent-hub-page'))
 const EnterpriseConfigPage = lazy(() => import('./pages/enterprise-config-page'))
 const DocumentCenterPage = lazy(() => import('./pages/document-center-page'))
 const ExternalSourcesPage = lazy(() => import('./pages/external-sources-page'))
+const BuildJobsPage = lazy(() => import('./pages/build-jobs-page'))
 const ConfigItemsPage = lazy(() => import('./pages/secrets/config-items-page'))
 const EnterpriseSecretsPage = lazy(() => import('./pages/secrets/enterprise-secrets-page'))
 const DepartmentPoliciesPage = lazy(() => import('./pages/secrets/department-policies-page'))
@@ -150,8 +151,9 @@ export default function App() {
             </SuspendedRoute>
           }
         />
+        <Route path="/document-center" element={<Navigate to="/document-center/tree" replace />} />
         <Route
-          path="/document-center"
+          path="/document-center/tree"
           element={
             <SuspendedRoute>
               <DocumentCenterPage />
@@ -163,6 +165,14 @@ export default function App() {
           element={
             <SuspendedRoute>
               <ExternalSourcesPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/document-center/build-jobs"
+          element={
+            <SuspendedRoute>
+              <BuildJobsPage />
             </SuspendedRoute>
           }
         />

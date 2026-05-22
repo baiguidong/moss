@@ -1494,6 +1494,71 @@ export function startServer(
       }
 
       // ---- Wiki Build ----
+      if (req.method === 'GET' && pathname === '/api/v1/wiki-build-jobs') {
+        authService.requireScope(auth, 'admin:documents')
+        const url = new URL(req.url ?? '', 'http://localhost')
+        const rawStatus = url.searchParams.get('status')
+        const status = rawStatus && ['queued', 'running', 'succeeded', 'failed', 'cancelled'].includes(rawStatus)
+          ? rawStatus as 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+          : undefined
+        const wikiId = url.searchParams.get('wiki_id') ?? undefined
+        const limitParam = Number(url.searchParams.get('limit') ?? '50')
+        const offsetParam = Number(url.searchParams.get('offset') ?? '0')
+        const result = documentStore.listBuildJobsForOrg(auth.orgId, {
+          status,
+          wikiId,
+          limit: Number.isFinite(limitParam) ? limitParam : 50,
+          offset: Number.isFinite(offsetParam) ? offsetParam : 0,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      const wikiBuildJobItemMatch = pathname.match(/^\/api\/v1\/wiki-build-jobs\/([^/]+)$/)
+      if (req.method === 'GET' && wikiBuildJobItemMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const jobId = wikiBuildJobItemMatch[1] || ''
+        const job = documentStore.getBuildJobForOrg(jobId, auth.orgId)
+        if (!job) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'build job not found' } })
+          return
+        }
+        writeJson(res, 200, job)
+        return
+      }
+
+      const wikiBuildJobRetryMatch = pathname.match(/^\/api\/v1\/wiki-build-jobs\/([^/]+)\/retry$/)
+      if (req.method === 'POST' && wikiBuildJobRetryMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const jobId = wikiBuildJobRetryMatch[1] || ''
+        const job = documentStore.getBuildJobForOrg(jobId, auth.orgId)
+        if (!job) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'build job not found' } })
+          return
+        }
+        const newJob = documentStore.createBuildJob({ wikiId: job.wikiId, triggeredBy: auth.userId })
+        documentStore.setWikiBuildResult(job.wikiId, { status: 'pending' })
+        writeJson(res, 200, { job_id: newJob.id, wiki_id: job.wikiId })
+        return
+      }
+
+      const wikiBuildJobsByWikiMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)\/build-jobs$/)
+      if (req.method === 'GET' && wikiBuildJobsByWikiMatch) {
+        authService.requireScope(auth, 'admin:documents')
+        const wikiId = wikiBuildJobsByWikiMatch[1] || ''
+        const wiki = documentStore.getWiki(wikiId, auth.orgId)
+        if (!wiki) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'wiki not found' } })
+          return
+        }
+        const url = new URL(req.url ?? '', 'http://localhost')
+        const limitParam = Number(url.searchParams.get('limit') ?? '20')
+        writeJson(res, 200, {
+          jobs: documentStore.listBuildJobs(wikiId, Number.isFinite(limitParam) ? limitParam : 20),
+        })
+        return
+      }
+
       const wikiBuildMatch = pathname.match(/^\/api\/v1\/wikis\/([^/]+)\/build$/)
       if (req.method === 'POST' && wikiBuildMatch) {
         authService.requireScope(auth, 'admin:documents')

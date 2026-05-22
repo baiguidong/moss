@@ -70,6 +70,13 @@ export type WikiBuildJob = {
   finishedAt: number | null
 }
 
+export type WikiBuildJobListItem = WikiBuildJob & {
+  wikiName: string
+  wikiNodeId: string | null
+  wikiBuildStatus: WikiBuildStatus
+  wikiNeedsRebuild: boolean
+}
+
 // ============================================================
 // Tree
 // ============================================================
@@ -217,6 +224,39 @@ export function triggerWikiBuild(id: string): Promise<{ job_id: string; wiki_id:
     `/api/v1/wikis/${id}/build`,
     undefined,
   )
+}
+
+export async function listWikiBuildJobs(filter?: {
+  status?: WikiBuildJob['status'] | 'all'
+  wiki_id?: string
+  limit?: number
+  offset?: number
+}): Promise<{ items: WikiBuildJobListItem[]; total: number }> {
+  const params = new URLSearchParams()
+  if (filter?.status && filter.status !== 'all') params.set('status', filter.status)
+  if (filter?.wiki_id) params.set('wiki_id', filter.wiki_id)
+  if (filter?.limit) params.set('limit', String(filter.limit))
+  if (filter?.offset) params.set('offset', String(filter.offset))
+  const qs = params.toString()
+  return authClient.get(`/api/v1/wiki-build-jobs${qs ? `?${qs}` : ''}`)
+}
+
+export function getWikiBuildJob(id: string): Promise<WikiBuildJobListItem> {
+  return authClient.get(`/api/v1/wiki-build-jobs/${id}`)
+}
+
+export async function listWikiBuildJobHistory(
+  wikiId: string,
+  limit = 20,
+): Promise<WikiBuildJob[]> {
+  const data = await authClient.get<{ jobs: WikiBuildJob[] }>(
+    `/api/v1/wikis/${wikiId}/build-jobs?limit=${limit}`,
+  )
+  return data.jobs
+}
+
+export function retryWikiBuildJob(id: string): Promise<{ job_id: string; wiki_id: string }> {
+  return authClient.post(`/api/v1/wiki-build-jobs/${id}/retry`, undefined)
 }
 
 export function getWikiBuildStatus(id: string): Promise<{

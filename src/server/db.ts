@@ -1893,6 +1893,67 @@ export class DirectConnectStore {
       .all(wikiId, limit) as SqlRow[]
   }
 
+  listWikiBuildJobsForOrg(orgId: string, opts?: {
+    status?: string
+    wikiId?: string
+    limit?: number
+    offset?: number
+  }): { items: SqlRow[]; total: number } {
+    const where = ['w.org_id = ?']
+    const params: Array<string | number> = [orgId]
+    if (opts?.status) {
+      where.push('j.status = ?')
+      params.push(opts.status)
+    }
+    if (opts?.wikiId) {
+      where.push('j.wiki_id = ?')
+      params.push(opts.wikiId)
+    }
+    const whereSql = where.join(' AND ')
+    const totalRow = this.db
+      .prepare(`
+        SELECT COUNT(*) AS c
+        FROM wiki_build_jobs j
+        JOIN wikis w ON w.id = j.wiki_id
+        WHERE ${whereSql}
+      `)
+      .get(...params) as { c: number } | undefined
+    const limit = Math.min(Math.max(Math.floor(opts?.limit ?? 50), 1), 200)
+    const offset = Math.max(Math.floor(opts?.offset ?? 0), 0)
+    const items = this.db
+      .prepare(`
+        SELECT
+          j.*,
+          w.name AS wiki_name,
+          w.node_id AS wiki_node_id,
+          w.build_status AS wiki_build_status,
+          w.needs_rebuild AS wiki_needs_rebuild
+        FROM wiki_build_jobs j
+        JOIN wikis w ON w.id = j.wiki_id
+        WHERE ${whereSql}
+        ORDER BY j.queued_at DESC
+        LIMIT ? OFFSET ?
+      `)
+      .all(...params, limit, offset) as SqlRow[]
+    return { items, total: totalRow ? Number(totalRow.c) : 0 }
+  }
+
+  getWikiBuildJobForOrg(id: string, orgId: string): SqlRow | null {
+    return (this.db
+      .prepare(`
+        SELECT
+          j.*,
+          w.name AS wiki_name,
+          w.node_id AS wiki_node_id,
+          w.build_status AS wiki_build_status,
+          w.needs_rebuild AS wiki_needs_rebuild
+        FROM wiki_build_jobs j
+        JOIN wikis w ON w.id = j.wiki_id
+        WHERE j.id = ? AND w.org_id = ?
+      `)
+      .get(id, orgId) as SqlRow) ?? null
+  }
+
   getWikiBuildJob(id: string): SqlRow | null {
     return (this.db.prepare(`SELECT * FROM wiki_build_jobs WHERE id = ?`).get(id) as SqlRow) ?? null
   }
