@@ -12,6 +12,9 @@ services:
       - ./.moss:/root/.moss
       - ./data:/app/data
       - ./server.json:/app/server.json:ro
+    # 允许 Node.js 创建工作线程
+    security_opt:
+      - seccomp:unconfined
     environment:
       - MOSS_SERVER_CONFIG=/app/server.json
       - MOSS_HOST_PATH_MAP={"./data":"/app/data"}
