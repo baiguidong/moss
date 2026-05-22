@@ -130,7 +130,7 @@ export function AppSidebar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, scopes, logout } = useAuth()
-  const [expandedMenu, setExpandedMenu] = useState<string | null>(null)
+  const [expandedMenu, setExpandedMenu] = useState<string | null>('auto')
 
   const visibleMenuItems = menuItems.filter((item) => {
     if ('requiredScope' in item && item.requiredScope) {
@@ -172,7 +172,7 @@ export function AppSidebar() {
       if (visibleChildren.length === 0) return null
 
       const isAnyChildActive = visibleChildren.some(child => isItemActive(child.url))
-      const isExpanded = expandedMenu === item.title || isAnyChildActive
+      const isExpanded = expandedMenu === item.title || (expandedMenu === 'auto' && isAnyChildActive)
 
       return (
         <li key={item.title}>
