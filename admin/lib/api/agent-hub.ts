@@ -48,6 +48,7 @@ export interface InstalledAgentMeta {
   installed_version?: string
   installed_at?: string
   ruleFile?: string
+  rules?: string
   skills?: string[]
   enabledSkills?: string[]
   /** Document Center: Wiki IDs this assistant is authorised to query via wikiCli. */
@@ -107,6 +108,7 @@ export interface CreateAssistantRequest {
   emoji?: string
   rules: string
   skills?: string[]
+  enabledWikis?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
@@ -184,7 +186,7 @@ export function updateInstalledAgentMeta(data: {
   updates: Partial<
     Pick<
       InstalledAgentMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'rules' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
     >
   >
 }): Promise<{ ok: boolean }> {
@@ -263,6 +265,7 @@ export interface TenantAssistantInfo {
   reviewed_at?: number
   enabled: number
   visible_to?: VisibleTo | null
+  rules?: string
   workflow?: {
     trigger?: 'cron' | 'webhook' | 'manual'
     cron?: string
@@ -297,6 +300,7 @@ export interface CreateTenantAssistantRequest {
   description?: string
   avatar?: string
   emoji?: string
+  rules?: string
   skills?: string[]
   enabled_skills?: string[]
   enabled_wikis?: string[]
@@ -321,6 +325,7 @@ export function updateTenantAssistantMeta(params: {
   description?: string
   avatar?: string
   emoji?: string
+  rules?: string
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
@@ -347,4 +352,16 @@ export function downloadAssistant(assistantId: string, type: 'installed' | 'tena
     ? `/api/v1/agents/installed/${encodeURIComponent(assistantId)}/download`
     : `/api/v1/agents/tenant/${encodeURIComponent(assistantId)}/download`
   return authClient.getBlob(path)
+}
+
+export function getInstalledAgentRules(assistantName: string): Promise<{ rules: string }> {
+  return authClient.get<{ rules: string }>(
+    `/api/v1/agents/installed/${encodeURIComponent(assistantName)}/rules`,
+  )
+}
+
+export function getTenantAssistantRules(id: string): Promise<{ rules: string }> {
+  return authClient.get<{ rules: string }>(
+    `/api/v1/agents/tenant/${encodeURIComponent(id)}/rules`,
+  )
 }
