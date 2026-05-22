@@ -105,8 +105,16 @@ jobs:
           cd ../..
 
           # 创建符号链接，让代码能通过 bin/soffice 找到
-          ln -sf libreoffice/opt/libreoffice/program/soffice bin/soffice
-          chmod +x bin/soffice
+          # soffice 实际路径是 opt/libreoffice26.2/program/soffice
+          SOFFICE_PATH=$(find bin/libreoffice -name "soffice" -path "*/program/soffice" | head -1)
+          if [ -n "$SOFFICE_PATH" ]; then
+            ln -sf "$SOFFICE_PATH" bin/soffice
+            chmod +x bin/soffice
+            echo "Created symlink: bin/soffice -> $SOFFICE_PATH"
+          else
+            echo "ERROR: soffice not found!"
+            exit 1
+          fi
 
           # 清理
           rm -rf "$EXTRACT_DIR" libreoffice.tar.gz
