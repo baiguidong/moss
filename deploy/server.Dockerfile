@@ -55,21 +55,19 @@ RUN for i in 1 2 3; do \
 
 # 下载 scode
 # 下载 LibreOffice
-# 下载 LibreOffice (使用 dpkg -x 解压，不安装到系统)
+# 安装 LibreOffice (使用 dpkg -i 正常安装，确保配置正确)
 ARG LIBREOFFICE_VERSION=26.2.1
 RUN LIBREOFFICE_URL="https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/sudoclaw/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz" \
     && curl -fSL -o /tmp/libreoffice.tar.gz "$LIBREOFFICE_URL" \
     && tar -xzf /tmp/libreoffice.tar.gz -C /tmp \
     && EXTRACT_DIR=$(ls -d /tmp/LibreOffice_*_Linux_x86-64_deb | head -1) \
-    && mkdir -p /app/bin/libreoffice \
     && cd "$EXTRACT_DIR/DEBS" \
-    && for deb in *.deb; do dpkg -x "$deb" /app/bin/libreoffice/; done \
-    && cd /app \
-    && SOFFICE_PATH=$(find /app/bin/libreoffice/opt -name "soffice" -path "*/program/soffice" | head -1) \
-    && SOFFICE_REL_PATH="${SOFFICE_PATH#/app/bin/}" \
-    && ln -sf "$SOFFICE_REL_PATH" /app/bin/soffice \
-    && chmod +x "$SOFFICE_PATH" \
-    && rm -rf /tmp/libreoffice.tar.gz "$EXTRACT_DIR"
+    && apt-get update \
+    && for deb in *.deb; do dpkg -i "$deb" || apt-get install -f -y; done \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/libreoffice.tar.gz "$EXTRACT_DIR"
+
+ENV LIBREOFFICE_BIN=/usr/bin/soffice
 
 
 WORKDIR /app
@@ -80,6 +78,7 @@ COPY bin/wiki bin/
 COPY bin/moss-server.mjs ./bin/
 COPY bin/direct-connect-session-runner.mjs ./bin/
 COPY admin/dist/ ./admin/dist/
+COPY assistants/ ./assistants/
 
 # 复制 wiki (从 Go 构建阶段)
 RUN chmod +x ./bin/wiki

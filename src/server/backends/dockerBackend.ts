@@ -203,9 +203,11 @@ export class DockerBackend implements SessionBackend {
     console.log(`[DockerBackend] Model for session ${options.sessionId}: ${model} (from env.MOSS_DEFAULT_MODEL: ${env.MOSS_DEFAULT_MODEL})`)
 
     const args = ['run', '--rm', '-i', '--name', containerName]
-    // Add security options to allow Tokio runtime to spawn threads
+    // Add security options to allow Tokio runtime to spawn threads and sandbox to work
     // Without this, scode fails with "OS can't spawn worker thread: Operation not permitted"
+    // and sandbox unshare fails with "Permission denied"
     args.push('--security-opt', 'seccomp=unconfined')
+    args.push('--cap-add', 'SYS_ADMIN')
     const dockerUser = resolveDockerUser()
     if (dockerUser) {
       args.push('--user', dockerUser)
