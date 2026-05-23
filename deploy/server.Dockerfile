@@ -56,7 +56,7 @@ RUN for i in 1 2 3; do \
 # 下载 scode
 # 安装 LibreOffice (直接从 apt 安装，确保依赖完整)
 RUN apt-get update \
-    && apt-get install -y libreoffice-writer libreoffice-core --no-install-recommends \
+    && apt-get install -y libreoffice-writer libreoffice-core fonts-noto-cjk --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
