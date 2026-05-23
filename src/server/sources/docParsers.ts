@@ -21,7 +21,7 @@
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { readFile, writeFile, rm, mkdir } from 'fs/promises'
+import { readFile, writeFile, rm, mkdir, unlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
 import { randomUUID } from 'crypto'
@@ -45,7 +45,7 @@ export type ParseResult = {
   /** Files generated alongside (e.g. extracted images) for the caller to also write. */
   attachments?: Array<{ name: string; bytes: Buffer }>
   /** Parser identifier (for debugging / meta logs). */
-  via: 'passthrough' | 'mammoth' | 'pdf-parse' | 'libreoffice'
+  via: 'passthrough' | 'mammoth' | 'pdf-parse' | 'pdftotext' | 'libreoffice'
 }
 
 /**
@@ -104,6 +104,8 @@ export async function parseDocument(
   if (magic === 'pdf') {
     const r = await parsePdfWithPdfParse(filePath).catch(() => null)
     if (r) return r
+    const r2 = await parsePdfWithPdftotext(filePath).catch(() => null)
+    if (r2) return r2
     return parseWithLibreOffice(filePath, fileName).catch(() => null)
   }
   if (magic === 'ole') {
@@ -126,6 +128,8 @@ export async function parseDocument(
   if (ext === '.pdf') {
     const r = await parsePdfWithPdfParse(filePath).catch(() => null)
     if (r) return r
+    const r2 = await parsePdfWithPdftotext(filePath).catch(() => null)
+    if (r2) return r2
   }
 
   // Generic libreoffice fallback handles .doc/.xlsx/.pptx/.odt/.rtf and
@@ -217,6 +221,26 @@ async function parsePdfWithPdfParse(filePath: string): Promise<ParseResult | nul
   const text = String(out?.text ?? '').trim()
   if (!text) return null
   return { markdown: text, via: 'pdf-parse' }
+}
+
+async function parsePdfWithPdftotext(filePath: string): Promise<ParseResult | null> {
+  const { execFile } = await import('child_process')
+  const tmpFile = filePath + '.txt'
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile('pdftotext', [filePath, tmpFile], { timeout: 30000 }, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+    const text = await readFile(tmpFile, 'utf8')
+    await unlink(tmpFile).catch(() => {})
+    if (!text.trim()) return null
+    return { markdown: text.trim(), via: 'pdftotext' }
+  } catch {
+    await unlink(tmpFile).catch(() => {})
+    return null
+  }
 }
 
 async function resolveLibreOfficeBin(): Promise<string | null> {
