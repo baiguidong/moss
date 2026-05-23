@@ -54,18 +54,11 @@ RUN for i in 1 2 3; do \
     && rm -rf /var/lib/apt/lists/*
 
 # 下载 scode
-# 下载 LibreOffice
-# 安装 LibreOffice (使用 dpkg -i 正常安装，确保配置正确)
-ARG LIBREOFFICE_VERSION=26.2.1
-RUN LIBREOFFICE_URL="https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com/sudoclaw/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz" \
-    && curl -fSL -o /tmp/libreoffice.tar.gz "$LIBREOFFICE_URL" \
-    && tar -xzf /tmp/libreoffice.tar.gz -C /tmp \
-    && EXTRACT_DIR=$(ls -d /tmp/LibreOffice_*_Linux_x86-64_deb | head -1) \
-    && cd "$EXTRACT_DIR/DEBS" \
-    && apt-get update \
-    && for deb in *.deb; do dpkg -i "$deb" || apt-get install -f -y; done \
+# 安装 LibreOffice (直接从 apt 安装，确保依赖完整)
+RUN apt-get update \
+    && apt-get install -y libreoffice-writer libreoffice-core --no-install-recommends \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/libreoffice.tar.gz "$EXTRACT_DIR"
+    && rm -rf /var/lib/apt/lists/*
 
 ENV LIBREOFFICE_BIN=/usr/bin/soffice
 
