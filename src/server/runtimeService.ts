@@ -717,6 +717,7 @@ export class RuntimeService {
     if (this.authProxy) {
       const authToken = randomUUID()
       runnerEnv.SUDOWORK_AUTH_PROXY_URL = 'http://localhost:12013'
+      runnerEnv.SUDOWORK_AUTH_PROXY_BASE_URL = 'http://localhost:12013'
       runnerEnv.SUDOWORK_AUTH_PROXY_TOKEN = authToken
       // Token will be registered after spawn (needs pid)
       this.sessionTokens.set(session.sessionId, { token: authToken, pid: -1 })
@@ -746,7 +747,9 @@ export class RuntimeService {
       const entry = this.sessionTokens.get(session.sessionId)
       if (entry) {
         entry.pid = child.pid
-        this.authProxy.registerToken(entry.token, session.userId, null, child.pid)
+        const tokenUser = this.authService.getUserById(session.userId)
+        const deptId = tokenUser?.departmentId ?? null
+        this.authProxy.registerToken(entry.token, session.userId, deptId, child.pid)
       }
     }
 
