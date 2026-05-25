@@ -15,6 +15,18 @@ export type SystemSettingsSkillStore = {
   tenantId: string
 }
 
+export type SystemSettingsOAuth2 = {
+  enabled: boolean
+  /**
+   * Full authorize URL template. moss substitutes {redirect_uri} (the sudowork
+   * deep link) and {response_type}; sudowork fills {state}. Any provider-specific
+   * params such as client_id or scope should be written literally into the URL.
+   */
+  authorizeUrlTemplate: string
+  /** Absolute path to the credential script invoked with `resolve` / `refresh`. */
+  scriptPath: string
+}
+
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
@@ -25,6 +37,7 @@ export type SystemSettingsPayload = {
   apiKey: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
+  oauth2: SystemSettingsOAuth2
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -60,6 +73,11 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   },
   skillStore: {
     tenantId: '',
+  },
+  oauth2: {
+    enabled: false,
+    authorizeUrlTemplate: '',
+    scriptPath: '',
   },
 })
 
@@ -188,6 +206,33 @@ function normalizeSystemSettings(
           : DEFAULT_SYSTEM_SETTINGS.skillStore.tenantId,
   }
 
+  const sourceOAuth2 = isRecord(source.oauth2) ? source.oauth2 : {}
+  const existingOAuth2 = isRecord(result.oauth2) ? result.oauth2 : {}
+  const pickString = (a: unknown, b: unknown, fallback: string): string =>
+    typeof a === 'string'
+      ? a.trim()
+      : typeof b === 'string'
+        ? b
+        : fallback
+  result.oauth2 = {
+    enabled:
+      sourceOAuth2.enabled !== undefined
+        ? Boolean(sourceOAuth2.enabled)
+        : typeof existingOAuth2.enabled === 'boolean'
+          ? existingOAuth2.enabled
+          : DEFAULT_SYSTEM_SETTINGS.oauth2.enabled,
+    authorizeUrlTemplate: pickString(
+      sourceOAuth2.authorizeUrlTemplate,
+      existingOAuth2.authorizeUrlTemplate,
+      DEFAULT_SYSTEM_SETTINGS.oauth2.authorizeUrlTemplate,
+    ),
+    scriptPath: pickString(
+      sourceOAuth2.scriptPath,
+      existingOAuth2.scriptPath,
+      DEFAULT_SYSTEM_SETTINGS.oauth2.scriptPath,
+    ),
+  }
+
   return result as PersistedSystemSettings
 }
 
@@ -230,6 +275,7 @@ function readSystemSettingsState(): SystemSettingsState {
       skillStore: normalized.skillStore || {
         ...DEFAULT_SYSTEM_SETTINGS.skillStore,
       },
+      oauth2: normalized.oauth2 || { ...DEFAULT_SYSTEM_SETTINGS.oauth2 },
     }
     result.loaded = true
     return result
@@ -252,6 +298,7 @@ function toSystemSettingsPayload(
     apiKey: state.value.apiKey,
     image: state.value.image,
     skillStore: state.value.skillStore,
+    oauth2: state.value.oauth2,
     settingsPath: state.path,
     settingsExists: state.exists,
     settingsLoaded: state.loaded,
@@ -326,6 +373,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
     skillStore: nextSettings.skillStore,
+    oauth2: nextSettings.oauth2,
     settingsPath: SYSTEM_SETTINGS_PATH,
     settingsExists: true,
     settingsLoaded: true,

@@ -152,6 +152,12 @@ export interface SystemSettingsSkillStore {
   tenantId: string
 }
 
+export interface SystemSettingsOAuth2 {
+  enabled: boolean
+  authorizeUrlTemplate: string
+  scriptPath: string
+}
+
 export interface SystemSettings {
   bypassPermissions: boolean
   model: string
@@ -162,6 +168,7 @@ export interface SystemSettings {
   apiKey: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
+  oauth2: SystemSettingsOAuth2
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -178,6 +185,7 @@ export interface UpdateSystemSettingsRequest {
   apiKey?: string
   image?: Partial<SystemSettingsImage>
   skillStore?: Partial<SystemSettingsSkillStore>
+  oauth2?: Partial<SystemSettingsOAuth2>
 }
 
 // Direct Connect Server Types

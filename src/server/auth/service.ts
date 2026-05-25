@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { hasScope, issueAccessToken, issueWikiSessionToken, verifyAccessToken, type AuthContext } from './token.js'
+import { OAuth2Bridge, OAuth2BridgeError, type OAuth2Identity } from './oauth2Bridge.js'
 import { buildVisibilityFilter, getUserAncestorIds } from '../visibilityFilter.js'
+import { getSystemSettings } from '../systemSettings.js'
 import {
   AuthCenterDb,
   type AuthCenterApiKey,
@@ -36,6 +38,16 @@ export class AuthServiceError extends Error {
     super(message)
     this.name = 'AuthServiceError'
   }
+}
+
+function toAuthServiceError(error: unknown): AuthServiceError {
+  if (error instanceof AuthServiceError) {
+    return error
+  }
+  if (error instanceof OAuth2BridgeError) {
+    return new AuthServiceError(error.statusCode, error.message)
+  }
+  return new AuthServiceError(500, 'OAuth2 authentication failed')
 }
 
 function defaultScopesForRole(role: string): string[] {
@@ -97,6 +109,7 @@ const REVOKED_TOKENS_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 
 export class AuthService {
   private readonly cleanupTimer: ReturnType<typeof setInterval>
+  private readonly oauth2Bridge: OAuth2Bridge
 
   constructor(
     private readonly db: AuthCenterDb,
@@ -106,6 +119,7 @@ export class AuthService {
       this.db.cleanupExpiredRevokedTokens()
     }, REVOKED_TOKENS_CLEANUP_INTERVAL_MS)
     this.cleanupTimer.unref?.()
+    this.oauth2Bridge = new OAuth2Bridge(() => getSystemSettings().oauth2.scriptPath || null)
   }
 
   destroy(): void {
@@ -127,6 +141,8 @@ export class AuthService {
     const access = verifyAccessToken(accessToken, this.db.getJwtSecret(), this.db.getIssuer(), 'access')
     if (access) {
       this.db.revokeToken(access.jti, access.exp)
+      // Drop any stored provider token for this session.
+      this.db.deleteProviderToken(access.jti)
     }
 
     if (refreshToken) {
@@ -257,6 +273,218 @@ export class AuthService {
       scopes: apiKey.scopes,
       keyId: apiKey.id,
     })
+  }
+
+  /**
+   * OAuth2 login: resolve the provider access_token to a moss user (creating or
+   * linking as needed), then issue a wrapper JWT whose lifetime equals the
+   * provider token's `expiresIn`. The provider's refresh_token is NOT stored on
+   * moss — the client holds it and replays it via `oauth2_refresh_token`.
+   */
+  async issueTokenFromOAuth2(input: { params: Record<string, string> }): Promise<{
+    access_token: string
+    refresh_token: string
+    token_type: 'Bearer'
+    expires_in: number
+    user: SanitizedAuthCenterUser
+    organization: { id: string; name: string; createdAt: number } | null
+    scopes: string[]
+  }> {
+    let identity: OAuth2Identity
+    try {
+      identity = await this.oauth2Bridge.resolve(input.params)
+    } catch (error) {
+      throw toAuthServiceError(error)
+    }
+    const { user, scopes } = this.applyScriptIdentity(identity)
+    this.db.updateUserLastLogin(user.id)
+    const issued = this.issueToken({
+      user,
+      scopes,
+      keyId: 'oauth2-login',
+      accessTtlSec: identity.expiresIn,
+    })
+    // Stash the provider access_token server-side, keyed by the moss JWT jti,
+    // so moss can call provider resources later. The provider refresh_token is
+    // NOT stored here — the client holds it (symmetric with other login types).
+    this.storeProviderToken(issued.access_token, identity.accessToken)
+    // Echo the provider refresh_token so the client can persist it.
+    return { ...issued, refresh_token: identity.refreshToken ?? '' }
+  }
+
+  /**
+   * OAuth2 refresh: replay the provider refresh params (the client holds the
+   * provider refresh_token and sends it back) through the credential script to
+   * obtain a fresh provider access_token + identity, re-sync the moss user, and
+   * issue a new wrapper JWT. The (possibly rotated) provider refresh_token is
+   * echoed back so the client can update its storage.
+   */
+  async refreshOAuth2Token(input: { params: Record<string, string> }): Promise<{
+    access_token: string
+    refresh_token: string
+    token_type: 'Bearer'
+    expires_in: number
+    user: SanitizedAuthCenterUser
+    organization: { id: string; name: string; createdAt: number } | null
+    scopes: string[]
+  }> {
+    let result
+    try {
+      result = await this.oauth2Bridge.refresh(input.params)
+    } catch (error) {
+      throw toAuthServiceError(error)
+    }
+    // Provider does not support refresh: end the session so the client re-logs in.
+    if (!result) {
+      throw new AuthServiceError(401, 'OAuth2 session cannot be refreshed; please sign in again')
+    }
+    const { user, scopes } = this.applyScriptIdentity(result)
+    this.db.updateUserLastLogin(user.id)
+    const issued = this.issueToken({
+      user,
+      scopes,
+      keyId: 'oauth2-login',
+      accessTtlSec: result.expiresIn,
+    })
+    // Store the rotated provider access_token under the new jti.
+    this.storeProviderToken(issued.access_token, result.accessToken)
+    // Echo the (possibly rotated) provider refresh_token so the client persists it.
+    const echoedRefresh = result.refreshToken ?? input.params.refresh_token ?? ''
+    return { ...issued, refresh_token: echoedRefresh }
+  }
+
+  /**
+   * Persist a provider access_token keyed by the just-issued moss access JWT's
+   * jti, with expiry equal to that JWT's exp. Decodes the moss JWT (which we
+   * just signed) to recover jti/exp without changing issueToken's signature.
+   */
+  private storeProviderToken(mossAccessJwt: string, providerAccessToken: string): void {
+    const auth = verifyAccessToken(mossAccessJwt, this.db.getJwtSecret(), this.db.getIssuer())
+    if (!auth) return // should never happen for a token we just signed
+    this.db.putProviderToken(auth.jti, providerAccessToken, auth.exp)
+  }
+
+  /** Recover the provider access_token for a session (by the moss JWT jti). */
+  getProviderTokenForSession(jti: string): string | null {
+    return this.db.getProviderToken(jti)
+  }
+
+  /**
+   * Find-or-link a user for an OAuth2 identity and apply the IdP-authoritative
+   * org / department / scopes. Lookup order: by (provider, providerUserId),
+   * then by email (linking the provider columns onto the matched local user),
+   * then create. Email is synthesized (same helper as admin create-user) when
+   * the provider does not supply one. Org, department and scopes are
+   * re-synced on every login and refresh — the IdP is authoritative.
+   */
+  private applyScriptIdentity(identity: OAuth2Identity): {
+    user: AuthCenterUser
+    scopes: string[]
+  } {
+    const provider = identity.providerId || 'oauth2'
+    let user = this.db.getUserByProvider(provider, identity.providerUserId)
+
+    // Resolve the email up front: prefer the provider's, otherwise synthesize a
+    // stable internal one keyed on the provider user id (matches admin create).
+    const email = identity.email?.trim() || createSyntheticUserEmail(`${provider}-${identity.providerUserId}`)
+
+    if (!user) {
+      const byEmail = this.db.getUserByEmail(email)
+      if (byEmail) {
+        this.db.linkProviderToUser(byEmail.id, provider, identity.providerUserId)
+        user = this.db.getUserById(byEmail.id)
+      }
+    }
+
+    // Resolve the target org from the script (authoritative), falling back to
+    // the existing org or the default org. We do not auto-create orgs.
+    const targetOrg =
+      (identity.organization
+        ? this.db.getOrganizationByName(identity.organization)
+        : null) ??
+      (user ? this.db.getOrganization(user.orgId) : null) ??
+      this.db.listOrganizations()[0] ??
+      null
+    if (!targetOrg) {
+      throw new AuthServiceError(500, 'No organization available for OAuth2 user')
+    }
+
+    // Resolve-or-create the department by name within the target org (the IdP
+    // only supplies a flat group name, so OAuth2 departments are top-level).
+    const departmentId = identity.department
+      ? this.resolveOrCreateDepartment(targetOrg.id, identity.department).id
+      : null
+
+    if (!user) {
+      const userId = randomUUID()
+      const createdAt = Date.now()
+      const newUser: AuthCenterUser = {
+        id: userId,
+        orgId: targetOrg.id,
+        email,
+        name: identity.displayName?.trim() || email,
+        departmentId,
+        role: 'user',
+        status: 'active',
+        localAuth: false,
+        tokenLimit: null,
+        createdAt,
+        passwordHash: null,
+        passwordUpdatedAt: null,
+        lastLoginAt: null,
+        provider,
+        providerUserId: identity.providerUserId,
+      }
+      this.db.createUser(newUser)
+      user = newUser
+    } else {
+      if (user.orgId !== targetOrg.id) {
+        this.db.updateUserOrg(user.id, targetOrg.id)
+        user = { ...user, orgId: targetOrg.id }
+      }
+      // Re-sync department membership (IdP authoritative). Only write when it
+      // actually changed to avoid needless updates.
+      if (user.departmentId !== departmentId) {
+        this.db.updateUser(user.id, { departmentId })
+        user = { ...user, departmentId }
+      }
+    }
+
+    if (user.status !== 'active') {
+      throw new AuthServiceError(403, 'User account is disabled')
+    }
+
+    // moss JWT scopes are moss's own permission vocabulary, derived from the
+    // user's role — identical to the password/api_key paths. The provider's
+    // OAuth2 scope (e.g. "server") is a different vocabulary meant for the
+    // provider's own APIs and must NOT leak into moss's authorization claim.
+    const scopes = defaultScopesForRole(user.role)
+    return { user, scopes }
+  }
+
+  /**
+   * Resolve a top-level department by name within an org, creating it if absent.
+   * Mirrors the admin createDepartment write path but is idempotent (no 409),
+   * since OAuth2 login re-runs on every authentication.
+   */
+  private resolveOrCreateDepartment(orgId: string, name: string): AuthCenterDepartment {
+    const trimmed = name.trim()
+    const existing = this.findSiblingDepartment(orgId, null, trimmed)
+    if (existing) {
+      return existing
+    }
+    const timestamp = Date.now()
+    const department: AuthCenterDepartment = {
+      id: randomUUID(),
+      orgId,
+      parentId: null,
+      name: trimmed,
+      tokenLimit: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    this.db.createDepartment(department)
+    return department
   }
 
   getMe(auth: AuthContext): {
@@ -429,11 +657,14 @@ export class AuthService {
       departmentId,
       role,
       status: 'active',
+      localAuth: true,
       tokenLimit: null,
       createdAt,
       passwordHash: hashPassword(input.password),
       passwordUpdatedAt: createdAt,
       lastLoginAt: null,
+      provider: null,
+      providerUserId: null,
     }
     this.db.createUser(user)
     return { user: sanitizeUser(user) }
@@ -816,6 +1047,9 @@ export class AuthService {
     user: AuthCenterUser
     scopes: string[]
     keyId: string
+    /** Override the access-token TTL (seconds). Used by OAuth2 to bound the
+     *  wrapper JWT to the provider's token lifetime. */
+    accessTtlSec?: number
   }): {
     access_token: string
     refresh_token: string
@@ -835,7 +1069,7 @@ export class AuthService {
         key_id: input.keyId,
       },
       this.db.getJwtSecret(),
-      this.tokenTtlSec,
+      input.accessTtlSec ?? this.tokenTtlSec,
       'access',
     )
 

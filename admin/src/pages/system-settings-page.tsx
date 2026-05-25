@@ -35,6 +35,7 @@ import {
   Building2,
   Copy,
   Image as ImageIcon,
+  KeyRound,
   Loader2,
   Package,
   RefreshCw,
@@ -102,6 +103,11 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     skillStore: {
       tenantId: settings.skillStore.tenantId,
     },
+    oauth2: {
+      enabled: settings.oauth2.enabled,
+      authorizeUrlTemplate: settings.oauth2.authorizeUrlTemplate,
+      scriptPath: settings.oauth2.scriptPath,
+    },
   }
 }
 
@@ -156,6 +162,20 @@ function buildSystemSettingsPatch(
   }
   if (Object.keys(skillStorePatch).length > 0) {
     patch.skillStore = skillStorePatch
+  }
+
+  const oauth2Patch: NonNullable<UpdateSystemSettingsRequest['oauth2']> = {}
+  if (draft.oauth2.enabled !== settings.oauth2.enabled) {
+    oauth2Patch.enabled = draft.oauth2.enabled
+  }
+  if (draft.oauth2.authorizeUrlTemplate !== settings.oauth2.authorizeUrlTemplate) {
+    oauth2Patch.authorizeUrlTemplate = draft.oauth2.authorizeUrlTemplate
+  }
+  if (draft.oauth2.scriptPath !== settings.oauth2.scriptPath) {
+    oauth2Patch.scriptPath = draft.oauth2.scriptPath
+  }
+  if (Object.keys(oauth2Patch).length > 0) {
+    patch.oauth2 = oauth2Patch
   }
 
   return patch
@@ -853,6 +873,76 @@ export default function SystemSettingsPage() {
               />
             </SettingField>
           ) : null}
+        </SettingSection>
+
+        <SettingSection
+          icon={KeyRound}
+          title="OAuth2 登录"
+          description="允许企业用户通过外部身份提供方（IdP）以浏览器跳转方式登录 SudoWork。"
+        >
+          <SettingField
+            label="启用 OAuth2 登录"
+            description="关闭后，客户端的 OAuth2 登录选项将提示未启用。"
+          >
+            <div className="flex min-h-10 items-center">
+              <Switch
+                checked={draft.oauth2.enabled}
+                onCheckedChange={checked =>
+                  setDraft(current =>
+                    current
+                      ? { ...current, oauth2: { ...current.oauth2, enabled: checked } }
+                      : current,
+                  )
+                }
+              />
+            </div>
+          </SettingField>
+
+          <SettingField
+            label="Authorize URL 模板"
+            description="完整授权地址。系统只会替换 {redirect_uri}，客户端会填充 {state}。client_id、scope、response_type 等参数请直接写入地址中。"
+          >
+            <Input
+              value={draft.oauth2.authorizeUrlTemplate}
+              onChange={(event) =>
+                setDraft(current =>
+                  current
+                    ? {
+                        ...current,
+                        oauth2: { ...current.oauth2, authorizeUrlTemplate: event.target.value },
+                      }
+                    : current,
+                )
+              }
+              placeholder="https://idp.example.com/authorize?client_id=your-client-id&scope=server&response_type=token&redirect_uri={redirect_uri}&state={state}"
+            />
+          </SettingField>
+
+          <SettingField
+            label="凭证脚本路径"
+            description="服务器上可执行脚本的绝对路径，调用时传入 resolve / refresh 参数解析用户身份。"
+          >
+            <Input
+              value={draft.oauth2.scriptPath}
+              onChange={(event) =>
+                setDraft(current =>
+                  current
+                    ? { ...current, oauth2: { ...current.oauth2, scriptPath: event.target.value } }
+                    : current,
+                )
+              }
+              placeholder="/opt/moss/oauth2-resolve.sh"
+            />
+          </SettingField>
+
+          <SettingField
+            label="Redirect URI"
+            description="请在 IdP 中将此地址注册为允许的回调地址。认证完成后，IdP 需携带 access_token、refresh_token 与原样回传的 state 重定向到此地址。"
+          >
+            <p className="min-h-10 break-all rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+              sudowork://oauth2-callback
+            </p>
+          </SettingField>
         </SettingSection>
       </div>
     </DashboardLayout>
