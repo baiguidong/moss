@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { NexusClient } from '../nexus/nexusClient.js'
+import { secretSubject, SYSTEM_SECRET_SUBJECT } from '../secrets/secretSubject.js'
 
 type SqlRow = Record<string, unknown>
 
@@ -74,7 +75,7 @@ export function createSecretsApi(db: {
 
     async listEnterpriseSecrets(orgId: string, userId: string) {
       try {
-        const secrets = await nexus.listSecrets(undefined, userId)
+        const secrets = await nexus.listSecrets(undefined, SYSTEM_SECRET_SUBJECT)
         // Filter to system:* namespace
         const systemSecrets = secrets.filter(s => s.namespace.startsWith('system:'))
         // Enrich with config item data
@@ -91,7 +92,7 @@ export function createSecretsApi(db: {
 
     async getSecret(orgId: string, userId: string, namespace: string, key: string, ip?: string) {
       try {
-        const secret = await nexus.getSecret(namespace, key, userId)
+        const secret = await nexus.getSecret(namespace, key, secretSubject(namespace, userId))
         if (!secret) return { success: false, error: { code: 'not_found', message: '凭据不存在' } }
         writeAudit(userId, undefined, 'read', undefined, namespace, key, undefined, ip)
         return { success: true, data: secret }
@@ -102,9 +103,9 @@ export function createSecretsApi(db: {
 
     async putSecret(orgId: string, userId: string, namespace: string, key: string, value: string, metadata?: { expires_at?: number | null }, ip?: string) {
       try {
-        const existing = await nexus.getSecret(namespace, key, userId).catch(() => null)
+        const existing = await nexus.getSecret(namespace, key, secretSubject(namespace, userId)).catch(() => null)
         const action = existing && existing.version > 0 ? 'updated' : 'created'
-        await nexus.putSecret(namespace, key, value, userId)
+        await nexus.putSecret(namespace, key, value, secretSubject(namespace, userId))
         writeAudit(userId, undefined, action, undefined, namespace, key, { value_length: value.length }, ip)
         // Handle metadata if provided
         if (metadata && metadata.expires_at !== undefined) {
@@ -121,7 +122,7 @@ export function createSecretsApi(db: {
 
     async deleteSecret(orgId: string, userId: string, namespace: string, key: string, ip?: string) {
       try {
-        await nexus.deleteSecret(namespace, key, userId)
+        await nexus.deleteSecret(namespace, key, secretSubject(namespace, userId))
         writeAudit(userId, undefined, 'deleted', undefined, namespace, key, undefined, ip)
         return { success: true }
       } catch {
@@ -131,7 +132,7 @@ export function createSecretsApi(db: {
 
     async enableSecret(orgId: string, userId: string, namespace: string, key: string, ip?: string) {
       try {
-        await nexus.enableSecret(namespace, key, userId)
+        await nexus.enableSecret(namespace, key, secretSubject(namespace, userId))
         writeAudit(userId, undefined, 'enabled', undefined, namespace, key, undefined, ip)
         return { success: true }
       } catch {
@@ -141,7 +142,7 @@ export function createSecretsApi(db: {
 
     async disableSecret(orgId: string, userId: string, namespace: string, key: string, ip?: string) {
       try {
-        await nexus.disableSecret(namespace, key, userId)
+        await nexus.disableSecret(namespace, key, secretSubject(namespace, userId))
         writeAudit(userId, undefined, 'disabled', undefined, namespace, key, undefined, ip)
         return { success: true }
       } catch {

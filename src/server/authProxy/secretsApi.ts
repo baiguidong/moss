@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http'
 import type { URL } from 'url'
 import type { NexusClient } from '../nexus/nexusClient.js'
+import { SYSTEM_SECRET_SUBJECT } from '../secrets/secretSubject.js'
 
 interface DepartmentPolicyProvider {
   getAuthorizedConfigItemIds(departmentId: string): number[]
@@ -85,7 +86,7 @@ export async function handleSecretsRequest(
 
 async function handleList(res: ServerResponse, context: SecretsApiContext): Promise<void> {
   try {
-    const raw = await nexusClient!.listSecrets()
+    const raw = await nexusClient!.listSecrets(undefined, context.userId)
     // Immediately strip value to minimize plaintext exposure window
     const allMeta: SecretSummary[] = raw.map(s => ({
       namespace: s.namespace,
@@ -108,11 +109,10 @@ async function handleList(res: ServerResponse, context: SecretsApiContext): Prom
             authorizedPinyins.add(item.pinyin)
           }
         }
-        enterprise = allMeta.filter(s => {
-          if (!s.namespace.startsWith('system:')) return false
-          const pinyin = s.namespace.slice('system:'.length)
-          return authorizedPinyins.has(pinyin)
-        })
+        const enterpriseRaw = await nexusClient!.listSecrets(undefined, SYSTEM_SECRET_SUBJECT)
+        enterprise = enterpriseRaw
+          .filter(s => s.namespace.startsWith('system:') && authorizedPinyins.has(s.namespace.slice('system:'.length)))
+          .map(s => ({ namespace: s.namespace, key: s.key, status: s.status, version: s.version }))
       }
     }
 

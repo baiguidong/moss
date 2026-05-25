@@ -5,6 +5,7 @@ import { URL } from 'url'
 import { validateRemoteUrl } from './ssrfGuard.js'
 import { injectAuth, injectMultiAuth, type InjectAuthResult } from './authInjectors.js'
 import { handleSecretsRequest } from './secretsApi.js'
+import { secretSubject } from '../secrets/secretSubject.js'
 import type { NexusClient } from '../nexus/nexusClient.js'
 
 export interface AuthProxyRule {
@@ -181,6 +182,15 @@ export class AuthProxyServer {
     const explicitScheme = req.headers['x-secret-scheme'] as string || req.headers['x-auth-scheme'] as string
 
     if (explicitNs && explicitKey && this.nexusClient) {
+      // 显式头路径不允许消费企业凭据：缺少部门策略门，避免越权
+      if (explicitNs.startsWith('system:')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          error: 'forbidden_namespace',
+          message: 'Enterprise secrets cannot be fetched via explicit headers',
+        }))
+        return
+      }
       const secret = await this.nexusClient.getSecret(explicitNs, explicitKey, tokenEntry.userId)
       if (secret?.value) {
         // For explicit headers, treat non-standard scheme as a Bearer prefix
@@ -220,7 +230,7 @@ export class AuthProxyServer {
       for (const entry of match.entries) {
         if (this.nexusClient) {
           try {
-            const secret = await this.nexusClient.getSecret(resolvedNamespace, entry.configKey, tokenEntry.userId)
+            const secret = await this.nexusClient.getSecret(resolvedNamespace, entry.configKey, secretSubject(resolvedNamespace, tokenEntry.userId))
             if (secret?.value) {
               secrets.push({ configKey: entry.configKey, value: secret.value })
             }
