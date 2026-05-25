@@ -4,6 +4,7 @@ import { request as httpRequest } from 'http'
 import { URL } from 'url'
 import { validateRemoteUrl } from './ssrfGuard.js'
 import { injectAuth, injectMultiAuth, type InjectAuthResult } from './authInjectors.js'
+import { handleSecretsRequest } from './secretsApi.js'
 import type { NexusClient } from '../nexus/nexusClient.js'
 
 export interface AuthProxyRule {
@@ -116,6 +117,23 @@ export class AuthProxyServer {
       return
     }
 
+    const parsedUrl = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (parsedUrl.pathname === '/secrets' || parsedUrl.pathname.startsWith('/secrets/')) {
+      const authHeader = req.headers['authorization']
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+      if (!token || !this.isValidToken(token)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid_token' }))
+        return
+      }
+      const tokenEntry = this.tokenRegistry.get(token)!
+      await handleSecretsRequest(req, res, parsedUrl.pathname, parsedUrl, {
+        userId: tokenEntry.userId,
+        departmentId: tokenEntry.departmentId,
+      })
+      return
+    }
+
     if (req.url !== '/proxy' || req.method !== 'POST') {
       if (req.method === 'GET' && req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -197,11 +215,12 @@ export class AuthProxyServer {
       matchedConfigItemId = match.configItemId
 
       // 5. Resolve secrets from Nexus
+      const resolvedNamespace = match.secretNamespace.replaceAll('{userId}', tokenEntry.userId)
       const secrets: Array<{ configKey: string; value: string }> = []
       for (const entry of match.entries) {
         if (this.nexusClient) {
           try {
-            const secret = await this.nexusClient.getSecret(match.secretNamespace, entry.configKey, tokenEntry.userId)
+            const secret = await this.nexusClient.getSecret(resolvedNamespace, entry.configKey, tokenEntry.userId)
             if (secret?.value) {
               secrets.push({ configKey: entry.configKey, value: secret.value })
             }

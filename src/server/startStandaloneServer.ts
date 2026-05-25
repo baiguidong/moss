@@ -12,6 +12,7 @@ import { NexusManager } from './nexus/nexusManager.js'
 import { NexusClient } from './nexus/nexusClient.js'
 import { InMemorySecretsStore } from './nexus/inMemorySecretsStore.js'
 import { AuthProxyServer } from './authProxy/authProxyServer.js'
+import { setSecretsApiDependencies } from './authProxy/secretsApi.js'
 import type { NexusClient as NexusClientType } from './nexus/nexusClient.js'
 
 export type StandaloneServerOptions = ServerConfig
@@ -92,18 +93,24 @@ export async function startStandaloneDirectConnectServer(
     urlPattern: (item.url_pattern as string) || '',
     scheme: (item.scheme as string) || '',
     bearerPrefix: (item.bearer_prefix as string) || '',
-    secretNamespace: `${item.scope}:${item.pinyin}`,
+    secretNamespace: item.scope === 'user' ? `user:{userId}:${item.pinyin}` : `system:${item.pinyin}`,
     entries: store.getConfigEntries(item.id as number).map(e => ({
       configKey: e.config_key as string,
       name: e.name as string,
       required: !!e.required,
     })),
   })))
-  authProxy.setPolicyProvider({
+  const policyProvider = {
     getAuthorizedConfigItemIds(departmentId: string): number[] {
       return store.getDepartmentPolicies(departmentId).map(r => r.config_item_id as number)
     },
-  })
+  }
+  authProxy.setPolicyProvider(policyProvider)
+  setSecretsApiDependencies(
+    nexusClient!,
+    policyProvider,
+    () => store.getAllActiveConfigItems() as unknown as Array<{ id: number; scope: string; pinyin: string }>,
+  )
   const runtime = new RuntimeService({
     config,
     store,
