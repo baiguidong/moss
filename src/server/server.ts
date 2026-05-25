@@ -506,6 +506,50 @@ function redirect(
   res.end()
 }
 
+/**
+ * Redirect URI the provider sends the user back to after authentication.
+ * This is the sudowork desktop deep link — the provider redirects straight to
+ * the app, which validates `state` and forwards the token to moss for login.
+ * Register this exact value as an allowed redirect URI at the IdP.
+ */
+const OAUTH2_DEEP_LINK_REDIRECT_URI = 'sudowork://oauth2-callback'
+
+/**
+ * Substitute {placeholder} tokens in the admin-configured authorize URL
+ * template. Leaves {state} for the client to fill. Each substituted value is
+ * URL-encoded.
+ */
+function substituteOAuth2Template(
+  template: string,
+  values: Record<string, string>,
+): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => {
+    if (key === 'state') return match // client fills this
+    const value = values[key]
+    return value === undefined ? match : encodeURIComponent(value)
+  })
+}
+
+/**
+ * Extract the OAuth2 param dictionary from a login/token request body. Returns
+ * a {string:string} map of the non-empty string entries in `body.params`, or
+ * null when absent/empty. moss stays provider-agnostic — the credential script
+ * validates that the dict contains what it needs (code / access_token / …).
+ */
+function readOAuth2Params(body: JsonBody): Record<string, string> | null {
+  const raw = body.params
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+  const params: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.length > 0) {
+      params[key] = value
+    }
+  }
+  return Object.keys(params).length > 0 ? params : null
+}
+
 function parseRuntimeOptions(body: JsonBody) {
   if (typeof body.runtime_type === 'string') {
     return {
@@ -916,6 +960,26 @@ export function startServer(
           return
         }
 
+        if (grantType === 'oauth2') {
+          const params = readOAuth2Params(body)
+          if (!params) {
+            throw new HttpError(400, 'Missing oauth2 params')
+          }
+          const result = await authService.issueTokenFromOAuth2({ params })
+          writeJson(res, 200, attachSudocodeFields(result))
+          return
+        }
+
+        if (grantType === 'oauth2_refresh_token') {
+          const params = readOAuth2Params(body)
+          if (!params) {
+            throw new HttpError(400, 'Missing oauth2 params')
+          }
+          const result = await authService.refreshOAuth2Token({ params })
+          writeJson(res, 200, attachSudocodeFields(result))
+          return
+        }
+
         throw new HttpError(400, `Unsupported grant_type: ${grantType}`)
       }
 
@@ -932,6 +996,24 @@ export function startServer(
             : undefined
         authService.logout(accessToken, refreshToken)
         writeJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/auth/oauth2/config') {
+        const oauth2 = getSystemSettings().oauth2
+        if (!oauth2.enabled || !oauth2.authorizeUrlTemplate || !oauth2.scriptPath) {
+          writeJson(res, 200, { enabled: false })
+          return
+        }
+        // The provider redirects straight back to the desktop app via the
+        // sudowork deep link — no server-side callback page in this flow.
+        // moss only injects {redirect_uri}; sudowork fills {state}. All other
+        // provider params (client_id, scope, response_type, …) are written
+        // literally into the admin-configured template.
+        const authorizeUrl = substituteOAuth2Template(oauth2.authorizeUrlTemplate, {
+          redirect_uri: OAUTH2_DEEP_LINK_REDIRECT_URI,
+        })
+        writeJson(res, 200, { enabled: true, authorize_url: authorizeUrl })
         return
       }
 

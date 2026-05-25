@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto'
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto'
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
@@ -34,6 +34,8 @@ export type AuthCenterUser = {
   passwordHash: string | null
   passwordUpdatedAt: number | null
   lastLoginAt: number | null
+  provider: string | null
+  providerUserId: string | null
 }
 
 export type AuthCenterApiKey = {
@@ -139,6 +141,8 @@ function mapUser(row: SqlRow): AuthCenterUser {
     passwordHash: row.password_hash == null ? null : String(row.password_hash),
     passwordUpdatedAt: row.password_updated_at == null ? null : Number(row.password_updated_at),
     lastLoginAt: row.last_login_at == null ? null : Number(row.last_login_at),
+    provider: row.provider == null ? null : String(row.provider),
+    providerUserId: row.provider_user_id == null ? null : String(row.provider_user_id),
   }
 }
 
@@ -239,6 +243,13 @@ export class AuthCenterDb {
         expires_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS oauth_provider_tokens (
+        jti TEXT PRIMARY KEY,
+        token_enc TEXT NOT NULL,
+        token_iv TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS server_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -251,6 +262,7 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
       CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
       CREATE INDEX IF NOT EXISTS revoked_tokens_expiry_idx ON revoked_tokens (expires_at);
+      CREATE INDEX IF NOT EXISTS oauth_provider_tokens_expiry_idx ON oauth_provider_tokens (expires_at);
     `)
 
     // Older databases may need the column added before SQLite can create the index.
@@ -277,6 +289,19 @@ export class AuthCenterDb {
       'local_auth',
       'ALTER TABLE users ADD COLUMN local_auth INTEGER NOT NULL DEFAULT 0',
     )
+    this.ensureColumn(
+      'users',
+      'provider',
+      'ALTER TABLE users ADD COLUMN provider TEXT',
+    )
+    this.ensureColumn(
+      'users',
+      'provider_user_id',
+      'ALTER TABLE users ADD COLUMN provider_user_id TEXT',
+    )
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS users_provider_idx ON users (provider, provider_user_id);
+    `)
     this.db.exec(`
       UPDATE users
       SET role = 'user'
@@ -336,6 +361,13 @@ export class AuthCenterDb {
       SELECT * FROM organizations ORDER BY created_at ASC
     `).all() as SqlRow[]
     return rows.map(mapOrganization)
+  }
+
+  getOrganizationByName(name: string): AuthCenterOrganization | null {
+    const row = this.db.prepare(`
+      SELECT * FROM organizations WHERE name = ? ORDER BY created_at ASC LIMIT 1
+    `).get(name) as SqlRow | undefined
+    return row ? mapOrganization(row) : null
   }
 
   // Department operations
@@ -421,8 +453,8 @@ export class AuthCenterDb {
   createUser(user: AuthCenterUser): void {
     this.db.prepare(`
       INSERT INTO users (id, org_id, email, name, department_id, role, status, password_hash,
-                         password_updated_at, last_login_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         password_updated_at, last_login_at, created_at, provider, provider_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.id,
       user.orgId,
@@ -435,6 +467,8 @@ export class AuthCenterDb {
       user.passwordUpdatedAt,
       user.lastLoginAt,
       user.createdAt,
+      user.provider ?? null,
+      user.providerUserId ?? null,
     )
   }
 
@@ -450,6 +484,19 @@ export class AuthCenterDb {
       SELECT * FROM users WHERE email = ? LIMIT 1
     `).get(email) as SqlRow | undefined
     return row ? mapUser(row) : null
+  }
+
+  getUserByProvider(provider: string, providerUserId: string): AuthCenterUser | null {
+    const row = this.db.prepare(`
+      SELECT * FROM users WHERE provider = ? AND provider_user_id = ? LIMIT 1
+    `).get(provider, providerUserId) as SqlRow | undefined
+    return row ? mapUser(row) : null
+  }
+
+  linkProviderToUser(id: string, provider: string, providerUserId: string): void {
+    this.db.prepare(`
+      UPDATE users SET provider = ?, provider_user_id = ? WHERE id = ?
+    `).run(provider, providerUserId, id)
   }
 
   listUsersByName(name: string): AuthCenterUser[] {
@@ -520,6 +567,12 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE users SET last_login_at = ? WHERE id = ?
     `).run(now(), id)
+  }
+
+  updateUserOrg(id: string, orgId: string): void {
+    this.db.prepare(`
+      UPDATE users SET org_id = ? WHERE id = ?
+    `).run(orgId, id)
   }
 
   setUserTokenLimit(id: string, tokenLimit: number | null): void {
@@ -615,9 +668,85 @@ export class AuthCenterDb {
   }
 
   cleanupExpiredRevokedTokens(): void {
+    const nowSec = Math.floor(Date.now() / 1000)
     this.db.prepare(`
       DELETE FROM revoked_tokens WHERE expires_at < ?
-    `).run(Math.floor(Date.now() / 1000))
+    `).run(nowSec)
+    this.db.prepare(`
+      DELETE FROM oauth_provider_tokens WHERE expires_at < ?
+    `).run(nowSec)
+  }
+
+  // OAuth2 provider-token store: holds the provider access_token encrypted,
+  // keyed by the moss access JWT's jti, so moss can call provider resources
+  // later. The token never enters the moss JWT or reaches the client.
+  putProviderToken(jti: string, token: string, expiresAt: number): void {
+    const { enc, iv } = this.#encryptProviderToken(token)
+    this.db.prepare(`
+      INSERT INTO oauth_provider_tokens (jti, token_enc, token_iv, expires_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(jti) DO UPDATE SET
+        token_enc = excluded.token_enc,
+        token_iv = excluded.token_iv,
+        expires_at = excluded.expires_at
+    `).run(jti, enc, iv, expiresAt)
+  }
+
+  getProviderToken(jti: string): string | null {
+    const row = this.db.prepare(`
+      SELECT token_enc, token_iv, expires_at FROM oauth_provider_tokens WHERE jti = ? LIMIT 1
+    `).get(jti) as SqlRow | undefined
+    if (!row) return null
+    if (Number(row.expires_at) < Math.floor(Date.now() / 1000)) {
+      this.deleteProviderToken(jti)
+      return null
+    }
+    try {
+      return this.#decryptProviderToken(String(row.token_enc), String(row.token_iv))
+    } catch {
+      return null
+    }
+  }
+
+  deleteProviderToken(jti: string): void {
+    this.db.prepare(`
+      DELETE FROM oauth_provider_tokens WHERE jti = ?
+    `).run(jti)
+  }
+
+  // AES-256-GCM. The key is derived from the existing jwt_secret via HKDF, so
+  // no new secret is introduced; the auth-token format ('iv:tag:ciphertext'
+  // base64url parts) keeps everything in one TEXT column pair.
+  #providerTokenKey(): Buffer {
+    const secret = this.getJwtSecret()
+    if (!secret) {
+      throw new Error('jwt_secret not initialized; cannot encrypt provider token')
+    }
+    return Buffer.from(hkdfSync('sha256', secret, '', 'oauth-provider-token', 32))
+  }
+
+  #encryptProviderToken(token: string): { enc: string; iv: string } {
+    const key = this.#providerTokenKey()
+    const ivBuf = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', key, ivBuf)
+    const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()])
+    const tag = cipher.getAuthTag()
+    // Store ciphertext+tag together; iv separately.
+    return {
+      enc: Buffer.concat([ciphertext, tag]).toString('base64'),
+      iv: ivBuf.toString('base64'),
+    }
+  }
+
+  #decryptProviderToken(enc: string, iv: string): string {
+    const key = this.#providerTokenKey()
+    const ivBuf = Buffer.from(iv, 'base64')
+    const blob = Buffer.from(enc, 'base64')
+    const tag = blob.subarray(blob.length - 16)
+    const ciphertext = blob.subarray(0, blob.length - 16)
+    const decipher = createDecipheriv('aes-256-gcm', key, ivBuf)
+    decipher.setAuthTag(tag)
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
   }
 
   // Config operations
@@ -666,10 +795,14 @@ export class AuthCenterDb {
         departmentId: null,
         role: 'admin',
         status: 'active',
+        localAuth: true,
+        tokenLimit: null,
         createdAt: now(),
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),
         lastLoginAt: null,
+        provider: null,
+        providerUserId: null,
       })
       this.createApiKey(apiKey)
       this.setConfig('issuer', 'moss-server')
@@ -732,10 +865,14 @@ export class AuthCenterDb {
         departmentId: null,
         role: 'admin',
         status: 'active',
+        localAuth: true,
+        tokenLimit: null,
         createdAt: now(),
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),
         lastLoginAt: null,
+        provider: null,
+        providerUserId: null,
       })
       this.createApiKey(apiKey)
       this.db.exec('COMMIT')
