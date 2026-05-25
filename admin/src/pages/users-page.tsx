@@ -936,26 +936,39 @@ export default function UsersPage() {
     }
   }
 
-  const copyApiKey = (value: string) => {
+  const copyApiKey = async (value: string) => {
     // Fallback for non-HTTPS environments (navigator.clipboard requires secure context)
+    // For Radix Dialog, we need to append textarea inside the dialog to avoid focus trap issues
     const fallbackCopy = (text: string): boolean => {
+      // Try to find the dialog content element
+      const dialogContent = document.querySelector('[role="dialog"]')
       const textarea = document.createElement('textarea')
       textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.left = '-9999px'
-      textarea.style.top = '-9999px'
+      textarea.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;opacity:0;z-index:9999;'
       textarea.setAttribute('readonly', '')
-      document.body.appendChild(textarea)
+
+      // Append to dialog if inside one, otherwise to body
+      const container = dialogContent || document.body
+      container.appendChild(textarea)
+
+      // Create a range and select the text
+      textarea.focus()
       textarea.select()
-      textarea.setSelectionRange(0, textarea.value.length)
-      const success = document.execCommand('copy')
-      document.body.removeChild(textarea)
+
+      let success = false
+      try {
+        success = document.execCommand('copy')
+      } catch {
+        success = false
+      }
+
+      container.removeChild(textarea)
       return success
     }
 
     try {
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(value)
+        await navigator.clipboard.writeText(value)
         toast.success('API Key 已复制')
       } else {
         const success = fallbackCopy(value)
@@ -1785,7 +1798,7 @@ export default function UsersPage() {
               variant="outline"
               onClick={() => {
                 if (revealedApiKey) {
-                  copyApiKey(revealedApiKey.value)
+                  void copyApiKey(revealedApiKey.value)
                 }
               }}
             >
