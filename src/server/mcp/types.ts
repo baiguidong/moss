@@ -192,6 +192,9 @@ export interface McpServerListFilter {
   audit_enabled?: boolean
   bound_assistant?: string
   created_by?: string
+  /** When set, only return org-scope MCPs or department-scope MCPs whose owner_id matches.
+   *  Used for dept_admin SQL-level visibility filtering so pagination total stays correct. */
+  dept_admin_department_id?: string
   page?: number
   page_size?: number
 }
@@ -199,10 +202,67 @@ export interface McpServerListFilter {
 /** List filter parameters for MCP Audit Log */
 export interface McpAuditLogFilter {
   mcp_server_id?: string
+  mcp_server_name?: string
   user_id?: string
   action?: string
+  status?: 'success' | 'error'
   since?: number
   until?: number
+  page?: number
+  page_size?: number
+}
+
+/** MCP Template (Phase 2, §4.6 模板市场) */
+export interface McpTemplate {
+  id: string
+  org_id: string
+  name: string
+  display_name: string | null
+  description: string | null
+  icon: string | null
+  category: string | null
+  tags_json: string[] | null
+  mcp_type: 'http' | 'sse' | 'stdio'
+  url: string | null
+  command: string | null
+  args_json: string | null
+  env_json: string | null
+  timeout_ms: number
+  auth_type: 'none' | 'api_key' | 'bearer' | 'basic' | 'oauth' | 'custom_header' | 'secret_ref'
+  scope: 'org' | 'department'
+  risk_level: 'low' | 'medium' | 'high'
+  config_json: string | null
+  downloads: number
+  rating: number
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+
+/** Input for creating an MCP Template */
+export interface McpTemplateInput {
+  name: string
+  display_name?: string | null
+  description?: string | null
+  icon?: string | null
+  category?: string | null
+  tags_json?: string[] | null
+  mcp_type: 'http' | 'sse' | 'stdio'
+  url?: string | null
+  command?: string | null
+  args_json?: string | null
+  env_json?: string | null
+  timeout_ms?: number
+  auth_type?: 'none' | 'api_key' | 'bearer' | 'basic' | 'oauth' | 'custom_header' | 'secret_ref'
+  scope?: 'org' | 'department'
+  risk_level?: 'low' | 'medium' | 'high'
+  config_json?: string | null
+}
+
+/** List filter for MCP Templates */
+export interface McpTemplateListFilter {
+  category?: string
+  search?: string
   page?: number
   page_size?: number
 }

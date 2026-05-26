@@ -3517,7 +3517,9 @@ export function startServer(
           status: url.searchParams.get('status') as any || undefined,
           risk_level: url.searchParams.get('risk_level') as any || undefined,
           mcp_type: url.searchParams.get('mcp_type') as any || undefined,
-          audit_enabled: url.searchParams.get('audit_enabled') === 'true' ? true : undefined,
+          audit_enabled: url.searchParams.get('audit_enabled') === 'true'
+            ? true
+            : url.searchParams.get('audit_enabled') === 'false' ? false : undefined,
           bound_assistant: url.searchParams.get('bound_assistant') || undefined,
           created_by: url.searchParams.get('created_by') || undefined,
           page: Number(url.searchParams.get('page')) || undefined,
@@ -3599,10 +3601,14 @@ export function startServer(
 
       // Admin: MCP audit logs
       if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-audit-logs') {
+        const statusParam = url.searchParams.get('status') || undefined
+        const status = statusParam === 'success' || statusParam === 'error' ? statusParam : undefined
         const result = mcpAdminApi.getAuditLogs(auth, {
           mcp_server_id: url.searchParams.get('mcp_server_id') || undefined,
+          mcp_server_name: url.searchParams.get('mcp_server_name') || undefined,
           user_id: url.searchParams.get('user_id') || undefined,
           action: url.searchParams.get('action') || undefined,
+          status,
           since: Number(url.searchParams.get('since')) || undefined,
           until: Number(url.searchParams.get('until')) || undefined,
           page: Number(url.searchParams.get('page')) || undefined,
@@ -3631,6 +3637,36 @@ export function startServer(
         const body = await readJsonBody(req)
         const result = mcpAdminApi.rejectRequest(auth, mcpRejectMatch[1], body.review_note || '', clientIp)
         writeJson(res, 200, result)
+        return
+      }
+
+      // MCP Templates: list
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-templates') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams
+        const filter: Record<string, string> = {}
+        if (params.get('category')) filter.category = params.get('category')!
+        if (params.get('search')) filter.search = params.get('search')!
+        if (params.get('page')) filter.page = params.get('page')!
+        if (params.get('page_size')) filter.page_size = params.get('page_size')!
+        const result = mcpAdminApi.listTemplates(auth, filter)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // MCP Templates: get single
+      const mcpTemplateMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)$/)
+      if (mcpTemplateMatch && req.method === 'GET') {
+        const result = mcpAdminApi.getTemplate(auth, mcpTemplateMatch[1])
+        writeJson(res, result.success ? 200 : 404, result)
+        return
+      }
+
+      // MCP Templates: install (create MCP from template)
+      const mcpTemplateInstallMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)\/install$/)
+      if (mcpTemplateInstallMatch && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.installTemplate(auth, mcpTemplateInstallMatch[1], body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
         return
       }
 

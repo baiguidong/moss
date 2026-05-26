@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus,
   RefreshCw,
@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -46,9 +47,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import type { McpServer, McpServerFormData } from '@/lib/api/mcp'
-import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection } from '@/lib/api/mcp'
+import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
+import { getUsers, getDepartments } from '@/lib/api/auth'
+import { getTenantAssistants } from '@/lib/api/agent-hub'
+import { getTenantSkills } from '@/lib/api/skill-store'
+import type { AuthUser, AuthDepartment } from '@/lib/api/types'
 
 // ===== Helper components =====
 
@@ -91,10 +106,188 @@ function getCredentialSource(secretRef: string | null): string {
   return '未知'
 }
 
+function formatLastInvocation(ts: number | null): string {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ===== Args (TagInput) + Env (K-V) editors =====
+
+interface TagInputProps {
+  value: string[]
+  onChange: (next: string[]) => void
+  placeholder?: string
+}
+
+function TagInput({ value, onChange, placeholder }: TagInputProps) {
+  const [draft, setDraft] = useState('')
+  const tags = value
+  return (
+    <div className="border rounded-md p-2 min-h-9 flex flex-wrap items-center gap-1.5">
+      {tags.map((t, i) => (
+        <Badge key={`${t}-${i}`} variant="secondary" className="gap-1">
+          <span className="font-mono text-xs">{t}</span>
+          <button
+            type="button"
+            onClick={() => onChange(tags.filter((_, idx) => idx !== i))}
+            className="hover:bg-muted-foreground/20 rounded"
+            aria-label="删除参数"
+          >
+            <X className="size-3" />
+          </button>
+        </Badge>
+      ))}
+      <input
+        className="flex-1 min-w-[120px] bg-transparent outline-none text-sm px-1 py-0.5"
+        placeholder={placeholder || '输入后回车添加'}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && draft.trim()) {
+            e.preventDefault()
+            onChange([...tags, draft.trim()])
+            setDraft('')
+          } else if (e.key === 'Backspace' && !draft && tags.length > 0) {
+            onChange(tags.slice(0, -1))
+          }
+        }}
+      />
+    </div>
+  )
+}
+
+interface KVEditorProps {
+  value: Record<string, string>
+  onChange: (next: Record<string, string>) => void
+}
+
+function KVEditor({ value, onChange }: KVEditorProps) {
+  const entries = Object.entries(value)
+  function setKey(i: number, newKey: string) {
+    const next: Record<string, string> = {}
+    entries.forEach(([k, v], idx) => {
+      if (idx === i) next[newKey] = v
+      else next[k] = v
+    })
+    onChange(next)
+  }
+  function setVal(i: number, newVal: string) {
+    const next: Record<string, string> = {}
+    entries.forEach(([k, v], idx) => {
+      next[k] = idx === i ? newVal : v
+    })
+    onChange(next)
+  }
+  function remove(i: number) {
+    const next: Record<string, string> = {}
+    entries.forEach(([k, v], idx) => {
+      if (idx !== i) next[k] = v
+    })
+    onChange(next)
+  }
+  function add() {
+    onChange({ ...value, '': '' })
+  }
+  return (
+    <div className="space-y-2">
+      {entries.map(([k, v], i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input
+            placeholder="KEY"
+            value={k}
+            onChange={(e) => setKey(i, e.target.value)}
+            className="flex-1 font-mono text-xs"
+          />
+          <span className="text-muted-foreground">=</span>
+          <Input
+            placeholder="value"
+            value={v}
+            onChange={(e) => setVal(i, e.target.value)}
+            className="flex-1 font-mono text-xs"
+          />
+          <Button type="button" variant="ghost" size="icon" className="size-8" onClick={() => remove(i)}>
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={add}>
+        <Plus className="size-3.5 mr-1" />添加环境变量
+      </Button>
+    </div>
+  )
+}
+
+// ===== Multi-select checkbox list =====
+
+interface MultiSelectProps {
+  options: { id: string; label: string; sub?: string }[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  emptyText?: string
+}
+
+function MultiSelectList({ options, selected, onChange, emptyText }: MultiSelectProps) {
+  if (options.length === 0) {
+    return <div className="text-sm text-muted-foreground py-2">{emptyText || '没有可选项'}</div>
+  }
+  function toggle(id: string) {
+    if (selected.includes(id)) onChange(selected.filter((x) => x !== id))
+    else onChange([...selected, id])
+  }
+  return (
+    <div className="border rounded-md max-h-40 overflow-y-auto divide-y">
+      {options.map((opt) => (
+        <label
+          key={opt.id}
+          className="flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 cursor-pointer text-sm"
+        >
+          <Checkbox checked={selected.includes(opt.id)} onCheckedChange={() => toggle(opt.id)} />
+          <div className="flex-1 min-w-0">
+            <div className="truncate">{opt.label}</div>
+            {opt.sub && <div className="text-xs text-muted-foreground truncate">{opt.sub}</div>}
+          </div>
+        </label>
+      ))}
+    </div>
+  )
+}
+
+// ===== Form helpers =====
+
+function parseArgsJson(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+function parseEnvJson(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const result: Record<string, string> = {}
+      for (const [k, v] of Object.entries(parsed)) {
+        result[k] = typeof v === 'string' ? v : JSON.stringify(v)
+      }
+      return result
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
 // ===== Main page component =====
 
 export default function McpServersPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [servers, setServers] = useState<McpServer[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -103,6 +296,9 @@ export default function McpServersPage() {
   const [riskFilter, setRiskFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
   const [auditFilter, setAuditFilter] = useState('all')
+  const [departmentFilter, setDepartmentFilter] = useState('all')
+  const [assistantFilter, setAssistantFilter] = useState('all')
+  const [creatorFilter, setCreatorFilter] = useState('all')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [editingServer, setEditingServer] = useState<McpServer | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
@@ -111,11 +307,60 @@ export default function McpServersPage() {
 
   // Form state for create/edit dialog
   const [formData, setFormData] = useState<McpServerFormData>({})
+  const [argsList, setArgsList] = useState<string[]>([])
+  const [envMap, setEnvMap] = useState<Record<string, string>>({})
+  // Plan §9 Step 3: auth_config_json — Key-Value pairs for non secret_ref auth types
+  const [authConfigMap, setAuthConfigMap] = useState<Record<string, string>>({})
+  // Plan §4.1 line 452: enable/disable requires AlertDialog confirmation
+  const [pendingToggle, setPendingToggle] = useState<McpServer | null>(null)
+
+  // Options for visible_to / bound_assistants / bound_skills (loaded once for dialog)
+  const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [users, setUsers] = useState<AuthUser[]>([])
+  const [assistants, setAssistants] = useState<{ id: string; name: string; display_name?: string }[]>([])
+  const [skills, setSkills] = useState<{ id: string; name: string; display_name?: string }[]>([])
+  const [optionsLoaded, setOptionsLoaded] = useState(false)
+  const [isLoadingOptions, setIsLoadingOptions] = useState(false)
+
+  const loadOptions = useCallback(async () => {
+    if (optionsLoaded || isLoadingOptions) return
+    setIsLoadingOptions(true)
+    try {
+      const [depts, usrs, asts, skls] = await Promise.all([
+        getDepartments().catch(() => ({ departments: [] })),
+        getUsers().catch(() => ({ users: [] })),
+        getTenantAssistants().catch(() => [] as { id: string; name: string; display_name?: string }[]),
+        getTenantSkills().catch(() => [] as { id: string; name: string; display_name?: string }[]),
+      ])
+      setDepartments(depts.departments || [])
+      setUsers(usrs.users || [])
+      setAssistants(asts || [])
+      setSkills(skls || [])
+      setOptionsLoaded(true)
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        toast.error(`加载选项失败: ${err.message}`)
+      }
+    } finally {
+      setIsLoadingOptions(false)
+    }
+  }, [optionsLoaded, isLoadingOptions])
 
   const loadServers = useCallback(async () => {
     try {
       setIsLoading(true)
-      const result = await fetchMcpServers()
+      // Plan §8.2: 通过后端筛选参数下发，避免分页与多 org 场景下漏匹配；
+      // 文本搜索 backend 暂未实现 q/search 参数，沿用客户端 includes 过滤。
+      const params: Record<string, string> = {}
+      if (scopeFilter !== 'all') params.scope = scopeFilter
+      if (statusFilter !== 'all') params.status = statusFilter
+      if (riskFilter !== 'all') params.risk_level = riskFilter
+      if (typeFilter !== 'all') params.mcp_type = typeFilter
+      if (auditFilter !== 'all') params.audit_enabled = auditFilter === 'yes' ? 'true' : 'false'
+      if (departmentFilter !== 'all') params.department_id = departmentFilter
+      if (assistantFilter !== 'all') params.bound_assistant = assistantFilter
+      if (creatorFilter !== 'all') params.created_by = creatorFilter
+      const result = await fetchMcpServers(params)
       setServers(result.items)
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -124,11 +369,69 @@ export default function McpServersPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [scopeFilter, statusFilter, riskFilter, typeFilter, auditFilter, departmentFilter, assistantFilter, creatorFilter])
 
   useEffect(() => {
     loadServers()
   }, [loadServers])
+
+  // Filter bar dropdowns (department / assistant / creator) need their option
+  // lists available before any dialog is opened, so load them on mount too.
+  useEffect(() => {
+    loadOptions()
+  }, [loadOptions])
+
+  // Plan §2.5: subscribe to live MCP events and re-fetch the list when any
+  // admin/user makes a change in this org.
+  useEffect(() => {
+    const unsubscribe = subscribeMcpEvents({
+      onMcpChanged: () => { loadServers() },
+    })
+    return () => { unsubscribe() }
+  }, [loadServers])
+
+  // Per plan §4.6: 从模板市场跳转过来时，预填模板配置并打开 5 步向导。
+  // 处理一次即清掉 query param，避免再次进入页面又触发。
+  useEffect(() => {
+    const templateId = searchParams.get('install_template')
+    if (!templateId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const template = await fetchMcpTemplate(templateId)
+        if (cancelled) return
+        setEditingServer(null)
+        setFormData({
+          name: template.name,
+          display_name: template.display_name || template.name,
+          description: template.description || '',
+          category: template.category || '',
+          risk_level: template.risk_level,
+          mcp_type: template.mcp_type,
+          url: template.url || '',
+          command: template.command || '',
+          timeout_ms: template.timeout_ms,
+          auth_type: template.auth_type,
+          scope: template.scope === 'department' ? 'department' : 'org',
+          owner_type: template.scope === 'department' ? 'department' : 'system',
+        })
+        setArgsList(parseArgsJson(template.args_json))
+        setEnvMap(parseEnvJson(template.env_json))
+        setCurrentStep(0)
+        setIsCreateDialogOpen(true)
+        loadOptions()
+      } catch (err) {
+        if (err instanceof ApiRequestError) {
+          toast.error(`加载模板失败: ${err.message}`)
+        }
+      } finally {
+        const next = new URLSearchParams(searchParams)
+        next.delete('install_template')
+        setSearchParams(next, { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [searchParams, setSearchParams, loadOptions])
 
   // Filter logic
   const filteredServers = servers.filter((s) => {
@@ -164,9 +467,20 @@ export default function McpServersPage() {
 
   function openCreateDialog() {
     setEditingServer(null)
-    setFormData({})
+    setFormData({
+      mcp_type: 'http',
+      scope: 'org',
+      owner_type: 'system',
+      risk_level: 'low',
+      auth_type: 'none',
+      timeout_ms: 30000,
+    })
+    setArgsList([])
+    setEnvMap({})
+    setAuthConfigMap({})
     setCurrentStep(0)
     setIsCreateDialogOpen(true)
+    loadOptions()
   }
 
   function openEditDialog(server: McpServer) {
@@ -188,6 +502,8 @@ export default function McpServersPage() {
       secret_ref: server.secret_ref || '',
       scope: server.scope,
       visible_to: server.visible_to,
+      bound_assistants: server.bound_assistants || [],
+      bound_skills: server.bound_skills || [],
       allow_read: server.allow_read,
       allow_write: server.allow_write,
       require_confirmation_for_write: server.require_confirmation_for_write,
@@ -199,18 +515,38 @@ export default function McpServersPage() {
       redact_sensitive_fields: server.redact_sensitive_fields,
       allow_user_disable: server.allow_user_disable,
     })
+    setArgsList(parseArgsJson(server.args_json))
+    setEnvMap(parseEnvJson(server.env_json))
+    setAuthConfigMap(parseEnvJson(server.auth_config_json))
     setCurrentStep(0)
     setIsCreateDialogOpen(true)
+    loadOptions()
   }
 
   async function handleSubmit() {
     setIsSubmitting(true)
     try {
+      // Serialize args/env from local state for STDIO type.
+      // Send null when empty so backend can clear the field.
+      const cleanedEnv: Record<string, string> = {}
+      for (const [k, v] of Object.entries(envMap)) {
+        if (k.trim()) cleanedEnv[k.trim()] = v
+      }
+      const cleanedAuth: Record<string, string> = {}
+      for (const [k, v] of Object.entries(authConfigMap)) {
+        if (k.trim()) cleanedAuth[k.trim()] = v
+      }
+      const payload: McpServerFormData = {
+        ...formData,
+        args_json: argsList.length > 0 ? JSON.stringify(argsList) : null,
+        env_json: Object.keys(cleanedEnv).length > 0 ? JSON.stringify(cleanedEnv) : null,
+        auth_config_json: Object.keys(cleanedAuth).length > 0 ? JSON.stringify(cleanedAuth) : null,
+      }
       if (editingServer) {
-        await updateMcpServer(editingServer.id, formData)
+        await updateMcpServer(editingServer.id, payload)
         toast.success('MCP 服务已更新')
       } else {
-        await createMcpServer(formData)
+        await createMcpServer(payload)
         toast.success('MCP 服务已创建')
       }
       setIsCreateDialogOpen(false)
@@ -227,7 +563,15 @@ export default function McpServersPage() {
     }
   }
 
-  async function handleToggleEnabled(server: McpServer) {
+  function requestToggleEnabled(server: McpServer) {
+    // Plan §4.1 line 452: 禁用/启用 需二次确认 Dialog
+    setPendingToggle(server)
+  }
+
+  async function confirmToggleEnabled() {
+    const server = pendingToggle
+    if (!server) return
+    setPendingToggle(null)
     try {
       await updateMcpServer(server.id, { enabled: !server.enabled })
       toast.success(server.enabled ? `已禁用 ${server.display_name || server.name}` : `已启用 ${server.display_name || server.name}`)
@@ -265,6 +609,9 @@ export default function McpServersPage() {
     setRiskFilter('all')
     setTypeFilter('all')
     setAuditFilter('all')
+    setDepartmentFilter('all')
+    setAssistantFilter('all')
+    setCreatorFilter('all')
   }
 
   if (isLoading) {
@@ -366,6 +713,33 @@ export default function McpServersPage() {
             <SelectItem value="no">未开启</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+          <SelectTrigger className="w-[140px]"><SelectValue placeholder="部门" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部部门</SelectItem>
+            {departments.map((d) => (
+              <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={assistantFilter} onValueChange={setAssistantFilter}>
+          <SelectTrigger className="w-[140px]"><SelectValue placeholder="助手" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部助手</SelectItem>
+            {assistants.map((a) => (
+              <SelectItem key={a.id} value={a.id}>{a.display_name || a.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={creatorFilter} onValueChange={setCreatorFilter}>
+          <SelectTrigger className="w-[140px]"><SelectValue placeholder="创建人" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部创建人</SelectItem>
+            {users.map((u) => (
+              <SelectItem key={u.id} value={u.id}>{u.name || u.id}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button variant="ghost" size="sm" onClick={resetFilters}>
           <X className="size-3 mr-1" />重置
         </Button>
@@ -382,8 +756,10 @@ export default function McpServersPage() {
               <TableHead>状态</TableHead>
               <TableHead>可见范围</TableHead>
               <TableHead>绑定助手</TableHead>
+              <TableHead>绑定技能</TableHead>
               <TableHead>凭据来源</TableHead>
               <TableHead>风险等级</TableHead>
+              <TableHead>最近调用</TableHead>
               <TableHead>审计</TableHead>
               <TableHead className="text-right">操作</TableHead>
             </TableRow>
@@ -391,7 +767,7 @@ export default function McpServersPage() {
           <TableBody>
             {filteredServers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                   没有找到匹配的数据
                 </TableCell>
               </TableRow>
@@ -411,8 +787,14 @@ export default function McpServersPage() {
                   <TableCell className="text-sm">
                     {server.bound_assistants?.join(', ') || '-'}
                   </TableCell>
+                  <TableCell className="text-sm">
+                    {server.bound_skills?.join(', ') || '-'}
+                  </TableCell>
                   <TableCell className="text-sm">{getCredentialSource(server.secret_ref)}</TableCell>
                   <TableCell><RiskBadge level={server.risk_level} /></TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">
+                    {formatLastInvocation(server.last_invocation_at)}
+                  </TableCell>
                   <TableCell>
                     {(server.audit_request || server.audit_response_summary) ? '是' : '否'}
                   </TableCell>
@@ -421,13 +803,13 @@ export default function McpServersPage() {
                       <Button variant="ghost" size="icon" className="size-8" title="编辑" onClick={() => openEditDialog(server)}>
                         <Pencil className="size-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="size-8" title={server.enabled ? '禁用' : '启用'} onClick={() => handleToggleEnabled(server)}>
+                      <Button variant="ghost" size="icon" className="size-8" title={server.enabled ? '禁用' : '启用'} onClick={() => requestToggleEnabled(server)}>
                         {server.enabled ? <PowerOff className="size-3.5" /> : <Power className="size-3.5" />}
                       </Button>
                       <Button variant="ghost" size="icon" className="size-8" title="测试连接" onClick={() => handleTestConnection(server)} disabled={testingId === server.id}>
                         {testingId === server.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
                       </Button>
-                      <Button variant="ghost" size="icon" className="size-8" title="查看日志" onClick={() => navigate('/mcp/audit-log')}>
+                      <Button variant="ghost" size="icon" className="size-8" title="查看日志" onClick={() => navigate(`/mcp/audit-log?mcp_server_id=${encodeURIComponent(server.id)}`)}>
                         <FileText className="size-3.5" />
                       </Button>
                     </div>
@@ -517,9 +899,15 @@ export default function McpServersPage() {
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>负责人</Label>
-                  <Input placeholder="负责人姓名" value={formData.responsible_person || ''} onChange={(e) => setFormData({ ...formData, responsible_person: e.target.value })} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>图标</Label>
+                    <Input placeholder="icon-name 或 https://..." value={formData.icon || ''} onChange={(e) => setFormData({ ...formData, icon: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>负责人</Label>
+                    <Input placeholder="负责人姓名" value={formData.responsible_person || ''} onChange={(e) => setFormData({ ...formData, responsible_person: e.target.value })} />
+                  </div>
                 </div>
               </div>
             )}
@@ -538,14 +926,30 @@ export default function McpServersPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>URL (HTTP/SSE)</Label>
-                  <Input placeholder="https://example.com/mcp" value={formData.url || ''} onChange={(e) => setFormData({ ...formData, url: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>启动命令 (STDIO)</Label>
-                  <Input placeholder="npx" value={formData.command || ''} onChange={(e) => setFormData({ ...formData, command: e.target.value })} />
-                </div>
+                {(formData.mcp_type === 'http' || formData.mcp_type === 'sse' || !formData.mcp_type) && (
+                  <div className="space-y-2">
+                    <Label>URL (HTTP/SSE)</Label>
+                    <Input placeholder="https://example.com/mcp" value={formData.url || ''} onChange={(e) => setFormData({ ...formData, url: e.target.value })} />
+                  </div>
+                )}
+                {formData.mcp_type === 'stdio' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>启动命令 <span className="text-red-500">*</span></Label>
+                      <Input placeholder="npx" value={formData.command || ''} onChange={(e) => setFormData({ ...formData, command: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>命令参数</Label>
+                      <TagInput value={argsList} onChange={setArgsList} placeholder="输入参数后回车，如 -y、@modelcontextprotocol/server-fs" />
+                      <p className="text-xs text-muted-foreground">每行一个参数。提交时序列化为 JSON 数组。</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>环境变量</Label>
+                      <KVEditor value={envMap} onChange={setEnvMap} />
+                      <p className="text-xs text-muted-foreground">敏感值请改用 Secret Center 引用，避免明文落库。</p>
+                    </div>
+                  </>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>超时时间 (ms)</Label>
@@ -581,10 +985,19 @@ export default function McpServersPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>Secret Center 凭据引用</Label>
-                  <Input placeholder="system:secret_name" value={formData.secret_ref || ''} onChange={(e) => setFormData({ ...formData, secret_ref: e.target.value })} />
-                </div>
+                {formData.auth_type === 'secret_ref' && (
+                  <div className="space-y-2">
+                    <Label>Secret Center 凭据引用</Label>
+                    <Input placeholder="system:secret_name" value={formData.secret_ref || ''} onChange={(e) => setFormData({ ...formData, secret_ref: e.target.value })} />
+                  </div>
+                )}
+                {formData.auth_type && formData.auth_type !== 'none' && formData.auth_type !== 'secret_ref' && (
+                  <div className="space-y-2">
+                    <Label>额外配置</Label>
+                    <KVEditor value={authConfigMap} onChange={setAuthConfigMap} />
+                    <p className="text-xs text-muted-foreground">Key-Value 形式，例如 header_name=X-API-Key 等。敏感值请改用 Secret Center 引用。</p>
+                  </div>
+                )}
                 <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
                   MCP 配置不直接保存明文密钥，只保存 Secret 引用。
                 </div>
@@ -604,9 +1017,72 @@ export default function McpServersPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
-                  "可见范围"和"绑定助手"功能将在后续版本中支持配置。
-                </div>
+
+                {isLoadingOptions ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />加载选项中…
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label>可见部门</Label>
+                      <p className="text-xs text-muted-foreground">不勾选任何项则默认全员可见；勾选后仅所选部门可见。</p>
+                      <MultiSelectList
+                        options={departments.map((d) => ({ id: d.id, label: d.name }))}
+                        selected={formData.visible_to?.department_ids || []}
+                        onChange={(ids) => setFormData({
+                          ...formData,
+                          visible_to: {
+                            ...formData.visible_to,
+                            department_ids: ids,
+                            user_ids: formData.visible_to?.user_ids,
+                          },
+                        })}
+                        emptyText="没有部门"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>可见用户</Label>
+                      <p className="text-xs text-muted-foreground">额外把权限授予指定用户（与部门并集生效）。</p>
+                      <MultiSelectList
+                        options={users.map((u) => ({ id: u.id, label: u.name, sub: u.email || undefined }))}
+                        selected={formData.visible_to?.user_ids || []}
+                        onChange={(ids) => setFormData({
+                          ...formData,
+                          visible_to: {
+                            ...formData.visible_to,
+                            department_ids: formData.visible_to?.department_ids,
+                            user_ids: ids,
+                          },
+                        })}
+                        emptyText="没有用户"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>绑定助手</Label>
+                      <p className="text-xs text-muted-foreground">仅勾选的助手可以调用本 MCP；为空表示不限。</p>
+                      <MultiSelectList
+                        options={assistants.map((a) => ({ id: a.id, label: a.display_name || a.name, sub: a.name }))}
+                        selected={formData.bound_assistants || []}
+                        onChange={(ids) => setFormData({ ...formData, bound_assistants: ids })}
+                        emptyText="没有可绑定的助手"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>绑定技能</Label>
+                      <p className="text-xs text-muted-foreground">仅勾选的技能可以调用本 MCP；为空表示不限。</p>
+                      <MultiSelectList
+                        options={skills.map((s) => ({ id: s.id, label: s.display_name || s.name, sub: s.name }))}
+                        selected={formData.bound_skills || []}
+                        onChange={(ids) => setFormData({ ...formData, bound_skills: ids })}
+                        emptyText="没有可绑定的技能"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -649,6 +1125,24 @@ export default function McpServersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Plan §4.1 line 452: 禁用/启用二次确认 */}
+      <AlertDialog open={pendingToggle != null} onOpenChange={(open) => { if (!open) setPendingToggle(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingToggle?.enabled ? '禁用 MCP 服务' : '启用 MCP 服务'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingToggle?.enabled
+                ? `确认禁用「${pendingToggle?.display_name || pendingToggle?.name}」？禁用后该 MCP 将无法被调用。`
+                : `确认启用「${pendingToggle?.display_name || pendingToggle?.name}」？启用后该 MCP 将立即可被调用。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmToggleEnabled}>确认</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   )
 }

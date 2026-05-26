@@ -131,11 +131,18 @@ const menuItems: NavItem[] = [
     icon: Wrench,
     requiredScope: 'admin:mcp',
     children: [
-      { title: 'MCP 服务', url: '/mcp/servers', icon: Wrench },
-      { title: 'MCP 策略', url: '/mcp/policy', icon: ShieldCheck },
-      { title: 'MCP 审计', url: '/mcp/audit-log', icon: ScrollText },
-      { title: '审批管理', url: '/mcp/approvals', icon: ListChecks },
-      { title: '模板市场', url: '/mcp/templates', icon: Sparkles },
+      {
+        title: 'MCP 服务',
+        url: '#',
+        icon: Wrench,
+        children: [
+          { title: '服务列表', url: '/mcp/servers', icon: ListChecks },
+          { title: '策略配置', url: '/mcp/policy', icon: ShieldCheck },
+          { title: '审计日志', url: '/mcp/audit-log', icon: ScrollText },
+          { title: '审批管理', url: '/mcp/approvals', icon: Shield },
+          { title: '模板市场', url: '/mcp/templates', icon: Sparkles },
+        ],
+      },
     ],
   },
 ]
@@ -159,7 +166,7 @@ export function AppSidebar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, scopes, logout } = useAuth()
-  const [expandedMenu, setExpandedMenu] = useState<string | null>('auto')
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set())
 
   const visibleMenuItems = menuItems.filter((item) => {
     if ('requiredScope' in item && item.requiredScope) {
@@ -191,7 +198,15 @@ export function AppSidebar() {
     return pathname === url || pathname.startsWith(`${url}/`)
   }
 
-  const renderNavItem = (item: NavItem) => {
+  const hasActiveDescendant = (item: NavItem): boolean => {
+    if (!item.children) return false
+    return item.children.some(child => {
+      if (child.children) return hasActiveDescendant(child)
+      return child.url ? isItemActive(child.url) : false
+    })
+  }
+
+  const renderNavItem = (item: NavItem, level = 0) => {
     // Parent menu with children
     if (item.children) {
       const visibleChildren = item.children.filter(() => {
@@ -200,15 +215,16 @@ export function AppSidebar() {
       })
       if (visibleChildren.length === 0) return null
 
-      const isAnyChildActive = visibleChildren.some(child => isItemActive(child.url))
-      const isExpanded = expandedMenu === item.title || (expandedMenu === 'auto' && isAnyChildActive)
+      const isAnyChildActive = hasActiveDescendant(item)
+      const isExpanded = expandedMenus.has(item.title) || isAnyChildActive
 
       return (
         <li key={item.title}>
-          <Collapsible
-            open={isExpanded}
-            onOpenChange={(open) => setExpandedMenu(open ? item.title : null)}
-          >
+          <Collapsible open={isExpanded} onOpenChange={(open) => {
+            const next = new Set(expandedMenus)
+            if (open) { next.add(item.title) } else { next.delete(item.title) }
+            setExpandedMenus(next)
+          }}>
             <CollapsibleTrigger className={cn(
               'flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full transition-colors text-left',
               isAnyChildActive
@@ -222,21 +238,78 @@ export function AppSidebar() {
             <CollapsibleContent>
               <ul className="space-y-0.5 mt-1 ml-4">
                 {visibleChildren.map(child => {
-                  const isActive = isItemActive(child.url)
+                  // Check if child has nested children (for 工具中心 -> MCP 服务)
+                  const hasNestedChildren = child.children && child.children.length > 0
                   return (
                     <li key={child.title}>
-                      <Link
-                        to={child.url}
-                        className={cn(
-                          'flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors',
-                          isActive
-                            ? 'bg-primary/10 text-primary font-medium'
-                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                        )}
-                      >
-                        <span className="w-1 h-1 rounded-full bg-current opacity-40" />
-                        <span>{child.title}</span>
-                      </Link>
+                      {hasNestedChildren ? (
+                        // Nested menu (level 1 with children, like MCP 服务)
+                        (() => {
+                          const nestedChildren = child.children!
+                          const isAnyNestedActive = nestedChildren.some((c: NavItem) => isItemActive(c.url))
+                          const isNestedExpanded = expandedMenus.has(child.title) || isAnyNestedActive
+                          return (
+                            <Collapsible open={isNestedExpanded} onOpenChange={(open) => {
+                              const next = new Set(expandedMenus)
+                              if (open) { next.add(child.title) } else { next.delete(child.title) }
+                              setExpandedMenus(next)
+                            }}>
+                              <CollapsibleTrigger className={cn(
+                                'flex items-center gap-3 px-2 py-1.5 rounded-md text-sm w-full transition-colors text-left ml-2',
+                                isAnyNestedActive
+                                  ? 'bg-primary/10 text-primary font-medium'
+                                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                              )}>
+                                <span className="w-1 h-1 rounded-full bg-current opacity-40" />
+                                <span className="flex-1">{child.title}</span>
+                                <ChevronRight className={cn('size-3.5 transition-transform', isNestedExpanded && 'rotate-90')} />
+                              </CollapsibleTrigger>
+                              <CollapsibleContent>
+                                <ul className="space-y-0.5 mt-0.5 ml-4">
+                                  {nestedChildren.map((nested: NavItem) => {
+                                    const isActive = isItemActive(nested.url)
+                                    return (
+                                      <li key={nested.title}>
+                                        <Link
+                                          to={nested.url}
+                                          className={cn(
+                                            'flex items-center gap-3 px-2 py-1.5 rounded-md text-sm transition-colors ml-2',
+                                            isActive
+                                              ? 'bg-primary/10 text-primary font-medium'
+                                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                                          )}
+                                        >
+                                          {nested.icon && <nested.icon className="size-3.5" />}
+                                          <span>{nested.title}</span>
+                                        </Link>
+                                      </li>
+                                    )
+                                  })}
+                                </ul>
+                              </CollapsibleContent>
+                            </Collapsible>
+                          )
+                        })()
+                      ) : (
+                        // Regular child (no nested children, like 知识树管理)
+                        (() => {
+                          const isActive = isItemActive(child.url)
+                          return (
+                            <Link
+                              to={child.url}
+                              className={cn(
+                                'flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors',
+                                isActive
+                                  ? 'bg-primary/10 text-primary font-medium'
+                                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                              )}
+                            >
+                              <span className="w-1 h-1 rounded-full bg-current opacity-40" />
+                              <span>{child.title}</span>
+                            </Link>
+                          )
+                        })()
+                      )}
                     </li>
                   )
                 })}

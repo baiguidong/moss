@@ -1,4 +1,4 @@
-import { authClient } from './client'
+import { authClient, getToken } from './client'
 
 // ===== Types =====
 
@@ -40,8 +40,10 @@ export interface McpServer {
   redact_sensitive_fields: boolean
   allow_user_disable: boolean
   enabled: boolean
-  status: 'enabled' | 'pending' | 'error'
+  status: 'enabled' | 'pending' | 'disabled' | 'error'
+  last_invocation_at: number | null
   created_by: string
+  updated_by: string | null
   created_at: number
   updated_at: number
 }
@@ -52,7 +54,7 @@ export interface McpPolicy {
   allow_http_sse_mcp: boolean
   allow_local_file_access: boolean
   allow_external_network: boolean
-  domain_whitelist_json: string
+  domain_whitelist_json: string[] | null
   require_approval: boolean
   allow_auto_task_call_personal_mcp: boolean
   allow_enterprise_assistant_call_personal_mcp: boolean
@@ -76,11 +78,52 @@ export interface McpAuditLog {
   user_id: string
   user_name: string | null
   session_id: string | null
-  status: 'success' | 'failure'
+  status: 'success' | 'error' | null
   request_params_json: string | null
   response_summary: string | null
   error_message: string | null
+  ip_address: string | null
   created_at: number
+}
+
+export interface McpApprovalRequest {
+  id: string
+  org_id: string
+  user_id: string
+  user_name: string | null
+  mcp_server_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewed_by: string | null
+  reviewer_name: string | null
+  review_note: string | null
+  reviewed_at: number | null
+  created_at: number
+}
+
+export interface McpTemplate {
+  id: string
+  org_id: string
+  name: string
+  display_name: string | null
+  description: string | null
+  icon: string | null
+  category: string | null
+  tags_json: string[] | null
+  mcp_type: 'http' | 'sse' | 'stdio'
+  url: string | null
+  command: string | null
+  args_json: string | null
+  env_json: string | null
+  timeout_ms: number
+  auth_type: 'none' | 'api_key' | 'bearer' | 'basic' | 'oauth' | 'custom_header' | 'secret_ref'
+  scope: 'org' | 'department'
+  risk_level: 'low' | 'medium' | 'high'
+  config_json: string | null
+  downloads: number
+  rating: number
+  created_by: string
+  created_at: number
+  updated_at: number
 }
 
 export type McpServerFormData = Partial<Omit<McpServer, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'status' | 'last_invocation_at'>>
@@ -143,4 +186,81 @@ export async function fetchMcpAuditLogs(params?: Record<string, string>): Promis
   const path = `/api/v1/admin/mcp-audit-logs${query ? `?${query}` : ''}`
   const res = await authClient.get<Envelope<McpAuditLog[]>>(path)
   return { items: res.data, total: res.total ?? 0 }
+}
+
+// ===== Approval API =====
+
+export async function fetchMcpApprovals(status?: string): Promise<McpApprovalRequest[]> {
+  const query = status ? `?status=${status}` : ''
+  const res = await authClient.get<Envelope<McpApprovalRequest[]>>(`/api/v1/admin/mcp-approvals${query}`)
+  return res.data
+}
+
+export async function approveMcpRequest(id: string): Promise<McpApprovalRequest> {
+  const res = await authClient.post<Envelope<McpApprovalRequest>>(`/api/v1/admin/mcp-approvals/${id}/approve`, {})
+  return res.data
+}
+
+export async function rejectMcpRequest(id: string, reviewNote: string): Promise<McpApprovalRequest> {
+  const res = await authClient.post<Envelope<McpApprovalRequest>>(`/api/v1/admin/mcp-approvals/${id}/reject`, { review_note: reviewNote })
+  return res.data
+}
+
+// ===== Template API =====
+
+export async function fetchMcpTemplates(params?: Record<string, string>): Promise<{ items: McpTemplate[]; total: number }> {
+  const query = new URLSearchParams(params).toString()
+  const path = `/api/v1/admin/mcp-templates${query ? `?${query}` : ''}`
+  const res = await authClient.get<Envelope<McpTemplate[]>>(path)
+  return { items: res.data, total: res.total ?? 0 }
+}
+
+export async function fetchMcpTemplate(id: string): Promise<McpTemplate> {
+  const res = await authClient.get<Envelope<McpTemplate>>(`/api/v1/admin/mcp-templates/${id}`)
+  return res.data
+}
+
+export async function installMcpTemplate(id: string, overrides?: Partial<McpServerFormData>): Promise<McpServer> {
+  const res = await authClient.post<Envelope<McpServer>>(`/api/v1/admin/mcp-templates/${id}/install`, overrides ?? {})
+  return res.data
+}
+
+// ===== SSE: live update subscription (plan §2.5) =====
+
+export type McpSseEventType = 'mcp.changed' | 'mcp.policy.changed'
+
+/**
+ * Subscribe to MCP server-side events. Server emits `mcp.changed` on any MCP
+ * write (create/update/delete/enable/disable) and `mcp.policy.changed` on policy
+ * updates; the frontend should re-fetch the relevant resource on receipt.
+ *
+ * EventSource cannot send Authorization headers, so the bearer token is appended
+ * as `?token=` — the server route `/api/v1/mcp/events` accepts this as documented
+ * in plan §2.5.
+ */
+export function subscribeMcpEvents(handlers: {
+  onMcpChanged?: () => void
+  onPolicyChanged?: () => void
+  onError?: (err: Event) => void
+}): () => void {
+  const token = getToken()
+  const url = `/api/v1/mcp/events${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  let es: EventSource | null
+  try {
+    es = new EventSource(url, { withCredentials: true })
+  } catch {
+    return () => undefined
+  }
+  if (handlers.onMcpChanged) {
+    es.addEventListener('mcp.changed', () => handlers.onMcpChanged?.())
+  }
+  if (handlers.onPolicyChanged) {
+    es.addEventListener('mcp.policy.changed', () => handlers.onPolicyChanged?.())
+  }
+  if (handlers.onError) {
+    es.onerror = handlers.onError
+  }
+  return () => {
+    es?.close()
+  }
 }

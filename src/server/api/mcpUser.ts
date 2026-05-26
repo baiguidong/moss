@@ -14,18 +14,19 @@ interface McpUserDeps {
   listDepartmentsByOrg: (orgId: string) => { id: string; parentId: string | null }[]
 }
 
-/** Fields excluded from user-side response (sensitive) */
-const SENSITIVE_FIELDS = new Set([
-  'env_json', 'auth_config_json', 'secret_ref', 'command', 'args_json',
-  'created_by', 'updated_by',
-])
+// Plan §2.2 step 6: user-side response is a strict whitelist of 16 fields.
+const USER_VISIBLE_FIELDS = [
+  'id', 'name', 'display_name', 'description', 'icon', 'category',
+  'scope', 'mcp_type', 'url', 'risk_level',
+  'bound_assistants', 'bound_skills',
+  'allow_read', 'allow_write',
+  'enabled', 'status',
+] as const
 
 function sanitizeForUser(server: Record<string, unknown>) {
   const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(server)) {
-    if (!SENSITIVE_FIELDS.has(key)) {
-      result[key] = value
-    }
+  for (const key of USER_VISIBLE_FIELDS) {
+    if (key in server) result[key] = server[key]
   }
   return result
 }
@@ -71,12 +72,14 @@ export function createMcpUserApi(deps: McpUserDeps) {
         return { success: false, error: { code: 'forbidden', message: '企业策略不允许创建个人 MCP' } }
       }
 
-      // Enforce scope=user
+      // Enforce scope=user; default visible_to to only the owner so that even if
+      // the SQL filter is bypassed, isVisibleTo() will still gate cross-user visibility.
       const personalInput: McpServerInput = {
         ...input,
         scope: 'user',
         owner_type: 'user',
         owner_id: auth.userId,
+        visible_to: input.visible_to ?? { user_ids: [auth.userId] },
       }
 
       // Check policy constraints

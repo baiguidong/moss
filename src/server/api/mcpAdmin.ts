@@ -1,7 +1,7 @@
 import type { McpStore } from '../mcp/db.js'
 import type { AuthContext } from '../auth/token.js'
 import type { AuthService } from '../auth/service.js'
-import type { McpServerInput, McpPolicyInput, McpServerListFilter, McpAuditLogFilter } from '../mcp/types.js'
+import type { McpServerInput, McpPolicyInput, McpServerListFilter, McpAuditLogFilter, McpTemplateListFilter } from '../mcp/types.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
 import { broadcastMcpEvent } from './mcpEvents.js'
 
@@ -60,6 +60,7 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
     mcpServerName: string | null,
     detail?: Record<string, unknown>,
     ip?: string,
+    status?: 'success' | 'error',
   ) => {
     try {
       mcpStore.insertAuditLog({
@@ -70,6 +71,7 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
         user_name: getUserName(userId),
         action,
         request_params_json: detail ? JSON.stringify(detail) : null,
+        status: status ?? null,
         ip_address: ip,
       })
     } catch {
@@ -82,17 +84,14 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
 
     listMcpServers(auth: AuthContext, filter?: McpServerListFilter, ip?: string) {
       authService.requireScope(auth, 'admin:mcp')
-      const result = mcpStore.listMcpServers(auth.orgId, filter)
-
-      // dept_admin can only see department scope MCPs for their department
+      // For dept_admin, push the visibility restriction into the SQL layer so that
+      // `total` reflects the post-filter count and pagination remains correct.
+      const effectiveFilter: McpServerListFilter = { ...(filter ?? {}) }
       if (auth.role === 'dept_admin') {
-        const deptId = getUserDepartmentId(auth.userId)
-        result.items = result.items.filter(s =>
-          s.scope === 'org' || (s.scope === 'department' && s.owner_id === deptId)
-        )
-        result.total = result.items.length
+        const deptId = getUserDepartmentId(auth.userId) ?? ''
+        effectiveFilter.dept_admin_department_id = deptId
       }
-
+      const result = mcpStore.listMcpServers(auth.orgId, effectiveFilter)
       return { success: true, data: result.items, total: result.total, page: filter?.page ?? 1, page_size: filter?.page_size ?? 20 }
     },
 
@@ -112,6 +111,13 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       authService.requireScope(auth, 'admin:mcp:write')
       assertCanManageMcp(auth, input, 'create')
 
+      // 必填字段校验
+      if (!input.name || typeof input.name !== 'string' || !input.name.trim()) {
+        const err = new Error('name 为必填字段')
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
+
       // Check name uniqueness
       const existing = mcpStore.getMcpServerByName(auth.orgId, input.name)
       if (existing) {
@@ -120,7 +126,35 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
         throw err
       }
 
-      const server = mcpStore.createMcpServer(auth.orgId, input, auth.userId)
+      // 补全可枚举字段的默认值(与前端 wizard Select 默认值一致)
+      const resolvedInput: McpServerInput = {
+        scope: input.scope ?? 'org',
+        owner_type: input.owner_type ?? 'system',
+        mcp_type: input.mcp_type ?? 'http',
+        risk_level: input.risk_level ?? 'low',
+        auth_type: input.auth_type ?? 'none',
+        timeout_ms: input.timeout_ms ?? 30000,
+        ...input,
+      }
+
+      // Auto-fill owner_id when scope=org and owner_type=system
+      if (resolvedInput.scope === 'org' && resolvedInput.owner_type === 'system' && !resolvedInput.owner_id) {
+        resolvedInput.owner_id = auth.orgId
+      }
+      if (resolvedInput.scope === 'department' && resolvedInput.owner_type === 'department' && !resolvedInput.owner_id) {
+        resolvedInput.owner_id = getUserDepartmentId(auth.userId) ?? ''
+      }
+      // Plan §2.2 step 5: scope=department MCPs default visible_to to {department_ids: [owner_id]}
+      // so that without explicit visibility config they are scoped to their own department only.
+      if (
+        resolvedInput.scope === 'department'
+        && resolvedInput.owner_id
+        && resolvedInput.visible_to == null
+      ) {
+        resolvedInput.visible_to = { department_ids: [resolvedInput.owner_id] }
+      }
+
+      const server = mcpStore.createMcpServer(auth.orgId, resolvedInput, auth.userId)
       writeAudit(auth.orgId, auth.userId, 'create', server.id, server.name, { name: input.name }, ip)
       broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
       return { success: true, data: server }
@@ -191,11 +225,12 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
         mcpStore.setMcpServerStatus(auth.orgId, id, 'error', auth.userId)
       }
 
-      writeAudit(auth.orgId, auth.userId, 'test_connection', id, server.name, {
-        ok: result.ok,
-        message: result.message,
-        latency_ms: result.latency_ms,
-      }, ip)
+      writeAudit(
+        auth.orgId, auth.userId, 'test_connection', id, server.name,
+        { ok: result.ok, message: result.message, latency_ms: result.latency_ms },
+        ip,
+        result.ok ? 'success' : 'error',
+      )
 
       return { success: true, data: result }
     },
@@ -278,6 +313,71 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
 
       writeAudit(auth.orgId, auth.userId, 'reject_request', request.mcp_server_id, null, { request_id: requestId, reason: reviewNote }, ip)
       return { success: true, data: updated }
+    },
+
+    // ==================== Templates (Phase 2, §4.6 模板市场) ====================
+
+    listTemplates(auth: AuthContext, filter?: McpTemplateListFilter) {
+      authService.requireScope(auth, 'admin:mcp')
+      const result = mcpStore.listTemplates(auth.orgId, filter)
+      return { success: true, data: result.items, total: result.total, page: filter?.page ?? 1, page_size: filter?.page_size ?? 20 }
+    },
+
+    getTemplate(auth: AuthContext, id: string) {
+      authService.requireScope(auth, 'admin:mcp')
+      const template = mcpStore.getTemplate(auth.orgId, id)
+      if (!template) return { success: false, error: { code: 'not_found', message: '模板不存在' } }
+      return { success: true, data: template }
+    },
+
+    installTemplate(auth: AuthContext, templateId: string, overrides?: Partial<McpServerInput>, ip?: string) {
+      authService.requireScope(auth, 'admin:mcp:write')
+      const template = mcpStore.getTemplate(auth.orgId, templateId)
+      if (!template) return { success: false, error: { code: 'not_found', message: '模板不存在' } }
+
+      // Build MCP server input from template
+      const serverInput: McpServerInput = {
+        name: overrides?.name ?? template.name,
+        display_name: overrides?.display_name ?? template.display_name,
+        description: overrides?.description ?? template.description,
+        icon: overrides?.icon ?? template.icon,
+        category: overrides?.category ?? template.category,
+        risk_level: overrides?.risk_level ?? template.risk_level,
+        scope: overrides?.scope ?? template.scope,
+        owner_type: overrides?.owner_type ?? (template.scope === 'org' ? 'system' : 'department'),
+        owner_id: overrides?.owner_id ?? (template.scope === 'org' ? auth.orgId : getUserDepartmentId(auth.userId) ?? ''),
+        mcp_type: overrides?.mcp_type ?? template.mcp_type,
+        url: overrides?.url ?? template.url,
+        command: overrides?.command ?? template.command,
+        args_json: overrides?.args_json ?? template.args_json,
+        env_json: overrides?.env_json ?? template.env_json,
+        timeout_ms: overrides?.timeout_ms ?? template.timeout_ms,
+        auth_type: overrides?.auth_type ?? template.auth_type,
+      }
+
+      // Check name uniqueness
+      const existing = mcpStore.getMcpServerByName(auth.orgId, serverInput.name)
+      if (existing) {
+        const err = new Error('MCP 名称已存在')
+        Object.assign(err, { statusCode: 409 })
+        throw err
+      }
+
+      assertCanManageMcp(auth, serverInput, 'install_template')
+
+      // Auto-fill owner_id if still missing
+      if (serverInput.scope === 'org' && serverInput.owner_type === 'system' && !serverInput.owner_id) {
+        serverInput.owner_id = auth.orgId
+      }
+
+      const server = mcpStore.createMcpServer(auth.orgId, serverInput, auth.userId)
+
+      // Increment template downloads
+      mcpStore.incrementDownloads(auth.orgId, templateId)
+
+      writeAudit(auth.orgId, auth.userId, 'create', server.id, server.name, { template_id: templateId, template_name: template.name }, ip)
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true, data: server }
     },
   }
 

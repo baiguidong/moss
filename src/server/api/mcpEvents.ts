@@ -68,6 +68,13 @@ export function broadcastMcpEvent(event: McpSseEvent): void {
   }
 }
 
+// Test-only seam: reset the module singleton (clients + heartbeat timer) between
+// test cases. No-op in production code paths (never called there).
+export function __resetMcpEventsForTest(): void {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
+  clients.length = 0
+}
+
 export function handleMcpSseConnection(res: ServerResponse, orgId: string): void {
   // Enforce connection limit per org
   const orgConnections = clients.filter(c => c.orgId === orgId)

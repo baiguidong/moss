@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Shield, Settings2, X } from 'lucide-react'
-import { fetchMcpPolicy, updateMcpPolicy } from '@/lib/api/mcp'
+import { fetchMcpPolicy, updateMcpPolicy, subscribeMcpEvents } from '@/lib/api/mcp'
+import type { McpPolicy } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
 
 interface PolicyState {
@@ -79,9 +80,7 @@ export default function McpPolicyPage() {
       setPolicy({
         ...defaultPolicy,
         ...data,
-        domain_whitelist: Array.isArray((data as any).domain_whitelist_json)
-          ? (data as any).domain_whitelist_json
-          : [],
+        domain_whitelist: Array.isArray(data.domain_whitelist_json) ? data.domain_whitelist_json : [],
       })
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -94,6 +93,14 @@ export default function McpPolicyPage() {
 
   useEffect(() => {
     loadPolicy()
+  }, [loadPolicy])
+
+  // Plan §2.5: subscribe to live policy events and re-fetch on change.
+  useEffect(() => {
+    const unsubscribe = subscribeMcpEvents({
+      onPolicyChanged: () => { loadPolicy() },
+    })
+    return () => { unsubscribe() }
   }, [loadPolicy])
 
   if (isLoading) {
@@ -129,10 +136,11 @@ export default function McpPolicyPage() {
     setIsSaving(true)
     try {
       const { domain_whitelist, ...rest } = policy
-      await updateMcpPolicy({
+      const payload: Partial<McpPolicy> = {
         ...rest,
-        domain_whitelist_json: domain_whitelist as any,
-      })
+        domain_whitelist_json: domain_whitelist,
+      }
+      await updateMcpPolicy(payload)
       toast.success('策略已保存')
       await loadPolicy()
     } catch (err) {
