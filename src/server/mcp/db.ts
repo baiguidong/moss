@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import type { McpServer, McpPolicy, McpAuditLog, McpApprovalRequest, McpServerInput, McpPolicyInput, McpServerListFilter, McpAuditLogFilter } from './types.js'
+import type { McpServer, McpPolicy, McpAuditLog, McpApprovalRequest, McpTemplate, McpServerInput, McpPolicyInput, McpTemplateInput, McpServerListFilter, McpAuditLogFilter, McpTemplateListFilter } from './types.js'
 import type { VisibleTo } from '../visibilityFilter.js'
 
 type SqlRow = Record<string, unknown>
@@ -123,6 +123,34 @@ function mapMcpApprovalRequest(row: SqlRow): McpApprovalRequest {
     review_note: row.review_note as string | null,
     reviewed_at: row.reviewed_at != null ? Number(row.reviewed_at) : null,
     created_at: Number(row.created_at),
+  }
+}
+
+function mapMcpTemplate(row: SqlRow): McpTemplate {
+  return {
+    id: row.id as string,
+    org_id: row.org_id as string,
+    name: row.name as string,
+    display_name: row.display_name as string | null,
+    description: row.description as string | null,
+    icon: row.icon as string | null,
+    category: row.category as string | null,
+    tags_json: parseNullableJson(row.tags_json) as string[] | null,
+    mcp_type: (row.mcp_type as string) as McpTemplate['mcp_type'],
+    url: row.url as string | null,
+    command: row.command as string | null,
+    args_json: row.args_json as string | null,
+    env_json: row.env_json as string | null,
+    timeout_ms: row.timeout_ms as number,
+    auth_type: (row.auth_type as string) as McpTemplate['auth_type'],
+    scope: (row.scope as string) as McpTemplate['scope'],
+    risk_level: (row.risk_level as string) as McpTemplate['risk_level'],
+    config_json: row.config_json as string | null,
+    downloads: row.downloads as number,
+    rating: row.rating as number,
+    created_by: row.created_by as string,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
   }
 }
 
@@ -260,6 +288,38 @@ export class McpStore {
       CREATE INDEX IF NOT EXISTS idx_mcp_approval_status ON mcp_approval_requests(org_id, status);
       CREATE INDEX IF NOT EXISTS idx_mcp_approval_user ON mcp_approval_requests(user_id);
     `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_templates (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        display_name TEXT,
+        description TEXT,
+        icon TEXT,
+        category TEXT,
+        tags_json TEXT,
+        mcp_type TEXT NOT NULL DEFAULT 'http',
+        url TEXT,
+        command TEXT,
+        args_json TEXT,
+        env_json TEXT,
+        timeout_ms INTEGER DEFAULT 30000,
+        auth_type TEXT DEFAULT 'none',
+        scope TEXT DEFAULT 'org',
+        risk_level TEXT DEFAULT 'low',
+        config_json TEXT,
+        downloads INTEGER DEFAULT 0,
+        rating REAL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mcp_templates_org ON mcp_templates(org_id);
+      CREATE INDEX IF NOT EXISTS idx_mcp_templates_category ON mcp_templates(org_id, category);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_templates_org_name ON mcp_templates(org_id, name);
+    `)
   }
 
   // ==================== MCP Server CRUD ====================
@@ -303,8 +363,10 @@ export class McpStore {
       conditions.push('mcp_type = ?')
       params.push(filter.mcp_type)
     }
-    if (filter?.audit_enabled) {
+    if (filter?.audit_enabled === true) {
       conditions.push('(audit_request = 1 OR audit_response_summary = 1)')
+    } else if (filter?.audit_enabled === false) {
+      conditions.push('audit_request = 0 AND audit_response_summary = 0')
     }
     if (filter?.bound_assistant) {
       conditions.push('bound_assistants LIKE ?')
@@ -313,6 +375,11 @@ export class McpStore {
     if (filter?.created_by) {
       conditions.push('created_by = ?')
       params.push(filter.created_by)
+    }
+    if (filter?.dept_admin_department_id) {
+      // dept_admin sees org-scope MCPs and their own department's MCPs only.
+      conditions.push("(scope = 'org' OR (scope = 'department' AND owner_id = ?))")
+      params.push(filter.dept_admin_department_id)
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`
@@ -486,7 +553,13 @@ export class McpStore {
     ).run(...params)
   }
 
-  /** Get MCP servers visible to a user (for /me endpoint) */
+  /**
+   * Get MCP servers visible to a user (for /me endpoint).
+   * Filters per plan §2.2:
+   *   - scope='org': all enabled
+   *   - scope='department': all enabled (further filtered by isVisibleTo at caller)
+   *   - scope='user': only those whose owner_id = userId
+   */
   listVisibleMcpServers(orgId: string, userId: string, userDepartmentId: string | null, scope?: 'org' | 'department' | 'user'): McpServer[] {
     const conditions: string[] = ['org_id = ?', 'enabled = 1']
     const params: unknown[] = [orgId]
@@ -494,6 +567,14 @@ export class McpStore {
     if (scope) {
       conditions.push('scope = ?')
       params.push(scope)
+      if (scope === 'user') {
+        conditions.push('owner_id = ?')
+        params.push(userId)
+      }
+    } else {
+      // No scope filter: exclude other users' personal MCPs.
+      conditions.push("(scope != 'user' OR owner_id = ?)")
+      params.push(userId)
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`
@@ -552,27 +633,27 @@ export class McpStore {
       const sets: string[] = []
       const params: unknown[] = []
 
-      const setIfDefined = (col: string, val: unknown) => {
-        if (val !== undefined) { sets.push(`${col} = ?`); params.push(val) }
+      const setIfDefined = (col: string, val: boolean | undefined) => {
+        if (val !== undefined) { sets.push(`${col} = ?`); params.push(val ? 1 : 0) }
       }
 
-      setIfDefined('allow_personal_mcp', input.allow_personal_mcp ? 1 : 0)
-      setIfDefined('allow_stdio_mcp', input.allow_stdio_mcp ? 1 : 0)
-      setIfDefined('allow_http_sse_mcp', input.allow_http_sse_mcp ? 1 : 0)
-      setIfDefined('allow_local_file_access', input.allow_local_file_access ? 1 : 0)
-      setIfDefined('allow_external_network', input.allow_external_network ? 1 : 0)
+      setIfDefined('allow_personal_mcp', input.allow_personal_mcp)
+      setIfDefined('allow_stdio_mcp', input.allow_stdio_mcp)
+      setIfDefined('allow_http_sse_mcp', input.allow_http_sse_mcp)
+      setIfDefined('allow_local_file_access', input.allow_local_file_access)
+      setIfDefined('allow_external_network', input.allow_external_network)
       if (input.domain_whitelist_json !== undefined) { sets.push('domain_whitelist_json = ?'); params.push(input.domain_whitelist_json ? JSON.stringify(input.domain_whitelist_json) : null) }
-      setIfDefined('require_approval', input.require_approval ? 1 : 0)
-      setIfDefined('allow_auto_task_call_personal_mcp', input.allow_auto_task_call_personal_mcp ? 1 : 0)
-      setIfDefined('allow_enterprise_assistant_call_personal_mcp', input.allow_enterprise_assistant_call_personal_mcp ? 1 : 0)
-      setIfDefined('allow_enterprise_context_in_personal_mcp', input.allow_enterprise_context_in_personal_mcp ? 1 : 0)
-      setIfDefined('require_confirmation_for_high_risk', input.require_confirmation_for_high_risk ? 1 : 0)
-      setIfDefined('require_confirmation_for_write', input.require_confirmation_for_write ? 1 : 0)
-      setIfDefined('audit_request_params', input.audit_request_params ? 1 : 0)
-      setIfDefined('audit_response_summary', input.audit_response_summary ? 1 : 0)
-      setIfDefined('redact_audit_logs', input.redact_audit_logs ? 1 : 0)
-      setIfDefined('limit_concurrency_and_rate', input.limit_concurrency_and_rate ? 1 : 0)
-      setIfDefined('restrict_callable_models', input.restrict_callable_models ? 1 : 0)
+      setIfDefined('require_approval', input.require_approval)
+      setIfDefined('allow_auto_task_call_personal_mcp', input.allow_auto_task_call_personal_mcp)
+      setIfDefined('allow_enterprise_assistant_call_personal_mcp', input.allow_enterprise_assistant_call_personal_mcp)
+      setIfDefined('allow_enterprise_context_in_personal_mcp', input.allow_enterprise_context_in_personal_mcp)
+      setIfDefined('require_confirmation_for_high_risk', input.require_confirmation_for_high_risk)
+      setIfDefined('require_confirmation_for_write', input.require_confirmation_for_write)
+      setIfDefined('audit_request_params', input.audit_request_params)
+      setIfDefined('audit_response_summary', input.audit_response_summary)
+      setIfDefined('redact_audit_logs', input.redact_audit_logs)
+      setIfDefined('limit_concurrency_and_rate', input.limit_concurrency_and_rate)
+      setIfDefined('restrict_callable_models', input.restrict_callable_models)
 
       sets.push('updated_by = ?')
       params.push(updatedBy)
@@ -678,6 +759,10 @@ export class McpStore {
       conditions.push('mcp_server_id = ?')
       params.push(filter.mcp_server_id)
     }
+    if (filter?.mcp_server_name) {
+      conditions.push('mcp_server_name = ?')
+      params.push(filter.mcp_server_name)
+    }
     if (filter?.user_id) {
       conditions.push('user_id = ?')
       params.push(filter.user_id)
@@ -685,6 +770,10 @@ export class McpStore {
     if (filter?.action) {
       conditions.push('action = ?')
       params.push(filter.action)
+    }
+    if (filter?.status) {
+      conditions.push('status = ?')
+      params.push(filter.status)
     }
     if (filter?.since) {
       conditions.push('created_at >= ?')
@@ -761,5 +850,87 @@ export class McpStore {
       WHERE id = ?
     `).run(update.status, update.reviewed_by, update.reviewer_name ?? null, update.review_note ?? null, now(), id)
     return this.getMcpApprovalRequest(id)
+  }
+
+  // ==================== MCP Templates (Phase 2, §4.6 模板市场) ====================
+
+  listTemplates(orgId: string, filter?: McpTemplateListFilter): { items: McpTemplate[]; total: number } {
+    const conditions: string[] = ['org_id = ?']
+    const params: unknown[] = [orgId]
+
+    if (filter?.category) {
+      conditions.push('category = ?')
+      params.push(filter.category)
+    }
+    if (filter?.search) {
+      conditions.push('(display_name LIKE ? OR description LIKE ? OR name LIKE ?)')
+      const term = `%${filter.search}%`
+      params.push(term, term, term)
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`
+    const countRow = this.db.prepare(
+      `SELECT COUNT(*) AS c FROM mcp_templates ${where}`
+    ).get(...params) as { c: number }
+    const total = countRow.c
+
+    const page = filter?.page ?? 1
+    const pageSize = filter?.page_size ?? 20
+    const offset = (page - 1) * pageSize
+
+    const rows = this.db.prepare(
+      `SELECT * FROM mcp_templates ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    ).all(...params, pageSize, offset) as SqlRow[]
+
+    return { items: rows.map(mapMcpTemplate), total }
+  }
+
+  getTemplate(orgId: string, id: string): McpTemplate | null {
+    const row = this.db.prepare(
+      'SELECT * FROM mcp_templates WHERE org_id = ? AND id = ?'
+    ).get(orgId, id) as SqlRow | undefined
+    return row ? mapMcpTemplate(row) : null
+  }
+
+  createTemplate(orgId: string, input: McpTemplateInput, createdBy: string): McpTemplate {
+    const ts = now()
+    const id = randomUUID()
+    this.db.prepare(`
+      INSERT INTO mcp_templates (
+        id, org_id, name, display_name, description, icon, category, tags_json,
+        mcp_type, url, command, args_json, env_json, timeout_ms, auth_type,
+        scope, risk_level, config_json,
+        created_by, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?
+      )
+    `).run(
+      id, orgId, input.name, input.display_name ?? null, input.description ?? null,
+      input.icon ?? null, input.category ?? null,
+      input.tags_json ? JSON.stringify(input.tags_json) : null,
+      input.mcp_type, input.url ?? null, input.command ?? null,
+      input.args_json ?? null, input.env_json ?? null, input.timeout_ms ?? 30000,
+      input.auth_type ?? 'none',
+      input.scope ?? 'org', input.risk_level ?? 'low',
+      input.config_json ?? null,
+      createdBy, ts, ts,
+    )
+    return this.getTemplate(orgId, id)!
+  }
+
+  deleteTemplate(orgId: string, id: string): boolean {
+    const result = this.db.prepare(
+      'DELETE FROM mcp_templates WHERE org_id = ? AND id = ?'
+    ).run(orgId, id)
+    return result.changes > 0
+  }
+
+  incrementDownloads(orgId: string, id: string): void {
+    this.db.prepare(
+      'UPDATE mcp_templates SET downloads = downloads + 1 WHERE org_id = ? AND id = ?'
+    ).run(orgId, id)
   }
 }
