@@ -85,24 +85,38 @@ export interface McpAuditLog {
 
 export type McpServerFormData = Partial<Omit<McpServer, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'status' | 'last_invocation_at'>>
 
-// ===== API functions (prototype: returns mock data) =====
+// Backend MCP endpoints return { success, data, ... } envelope
+// while other endpoints return data directly. We must unwrap here.
+interface Envelope<T> {
+  success: boolean
+  data: T
+  total?: number
+  page?: number
+  page_size?: number
+}
+
+// ===== API functions =====
 
 export async function fetchMcpServers(params?: Record<string, string>): Promise<{ items: McpServer[]; total: number }> {
   const query = new URLSearchParams(params).toString()
   const path = `/api/v1/admin/mcp-servers${query ? `?${query}` : ''}`
-  return authClient.get<{ items: McpServer[]; total: number }>(path)
+  const res = await authClient.get<Envelope<McpServer[]>>(path)
+  return { items: res.data, total: res.total ?? 0 }
 }
 
 export async function fetchMcpServer(id: string): Promise<McpServer> {
-  return authClient.get<McpServer>(`/api/v1/admin/mcp-servers/${id}`)
+  const res = await authClient.get<Envelope<McpServer>>(`/api/v1/admin/mcp-servers/${id}`)
+  return res.data
 }
 
 export async function createMcpServer(data: McpServerFormData): Promise<McpServer> {
-  return authClient.post<McpServer>('/api/v1/admin/mcp-servers', data)
+  const res = await authClient.post<Envelope<McpServer>>('/api/v1/admin/mcp-servers', data)
+  return res.data
 }
 
 export async function updateMcpServer(id: string, data: McpServerFormData): Promise<McpServer> {
-  return authClient.patch<McpServer>(`/api/v1/admin/mcp-servers/${id}`, data)
+  const res = await authClient.patch<Envelope<McpServer>>(`/api/v1/admin/mcp-servers/${id}`, data)
+  return res.data
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {
@@ -110,19 +124,23 @@ export async function deleteMcpServer(id: string): Promise<void> {
 }
 
 export async function testMcpConnection(id: string): Promise<{ success: boolean; message: string; latency_ms?: number }> {
-  return authClient.post(`/api/v1/admin/mcp-servers/${id}/test`, {})
+  const res = await authClient.post<Envelope<{ ok: boolean; message: string; latency_ms: number }>>(`/api/v1/admin/mcp-servers/${id}/test`, {})
+  return { success: res.data.ok, message: res.data.message, latency_ms: res.data.latency_ms }
 }
 
 export async function fetchMcpPolicy(): Promise<McpPolicy> {
-  return authClient.get<McpPolicy>('/api/v1/tenant/mcp-policy')
+  const res = await authClient.get<Envelope<McpPolicy>>('/api/v1/tenant/mcp-policy')
+  return res.data
 }
 
 export async function updateMcpPolicy(data: Partial<McpPolicy>): Promise<McpPolicy> {
-  return authClient.patch<McpPolicy>('/api/v1/admin/mcp-policy', data)
+  const res = await authClient.patch<Envelope<McpPolicy>>('/api/v1/admin/mcp-policy', data)
+  return res.data
 }
 
 export async function fetchMcpAuditLogs(params?: Record<string, string>): Promise<{ items: McpAuditLog[]; total: number }> {
   const query = new URLSearchParams(params).toString()
-  const path = `/api/v1/admin/mcp-servers/audit-logs${query ? `?${query}` : ''}`
-  return authClient.get<{ items: McpAuditLog[]; total: number }>(path)
+  const path = `/api/v1/admin/mcp-audit-logs${query ? `?${query}` : ''}`
+  const res = await authClient.get<Envelope<McpAuditLog[]>>(path)
+  return { items: res.data, total: res.total ?? 0 }
 }

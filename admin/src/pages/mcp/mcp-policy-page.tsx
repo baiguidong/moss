@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Shield, Settings2, X } from 'lucide-react'
+import { fetchMcpPolicy, updateMcpPolicy } from '@/lib/api/mcp'
+import { ApiRequestError } from '@/lib/api/client'
 
 interface PolicyState {
   allow_personal_mcp: boolean
@@ -65,10 +67,34 @@ function SettingField({ label, description, children }: { label: string; descrip
 }
 
 export default function McpPolicyPage() {
-  const [isLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [policy, setPolicy] = useState<PolicyState>(defaultPolicy)
   const [isSaving, setIsSaving] = useState(false)
   const [newDomain, setNewDomain] = useState('')
+
+  const loadPolicy = useCallback(async () => {
+    try {
+      setIsLoading(true)
+      const data = await fetchMcpPolicy()
+      setPolicy({
+        ...defaultPolicy,
+        ...data,
+        domain_whitelist: Array.isArray((data as any).domain_whitelist_json)
+          ? (data as any).domain_whitelist_json
+          : [],
+      })
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        toast.error(`加载策略失败: ${err.message}`)
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadPolicy()
+  }, [loadPolicy])
 
   if (isLoading) {
     return (
@@ -99,12 +125,23 @@ export default function McpPolicyPage() {
     setPolicy((prev) => ({ ...prev, domain_whitelist: prev.domain_whitelist.filter((d) => d !== domain) }))
   }
 
-  function handleSave() {
+  async function handleSave() {
     setIsSaving(true)
-    setTimeout(() => {
-      setIsSaving(false)
+    try {
+      const { domain_whitelist, ...rest } = policy
+      await updateMcpPolicy({
+        ...rest,
+        domain_whitelist_json: domain_whitelist as any,
+      })
       toast.success('策略已保存')
-    }, 800)
+      await loadPolicy()
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        toast.error(err.message)
+      }
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
