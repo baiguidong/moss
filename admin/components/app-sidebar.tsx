@@ -20,6 +20,9 @@ import {
   ChevronRight,
   ListChecks,
   Clock,
+  Wrench,
+  ScrollText,
+  ShieldCheck,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -120,6 +123,19 @@ const menuItems: NavItem[] = [
       { title: '用户凭据', url: '/secrets/user-credentials', icon: KeyRound },
       { title: '审计日志', url: '/secrets/audit-log', icon: KeyRound },
       { title: '轮换告警', url: '/secrets/rotation-alerts', icon: KeyRound },
+    ],
+  },
+  {
+    title: '工具中心',
+    url: '/mcp',
+    icon: Wrench,
+    requiredScope: 'admin:mcp',
+    children: [
+      { title: 'MCP 服务', url: '/mcp/servers', icon: Wrench },
+      { title: 'MCP 策略', url: '/mcp/policy', icon: ShieldCheck },
+      { title: 'MCP 审计', url: '/mcp/audit-log', icon: ScrollText },
+      { title: '审批管理', url: '/mcp/approvals', icon: ListChecks },
+      { title: '模板市场', url: '/mcp/templates', icon: Sparkles },
     ],
   },
 ]

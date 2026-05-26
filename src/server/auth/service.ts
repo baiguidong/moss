@@ -62,6 +62,9 @@ function defaultScopesForRole(role: string): string[] {
       'admin:users',
       'admin:api_keys',
       'admin:secrets',
+      'admin:mcp',
+      'admin:mcp:write',
+      'admin:mcp:audit',
     ]
   }
   return ['sessions:create', 'sessions:attach', 'sessions:list']

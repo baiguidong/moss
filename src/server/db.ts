@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
 import { DatabaseSync } from 'node:sqlite'
+import { McpStore } from './mcp/db.js'
 import type {
   AttemptRecord,
   AttemptRuntimeState,
@@ -794,6 +795,9 @@ export class DirectConnectStore {
     try {
       this.db.exec(`ALTER TABLE cron_jobs ADD COLUMN lease_until INTEGER;`)
     } catch {}
+
+    // MCP Management tables
+    McpStore.ensureTables(this.db)
   }
 
   close(): void {

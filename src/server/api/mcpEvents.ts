@@ -1,0 +1,112 @@
+import type { ServerResponse } from 'http'
+import type { McpEventType, McpSseEvent } from '../mcp/types.js'
+
+interface ConnectedClient {
+  res: ServerResponse
+  orgId: string
+  connectedAt: number
+  lastActivityAt: number
+}
+
+const clients: ConnectedClient[] = []
+const MAX_CONNECTIONS_PER_ORG = 10
+const HEARTBEAT_INTERVAL_MS = 30_000
+const CLIENT_TIMEOUT_MS = 120_000
+
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+function startHeartbeat(): void {
+  if (heartbeatTimer) return
+  heartbeatTimer = setInterval(() => {
+    const now = Date.now()
+    const toRemove: number[] = []
+
+    for (let i = clients.length - 1; i >= 0; i--) {
+      const client = clients[i]
+      if (now - client.lastActivityAt > CLIENT_TIMEOUT_MS) {
+        toRemove.push(i)
+        continue
+      }
+      try {
+        client.res.write(':ping\n\n')
+      } catch {
+        toRemove.push(i)
+      }
+    }
+
+    for (const idx of toRemove) {
+      try { clients[idx].res.end() } catch { /* ignore */ }
+      clients.splice(idx, 1)
+    }
+
+    if (clients.length === 0 && heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+      heartbeatTimer = null
+    }
+  }, HEARTBEAT_INTERVAL_MS)
+}
+
+export function broadcastMcpEvent(event: McpSseEvent): void {
+  const data = JSON.stringify(event)
+  const sseMessage = `event: ${event.type}\ndata: ${data}\n\n`
+
+  const toRemove: number[] = []
+  for (let i = clients.length - 1; i >= 0; i--) {
+    const client = clients[i]
+    if (client.orgId !== event.org_id) continue
+    try {
+      client.res.write(sseMessage)
+      client.lastActivityAt = Date.now()
+    } catch {
+      toRemove.push(i)
+    }
+  }
+
+  for (const idx of toRemove) {
+    try { clients[idx].res.end() } catch { /* ignore */ }
+    clients.splice(idx, 1)
+  }
+}
+
+export function handleMcpSseConnection(res: ServerResponse, orgId: string): void {
+  // Enforce connection limit per org
+  const orgConnections = clients.filter(c => c.orgId === orgId)
+  if (orgConnections.length >= MAX_CONNECTIONS_PER_ORG) {
+    // Close the oldest connection
+    const oldest = orgConnections[0]
+    const idx = clients.indexOf(oldest)
+    if (idx >= 0) {
+      try { oldest.res.end() } catch { /* ignore */ }
+      clients.splice(idx, 1)
+    }
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+
+  const client: ConnectedClient = {
+    res,
+    orgId,
+    connectedAt: Date.now(),
+    lastActivityAt: Date.now(),
+  }
+  clients.push(client)
+
+  startHeartbeat()
+
+  res.write(':connected\n\n')
+
+  res.on('close', () => {
+    const idx = clients.indexOf(client)
+    if (idx >= 0) clients.splice(idx, 1)
+
+    if (clients.length === 0 && heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+      heartbeatTimer = null
+    }
+  })
+}

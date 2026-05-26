@@ -88,6 +88,10 @@ import { createConfigItemsApi } from './api/configItems.js'
 import { createSecretsApi } from './api/secrets.js'
 import { createCronApi } from './api/cron.js'
 import { CronService } from './services/cron/CronService.js'
+import { createMcpAdminApi } from './api/mcpAdmin.js'
+import { createMcpUserApi } from './api/mcpUser.js'
+import { handleMcpSseConnection, broadcastMcpEvent } from './api/mcpEvents.js'
+import { McpStore } from './mcp/db.js'
 import type { NexusClient } from './nexus/nexusClient.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -1094,6 +1098,40 @@ export function startServer(
   // Cron API - for scheduled tasks management
   const cronApi = createCronApi(runtime.store.db, { cronService })
 
+  const mcpStore = new McpStore(runtime.store.db)
+  const mcpAdminApi = createMcpAdminApi({
+    mcpStore,
+    authService,
+    getUserName: (userId: string) => {
+      try { return authService.getUserName(userId) } catch { return undefined }
+    },
+    getUserDepartmentId: (userId: string) => {
+      try { const u = authService.getUserById(userId); return u?.departmentId ?? null } catch { return null }
+    },
+  })
+  const mcpUserApi = createMcpUserApi({
+    mcpStore,
+    authService,
+    getUserName: (userId: string) => {
+      try { return authService.getUserName(userId) } catch { return undefined }
+    },
+    getUserDepartmentId: (userId: string) => {
+      try { const u = authService.getUserById(userId); return u?.departmentId ?? null } catch { return null }
+    },
+    getUserByIdAndOrg: (userId: string, _orgId: string) => {
+      try {
+        const u = authService.getUserById(userId)
+        if (!u) return null
+        // For visibility filter we need role; use auth.role if querying self
+        return { role: 'user', departmentId: u.departmentId }
+      } catch { return null }
+    },
+    listDepartmentsByOrg: (orgId: string) => {
+      try { return authService.listDepartments(orgId).departments } catch { return [] }
+    },
+  })
+
+
   function refreshAuthProxyRules() {
     const ap = runtime.authProxy
     if (!ap) return
@@ -1561,7 +1599,8 @@ export function startServer(
       let auth = authenticateRequest(req, authService)
       if (!auth && req.method === 'GET') {
         const isSseBuildEvents = /^\/api\/v1\/wikis\/[^/]+\/build-events$/.test(pathname)
-        if (isSseBuildEvents) {
+        const isSseMcpEvents = pathname === '/api/v1/mcp/events'
+        if (isSseBuildEvents || isSseMcpEvents) {
           const queryToken = url.searchParams.get('token')
           if (queryToken) {
             try {
@@ -1575,6 +1614,8 @@ export function startServer(
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
+
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined
 
       if (req.method === 'GET' && pathname === '/api/v1/roles') {
         authService.requireScope(auth, 'admin:users')
@@ -3376,7 +3417,6 @@ export function startServer(
         }
 
         // Individual secret CRUD (enterprise + user)
-        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined
         const secretMatch = pathname.match(/^\/api\/v1\/secrets\/([^/]+)\/([^/]+)(?:\/(enable|disable))?$/)
         if (secretMatch) {
           const namespace = decodeURIComponent(secretMatch[1])
@@ -3459,6 +3499,178 @@ export function startServer(
             return
           }
         }
+      }
+
+      // ==================== MCP Management ====================
+
+      // SSE events endpoint (token query param auth handled above)
+      if (req.method === 'GET' && pathname === '/api/v1/mcp/events') {
+        handleMcpSseConnection(res, auth.orgId)
+        return
+      }
+
+      // Admin: list MCP servers
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-servers') {
+        const result = mcpAdminApi.listMcpServers(auth, {
+          scope: url.searchParams.get('scope') as any || undefined,
+          department_id: url.searchParams.get('department_id') || undefined,
+          status: url.searchParams.get('status') as any || undefined,
+          risk_level: url.searchParams.get('risk_level') as any || undefined,
+          mcp_type: url.searchParams.get('mcp_type') as any || undefined,
+          audit_enabled: url.searchParams.get('audit_enabled') === 'true' ? true : undefined,
+          bound_assistant: url.searchParams.get('bound_assistant') || undefined,
+          created_by: url.searchParams.get('created_by') || undefined,
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        }, clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: create MCP server
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-servers') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.createMcpServer(auth, body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // Admin: get/update/delete/test MCP server by ID
+      const mcpServerMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)$/)
+      if (mcpServerMatch) {
+        const serverId = mcpServerMatch[1]
+        if (req.method === 'GET') {
+          const result = mcpAdminApi.getMcpServer(auth, serverId)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          // Handle enable/disable via dedicated method
+          if (body.enabled !== undefined && Object.keys(body).length === 1) {
+            const result = mcpAdminApi.setMcpServerEnabled(auth, serverId, !!body.enabled, clientIp)
+            writeJson(res, result.success ? 200 : 404, result)
+          } else {
+            const result = mcpAdminApi.updateMcpServer(auth, serverId, body, clientIp)
+            writeJson(res, result.success ? 200 : 400, result)
+          }
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = mcpAdminApi.deleteMcpServer(auth, serverId, clientIp)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+      }
+
+      // Admin: test MCP connection
+      const mcpTestMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)\/test$/)
+      if (mcpTestMatch && req.method === 'POST') {
+        const result = await mcpAdminApi.testConnection(auth, mcpTestMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 404, result)
+        return
+      }
+
+      // Admin: MCP server audit logs
+      const mcpAuditMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)\/audit-logs$/)
+      if (mcpAuditMatch && req.method === 'GET') {
+        const result = mcpAdminApi.getServerAuditLogs(auth, mcpAuditMatch[1], {
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: get MCP policy
+      if (req.method === 'GET' && pathname === '/api/v1/tenant/mcp-policy') {
+        const result = mcpAdminApi.getMcpPolicy(auth)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: update MCP policy
+      if (req.method === 'PATCH' && pathname === '/api/v1/admin/mcp-policy') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.updateMcpPolicy(auth, body, clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: MCP audit logs
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-audit-logs') {
+        const result = mcpAdminApi.getAuditLogs(auth, {
+          mcp_server_id: url.searchParams.get('mcp_server_id') || undefined,
+          user_id: url.searchParams.get('user_id') || undefined,
+          action: url.searchParams.get('action') || undefined,
+          since: Number(url.searchParams.get('since')) || undefined,
+          until: Number(url.searchParams.get('until')) || undefined,
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: list/approve/reject approval requests (Phase 2)
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-approvals') {
+        const result = mcpAdminApi.listApprovalRequests(auth, url.searchParams.get('status') || undefined)
+        writeJson(res, 200, result)
+        return
+      }
+
+      const mcpApproveMatch = pathname.match(/^\/api\/v1\/admin\/mcp-approvals\/([^/]+)\/approve$/)
+      if (mcpApproveMatch && req.method === 'POST') {
+        const result = mcpAdminApi.approveRequest(auth, mcpApproveMatch[1], clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      const mcpRejectMatch = pathname.match(/^\/api\/v1\/admin\/mcp-approvals\/([^/]+)\/reject$/)
+      if (mcpRejectMatch && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.rejectRequest(auth, mcpRejectMatch[1], body.review_note || '', clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // User: list my MCP servers
+      if (req.method === 'GET' && pathname === '/api/v1/me/mcp-servers') {
+        const result = await mcpUserApi.listMyMcpServers(auth)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // User: create personal MCP (Phase 2)
+      if (req.method === 'POST' && pathname === '/api/v1/me/mcp-servers') {
+        const body = await readJsonBody(req)
+        const result = await mcpUserApi.createPersonalMcp(auth, body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // User: update/delete/test personal MCP (Phase 2)
+      const meMcpMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)$/)
+      if (meMcpMatch) {
+        const serverId = meMcpMatch[1]
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          const result = await mcpUserApi.updatePersonalMcp(auth, serverId, body, clientIp)
+          writeJson(res, result.success ? 200 : 400, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = await mcpUserApi.deletePersonalMcp(auth, serverId, clientIp)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+      }
+
+      const meMcpTestMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/test$/)
+      if (meMcpTestMatch && req.method === 'POST') {
+        const result = await mcpUserApi.testPersonalMcpConnection(auth, meMcpTestMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 404, result)
+        return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/settings/system') {
