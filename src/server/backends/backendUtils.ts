@@ -122,6 +122,12 @@ export function createStreamBackendHandle(
         child.stdin.write(data)
       }
     },
+    interrupt() {
+      if (child.killed) return
+      try {
+        process.kill(child.pid!, 'SIGINT')
+      } catch {}
+    },
     onStdoutLine(listener) {
       stdoutListeners.add(listener)
       return () => {

@@ -48,6 +48,7 @@ export type BackendHandle = {
   workDir: string
   runtime: SessionRuntimeInfo
   writeStdin: (data: string) => void
+  interrupt: () => void
   onStdoutLine: (listener: (line: string) => void) => () => void
   onStderrLine: (listener: (line: string) => void) => () => void
   onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => () => void

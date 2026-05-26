@@ -24,6 +24,7 @@ import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
 import type { TranscriptRenderMessage, WorkerThread } from "@/lib/agent-transcript";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
+import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 
 type ComposerIntent = "chat" | "plan" | "coordinator";
 type PendingPlanApproval = {
@@ -222,6 +223,10 @@ function ComposerPanel({
   const isHomeComposer = !hasActiveSession;
   const submitDisabled =
     (!value.trim() && attachments.length === 0) || loading || Boolean(readOnlyReason);
+  const [slashCommandFilter, setSlashCommandFilter] = React.useState<string | null>(null);
+  const [slashCommandIndex, setSlashCommandIndex] = React.useState(0);
+  const [subMenuCommand, setSubMenuCommand] = React.useState<string | null>(null);
+  const [subMenuIndex, setSubMenuIndex] = React.useState(0);
 
   React.useEffect(() => {
     pasteService.init();
@@ -371,6 +376,38 @@ function ComposerPanel({
       onDrop={handleDrop}
     >
       <div className="relative">
+        {slashCommandFilter && !isHomeComposer && !subMenuCommand && (
+          <SlashCommandMenu
+            filter={slashCommandFilter}
+            onSelect={(cmd) => {
+              const cmdKey = cmd.startsWith("/") ? cmd.slice(1) : cmd;
+              if (COMMANDS_WITH_ARGS[cmdKey]) {
+                setSubMenuCommand(cmdKey);
+                setSlashCommandFilter(null);
+                setSlashCommandIndex(0);
+                setSubMenuIndex(0);
+              } else {
+                onChange(cmd + " ");
+                setSlashCommandFilter(null);
+                setSlashCommandIndex(0);
+              }
+            }}
+            selectedIndex={slashCommandIndex}
+            onSetSelectedIndex={setSlashCommandIndex}
+          />
+        )}
+        {subMenuCommand && !isHomeComposer && COMMANDS_WITH_ARGS[subMenuCommand] && (
+          <SlashCommandSubMenu
+            commandName={subMenuCommand}
+            onSelect={(value) => {
+              onChange(`/${subMenuCommand} ${value} `);
+              setSubMenuCommand(null);
+              setSubMenuIndex(0);
+            }}
+            selectedIndex={subMenuIndex}
+            onSetSelectedIndex={setSubMenuIndex}
+          />
+        )}
         <Textarea
           placeholder={
             readOnlyReason
@@ -390,7 +427,12 @@ function ComposerPanel({
               )
           }
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => {
+            const newValue = event.target.value;
+            onChange(newValue);
+            const filter = getSlashCommandFilter(newValue, event.target.selectionStart ?? newValue.length);
+            setSlashCommandFilter(filter);
+          }}
           disabled={Boolean(readOnlyReason)}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-6 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
@@ -400,6 +442,82 @@ function ComposerPanel({
           )}
           rows={isHomeComposer ? 5 : 2}
           onKeyDown={(event) => {
+            if (subMenuCommand && COMMANDS_WITH_ARGS[subMenuCommand]) {
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setSubMenuIndex((prev) => Math.max(0, prev - 1));
+                return;
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setSubMenuIndex((prev) => prev + 1);
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                const options = COMMANDS_WITH_ARGS[subMenuCommand].optionList;
+                const idx = Math.min(subMenuIndex, options.length - 1);
+                if (options[idx]) {
+                  onChange(`/${subMenuCommand} ${options[idx].value} `);
+                  setSubMenuCommand(null);
+                  setSubMenuIndex(0);
+                }
+                return;
+              }
+              if (event.key === "Escape") {
+                setSubMenuCommand(null);
+                setSubMenuIndex(0);
+                return;
+              }
+              if (event.key === "Backspace" && !value.trim()) {
+                setSubMenuCommand(null);
+                setSubMenuIndex(0);
+                return;
+              }
+            }
+            if (slashCommandFilter) {
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setSlashCommandIndex((prev) => Math.max(0, prev - 1));
+                return;
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setSlashCommandIndex((prev) => prev + 1);
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                const query = slashCommandFilter.toLowerCase().slice(1);
+                const matches = SLASH_COMMANDS.filter(
+                  (cmd: { name: string; description: string }) =>
+                    cmd.name.toLowerCase().startsWith("/" + query) ||
+                    cmd.description.toLowerCase().includes(query)
+                );
+                const visible = matches.slice(0, 8);
+                const idx = Math.min(slashCommandIndex, visible.length - 1);
+                if (visible[idx]) {
+                  const cmdName = visible[idx].name;
+                  const cmdKey = cmdName.startsWith("/") ? cmdName.slice(1) : cmdName;
+                  if (COMMANDS_WITH_ARGS[cmdKey]) {
+                    setSubMenuCommand(cmdKey);
+                    setSlashCommandFilter(null);
+                    setSlashCommandIndex(0);
+                    setSubMenuIndex(0);
+                  } else {
+                    onChange(cmdName + " ");
+                    setSlashCommandFilter(null);
+                    setSlashCommandIndex(0);
+                  }
+                }
+                return;
+              }
+              if (event.key === "Escape") {
+                setSlashCommandFilter(null);
+                setSlashCommandIndex(0);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               if (submitDisabled) {
                 return;
@@ -410,6 +528,39 @@ function ComposerPanel({
           }}
           onPaste={handlePaste}
         />
+
+        {slashCommandFilter && isHomeComposer && !subMenuCommand && (
+          <SlashCommandMenu
+            filter={slashCommandFilter}
+            onSelect={(cmd) => {
+              const cmdKey = cmd.startsWith("/") ? cmd.slice(1) : cmd;
+              if (COMMANDS_WITH_ARGS[cmdKey]) {
+                setSubMenuCommand(cmdKey);
+                setSlashCommandFilter(null);
+                setSlashCommandIndex(0);
+                setSubMenuIndex(0);
+              } else {
+                onChange(cmd + " ");
+                setSlashCommandFilter(null);
+                setSlashCommandIndex(0);
+              }
+            }}
+            selectedIndex={slashCommandIndex}
+            onSetSelectedIndex={setSlashCommandIndex}
+          />
+        )}
+        {subMenuCommand && isHomeComposer && COMMANDS_WITH_ARGS[subMenuCommand] && (
+          <SlashCommandSubMenu
+            commandName={subMenuCommand}
+            onSelect={(value) => {
+              onChange(`/${subMenuCommand} ${value} `);
+              setSubMenuCommand(null);
+              setSubMenuIndex(0);
+            }}
+            selectedIndex={subMenuIndex}
+            onSetSelectedIndex={setSubMenuIndex}
+          />
+        )}
 
         {readOnlyReason && (
           <div className="px-4 pb-2 text-xs text-amber-600">
@@ -485,11 +636,11 @@ function ComposerPanel({
               {loading && (
                 <Button
                   variant="outline"
-                  size="icon"
-                  className="h-9 w-9 rounded-full"
+                  className="h-9 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground"
                   onClick={onStop}
                 >
-                  <Square className="h-3.5 w-3.5" />
+                  <Square className="h-3 w-3" />
+                  <span className="ml-1">停止</span>
                 </Button>
               )}
 

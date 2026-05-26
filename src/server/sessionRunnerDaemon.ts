@@ -319,6 +319,11 @@ export class SessionRunnerDaemon {
         this.#handle.writeStdin(parsed.data)
       }
     }
+    if (parsed.type === 'interrupt') {
+      if (this.#handle) {
+        this.#handle.interrupt()
+      }
+    }
   }
 
   #broadcast(message: RunnerServerMessage): void {

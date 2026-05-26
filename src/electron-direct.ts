@@ -249,6 +249,7 @@ export class ClaudeSession {
   #processing = false
   #disposed = false
   #forkContentReplacementsSeeded = false
+  #abortController: AbortController | null = null
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -466,11 +467,17 @@ export class ClaudeSession {
         runInSessionContext(() => this.#getEngine()),
       )
 
+      // Reset the engine's abort controller from any previous interrupt so
+      // this turn can run cleanly.
+      engine.resetAbort()
+
       const prompt = typeof text === 'string' ? text : text as any
-      const abortController = signal
-        ? (() => { const ac = new AbortController(); signal.addEventListener('abort', () => ac.abort()); return ac })()
-        : undefined
-      const waitSignal = abortController?.signal ?? signal
+      const internalAbort = new AbortController()
+      this.#abortController = internalAbort
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, internalAbort.signal])
+        : internalAbort.signal
+      const waitSignal = combinedSignal
       let finalResult: SDKMessage | undefined
 
       const isCurrentSessionMainThreadCommand = (
@@ -587,6 +594,7 @@ export class ClaudeSession {
       )
     } finally {
       this.#processing = false
+      this.#abortController = null
       this.#flush()
     }
   }
@@ -605,6 +613,17 @@ export class ClaudeSession {
     const activationKey = `${this.sessionId}:${this.#opts.projectDir ?? ''}`
     if (activeSessionStorageKey === activationKey) {
       activeSessionStorageKey = null
+    }
+  }
+
+  /** 中止正在进行的请求 */
+  abort() {
+    if (this.#abortController) {
+      this.#abortController.abort()
+      this.#abortController = null
+    }
+    if (this.#engine) {
+      this.#engine.interrupt()
     }
   }
 

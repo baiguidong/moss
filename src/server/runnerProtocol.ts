@@ -10,6 +10,9 @@ export type RunnerClientMessage =
   | {
       type: 'ping'
     }
+  | {
+      type: 'interrupt'
+    }
 
 export type RunnerServerMessage =
   | {

@@ -1398,6 +1398,13 @@ export function startServer(
                 typeof data === 'string'
                   ? data
                   : Buffer.from(data).toString('utf8')
+              try {
+                const parsed = jsonParse(text) as Record<string, unknown>
+                if (parsed.type === 'control_request' && (parsed.request as Record<string, unknown>)?.subtype === 'interrupt') {
+                  sendToRunner({ type: 'interrupt' })
+                  return
+                }
+              } catch {}
               sendToRunner({
                 type: 'stdin',
                 data: text.endsWith('\n') ? text : `${text}\n`,

@@ -45,10 +45,152 @@ import { buildPluginCommandTelemetryFields } from '../telemetry/pluginTelemetry.
 import { getAssistantMessageContentLength } from '../tokens.js';
 import { createAgentId } from '../uuid.js';
 import { getWorkload } from '../workloadContext.js';
+import { getDoctorDiagnostic } from '../doctorDiagnostic.js';
+import { getGlobalConfig } from '../config.js';
+import { getCwd } from '../cwd.js';
+import { getInstalledSkills } from '../../server/skillStore.js';
 import type { ProcessUserInputBaseResult, ProcessUserInputContext } from './processUserInput.js';
 type SlashCommandResult = ProcessUserInputBaseResult & {
   command: Command;
 };
+
+const HELP_CATEGORIES: Record<string, string[]> = {
+  'Basic': ['help', 'clear', 'compact', 'status', 'cost', 'version', 'exit', 'quit'],
+  'Session': ['resume', 'branch', 'rename', 'session', 'tag', 'export', 'copy', 'share'],
+  'Model & Effort': ['model', 'effort', 'fast', 'thinkback-play'],
+  'Configuration': ['config', 'mcp', 'permissions', 'context', 'memory', 'add-dir', 'theme', 'color', 'output-style', 'terminal-setup', 'privacy-settings'],
+  'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'commit', 'plan', 'ultraplan', 'btw', 'tasks', 'agents', 'plugin'],
+  'System': ['login', 'logout', 'upgrade', 'install', 'install-github-app', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-control', 'remote-env', 'sandbox', 'rate-limit-options', 'extra-usage', 'usage', 'web-setup'],
+}
+
+function formatHelpText(commands: Command[]): string {
+  const cmdMap = new Map(commands.filter(c => !c.isHidden).map(c => [c.name, c]))
+  const seen = new Set<string>()
+  const sections: string[] = []
+
+  for (const [category, names] of Object.entries(HELP_CATEGORIES)) {
+    const items: string[] = []
+    for (const name of names) {
+      const cmd = cmdMap.get(name)
+      if (!cmd) continue
+      seen.add(name)
+      const desc = cmd.description || ''
+      items.push(`  /${name.padEnd(20)}${desc}`)
+    }
+    if (items.length === 0) continue
+    sections.push(`${category}:\n${items.join('\n')}`)
+  }
+
+  const remaining = commands
+    .filter(c => !c.isHidden && !seen.has(c.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+  if (remaining.length > 0) {
+    const items = remaining.map(c => `  /${c.name.padEnd(20)}${c.description || ''}`)
+    sections.push(`Other:\n${items.join('\n')}`)
+  }
+
+  return sections.join('\n\n')
+}
+
+async function formatDoctorText(): Promise<string> {
+  try {
+    const diag = await getDoctorDiagnostic()
+    const lines: string[] = []
+    lines.push('Doctor Diagnostics:')
+    lines.push('')
+    lines.push(`  Version:           ${diag.version}`)
+    lines.push(`  Installation:      ${diag.installationType}`)
+    if (diag.packageManager) lines.push(`  Package manager:  ${diag.packageManager}`)
+    lines.push(`  Auto-updates:     ${diag.autoUpdates}`)
+    lines.push(`  ripgrep:          ${diag.ripgrepStatus.working ? 'OK' : 'Not working'} (${diag.ripgrepStatus.mode})`)
+    if (diag.warnings.length > 0) {
+      lines.push('')
+      lines.push('Warnings:')
+      for (const w of diag.warnings) {
+        lines.push(`  ⚠ ${w.issue}`)
+        if (w.fix) lines.push(`    → ${w.fix}`)
+      }
+    }
+    if (diag.recommendation) {
+      lines.push('')
+      lines.push(`Recommendation: ${diag.recommendation.split('\n')[0]}`)
+    }
+    return lines.join('\n')
+  } catch (e) {
+    return `Doctor: failed to run diagnostics — ${String(e)}`
+  }
+}
+
+async function formatStatusText(context: ProcessUserInputContext): Promise<string> {
+  const lines: string[] = []
+  lines.push('Status:')
+  try {
+    const state = context.getAppState()
+    lines.push(`  Model:  ${state.mainLoopModel ?? 'default'}`)
+    lines.push(`  CWD:    ${getCwd()}`)
+    const config = getGlobalConfig()
+    lines.push(`  Theme:  ${config?.theme ?? 'default'}`)
+  } catch {
+    lines.push('  (unable to read state)')
+  }
+  lines.push('')
+  lines.push('Tip: For detailed diagnostics, use /doctor')
+  return lines.join('\n')
+}
+
+async function formatSkillsText(): Promise<string> {
+  try {
+    const skills = await getInstalledSkills()
+    if (skills.length === 0) {
+      return 'No skills installed.\n\nInstall skills with: /skills install <name>'
+    }
+    const lines: string[] = ['Installed skills:', '']
+    for (const skill of skills) {
+      const status = skill.enabled ? '' : ' (disabled)'
+      lines.push(`  ${skill.displayName}${status}`)
+      if (skill.description) lines.push(`    ${skill.description}`)
+    }
+    return lines.join('\n')
+  } catch (e) {
+    return `Skills: failed to list — ${String(e)}`
+  }
+}
+
+function formatMcpText(context: ProcessUserInputContext): string {
+  const mcpClients = context.options.mcpClients
+  if (!mcpClients || mcpClients.length === 0) {
+    return 'No MCP servers configured.\n\nAdd a server with: /mcp add <name>'
+  }
+  const lines: string[] = ['MCP servers:', '']
+  for (const client of mcpClients) {
+    const name = client.name || 'unknown'
+    const status = client.connected ? '✓' : '✗'
+    lines.push(`  ${status} ${name}`)
+  }
+  return lines.join('\n')
+}
+
+function formatConfigText(): string {
+  try {
+    const config = getGlobalConfig()
+    const lines: string[] = ['Current configuration:', '']
+    lines.push(`  Theme:            ${config.theme ?? 'default'}`)
+    lines.push(`  Auto-updates:     ${config.autoUpdates === false ? 'disabled' : 'enabled'}`)
+    lines.push(`  Verbose:          ${config.verbose ? 'on' : 'off'}`)
+    lines.push(`  Editor mode:      ${config.editorMode ?? 'default'}`)
+    if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
+      lines.push(`  MCP servers:      ${Object.keys(config.mcpServers).join(', ')}`)
+    }
+    if (config.installMethod) {
+      lines.push(`  Install method:   ${config.installMethod}`)
+    }
+    lines.push('')
+    lines.push('Use /config in terminal for interactive settings.')
+    return lines.join('\n')
+  } catch (e) {
+    return `Config: failed to read configuration — ${String(e)}`
+  }
+}
 
 // Poll interval and deadline for MCP settle before launching a background
 // forked subagent. MCP servers typically connect within 1-3s of startup;
@@ -331,6 +473,32 @@ export async function processSlashCommand(inputString: string, precedingInputBlo
 
   // Check if it's a real command before processing
   if (!hasCommand(commandName, context.options.commands)) {
+    // If the command name is a known built-in but was filtered out of the
+    // available list (e.g. local-jsx commands in headless/non-interactive mode),
+    // generate a text-based fallback instead of "Unknown skill".
+    if (builtInCommandNames().has(commandName) && context.options.isNonInteractiveSession) {
+      let fallbackText: string
+      if (commandName === 'help' && context.options.commands) {
+        fallbackText = formatHelpText(context.options.commands)
+      } else if (commandName === 'doctor') {
+        fallbackText = await formatDoctorText()
+      } else if (commandName === 'status') {
+        fallbackText = await formatStatusText(context)
+      } else if (commandName === 'skills') {
+        fallbackText = await formatSkillsText()
+      } else if (commandName === 'mcp') {
+        fallbackText = formatMcpText(context)
+      } else if (commandName === 'config') {
+        fallbackText = formatConfigText()
+      } else {
+        fallbackText = `/${commandName} is not available in this mode.`
+      }
+      return {
+        messages: [createCommandInputMessage(`<local-command-stdout>${fallbackText}</local-command-stdout>`)],
+        shouldQuery: false,
+        resultText: fallbackText,
+      }
+    }
     // Check if this looks like a command name vs a file path or other input
     // Also check if it's an actual file path that exists
     let isFilePath = false;
@@ -344,7 +512,9 @@ export async function processSlashCommand(inputString: string, precedingInputBlo
       logEvent('tengu_input_slash_invalid', {
         input: commandName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
-      const unknownMessage = `Unknown skill: ${commandName}`;
+      const unknownMessage = builtInCommandNames().has(commandName)
+        ? `/${commandName} is not available in this mode.`
+        : `Unknown skill: ${commandName}`;
       return {
         messages: [createSyntheticUserCaveatMessage(), ...attachmentMessages, createUserMessage({
           content: prepareUserContent({
@@ -550,6 +720,87 @@ async function getMessagesForSlashCommand(commandName: string, args: string, set
     switch (command.type) {
       case 'local-jsx':
         {
+          // Local-JSX commands render interactive CLI components (Ink/React).
+          // In non-interactive sessions (e.g. desktop UI), interactive JSX
+          // cannot render. We call onDone immediately to capture any text
+          // result, and auto-dismiss interactive JSX after a short timeout.
+          if (context.options.isNonInteractiveSession) {
+            return new Promise<SlashCommandResult>(resolve => {
+              let resolved = false
+              const userMessage = createUserMessage({
+                content: prepareUserContent({
+                  inputString: formatCommandInput(command, args),
+                  precedingInputBlocks
+                }),
+                uuid
+              })
+
+              const onDone = (result?: string, options?: {
+                display?: CommandResultDisplay
+                shouldQuery?: boolean
+                metaMessages?: string[]
+                nextInput?: string
+                submitNextInput?: boolean
+              }) => {
+                if (resolved) return
+                resolved = true
+                const text = result?.trim()
+                void resolve({
+                  messages: text
+                    ? [userMessage, createCommandInputMessage(`<local-command-stdout>${text}</local-command-stdout>`)]
+                    : [userMessage, createCommandInputMessage(`<local-command-stdout>${command.description || `/${getCommandName(command)}`} completed.</local-command-stdout>`)],
+                  shouldQuery: false,
+                  command,
+                  nextInput: options?.nextInput,
+                  submitNextInput: options?.submitNextInput
+                })
+              }
+
+void command.load().then(mod => mod.call(onDone, {
+                ...context,
+                canUseTool
+              }, args)).then(async jsx => {
+                // If onDone was called during mod.call() (early-exit path),
+                // we already resolved above. If JSX was returned without
+                // onDone being called, the command shows an interactive UI
+                // that can't render in non-interactive mode — auto-dismiss
+                // and generate a text-based fallback.
+                if (resolved) return
+                // Generate text fallback for interactive commands
+                let fallbackText: string
+                const commandName = getCommandName(command)
+                const commands = context.options.commands
+                if (commandName === 'help' && commands) {
+                  fallbackText = formatHelpText(commands)
+                } else if (commandName === 'doctor') {
+                  fallbackText = await formatDoctorText()
+                } else if (commandName === 'status') {
+                  fallbackText = await formatStatusText(context)
+                } else if (commandName === 'skills') {
+                  fallbackText = await formatSkillsText()
+                } else if (commandName === 'mcp') {
+                  fallbackText = formatMcpText(context)
+                } else if (commandName === 'config') {
+                  fallbackText = formatConfigText()
+                } else {
+                  fallbackText = command.description || `/${commandName} completed.`
+                }
+                void resolve({
+                  messages: [userMessage, createCommandInputMessage(`<local-command-stdout>${fallbackText}</local-command-stdout>`)],
+                  shouldQuery: false,
+                  command
+                })
+              }).catch(e => {
+                if (resolved) return
+                logError(e)
+                void resolve({
+                  messages: [userMessage, createCommandInputMessage(`<local-command-stderr>${String(e)}</local-command-stderr>`)],
+                  shouldQuery: false,
+                  command
+                })
+              })
+            })
+          }
           return new Promise<SlashCommandResult>(resolve => {
             let doneWasCalled = false;
             const onDone = (result?: string, options?: {
@@ -611,14 +862,6 @@ async function getMessagesForSlashCommand(commandName: string, args: string, set
               canUseTool
             }, args)).then(jsx => {
               if (jsx == null) return;
-              if (context.options.isNonInteractiveSession) {
-                void resolve({
-                  messages: [],
-                  shouldQuery: false,
-                  command
-                });
-                return;
-              }
               // Guard: if onDone fired during mod.call() (early-exit path
               // that calls onDone then returns JSX), skip setToolJSX. This
               // chain is fire-and-forget — the outer Promise resolves when

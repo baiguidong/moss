@@ -1165,6 +1165,11 @@ export class QueryEngine {
     this.abortController.abort()
   }
 
+  /** Reset the abort controller so the engine can be reused after an interrupt. */
+  resetAbort(): void {
+    this.abortController = createAbortController()
+  }
+
   getMessages(): readonly Message[] {
     return this.mutableMessages
   }
