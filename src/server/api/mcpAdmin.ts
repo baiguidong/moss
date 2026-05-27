@@ -1,7 +1,7 @@
 import type { McpStore } from '../mcp/db.js'
 import type { AuthContext } from '../auth/token.js'
 import type { AuthService } from '../auth/service.js'
-import type { McpServerInput, McpPolicyInput, McpServerListFilter, McpAuditLogFilter, McpTemplateListFilter } from '../mcp/types.js'
+import type { McpServerInput, McpPolicyInput, McpServerListFilter, McpAuditLogFilter, McpTemplateListFilter, McpTemplateInput } from '../mcp/types.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
 import { broadcastMcpEvent } from './mcpEvents.js'
 
@@ -77,6 +77,25 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
     } catch {
       // Audit log failure should not block operations
     }
+  }
+
+  function validateConfigJson(configJson: string | null): { ok: boolean; message?: string } {
+    if (!configJson) return { ok: true }
+    let parsed: unknown
+    try { parsed = JSON.parse(configJson) } catch { return { ok: false, message: 'config_json 不是合法 JSON' } }
+    if (typeof parsed !== 'object' || parsed === null) return { ok: true }
+    const items = (parsed as Record<string, unknown>).user_config_items
+    if (items === undefined) return { ok: true }
+    if (!Array.isArray(items)) return { ok: false, message: 'user_config_items 必须是数组' }
+    const keyRegex = /^[A-Za-z0-9_-]+$/
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i] as Record<string, unknown> | undefined
+      if (!item || typeof item !== 'object') return { ok: false, message: `user_config_items[${i}] 必须是对象` }
+      if (!item.name || typeof item.name !== 'string') return { ok: false, message: `user_config_items[${i}].name 必填` }
+      if (!item.target || (item.target !== 'env' && item.target !== 'headers')) return { ok: false, message: `user_config_items[${i}].target 必须是 env 或 headers` }
+      if (!item.key || typeof item.key !== 'string' || !keyRegex.test(item.key as string)) return { ok: false, message: `user_config_items[${i}].key 必须匹配 ${keyRegex.source}` }
+    }
+    return { ok: true }
   }
 
   const api = {
@@ -330,6 +349,82 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       return { success: true, data: template }
     },
 
+    createTemplate(auth: AuthContext, input: McpTemplateInput, ip?: string) {
+      authService.requireScope(auth, 'admin:mcp:write')
+      if (!input.name?.trim()) {
+        const err = new Error('模板名称不能为空')
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
+      if (!input.icon?.trim()) {
+        const err = new Error('模板图标不能为空')
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
+      const existing = mcpStore.getTemplateByName(auth.orgId, input.name)
+      if (existing) {
+        const err = new Error('模板名称已存在')
+        Object.assign(err, { statusCode: 409 })
+        throw err
+      }
+      if (input.config_json) {
+        const validation = validateConfigJson(input.config_json)
+        if (!validation.ok) {
+          const err = new Error(validation.message!)
+          Object.assign(err, { statusCode: 400 })
+          throw err
+        }
+      }
+      const template = mcpStore.createTemplate(auth.orgId, input, auth.userId)
+      writeAudit(auth.orgId, auth.userId, 'create_template', template.id, template.name, undefined, ip)
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true, data: template }
+    },
+
+    updateTemplate(auth: AuthContext, id: string, input: Partial<McpTemplateInput>, ip?: string) {
+      authService.requireScope(auth, 'admin:mcp:write')
+      const existing = mcpStore.getTemplate(auth.orgId, id)
+      if (!existing) {
+        const err = new Error('模板不存在')
+        Object.assign(err, { statusCode: 404 })
+        throw err
+      }
+      if (input.name !== undefined && input.name !== existing.name) {
+        const nameConflict = mcpStore.getTemplateByName(auth.orgId, input.name)
+        if (nameConflict) {
+          const err = new Error('模板名称已存在')
+          Object.assign(err, { statusCode: 409 })
+          throw err
+        }
+      }
+      if (input.config_json !== undefined) {
+        const validation = validateConfigJson(input.config_json)
+        if (!validation.ok) {
+          const err = new Error(validation.message!)
+          Object.assign(err, { statusCode: 400 })
+          throw err
+        }
+      }
+      const template = mcpStore.updateTemplate(auth.orgId, id, input)
+      writeAudit(auth.orgId, auth.userId, 'update_template', template.id, template.name, { updated_fields: Object.keys(input).filter(k => (input as Record<string, unknown>)[k] !== undefined) }, ip)
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true, data: template }
+    },
+
+    deleteTemplate(auth: AuthContext, id: string, ip?: string) {
+      authService.requireScope(auth, 'admin:mcp:write')
+      const existing = mcpStore.getTemplate(auth.orgId, id)
+      if (!existing) {
+        const err = new Error('模板不存在')
+        Object.assign(err, { statusCode: 404 })
+        throw err
+      }
+      mcpStore.deleteTemplate(auth.orgId, id)
+      writeAudit(auth.orgId, auth.userId, 'delete_template', id, existing.name, undefined, ip)
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true }
+    },
+
     installTemplate(auth: AuthContext, templateId: string, overrides?: Partial<McpServerInput>, ip?: string) {
       authService.requireScope(auth, 'admin:mcp:write')
       const template = mcpStore.getTemplate(auth.orgId, templateId)
@@ -338,7 +433,7 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       // Build MCP server input from template
       const serverInput: McpServerInput = {
         name: overrides?.name ?? template.name,
-        display_name: overrides?.display_name ?? template.display_name,
+        display_name: overrides?.display_name ?? template.name,
         description: overrides?.description ?? template.description,
         icon: overrides?.icon ?? template.icon,
         category: overrides?.category ?? template.category,
@@ -353,6 +448,7 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
         env_json: overrides?.env_json ?? template.env_json,
         timeout_ms: overrides?.timeout_ms ?? template.timeout_ms,
         auth_type: overrides?.auth_type ?? template.auth_type,
+        template_id: templateId,
       }
 
       // Check name uniqueness

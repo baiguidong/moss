@@ -46,6 +46,7 @@ export interface McpServer {
   updated_by: string | null
   created_at: number
   updated_at: number
+  template_id: string | null
 }
 
 export interface McpPolicy {
@@ -104,9 +105,8 @@ export interface McpTemplate {
   id: string
   org_id: string
   name: string
-  display_name: string | null
   description: string | null
-  icon: string | null
+  icon: string
   category: string | null
   tags_json: string[] | null
   mcp_type: 'http' | 'sse' | 'stdio'
@@ -127,6 +127,16 @@ export interface McpTemplate {
 }
 
 export type McpServerFormData = Partial<Omit<McpServer, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'status' | 'last_invocation_at'>>
+
+export type McpTemplateFormData = Partial<Omit<McpTemplate, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'downloads' | 'rating'>>
+
+export interface UserConfigItem {
+  name: string
+  target: 'env' | 'headers'
+  key: string
+  description?: string
+  required?: boolean
+}
 
 export interface McpConfigParseResult {
   success: boolean
@@ -255,6 +265,35 @@ export async function fetchMcpTemplate(id: string): Promise<McpTemplate> {
 export async function installMcpTemplate(id: string, overrides?: Partial<McpServerFormData>): Promise<McpServer> {
   const res = await authClient.post<Envelope<McpServer>>(`/api/v1/admin/mcp-templates/${id}/install`, overrides ?? {})
   return res.data
+}
+
+export async function createMcpTemplate(data: McpTemplateFormData): Promise<McpTemplate> {
+  const res = await authClient.post<Envelope<McpTemplate>>('/api/v1/admin/mcp-templates', data)
+  return res.data
+}
+
+export async function updateMcpTemplate(id: string, data: McpTemplateFormData): Promise<McpTemplate> {
+  const res = await authClient.patch<Envelope<McpTemplate>>(`/api/v1/admin/mcp-templates/${id}`, data)
+  return res.data
+}
+
+export async function deleteMcpTemplate(id: string): Promise<void> {
+  await authClient.delete(`/api/v1/admin/mcp-templates/${id}`)
+}
+
+// ===== User Config API =====
+
+export async function fetchUserConfig(serverId: string): Promise<{ schema: UserConfigItem[]; values: Record<string, string> }> {
+  const res = await authClient.get<Envelope<{ schema: UserConfigItem[]; values: Record<string, string> }>>(`/api/v1/me/mcp-servers/${serverId}/user-config`)
+  return res.data
+}
+
+export async function setUserConfigValue(serverId: string, key: string, value: string): Promise<void> {
+  await authClient.put(`/api/v1/me/mcp-servers/${serverId}/user-config/${encodeURIComponent(key)}`, { value })
+}
+
+export async function deleteUserConfigValue(serverId: string, key: string): Promise<void> {
+  await authClient.delete(`/api/v1/me/mcp-servers/${serverId}/user-config/${encodeURIComponent(key)}`)
 }
 
 // ===== MCP 配置解析 =====

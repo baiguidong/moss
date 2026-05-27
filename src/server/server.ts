@@ -90,6 +90,7 @@ import { createCronApi } from './api/cron.js'
 import { CronService } from './services/cron/CronService.js'
 import { createMcpAdminApi } from './api/mcpAdmin.js'
 import { createMcpUserApi } from './api/mcpUser.js'
+import { createMcpUserConfigApi, type McpUserConfigApi } from './api/mcpUserConfig.js'
 import { handleMcpSseConnection, broadcastMcpEvent } from './api/mcpEvents.js'
 import { McpStore } from './mcp/db.js'
 import type { NexusClient } from './nexus/nexusClient.js'
@@ -1099,6 +1100,20 @@ export function startServer(
   const cronApi = createCronApi(runtime.store.db, { cronService })
 
   const mcpStore = new McpStore(runtime.store.db)
+  const mcpUserConfigApi = nexusClient ? createMcpUserConfigApi({
+    nexusClient,
+    mcpStore,
+    getUserByIdAndOrg: (userId: string, _orgId: string) => {
+      try {
+        const u = authService.getUserById(userId)
+        if (!u) return null
+        return { role: 'user', departmentId: u.departmentId }
+      } catch { return null }
+    },
+    listDepartmentsByOrg: (orgId: string) => {
+      try { return authService.listDepartments(orgId).departments } catch { return [] }
+    },
+  }) : null
   const mcpAdminApi = createMcpAdminApi({
     mcpStore,
     authService,
@@ -3669,6 +3684,31 @@ export function startServer(
         return
       }
 
+      // Template CRUD: create
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-templates') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.createTemplate(auth, body as any, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // Template CRUD: update / delete
+      const mcpTemplateUpdateMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)$/)
+      if (mcpTemplateUpdateMatch) {
+        const templateId = mcpTemplateUpdateMatch[1]
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          const result = mcpAdminApi.updateTemplate(auth, templateId, body as any, clientIp)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = mcpAdminApi.deleteTemplate(auth, templateId, clientIp)
+          writeJson(res, 200, result)
+          return
+        }
+      }
+
       // MCP Templates: install (create MCP from template)
       const mcpTemplateInstallMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)\/install$/)
       if (mcpTemplateInstallMatch && req.method === 'POST') {
@@ -3715,6 +3755,37 @@ export function startServer(
         const result = await mcpUserApi.testPersonalMcpConnection(auth, meMcpTestMatch[1], clientIp)
         writeJson(res, result.success ? 200 : 404, result)
         return
+      }
+
+      // User config routes
+      const userConfigMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/user-config(?:\/([^/]+))?$/)
+      if (userConfigMatch) {
+        if (!mcpUserConfigApi) {
+          writeJson(res, 503, { error: { code: 'user_config_unavailable', message: '用户配置功能当前不可用' } })
+          return
+        }
+        const serverId = userConfigMatch[1]
+        const configKey = userConfigMatch[2]
+        if (req.method === 'GET' && !configKey) {
+          const result = await mcpUserConfigApi.listForServer(auth, serverId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT' && configKey) {
+          const body = await readJsonBody(req) as { value?: string }
+          if (!body || typeof body.value !== 'string') {
+            writeJson(res, 400, { error: { code: 'bad_request', message: '请求体必须包含 value 字段' } })
+            return
+          }
+          const result = await mcpUserConfigApi.setValue(auth, serverId, configKey, body.value)
+          writeJson(res, result.success ? 200 : 400, result)
+          return
+        }
+        if (req.method === 'DELETE' && configKey) {
+          const result = await mcpUserConfigApi.deleteValue(auth, serverId, configKey)
+          writeJson(res, 200, result)
+          return
+        }
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/settings/system') {

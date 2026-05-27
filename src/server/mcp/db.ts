@@ -55,6 +55,7 @@ function mapMcpServer(row: SqlRow): McpServer {
     status: (row.status as string) as McpServer['status'],
     enabled: Number(row.enabled) === 1,
     last_invocation_at: row.last_invocation_at != null ? Number(row.last_invocation_at) : null,
+    template_id: row.template_id ?? null as string | null,
     created_by: row.created_by as string,
     updated_by: row.updated_by as string | null,
     created_at: Number(row.created_at),
@@ -131,9 +132,8 @@ function mapMcpTemplate(row: SqlRow): McpTemplate {
     id: row.id as string,
     org_id: row.org_id as string,
     name: row.name as string,
-    display_name: row.display_name as string | null,
     description: row.description as string | null,
-    icon: row.icon as string | null,
+    icon: row.icon as string,
     category: row.category as string | null,
     tags_json: parseNullableJson(row.tags_json) as string[] | null,
     mcp_type: (row.mcp_type as string) as McpTemplate['mcp_type'],
@@ -294,9 +294,8 @@ export class McpStore {
         id TEXT PRIMARY KEY,
         org_id TEXT NOT NULL,
         name TEXT NOT NULL,
-        display_name TEXT,
         description TEXT,
-        icon TEXT,
+        icon TEXT NOT NULL,
         category TEXT,
         tags_json TEXT,
         mcp_type TEXT NOT NULL DEFAULT 'http',
@@ -320,6 +319,9 @@ export class McpStore {
       CREATE INDEX IF NOT EXISTS idx_mcp_templates_category ON mcp_templates(org_id, category);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_templates_org_name ON mcp_templates(org_id, name);
     `)
+
+    // Migration: add template_id column to mcp_servers
+    try { this.db.exec('ALTER TABLE mcp_servers ADD COLUMN template_id TEXT') } catch { /* column already exists */ }
   }
 
   // ==================== MCP Server CRUD ====================
@@ -413,6 +415,11 @@ export class McpStore {
     return row ? mapMcpServer(row) : null
   }
 
+  getTemplateByName(orgId: string, name: string): McpTemplate | null {
+    const row = this.db.prepare('SELECT * FROM mcp_templates WHERE org_id = ? AND name = ?').get(orgId, name) as SqlRow | undefined
+    return row ? mapMcpTemplate(row) : null
+  }
+
   createMcpServer(orgId: string, input: McpServerInput, createdBy: string): McpServer {
     const ts = now()
     const id = randomUUID()
@@ -427,6 +434,7 @@ export class McpStore {
         allow_outbound_network, allow_scheduled_task, audit_request, audit_response_summary,
         redact_sensitive_fields, allow_user_disable,
         status, enabled,
+        template_id,
         created_by, updated_by, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -438,6 +446,7 @@ export class McpStore {
         ?, ?, ?, ?,
         ?, ?,
         ?, 1,
+        ?,
         ?, NULL, ?, ?
       )
     `).run(
@@ -462,6 +471,7 @@ export class McpStore {
       input.redact_sensitive_fields ? 1 : 0,
       input.allow_user_disable !== false ? 1 : 0,
       'pending',
+      input.template_id ?? null,
       createdBy, ts, ts,
     )
     return this.getMcpServer(orgId, id)!
@@ -863,9 +873,9 @@ export class McpStore {
       params.push(filter.category)
     }
     if (filter?.search) {
-      conditions.push('(display_name LIKE ? OR description LIKE ? OR name LIKE ?)')
+      conditions.push('(name LIKE ? OR description LIKE ?)')
       const term = `%${filter.search}%`
-      params.push(term, term, term)
+      params.push(term, term)
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`
@@ -897,18 +907,18 @@ export class McpStore {
     const id = randomUUID()
     this.db.prepare(`
       INSERT INTO mcp_templates (
-        id, org_id, name, display_name, description, icon, category, tags_json,
+        id, org_id, name, description, icon, category, tags_json,
         mcp_type, url, command, args_json, env_json, timeout_ms, auth_type,
         scope, risk_level, config_json,
         created_by, created_at, updated_at
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?
       )
     `).run(
-      id, orgId, input.name, input.display_name ?? null, input.description ?? null,
+      id, orgId, input.name, input.description ?? null,
       input.icon ?? null, input.category ?? null,
       input.tags_json ? JSON.stringify(input.tags_json) : null,
       input.mcp_type, input.url ?? null, input.command ?? null,
@@ -926,6 +936,45 @@ export class McpStore {
       'DELETE FROM mcp_templates WHERE org_id = ? AND id = ?'
     ).run(orgId, id)
     return result.changes > 0
+  }
+
+  updateTemplate(orgId: string, id: string, input: Partial<McpTemplateInput>): McpTemplate {
+    const existing = this.getTemplate(orgId, id)
+    if (!existing) throw new Error('Template not found')
+
+    const sets: string[] = []
+    const params: unknown[] = []
+
+    const setIfDefined = (col: string, val: unknown) => {
+      if (val !== undefined) { sets.push(`${col} = ?`); params.push(val) }
+    }
+
+    setIfDefined('name', input.name)
+    setIfDefined('description', input.description ?? null)
+    setIfDefined('icon', input.icon ?? null)
+    setIfDefined('category', input.category ?? null)
+    if (input.tags_json !== undefined) { sets.push('tags_json = ?'); params.push(input.tags_json ? JSON.stringify(input.tags_json) : null) }
+    setIfDefined('mcp_type', input.mcp_type)
+    setIfDefined('url', input.url ?? null)
+    setIfDefined('command', input.command ?? null)
+    setIfDefined('args_json', input.args_json ?? null)
+    setIfDefined('env_json', input.env_json ?? null)
+    setIfDefined('timeout_ms', input.timeout_ms)
+    setIfDefined('auth_type', input.auth_type)
+    setIfDefined('scope', input.scope)
+    setIfDefined('risk_level', input.risk_level)
+    setIfDefined('config_json', input.config_json ?? null)
+
+    sets.push('updated_at = ?')
+    params.push(now())
+
+    params.push(orgId, id)
+
+    this.db.prepare(
+      `UPDATE mcp_templates SET ${sets.join(', ')} WHERE org_id = ? AND id = ?`
+    ).run(...params)
+
+    return this.getTemplate(orgId, id)!
   }
 
   incrementDownloads(orgId: string, id: string): void {

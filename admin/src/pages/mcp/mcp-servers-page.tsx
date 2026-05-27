@@ -60,8 +60,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { McpServer, McpServerFormData, McpConfigParseResult } from '@/lib/api/mcp'
-import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon, parseMcpConfig } from '@/lib/api/mcp'
+import type { McpServer, McpServerFormData, McpConfigParseResult, UserConfigItem } from '@/lib/api/mcp'
+import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon, parseMcpConfig, fetchUserConfig, setUserConfigValue, deleteUserConfigValue } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
 import { getUsers, getDepartments } from '@/lib/api/auth'
 import { getTenantAssistants } from '@/lib/api/agent-hub'
@@ -323,6 +323,13 @@ export default function McpServersPage() {
   // Plan §4.1 line 452: enable/disable requires AlertDialog confirmation
   const [pendingToggle, setPendingToggle] = useState<McpServer | null>(null)
 
+  // User config dialog state
+  const [configServerId, setConfigServerId] = useState<string | null>(null)
+  const [configSchema, setConfigSchema] = useState<UserConfigItem[]>([])
+  const [configValues, setConfigValues] = useState<Record<string, string>>({})
+  const [configLoading, setConfigLoading] = useState(false)
+  const [showConfigValues, setShowConfigValues] = useState<Record<string, boolean>>({})
+
   // Options for visible_to / bound_assistants / bound_skills (loaded once for dialog)
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
@@ -412,11 +419,12 @@ export default function McpServersPage() {
         setEditingServer(null)
         setFormData({
           name: template.name,
-          display_name: template.display_name || template.name,
+          display_name: template.name,
           description: template.description || '',
           category: template.category || '',
           risk_level: template.risk_level,
           mcp_type: template.mcp_type,
+          template_id: templateId,
           url: template.url || '',
           command: template.command || '',
           timeout_ms: template.timeout_ms,
@@ -748,6 +756,22 @@ export default function McpServersPage() {
     setCreatorFilter('all')
   }
 
+  async function handleOpenConfig(server: McpServer) {
+    if (!server.template_id) return
+    setConfigServerId(server.id)
+    setConfigLoading(true)
+    try {
+      const result = await fetchUserConfig(server.id)
+      setConfigSchema(result.schema)
+      setConfigValues(result.values)
+      setShowConfigValues({})
+    } catch {
+      toast.error('加载用户配置失败')
+    } finally {
+      setConfigLoading(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <DashboardLayout title="MCP 服务" description="管理企业级和部门级 MCP 服务配置">
@@ -934,6 +958,9 @@ export default function McpServersPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {server.template_id && (
+                        <Button variant="outline" size="sm" onClick={() => handleOpenConfig(server)}>配置</Button>
+                      )}
                       <Button variant="ghost" size="icon" className="size-8" title="编辑" onClick={() => openEditDialog(server)}>
                         <Pencil className="size-3.5" />
                       </Button>
@@ -1385,6 +1412,56 @@ export default function McpServersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* User config dialog for template-based servers */}
+      <Dialog open={!!configServerId} onOpenChange={(open) => { if (!open) setConfigServerId(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>用户配置</DialogTitle>
+          </DialogHeader>
+          {configLoading ? (
+            <div className="flex items-center justify-center py-8"><Loader2 className="size-6 animate-spin" /></div>
+          ) : configSchema.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4">该服务暂无可配置项</p>
+          ) : (
+            <div className="space-y-4">
+              {configSchema.map((item) => (
+                <div key={item.key} className="space-y-1.5">
+                  <Label className="text-sm font-medium">{item.name} {item.required !== false && <span className="text-destructive">*</span>}</Label>
+                  {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
+                  <div className="flex gap-2">
+                    <Input
+                      type={showConfigValues[item.key] ? 'text' : 'password'}
+                      value={configValues[item.key] ?? ''}
+                      onChange={(e) => setConfigValues(prev => ({ ...prev, [item.key]: e.target.value }))}
+                      placeholder={item.required !== false ? '必填' : '可选'}
+                    />
+                    <Button variant="ghost" size="sm" onClick={() => setShowConfigValues(prev => ({ ...prev, [item.key]: !prev[item.key] }))}>
+                      {showConfigValues[item.key] ? '隐藏' : '显示'}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {configSchema.length > 0 && (
+            <DialogFooter>
+              <Button onClick={async () => {
+                try {
+                  for (const item of configSchema) {
+                    const val = configValues[item.key]
+                    if (val !== undefined && val !== '') {
+                      await setUserConfigValue(configServerId!, item.key, val)
+                    }
+                  }
+                  toast.success('配置已保存')
+                  setConfigServerId(null)
+                } catch { toast.error('保存失败') }
+              }}>保存</Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

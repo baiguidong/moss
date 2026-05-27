@@ -47,6 +47,8 @@ export interface McpServer {
   enabled: boolean
   last_invocation_at: number | null
 
+  template_id: string | null
+
   created_by: string
   updated_by: string | null
   created_at: number
@@ -158,6 +160,8 @@ export interface McpServerInput {
   audit_response_summary?: boolean
   redact_sensitive_fields?: boolean
   allow_user_disable?: boolean
+
+  template_id?: string | null
 }
 
 /** Input for creating/updating an MCP Policy */
@@ -217,9 +221,8 @@ export interface McpTemplate {
   id: string
   org_id: string
   name: string
-  display_name: string | null
   description: string | null
-  icon: string | null
+  icon: string
   category: string | null
   tags_json: string[] | null
   mcp_type: 'http' | 'sse' | 'stdio'
@@ -242,7 +245,6 @@ export interface McpTemplate {
 /** Input for creating an MCP Template */
 export interface McpTemplateInput {
   name: string
-  display_name?: string | null
   description?: string | null
   icon?: string | null
   category?: string | null
