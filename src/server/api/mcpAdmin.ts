@@ -379,6 +379,14 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
       return { success: true, data: server }
     },
+
+    // ==================== MCP 配置解析 ====================
+
+    async parseMcpConfig(auth: AuthContext, body: { json: string }) {
+      authService.requireScope(auth, 'admin:mcp')
+      const { parseMcpConfig } = await import('../mcp/mcpConfigParser.js')
+      return parseMcpConfig(body.json)
+    },
   }
 
   return api

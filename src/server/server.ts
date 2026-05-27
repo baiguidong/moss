@@ -3573,6 +3573,14 @@ export function startServer(
         return
       }
 
+      // Admin: MCP 配置解析
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-config/parse') {
+        const body = await readJsonBody(req)
+        const result = await mcpAdminApi.parseMcpConfig(auth, body)
+        writeJson(res, result.success ? 200 : 400, result)
+        return
+      }
+
       // Admin: MCP server audit logs
       const mcpAuditMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)\/audit-logs$/)
       if (mcpAuditMatch && req.method === 'GET') {

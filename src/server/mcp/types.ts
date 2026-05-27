@@ -281,3 +281,6 @@ export interface McpSseEvent {
   org_id: string
   type: McpEventType
 }
+
+/** MCP 配置解析结果 */
+export type { McpConfigParseResult } from './mcpConfigParser.js'

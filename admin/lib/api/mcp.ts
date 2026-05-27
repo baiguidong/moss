@@ -128,6 +128,23 @@ export interface McpTemplate {
 
 export type McpServerFormData = Partial<Omit<McpServer, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'status' | 'last_invocation_at'>>
 
+export interface McpConfigParseResult {
+  success: boolean
+  mcp_type?: 'stdio' | 'http' | 'sse'
+  data?: {
+    name?: string | null
+    mcp_type: 'stdio' | 'http' | 'sse'
+    url?: string | null
+    command?: string | null
+    args_json?: string | null
+    env_json?: string | null
+    auth_config_json?: string | null
+    timeout_ms?: number
+  }
+  error?: string
+  warnings?: string[]
+}
+
 export interface UploadIconResponse {
   success: boolean
   data: {
@@ -238,6 +255,14 @@ export async function fetchMcpTemplate(id: string): Promise<McpTemplate> {
 export async function installMcpTemplate(id: string, overrides?: Partial<McpServerFormData>): Promise<McpServer> {
   const res = await authClient.post<Envelope<McpServer>>(`/api/v1/admin/mcp-templates/${id}/install`, overrides ?? {})
   return res.data
+}
+
+// ===== MCP 配置解析 =====
+
+export async function parseMcpConfig(json: string): Promise<McpConfigParseResult> {
+  return authClient.post<{ success: boolean; data?: McpConfigParseResult }>('/api/v1/admin/mcp-config/parse', { json })
+    .then(res => res.success ? res.data : { success: false, error: 'Parse failed' })
+    .catch(() => ({ success: false, error: 'Parse failed' }))
 }
 
 // ===== SSE: live update subscription (plan §2.5) =====

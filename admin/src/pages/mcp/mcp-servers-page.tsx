@@ -19,6 +19,7 @@ import {
 import { toast } from 'sonner'
 
 import { DashboardLayout } from '@/components/dashboard-layout'
+import { JsonEditor } from '@/components/ui/json-editor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -59,8 +60,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { McpServer, McpServerFormData } from '@/lib/api/mcp'
-import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon } from '@/lib/api/mcp'
+import type { McpServer, McpServerFormData, McpConfigParseResult } from '@/lib/api/mcp'
+import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon, parseMcpConfig } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
 import { getUsers, getDepartments } from '@/lib/api/auth'
 import { getTenantAssistants } from '@/lib/api/agent-hub'
@@ -314,6 +315,11 @@ export default function McpServersPage() {
   const [envMap, setEnvMap] = useState<Record<string, string>>({})
   // Plan §9 Step 3: auth_config_json — Key-Value pairs for non secret_ref auth types
   const [authConfigMap, setAuthConfigMap] = useState<Record<string, string>>({})
+  // JSON 配置模式相关状态
+  const [configMode, setConfigMode] = useState<'json' | 'form'>('json')
+  const [jsonConfig, setJsonConfig] = useState<string>('{}')
+  const [parseResult, setParseResult] = useState<McpConfigParseResult | null>(null)
+  const [parseError, setParseError] = useState<string>('')
   // Plan §4.1 line 452: enable/disable requires AlertDialog confirmation
   const [pendingToggle, setPendingToggle] = useState<McpServer | null>(null)
 
@@ -469,6 +475,62 @@ export default function McpServersPage() {
 
   const steps = ['基础信息', '连接配置', '鉴权配置', '权限范围', '安全策略']
 
+  // JSON/表单 模式转换函数
+  const formToJson = useCallback(() => {
+    const config: Record<string, unknown> = {}
+    if (formData.mcp_type === 'stdio') {
+      config.command = formData.command || ''
+      if (argsList.length > 0) config.args = argsList
+      if (Object.keys(envMap).length > 0) config.env = envMap
+    } else {
+      config.url = formData.url || ''
+    }
+    return JSON.stringify({ [formData.name || 'server']: config }, null, 2)
+  }, [formData, argsList, envMap])
+
+  const jsonToForm = useCallback((result: McpConfigParseResult['data']) => {
+    if (!result) return
+    setFormData(prev => ({
+      ...prev,
+      ...result,
+      name: result.name || prev.name,
+      display_name: result.name || prev.display_name,
+    }))
+    if (result.args_json) setArgsList(parseArgsJson(result.args_json))
+    if (result.env_json) setEnvMap(parseEnvJson(result.env_json))
+    if (result.auth_config_json) setAuthConfigMap(parseEnvJson(result.auth_config_json))
+  }, [])
+
+  const handleModeSwitch = useCallback((mode: 'json' | 'form') => {
+    if (mode === 'json') {
+      setJsonConfig(formToJson())
+    } else {
+      if (parseResult?.data) jsonToForm(parseResult.data)
+    }
+    setConfigMode(mode)
+  }, [formToJson, parseResult, jsonToForm])
+
+  // JSON 模式实时解析
+  useEffect(() => {
+    if (configMode !== 'json') return
+    const timer = setTimeout(async () => {
+      try {
+        JSON.parse(jsonConfig)
+        const result = await parseMcpConfig(jsonConfig)
+        setParseResult(result.success ? result : null)
+        setParseError(result.success ? '' : result.error || '')
+        // 如果解析成功且提取了 name，同步到 Step 0
+        if (result.success && result.data?.name) {
+          setFormData(prev => ({ ...prev, name: result.data?.name || prev.name, display_name: result.data?.name || prev.display_name }))
+        }
+      } catch {
+        setParseError('无效的 JSON 格式')
+        setParseResult(null)
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [jsonConfig, configMode])
+
   function openCreateDialog() {
     setEditingServer(null)
     setFormData({
@@ -482,6 +544,10 @@ export default function McpServersPage() {
     setArgsList([])
     setEnvMap({})
     setAuthConfigMap({})
+    setConfigMode('json')
+    setJsonConfig('{}')
+    setParseResult(null)
+    setParseError('')
     setCurrentStep(0)
     setIsCreateDialogOpen(true)
     loadOptions()
@@ -523,6 +589,11 @@ export default function McpServersPage() {
     setArgsList(parseArgsJson(server.args_json))
     setEnvMap(parseEnvJson(server.env_json))
     setAuthConfigMap(parseEnvJson(server.auth_config_json))
+    // 编辑场景：用表单模式（已有数据），用户可切换到 JSON 模式查看/编辑
+    setConfigMode('form')
+    setJsonConfig('{}')
+    setParseResult(null)
+    setParseError('')
     setCurrentStep(0)
     setIsCreateDialogOpen(true)
     loadOptions()
@@ -531,23 +602,52 @@ export default function McpServersPage() {
   async function handleSubmit() {
     setIsSubmitting(true)
     try {
-      // Serialize args/env from local state for STDIO type.
-      // Send null when empty so backend can clear the field.
-      const cleanedEnv: Record<string, string> = {}
-      for (const [k, v] of Object.entries(envMap)) {
-        if (k.trim()) cleanedEnv[k.trim()] = v
+      let payload: McpServerFormData
+
+      if (configMode === 'json') {
+        // JSON 模式下必须有有效的解析结果才能提交
+        if (!parseResult?.success || !parseResult.data) {
+          toast.error('JSON 配置解析失败，请检查格式')
+          setIsSubmitting(false)
+          return
+        }
+        // 直接从 parseResult 构建提交数据，绕过 React 异步状态更新
+        const parsed = parseResult.data
+        const parsedArgs = parsed.args_json ? JSON.parse(parsed.args_json) : []
+        const parsedEnv = parsed.env_json ? JSON.parse(parsed.env_json) : {}
+        const parsedAuth = parsed.auth_config_json ? JSON.parse(parsed.auth_config_json) : {}
+        payload = {
+          ...formData,
+          // name 优先用 parseResult 中提取的服务名称，其次用用户填写的
+          name: parsed.name || formData.name || formData.display_name,
+          display_name: parsed.name || formData.name || formData.display_name,
+          mcp_type: parsed.mcp_type,
+          url: parsed.url || null,
+          command: parsed.command || null,
+          timeout_ms: parsed.timeout_ms,
+          args_json: parsedArgs.length > 0 ? JSON.stringify(parsedArgs) : null,
+          env_json: Object.keys(parsedEnv).length > 0 ? JSON.stringify(parsedEnv) : null,
+          auth_config_json: Object.keys(parsedAuth).length > 0 ? JSON.stringify(parsedAuth) : null,
+        }
+      } else {
+        // 表单模式：原有逻辑
+        const cleanedEnv: Record<string, string> = {}
+        for (const [k, v] of Object.entries(envMap)) {
+          if (k.trim()) cleanedEnv[k.trim()] = v
+        }
+        const cleanedAuth: Record<string, string> = {}
+        for (const [k, v] of Object.entries(authConfigMap)) {
+          if (k.trim()) cleanedAuth[k.trim()] = v
+        }
+        payload = {
+          ...formData,
+          display_name: formData.name || formData.display_name,
+          args_json: argsList.length > 0 ? JSON.stringify(argsList) : null,
+          env_json: Object.keys(cleanedEnv).length > 0 ? JSON.stringify(cleanedEnv) : null,
+          auth_config_json: Object.keys(cleanedAuth).length > 0 ? JSON.stringify(cleanedAuth) : null,
+        }
       }
-      const cleanedAuth: Record<string, string> = {}
-      for (const [k, v] of Object.entries(authConfigMap)) {
-        if (k.trim()) cleanedAuth[k.trim()] = v
-      }
-      const payload: McpServerFormData = {
-        ...formData,
-        display_name: formData.name || formData.display_name, // 同步 name 到 display_name
-        args_json: argsList.length > 0 ? JSON.stringify(argsList) : null,
-        env_json: Object.keys(cleanedEnv).length > 0 ? JSON.stringify(cleanedEnv) : null,
-        auth_config_json: Object.keys(cleanedAuth).length > 0 ? JSON.stringify(cleanedAuth) : null,
-      }
+
       if (editingServer) {
         await updateMcpServer(editingServer.id, payload)
         toast.success('MCP 服务已更新')
@@ -981,55 +1081,136 @@ export default function McpServersPage() {
             {/* Step 2: 连接配置 */}
             {currentStep === 1 && (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>类型 <span className="text-red-500">*</span></Label>
-                  <Select value={formData.mcp_type || 'http'} onValueChange={(v) => setFormData({ ...formData, mcp_type: v as any })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="http">HTTP</SelectItem>
-                      <SelectItem value="sse">SSE</SelectItem>
-                      <SelectItem value="stdio">STDIO</SelectItem>
-                    </SelectContent>
-                  </Select>
+                {/* 模式切换 - JSON 默认在前 */}
+                <div className="flex items-center gap-2 border-b pb-2">
+                  <Button
+                    variant={configMode === 'json' ? 'default' : 'ghost'}
+                    onClick={() => handleModeSwitch('json')}
+                  >
+                    JSON 模式
+                  </Button>
+                  <Button
+                    variant={configMode === 'form' ? 'default' : 'ghost'}
+                    onClick={() => handleModeSwitch('form')}
+                  >
+                    表单模式
+                  </Button>
                 </div>
-                {(formData.mcp_type === 'http' || formData.mcp_type === 'sse' || !formData.mcp_type) && (
-                  <div className="space-y-2">
-                    <Label>URL (HTTP/SSE)</Label>
-                    <Input placeholder="https://example.com/mcp" value={formData.url || ''} onChange={(e) => setFormData({ ...formData, url: e.target.value })} />
+
+                {/* JSON 模式（默认显示） */}
+                {configMode === 'json' && (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <Label>连接配置 (JSON)</Label>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => {
+                          try {
+                            setJsonConfig(JSON.stringify(JSON.parse(jsonConfig), null, 2))
+                          } catch {
+                            toast.error('JSON 格式无效')
+                          }
+                        }}>
+                          格式化
+                        </Button>
+                      </div>
+                    </div>
+
+                    <JsonEditor
+                      value={jsonConfig}
+                      onChange={setJsonConfig}
+                      height="300px"
+                      language="json"
+                    />
+
+                    {/* 解析结果/错误 */}
+                    {parseError && (
+                      <div className="text-sm text-destructive">⚠ {parseError}</div>
+                    )}
+                    {parseResult?.success && (
+                      <div className="text-sm text-muted-foreground">
+                        ✓ 已识别为 {parseResult.mcp_type} 类型
+                        {parseResult.data?.command && `，命令: ${parseResult.data.command}`}
+                        {parseResult.data?.url && `，URL: ${parseResult.data.url}`}
+                        {parseResult.warnings?.length && (
+                          <div className="text-yellow-600 mt-1">
+                            警告: {parseResult.warnings.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 超时时间等补充字段 */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>超时时间 (ms)</Label>
+                        <Input type="number" value={formData.timeout_ms || 30000} onChange={(e) => setFormData({ ...formData, timeout_ms: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>健康检查地址</Label>
+                        <Input placeholder="https://example.com/health" value={formData.health_check_url || ''} onChange={(e) => setFormData({ ...formData, health_check_url: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch checked={formData.use_proxy || false} onCheckedChange={(v) => setFormData({ ...formData, use_proxy: v })} />
+                      <Label>使用代理</Label>
+                    </div>
                   </div>
                 )}
-                {formData.mcp_type === 'stdio' && (
+
+                {/* 表单模式（现有逻辑） */}
+                {configMode === 'form' && (
                   <>
                     <div className="space-y-2">
-                      <Label>启动命令 <span className="text-red-500">*</span></Label>
-                      <Input placeholder="npx" value={formData.command || ''} onChange={(e) => setFormData({ ...formData, command: e.target.value })} />
+                      <Label>类型 <span className="text-red-500">*</span></Label>
+                      <Select value={formData.mcp_type || 'http'} onValueChange={(v) => setFormData({ ...formData, mcp_type: v as any })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="http">HTTP</SelectItem>
+                          <SelectItem value="sse">SSE</SelectItem>
+                          <SelectItem value="stdio">STDIO</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <div className="space-y-2">
-                      <Label>命令参数</Label>
-                      <TagInput value={argsList} onChange={setArgsList} placeholder="输入参数后回车，如 -y、@modelcontextprotocol/server-fs" />
-                      <p className="text-xs text-muted-foreground">每行一个参数。提交时序列化为 JSON 数组。</p>
+                    {(formData.mcp_type === 'http' || formData.mcp_type === 'sse' || !formData.mcp_type) && (
+                      <div className="space-y-2">
+                        <Label>URL (HTTP/SSE)</Label>
+                        <Input placeholder="https://example.com/mcp" value={formData.url || ''} onChange={(e) => setFormData({ ...formData, url: e.target.value })} />
+                      </div>
+                    )}
+                    {formData.mcp_type === 'stdio' && (
+                      <>
+                        <div className="space-y-2">
+                          <Label>启动命令 <span className="text-red-500">*</span></Label>
+                          <Input placeholder="npx" value={formData.command || ''} onChange={(e) => setFormData({ ...formData, command: e.target.value })} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>命令参数</Label>
+                          <TagInput value={argsList} onChange={setArgsList} placeholder="输入参数后回车，如 -y、@modelcontextprotocol/server-fs" />
+                          <p className="text-xs text-muted-foreground">每行一个参数。提交时序列化为 JSON 数组。</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>环境变量</Label>
+                          <KVEditor value={envMap} onChange={setEnvMap} />
+                          <p className="text-xs text-muted-foreground">敏感值请改用 Secret Center 引用，避免明文落库。</p>
+                        </div>
+                      </>
+                    )}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>超时时间 (ms)</Label>
+                        <Input type="number" value={formData.timeout_ms || 30000} onChange={(e) => setFormData({ ...formData, timeout_ms: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>健康检查地址</Label>
+                        <Input placeholder="https://example.com/health" value={formData.health_check_url || ''} onChange={(e) => setFormData({ ...formData, health_check_url: e.target.value })} />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>环境变量</Label>
-                      <KVEditor value={envMap} onChange={setEnvMap} />
-                      <p className="text-xs text-muted-foreground">敏感值请改用 Secret Center 引用，避免明文落库。</p>
+                    <div className="flex items-center gap-2">
+                      <Switch checked={formData.use_proxy || false} onCheckedChange={(v) => setFormData({ ...formData, use_proxy: v })} />
+                      <Label>使用代理</Label>
                     </div>
                   </>
                 )}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>超时时间 (ms)</Label>
-                    <Input type="number" value={formData.timeout_ms || 30000} onChange={(e) => setFormData({ ...formData, timeout_ms: Number(e.target.value) })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>健康检查地址</Label>
-                    <Input placeholder="https://example.com/health" value={formData.health_check_url || ''} onChange={(e) => setFormData({ ...formData, health_check_url: e.target.value })} />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch checked={formData.use_proxy || false} onCheckedChange={(v) => setFormData({ ...formData, use_proxy: v })} />
-                  <Label>使用代理</Label>
-                </div>
               </div>
             )}
 
