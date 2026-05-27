@@ -128,6 +128,13 @@ export interface McpTemplate {
 
 export type McpServerFormData = Partial<Omit<McpServer, 'id' | 'org_id' | 'created_by' | 'created_at' | 'updated_at' | 'status' | 'last_invocation_at'>>
 
+export interface UploadIconResponse {
+  success: boolean
+  data: {
+    url: string
+  }
+}
+
 // Backend MCP endpoints return { success, data, ... } envelope
 // while other endpoints return data directly. We must unwrap here.
 interface Envelope<T> {
@@ -139,6 +146,14 @@ interface Envelope<T> {
 }
 
 // ===== API functions =====
+
+export function uploadMcpIcon(file: File): Promise<UploadIconResponse> {
+  return authClient.post<UploadIconResponse>('/api/v1/upload/mcp-icon', file, {
+    headers: {
+      'Content-Type': file.type,
+    },
+  })
+}
 
 export async function fetchMcpServers(params?: Record<string, string>): Promise<{ items: McpServer[]; total: number }> {
   const query = new URLSearchParams(params).toString()
