@@ -3876,33 +3876,27 @@ export function startServer(
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/upload/mcp-icon') {
-        console.error('[MCP ICON UPLOAD] Processing request')
         authService.requireScope(auth, 'admin:mcp')
         const buffer = await readRawBody(req)
-        console.error('[MCP ICON UPLOAD] Buffer size:', buffer?.length)
-        const uploadDir = join(config.runtimeDir, 'uploads', 'mcp-icons')
-        await mkdir(uploadDir, { recursive: true })
 
-        const contentType = req.headers['content-type']
-        let ext = '.png'
-        if (typeof contentType === 'string') {
-          const mime = contentType.split(';')[0].trim().toLowerCase()
-          if (mime === 'image/png') {
-            ext = '.png'
-          } else if (mime === 'image/jpeg' || mime === 'image/jpg') {
-            ext = '.jpg'
-          } else if (mime === 'image/webp') {
-            ext = '.webp'
-          } else if (mime === 'image/svg+xml') {
-            ext = '.svg'
+        const headerCt = req.headers['content-type']
+        let mime = 'image/png'
+        if (typeof headerCt === 'string') {
+          const parsed = headerCt.split(';')[0].trim().toLowerCase()
+          if (
+            parsed === 'image/png' ||
+            parsed === 'image/jpeg' ||
+            parsed === 'image/webp' ||
+            parsed === 'image/svg+xml'
+          ) {
+            mime = parsed
+          } else if (parsed === 'image/jpg') {
+            mime = 'image/jpeg'
           }
         }
 
-        const filename = `mcp_icon_${randomUUID()}${ext}`
-        const filePath = join(uploadDir, filename)
-        await writeFile(filePath, buffer)
-
-        writeJson(res, 200, { success: true, data: { url: `/uploads/mcp-icons/${filename}` } })
+        const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`
+        writeJson(res, 200, { success: true, data: { url: dataUrl } })
         return
       }
 
