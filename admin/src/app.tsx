@@ -26,6 +26,8 @@ const AuditLogPage = lazy(() => import('./pages/secrets/audit-log-page'))
 const RotationAlertsPage = lazy(() => import('./pages/secrets/rotation-alerts-page'))
 const CronJobsPage = lazy(() => import('./pages/cron-jobs-page'))
 const McpServersPage = lazy(() => import('./pages/mcp/mcp-servers-page'))
+const McpEnterpriseServersPage = lazy(() => import('./pages/mcp/mcp-enterprise-servers-page'))
+const McpDepartmentServersPage = lazy(() => import('./pages/mcp/mcp-department-servers-page'))
 const McpPolicyPage = lazy(() => import('./pages/mcp/mcp-policy-page'))
 const McpAuditLogPage = lazy(() => import('./pages/mcp/mcp-audit-log-page'))
 const McpApprovalsPage = lazy(() => import('./pages/mcp/mcp-approvals-page'))
@@ -250,12 +252,21 @@ export default function App() {
           }
         />
         {/* MCP Management */}
-        <Route path="/mcp" element={<Navigate to="/mcp/servers" replace />} />
+        <Route path="/mcp" element={<Navigate to="/mcp/servers/enterprise" replace />} />
+        <Route path="/mcp/servers" element={<Navigate to="/mcp/servers/enterprise" replace />} />
         <Route
-          path="/mcp/servers"
+          path="/mcp/servers/enterprise"
           element={
             <SuspendedRoute>
-              <McpServersPage />
+              <McpEnterpriseServersPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/servers/department"
+          element={
+            <SuspendedRoute>
+              <McpDepartmentServersPage />
             </SuspendedRoute>
           }
         />

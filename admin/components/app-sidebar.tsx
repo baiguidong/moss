@@ -38,6 +38,7 @@ type NavItem = {
   icon: ComponentType<{ className?: string }>
   requiredScope?: string
   requiredAnyScopes?: string[]
+  requiredRole?: string
   children?: NavItem[]
 }
 
@@ -136,7 +137,8 @@ const menuItems: NavItem[] = [
         url: '#',
         icon: Wrench,
         children: [
-          { title: '服务列表', url: '/mcp/servers', icon: ListChecks },
+          { title: '企业服务', url: '/mcp/servers/enterprise', icon: Building2, requiredRole: 'admin' },
+          { title: '部门服务', url: '/mcp/servers/department', icon: Users },
           { title: '策略配置', url: '/mcp/policy', icon: ShieldCheck },
           { title: '审计日志', url: '/mcp/audit-log', icon: ScrollText },
           { title: '审批管理', url: '/mcp/approvals', icon: Shield },
@@ -206,13 +208,15 @@ export function AppSidebar() {
     })
   }
 
+  const isItemVisible = (item: NavItem): boolean => {
+    if (item.requiredRole && user?.role !== item.requiredRole) return false
+    return true
+  }
+
   const renderNavItem = (item: NavItem, level = 0) => {
     // Parent menu with children
     if (item.children) {
-      const visibleChildren = item.children.filter(() => {
-        // Children inherit parent's scope requirement; if parent is visible, children are too
-        return true
-      })
+      const visibleChildren = item.children.filter(isItemVisible)
       if (visibleChildren.length === 0) return null
 
       const isAnyChildActive = hasActiveDescendant(item)
@@ -245,7 +249,7 @@ export function AppSidebar() {
                       {hasNestedChildren ? (
                         // Nested menu (level 1 with children, like MCP 服务)
                         (() => {
-                          const nestedChildren = child.children!
+                          const nestedChildren = child.children!.filter(isItemVisible)
                           const isAnyNestedActive = nestedChildren.some((c: NavItem) => isItemActive(c.url))
                           const isNestedExpanded = expandedMenus.has(child.title) || isAnyNestedActive
                           return (

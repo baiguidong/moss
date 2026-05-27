@@ -136,6 +136,11 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
         Object.assign(err, { statusCode: 400 })
         throw err
       }
+      if (input.scope === 'department' && (!input.owner_id || !input.owner_id.trim())) {
+        const err = new Error('部门级 MCP 必须指定所属部门')
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
 
       // Check name uniqueness
       const existing = mcpStore.getMcpServerByName(auth.orgId, input.name)
@@ -185,6 +190,15 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       if (!existing) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
 
       assertCanManageExistingMcp(auth, existing)
+
+      // 部门级 MCP 更新时如果 owner_id 被清空则拒绝
+      const effectiveScope = input.scope ?? existing.scope
+      const effectiveOwnerId = input.owner_id ?? existing.owner_id
+      if (effectiveScope === 'department' && (!effectiveOwnerId || !effectiveOwnerId.trim())) {
+        const err = new Error('部门级 MCP 必须指定所属部门')
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
 
       // If name is being changed, check uniqueness
       if (input.name && input.name !== existing.name) {

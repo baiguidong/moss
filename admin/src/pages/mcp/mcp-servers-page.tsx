@@ -67,6 +67,7 @@ import { getUsers, getDepartments } from '@/lib/api/auth'
 import { getTenantAssistants } from '@/lib/api/agent-hub'
 import { getTenantSkills } from '@/lib/api/skill-store'
 import type { AuthUser, AuthDepartment } from '@/lib/api/types'
+import { useAuth } from '@/lib/hooks/use-auth'
 
 // ===== Helper components =====
 
@@ -288,9 +289,14 @@ function parseEnvJson(raw: string | null | undefined): Record<string, string> {
 
 // ===== Main page component =====
 
-export default function McpServersPage() {
+interface McpServersPageProps {
+  fixedScope?: 'org' | 'department'
+}
+
+export default function McpServersPage({ fixedScope }: McpServersPageProps) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { user } = useAuth()
   const [servers, setServers] = useState<McpServer[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -368,7 +374,8 @@ export default function McpServersPage() {
       // Plan §8.2: 通过后端筛选参数下发，避免分页与多 org 场景下漏匹配；
       // 文本搜索 backend 暂未实现 q/search 参数，沿用客户端 includes 过滤。
       const params: Record<string, string> = {}
-      if (scopeFilter !== 'all') params.scope = scopeFilter
+      if (fixedScope) params.scope = fixedScope
+      else if (scopeFilter !== 'all') params.scope = scopeFilter
       if (statusFilter !== 'all') params.status = statusFilter
       if (riskFilter !== 'all') params.risk_level = riskFilter
       if (typeFilter !== 'all') params.mcp_type = typeFilter
@@ -481,6 +488,9 @@ export default function McpServersPage() {
     error: servers.filter((s) => s.enabled && s.status === 'error').length,
   }
 
+  const pageTitle = fixedScope === 'org' ? '企业服务' : fixedScope === 'department' ? '部门服务' : 'MCP 服务'
+  const pageDesc = fixedScope === 'org' ? '管理企业级 MCP 服务配置' : fixedScope === 'department' ? '管理部门级 MCP 服务配置' : '管理企业级和部门级 MCP 服务配置'
+
   const steps = ['基础信息', '连接配置', '鉴权配置', '权限范围', '安全策略']
 
   // JSON/表单 模式转换函数
@@ -537,10 +547,14 @@ export default function McpServersPage() {
 
   function openCreateDialog() {
     setEditingServer(null)
+    const scope = fixedScope ?? 'org'
+    const ownerType = scope === 'org' ? 'system' : 'department'
+    const ownerId = scope === 'department' && user?.role === 'dept_admin' ? (user.departmentId ?? '') : undefined
     setFormData({
       mcp_type: 'http',
-      scope: 'org',
-      owner_type: 'system',
+      scope,
+      owner_type: ownerType,
+      ...(ownerId ? { owner_id: ownerId } : {}),
       risk_level: 'low',
       auth_type: 'none',
       timeout_ms: 30000,
@@ -575,7 +589,9 @@ export default function McpServersPage() {
       use_proxy: server.use_proxy,
       auth_type: server.auth_type,
       secret_ref: server.secret_ref || '',
-      scope: server.scope,
+      scope: fixedScope ?? server.scope,
+      owner_type: server.owner_type,
+      owner_id: server.owner_id,
       visible_to: server.visible_to,
       bound_assistants: server.bound_assistants || [],
       bound_skills: server.bound_skills || [],
@@ -604,6 +620,11 @@ export default function McpServersPage() {
   }
 
   async function handleSubmit() {
+    // 部门服务：校验 owner_id 必填
+    if (fixedScope === 'department' && user?.role !== 'dept_admin' && !formData.owner_id) {
+      toast.error('请选择所属部门')
+      return
+    }
     setIsSubmitting(true)
     try {
       let payload: McpServerFormData
@@ -774,7 +795,7 @@ export default function McpServersPage() {
 
   if (isLoading) {
     return (
-      <DashboardLayout title="MCP 服务" description="管理企业级和部门级 MCP 服务配置">
+      <DashboardLayout title={pageTitle} description={pageDesc}>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="size-8 animate-spin text-muted-foreground" />
         </div>
@@ -783,21 +804,37 @@ export default function McpServersPage() {
   }
 
   return (
-    <DashboardLayout title="MCP 服务" description="管理企业级和部门级 MCP 服务配置">
+    <DashboardLayout title={pageTitle} description={pageDesc}>
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
         <div className="rounded-lg border bg-card p-4">
           <div className="text-2xl font-bold">{stats.total}</div>
           <div className="text-sm text-muted-foreground">总数</div>
         </div>
-        <div className="rounded-lg border bg-card p-4">
-          <div className="text-2xl font-bold">{stats.org}</div>
-          <div className="text-sm text-muted-foreground">企业级</div>
-        </div>
-        <div className="rounded-lg border bg-card p-4">
-          <div className="text-2xl font-bold">{stats.dept}</div>
-          <div className="text-sm text-muted-foreground">部门级</div>
-        </div>
+        {!fixedScope && (
+          <div className="rounded-lg border bg-card p-4">
+            <div className="text-2xl font-bold">{stats.org}</div>
+            <div className="text-sm text-muted-foreground">企业级</div>
+          </div>
+        )}
+        {!fixedScope && (
+          <div className="rounded-lg border bg-card p-4">
+            <div className="text-2xl font-bold">{stats.dept}</div>
+            <div className="text-sm text-muted-foreground">部门级</div>
+          </div>
+        )}
+        {fixedScope === 'org' && (
+          <div className="rounded-lg border bg-card p-4">
+            <div className="text-2xl font-bold">{stats.org}</div>
+            <div className="text-sm text-muted-foreground">企业级</div>
+          </div>
+        )}
+        {fixedScope === 'department' && (
+          <div className="rounded-lg border bg-card p-4">
+            <div className="text-2xl font-bold">{stats.dept}</div>
+            <div className="text-sm text-muted-foreground">部门级</div>
+          </div>
+        )}
         <div className="rounded-lg border bg-card p-4">
           <div className="text-2xl font-bold text-red-600">{stats.error}</div>
           <div className="text-sm text-muted-foreground">异常</div>
@@ -827,14 +864,16 @@ export default function McpServersPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
-        <Select value={scopeFilter} onValueChange={setScopeFilter}>
-          <SelectTrigger className="w-[120px]"><SelectValue placeholder="作用域" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部作用域</SelectItem>
-            <SelectItem value="org">企业级</SelectItem>
-            <SelectItem value="department">部门级</SelectItem>
-          </SelectContent>
-        </Select>
+        {!fixedScope && (
+          <Select value={scopeFilter} onValueChange={setScopeFilter}>
+            <SelectTrigger className="w-[120px]"><SelectValue placeholder="作用域" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部作用域</SelectItem>
+              <SelectItem value="org">企业级</SelectItem>
+              <SelectItem value="department">部门级</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[120px]"><SelectValue placeholder="状态" /></SelectTrigger>
           <SelectContent>
@@ -910,7 +949,7 @@ export default function McpServersPage() {
             <TableRow>
               <TableHead>名称</TableHead>
               <TableHead>类型</TableHead>
-              <TableHead>作用域</TableHead>
+              {!fixedScope && <TableHead>作用域</TableHead>}
               <TableHead>状态</TableHead>
               <TableHead>可见范围</TableHead>
               <TableHead>绑定助手</TableHead>
@@ -925,7 +964,7 @@ export default function McpServersPage() {
           <TableBody>
             {filteredServers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={fixedScope ? 11 : 12} className="text-center py-8 text-muted-foreground">
                   没有找到匹配的数据
                 </TableCell>
               </TableRow>
@@ -939,7 +978,7 @@ export default function McpServersPage() {
                     </div>
                   </TableCell>
                   <TableCell><TypeBadge mcpType={server.mcp_type} /></TableCell>
-                  <TableCell><ScopeBadge scope={server.scope} /></TableCell>
+                  {!fixedScope && <TableCell><ScopeBadge scope={server.scope} /></TableCell>}
                   <TableCell><StatusBadge enabled={server.enabled} status={server.status} /></TableCell>
                   <TableCell className="text-sm">{formatVisibleTo(server.visible_to)}</TableCell>
                   <TableCell className="text-sm">
@@ -1276,16 +1315,47 @@ export default function McpServersPage() {
             {/* Step 4: 权限范围 */}
             {currentStep === 3 && (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>作用域 <span className="text-red-500">*</span></Label>
-                  <Select value={formData.scope || 'org'} onValueChange={(v) => setFormData({ ...formData, scope: v as any, owner_type: v === 'org' ? 'system' : 'department' })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="org">企业级</SelectItem>
-                      <SelectItem value="department">部门级</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!fixedScope && (
+                  <div className="space-y-2">
+                    <Label>作用域 <span className="text-red-500">*</span></Label>
+                    <Select value={formData.scope || 'org'} onValueChange={(v) => setFormData({ ...formData, scope: v as any, owner_type: v === 'org' ? 'system' : 'department' })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="org">企业级</SelectItem>
+                        <SelectItem value="department">部门级</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* 部门服务：所属部门选择（必填） */}
+                {fixedScope === 'department' && (
+                  <div className="space-y-2">
+                    <Label>所属部门 <span className="text-red-500">*</span></Label>
+                    {user?.role === 'dept_admin' ? (
+                      <Input
+                        value={departments.find((d) => d.id === user.departmentId)?.name || user.departmentId || ''}
+                        disabled
+                        readOnly
+                      />
+                    ) : (
+                      <>
+                        <Select
+                          value={formData.owner_id || ''}
+                          onValueChange={(v) => setFormData({ ...formData, owner_id: v, owner_type: 'department' })}
+                        >
+                          <SelectTrigger><SelectValue placeholder="请选择部门" /></SelectTrigger>
+                          <SelectContent>
+                            {departments.map((d) => (
+                              <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">请选择所属部门（必填）</p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {isLoadingOptions ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1293,41 +1363,45 @@ export default function McpServersPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="space-y-2">
-                      <Label>可见部门</Label>
-                      <p className="text-xs text-muted-foreground">不勾选任何项则默认全员可见；勾选后仅所选部门可见。</p>
-                      <MultiSelectList
-                        options={departments.map((d) => ({ id: d.id, label: d.name }))}
-                        selected={formData.visible_to?.department_ids || []}
-                        onChange={(ids) => setFormData({
-                          ...formData,
-                          visible_to: {
-                            ...formData.visible_to,
-                            department_ids: ids,
-                            user_ids: formData.visible_to?.user_ids,
-                          },
-                        })}
-                        emptyText="没有部门"
-                      />
-                    </div>
+                    {fixedScope !== 'department' && (
+                      <div className="space-y-2">
+                        <Label>可见部门</Label>
+                        <p className="text-xs text-muted-foreground">不勾选任何项则默认全员可见；勾选后仅所选部门可见。</p>
+                        <MultiSelectList
+                          options={departments.map((d) => ({ id: d.id, label: d.name }))}
+                          selected={formData.visible_to?.department_ids || []}
+                          onChange={(ids) => setFormData({
+                            ...formData,
+                            visible_to: {
+                              ...formData.visible_to,
+                              department_ids: ids,
+                              user_ids: formData.visible_to?.user_ids,
+                            },
+                          })}
+                          emptyText="没有部门"
+                        />
+                      </div>
+                    )}
 
-                    <div className="space-y-2">
-                      <Label>可见用户</Label>
-                      <p className="text-xs text-muted-foreground">额外把权限授予指定用户（与部门并集生效）。</p>
-                      <MultiSelectList
-                        options={users.map((u) => ({ id: u.id, label: u.name, sub: u.email || undefined }))}
-                        selected={formData.visible_to?.user_ids || []}
-                        onChange={(ids) => setFormData({
-                          ...formData,
-                          visible_to: {
-                            ...formData.visible_to,
-                            department_ids: formData.visible_to?.department_ids,
-                            user_ids: ids,
-                          },
-                        })}
-                        emptyText="没有用户"
-                      />
-                    </div>
+                    {fixedScope !== 'department' && (
+                      <div className="space-y-2">
+                        <Label>可见用户</Label>
+                        <p className="text-xs text-muted-foreground">额外把权限授予指定用户（与部门并集生效）。</p>
+                        <MultiSelectList
+                          options={users.map((u) => ({ id: u.id, label: u.name, sub: u.email || undefined }))}
+                          selected={formData.visible_to?.user_ids || []}
+                          onChange={(ids) => setFormData({
+                            ...formData,
+                            visible_to: {
+                              ...formData.visible_to,
+                              department_ids: formData.visible_to?.department_ids,
+                              user_ids: ids,
+                            },
+                          })}
+                          emptyText="没有用户"
+                        />
+                      </div>
+                    )}
 
                     <div className="space-y-2">
                       <Label>绑定助手</Label>

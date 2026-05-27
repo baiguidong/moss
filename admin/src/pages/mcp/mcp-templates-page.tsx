@@ -255,7 +255,6 @@ export default function McpTemplatesPage() {
                   <div className="flex items-center gap-1 ml-auto">
                     <Button variant="ghost" size="icon" className="size-8" onClick={() => handleEdit(template)} title="编辑"><Pencil className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => handleDelete(template)} title="删除"><Trash2 className="size-3.5" /></Button>
-                    <Button size="sm" onClick={() => handleInstall(template)}>安装</Button>
                   </div>
                 </div>
               </CardContent>
