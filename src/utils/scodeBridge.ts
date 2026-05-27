@@ -239,6 +239,13 @@ export async function prepareFirstMessageForScode(
      * fetched on-demand by the agent calling `wiki read|search`.
      */
     availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+    /**
+     * 企业应用管理: corp app instances the current Assistant may use via the
+     * in-container `corpapp` CLI. When non-empty, an `[Available Corp Apps]`
+     * block is prepended so the agent knows it can send/receive messages and
+     * files through these apps.
+     */
+    availableCorpApps?: Array<{ id: string; name: string; type: string; key: string }>
   }
 ): Promise<string> {
   const instructions: string[] = []
@@ -287,6 +294,27 @@ export async function prepareFirstMessageForScode(
     lines.push('  wiki read <wikiId> --file <path>   # read a specific chunk')
     lines.push('  wiki search <wikiId> <query>       # full-text grep (recommended for large wikis)')
     lines.push('  wiki metadata <wikiId>             # build time / chunk count / etc.')
+    instructions.push(lines.join('\n'))
+  }
+
+  // 5. 企业应用管理: available corp apps hint
+  if (config.availableCorpApps && config.availableCorpApps.length > 0) {
+    const lines: string[] = []
+    lines.push('[Available Corp Apps]')
+    lines.push(
+      'You can send and receive messages/files through the following enterprise apps using the `corpapp` CLI inside your shell.',
+    )
+    lines.push('')
+    for (const a of config.availableCorpApps) {
+      lines.push(`- ${a.name} (type: ${a.type}, key: ${a.key})`)
+    }
+    lines.push('')
+    lines.push('Commands:')
+    lines.push('  corpapp list                                            # list apps you can use')
+    lines.push('  corpapp get --name <name>                               # resolve an app by name')
+    lines.push('  corpapp send --app <name> --to <userid> --text <msg>    # send a text message')
+    lines.push('  corpapp send-file --app <name> --to <userid> --file <p> # send a file')
+    lines.push('  corpapp receive --app <name> [--since <cursor>]         # poll inbound messages')
     instructions.push(lines.join('\n'))
   }
 

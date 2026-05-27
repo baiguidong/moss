@@ -522,6 +522,54 @@ export class DirectConnectStore {
         ON external_sources (enabled, last_sync_at);
     `)
 
+    // ============================================================
+    // 企业应用管理 (Corp App Management)
+    // ------------------------------------------------------------
+    // Multiple named instances per type (first type: 'wecomapp').
+    // Mirrors external_sources but without the sync-specific columns,
+    // plus an indexed `app_key` (keyOf(config), e.g. corpId:agentId) so
+    // the agent CLI can resolve an instance by key in O(1).
+    // ============================================================
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS corp_apps (
+        id                       TEXT PRIMARY KEY,
+        org_id                   TEXT NOT NULL,
+        type                     TEXT NOT NULL,                 -- 'wecomapp'
+        name                     TEXT NOT NULL,                 -- user-assigned unique name
+        app_key                  TEXT NOT NULL,                 -- keyOf(config), e.g. corpId:agentId
+        config_json              TEXT NOT NULL,                 -- {corpId, agentId, ...non-secret}
+        credentials_secret_key   TEXT,                          -- ref to secret store
+        enabled                  INTEGER NOT NULL DEFAULT 1,
+        created_by               TEXT NOT NULL,
+        created_at               INTEGER NOT NULL,
+        updated_at               INTEGER NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS corp_apps_org_name_idx
+        ON corp_apps (org_id, name);
+      CREATE UNIQUE INDEX IF NOT EXISTS corp_apps_org_type_key_idx
+        ON corp_apps (org_id, type, app_key);
+      CREATE INDEX IF NOT EXISTS corp_apps_org_idx
+        ON corp_apps (org_id);
+
+      CREATE TABLE IF NOT EXISTS corp_app_inbound (
+        id           TEXT PRIMARY KEY,
+        corp_app_id  TEXT NOT NULL,
+        org_id       TEXT NOT NULL,
+        seq          INTEGER NOT NULL,            -- monotonic per corp_app_id; poll cursor
+        from_user    TEXT,
+        msg_type     TEXT,
+        text         TEXT,
+        media_id     TEXT,
+        file_name    TEXT,
+        received_at  INTEGER NOT NULL,
+        payload_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS corp_app_inbound_seq_idx
+        ON corp_app_inbound (corp_app_id, seq);
+    `)
+
     // Incremental migration: add v2 columns to existing P0 tables.
     // Uses the moss-standard try/catch ALTER TABLE pattern.
     const v2NodeColumns: Array<[string, string]> = [
@@ -2141,6 +2189,152 @@ export class DirectConnectStore {
     // Note: documents and tree nodes with this source_id are NOT cascade-deleted;
     // the next sync sweep will soft-delete them. Keep DB referential integrity loose.
     this.db.prepare(`DELETE FROM external_sources WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ==================== 企业应用管理 (Corp Apps) ====================
+
+  listCorpApps(orgId: string, opts?: { enabledOnly?: boolean }): SqlRow[] {
+    if (opts?.enabledOnly) {
+      return this.db
+        .prepare(`SELECT * FROM corp_apps WHERE org_id = ? AND enabled = 1 ORDER BY created_at`)
+        .all(orgId) as SqlRow[]
+    }
+    return this.db
+      .prepare(`SELECT * FROM corp_apps WHERE org_id = ? ORDER BY created_at`)
+      .all(orgId) as SqlRow[]
+  }
+
+  getCorpApp(id: string, orgId: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM corp_apps WHERE id = ? AND org_id = ?`).get(id, orgId) as SqlRow) ?? null
+  }
+
+  /** Cross-org getter (callback listener has no caller org context). */
+  getCorpAppById(id: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM corp_apps WHERE id = ?`).get(id) as SqlRow) ?? null
+  }
+
+  getCorpAppByName(orgId: string, name: string): SqlRow | null {
+    return (this.db.prepare(`SELECT * FROM corp_apps WHERE org_id = ? AND name = ?`).get(orgId, name) as SqlRow) ?? null
+  }
+
+  getCorpAppByKey(orgId: string, type: string, appKey: string): SqlRow | null {
+    return (
+      (this.db
+        .prepare(`SELECT * FROM corp_apps WHERE org_id = ? AND type = ? AND app_key = ?`)
+        .get(orgId, type, appKey) as SqlRow) ?? null
+    )
+  }
+
+  /** Insert a corp app. Throws on (org_id, name) or (org_id, type, app_key) collision. */
+  createCorpApp(row: {
+    id: string
+    org_id: string
+    type: string
+    name: string
+    app_key: string
+    config_json: string
+    credentials_secret_key?: string | null
+    created_by: string
+  }): void {
+    const ts = now()
+    this.db.prepare(`
+      INSERT INTO corp_apps (
+        id, org_id, type, name, app_key, config_json, credentials_secret_key,
+        enabled, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      row.id,
+      row.org_id,
+      row.type,
+      row.name,
+      row.app_key,
+      row.config_json,
+      row.credentials_secret_key ?? null,
+      row.created_by,
+      ts,
+      ts,
+    )
+  }
+
+  updateCorpApp(id: string, orgId: string, updates: {
+    name?: string
+    app_key?: string
+    config_json?: string
+    credentials_secret_key?: string | null
+    enabled?: number
+  }): void {
+    const existing = this.getCorpApp(id, orgId)
+    if (!existing) return
+    const ts = now()
+    this.db.prepare(`
+      UPDATE corp_apps
+      SET name = ?, app_key = ?, config_json = ?, credentials_secret_key = ?,
+          enabled = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(
+      updates.name ?? (existing.name as string),
+      updates.app_key ?? (existing.app_key as string),
+      updates.config_json ?? (existing.config_json as string),
+      updates.credentials_secret_key !== undefined
+        ? updates.credentials_secret_key
+        : (existing.credentials_secret_key as string | null),
+      updates.enabled !== undefined ? updates.enabled : (existing.enabled as number),
+      ts,
+      id,
+      orgId,
+    )
+  }
+
+  deleteCorpApp(id: string, orgId: string): void {
+    this.db.prepare(`DELETE FROM corp_apps WHERE id = ? AND org_id = ?`).run(id, orgId)
+  }
+
+  // ---- Inbound message buffer ----
+
+  /** Append an inbound message, assigning the next per-app sequence number. */
+  appendCorpAppInbound(msg: {
+    corp_app_id: string
+    org_id: string
+    from_user?: string | null
+    msg_type?: string | null
+    text?: string | null
+    media_id?: string | null
+    file_name?: string | null
+    received_at?: number
+    payload_json?: string | null
+  }): number {
+    const r = this.db
+      .prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM corp_app_inbound WHERE corp_app_id = ?`)
+      .get(msg.corp_app_id) as { m: number }
+    const seq = (r?.m ?? 0) + 1
+    this.db.prepare(`
+      INSERT INTO corp_app_inbound (
+        id, corp_app_id, org_id, seq, from_user, msg_type, text,
+        media_id, file_name, received_at, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      randomUUID(),
+      msg.corp_app_id,
+      msg.org_id,
+      seq,
+      msg.from_user ?? null,
+      msg.msg_type ?? null,
+      msg.text ?? null,
+      msg.media_id ?? null,
+      msg.file_name ?? null,
+      msg.received_at ?? now(),
+      msg.payload_json ?? null,
+    )
+    return seq
+  }
+
+  /** List inbound messages with seq > sinceSeq, oldest first. */
+  listCorpAppInbound(corpAppId: string, sinceSeq: number, limit: number): SqlRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM corp_app_inbound WHERE corp_app_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`,
+      )
+      .all(corpAppId, sinceSeq, Math.max(1, Math.min(limit, 500))) as SqlRow[]
   }
 
   // ==================== Document Center v2: Soft-delete helpers ====================

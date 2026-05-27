@@ -130,6 +130,13 @@ export type ServerFileConfig = z.infer<ReturnType<typeof serverFileConfigSchema>
 export type ServerConfig = {
   host: string
   port: number
+  /**
+   * 企业应用管理: optional dedicated port for the PUBLIC corp-app callback
+   * listener (WeCom etc.). Runs a separate http.Server that ONLY serves the
+   * callback route, isolating external traffic from the admin/API server.
+   * Resolved from MOSS_CALLBACK_PORT when unset. Disabled if 0/undefined.
+   */
+  callbackPort?: number
   advertisedHost?: string
   authMode: 'local'
   tokenTtlSec: number
@@ -329,6 +336,12 @@ export type RunnerManifest = {
      * `[Available Wikis]` block so scode actually knows to use `wiki` CLI.
      */
     availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+    /**
+     * Corp app instances this assistant may use via the `corpapp` CLI.
+     * acpBridge injects an `[Available Corp Apps]` block so the agent knows
+     * the CLI + instance names exist.
+     */
+    availableCorpApps?: Array<{ id: string; name: string; type: string; key: string }>
     sharedMemory?: string | null
     /** Enabled skill names (from client or assistant config) */
     enabledSkills?: string[]

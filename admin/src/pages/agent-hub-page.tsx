@@ -501,8 +501,10 @@ export default function AgentHubPage() {
   const [editSkillsLoading, setEditSkillsLoading] = useState(false)
   const [editEnabledSkills, setEditEnabledSkills] = useState<string[]>([])
   const [editEnabledWikis, setEditEnabledWikis] = useState<string[]>([])
+  const [editEnabledCorpApps, setEditEnabledCorpApps] = useState<string[]>([])
   const [editRules, setEditRules] = useState('')
   const [availableWikis, setAvailableWikis] = useState<Array<{ id: string; name: string; description: string | null; buildStatus: string }>>([])
+  const [availableCorpApps, setAvailableCorpApps] = useState<Array<{ id: string; name: string; type: string; appKey: string }>>([])
   const [editAddSkillOpen, setEditAddSkillOpen] = useState(false)
   const [editAddSkillSelection, setEditAddSkillSelection] = useState<string[]>([])
   const [savingEdit, setSavingEdit] = useState(false)
@@ -703,6 +705,21 @@ export default function AgentHubPage() {
       })))
     } catch {
       setAvailableWikis([])
+    }
+  }, [])
+
+  const loadAvailableCorpApps = useCallback(async () => {
+    try {
+      const { listCorpApps } = await import('@/lib/api/corp-apps')
+      const list = await listCorpApps()
+      setAvailableCorpApps(list.map(a => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        appKey: a.appKey,
+      })))
+    } catch {
+      setAvailableCorpApps([])
     }
   }, [])
 
@@ -999,8 +1016,12 @@ export default function AgentHubPage() {
     // Document Center: load assistant.enabledWikis + list of available wikis
     const rawWikis = (agent.meta as { enabledWikis?: unknown } | undefined)?.enabledWikis
     setEditEnabledWikis(Array.isArray(rawWikis) ? rawWikis.filter((v): v is string => typeof v === 'string') : [])
+    // 企业应用管理: load assistant.enabledCorpApps + list of available corp apps
+    const rawCorpApps = (agent.meta as { enabledCorpApps?: unknown } | undefined)?.enabledCorpApps
+    setEditEnabledCorpApps(Array.isArray(rawCorpApps) ? rawCorpApps.filter((v): v is string => typeof v === 'string') : [])
     setEditRules('')
     void loadAvailableWikis()
+    void loadAvailableCorpApps()
     setEditOpen(true)
 
     try {
@@ -1062,7 +1083,7 @@ export default function AgentHubPage() {
     } finally {
       setEditSkillsLoading(false)
     }
-  }, [installedSkills, loadAvailableWikis])
+  }, [installedSkills, loadAvailableWikis, loadAvailableCorpApps])
 
   const handleInstall = useCallback(
     async (agent: AgentHubAssistant, skillIds: string[]) => {
@@ -1131,6 +1152,8 @@ export default function AgentHubPage() {
           enabledSkills: editEnabledSkills,
           // Document Center: persist Wiki associations (string[] of wiki IDs)
           enabledWikis: editEnabledWikis,
+          // 企业应用管理: persist Corp App associations (string[] of corp app IDs)
+          enabledCorpApps: editEnabledCorpApps,
           visible_to: editVisibilityMode === 'admin'
             ? { department_ids: [], user_ids: [] }
             : editVisibilityMode === 'departments'
@@ -1158,7 +1181,7 @@ export default function AgentHubPage() {
     } finally {
       setSavingEdit(false)
     }
-  }, [editAvatar, editDescription, editEmoji, editName, editRules, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editSkills, editingAgent, fetchInstalledState])
+  }, [editAvatar, editDescription, editEmoji, editName, editRules, editAgentType, editMemoryMode, editVisibilityMode, editVisibleTo, editVisibleUserIds, editWorkflowTrigger, editWorkflowCron, editWorkflowWebhookPath, editWorkflowOutputWebhook, editWorkflowTimeout, editWorkflowOutputTargets, editEnabledSkills, editEnabledWikis, editEnabledCorpApps, editSkills, editingAgent, fetchInstalledState])
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!pendingUninstallAgent) {
@@ -2939,6 +2962,64 @@ export default function AgentHubPage() {
                               {wiki.description}
                             </p>
                           )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ---------- 企业应用管理: Corp App associations ---------- */}
+            <div className="space-y-2 pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">关联企业应用</div>
+                <Badge variant="outline">{editEnabledCorpApps.length} / {availableCorpApps.length} 已关联</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                勾选后,该助手可通过 corpapp CLI 使用这些企业应用收发消息与文件。
+              </p>
+              {availableCorpApps.length === 0 ? (
+                <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                  暂无可用企业应用。请先在「企业应用管理」中配置。
+                </div>
+              ) : (
+                <div className="max-h-48 space-y-1 overflow-auto rounded-md border p-2">
+                  {availableCorpApps.map(app => {
+                    const isEnabled = editEnabledCorpApps.includes(app.id)
+                    const toggle = () => {
+                      setEditEnabledCorpApps(prev =>
+                        prev.includes(app.id)
+                          ? prev.filter(id => id !== app.id)
+                          : Array.from(new Set([...prev, app.id])),
+                      )
+                    }
+                    return (
+                      <div
+                        key={app.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={toggle}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault()
+                            toggle()
+                          }
+                        }}
+                        className="flex items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={isEnabled}
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          className="mt-0.5 pointer-events-none"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{app.name}</span>
+                            <Badge variant="outline" className="text-xs">{app.type}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-clamp-1">{app.appKey}</p>
                         </div>
                       </div>
                     )

@@ -80,6 +80,8 @@ import { storeSecret, deleteSecret } from './sources/secrets.js'
 // Connector implementations register themselves on import.
 import './sources/filesystem.js'
 import './sources/wecomDrive.js'
+// Corp-app connectors register themselves on import.
+import './corpapps/wecomApp.js'
 import { getUserProfile } from './api/userProfile.js'
 import { createConfigItemsApi } from './api/configItems.js'
 import { createSecretsApi } from './api/secrets.js'
@@ -190,6 +192,29 @@ function serializeExternalSource(row: Record<string, unknown>) {
     lastSyncAt: row.last_sync_at == null ? null : Number(row.last_sync_at),
     lastSyncStatus: typeof row.last_sync_status === 'string' ? row.last_sync_status : null,
     lastSyncError: typeof row.last_sync_error === 'string' ? row.last_sync_error : null,
+    createdBy: String(row.created_by),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  }
+}
+
+function serializeCorpApp(row: Record<string, unknown>) {
+  let configParsed: Record<string, unknown> = {}
+  try {
+    configParsed = JSON.parse(String(row.config_json ?? '{}')) as Record<string, unknown>
+  } catch {
+    configParsed = {}
+  }
+  return {
+    id: String(row.id),
+    orgId: String(row.org_id),
+    type: String(row.type),
+    name: String(row.name),
+    appKey: String(row.app_key ?? ''),
+    config: configParsed,
+    // Never return the credential blob — just whether one is set.
+    hasCredentials: typeof row.credentials_secret_key === 'string' && row.credentials_secret_key.length > 0,
+    enabled: Number(row.enabled ?? 0) === 1,
     createdBy: String(row.created_by),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -1955,6 +1980,206 @@ export function startServer(
         return
       }
 
+      // ============================================================
+      // 企业应用管理 (Corp App Management): /api/v1/corp-apps/*
+      // Admin-facing CRUD. Multiple named instances per type.
+      // ============================================================
+
+      if (req.method === 'GET' && pathname === '/api/v1/corp-apps') {
+        authService.requireScope(auth, 'admin:settings')
+        const rows = runtime.store.listCorpApps(auth.orgId)
+        const { getCorpAppCapabilities } = await import('./corpapps/types.js')
+        writeJson(res, 200, {
+          apps: rows.map((r) => ({
+            ...serializeCorpApp(r),
+            capabilities: getCorpAppCapabilities(String((r as Record<string, unknown>).type)),
+          })),
+        })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/corp-apps/types') {
+        authService.requireScope(auth, 'admin:settings')
+        const { listCorpAppTypes, getCorpAppCapabilities } = await import('./corpapps/types.js')
+        writeJson(res, 200, {
+          types: listCorpAppTypes().map((t) => ({ type: t, capabilities: getCorpAppCapabilities(t) })),
+        })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/corp-apps') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const type = typeof body.type === 'string' ? body.type : ''
+        const name = typeof body.name === 'string' ? body.name.trim() : ''
+        const config = body.config && typeof body.config === 'object' ? (body.config as Record<string, unknown>) : {}
+        const credentials =
+          body.credentials && typeof body.credentials === 'object'
+            ? (body.credentials as Record<string, unknown>)
+            : {}
+        if (!type || !name) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'type and name are required' } })
+          return
+        }
+
+        const { createCorpApp } = await import('./corpapps/types.js')
+        let appKey: string
+        try {
+          appKey = createCorpApp(type).keyOf(config)
+        } catch (err) {
+          writeJson(res, 400, { error: { code: 'invalid_type', message: err instanceof Error ? err.message : String(err) } })
+          return
+        }
+
+        let secretKey: string | null = null
+        if (Object.keys(credentials).length > 0) {
+          const stringOnly: Record<string, string> = {}
+          for (const [k, v] of Object.entries(credentials)) {
+            if (typeof v === 'string' && v.length > 0) stringOnly[k] = v
+          }
+          if (Object.keys(stringOnly).length > 0) secretKey = await storeSecret(stringOnly)
+        }
+
+        const id = randomUUID()
+        try {
+          runtime.store.createCorpApp({
+            id,
+            org_id: auth.orgId,
+            type,
+            name,
+            app_key: appKey,
+            config_json: JSON.stringify(config),
+            credentials_secret_key: secretKey,
+            created_by: auth.userId,
+          })
+          const row = runtime.store.getCorpApp(id, auth.orgId)
+          writeJson(res, 200, row ? serializeCorpApp(row) : { id })
+        } catch (err) {
+          if (secretKey) await deleteSecret(secretKey).catch(() => {})
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/UNIQUE constraint/i.test(msg)) {
+            const code = /app_key/.test(msg) ? 'key_taken' : 'name_taken'
+            writeJson(res, 400, { error: { code, message: code === 'key_taken' ? '该 corpId+agentId 已存在' : '名称已存在' } })
+          } else {
+            writeJson(res, 400, { error: { code: 'create_failed', message: msg } })
+          }
+        }
+        return
+      }
+
+      const corpAppItemMatch = pathname.match(/^\/api\/v1\/corp-apps\/([^/]+)$/)
+      if (req.method === 'GET' && corpAppItemMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const id = corpAppItemMatch[1] || ''
+        const row = runtime.store.getCorpApp(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const { getCorpAppCapabilities } = await import('./corpapps/types.js')
+        writeJson(res, 200, { ...serializeCorpApp(row), capabilities: getCorpAppCapabilities(String((row as Record<string, unknown>).type)) })
+        return
+      }
+
+      if (req.method === 'PATCH' && corpAppItemMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const id = corpAppItemMatch[1] || ''
+        const existing = runtime.store.getCorpApp(id, auth.orgId)
+        if (!existing) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const body = await readJsonBody(req)
+        const updates: {
+          name?: string
+          app_key?: string
+          config_json?: string
+          credentials_secret_key?: string | null
+          enabled?: number
+        } = {}
+        if (typeof body.name === 'string') updates.name = body.name.trim()
+        if (body.config && typeof body.config === 'object') {
+          const config = body.config as Record<string, unknown>
+          updates.config_json = JSON.stringify(config)
+          // Recompute the key whenever config changes (corpId/agentId may move).
+          try {
+            const { createCorpApp } = await import('./corpapps/types.js')
+            updates.app_key = createCorpApp(String((existing as Record<string, unknown>).type)).keyOf(config)
+          } catch {
+            // leave app_key unchanged on connector error
+          }
+        }
+        if (body.enabled !== undefined) updates.enabled = body.enabled === true ? 1 : 0
+        // Credential rotation.
+        if (body.credentials && typeof body.credentials === 'object') {
+          const stringOnly: Record<string, string> = {}
+          for (const [k, v] of Object.entries(body.credentials as Record<string, unknown>)) {
+            if (typeof v === 'string' && v.length > 0) stringOnly[k] = v
+          }
+          if (Object.keys(stringOnly).length > 0) {
+            const newKey = await storeSecret(stringOnly)
+            const oldKey = (existing as Record<string, unknown>).credentials_secret_key
+            updates.credentials_secret_key = newKey
+            if (typeof oldKey === 'string' && oldKey) await deleteSecret(oldKey).catch(() => {})
+          }
+        }
+        try {
+          runtime.store.updateCorpApp(id, auth.orgId, updates)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/UNIQUE constraint/i.test(msg)) {
+            const code = /app_key/.test(msg) ? 'key_taken' : 'name_taken'
+            writeJson(res, 400, { error: { code, message: code === 'key_taken' ? '该 corpId+agentId 已存在' : '名称已存在' } })
+            return
+          }
+          throw err
+        }
+        const row = runtime.store.getCorpApp(id, auth.orgId)
+        writeJson(res, 200, row ? serializeCorpApp(row) : { id })
+        return
+      }
+
+      if (req.method === 'DELETE' && corpAppItemMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const id = corpAppItemMatch[1] || ''
+        const existing = runtime.store.getCorpApp(id, auth.orgId)
+        if (existing) {
+          const oldKey = (existing as Record<string, unknown>).credentials_secret_key
+          if (typeof oldKey === 'string' && oldKey) await deleteSecret(oldKey).catch(() => {})
+          runtime.store.deleteCorpApp(id, auth.orgId)
+        }
+        writeJson(res, 200, { ok: true })
+        return
+      }
+
+      const corpAppTestMatch = pathname.match(/^\/api\/v1\/corp-apps\/([^/]+)\/test$/)
+      if (req.method === 'POST' && corpAppTestMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const id = corpAppTestMatch[1] || ''
+        const row = runtime.store.getCorpApp(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        try {
+          const { createCorpApp } = await import('./corpapps/types.js')
+          const { readSecret } = await import('./sources/secrets.js')
+          const r = row as Record<string, unknown>
+          const config = JSON.parse(String(r.config_json)) as Record<string, unknown>
+          const credentials =
+            typeof r.credentials_secret_key === 'string' && r.credentials_secret_key
+              ? await readSecret(r.credentials_secret_key)
+              : {}
+          const connector = createCorpApp(String(r.type))
+          await connector.init(config, credentials)
+          const result = await connector.testConnection()
+          writeJson(res, 200, result)
+        } catch (err) {
+          writeJson(res, 200, { ok: false, message: err instanceof Error ? err.message : String(err) })
+        }
+        return
+      }
+
 
       // ---- Agent-facing wiki endpoints (called by wikiCli from inside scode container) ----
       // Auth model:
@@ -2147,6 +2372,264 @@ export function startServer(
           source_document_count: wiki.sourceDocumentIds.length,
           chunk_count: chunkCount,
         })
+        return
+      }
+
+      // ---- Agent-facing corp-app endpoints (called by the `corpapp` CLI inside scode) ----
+      // Auth model mirrors wikis: an in-container session token (auth.assistantId
+      // set) is restricted to that assistant's `enabledCorpApps` from its
+      // `_moss_meta.json`; admins (admin:settings) are unrestricted; everyone
+      // else is denied.
+      const resolveAgentCorpAppAccess = async (): Promise<Set<string> | null | undefined> => {
+        if (typeof auth.assistantId === 'string' && auth.assistantId.length > 0) {
+          try {
+            const dir = await findAssistantDir(auth.assistantId)
+            if (!dir) return new Set()
+            const meta = await readAssistantMeta(dir.dir)
+            const ids = Array.isArray((meta as { enabledCorpApps?: unknown } | null)?.enabledCorpApps)
+              ? (meta as { enabledCorpApps: unknown[] }).enabledCorpApps.filter(
+                  (v): v is string => typeof v === 'string',
+                )
+              : []
+            return new Set(ids)
+          } catch {
+            return new Set()
+          }
+        }
+        if (hasScope(auth.scopes, 'admin:settings')) {
+          return null
+        }
+        return undefined
+      }
+
+      // Build an agent-facing view of a corp app row (no secrets).
+      const agentCorpAppView = async (row: Record<string, unknown>) => {
+        const { getCorpAppCapabilities } = await import('./corpapps/types.js')
+        return {
+          id: String(row.id),
+          name: String(row.name),
+          type: String(row.type),
+          key: String(row.app_key ?? ''),
+          capabilities: getCorpAppCapabilities(String(row.type)),
+        }
+      }
+
+      // Construct + init the connector for a stored corp app instance.
+      const initCorpAppConnector = async (row: Record<string, unknown>) => {
+        const { createCorpApp } = await import('./corpapps/types.js')
+        const { readSecret } = await import('./sources/secrets.js')
+        const config = JSON.parse(String(row.config_json ?? '{}')) as Record<string, unknown>
+        const credentials =
+          typeof row.credentials_secret_key === 'string' && row.credentials_secret_key
+            ? await readSecret(row.credentials_secret_key)
+            : {}
+        const connector = createCorpApp(String(row.type))
+        await connector.init(config, credentials)
+        return connector
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agent/corp-apps') {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const all = runtime.store.listCorpApps(auth.orgId, { enabledOnly: true })
+        const filtered = access === null ? all : all.filter((r) => access.has(String((r as Record<string, unknown>).id)))
+        const apps = await Promise.all(filtered.map((r) => agentCorpAppView(r as Record<string, unknown>)))
+        writeJson(res, 200, { apps })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agent/corp-apps/resolve') {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const name = url.searchParams.get('name')
+        const key = url.searchParams.get('key')
+        const type = url.searchParams.get('type') ?? 'wecomapp'
+        let row: Record<string, unknown> | null = null
+        if (name) {
+          row = runtime.store.getCorpAppByName(auth.orgId, name) as Record<string, unknown> | null
+        } else if (key) {
+          row = runtime.store.getCorpAppByKey(auth.orgId, type, key) as Record<string, unknown> | null
+        } else {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'name or key is required' } })
+          return
+        }
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        if (access !== null && !access.has(String(row.id))) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'corp app not authorised for this assistant' } })
+          return
+        }
+        writeJson(res, 200, await agentCorpAppView(row))
+        return
+      }
+
+      const agentCorpAppMsgMatch = pathname.match(/^\/api\/v1\/agent\/corp-apps\/([^/]+)\/messages$/)
+      if (req.method === 'POST' && agentCorpAppMsgMatch) {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const id = agentCorpAppMsgMatch[1] || ''
+        if (access !== null && !access.has(id)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'corp app not authorised for this assistant' } })
+          return
+        }
+        const row = runtime.store.getCorpApp(id, auth.orgId) as Record<string, unknown> | null
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const body = await readJsonBody(req)
+        const to = typeof body.to === 'string' ? body.to : ''
+        const text = typeof body.text === 'string' ? body.text : ''
+        if (!to || !text) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'to and text are required' } })
+          return
+        }
+        try {
+          const connector = await initCorpAppConnector(row)
+          if (!connector.sendMessage) {
+            writeJson(res, 501, { error: { code: 'unsupported', message: 'this corp app type cannot send messages' } })
+            return
+          }
+          const result = await connector.sendMessage(to, text)
+          writeJson(res, 200, result)
+        } catch (err) {
+          writeJson(res, 502, { error: { code: 'send_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      const agentCorpAppFileMatch = pathname.match(/^\/api\/v1\/agent\/corp-apps\/([^/]+)\/files$/)
+      if (req.method === 'POST' && agentCorpAppFileMatch) {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const id = agentCorpAppFileMatch[1] || ''
+        if (access !== null && !access.has(id)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'corp app not authorised for this assistant' } })
+          return
+        }
+        const row = runtime.store.getCorpApp(id, auth.orgId) as Record<string, unknown> | null
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const to = url.searchParams.get('to') ?? ''
+        const fileName = url.searchParams.get('fileName') ?? 'file'
+        if (!to) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'to query param is required' } })
+          return
+        }
+        const bytes = await readRawBody(req)
+        if (bytes.length === 0) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'empty file body' } })
+          return
+        }
+        try {
+          const connector = await initCorpAppConnector(row)
+          if (!connector.sendFile) {
+            writeJson(res, 501, { error: { code: 'unsupported', message: 'this corp app type cannot send files' } })
+            return
+          }
+          const result = await connector.sendFile(to, fileName, bytes)
+          writeJson(res, 200, result)
+        } catch (err) {
+          writeJson(res, 502, { error: { code: 'send_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
+        return
+      }
+
+      const agentCorpAppInboundMatch = pathname.match(/^\/api\/v1\/agent\/corp-apps\/([^/]+)\/inbound$/)
+      if (req.method === 'GET' && agentCorpAppInboundMatch) {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const id = agentCorpAppInboundMatch[1] || ''
+        if (access !== null && !access.has(id)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'corp app not authorised for this assistant' } })
+          return
+        }
+        const row = runtime.store.getCorpApp(id, auth.orgId)
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0
+        const limit = Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50
+        const rows = runtime.store.listCorpAppInbound(id, since, limit)
+        let nextCursor = since
+        const messages = rows.map((r) => {
+          const m = r as Record<string, unknown>
+          if (Number(m.seq) > nextCursor) nextCursor = Number(m.seq)
+          return {
+            id: String(m.id),
+            seq: Number(m.seq),
+            from: String(m.from_user ?? ''),
+            type: String(m.msg_type ?? 'other'),
+            text: typeof m.text === 'string' ? m.text : '',
+            mediaId: typeof m.media_id === 'string' ? m.media_id : '',
+            fileName: typeof m.file_name === 'string' ? m.file_name : '',
+            receivedAt: Number(m.received_at ?? 0),
+          }
+        })
+        writeJson(res, 200, { messages, nextCursor })
+        return
+      }
+
+      const agentCorpAppMediaMatch = pathname.match(/^\/api\/v1\/agent\/corp-apps\/([^/]+)\/media$/)
+      if (req.method === 'GET' && agentCorpAppMediaMatch) {
+        const access = await resolveAgentCorpAppAccess()
+        if (access === undefined) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'insufficient scope' } })
+          return
+        }
+        const id = agentCorpAppMediaMatch[1] || ''
+        if (access !== null && !access.has(id)) {
+          writeJson(res, 403, { error: { code: 'forbidden', message: 'corp app not authorised for this assistant' } })
+          return
+        }
+        const row = runtime.store.getCorpApp(id, auth.orgId) as Record<string, unknown> | null
+        if (!row) {
+          writeJson(res, 404, { error: { code: 'not_found', message: 'corp app not found' } })
+          return
+        }
+        const mediaId = url.searchParams.get('mediaId') ?? ''
+        if (!mediaId) {
+          writeJson(res, 400, { error: { code: 'invalid_payload', message: 'mediaId is required' } })
+          return
+        }
+        try {
+          const connector = await initCorpAppConnector(row)
+          if (!connector.downloadMedia) {
+            writeJson(res, 501, { error: { code: 'unsupported', message: 'this corp app type cannot download media' } })
+            return
+          }
+          const { bytes, fileName, contentType } = await connector.downloadMedia(mediaId)
+          // Stream raw bytes back; CLI writes them to disk. Surface the
+          // provider filename so the caller can name the local file.
+          res.writeHead(200, {
+            'Content-Type': contentType || 'application/octet-stream',
+            'Content-Length': String(bytes.length),
+            ...(fileName ? { 'X-Corp-App-Filename': encodeURIComponent(fileName) } : {}),
+          })
+          res.end(bytes)
+        } catch (err) {
+          writeJson(res, 502, { error: { code: 'download_failed', message: err instanceof Error ? err.message : String(err) } })
+        }
         return
       }
 
@@ -2835,6 +3318,9 @@ export function startServer(
           enabledWikis: Array.isArray(body.enabledWikis)
             ? body.enabledWikis.filter((s): s is string => typeof s === 'string')
             : undefined,
+          enabledCorpApps: Array.isArray(body.enabledCorpApps)
+            ? body.enabledCorpApps.filter((s): s is string => typeof s === 'string')
+            : undefined,
           agent_type:
             body.agent_type === 'chat' || body.agent_type === 'workflow'
               ? body.agent_type
@@ -2916,6 +3402,10 @@ export function startServer(
             enabledWikis:
               Array.isArray(updates.enabledWikis)
                 ? updates.enabledWikis.filter((s: unknown) => typeof s === 'string')
+                : undefined,
+            enabledCorpApps:
+              Array.isArray(updates.enabledCorpApps)
+                ? updates.enabledCorpApps.filter((s: unknown) => typeof s === 'string')
                 : undefined,
             skills:
               Array.isArray(updates.skills)
@@ -3141,6 +3631,7 @@ export function startServer(
           skills: Array.isArray(body.skills) ? body.skills : [],
           enabledSkills: Array.isArray(body.enabled_skills) ? body.enabled_skills : [],
           enabledWikis: Array.isArray(body.enabled_wikis) ? body.enabled_wikis : [],
+          enabledCorpApps: Array.isArray(body.enabled_corp_apps) ? body.enabled_corp_apps : [],
           agent_type: body.agent_type || 'chat',
           memory_mode: body.memory_mode || 'session',
           visible_to: body.visible_to || null,
@@ -3363,6 +3854,7 @@ export function startServer(
               if (body.visible_to !== undefined) meta.visible_to = body.visible_to as VisibleTo | null
               if (body.enabledSkills !== undefined) meta.enabledSkills = body.enabledSkills as string[]
               if (body.enabledWikis !== undefined) meta.enabledWikis = body.enabledWikis as string[]
+              if (body.enabledCorpApps !== undefined) meta.enabledCorpApps = body.enabledCorpApps as string[]
               if (body.skills !== undefined) meta.skills = body.skills as string[]
               if (body.workflow !== undefined) meta.workflow = body.workflow as AssistantStoreMeta['workflow']
               if (typeof body.rules === 'string') {
@@ -4473,6 +4965,117 @@ export function startServer(
 
   server.listen(config.port, config.host)
 
+  // ============================================================
+  // 企业应用管理: PUBLIC corp-app callback listener (separate port)
+  // ------------------------------------------------------------
+  // External platforms (WeCom etc.) push events to a callback URL. This
+  // runs on a DEDICATED port and serves ONLY /api/v1/corp-apps/callback/:id
+  // — it never touches the admin/API/auth routing, so external traffic
+  // to this port physically cannot reach admin endpoints. Anything else
+  // is 404. Disabled when no callback port is configured.
+  // ============================================================
+  const callbackPort = config.callbackPort ?? Number(process.env.MOSS_CALLBACK_PORT ?? 0)
+  let callbackServer: http.Server | null = null
+  if (callbackPort && Number.isFinite(callbackPort) && callbackPort > 0) {
+    callbackServer = http.createServer(async (req, res) => {
+      try {
+        const url = new URL(req.url || '/', 'http://localhost')
+        const m = url.pathname.match(/^\/api\/v1\/corp-apps\/callback\/([^/]+)$/)
+        if (!m) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('not found')
+          return
+        }
+        const id = m[1] || ''
+        const row = runtime.store.getCorpAppById(id) as Record<string, unknown> | null
+        if (!row) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('not found')
+          return
+        }
+
+        // Build + init the connector (resolve its credentials).
+        const { createCorpApp } = await import('./corpapps/types.js')
+        const { readSecret } = await import('./sources/secrets.js')
+        const cfg = JSON.parse(String(row.config_json ?? '{}')) as Record<string, unknown>
+        const creds =
+          typeof row.credentials_secret_key === 'string' && row.credentials_secret_key
+            ? await readSecret(row.credentials_secret_key)
+            : {}
+        const connector = createCorpApp(String(row.type))
+        await connector.init(cfg, creds)
+
+        const msgSignature = url.searchParams.get('msg_signature') ?? ''
+        const timestamp = url.searchParams.get('timestamp') ?? ''
+        const nonce = url.searchParams.get('nonce') ?? ''
+
+        // GET → URL verification handshake (echo back decrypted echostr).
+        if (req.method === 'GET') {
+          const echostr = url.searchParams.get('echostr') ?? ''
+          if (!connector.verifyCallbackUrl) {
+            res.writeHead(501, { 'Content-Type': 'text/plain' })
+            res.end('not supported')
+            return
+          }
+          const plain = await connector.verifyCallbackUrl({ msgSignature, timestamp, nonce, echostr })
+          res.writeHead(200, { 'Content-Type': 'text/plain' })
+          res.end(plain)
+          return
+        }
+
+        // POST → inbound event. Verify + decrypt + persist, reply empty 200.
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const bodyText = Buffer.concat(chunks).toString('utf8')
+          if (connector.parseInboundCallback) {
+            try {
+              const messages = await connector.parseInboundCallback({
+                msgSignature,
+                timestamp,
+                nonce,
+                body: bodyText,
+              })
+              for (const msg of messages) {
+                runtime.store.appendCorpAppInbound({
+                  corp_app_id: id,
+                  org_id: String(row.org_id),
+                  from_user: msg.from,
+                  msg_type: msg.type,
+                  text: msg.text ?? null,
+                  media_id: msg.mediaId ?? null,
+                  file_name: msg.fileName ?? null,
+                  received_at: msg.receivedAt,
+                  payload_json: JSON.stringify(msg),
+                })
+              }
+            } catch (err) {
+              console.error('[corp-app callback] parse failed:', err)
+              // Still reply 200 so the platform doesn't hammer retries.
+            }
+          }
+          // WeCom expects a fast empty 200 (passive reply not implemented).
+          res.writeHead(200, { 'Content-Type': 'text/plain' })
+          res.end('')
+          return
+        }
+
+        res.writeHead(405, { 'Content-Type': 'text/plain' })
+        res.end('method not allowed')
+      } catch (err) {
+        console.error('[corp-app callback] error:', err)
+        res.writeHead(200, { 'Content-Type': 'text/plain' })
+        res.end('')
+      }
+    })
+    callbackServer.on('error', (err) => {
+      logger.error(`[corp-app callback] listener error: ${err.message}`)
+    })
+    callbackServer.listen(callbackPort, config.host, () => {
+      console.log(`[server] corp-app callback listener on ${config.host}:${callbackPort} (public; callback route only)`)
+    })
+  }
+
   return {
     port: null,
     ready,
@@ -4480,6 +5083,11 @@ export function startServer(
       wikiJobExecutor.stop()
       sourceSyncWorker.stop()
       wss.close()
+      if (callbackServer) {
+        await new Promise<void>((resolveClose) => {
+          callbackServer!.close(() => resolveClose())
+        })
+      }
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {
           if (error) {

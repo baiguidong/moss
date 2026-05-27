@@ -530,6 +530,7 @@ export class RuntimeService {
     // even though SESSION_TOKEN is set the agent has no idea it can use
     // the `wiki` CLI.
     let availableWikis: Array<{ id: string; name: string; description?: string | null }> | undefined
+    let availableCorpApps: Array<{ id: string; name: string; type: string; key: string }> | undefined
     let sharedMemory: string | null = null
     if (options.assistantName) {
       try {
@@ -555,6 +556,27 @@ export class RuntimeService {
               }
             }
             if (collected.length > 0) availableWikis = collected
+          }
+
+          // 企业应用管理: resolve `enabledCorpApps` so acpBridge can advertise
+          // the `corpapp` CLI + the instance names the agent may use.
+          const corpAppIds = Array.isArray(meta?.enabledCorpApps)
+            ? meta.enabledCorpApps.filter((v: unknown): v is string => typeof v === 'string')
+            : []
+          if (corpAppIds.length > 0) {
+            const collectedApps: Array<{ id: string; name: string; type: string; key: string }> = []
+            for (const appId of corpAppIds) {
+              const appRow = this.store.getCorpApp(appId, session.orgId) as Record<string, unknown> | null
+              if (appRow && Number(appRow.enabled ?? 0) === 1) {
+                collectedApps.push({
+                  id: String(appRow.id),
+                  name: String(appRow.name),
+                  type: String(appRow.type),
+                  key: String(appRow.app_key ?? ''),
+                })
+              }
+            }
+            if (collectedApps.length > 0) availableCorpApps = collectedApps
           }
 
           if (
@@ -651,6 +673,7 @@ export class RuntimeService {
         assistantName: options.assistantName,
         sessionToken,
         availableWikis,
+        availableCorpApps,
         sharedMemory,
         enabledSkills: options.enabledSkills,
         visibilityFilter: visibilityFilter ? {
