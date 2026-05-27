@@ -6,8 +6,8 @@ export function normalizeHubApiBaseUrl(rawValue: unknown): string {
   return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`
 }
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
-const DEFAULT_COS_BASE_URL = 'https://sudoclaw-1309794936.cos.ap-beijing.myqcloud.com'
+const DEFAULT_HUB_API_BASE_URL = 'https://sudoworkhub.sudoprivacy.com/api'
+const DEFAULT_COS_BASE_URL = 'https://sudowork-1309794936.cos.ap-beijing.myqcloud.com'
 
 let _resolvedBaseUrl: string | undefined
 let _resolvedAuth: string | undefined
