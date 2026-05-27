@@ -3867,6 +3867,37 @@ export function startServer(
         return
       }
 
+      if (req.method === 'POST' && pathname === '/api/v1/upload/mcp-icon') {
+        console.error('[MCP ICON UPLOAD] Processing request')
+        authService.requireScope(auth, 'admin:mcp')
+        const buffer = await readRawBody(req)
+        console.error('[MCP ICON UPLOAD] Buffer size:', buffer?.length)
+        const uploadDir = join(config.runtimeDir, 'uploads', 'mcp-icons')
+        await mkdir(uploadDir, { recursive: true })
+
+        const contentType = req.headers['content-type']
+        let ext = '.png'
+        if (typeof contentType === 'string') {
+          const mime = contentType.split(';')[0].trim().toLowerCase()
+          if (mime === 'image/png') {
+            ext = '.png'
+          } else if (mime === 'image/jpeg' || mime === 'image/jpg') {
+            ext = '.jpg'
+          } else if (mime === 'image/webp') {
+            ext = '.webp'
+          } else if (mime === 'image/svg+xml') {
+            ext = '.svg'
+          }
+        }
+
+        const filename = `mcp_icon_${randomUUID()}${ext}`
+        const filePath = join(uploadDir, filename)
+        await writeFile(filePath, buffer)
+
+        writeJson(res, 200, { success: true, data: { url: `/uploads/mcp-icons/${filename}` } })
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/agent-hub/categories') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, await fetchAgentHubCategories())
@@ -5503,6 +5534,33 @@ export function startServer(
           runtime: created.runtime,
         })
         return
+      }
+
+      // ---- Static file serving: /uploads/mcp-icons/* ----
+      const uploadMatch = pathname.match(/^\/uploads\/mcp-icons\/(.+)$/)
+      if (uploadMatch && req.method === 'GET') {
+        const filename = uploadMatch[1]
+        const filePath = join(config.runtimeDir, 'uploads', 'mcp-icons', filename)
+        try {
+          const fileContent = await readFile(filePath)
+          const ext = extname(filename).slice(1).toLowerCase()
+          const contentTypeMap: Record<string, string> = {
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            webp: 'image/webp',
+            svg: 'image/svg+xml',
+          }
+          const contentType = contentTypeMap[ext] || 'image/png'
+          res.writeHead(200, {
+            'content-type': contentType,
+            'cache-control': 'public, max-age=31536000',
+          })
+          res.end(fileContent)
+          return
+        } catch {
+          throw new HttpError(404, 'File not found')
+        }
       }
 
       throw new HttpError(404, 'Not found')

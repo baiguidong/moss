@@ -13,6 +13,8 @@ import {
   FileText,
   Search,
   X,
+  Upload,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -58,7 +60,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import type { McpServer, McpServerFormData } from '@/lib/api/mcp'
-import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents } from '@/lib/api/mcp'
+import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
 import { getUsers, getDepartments } from '@/lib/api/auth'
 import { getTenantAssistants } from '@/lib/api/agent-hub'
@@ -304,6 +306,7 @@ export default function McpServersPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
+  const [isUploadingIcon, setIsUploadingIcon] = useState(false)
 
   // Form state for create/edit dialog
   const [formData, setFormData] = useState<McpServerFormData>({})
@@ -437,7 +440,8 @@ export default function McpServersPage() {
   const filteredServers = servers.filter((s) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
-      if (!(s.display_name?.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))) return false
+      const displayName = s.display_name || s.name
+      if (!(displayName.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))) return false
     }
     if (scopeFilter !== 'all' && s.scope !== scopeFilter) return false
     if (typeFilter !== 'all' && s.mcp_type !== typeFilter) return false
@@ -486,8 +490,9 @@ export default function McpServersPage() {
   function openEditDialog(server: McpServer) {
     setEditingServer(server)
     setFormData({
-      name: server.name,
-      display_name: server.display_name || '',
+      name: server.display_name || server.name,
+      display_name: server.display_name || server.name,
+      icon: server.icon || '',
       description: server.description || '',
       category: server.category || '',
       risk_level: server.risk_level,
@@ -538,6 +543,7 @@ export default function McpServersPage() {
       }
       const payload: McpServerFormData = {
         ...formData,
+        display_name: formData.name || formData.display_name, // 同步 name 到 display_name
         args_json: argsList.length > 0 ? JSON.stringify(argsList) : null,
         env_json: Object.keys(cleanedEnv).length > 0 ? JSON.stringify(cleanedEnv) : null,
         auth_config_json: Object.keys(cleanedAuth).length > 0 ? JSON.stringify(cleanedAuth) : null,
@@ -599,6 +605,39 @@ export default function McpServersPage() {
       }
     } finally {
       setTestingId(null)
+    }
+  }
+
+  async function handleIconUpload(file: File) {
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml']
+    const maxSize = 2 * 1024 * 1024 // 2MB
+
+    if (!validTypes.includes(file.type)) {
+      toast.error('仅支持 PNG、JPG、JPEG、WebP、SVG 格式的图片')
+      return
+    }
+    if (file.size > maxSize) {
+      toast.error('图片大小不能超过 2MB')
+      return
+    }
+
+    setIsUploadingIcon(true)
+    try {
+      const response = await uploadMcpIcon(file)
+      if (response.success) {
+        setFormData({ ...formData, icon: response.data.url })
+        toast.success('图标上传成功')
+      } else {
+        toast.error('图标上传失败')
+      }
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        toast.error(err.message)
+      } else {
+        toast.error('图标上传失败')
+      }
+    } finally {
+      setIsUploadingIcon(false)
     }
   }
 
@@ -775,9 +814,9 @@ export default function McpServersPage() {
               filteredServers.map((server) => (
                 <TableRow key={server.id}>
                   <TableCell>
-                    <div>
+                    <div className="flex items-center gap-2">
+                      {server.icon && <img src={server.icon} className="size-5 rounded" alt="" />}
                       <div className="font-medium">{server.display_name || server.name}</div>
-                      <div className="text-xs text-muted-foreground">{server.name}</div>
                     </div>
                   </TableCell>
                   <TableCell><TypeBadge mcpType={server.mcp_type} /></TableCell>
@@ -859,21 +898,54 @@ export default function McpServersPage() {
             {/* Step 1: 基础信息 */}
             {currentStep === 0 && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>名称 <span className="text-red-500">*</span></Label>
-                    <Input placeholder="mcp-server-name" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+                <div className="space-y-2">
+                  <Label>图标 <span className="text-red-500">*</span></Label>
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-lg border bg-muted/20 flex items-center justify-center overflow-hidden shrink-0">
+                      {formData.icon ? (
+                        <img src={formData.icon} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <ImageIcon className="size-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="relative"
+                      disabled={isUploadingIcon}
+                    >
+                      {isUploadingIcon ? (
+                        <Loader2 className="mr-2 size-4 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 size-4" />
+                      )}
+                      {isUploadingIcon ? '上传中...' : '上传图标'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) {
+                            void handleIconUpload(file)
+                          }
+                          e.target.value = ''
+                        }}
+                      />
+                    </Button>
+                    <p className="text-xs text-muted-foreground">支持 PNG、JPG、WebP、SVG 格式，最大 2MB</p>
                   </div>
-                  <div className="space-y-2">
-                    <Label>显示名称 <span className="text-red-500">*</span></Label>
-                    <Input placeholder="CRM MCP" value={formData.display_name || ''} onChange={(e) => setFormData({ ...formData, display_name: e.target.value })} />
-                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>名称 <span className="text-red-500">*</span></Label>
+                  <Input placeholder="CRM MCP" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
                 </div>
                 <div className="space-y-2">
                   <Label>描述</Label>
                   <Textarea placeholder="MCP 服务描述..." value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label>分类</Label>
                     <Select value={formData.category || ''} onValueChange={(v) => setFormData({ ...formData, category: v })}>
@@ -897,12 +969,6 @@ export default function McpServersPage() {
                         <SelectItem value="high">高</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>图标</Label>
-                    <Input placeholder="icon-name 或 https://..." value={formData.icon || ''} onChange={(e) => setFormData({ ...formData, icon: e.target.value })} />
                   </div>
                   <div className="space-y-2">
                     <Label>负责人</Label>
