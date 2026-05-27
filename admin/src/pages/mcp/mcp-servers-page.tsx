@@ -493,8 +493,8 @@ export default function McpServersPage() {
     setFormData(prev => ({
       ...prev,
       ...result,
-      name: result.name || prev.name,
-      display_name: result.name || prev.display_name,
+      name: prev.name,
+      display_name: prev.display_name,
     }))
     if (result.args_json) setArgsList(parseArgsJson(result.args_json))
     if (result.env_json) setEnvMap(parseEnvJson(result.env_json))
@@ -519,10 +519,6 @@ export default function McpServersPage() {
         const result = await parseMcpConfig(jsonConfig)
         setParseResult(result.success ? result : null)
         setParseError(result.success ? '' : result.error || '')
-        // 如果解析成功且提取了 name，同步到 Step 0
-        if (result.success && result.data?.name) {
-          setFormData(prev => ({ ...prev, name: result.data?.name || prev.name, display_name: result.data?.name || prev.display_name }))
-        }
       } catch {
         setParseError('无效的 JSON 格式')
         setParseResult(null)
@@ -618,9 +614,8 @@ export default function McpServersPage() {
         const parsedAuth = parsed.auth_config_json ? JSON.parse(parsed.auth_config_json) : {}
         payload = {
           ...formData,
-          // name 优先用 parseResult 中提取的服务名称，其次用用户填写的
-          name: parsed.name || formData.name || formData.display_name,
-          display_name: parsed.name || formData.name || formData.display_name,
+          name: formData.name || formData.display_name,
+          display_name: formData.name || formData.display_name,
           mcp_type: parsed.mcp_type,
           url: parsed.url || null,
           command: parsed.command || null,
