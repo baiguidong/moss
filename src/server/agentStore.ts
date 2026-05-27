@@ -98,6 +98,8 @@ export type AssistantStoreMeta = {
   enabledSkills?: string[]
   /** Document Center: Wiki IDs this assistant is authorised to query via wikiCli. */
   enabledWikis?: string[]
+  /** 企业应用管理: Corp App instance IDs this assistant may use via the corpapp CLI. */
+  enabledCorpApps?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo
@@ -987,6 +989,7 @@ export async function createCustomAssistant(params: {
   rules: string
   skills?: string[]
   enabledWikis?: string[]
+  enabledCorpApps?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo
@@ -1026,6 +1029,7 @@ export async function createCustomAssistant(params: {
     skills: params.skills || [],
     enabledSkills: params.skills || [],
     enabledWikis: params.enabledWikis || [],
+    enabledCorpApps: params.enabledCorpApps || [],
     agent_type: params.agent_type,
     memory_mode: params.memory_mode,
     visible_to: params.visible_to,
@@ -1063,7 +1067,7 @@ export async function updateInstalledAssistantMeta(params: {
   updates: Partial<
     Pick<
       AssistantStoreMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'ruleFile' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'ruleFile' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'enabledCorpApps' | 'skills'
     >
   > & { rules?: string }
 }): Promise<void> {
@@ -1112,6 +1116,9 @@ export async function updateInstalledAssistantMeta(params: {
   }
   if (Array.isArray(params.updates.enabledWikis)) {
     nextMeta.enabledWikis = params.updates.enabledWikis
+  }
+  if (Array.isArray(params.updates.enabledCorpApps)) {
+    nextMeta.enabledCorpApps = params.updates.enabledCorpApps
   }
   if (Array.isArray(params.updates.skills)) {
     nextMeta.skills = params.updates.skills

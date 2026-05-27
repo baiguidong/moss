@@ -53,6 +53,8 @@ export interface InstalledAgentMeta {
   enabledSkills?: string[]
   /** Document Center: Wiki IDs this assistant is authorised to query via wikiCli. */
   enabledWikis?: string[]
+  /** 企业应用管理: Corp App instance IDs this assistant may use via the corpapp CLI. */
+  enabledCorpApps?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
@@ -109,6 +111,7 @@ export interface CreateAssistantRequest {
   rules: string
   skills?: string[]
   enabledWikis?: string[]
+  enabledCorpApps?: string[]
   agent_type?: 'chat' | 'workflow'
   memory_mode?: 'session' | 'user'
   visible_to?: VisibleTo | null
@@ -186,7 +189,7 @@ export function updateInstalledAgentMeta(data: {
   updates: Partial<
     Pick<
       InstalledAgentMeta,
-      'display_name' | 'description' | 'avatar' | 'emoji' | 'rules' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'skills'
+      'display_name' | 'description' | 'avatar' | 'emoji' | 'rules' | 'agent_type' | 'memory_mode' | 'visible_to' | 'workflow' | 'enabledSkills' | 'enabledWikis' | 'enabledCorpApps' | 'skills'
     >
   >
 }): Promise<{ ok: boolean }> {
@@ -333,6 +336,7 @@ export function updateTenantAssistantMeta(params: {
   enabled?: boolean
   enabledSkills?: string[]
   enabledWikis?: string[]
+  enabledCorpApps?: string[]
   skills?: string[]
 }): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>(

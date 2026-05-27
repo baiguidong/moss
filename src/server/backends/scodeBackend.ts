@@ -151,6 +151,7 @@ export class ScodeBackend implements SessionBackend {
       assistantName: options.assistantName,
       enabledSkillNames: options.enabledSkillNames,
       availableWikis: options.availableWikis,
+      availableCorpApps: options.availableCorpApps,
       sharedMemory: options.sharedMemory,
       runtime: {
         type: 'host',

@@ -77,6 +77,8 @@ export type BackendSpawnOptions = {
    * the `wiki` CLI.
    */
   availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+  /** 企业应用管理: corp app instances the bound assistant may use via the `corpapp` CLI. */
+  availableCorpApps?: Array<{ id: string; name: string; type: string; key: string }>
   sharedMemory?: string | null
   /**
    * 可见性过滤上下文，用于过滤用户有权访问的技能

@@ -72,32 +72,32 @@ function ensureAdminBuildDependencies() {
 }
 
 /**
- * Build the wiki CLI from cli/wiki/ (Go) into bin/wiki.
+ * Build an in-scode Go CLI from cli/<name>/ into bin/<name>.
  *
  * Non-fatal: if Go is missing we warn and continue. The scode env will
- * still get PATH including bin/, but wiki calls will fail with
+ * still get PATH including bin/, but calls to the CLI will fail with
  * "command not found" — surfaceable to ops via server logs.
  */
-function buildWikiCli() {
-  if (!existsSync(resolve('cli', 'wiki', 'main.go'))) {
-    console.log('Skipping bin/wiki — cli/wiki/main.go not found')
+function buildGoCli(name) {
+  if (!existsSync(resolve('cli', name, 'main.go'))) {
+    console.log(`Skipping bin/${name} — cli/${name}/main.go not found`)
     return
   }
   const probe = spawnSync('go', ['version'], { encoding: 'utf8' })
   if (probe.status !== 0) {
     console.warn(
-      '⚠  Skipping bin/wiki build — `go` not on PATH. Install Go 1.22+ or pre-build cli/wiki manually.',
+      `⚠  Skipping bin/${name} build — \`go\` not on PATH. Install Go 1.22+ or pre-build cli/${name} manually.`,
     )
     return
   }
-  console.log('\nBuilding bin/wiki (Go)')
+  console.log(`\nBuilding bin/${name} (Go)`)
   const result = spawnSync(
     'go',
-    ['build', '-o', resolve('bin', 'wiki'), '.'],
-    { cwd: resolve('cli', 'wiki'), stdio: 'inherit' },
+    ['build', '-o', resolve('bin', name), '.'],
+    { cwd: resolve('cli', name), stdio: 'inherit' },
   )
   if (result.status !== 0) {
-    console.warn(`⚠  bin/wiki build failed (exit ${result.status}); continuing`)
+    console.warn(`⚠  bin/${name} build failed (exit ${result.status}); continuing`)
   }
 }
 
@@ -137,7 +137,10 @@ build('bin/direct-connect-session-runner.mjs', [
 // bin/wiki（Document Center: in-scode wiki CLI; written in Go so scode's
 // shell can shell out to it. server.ts prepends bin/ to PATH for scode
 // subprocesses so it resolves without manual install.）
-buildWikiCli()
+buildGoCli('wiki')
+
+// bin/corpapp（企业应用管理: in-scode corp-app CLI; same PATH mechanism.）
+buildGoCli('corpapp')
 
 // direct-connect-open.mjs（独立 headless 客户端入口）
 // build('direct-connect-open.mjs', [

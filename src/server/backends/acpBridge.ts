@@ -27,6 +27,8 @@ type AcpBridgeOptions = {
    * so scode learns it can use the `wiki` CLI.
    */
   availableWikis?: Array<{ id: string; name: string; description?: string | null }>
+  /** 企业应用管理: corp app instances surfaced as an `[Available Corp Apps]` block. */
+  availableCorpApps?: Array<{ id: string; name: string; type: string; key: string }>
   sharedMemory?: string | null
   // 旧参数（已废弃，保留兼容）
   mcpServers?: any[]
@@ -293,6 +295,7 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
           enabledSkillNames: options.enabledSkillNames,
           sharedMemory: options.sharedMemory,
           availableWikis: options.availableWikis,
+          availableCorpApps: options.availableCorpApps,
         })
         process.stderr.write(`[AcpBridge] First message prepared with skills/assistant injection\n`)
       } catch (err) {

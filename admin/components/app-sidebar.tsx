@@ -80,6 +80,12 @@ const menuItems: NavItem[] = [
     icon: Bot,
   },
   {
+    title: '企业应用管理',
+    url: '/corp-apps',
+    icon: Building2,
+    requiredScope: 'admin:settings',
+  },
+  {
     title: '智能体管理',
     url: '/settings/agents',
     icon: Bot,

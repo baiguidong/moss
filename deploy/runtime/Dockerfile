@@ -12,6 +12,15 @@ COPY ./cli/wiki/*.go ./
 COPY ./cli/wiki/client/*.go ./client/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/wiki .
 
+# Stage 1b: build the Corp App (企业应用) CLI (Go, no deps)
+FROM golang:1.22-alpine AS corpapp-builder
+WORKDIR /src
+COPY ./cli/corpapp/go.mod ./
+# go.sum intentionally absent — corpapp CLI has zero external deps
+COPY ./cli/corpapp/*.go ./
+COPY ./cli/corpapp/client/*.go ./client/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/corpapp .
+
 # Stage 2: runtime image
 FROM ubuntu:24.04
 
@@ -45,6 +54,10 @@ RUN ln -s /usr/local/bin/scode /usr/bin/scode
 # 5. Document Center wiki CLI (built in stage 1)
 COPY --from=wiki-builder /out/wiki /usr/local/bin/wiki
 RUN chmod +x /usr/local/bin/wiki
+
+# 5b. Corp App (企业应用) CLI (built in stage 1b)
+COPY --from=corpapp-builder /out/corpapp /usr/local/bin/corpapp
+RUN chmod +x /usr/local/bin/corpapp
 
 # 6. 设置工作目录（Moss 创建会话容器时通常会挂载这里）
 WORKDIR /workspace
