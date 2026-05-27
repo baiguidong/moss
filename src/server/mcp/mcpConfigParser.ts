@@ -131,6 +131,16 @@ export function parseMcpConfig(jsonStr: string): McpConfigParseResult {
     }
   }
 
+  // 1.5 剥除 Claude Desktop 官方包装层 mcpServers
+  // 官方文档格式：{ "mcpServers": { "<name>": { command/args/url/... } } }
+  if (
+    config.mcpServers &&
+    typeof config.mcpServers === 'object' &&
+    !Array.isArray(config.mcpServers)
+  ) {
+    config = config.mcpServers as Record<string, unknown>
+  }
+
   const warnings: string[] = []
 
   // 2. 识别配置格式并提取服务名称

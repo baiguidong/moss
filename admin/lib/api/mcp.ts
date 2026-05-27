@@ -260,9 +260,11 @@ export async function installMcpTemplate(id: string, overrides?: Partial<McpServ
 // ===== MCP 配置解析 =====
 
 export async function parseMcpConfig(json: string): Promise<McpConfigParseResult> {
-  return authClient.post<{ success: boolean; data?: McpConfigParseResult }>('/api/v1/admin/mcp-config/parse', { json })
-    .then(res => res.success ? res.data : { success: false, error: 'Parse failed' })
-    .catch(() => ({ success: false, error: 'Parse failed' }))
+  return authClient.post<McpConfigParseResult>('/api/v1/admin/mcp-config/parse', { json })
+    .catch((err) => ({
+      success: false,
+      error: err instanceof Error ? err.message : 'Parse failed',
+    }))
 }
 
 // ===== SSE: live update subscription (plan §2.5) =====
