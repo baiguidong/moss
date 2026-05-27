@@ -4,7 +4,7 @@ function normalizeHubApiBaseUrl(rawValue) {
   return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
 }
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api';
+const DEFAULT_HUB_API_BASE_URL = 'https://sudoworkhub.sudoprivacy.com/api';
 const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
   process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
 );
