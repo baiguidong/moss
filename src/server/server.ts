@@ -4052,11 +4052,10 @@ export function startServer(
         try {
           // Package from the tenant directory
           const zipBuffer = await packageAssistantZipByDir(tenantPath)
-          const downloadName = tenantAssistant.display_name || tenantAssistant.name || 'assistant'
-          // Use UUID as filename to avoid encoding issues with Chinese characters
-          const safeFilename = `${tenantAssistantId}.zip`
+          // Encode filename for Content-Disposition header (Chinese characters not allowed)
+          const encodedFilename = encodeURIComponent(tenantAssistantId)
           res.setHeader('Content-Type', 'application/zip')
-          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`)
+          res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}.zip"; filename*=UTF-8''${encodedFilename}.zip`)
           res.end(zipBuffer)
         } catch (error) {
           throw new HttpError(404, `Failed to package assistant: ${error}`)
@@ -4568,8 +4567,10 @@ export function startServer(
         }
         try {
           const zipBuffer = await packageSkillZip(skillName)
+          // Encode filename for Content-Disposition header (Chinese characters not allowed)
+          const encodedFilename = encodeURIComponent(tenantSkillId)
           res.setHeader('Content-Type', 'application/zip')
-          res.setHeader('Content-Disposition', `attachment; filename="${skillName}.zip"`)
+          res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}.zip"; filename*=UTF-8''${encodedFilename}.zip`)
           res.end(zipBuffer)
         } catch (error) {
           throw new HttpError(404, `Failed to package skill: ${skillName}`)
