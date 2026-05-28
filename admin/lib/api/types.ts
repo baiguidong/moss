@@ -156,6 +156,7 @@ export interface SystemSettingsOAuth2 {
   enabled: boolean
   authorizeUrlTemplate: string
   scriptPath: string
+  requireState: boolean
 }
 
 export interface SystemSettings {

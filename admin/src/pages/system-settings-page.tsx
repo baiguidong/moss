@@ -899,6 +899,24 @@ export default function SystemSettingsPage() {
           </SettingField>
 
           <SettingField
+            label="强制校验 state 参数 (CSRF 保护)"
+            description="默认开启。客户端在收到 OAuth2 回调时会校验 state 是否与发起授权时一致，用于防御 CSRF 攻击。在完全可信的内网部署中可关闭：客户端仍会在授权 URL 中携带 state（兼容性需要），但回调时不再进行本地校验。"
+          >
+            <div className="flex min-h-10 items-center">
+              <Switch
+                checked={draft.oauth2.requireState}
+                onCheckedChange={checked =>
+                  setDraft(current =>
+                    current
+                      ? { ...current, oauth2: { ...current.oauth2, requireState: checked } }
+                      : current,
+                  )
+                }
+              />
+            </div>
+          </SettingField>
+
+          <SettingField
             label="Authorize URL 模板"
             description="完整授权地址。系统只会替换 {redirect_uri}，客户端会填充 {state}。client_id、scope、response_type 等参数请直接写入地址中。"
           >
@@ -937,7 +955,7 @@ export default function SystemSettingsPage() {
 
           <SettingField
             label="Redirect URI"
-            description="请在 IdP 中将此地址注册为允许的回调地址。认证完成后，IdP 需携带 access_token、refresh_token 与原样回传的 state 重定向到此地址。"
+            description="请在 IdP 中将此地址注册为允许的回调地址。认证完成后，IdP 重定向到该地址，至少携带凭证脚本所需的业务参数 (例如标准 OAuth2 的 code，或非标准实现的 access_token / refresh_token 等)。当“强制校验 state 参数”开启时，IdP 还需将发起授权时的 state 原样回传；关闭后可省略。"
           >
             <p className="min-h-10 break-all rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
               sudowork://oauth2-callback
