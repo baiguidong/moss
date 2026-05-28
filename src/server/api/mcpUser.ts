@@ -1,6 +1,6 @@
 import type { McpStore } from '../mcp/db.js'
 import type { AuthContext } from '../auth/token.js'
-import type { McpServerInput } from '../mcp/types.js'
+import type { McpServerInput, McpTemplate, McpTemplateListFilter } from '../mcp/types.js'
 import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
 import type { AuthService } from '../auth/service.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
@@ -31,6 +31,66 @@ function sanitizeForUser(server: Record<string, unknown>) {
   return result
 }
 
+/** A user-fillable config item declaration exposed to third parties (no secret values). */
+interface TemplateUserConfigItemDto {
+  name: string
+  key: string
+  required: boolean
+  description?: string
+  target: 'env' | 'headers'
+}
+
+/**
+ * Parse a template's config_json and extract only the user_config_items schema.
+ * Returns [] when absent or malformed. Never exposes any stored secret values.
+ */
+function parseTemplateUserConfigItems(configJson: string | null): TemplateUserConfigItemDto[] {
+  if (!configJson) return []
+  let parsed: unknown
+  try { parsed = JSON.parse(configJson) } catch { return [] }
+  const items = (parsed as Record<string, unknown> | null)?.user_config_items
+  if (!Array.isArray(items)) return []
+  const result: TemplateUserConfigItemDto[] = []
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as Record<string, unknown>
+    if (typeof item.name !== 'string' || typeof item.key !== 'string') continue
+    if (item.target !== 'env' && item.target !== 'headers') continue
+    result.push({
+      name: item.name,
+      key: item.key,
+      required: item.required === true,
+      ...(typeof item.description === 'string' ? { description: item.description } : {}),
+      target: item.target,
+    })
+  }
+  return result
+}
+
+/**
+ * Sanitize a template for third-party / user consumption.
+ * Explicit allowlist: connection/infra fields (url, command, args_json, env_json,
+ * auth_type, raw config_json, owner) are deliberately excluded.
+ */
+function sanitizeTemplateForUser(t: McpTemplate) {
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    icon: t.icon,
+    category: t.category,
+    tags: t.tags_json ?? [],
+    mcp_type: t.mcp_type,
+    scope: t.scope,
+    risk_level: t.risk_level,
+    downloads: t.downloads,
+    rating: t.rating,
+    user_config_items: parseTemplateUserConfigItems(t.config_json),
+    created_at: t.created_at,
+    updated_at: t.updated_at,
+  }
+}
+
 export function createMcpUserApi(deps: McpUserDeps) {
   const { mcpStore, authService, getUserName, getUserDepartmentId, getUserByIdAndOrg, listDepartmentsByOrg } = deps
 
@@ -57,6 +117,24 @@ export function createMcpUserApi(deps: McpUserDeps) {
       const sanitized = visibleServers.map(s => sanitizeForUser(s as unknown as Record<string, unknown>))
 
       return { success: true, data: sanitized }
+    },
+
+    /**
+     * GET /api/v1/me/mcp-templates
+     * Third-party / user-facing MCP template catalog for the caller's org.
+     * Auth identical to listMyMcpServers: valid token only, no scope check.
+     * Returns a sanitized DTO; user_config_items is always present (the data
+     * third parties need to render a config form).
+     */
+    listAvailableTemplates(auth: AuthContext, filter?: McpTemplateListFilter) {
+      const result = mcpStore.listTemplates(auth.orgId, filter)
+      return {
+        success: true,
+        data: result.items.map(sanitizeTemplateForUser),
+        total: result.total,
+        page: filter?.page ?? 1,
+        page_size: filter?.page_size ?? 20,
+      }
     },
 
     // ==================== Personal MCP CRUD (Phase 2) ====================

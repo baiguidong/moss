@@ -93,6 +93,7 @@ import { createMcpUserApi } from './api/mcpUser.js'
 import { createMcpUserConfigApi, type McpUserConfigApi } from './api/mcpUserConfig.js'
 import { handleMcpSseConnection, broadcastMcpEvent } from './api/mcpEvents.js'
 import { McpStore } from './mcp/db.js'
+import type { McpTemplateListFilter } from './mcp/types.js'
 import type { NexusClient } from './nexus/nexusClient.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -3721,6 +3722,18 @@ export function startServer(
       // User: list my MCP servers
       if (req.method === 'GET' && pathname === '/api/v1/me/mcp-servers') {
         const result = await mcpUserApi.listMyMcpServers(auth)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // User / third-party: list available MCP templates (sanitized, no admin scope)
+      if (req.method === 'GET' && pathname === '/api/v1/me/mcp-templates') {
+        const filter: McpTemplateListFilter = {}
+        if (url.searchParams.get('category')) filter.category = url.searchParams.get('category')!
+        if (url.searchParams.get('search')) filter.search = url.searchParams.get('search')!
+        if (url.searchParams.get('page')) filter.page = Number(url.searchParams.get('page')) || undefined
+        if (url.searchParams.get('page_size')) filter.page_size = Number(url.searchParams.get('page_size')) || undefined
+        const result = mcpUserApi.listAvailableTemplates(auth, filter)
         writeJson(res, 200, result)
         return
       }
