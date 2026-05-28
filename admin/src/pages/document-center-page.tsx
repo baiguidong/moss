@@ -623,6 +623,11 @@ export default function DocumentCenterPage() {
                                 <WikiStatusBadge status={wiki.buildStatus} />
                               </div>
                             </div>
+                            {wiki.buildStatus === 'succeeded' && (
+                              <p className="text-xs text-muted-foreground font-mono break-all">
+                                ID: {wiki.id}
+                              </p>
+                            )}
                             {wiki.description && (
                               <p className="text-xs text-muted-foreground">{wiki.description}</p>
                             )}
