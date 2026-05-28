@@ -3812,7 +3812,7 @@ export function startServer(
       const tenantAgentRulesMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)\/rules$/)
       if (req.method === 'GET' && tenantAgentRulesMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantAssistantId = tenantAgentRulesMatch[1] || ''
+        const tenantAssistantId = decodeURIComponent(tenantAgentRulesMatch[1] || '')
         const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
         if (!tenantAssistant) {
           throw new HttpError(404, `Tenant assistant not found: ${tenantAssistantId}`)
@@ -3889,7 +3889,7 @@ export function startServer(
       const agentApproveMatch = pathname.match(/^\/api\/v1\/admin\/agents\/tenant\/([^/]+)\/approve$/)
       if (req.method === 'POST' && agentApproveMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantAssistantId = agentApproveMatch[1] || ''
+        const tenantAssistantId = decodeURIComponent(agentApproveMatch[1] || '')
         const body = await readJsonBody(req)
         const approved = body.approved === true
         const reviewNote = typeof body.reviewNote === 'string' ? body.reviewNote : undefined
@@ -3927,7 +3927,7 @@ export function startServer(
       const agentTenantPatchMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)$/)
       if (req.method === 'PATCH' && agentTenantPatchMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantAssistantId = agentTenantPatchMatch[1] || ''
+        const tenantAssistantId = decodeURIComponent(agentTenantPatchMatch[1] || '')
         const body = await readJsonBody(req)
 
         const updates: Record<string, unknown> = {}
@@ -4013,7 +4013,7 @@ export function startServer(
       // DELETE /api/v1/agents/tenant/:id - Delete tenant assistant
       if (req.method === 'DELETE' && agentTenantPatchMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantAssistantId = agentTenantPatchMatch[1] || ''
+        const tenantAssistantId = decodeURIComponent(agentTenantPatchMatch[1] || '')
         const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
         if (tenantAssistant) {
           const assistantName = tenantAssistant.name as string
@@ -4033,7 +4033,7 @@ export function startServer(
       // GET /api/v1/agents/tenant/:id/download - Download tenant assistant
       const tenantAgentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/tenant\/([^/]+)\/download$/)
       if (req.method === 'GET' && tenantAgentDownloadMatch) {
-        const tenantAssistantId = tenantAgentDownloadMatch[1] || ''
+        const tenantAssistantId = decodeURIComponent(tenantAgentDownloadMatch[1] || '')
         const tenantAssistant = runtime.store.getTenantAssistant(tenantAssistantId)
         if (!tenantAssistant || tenantAssistant.status !== 'approved') {
           throw new HttpError(404, `Tenant assistant not found or not approved: ${tenantAssistantId}`)
@@ -4468,7 +4468,7 @@ export function startServer(
       const skillApproveMatch = pathname.match(/^\/api\/v1\/admin\/skills\/tenant\/([^/]+)\/approve$/)
       if (req.method === 'POST' && skillApproveMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantSkillId = skillApproveMatch[1] || ''
+        const tenantSkillId = decodeURIComponent(skillApproveMatch[1] || '')
         const body = await readJsonBody(req)
         const approved = body.approved === true
         const reviewNote = typeof body.reviewNote === 'string' ? body.reviewNote : undefined
@@ -4498,7 +4498,7 @@ export function startServer(
       const skillTenantPatchMatch = pathname.match(/^\/api\/v1\/skills\/tenant\/([^/]+)$/)
       if (req.method === 'PATCH' && skillTenantPatchMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantSkillId = skillTenantPatchMatch[1] || ''
+        const tenantSkillId = decodeURIComponent(skillTenantPatchMatch[1] || '')
         const body = await readJsonBody(req)
 
         const updates: { enabled?: number; visible_to?: string | null } = {}
@@ -4537,7 +4537,7 @@ export function startServer(
       // DELETE /api/v1/skills/tenant/:id - Delete tenant skill
       if (req.method === 'DELETE' && skillTenantPatchMatch) {
         authService.requireScope(auth, 'admin:settings')
-        const tenantSkillId = skillTenantPatchMatch[1] || ''
+        const tenantSkillId = decodeURIComponent(skillTenantPatchMatch[1] || '')
         const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
         if (tenantSkill) {
           const skillName = tenantSkill.name as string
@@ -4555,7 +4555,7 @@ export function startServer(
       // GET /api/v1/skills/tenant/:id/download - Download tenant skill
       const tenantSkillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/tenant\/([^/]+)\/download$/)
       if (req.method === 'GET' && tenantSkillDownloadMatch) {
-        const tenantSkillId = tenantSkillDownloadMatch[1] || ''
+        const tenantSkillId = decodeURIComponent(tenantSkillDownloadMatch[1] || '')
         const tenantSkill = runtime.store.getTenantSkill(tenantSkillId)
         if (!tenantSkill || tenantSkill.status !== 'approved') {
           throw new HttpError(404, `Tenant skill not found or not approved: ${tenantSkillId}`)
