@@ -1145,6 +1145,7 @@ export function startServer(
     listDepartmentsByOrg: (orgId: string) => {
       try { return authService.listDepartments(orgId).departments } catch { return [] }
     },
+    nexusClient: nexusClient ?? undefined,
   })
 
 
@@ -3735,6 +3736,30 @@ export function startServer(
         if (url.searchParams.get('page_size')) filter.page_size = Number(url.searchParams.get('page_size')) || undefined
         const result = mcpUserApi.listAvailableTemplates(auth, filter)
         writeJson(res, 200, result)
+        return
+      }
+
+      // User: install MCP from template (creates a personal scope=user MCP)
+      const meMcpTemplateInstallMatch = pathname.match(/^\/api\/v1\/me\/mcp-templates\/([^/]+)\/install$/)
+      if (meMcpTemplateInstallMatch && req.method === 'POST') {
+        const body = (await readJsonBody(req)) as { config_values?: Record<string, string>; display_name?: string } | null
+        const result = await mcpUserApi.installFromTemplate(
+          auth,
+          meMcpTemplateInstallMatch[1],
+          body ?? {},
+          clientIp,
+        )
+        if (result.success) {
+          writeJson(res, 201, result)
+        } else {
+          const code = (result as any).error?.code
+          const status =
+            code === 'not_found' ? 404 :
+            code === 'forbidden' ? 403 :
+            code === 'user_config_unavailable' ? 503 :
+            400
+          writeJson(res, status, result)
+        }
         return
       }
 

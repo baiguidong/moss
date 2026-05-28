@@ -1,8 +1,10 @@
+import { randomBytes } from 'crypto'
 import type { McpStore } from '../mcp/db.js'
 import type { AuthContext } from '../auth/token.js'
 import type { McpServerInput, McpTemplate, McpTemplateListFilter } from '../mcp/types.js'
 import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
 import type { AuthService } from '../auth/service.js'
+import type { NexusClient } from '../nexus/nexusClient.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
 
 interface McpUserDeps {
@@ -12,6 +14,7 @@ interface McpUserDeps {
   getUserDepartmentId: (userId: string) => string | null
   getUserByIdAndOrg: (userId: string, orgId: string) => { role: string; departmentId: string | null } | null
   listDepartmentsByOrg: (orgId: string) => { id: string; parentId: string | null }[]
+  nexusClient?: NexusClient
 }
 
 // Plan §2.2 step 6: user-side response is a strict whitelist of 16 fields.
@@ -92,7 +95,7 @@ function sanitizeTemplateForUser(t: McpTemplate) {
 }
 
 export function createMcpUserApi(deps: McpUserDeps) {
-  const { mcpStore, authService, getUserName, getUserDepartmentId, getUserByIdAndOrg, listDepartmentsByOrg } = deps
+  const { mcpStore, authService, getUserName, getUserDepartmentId, getUserByIdAndOrg, listDepartmentsByOrg, nexusClient } = deps
 
   const api = {
     /**
@@ -304,6 +307,145 @@ export function createMcpUserApi(deps: McpUserDeps) {
       } catch { /* ignore */ }
 
       return { success: true, data: result }
+    },
+
+    /**
+     * POST /api/v1/me/mcp-templates/:id/install
+     * Install a personal MCP from a template. Atomic: validates required user-config
+     * values up front, then creates the server with template connection info, writes
+     * user-config secrets keyed by the new serverId, and sets status='enabled'.
+     * Rolls back the created server if writing a config value fails.
+     */
+    async installFromTemplate(
+      auth: AuthContext,
+      templateId: string,
+      body: { config_values?: Record<string, string>; display_name?: string },
+      ip?: string,
+    ) {
+      const policy = mcpStore.getMcpPolicy(auth.orgId)
+      if (!policy.allow_personal_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许创建个人 MCP' } }
+      }
+
+      const template = mcpStore.getTemplate(auth.orgId, templateId)
+      if (!template) {
+        return { success: false, error: { code: 'not_found', message: '模板不存在' } }
+      }
+
+      if (template.mcp_type === 'stdio' && !policy.allow_stdio_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 STDIO 类型 MCP' } }
+      }
+      if ((template.mcp_type === 'http' || template.mcp_type === 'sse') && !policy.allow_http_sse_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 HTTP/SSE 类型 MCP' } }
+      }
+
+      const schema = parseTemplateUserConfigItems(template.config_json)
+      const providedValues = body.config_values ?? {}
+
+      const missing: string[] = []
+      for (const item of schema) {
+        if (item.required) {
+          const v = providedValues[item.key]
+          if (typeof v !== 'string' || v.length === 0) {
+            missing.push(item.key)
+          }
+        }
+      }
+      if (missing.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'missing_config',
+            message: `缺少必填配置项: ${missing.join(', ')}`,
+            missing_keys: missing,
+          },
+        }
+      }
+
+      const declaredKeys = new Set(schema.map(s => s.key))
+      const valuesToWrite: Array<{ key: string; value: string }> = []
+      for (const [k, v] of Object.entries(providedValues)) {
+        if (declaredKeys.has(k) && typeof v === 'string' && v.length > 0) {
+          valuesToWrite.push({ key: k, value: v })
+        }
+      }
+      if (valuesToWrite.length > 0 && !nexusClient) {
+        return {
+          success: false,
+          error: { code: 'user_config_unavailable', message: '用户配置服务当前不可用，无法保存配置值' },
+        }
+      }
+
+      // Generate unique name: {template.name}-{8 hex chars}
+      let serverName: string | null = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = `${template.name}-${randomBytes(4).toString('hex')}`
+        if (!mcpStore.getMcpServerByName(auth.orgId, candidate)) {
+          serverName = candidate
+          break
+        }
+      }
+      if (!serverName) {
+        return { success: false, error: { code: 'name_conflict', message: '生成唯一名称失败，请重试' } }
+      }
+
+      const serverInput: McpServerInput = {
+        name: serverName,
+        display_name: body.display_name ?? template.name,
+        description: template.description,
+        icon: template.icon,
+        category: template.category,
+        risk_level: template.risk_level,
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: auth.userId,
+        visible_to: { user_ids: [auth.userId] },
+        mcp_type: template.mcp_type,
+        url: template.url,
+        command: template.command,
+        args_json: template.args_json,
+        env_json: template.env_json,
+        timeout_ms: template.timeout_ms,
+        auth_type: template.auth_type,
+        template_id: templateId,
+      }
+
+      const server = mcpStore.createMcpServer(auth.orgId, serverInput, auth.userId)
+
+      // Write user-config secrets; on any failure, roll back the server
+      for (const { key, value } of valuesToWrite) {
+        try {
+          await nexusClient!.putSecret(`mcp:user:${auth.userId}:${server.id}`, key, value, auth.userId)
+        } catch (err) {
+          try { mcpStore.deleteMcpServer(auth.orgId, server.id) } catch { /* best effort */ }
+          return {
+            success: false,
+            error: {
+              code: 'config_write_failed',
+              message: `保存配置失败: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          }
+        }
+      }
+
+      mcpStore.setMcpServerStatus(auth.orgId, server.id, 'enabled', auth.userId)
+      mcpStore.incrementDownloads(auth.orgId, templateId)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: server.id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'install_template',
+          request_params_json: JSON.stringify({ template_id: templateId, template_name: template.name }),
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      const fresh = mcpStore.getMcpServer(auth.orgId, server.id) ?? server
+      return { success: true, data: sanitizeForUser(fresh as unknown as Record<string, unknown>) }
     },
   }
 
