@@ -66,14 +66,24 @@ jobs:
       - name: Get scode version
         id: scode-version
         run: |
-          if [ "${{ github.event.inputs.scode_version }}" != "" ] && [ "${{ github.event.inputs.scode_version }}" != "latest" ]; then
-            VERSION="${{ github.event.inputs.scode_version }}"
+          # 优先级: 手动输入 > 配置文件(server.json) > latest
+          INPUT_VERSION="${{ github.event.inputs.scode_version }}"
+          CONFIG_VERSION=$(grep -o '"scodeVersion"[[:space:]]*:[[:space:]]*"[^"]*"' deploy/server.json | sed 's/.*"scodeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "latest" ]; then
+            VERSION="$INPUT_VERSION"
+            echo "Using version from workflow input: $VERSION"
+          elif [ -n "$CONFIG_VERSION" ] && [ "$CONFIG_VERSION" != "latest" ]; then
+            VERSION="$CONFIG_VERSION"
+            echo "Using version from server.json config: $VERSION"
           else
             VERSION=$(curl -sI "https://github.com/sudoprivacy/sudocode/releases/latest" | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
             if [ -z "$VERSION" ]; then
               VERSION=$(curl -s https://api.github.com/repos/sudoprivacy/sudocode/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
             fi
+            echo "Using latest version: $VERSION"
           fi
+
           echo "Detected scode version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
