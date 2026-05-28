@@ -642,12 +642,25 @@ async function installImportedSkillFromTemp(
 export async function findInstalledSkillPath(
   skillName: string,
 ): Promise<string | null> {
+  const trimmedName = skillName.trim()
   for (const baseDir of MANAGED_SKILL_SEARCH_DIRS) {
-    const candidate = path.join(baseDir, skillName)
+    // Try trimmed name first (normal case)
+    const candidate = path.join(baseDir, trimmedName)
     try {
       const candidateStat = await stat(candidate)
       if (candidateStat.isDirectory()) {
         return candidate
+      }
+    } catch {
+      // Ignore and continue.
+    }
+
+    // Also try with leading/trailing space (legacy data compatibility)
+    const candidateWithSpace = path.join(baseDir, ` ${trimmedName}`)
+    try {
+      const candidateStat = await stat(candidateWithSpace)
+      if (candidateStat.isDirectory()) {
+        return candidateWithSpace
       }
     } catch {
       // Ignore and continue.
@@ -756,17 +769,19 @@ export async function installHubSkill(params: {
     }
   }
 
+  // Trim skill name to avoid leading/trailing spaces in directory name
+  const trimmedSkillName = params.skillName.trim()
   await mkdir(MOSS_SKILLS_HUB_DIR, { recursive: true })
-  const skillDir = path.join(MOSS_SKILLS_HUB_DIR, params.skillName)
+  const skillDir = path.join(MOSS_SKILLS_HUB_DIR, trimmedSkillName)
   await rm(skillDir, { recursive: true, force: true })
   await mkdir(skillDir, { recursive: true })
   await extractSkillZip(zipBuffer, skillDir)
 
   const meta: SkillStoreMeta = {
     id: params.skillMeta?.id || '',
-    name: params.skillName,
+    name: trimmedSkillName,
     display_name:
-      params.skillMeta?.display_name || params.skillMeta?.name || params.skillName,
+      params.skillMeta?.display_name || params.skillMeta?.name || trimmedSkillName,
     description:
       typeof params.skillMeta?.description === 'string'
         ? params.skillMeta.description
