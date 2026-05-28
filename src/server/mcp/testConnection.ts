@@ -135,7 +135,7 @@ async function runHandshake(
   }
 }
 
-function parseHeaders(authConfigJson: string | null): Record<string, string> | undefined {
+export function parseHeaders(authConfigJson: string | null): Record<string, string> | undefined {
   if (!authConfigJson) return undefined
   try {
     const parsed = JSON.parse(authConfigJson)

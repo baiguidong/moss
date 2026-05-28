@@ -41,6 +41,10 @@ import {
   writeAssistantOverrideAgentsMd,
 } from './sharedAgentMemory.js'
 import { ensureDraftsDirectory } from './draftsCleanup.js'
+import type { NexusClient } from './nexus/nexusClient.js'
+import { McpStore } from './mcp/db.js'
+import { createMcpUserConfigApi, type McpUserConfigApi } from './api/mcpUserConfig.js'
+import { resolveScodeMcpSettings } from './mcp/scodeMcpInjector.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -240,11 +244,18 @@ type RuntimeServiceOptions = {
   store?: DirectConnectStore
   authService: AuthService
   serverInstanceId: string
+  /**
+   * 主进程独占的密钥客户端。提供时启用"会话下发用户已安装 MCP"功能；
+   * 缺省则跳过 MCP 注入（如测试或无 nexus 环境），不影响会话其余功能。
+   */
+  nexusClient?: NexusClient
 }
 
 export class RuntimeService {
   readonly store: DirectConnectStore
   readonly authService: AuthService
+  private readonly mcpStore: McpStore | null
+  private readonly mcpUserConfig: McpUserConfigApi | null
   private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
   private readonly sessionTokens = new Map<string, { token: string; pid: number }>()
   authProxy: AuthProxyServer | null = null
@@ -252,6 +263,32 @@ export class RuntimeService {
   constructor(private readonly options: RuntimeServiceOptions) {
     this.store = options.store ?? openDirectConnectStore(options.config)
     this.authService = options.authService
+    if (options.nexusClient) {
+      this.mcpStore = new McpStore(this.store.db)
+      this.mcpUserConfig = createMcpUserConfigApi({
+        nexusClient: options.nexusClient,
+        mcpStore: this.mcpStore,
+        getUserByIdAndOrg: (userId: string, _orgId: string) => {
+          try {
+            const u = this.authService.getUserById(userId)
+            if (!u) return null
+            return { role: 'user', departmentId: u.departmentId }
+          } catch {
+            return null
+          }
+        },
+        listDepartmentsByOrg: (orgId: string) => {
+          try {
+            return this.authService.listDepartments(orgId).departments
+          } catch {
+            return []
+          }
+        },
+      })
+    } else {
+      this.mcpStore = null
+      this.mcpUserConfig = null
+    }
   }
 
   listSessions(filter: {
@@ -734,6 +771,29 @@ export class RuntimeService {
       }
     }
 
+    // Resolve the user's visible MCP servers into scode settings.json shape.
+    // Done here (main process) because secret resolution needs nexusClient,
+    // which the detached runner can't reach; result travels via manifest.
+    let mcpSettings: { mcpServers: Record<string, unknown> } | undefined
+    if (session.userId && visibilityFilter && this.mcpStore && this.mcpUserConfig) {
+      try {
+        const resolvedMcp = await resolveScodeMcpSettings({
+          mcpStore: this.mcpStore,
+          mcpUserConfig: this.mcpUserConfig,
+          orgId: session.orgId,
+          userId: session.userId,
+          departmentId: visibilityFilter.departmentId,
+          visibilityFilter,
+        })
+        if (resolvedMcp) mcpSettings = resolvedMcp
+      } catch (err) {
+        console.warn(
+          `[RuntimeService] failed to resolve MCP settings for session ${session.sessionId}:`,
+          err,
+        )
+      }
+    }
+
     const manifest: RunnerManifest = {
       config: this.options.config,
       session: {
@@ -761,6 +821,7 @@ export class RuntimeService {
           departmentId: visibilityFilter.departmentId,
           visibleDepartmentIds: visibilityFilter.visibleDepartmentIds ? Array.from(visibilityFilter.visibleDepartmentIds) : null,
         } : null,
+        ...(mcpSettings ? { mcpSettings } : {}),
         runtime: {
           ...session.runtime,
           containerName:

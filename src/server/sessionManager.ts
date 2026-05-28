@@ -84,6 +84,11 @@ export type BackendSpawnOptions = {
    * 可见性过滤上下文，用于过滤用户有权访问的技能
    */
   visibilityFilter?: VisibilityFilterContext | null
+  /**
+   * 已解析的用户可见 MCP 配置（scode settings.json 格式）。由主进程
+   * RuntimeService 解析后经 manifest 透传，backend 仅负责写文件。
+   */
+  mcpSettings?: { mcpServers: Record<string, unknown> }
 }
 
 export type BackendAvailableSkill = {
