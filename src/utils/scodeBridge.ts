@@ -18,6 +18,7 @@ import {
   ASSISTANT_META_FILE,
 } from '../server/agentStore.js'
 import type { VisibilityFilterContext } from '../server/sessionManager.js'
+import { buildDraftsInstruction } from '../server/draftsCleanup.js'
 
 // ============================================================================
 // 工作空间技能同步函数 (新方案)
@@ -33,6 +34,12 @@ export function resolveWorkspaceSkillsDir(workspace: string): string {
   return path.join(workspace, '.nexus', 'sudocode', 'skills')
 }
 
+export type WorkspaceSkillLink = {
+  name: string
+  sourcePath: string
+  workspacePath: string
+}
+
 /**
  * 同步技能到工作空间目录
  *
@@ -46,7 +53,7 @@ export async function syncWorkspaceSkills(
   workspace: string,
   enabledSkillNames?: string[],
   visibilityFilter?: VisibilityFilterContext | null
-): Promise<void> {
+): Promise<WorkspaceSkillLink[]> {
   const workspaceSkillsDir = resolveWorkspaceSkillsDir(workspace)
   await mkdir(workspaceSkillsDir, { recursive: true })
 
@@ -103,6 +110,8 @@ export async function syncWorkspaceSkills(
     }
   }
 
+  const linkedTargets = new Map<string, string>()
+
   // 清理旧的符号链接
   const existingEntries = await readdir(workspaceSkillsDir, { withFileTypes: true }).catch(() => [])
   for (const entry of existingEntries) {
@@ -125,6 +134,7 @@ export async function syncWorkspaceSkills(
             await rm(entryPath, { force: true })
           } else {
             // 链接正确，从待创建列表中移除
+            linkedTargets.set(entry.name, expectedTarget)
             skillTargets.delete(entry.name)
           }
         }
@@ -141,10 +151,17 @@ export async function syncWorkspaceSkills(
 
     try {
       await symlink(sourcePath, linkPath, linkType)
+      linkedTargets.set(skillName, sourcePath)
     } catch (err) {
       console.warn(`[scodeBridge] Failed to create symlink for skill "${skillName}":`, err)
     }
   }
+
+  return Array.from(linkedTargets.entries()).map(([name, sourcePath]) => ({
+    name,
+    sourcePath,
+    workspacePath: path.join(workspaceSkillsDir, name),
+  }))
 }
 
 /**
@@ -261,13 +278,16 @@ export async function prepareFirstMessageForScode(
     }
   }
 
-  // 2. 构建工作空间技能目录提示
+  // 2. 添加草稿箱使用指令
+  instructions.push(buildDraftsInstruction(config.workspace))
+
+  // 3. 构建工作空间技能目录提示
   const skillsHint = await buildWorkspaceSkillsHint(config.workspace, config.enabledSkillNames)
   if (skillsHint) {
     instructions.push(skillsHint)
   }
 
-  // 3. Shared user memory is duplicated here only as a fallback. The primary
+  // 4. Shared user memory is duplicated here only as a fallback. The primary
   // path is the generated configDir/.nexus/sudocode/AGENTS.md override.
   if (config.sharedMemory && config.sharedMemory.trim()) {
     instructions.push(
@@ -275,7 +295,7 @@ export async function prepareFirstMessageForScode(
     )
   }
 
-  // 4. Document Center: available wikis hint
+  // 5. Document Center: available wikis hint
   if (config.availableWikis && config.availableWikis.length > 0) {
     const lines: string[] = []
     lines.push('[Available Wikis]')

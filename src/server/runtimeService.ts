@@ -27,6 +27,7 @@ import {
   getRuntimeStderrLogPath,
   getRuntimeStdoutLogPath,
   getSessionConfigDir,
+  getSessionWorkspaceDir,
   getTranscriptPath,
 } from './runtimePaths.js'
 import { errorMessage } from '../utils/errors.js'
@@ -39,6 +40,7 @@ import {
   readSharedAgentMemory,
   writeAssistantOverrideAgentsMd,
 } from './sharedAgentMemory.js'
+import { ensureDraftsDirectory } from './draftsCleanup.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -370,6 +372,10 @@ export class RuntimeService {
       }
     }
 
+    const workspaceDir = input.cwd || getSessionWorkspaceDir(this.options.config, sessionId)
+    await mkdir(workspaceDir, { recursive: true })
+    await ensureDraftsDirectory(workspaceDir)
+
     const runtime = mergeRuntime(this.options.config, runtimeInput)
     runtime.configDir =
       runtime.configDir ||
@@ -383,7 +389,7 @@ export class RuntimeService {
       )
     const transcriptPath = getTranscriptPath(
       this.options.config.transcriptDir || runtime.configDir,
-      input.cwd,
+      workspaceDir,
       sessionId,
     )
     const created = this.store.createSession({
@@ -394,7 +400,7 @@ export class RuntimeService {
       orgId: input.orgId,
       role: input.role,
       scopes: input.scopes,
-      cwd: input.cwd,
+      cwd: workspaceDir,
       runtime,
       status: 'creating',
       desiredState: 'active',

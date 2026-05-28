@@ -16,6 +16,7 @@ import {
   buildConfigDir,
   getAssistantRuntimeConfig,
   createSkillSymlinks,
+  buildAvailableSkillSnapshot,
 } from './backendUtils.js'
 import { createAcpBridgeHandle } from './acpBridge.js'
 import { buildAllModelsConfig } from '../modelListCache.js'
@@ -97,6 +98,10 @@ export class DockerBackend implements SessionBackend {
     // 读取 assistant 配置
     const assistantConfig = await getAssistantRuntimeConfig(options.assistantName)
 
+    const enabledSkills = options.assistantName
+      ? assistantConfig.enabledSkills
+      : (options.enabledSkillNames ?? assistantConfig.enabledSkills)
+
     // 根据 memory_mode 决定 mode
     const mode = runtime?.dockerMode
       || (assistantConfig.memoryMode === 'user' ? 'user' : undefined)
@@ -116,12 +121,14 @@ export class DockerBackend implements SessionBackend {
     // Docker 会挂载工作空间，所以容器内可以访问这些符号链接
     // enabledSkills: 由 getAssistantRuntimeConfig 统一处理
     // visibilityFilter: 过滤用户无权访问的技能
+    let workspaceSkillLinks = [] as Awaited<ReturnType<typeof syncWorkspaceSkills>>
     try {
-      await syncWorkspaceSkills(safeCwd, assistantConfig.enabledSkills, options.visibilityFilter)
-      process.stderr.write(`[DockerBackend] Workspace skills synced to ${safeCwd}/.nexus/sudocode/skills/ with ${assistantConfig.enabledSkills.length} skills\n`)
+      workspaceSkillLinks = await syncWorkspaceSkills(safeCwd, enabledSkills, options.visibilityFilter)
+      process.stderr.write(`[DockerBackend] Workspace skills synced to ${safeCwd}/.nexus/sudocode/skills/ with ${enabledSkills.length} skills\n`)
     } catch (err) {
       process.stderr.write(`[DockerBackend] Workspace skills sync warning: ${err}\n`)
     }
+    const availableSkills = await buildAvailableSkillSnapshot(workspaceSkillLinks)
 
     const containerName =
       runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
@@ -149,8 +156,8 @@ export class DockerBackend implements SessionBackend {
     await mkdir(dotNexusDir, { recursive: true })
 
     // 创建 skill symlinks
-    if (assistantConfig.enabledSkills.length > 0) {
-      await createSkillSymlinks(configDir, assistantConfig.enabledSkills)
+    if (enabledSkills.length > 0) {
+      await createSkillSymlinks(configDir, enabledSkills)
     }
 
     const dummySudocodePath = join(dotNexusDir, 'sudocode.json')
@@ -250,7 +257,7 @@ export class DockerBackend implements SessionBackend {
     process.stderr.write(`  CWD: ${safeCwd}\n`)
     process.stderr.write(`  configDir: ${configDir}\n`)
     process.stderr.write(`  mode: ${mode}\n`)
-    process.stderr.write(`  enabledSkills: ${assistantConfig.enabledSkills.join(', ') || 'none'}\n`)
+    process.stderr.write(`  enabledSkills: ${enabledSkills.join(', ') || 'none'}\n`)
     process.stderr.write(`  Model: ${model}\n`)
     process.stderr.write(`  Mounts: ${mounts.join(', ')}\n\n`)
 
@@ -278,12 +285,13 @@ export class DockerBackend implements SessionBackend {
       transcriptPath: (options as any).transcriptPath,
       // 新方案：传递智能体名称和启用的技能列表
       assistantName: options.assistantName,
-      enabledSkillNames: options.enabledSkillNames,
+      enabledSkillNames: enabledSkills,
       availableWikis: options.availableWikis,
       availableCorpApps: options.availableCorpApps,
       sharedMemory: options.sharedMemory,
       runtime: runtimeInfo,
     })
+    handle.availableSkills = availableSkills
 
     const originalDestroy = handle.destroy.bind(handle)
     handle.destroy = (force = false) => {

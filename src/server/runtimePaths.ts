@@ -20,6 +20,13 @@ export function getAttemptDir(
   )
 }
 
+export function getSessionWorkspaceDir(
+  config: ServerConfig,
+  sessionId: string,
+): string {
+  return join(config.runtimeDir, 'sessions', sessionId, 'workspace')
+}
+
 export function getAttachPath(
   config: ServerConfig,
   sessionId: string,

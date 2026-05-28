@@ -86,9 +86,22 @@ export type BackendSpawnOptions = {
   visibilityFilter?: VisibilityFilterContext | null
 }
 
+export type BackendAvailableSkill = {
+  name: string
+  displayName?: string
+  description: string
+  icon?: string
+  iconUrl?: string
+  color?: string
+  emoji?: string | null
+  source?: string
+  path?: string
+}
+
 export type BackendHandle = {
   workDir: string
   runtime: SessionRuntimeInfo
+  availableSkills?: BackendAvailableSkill[]
   writeStdin: (data: string) => void
   onStdoutLine: (listener: (line: string) => void) => () => void
   onStderrLine: (listener: (line: string) => void) => () => void

@@ -8,9 +8,10 @@ import {
   buildConfigDir,
   getAssistantRuntimeConfig,
   createSkillSymlinks,
+  buildAvailableSkillSnapshot,
 } from './backendUtils.js'
 import { createAcpBridgeHandle } from './acpBridge.js'
-import { syncWorkspaceSkills } from '../../utils/scodeBridge.js'
+import { syncWorkspaceSkills, type WorkspaceSkillLink } from '../../utils/scodeBridge.js'
 import { buildAllModelsConfig } from '../modelListCache.js'
 import type {
   BackendHandle,
@@ -105,12 +106,14 @@ export class ScodeBackend implements SessionBackend {
     // 在工作空间的 .nexus/sudocode/skills/ 目录创建符号链接
     // enabledSkills: 客户端传递 > 助手配置 > 默认（所有可用 skills）
     // visibilityFilter: 过滤用户无权访问的技能
+    let workspaceSkillLinks: WorkspaceSkillLink[] = []
     try {
-      await syncWorkspaceSkills(options.cwd, enabledSkills, options.visibilityFilter)
+      workspaceSkillLinks = await syncWorkspaceSkills(options.cwd, enabledSkills, options.visibilityFilter)
       process.stderr.write(`[ScodeBackend] Workspace skills synced to ${options.cwd}/.nexus/sudocode/skills/ with ${enabledSkills.length} skills: ${enabledSkills.join(', ') || 'none'}\n`)
     } catch (err) {
       process.stderr.write(`[ScodeBackend] Workspace skills sync warning: ${err}\n`)
     }
+    const availableSkills = await buildAvailableSkillSnapshot(workspaceSkillLinks)
 
     const args = [
       'acp',
@@ -141,7 +144,7 @@ export class ScodeBackend implements SessionBackend {
       windowsHide: true,
     })
 
-    return createAcpBridgeHandle({
+    const handle = createAcpBridgeHandle({
       child,
       sessionId: options.sessionId,
       cwd: options.cwd,
@@ -149,7 +152,7 @@ export class ScodeBackend implements SessionBackend {
       transcriptPath: (options as any).transcriptPath,
       // 新方案：传递智能体名称和启用的技能列表
       assistantName: options.assistantName,
-      enabledSkillNames: options.enabledSkillNames,
+      enabledSkillNames: enabledSkills,
       availableWikis: options.availableWikis,
       availableCorpApps: options.availableCorpApps,
       sharedMemory: options.sharedMemory,
@@ -160,5 +163,7 @@ export class ScodeBackend implements SessionBackend {
         hostMode: mode,
       },
     })
+    handle.availableSkills = availableSkills
+    return handle
   }
 }

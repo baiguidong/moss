@@ -149,6 +149,15 @@ export class SessionRunnerDaemon {
       this.#handle = handle
       this.manifest.session.runtime.containerName = handle.runtime.containerName
       this.manifest.session.runtime.configDir = handle.runtime.configDir
+      this.#store.addEvent(
+        this.manifest.session.sessionId,
+        this.manifest.attempt.attemptId,
+        'available_skills_snapshot',
+        {
+          runtime: handle.runtime,
+          skills: handle.availableSkills ?? [],
+        },
+      )
 
       // Flush any pending stdin messages that arrived before handle was ready
       if (this.#pendingStdin.length > 0) {
@@ -173,6 +182,7 @@ export class SessionRunnerDaemon {
         {
           pid: process.pid,
           runtime: handle.runtime,
+          availableSkills: handle.availableSkills ?? [],
         },
       )
       await writeStatus(this.manifest.attempt.statusPath, {
