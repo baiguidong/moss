@@ -29,7 +29,7 @@ sudowork (登录页)
 | **强制校验 state 参数 (CSRF 保护)** | 默认 **开启**。客户端在 OAuth2 回调时会校验返回的 `state` 与发起授权时本地生成的值是否一致，防御跨站请求伪造。当 sudowork、IdP、moss-server 都部署在完全可信的内网，且能确保浏览器到 sudowork 的回调链路不经过外部网络时，可以关闭本开关。**关闭后客户端仍会在 authorize URL 中携带 `state`** —— 一些 IdP 强制要求该参数；只有回调时的本地校验会被跳过。 |
 | **Authorize URL 模板**              | 完整的 IdP 授权地址。moss-server 只替换 `{redirect_uri}`，客户端填充 `{state}`，其它参数（`client_id` / `scope` / `response_type` ...）请直接写在 URL 中。                                                                                                                                                                  |
 | **凭证脚本路径**                    | 服务器上可执行脚本的绝对路径，moss-server 以 `resolve` / `refresh` 两个子命令调用它。脚本输出 stdout JSON，包含用户身份。                                                                                                                                                                                                                |
-| **Redirect URI**                    | 只读：`sudowork://oauth2-callback`。请在 IdP 中将该 URI 注册为允许的回调地址。                                                                                                                                                                                                                                           |
+| **Redirect URI**                    | 只读：`sudowork://oauth2-callback`。请在 IdP 中将该 URI 注册为允许的回调地址。IdP 重定向到该地址时，至少携带凭证脚本需要的业务参数（标准 OAuth2 是 `code`，非标准实现可能是 `access_token`/`refresh_token`/`id_token` 等任意字段——sudowork 把除 `state` 之外的所有 query 参数原样转发给 moss）。当“强制校验 state 参数”开启时，IdP 还需把发起授权时的 `state` 原样回传。 |
 
 ## 何时关闭 state 校验
 
