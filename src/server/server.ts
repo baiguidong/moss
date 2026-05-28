@@ -3700,7 +3700,7 @@ export function startServer(
       // GET /api/v1/agents/installed/:id/download - Download installed assistant by ID
       const agentDownloadMatch = pathname.match(/^\/api\/v1\/agents\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && agentDownloadMatch) {
-        const assistantId = agentDownloadMatch[1] || ''
+        const assistantId = decodeURIComponent(agentDownloadMatch[1] || '')
         try {
           // Find assistant by ID in installed assistants list
           const installedAssistants = await getInstalledAssistants()
@@ -3710,8 +3710,10 @@ export function startServer(
           }
           // Use assistant name for packaging (directory lookup)
           const zipBuffer = await packageAssistantZip(assistant.name)
+          // Encode filename for Content-Disposition header (Chinese characters not allowed)
+          const encodedFilename = encodeURIComponent(assistantId)
           res.setHeader('Content-Type', 'application/zip')
-          res.setHeader('Content-Disposition', `attachment; filename="${assistantId}.zip"`)
+          res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}.zip"; filename*=UTF-8''${encodedFilename}.zip`)
           res.end(zipBuffer)
         } catch (error) {
           if (error instanceof HttpError) throw error
@@ -4327,7 +4329,7 @@ export function startServer(
       // GET /api/v1/skills/installed/:id/download - Download installed skill by ID
       const skillDownloadMatch = pathname.match(/^\/api\/v1\/skills\/installed\/([^/]+)\/download$/)
       if (req.method === 'GET' && skillDownloadMatch) {
-        const skillId = skillDownloadMatch[1] || ''
+        const skillId = decodeURIComponent(skillDownloadMatch[1] || '')
         try {
           // Find skill by ID in installed skills list
           const installedSkills = await getInstalledSkills()
@@ -4337,8 +4339,10 @@ export function startServer(
           }
           // Use skill name for packaging (directory lookup)
           const zipBuffer = await packageSkillZip(skill.name)
+          // Encode filename for Content-Disposition header (Chinese characters not allowed)
+          const encodedFilename = encodeURIComponent(skillId)
           res.setHeader('Content-Type', 'application/zip')
-          res.setHeader('Content-Disposition', `attachment; filename="${skillId}.zip"`)
+          res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}.zip"; filename*=UTF-8''${encodedFilename}.zip`)
           res.end(zipBuffer)
         } catch (error) {
           if (error instanceof HttpError) throw error

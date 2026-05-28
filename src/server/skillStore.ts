@@ -71,7 +71,7 @@ export type SkillStoreMeta = {
   core_features?: unknown
   homepage?: string | null
   author_id?: string
-  source_type?: 'hub' | 'upload' | 'tenant'
+  source_type?: 'hub' | 'custom' | 'tenant' | 'upload'
   is_builtin?: boolean
   enabled?: boolean
   installed_version?: string
@@ -1068,7 +1068,7 @@ export async function uploadCustomSkill(params: {
       emoji: frontmatter.emoji || null,
       category: frontmatter.category || '',
       categories: frontmatter.category ? [frontmatter.category] : [],
-      source_type: 'upload',
+      source_type: 'custom',
       is_builtin: false,
       enabled: true,
       installed_version: version,

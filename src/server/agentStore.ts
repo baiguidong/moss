@@ -537,6 +537,8 @@ export async function findAssistantDir(
   if (normalizedAssistantName.startsWith('builtin-')) {
     candidateNames.push(normalizedAssistantName.slice('builtin-'.length))
   }
+  // Also try with leading space for legacy data compatibility
+  candidateNames.push(` ${normalizedAssistantName}`)
 
   for (const { dir, category } of searchDirs) {
     for (const candidateName of candidateNames) {
@@ -1317,7 +1319,7 @@ export async function uploadCustomAssistant(params: {
       name: actualName,
       display_name: params.displayName || existingMeta?.display_name || actualName,
       description: params.description || existingMeta?.description || '',
-      source_type: 'upload',
+      source_type: 'custom',
       is_builtin: false,
       enabled: true,
       installed_version: version,
