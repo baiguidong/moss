@@ -163,6 +163,12 @@ export class WeComApiClient {
    * Upload bytes via a multipart/form-data POST (e.g.
    * /cgi-bin/media/upload?type=file). Returns the parsed JSON, which for
    * media/upload includes `media_id`. Retries once on an invalid token.
+   *
+   * The body is hand-assembled (rather than via `FormData` + `fetch`)
+   * because WeCom's media/upload returned `errcode=44001 empty media
+   * data` against undici's FormData serialisation — likely a strict-
+   * parser quirk. This mirrors what `curl --form` produces, which the
+   * WeCom curl examples document as the canonical client.
    */
   async postMultipart(
     endpoint: string,
@@ -173,11 +179,24 @@ export class WeComApiClient {
   ): Promise<Record<string, unknown>> {
     const send = async (token: string) => {
       const url = `${API_BASE}${endpoint}${endpoint.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`
-      const form = new FormData()
-      // Buffer → Uint8Array view → Blob keeps the bytes intact for fetch.
-      const blob = new Blob([new Uint8Array(bytes)], { type: contentType })
-      form.append(fieldName, blob, fileName)
-      const resp = await fetch(url, { method: 'POST', body: form })
+      const boundary = `----WeComBoundary${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`
+      const safeName = fileName.replace(/[\r\n"]/g, '_')
+      const head = Buffer.from(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="${fieldName}"; filename="${safeName}"\r\n` +
+          `Content-Type: ${contentType}\r\n\r\n`,
+        'utf8',
+      )
+      const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+      const body = Buffer.concat([head, bytes, tail])
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': String(body.length),
+        },
+        body,
+      })
       if (!resp.ok) {
         throw new Error(`${endpoint} HTTP ${resp.status}`)
       }
