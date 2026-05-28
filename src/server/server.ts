@@ -2,9 +2,9 @@ import http from 'http'
 import { randomUUID } from 'crypto'
 import net from 'net'
 import { existsSync, cpSync, rmSync } from 'fs'
-import { readFile, stat, mkdir, writeFile, readdir } from 'fs/promises'
+import { lstat, readFile, realpath, stat, mkdir, writeFile, readdir } from 'fs/promises'
 import os from 'os'
-import { basename, dirname, extname, join, resolve, sep } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
@@ -13,6 +13,7 @@ import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { isUserActive, invalidateUserStatusCache } from './auth/userStatusCache.js'
 import { RuntimeService } from './runtimeService.js'
+import { DRAFTS_DIR_NAME, ensureDraftsDirectory } from './draftsCleanup.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import {
   createCustomAssistant,
@@ -99,6 +100,90 @@ import {
 import { getAvailableModels, getCacheStatus, refreshModelCache } from './modelListCache.js'
 
 type JsonBody = Record<string, unknown>
+
+type MossWorkspaceNode = {
+  name: string
+  relativePath: string
+  fullPath: string
+  isFile: boolean
+  isDir: boolean
+  size?: number
+  mtime?: number
+  children?: MossWorkspaceNode[]
+}
+
+type MossWorkspaceFilePreview =
+  | {
+      kind: 'text'
+      name: string
+      relativePath: string
+      mime: string
+      encoding: 'utf8'
+      content: string
+      size: number
+      truncated: boolean
+    }
+  | {
+      kind: 'base64'
+      name: string
+      relativePath: string
+      mime: string
+      contentBase64: string
+      size: number
+    }
+
+type MossSessionAvailableSkill = {
+  name: string
+  displayName?: string
+  description: string
+  icon?: string
+  iconUrl?: string
+  color?: string
+  emoji?: string | null
+  source?: string
+  path?: string
+}
+
+const WORKSPACE_TREE_MAX_DEPTH = 10
+const WORKSPACE_TREE_MAX_ENTRIES_PER_DIR = 500
+const WORKSPACE_TEXT_PREVIEW_LIMIT_BYTES = 2 * 1024 * 1024
+const WORKSPACE_BINARY_PREVIEW_LIMIT_BYTES = 20 * 1024 * 1024
+const WORKSPACE_TREE_SKIP_DIRS = new Set(['.git', 'node_modules'])
+
+const WORKSPACE_TEXT_EXTENSIONS = new Set([
+  '.c', '.cc', '.conf', '.cpp', '.css', '.csv', '.go', '.h', '.hpp', '.html',
+  '.java', '.js', '.json', '.jsx', '.log', '.md', '.mjs', '.py', '.rs', '.sh',
+  '.sql', '.ts', '.tsx', '.txt', '.xml', '.yaml', '.yml',
+])
+
+const WORKSPACE_PREVIEW_MIME_TYPES: Record<string, string> = {
+  '.aac': 'audio/aac',
+  '.css': 'text/css; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.gif': 'image/gif',
+  '.html': 'text/html; charset=utf-8',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.ogg': 'audio/ogg',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ts': 'text/typescript; charset=utf-8',
+  '.tsx': 'text/tsx; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wav': 'audio/wav',
+  '.webm': 'video/webm',
+  '.webp': 'image/webp',
+  '.xml': 'application/xml; charset=utf-8',
+  '.yaml': 'application/yaml; charset=utf-8',
+  '.yml': 'application/yaml; charset=utf-8',
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -631,6 +716,196 @@ function canAccessSession(
     session.orgId === auth.orgId &&
     (session.userId === auth.userId || hasScope(auth.scopes, anyScope))
   )
+}
+
+function normalizeWorkspaceRelativePath(value: string | null): string {
+  if (!value) return ''
+  if (value.includes('\0')) throw new HttpError(400, 'Invalid path')
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '')
+  if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith('/')) {
+    throw new HttpError(400, 'Path must be relative')
+  }
+  return normalized
+}
+
+function isInsideDir(rootDir: string, targetPath: string): boolean {
+  const relativePath = relative(rootDir, targetPath)
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+}
+
+async function realpathOrHttpNotFound(filePath: string, message: string): Promise<string> {
+  try {
+    return await realpath(filePath)
+  } catch (error) {
+    const code = typeof error === 'object' && error && 'code' in error ? error.code : undefined
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new HttpError(404, message)
+    }
+    throw error
+  }
+}
+
+async function resolveWorkspaceEntry(rootDir: string, relativePath: string): Promise<{
+  rootRealPath: string
+  fullPath: string
+}> {
+  const rootRealPath = await realpathOrHttpNotFound(rootDir, 'Workspace root not found')
+  const candidate = resolve(rootRealPath, relativePath)
+  if (!isInsideDir(rootRealPath, candidate)) {
+    throw new HttpError(403, 'Path escapes workspace root')
+  }
+  const resolvedTarget = await realpathOrHttpNotFound(candidate, 'Path not found')
+  if (!isInsideDir(rootRealPath, resolvedTarget)) {
+    throw new HttpError(403, 'Path escapes workspace root')
+  }
+  return { rootRealPath, fullPath: resolvedTarget }
+}
+
+function toWorkspaceRelativePath(rootDir: string, fullPath: string): string {
+  return fullPath === rootDir ? '' : fullPath.slice(rootDir.length + 1).split(sep).join('/')
+}
+
+function workspacePreviewMime(filePath: string): string {
+  return WORKSPACE_PREVIEW_MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+}
+
+function isWorkspaceTextFile(filePath: string, mime: string): boolean {
+  return mime.startsWith('text/') || WORKSPACE_TEXT_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+async function buildWorkspaceNode(
+  rootDir: string,
+  fullPath: string,
+  depth: number,
+  search: string,
+): Promise<MossWorkspaceNode | null> {
+  const info = await lstat(fullPath)
+  if (info.isSymbolicLink()) return null
+
+  const name = fullPath === rootDir ? basename(rootDir) || rootDir : basename(fullPath)
+  const relativePath = toWorkspaceRelativePath(rootDir, fullPath)
+  const isDir = info.isDirectory()
+  const node: MossWorkspaceNode = {
+    name,
+    relativePath,
+    fullPath,
+    isFile: info.isFile(),
+    isDir,
+    size: info.size,
+    mtime: info.mtimeMs,
+  }
+
+  if (!isDir || depth <= 0) {
+    const matches = !search || name.toLowerCase().includes(search) || relativePath.toLowerCase().includes(search)
+    return matches ? node : null
+  }
+
+  const entries = (await readdir(fullPath, { withFileTypes: true }))
+    .filter(entry => !WORKSPACE_TREE_SKIP_DIRS.has(entry.name))
+    .sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    .slice(0, WORKSPACE_TREE_MAX_ENTRIES_PER_DIR)
+
+  const children: MossWorkspaceNode[] = []
+  for (const entry of entries) {
+    const child = await buildWorkspaceNode(rootDir, join(fullPath, entry.name), depth - 1, search)
+    if (child) children.push(child)
+  }
+  node.children = children
+
+  const matches = !search || name.toLowerCase().includes(search) || relativePath.toLowerCase().includes(search)
+  return matches || children.length > 0 ? node : null
+}
+
+async function readWorkspaceTree(
+  session: SessionRecord,
+  params: { path?: string | null; search?: string | null },
+): Promise<MossWorkspaceNode> {
+  const relativePath = normalizeWorkspaceRelativePath(params.path ?? '')
+  if (relativePath === '' || relativePath === DRAFTS_DIR_NAME) {
+    await ensureDraftsDirectory(session.cwd)
+  }
+  const { rootRealPath, fullPath } = await resolveWorkspaceEntry(session.cwd, relativePath)
+  const info = await lstat(fullPath)
+  if (!info.isDirectory()) throw new HttpError(400, 'Path is not a directory')
+  const search = (params.search ?? '').trim().toLowerCase()
+  const node = await buildWorkspaceNode(rootRealPath, fullPath, WORKSPACE_TREE_MAX_DEPTH, search)
+  return node ?? {
+    name: basename(fullPath) || fullPath,
+    relativePath: toWorkspaceRelativePath(rootRealPath, fullPath),
+    fullPath,
+    isFile: false,
+    isDir: true,
+    children: [],
+  }
+}
+
+async function readWorkspaceFilePreview(
+  session: SessionRecord,
+  pathParam: string | null,
+): Promise<MossWorkspaceFilePreview> {
+  const relativePath = normalizeWorkspaceRelativePath(pathParam)
+  if (!relativePath) throw new HttpError(400, 'Missing path')
+  const { rootRealPath, fullPath } = await resolveWorkspaceEntry(session.cwd, relativePath)
+  const info = await lstat(fullPath)
+  if (!info.isFile()) throw new HttpError(400, 'Path is not a file')
+
+  const mime = workspacePreviewMime(fullPath)
+  const name = basename(fullPath)
+  const responseRelativePath = toWorkspaceRelativePath(rootRealPath, fullPath)
+  if (isWorkspaceTextFile(fullPath, mime)) {
+    if (info.size > WORKSPACE_TEXT_PREVIEW_LIMIT_BYTES) {
+      throw new HttpError(413, 'Text file exceeds preview limit')
+    }
+    return {
+      kind: 'text',
+      name,
+      relativePath: responseRelativePath,
+      mime,
+      encoding: 'utf8',
+      content: await readFile(fullPath, 'utf8'),
+      size: info.size,
+      truncated: false,
+    }
+  }
+
+  if (info.size > WORKSPACE_BINARY_PREVIEW_LIMIT_BYTES) {
+    throw new HttpError(413, 'Binary file exceeds preview limit')
+  }
+  return {
+    kind: 'base64',
+    name,
+    relativePath: responseRelativePath,
+    mime,
+    contentBase64: (await readFile(fullPath)).toString('base64'),
+    size: info.size,
+  }
+}
+
+function normalizeAvailableSkills(value: unknown): MossSessionAvailableSkill[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    if (!isJsonBody(item) || typeof item.name !== 'string' || !item.name.trim()) return []
+    const icon = typeof item.icon === 'string' ? item.icon : undefined
+    return [{
+      name: item.name.trim(),
+      displayName: typeof item.displayName === 'string' ? item.displayName : undefined,
+      description: typeof item.description === 'string' ? item.description : '',
+      ...(icon ? { icon } : {}),
+      ...(typeof item.iconUrl === 'string' ? { iconUrl: item.iconUrl } : {}),
+      ...(typeof item.color === 'string' ? { color: item.color } : {}),
+      emoji: typeof item.emoji === 'string' ? item.emoji : item.emoji === null ? null : undefined,
+      ...(typeof item.source === 'string' ? { source: item.source } : {}),
+      ...(typeof item.path === 'string' ? { path: item.path } : {}),
+    }]
+  })
+}
+
+function getSessionAvailableSkills(runtime: RuntimeService, sessionId: string): MossSessionAvailableSkill[] {
+  const event = runtime.store.latestEvent(sessionId, 'available_skills_snapshot')
+  return normalizeAvailableSkills(event?.payload.skills)
 }
 
 
@@ -4211,6 +4486,46 @@ export function startServer(
         return
       }
 
+      const sessionWorkspaceTreeMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/tree$/)
+      if (req.method === 'GET' && sessionWorkspaceTreeMatch) {
+        const sessionId = sessionWorkspaceTreeMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        const root = await readWorkspaceTree(session, {
+          path: url.searchParams.get('path'),
+          search: url.searchParams.get('search'),
+        })
+        writeJson(res, 200, { root })
+        return
+      }
+
+      const sessionWorkspaceFileMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/file$/)
+      if (req.method === 'GET' && sessionWorkspaceFileMatch) {
+        const sessionId = sessionWorkspaceFileMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(res, 200, await readWorkspaceFilePreview(session, url.searchParams.get('path')))
+        return
+      }
+
+      const sessionAvailableSkillsMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/skills\/available$/)
+      if (req.method === 'GET' && sessionAvailableSkillsMatch) {
+        const sessionId = sessionAvailableSkillsMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(res, 200, { skills: getSessionAvailableSkills(runtime, sessionId) })
+        return
+      }
+
       const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (req.method === 'GET' && sessionIdMatch) {
         const sessionId = sessionIdMatch[1] || ''
@@ -4235,13 +4550,12 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/sessions') {
         authService.requireScope(auth, 'sessions:create')
         const body = await readJsonBody(req)
-        const fallbackCwd = config.workspace || process.cwd()
         const normalizeCwd = (p: string) => p === '/' ? os.homedir() : p
         const requestedCwd =
           typeof body.cwd === 'string' && body.cwd.trim()
             ? body.cwd
-            : fallbackCwd
-        const cwd = normalizeCwd(existsSync(requestedCwd) ? requestedCwd : fallbackCwd)
+            : config.workspace
+        const cwd = requestedCwd && existsSync(requestedCwd) ? normalizeCwd(requestedCwd) : undefined
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const runtimeOptions = parseRuntimeOptions(body)

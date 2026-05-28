@@ -273,7 +273,7 @@ export type SessionSummary = {
 }
 
 export type SessionCreateInput = {
-  cwd: string
+  cwd?: string
   dangerouslySkipPermissions: boolean
   userId: string
   orgId: string

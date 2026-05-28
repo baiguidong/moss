@@ -9,6 +9,7 @@ import {
   appendSharedAgentMemory,
   extractRememberableUserFact,
 } from '../sharedAgentMemory.js'
+import { cleanupIntermediateFiles, ensureDraftsDirectory } from '../draftsCleanup.js'
 
 type AcpBridgeOptions = {
   child: ChildProcess
@@ -171,6 +172,11 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
 
     // 首次消息注入：注入技能和智能体信息
     let finalText = trimmedText
+    try {
+      await ensureDraftsDirectory(cwd)
+    } catch (err) {
+      process.stderr.write(`[AcpBridge] Failed to ensure drafts directory: ${String(err)}\n`)
+    }
     if (isFirstMessage) {
       try {
         finalText = await prepareFirstMessageForScode(trimmedText, {
@@ -346,8 +352,14 @@ export function createAcpBridgeHandle(options: AcpBridgeOptions): BackendHandle 
             status: 'success',
             usage,
           })
-          process.stderr.write(`[AcpBridge] EMITTING RESULT EVENT: ${resultEvent}\n`)
-          emitStdout(resultEvent + '\n')
+          void cleanupIntermediateFiles(cwd)
+            .catch(err => {
+              process.stderr.write(`[AcpBridge] Draft cleanup failed: ${String(err)}\n`)
+            })
+            .finally(() => {
+              process.stderr.write(`[AcpBridge] EMITTING RESULT EVENT: ${resultEvent}\n`)
+              emitStdout(resultEvent + '\n')
+            })
 
           currentAssistantText = ''
         }

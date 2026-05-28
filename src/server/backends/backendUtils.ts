@@ -4,19 +4,22 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { fileURLToPath } from 'url'
-import { mkdir, symlink } from 'fs/promises'
+import { mkdir, readFile, symlink } from 'fs/promises'
 import {
   MOSS_HOME,
 } from '../../utils/skills/localSkillDirectories.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { findAssistantDir, readAssistantMeta } from '../agentStore.js'
 import type {
+  BackendAvailableSkill,
   BackendHandle,
   BackendSpawnOptions,
   SessionRuntimeInfo,
 } from '../sessionManager.js'
 import { getSystemSettings } from '../systemSettings.js'
 import { getUserModelPreference } from '../userModelPreference.js'
+import { readSkillMeta } from '../skillStore.js'
+import type { WorkspaceSkillLink } from '../../utils/scodeBridge.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -339,6 +342,74 @@ export async function getAssistantRuntimeConfig(
     const allSkills = await getAllAvailableSkillNames()
     return { memoryMode: 'session', enabledSkills: allSkills }
   }
+}
+
+function parseSkillFrontmatter(content: string): Record<string, string> {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?/)
+  if (!match) return {}
+  const result: Record<string, string> = {}
+  for (const line of match[1].split('\n')) {
+    const colonIndex = line.indexOf(':')
+    if (colonIndex === -1) continue
+    const key = line.slice(0, colonIndex).trim()
+    let value = line.slice(colonIndex + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (key) result[key] = value
+  }
+  return result
+}
+
+export async function buildAvailableSkillSnapshot(
+  skillLinks: WorkspaceSkillLink[],
+): Promise<BackendAvailableSkill[]> {
+  const snapshots: BackendAvailableSkill[] = []
+  const seen = new Set<string>()
+
+  for (const link of skillLinks) {
+    if (seen.has(link.name)) continue
+    seen.add(link.name)
+
+    const [meta, frontmatter] = await Promise.all([
+      readSkillMeta(link.sourcePath).catch(() => null),
+      readFile(path.join(link.sourcePath, 'SKILL.md'), 'utf8')
+        .then(parseSkillFrontmatter)
+        .catch(() => ({})),
+    ])
+    const icon =
+      typeof meta?.icon === 'string'
+        ? meta.icon
+        : typeof frontmatter.icon === 'string'
+          ? frontmatter.icon
+          : undefined
+
+    snapshots.push({
+      name: link.name,
+      displayName:
+        meta?.display_name ||
+        meta?.name ||
+        frontmatter.name ||
+        frontmatter.displayName ||
+        link.name,
+      description:
+        typeof meta?.description === 'string'
+          ? meta.description
+          : frontmatter.description || '',
+      ...(icon ? { icon } : {}),
+      ...(icon?.startsWith('http') ? { iconUrl: icon } : {}),
+      emoji:
+        typeof meta?.emoji === 'string'
+          ? meta.emoji
+          : typeof frontmatter.emoji === 'string'
+            ? frontmatter.emoji
+            : null,
+      source: typeof meta?.source_type === 'string' ? meta.source_type : undefined,
+      path: link.workspacePath,
+    })
+  }
+
+  return snapshots
 }
 
 /**
