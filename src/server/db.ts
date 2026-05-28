@@ -261,8 +261,8 @@ export class DirectConnectStore {
 
     const nowTs = now()
     this.db.prepare(`
-      INSERT OR IGNORE INTO enterprises (id, app_name, created_at, updated_at)
-      VALUES ('default', 'Moss', ?, ?)
+      INSERT OR IGNORE INTO enterprises (id, created_at, updated_at)
+      VALUES ('default', ?, ?)
     `).run(nowTs, nowTs)
 
     // Migration: add assistant_name column if it doesn't exist
