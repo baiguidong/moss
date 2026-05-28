@@ -289,7 +289,8 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
 
     getMcpPolicy(auth: AuthContext) {
       const policy = mcpStore.getMcpPolicy(auth.orgId)
-      return { success: true, data: policy }
+      const { id, org_id, created_by, updated_by, created_at, updated_at, ...rest } = policy
+      return { success: true, data: rest }
     },
 
     updateMcpPolicy(auth: AuthContext, input: McpPolicyInput, ip?: string) {
