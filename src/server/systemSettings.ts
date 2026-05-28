@@ -25,6 +25,14 @@ export type SystemSettingsOAuth2 = {
   authorizeUrlTemplate: string
   /** Absolute path to the credential script invoked with `resolve` / `refresh`. */
   scriptPath: string
+  /**
+   * Whether the client must verify the OAuth2 `state` parameter on callback.
+   * Default true (CSRF protection). Set false in trusted internal deployments
+   * where the desktop app and identity provider both live inside a controlled
+   * network. The client still includes `state` in the authorize URL either way
+   * (provider compatibility); only the local equality check is skipped.
+   */
+  requireState: boolean
 }
 
 export type SystemSettingsPayload = {
@@ -78,6 +86,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     enabled: false,
     authorizeUrlTemplate: '',
     scriptPath: '',
+    requireState: true,
   },
 })
 
@@ -231,6 +240,12 @@ function normalizeSystemSettings(
       existingOAuth2.scriptPath,
       DEFAULT_SYSTEM_SETTINGS.oauth2.scriptPath,
     ),
+    requireState:
+      sourceOAuth2.requireState !== undefined
+        ? Boolean(sourceOAuth2.requireState)
+        : typeof existingOAuth2.requireState === 'boolean'
+          ? existingOAuth2.requireState
+          : DEFAULT_SYSTEM_SETTINGS.oauth2.requireState,
   }
 
   return result as PersistedSystemSettings

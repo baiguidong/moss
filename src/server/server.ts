@@ -1341,7 +1341,11 @@ export function startServer(
         const authorizeUrl = substituteOAuth2Template(oauth2.authorizeUrlTemplate, {
           redirect_uri: OAUTH2_DEEP_LINK_REDIRECT_URI,
         })
-        writeJson(res, 200, { enabled: true, authorize_url: authorizeUrl })
+        writeJson(res, 200, {
+          enabled: true,
+          authorize_url: authorizeUrl,
+          require_state: oauth2.requireState,
+        })
         return
       }
 
