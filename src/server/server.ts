@@ -88,6 +88,12 @@ import { createConfigItemsApi } from './api/configItems.js'
 import { createSecretsApi } from './api/secrets.js'
 import { createCronApi } from './api/cron.js'
 import { CronService } from './services/cron/CronService.js'
+import { createMcpAdminApi } from './api/mcpAdmin.js'
+import { createMcpUserApi } from './api/mcpUser.js'
+import { createMcpUserConfigApi, type McpUserConfigApi } from './api/mcpUserConfig.js'
+import { handleMcpSseConnection, broadcastMcpEvent } from './api/mcpEvents.js'
+import { McpStore } from './mcp/db.js'
+import type { McpTemplateListFilter } from './mcp/types.js'
 import type { NexusClient } from './nexus/nexusClient.js'
 import { loadBudgetStats } from './budgetStats.js'
 import { loadDashboardStats } from './dashboardStats.js'
@@ -1094,6 +1100,55 @@ export function startServer(
   // Cron API - for scheduled tasks management
   const cronApi = createCronApi(runtime.store.db, { cronService })
 
+  const mcpStore = new McpStore(runtime.store.db)
+  const mcpUserConfigApi = nexusClient ? createMcpUserConfigApi({
+    nexusClient,
+    mcpStore,
+    getUserByIdAndOrg: (userId: string, _orgId: string) => {
+      try {
+        const u = authService.getUserById(userId)
+        if (!u) return null
+        return { role: 'user', departmentId: u.departmentId }
+      } catch { return null }
+    },
+    listDepartmentsByOrg: (orgId: string) => {
+      try { return authService.listDepartments(orgId).departments } catch { return [] }
+    },
+  }) : null
+  const mcpAdminApi = createMcpAdminApi({
+    mcpStore,
+    authService,
+    getUserName: (userId: string) => {
+      try { return authService.getUserName(userId) } catch { return undefined }
+    },
+    getUserDepartmentId: (userId: string) => {
+      try { const u = authService.getUserById(userId); return u?.departmentId ?? null } catch { return null }
+    },
+  })
+  const mcpUserApi = createMcpUserApi({
+    mcpStore,
+    authService,
+    getUserName: (userId: string) => {
+      try { return authService.getUserName(userId) } catch { return undefined }
+    },
+    getUserDepartmentId: (userId: string) => {
+      try { const u = authService.getUserById(userId); return u?.departmentId ?? null } catch { return null }
+    },
+    getUserByIdAndOrg: (userId: string, _orgId: string) => {
+      try {
+        const u = authService.getUserById(userId)
+        if (!u) return null
+        // For visibility filter we need role; use auth.role if querying self
+        return { role: 'user', departmentId: u.departmentId }
+      } catch { return null }
+    },
+    listDepartmentsByOrg: (orgId: string) => {
+      try { return authService.listDepartments(orgId).departments } catch { return [] }
+    },
+    nexusClient: nexusClient ?? undefined,
+  })
+
+
   function refreshAuthProxyRules() {
     const ap = runtime.authProxy
     if (!ap) return
@@ -1561,7 +1616,8 @@ export function startServer(
       let auth = authenticateRequest(req, authService)
       if (!auth && req.method === 'GET') {
         const isSseBuildEvents = /^\/api\/v1\/wikis\/[^/]+\/build-events$/.test(pathname)
-        if (isSseBuildEvents) {
+        const isSseMcpEvents = pathname === '/api/v1/mcp/events'
+        if (isSseBuildEvents || isSseMcpEvents) {
           const queryToken = url.searchParams.get('token')
           if (queryToken) {
             try {
@@ -1575,6 +1631,8 @@ export function startServer(
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
+
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined
 
       if (req.method === 'GET' && pathname === '/api/v1/roles') {
         authService.requireScope(auth, 'admin:users')
@@ -3376,7 +3434,6 @@ export function startServer(
         }
 
         // Individual secret CRUD (enterprise + user)
-        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined
         const secretMatch = pathname.match(/^\/api\/v1\/secrets\/([^/]+)\/([^/]+)(?:\/(enable|disable))?$/)
         if (secretMatch) {
           const namespace = decodeURIComponent(secretMatch[1])
@@ -3458,6 +3515,314 @@ export function startServer(
             writeJson(res, 200, await secretsApi.deleteUserSecret(auth.orgId, auth.userId, namespace, key, clientIp))
             return
           }
+        }
+      }
+
+      // ==================== MCP Management ====================
+
+      // SSE events endpoint (token query param auth handled above)
+      if (req.method === 'GET' && pathname === '/api/v1/mcp/events') {
+        handleMcpSseConnection(res, auth.orgId)
+        return
+      }
+
+      // Admin: list MCP servers
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-servers') {
+        const result = mcpAdminApi.listMcpServers(auth, {
+          scope: url.searchParams.get('scope') as any || undefined,
+          department_id: url.searchParams.get('department_id') || undefined,
+          status: url.searchParams.get('status') as any || undefined,
+          risk_level: url.searchParams.get('risk_level') as any || undefined,
+          mcp_type: url.searchParams.get('mcp_type') as any || undefined,
+          audit_enabled: url.searchParams.get('audit_enabled') === 'true'
+            ? true
+            : url.searchParams.get('audit_enabled') === 'false' ? false : undefined,
+          bound_assistant: url.searchParams.get('bound_assistant') || undefined,
+          created_by: url.searchParams.get('created_by') || undefined,
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        }, clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: create MCP server
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-servers') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.createMcpServer(auth, body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // Admin: get/update/delete/test MCP server by ID
+      const mcpServerMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)$/)
+      if (mcpServerMatch) {
+        const serverId = mcpServerMatch[1]
+        if (req.method === 'GET') {
+          const result = mcpAdminApi.getMcpServer(auth, serverId)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          // Handle enable/disable via dedicated method
+          if (body.enabled !== undefined && Object.keys(body).length === 1) {
+            const result = mcpAdminApi.setMcpServerEnabled(auth, serverId, !!body.enabled, clientIp)
+            writeJson(res, result.success ? 200 : 404, result)
+          } else {
+            const result = mcpAdminApi.updateMcpServer(auth, serverId, body, clientIp)
+            writeJson(res, result.success ? 200 : 400, result)
+          }
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = mcpAdminApi.deleteMcpServer(auth, serverId, clientIp)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+      }
+
+      // Admin: test MCP connection
+      const mcpTestMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)\/test$/)
+      if (mcpTestMatch && req.method === 'POST') {
+        const result = await mcpAdminApi.testConnection(auth, mcpTestMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 404, result)
+        return
+      }
+
+      // Admin: MCP 配置解析
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-config/parse') {
+        const body = await readJsonBody(req)
+        const result = await mcpAdminApi.parseMcpConfig(auth, body)
+        writeJson(res, result.success ? 200 : 400, result)
+        return
+      }
+
+      // Admin: MCP server audit logs
+      const mcpAuditMatch = pathname.match(/^\/api\/v1\/admin\/mcp-servers\/([^/]+)\/audit-logs$/)
+      if (mcpAuditMatch && req.method === 'GET') {
+        const result = mcpAdminApi.getServerAuditLogs(auth, mcpAuditMatch[1], {
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: get MCP policy
+      if (req.method === 'GET' && pathname === '/api/v1/tenant/mcp-policy') {
+        const result = mcpAdminApi.getMcpPolicy(auth)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: update MCP policy
+      if (req.method === 'PATCH' && pathname === '/api/v1/admin/mcp-policy') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.updateMcpPolicy(auth, body, clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: MCP audit logs
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-audit-logs') {
+        const statusParam = url.searchParams.get('status') || undefined
+        const status = statusParam === 'success' || statusParam === 'error' ? statusParam : undefined
+        const result = mcpAdminApi.getAuditLogs(auth, {
+          mcp_server_id: url.searchParams.get('mcp_server_id') || undefined,
+          mcp_server_name: url.searchParams.get('mcp_server_name') || undefined,
+          user_id: url.searchParams.get('user_id') || undefined,
+          action: url.searchParams.get('action') || undefined,
+          status,
+          since: Number(url.searchParams.get('since')) || undefined,
+          until: Number(url.searchParams.get('until')) || undefined,
+          page: Number(url.searchParams.get('page')) || undefined,
+          page_size: Number(url.searchParams.get('page_size')) || undefined,
+        })
+        writeJson(res, 200, result)
+        return
+      }
+
+      // Admin: list/approve/reject approval requests (Phase 2)
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-approvals') {
+        const result = mcpAdminApi.listApprovalRequests(auth, url.searchParams.get('status') || undefined)
+        writeJson(res, 200, result)
+        return
+      }
+
+      const mcpApproveMatch = pathname.match(/^\/api\/v1\/admin\/mcp-approvals\/([^/]+)\/approve$/)
+      if (mcpApproveMatch && req.method === 'POST') {
+        const result = mcpAdminApi.approveRequest(auth, mcpApproveMatch[1], clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      const mcpRejectMatch = pathname.match(/^\/api\/v1\/admin\/mcp-approvals\/([^/]+)\/reject$/)
+      if (mcpRejectMatch && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.rejectRequest(auth, mcpRejectMatch[1], body.review_note || '', clientIp)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // MCP Templates: list
+      if (req.method === 'GET' && pathname === '/api/v1/admin/mcp-templates') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams
+        const filter: Record<string, string> = {}
+        if (params.get('category')) filter.category = params.get('category')!
+        if (params.get('search')) filter.search = params.get('search')!
+        if (params.get('page')) filter.page = params.get('page')!
+        if (params.get('page_size')) filter.page_size = params.get('page_size')!
+        const result = mcpAdminApi.listTemplates(auth, filter)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // MCP Templates: get single
+      const mcpTemplateMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)$/)
+      if (mcpTemplateMatch && req.method === 'GET') {
+        const result = mcpAdminApi.getTemplate(auth, mcpTemplateMatch[1])
+        writeJson(res, result.success ? 200 : 404, result)
+        return
+      }
+
+      // Template CRUD: create
+      if (req.method === 'POST' && pathname === '/api/v1/admin/mcp-templates') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.createTemplate(auth, body as any, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // Template CRUD: update / delete
+      const mcpTemplateUpdateMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)$/)
+      if (mcpTemplateUpdateMatch) {
+        const templateId = mcpTemplateUpdateMatch[1]
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          const result = mcpAdminApi.updateTemplate(auth, templateId, body as any, clientIp)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = mcpAdminApi.deleteTemplate(auth, templateId, clientIp)
+          writeJson(res, 200, result)
+          return
+        }
+      }
+
+      // MCP Templates: install (create MCP from template)
+      const mcpTemplateInstallMatch = pathname.match(/^\/api\/v1\/admin\/mcp-templates\/([^/]+)\/install$/)
+      if (mcpTemplateInstallMatch && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const result = mcpAdminApi.installTemplate(auth, mcpTemplateInstallMatch[1], body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // User: list my MCP servers
+      if (req.method === 'GET' && pathname === '/api/v1/me/mcp-servers') {
+        const result = await mcpUserApi.listMyMcpServers(auth)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // User / third-party: list available MCP templates (sanitized, no admin scope)
+      if (req.method === 'GET' && pathname === '/api/v1/me/mcp-templates') {
+        const filter: McpTemplateListFilter = {}
+        if (url.searchParams.get('category')) filter.category = url.searchParams.get('category')!
+        if (url.searchParams.get('search')) filter.search = url.searchParams.get('search')!
+        if (url.searchParams.get('page')) filter.page = Number(url.searchParams.get('page')) || undefined
+        if (url.searchParams.get('page_size')) filter.page_size = Number(url.searchParams.get('page_size')) || undefined
+        const result = mcpUserApi.listAvailableTemplates(auth, filter)
+        writeJson(res, 200, result)
+        return
+      }
+
+      // User: install MCP from template (creates a personal scope=user MCP)
+      const meMcpTemplateInstallMatch = pathname.match(/^\/api\/v1\/me\/mcp-templates\/([^/]+)\/install$/)
+      if (meMcpTemplateInstallMatch && req.method === 'POST') {
+        const body = (await readJsonBody(req)) as { config_values?: Record<string, string>; display_name?: string } | null
+        const result = await mcpUserApi.installFromTemplate(
+          auth,
+          meMcpTemplateInstallMatch[1],
+          body ?? {},
+          clientIp,
+        )
+        if (result.success) {
+          writeJson(res, 201, result)
+        } else {
+          const code = (result as any).error?.code
+          const status =
+            code === 'not_found' ? 404 :
+            code === 'forbidden' ? 403 :
+            code === 'user_config_unavailable' ? 503 :
+            400
+          writeJson(res, status, result)
+        }
+        return
+      }
+
+      // User: create personal MCP (Phase 2)
+      if (req.method === 'POST' && pathname === '/api/v1/me/mcp-servers') {
+        const body = await readJsonBody(req)
+        const result = await mcpUserApi.createPersonalMcp(auth, body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
+      // User: update/delete/test personal MCP (Phase 2)
+      const meMcpMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)$/)
+      if (meMcpMatch) {
+        const serverId = meMcpMatch[1]
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req)
+          const result = await mcpUserApi.updatePersonalMcp(auth, serverId, body, clientIp)
+          writeJson(res, result.success ? 200 : 400, result)
+          return
+        }
+        if (req.method === 'DELETE') {
+          const result = await mcpUserApi.deletePersonalMcp(auth, serverId, clientIp)
+          writeJson(res, result.success ? 200 : 404, result)
+          return
+        }
+      }
+
+      const meMcpTestMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/test$/)
+      if (meMcpTestMatch && req.method === 'POST') {
+        const result = await mcpUserApi.testPersonalMcpConnection(auth, meMcpTestMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 404, result)
+        return
+      }
+
+      // User config routes
+      const userConfigMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/user-config(?:\/([^/]+))?$/)
+      if (userConfigMatch) {
+        if (!mcpUserConfigApi) {
+          writeJson(res, 503, { error: { code: 'user_config_unavailable', message: '用户配置功能当前不可用' } })
+          return
+        }
+        const serverId = userConfigMatch[1]
+        const configKey = userConfigMatch[2]
+        if (req.method === 'GET' && !configKey) {
+          const result = await mcpUserConfigApi.listForServer(auth, serverId)
+          writeJson(res, 200, result)
+          return
+        }
+        if (req.method === 'PUT' && configKey) {
+          const body = await readJsonBody(req) as { value?: string }
+          if (!body || typeof body.value !== 'string') {
+            writeJson(res, 400, { error: { code: 'bad_request', message: '请求体必须包含 value 字段' } })
+            return
+          }
+          const result = await mcpUserConfigApi.setValue(auth, serverId, configKey, body.value)
+          writeJson(res, result.success ? 200 : 400, result)
+          return
+        }
+        if (req.method === 'DELETE' && configKey) {
+          const result = await mcpUserConfigApi.deleteValue(auth, serverId, configKey)
+          writeJson(res, 200, result)
+          return
         }
       }
 
@@ -3616,6 +3981,31 @@ export function startServer(
         await writeFile(filePath, buffer)
 
         writeJson(res, 200, { success: true, data: { url: filename } })
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/upload/mcp-icon') {
+        authService.requireScope(auth, 'admin:mcp')
+        const buffer = await readRawBody(req)
+
+        const headerCt = req.headers['content-type']
+        let mime = 'image/png'
+        if (typeof headerCt === 'string') {
+          const parsed = headerCt.split(';')[0].trim().toLowerCase()
+          if (
+            parsed === 'image/png' ||
+            parsed === 'image/jpeg' ||
+            parsed === 'image/webp' ||
+            parsed === 'image/svg+xml'
+          ) {
+            mime = parsed
+          } else if (parsed === 'image/jpg') {
+            mime = 'image/jpeg'
+          }
+        }
+
+        const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`
+        writeJson(res, 200, { success: true, data: { url: dataUrl } })
         return
       }
 
@@ -5255,6 +5645,33 @@ export function startServer(
           runtime: created.runtime,
         })
         return
+      }
+
+      // ---- Static file serving: /uploads/mcp-icons/* ----
+      const uploadMatch = pathname.match(/^\/uploads\/mcp-icons\/(.+)$/)
+      if (uploadMatch && req.method === 'GET') {
+        const filename = uploadMatch[1]
+        const filePath = join(config.runtimeDir, 'uploads', 'mcp-icons', filename)
+        try {
+          const fileContent = await readFile(filePath)
+          const ext = extname(filename).slice(1).toLowerCase()
+          const contentTypeMap: Record<string, string> = {
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            webp: 'image/webp',
+            svg: 'image/svg+xml',
+          }
+          const contentType = contentTypeMap[ext] || 'image/png'
+          res.writeHead(200, {
+            'content-type': contentType,
+            'cache-control': 'public, max-age=31536000',
+          })
+          res.end(fileContent)
+          return
+        } catch {
+          throw new HttpError(404, 'File not found')
+        }
       }
 
       throw new HttpError(404, 'Not found')

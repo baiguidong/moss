@@ -116,6 +116,7 @@ export async function startStandaloneDirectConnectServer(
     store,
     authService,
     serverInstanceId: instance.instanceId,
+    nexusClient,
   })
   runtime.authProxy = authProxy
   await runtime.reconcileOnStartup()

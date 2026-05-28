@@ -94,6 +94,18 @@ export class ScodeBackend implements SessionBackend {
       process.stderr.write(`[ScodeBackend] Failed to create dynamic sudocode.json: ${e}\n`)
     }
 
+    // Write user-visible MCP servers as settings.json (same dir as sudocode.json)
+    // so scode loads them on startup. mcpSettings is resolved in the main process
+    // and passed via the runner manifest; here we only write the file.
+    if (options.mcpSettings && Object.keys(options.mcpSettings.mcpServers).length > 0) {
+      try {
+        writeFileSync(join(dotNexusDir, 'settings.json'), JSON.stringify(options.mcpSettings, null, 2), 'utf8')
+        process.stderr.write(`[ScodeBackend] Wrote ${Object.keys(options.mcpSettings.mcpServers).length} MCP server(s) to settings.json\n`)
+      } catch (e) {
+        process.stderr.write(`[ScodeBackend] Failed to write settings.json: ${e}\n`)
+      }
+    }
+
     // Use model from env (which includes user preference), or fallback
     const model = env.MOSS_DEFAULT_MODEL || options.runtime?.model || 'gemini-3-flash-preview'
     let scodeModel = model

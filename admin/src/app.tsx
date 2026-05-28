@@ -25,6 +25,13 @@ const UserCredentialsPage = lazy(() => import('./pages/secrets/user-credentials-
 const AuditLogPage = lazy(() => import('./pages/secrets/audit-log-page'))
 const RotationAlertsPage = lazy(() => import('./pages/secrets/rotation-alerts-page'))
 const CronJobsPage = lazy(() => import('./pages/cron-jobs-page'))
+const McpServersPage = lazy(() => import('./pages/mcp/mcp-servers-page'))
+const McpEnterpriseServersPage = lazy(() => import('./pages/mcp/mcp-enterprise-servers-page'))
+const McpDepartmentServersPage = lazy(() => import('./pages/mcp/mcp-department-servers-page'))
+const McpPolicyPage = lazy(() => import('./pages/mcp/mcp-policy-page'))
+const McpAuditLogPage = lazy(() => import('./pages/mcp/mcp-audit-log-page'))
+const McpApprovalsPage = lazy(() => import('./pages/mcp/mcp-approvals-page'))
+const McpTemplatesPage = lazy(() => import('./pages/mcp/mcp-templates-page'))
 const SessionDetailPage = lazy(() =>
   import('./pages/session-detail-page').then((module) => ({
     default: module.SessionDetailPage,
@@ -241,6 +248,57 @@ export default function App() {
           element={
             <SuspendedRoute>
               <CronJobsPage />
+            </SuspendedRoute>
+          }
+        />
+        {/* MCP Management */}
+        <Route path="/mcp" element={<Navigate to="/mcp/servers/enterprise" replace />} />
+        <Route path="/mcp/servers" element={<Navigate to="/mcp/servers/enterprise" replace />} />
+        <Route
+          path="/mcp/servers/enterprise"
+          element={
+            <SuspendedRoute>
+              <McpEnterpriseServersPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/servers/department"
+          element={
+            <SuspendedRoute>
+              <McpDepartmentServersPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/policy"
+          element={
+            <SuspendedRoute>
+              <McpPolicyPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/audit-log"
+          element={
+            <SuspendedRoute>
+              <McpAuditLogPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/approvals"
+          element={
+            <SuspendedRoute>
+              <McpApprovalsPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/mcp/templates"
+          element={
+            <SuspendedRoute>
+              <McpTemplatesPage />
             </SuspendedRoute>
           }
         />

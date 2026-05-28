@@ -144,6 +144,7 @@ export class SessionRunnerDaemon {
             ? new Set(this.manifest.session.visibilityFilter.visibleDepartmentIds)
             : null,
         } : null,
+        mcpSettings: this.manifest.session.mcpSettings,
       })
 
       this.#handle = handle

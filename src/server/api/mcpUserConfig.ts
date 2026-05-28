@@ -1,0 +1,144 @@
+import type { NexusClient } from '../nexus/nexusClient.js'
+import type { McpStore } from '../mcp/db.js'
+import type { AuthContext } from '../auth/token.js'
+import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
+
+export interface UserConfigItem {
+  name: string
+  target: 'env' | 'headers'
+  key: string
+  description?: string
+  required?: boolean
+}
+
+interface McpUserConfigDeps {
+  nexusClient: NexusClient
+  mcpStore: McpStore
+  getUserByIdAndOrg: (userId: string, orgId: string) => { role: string; departmentId: string | null } | null
+  listDepartmentsByOrg: (orgId: string) => Array<{ id: string; parentId: string | null }>
+}
+
+export function createMcpUserConfigApi(deps: McpUserConfigDeps) {
+  const { nexusClient, mcpStore, getUserByIdAndOrg, listDepartmentsByOrg } = deps
+
+  function checkVisibility(auth: AuthContext, server: { visible_to: unknown }) {
+    const filter = buildVisibilityFilter(auth, getUserByIdAndOrg, listDepartmentsByOrg)
+    if (!isVisibleTo(server.visible_to, filter)) {
+      const err = new Error('无权访问此 MCP 服务')
+      Object.assign(err, { statusCode: 403 })
+      throw err
+    }
+  }
+
+  function getSchemaForServer(server: { template_id: string | null; org_id: string }): UserConfigItem[] {
+    if (!server.template_id) return []
+    const template = mcpStore.getTemplate(server.org_id, server.template_id)
+    if (!template?.config_json) return []
+    try {
+      const parsed = JSON.parse(template.config_json)
+      if (parsed?.user_config_items && Array.isArray(parsed.user_config_items)) {
+        return parsed.user_config_items as UserConfigItem[]
+      }
+      return []
+    } catch {
+      return []
+    }
+  }
+
+  function namespace(userId: string, mcpServerId: string) {
+    return `mcp:user:${userId}:${mcpServerId}`
+  }
+
+  const api = {
+    async listForServer(auth: AuthContext, mcpServerId: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, mcpServerId)
+      if (!server) {
+        const err = new Error('MCP 服务不存在')
+        Object.assign(err, { statusCode: 404 })
+        throw err
+      }
+      checkVisibility(auth, server)
+
+      const schema = getSchemaForServer(server)
+      if (schema.length === 0) return { success: true, data: { schema: [], values: {} } }
+
+      const secrets = await nexusClient.listSecrets(namespace(auth.userId, mcpServerId), auth.userId)
+      const values: Record<string, string> = {}
+      for (const s of secrets) {
+        if (s.value !== null) {
+          values[s.key] = s.value
+        }
+      }
+      return { success: true, data: { schema, values } }
+    },
+
+    async setValue(auth: AuthContext, mcpServerId: string, key: string, value: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, mcpServerId)
+      if (!server) {
+        const err = new Error('MCP 服务不存在')
+        Object.assign(err, { statusCode: 404 })
+        throw err
+      }
+      checkVisibility(auth, server)
+
+      const schema = getSchemaForServer(server)
+      if (schema.length === 0) {
+        return { success: false, error: { code: 'template_not_found', message: '该服务关联的模板不存在或无配置项' } }
+      }
+      if (!schema.some(item => item.key === key)) {
+        const err = new Error(`配置项 ${key} 未在模板 schema 中声明`)
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
+
+      await nexusClient.putSecret(namespace(auth.userId, mcpServerId), key, value, auth.userId)
+      return { success: true }
+    },
+
+    async deleteValue(auth: AuthContext, mcpServerId: string, key: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, mcpServerId)
+      if (!server) {
+        const err = new Error('MCP 服务不存在')
+        Object.assign(err, { statusCode: 404 })
+        throw err
+      }
+      checkVisibility(auth, server)
+
+      const schema = getSchemaForServer(server)
+      if (!schema.some(item => item.key === key)) {
+        const err = new Error(`配置项 ${key} 未在模板 schema 中声明`)
+        Object.assign(err, { statusCode: 400 })
+        throw err
+      }
+
+      await nexusClient.deleteSecret(namespace(auth.userId, mcpServerId), key, auth.userId)
+      return { success: true }
+    },
+
+    async getResolvedEnvAndHeaders(server: { template_id: string | null; org_id: string }, userId: string): Promise<{ env: Record<string, string>; headers: Record<string, string> }> {
+      const schema = getSchemaForServer(server)
+      if (schema.length === 0) return { env: {}, headers: {} }
+
+      const ns = namespace(userId, server.id ?? '')
+      const secrets = await nexusClient.listSecrets(ns, userId)
+      const valueMap: Record<string, string> = {}
+      for (const s of secrets) {
+        if (s.value !== null) valueMap[s.key] = s.value
+      }
+
+      const env: Record<string, string> = {}
+      const headers: Record<string, string> = {}
+      for (const item of schema) {
+        const val = valueMap[item.key]
+        if (val === undefined) continue
+        if (item.target === 'env') env[item.key] = val
+        else headers[item.key] = val
+      }
+      return { env, headers }
+    },
+  }
+
+  return api
+}
+
+export type McpUserConfigApi = ReturnType<typeof createMcpUserConfigApi>

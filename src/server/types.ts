@@ -354,6 +354,12 @@ export type RunnerManifest = {
       departmentId: string | null
       visibleDepartmentIds: string[] | null // Set 序列化为数组
     } | null
+    /**
+     * 用户可见 MCP 服务的 scode settings.json 内容（主进程解析后下发）。
+     * 形如 { mcpServers: { name: {...} } }，由 backend 写入
+     * `${configDir}/.nexus/sudocode/settings.json` 供 scode 启动时加载。
+     */
+    mcpSettings?: { mcpServers: Record<string, unknown> }
   }
   attempt: {
     attemptId: string

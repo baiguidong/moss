@@ -1,0 +1,455 @@
+import { randomBytes } from 'crypto'
+import type { McpStore } from '../mcp/db.js'
+import type { AuthContext } from '../auth/token.js'
+import type { McpServerInput, McpTemplate, McpTemplateListFilter } from '../mcp/types.js'
+import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
+import type { AuthService } from '../auth/service.js'
+import type { NexusClient } from '../nexus/nexusClient.js'
+import { testMcpConnection } from '../mcp/testConnection.js'
+
+interface McpUserDeps {
+  mcpStore: McpStore
+  authService: AuthService
+  getUserName: (userId: string) => string | undefined
+  getUserDepartmentId: (userId: string) => string | null
+  getUserByIdAndOrg: (userId: string, orgId: string) => { role: string; departmentId: string | null } | null
+  listDepartmentsByOrg: (orgId: string) => { id: string; parentId: string | null }[]
+  nexusClient?: NexusClient
+}
+
+// Plan §2.2 step 6: user-side response is a strict whitelist of 16 fields.
+const USER_VISIBLE_FIELDS = [
+  'id', 'name', 'display_name', 'description', 'icon', 'category',
+  'scope', 'mcp_type', 'url', 'risk_level',
+  'bound_assistants', 'bound_skills',
+  'allow_read', 'allow_write',
+  'enabled', 'status',
+] as const
+
+function sanitizeForUser(server: Record<string, unknown>) {
+  const result: Record<string, unknown> = {}
+  for (const key of USER_VISIBLE_FIELDS) {
+    if (key in server) result[key] = server[key]
+  }
+  return result
+}
+
+/** A user-fillable config item declaration exposed to third parties (no secret values). */
+interface TemplateUserConfigItemDto {
+  name: string
+  key: string
+  required: boolean
+  description?: string
+  target: 'env' | 'headers'
+}
+
+/**
+ * Parse a template's config_json and extract only the user_config_items schema.
+ * Returns [] when absent or malformed. Never exposes any stored secret values.
+ */
+function parseTemplateUserConfigItems(configJson: string | null): TemplateUserConfigItemDto[] {
+  if (!configJson) return []
+  let parsed: unknown
+  try { parsed = JSON.parse(configJson) } catch { return [] }
+  const items = (parsed as Record<string, unknown> | null)?.user_config_items
+  if (!Array.isArray(items)) return []
+  const result: TemplateUserConfigItemDto[] = []
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as Record<string, unknown>
+    if (typeof item.name !== 'string' || typeof item.key !== 'string') continue
+    if (item.target !== 'env' && item.target !== 'headers') continue
+    result.push({
+      name: item.name,
+      key: item.key,
+      required: item.required === true,
+      ...(typeof item.description === 'string' ? { description: item.description } : {}),
+      target: item.target,
+    })
+  }
+  return result
+}
+
+/**
+ * Sanitize a template for third-party / user consumption.
+ * Explicit allowlist: connection/infra fields (url, command, args_json, env_json,
+ * auth_type, raw config_json, owner) are deliberately excluded.
+ */
+function sanitizeTemplateForUser(t: McpTemplate) {
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    icon: t.icon,
+    category: t.category,
+    tags: t.tags_json ?? [],
+    mcp_type: t.mcp_type,
+    scope: t.scope,
+    risk_level: t.risk_level,
+    downloads: t.downloads,
+    rating: t.rating,
+    user_config_items: parseTemplateUserConfigItems(t.config_json),
+    created_at: t.created_at,
+    updated_at: t.updated_at,
+  }
+}
+
+export function createMcpUserApi(deps: McpUserDeps) {
+  const { mcpStore, authService, getUserName, getUserDepartmentId, getUserByIdAndOrg, listDepartmentsByOrg, nexusClient } = deps
+
+  const api = {
+    /**
+     * GET /api/v1/me/mcp-servers
+     * Returns all MCP servers visible to the current user.
+     */
+    async listMyMcpServers(auth: AuthContext) {
+      const userDeptId = getUserDepartmentId(auth.userId)
+      const filter = buildVisibilityFilter(
+        auth,
+        getUserByIdAndOrg,
+        listDepartmentsByOrg,
+      )
+
+      // Get all enabled MCP servers for this org
+      const allServers = mcpStore.listVisibleMcpServers(auth.orgId, auth.userId, userDeptId)
+
+      // Filter by visibility
+      const visibleServers = allServers.filter(server => isVisibleTo(server.visible_to, filter))
+
+      // Sanitize sensitive fields
+      const sanitized = visibleServers.map(s => sanitizeForUser(s as unknown as Record<string, unknown>))
+
+      return { success: true, data: sanitized }
+    },
+
+    /**
+     * GET /api/v1/me/mcp-templates
+     * Third-party / user-facing MCP template catalog for the caller's org.
+     * Auth identical to listMyMcpServers: valid token only, no scope check.
+     * Returns a sanitized DTO; user_config_items is always present (the data
+     * third parties need to render a config form).
+     */
+    listAvailableTemplates(auth: AuthContext, filter?: McpTemplateListFilter) {
+      const result = mcpStore.listTemplates(auth.orgId, filter)
+      return {
+        success: true,
+        data: result.items.map(sanitizeTemplateForUser),
+        total: result.total,
+        page: filter?.page ?? 1,
+        page_size: filter?.page_size ?? 20,
+      }
+    },
+
+    // ==================== Personal MCP CRUD (Phase 2) ====================
+
+    /**
+     * POST /api/v1/me/mcp-servers
+     * Create a personal MCP server (scope=user).
+     */
+    async createPersonalMcp(auth: AuthContext, input: McpServerInput, ip?: string) {
+      // Check policy: is personal MCP allowed?
+      const policy = mcpStore.getMcpPolicy(auth.orgId)
+      if (!policy.allow_personal_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许创建个人 MCP' } }
+      }
+
+      // Enforce scope=user; default visible_to to only the owner so that even if
+      // the SQL filter is bypassed, isVisibleTo() will still gate cross-user visibility.
+      const personalInput: McpServerInput = {
+        ...input,
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: auth.userId,
+        visible_to: input.visible_to ?? { user_ids: [auth.userId] },
+      }
+
+      // Check policy constraints
+      if (input.mcp_type === 'stdio' && !policy.allow_stdio_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 STDIO 类型 MCP' } }
+      }
+      if ((input.mcp_type === 'http' || input.mcp_type === 'sse') && !policy.allow_http_sse_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 HTTP/SSE 类型 MCP' } }
+      }
+
+      // Check name uniqueness
+      const existing = mcpStore.getMcpServerByName(auth.orgId, input.name)
+      if (existing) {
+        return { success: false, error: { code: 'conflict', message: 'MCP 名称已存在' } }
+      }
+
+      const server = mcpStore.createMcpServer(auth.orgId, personalInput, auth.userId)
+
+      // Write audit log
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: server.id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'create_personal',
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      // If policy requires approval, create approval request and set status to pending
+      if (policy.require_approval) {
+        mcpStore.setMcpServerStatus(auth.orgId, server.id, 'pending', null)
+        mcpStore.createApprovalRequest({
+          org_id: auth.orgId,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          mcp_server_id: server.id,
+        })
+        return { success: true, data: { ...server, status: 'pending', _requires_approval: true } }
+      }
+
+      return { success: true, data: sanitizeForUser(server as unknown as Record<string, unknown>) }
+    },
+
+    /**
+     * PATCH /api/v1/me/mcp-servers/:id
+     * Update a personal MCP server.
+     */
+    async updatePersonalMcp(auth: AuthContext, id: string, input: Partial<McpServerInput>, ip?: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, id)
+      if (!server) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+
+      // Can only update own personal MCPs
+      if (server.scope !== 'user' || server.owner_id !== auth.userId) {
+        return { success: false, error: { code: 'forbidden', message: '只能修改自己的个人 MCP' } }
+      }
+
+      // Enforce scope stays as user
+      if (input.scope && input.scope !== 'user') {
+        return { success: false, error: { code: 'forbidden', message: '个人 MCP 作用域不可更改' } }
+      }
+
+      const updated = mcpStore.updateMcpServer(auth.orgId, id, input, auth.userId)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: id,
+          mcp_server_name: updated.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'update_personal',
+          request_params_json: JSON.stringify({ updated_fields: Object.keys(input) }),
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      return { success: true, data: sanitizeForUser(updated as unknown as Record<string, unknown>) }
+    },
+
+    /**
+     * DELETE /api/v1/me/mcp-servers/:id
+     * Delete a personal MCP server.
+     */
+    async deletePersonalMcp(auth: AuthContext, id: string, ip?: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, id)
+      if (!server) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+
+      if (server.scope !== 'user' || server.owner_id !== auth.userId) {
+        return { success: false, error: { code: 'forbidden', message: '只能删除自己的个人 MCP' } }
+      }
+
+      const deleted = mcpStore.deleteMcpServer(auth.orgId, id)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: null,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'delete_personal',
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      return { success: true }
+    },
+
+    /**
+     * POST /api/v1/me/mcp-servers/:id/test
+     * Test personal MCP connection.
+     */
+    async testPersonalMcpConnection(auth: AuthContext, id: string, ip?: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, id)
+      if (!server) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+
+      if (server.scope !== 'user' || server.owner_id !== auth.userId) {
+        return { success: false, error: { code: 'forbidden', message: '只能测试自己的个人 MCP' } }
+      }
+
+      const result = await testMcpConnection(server)
+
+      // Update status
+      if (result.ok) {
+        mcpStore.setMcpServerStatus(auth.orgId, id, 'enabled', auth.userId)
+      } else {
+        mcpStore.setMcpServerStatus(auth.orgId, id, 'error', auth.userId)
+      }
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'test_connection',
+          request_params_json: JSON.stringify({ ok: result.ok, latency_ms: result.latency_ms }),
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      return { success: true, data: result }
+    },
+
+    /**
+     * POST /api/v1/me/mcp-templates/:id/install
+     * Install a personal MCP from a template. Atomic: validates required user-config
+     * values up front, then creates the server with template connection info, writes
+     * user-config secrets keyed by the new serverId, and sets status='enabled'.
+     * Rolls back the created server if writing a config value fails.
+     */
+    async installFromTemplate(
+      auth: AuthContext,
+      templateId: string,
+      body: { config_values?: Record<string, string>; display_name?: string },
+      ip?: string,
+    ) {
+      const policy = mcpStore.getMcpPolicy(auth.orgId)
+      if (!policy.allow_personal_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许创建个人 MCP' } }
+      }
+
+      const template = mcpStore.getTemplate(auth.orgId, templateId)
+      if (!template) {
+        return { success: false, error: { code: 'not_found', message: '模板不存在' } }
+      }
+
+      if (template.mcp_type === 'stdio' && !policy.allow_stdio_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 STDIO 类型 MCP' } }
+      }
+      if ((template.mcp_type === 'http' || template.mcp_type === 'sse') && !policy.allow_http_sse_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 HTTP/SSE 类型 MCP' } }
+      }
+
+      const schema = parseTemplateUserConfigItems(template.config_json)
+      const providedValues = body.config_values ?? {}
+
+      const missing: string[] = []
+      for (const item of schema) {
+        if (item.required) {
+          const v = providedValues[item.key]
+          if (typeof v !== 'string' || v.length === 0) {
+            missing.push(item.key)
+          }
+        }
+      }
+      if (missing.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'missing_config',
+            message: `缺少必填配置项: ${missing.join(', ')}`,
+            missing_keys: missing,
+          },
+        }
+      }
+
+      const declaredKeys = new Set(schema.map(s => s.key))
+      const valuesToWrite: Array<{ key: string; value: string }> = []
+      for (const [k, v] of Object.entries(providedValues)) {
+        if (declaredKeys.has(k) && typeof v === 'string' && v.length > 0) {
+          valuesToWrite.push({ key: k, value: v })
+        }
+      }
+      if (valuesToWrite.length > 0 && !nexusClient) {
+        return {
+          success: false,
+          error: { code: 'user_config_unavailable', message: '用户配置服务当前不可用，无法保存配置值' },
+        }
+      }
+
+      // Generate unique name: {template.name}-{8 hex chars}
+      let serverName: string | null = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = `${template.name}-${randomBytes(4).toString('hex')}`
+        if (!mcpStore.getMcpServerByName(auth.orgId, candidate)) {
+          serverName = candidate
+          break
+        }
+      }
+      if (!serverName) {
+        return { success: false, error: { code: 'name_conflict', message: '生成唯一名称失败，请重试' } }
+      }
+
+      const serverInput: McpServerInput = {
+        name: serverName,
+        display_name: body.display_name ?? template.name,
+        description: template.description,
+        icon: template.icon,
+        category: template.category,
+        risk_level: template.risk_level,
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: auth.userId,
+        visible_to: { user_ids: [auth.userId] },
+        mcp_type: template.mcp_type,
+        url: template.url,
+        command: template.command,
+        args_json: template.args_json,
+        env_json: template.env_json,
+        timeout_ms: template.timeout_ms,
+        auth_type: template.auth_type,
+        template_id: templateId,
+      }
+
+      const server = mcpStore.createMcpServer(auth.orgId, serverInput, auth.userId)
+
+      // Write user-config secrets; on any failure, roll back the server
+      for (const { key, value } of valuesToWrite) {
+        try {
+          await nexusClient!.putSecret(`mcp:user:${auth.userId}:${server.id}`, key, value, auth.userId)
+        } catch (err) {
+          try { mcpStore.deleteMcpServer(auth.orgId, server.id) } catch { /* best effort */ }
+          return {
+            success: false,
+            error: {
+              code: 'config_write_failed',
+              message: `保存配置失败: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          }
+        }
+      }
+
+      mcpStore.setMcpServerStatus(auth.orgId, server.id, 'enabled', auth.userId)
+      mcpStore.incrementDownloads(auth.orgId, templateId)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: server.id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'install_template',
+          request_params_json: JSON.stringify({ template_id: templateId, template_name: template.name }),
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      const fresh = mcpStore.getMcpServer(auth.orgId, server.id) ?? server
+      return { success: true, data: sanitizeForUser(fresh as unknown as Record<string, unknown>) }
+    },
+  }
+
+  return api
+}
+
+export type McpUserApi = ReturnType<typeof createMcpUserApi>

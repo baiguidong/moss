@@ -194,6 +194,19 @@ export class DockerBackend implements SessionBackend {
       process.stderr.write(`[DockerBackend] Failed to create dynamic sudocode.json: ${e}\n`)
     }
 
+    // Write user-visible MCP servers as settings.json (same dir as sudocode.json)
+    // so scode loads them on startup. mcpSettings is resolved in the main process
+    // and passed via the runner manifest; here we only write the file. The
+    // configDir is mounted into the container, so the file is visible to scode.
+    if (options.mcpSettings && Object.keys(options.mcpSettings.mcpServers).length > 0) {
+      try {
+        writeFileSync(join(dotNexusDir, 'settings.json'), JSON.stringify(options.mcpSettings, null, 2), 'utf8')
+        process.stderr.write(`[DockerBackend] Wrote ${Object.keys(options.mcpSettings.mcpServers).length} MCP server(s) to settings.json\n`)
+      } catch (e) {
+        process.stderr.write(`[DockerBackend] Failed to write settings.json: ${e}\n`)
+      }
+    }
+
     // 挂载列表：工作空间、配置目录、Moss 安装目录
     // MOSS_HOME 需要挂载，因为符号链接指向这里
     const mounts = uniqueMounts([
