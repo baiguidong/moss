@@ -1,6 +1,8 @@
 # ---------------------------------------------------------
 # 使用 Ubuntu 24.04 以支持最新的 GLIBC 2.39
 # docker build -t my-moss-runtime:v1 -f deploy/runtime/Dockerfile .
+# 可通过 --build-arg 指定 scode 版本:
+# docker build -t my-moss-runtime:v1 --build-arg SCODE_VERSION=v0.1.9 -f deploy/runtime/Dockerfile .
 # ---------------------------------------------------------
 
 # Stage 1: build the Document Center wiki CLI (Go, no deps)
@@ -43,10 +45,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. 将你的 scode 引擎放入镜像并赋予执行权限
-# 注意：构建时确保本地路径 bin/scode 存在
-COPY ./bin/scode /usr/local/bin/scode
-RUN chmod +x /usr/local/bin/scode
+# 3. 从 GitHub 下载 scode 引擎并赋予执行权限
+# 通过构建参数指定版本，默认为 v0.1.8
+# 根据 TARGETARCH 自动选择对应架构的二进制文件
+ARG SCODE_VERSION=v0.1.9
+ARG TARGETARCH
+RUN ARCH=$(echo ${TARGETARCH} | sed 's/amd64/x64/' | sed 's/arm64/arm64/') && \
+    curl -fsSL https://github.com/sudoprivacy/sudocode/releases/download/${SCODE_VERSION}/scode-linux-${ARCH}.tar.gz | tar -xz -C /tmp && \
+    mv /tmp/scode-linux-${ARCH}/scode /usr/local/bin/scode && \
+    rm -rf /tmp/scode-linux-${ARCH} && \
+    chmod +x /usr/local/bin/scode
 
 # 4. 设置别名或链接，确保直接输入 scode 就能运行
 RUN ln -s /usr/local/bin/scode /usr/bin/scode
