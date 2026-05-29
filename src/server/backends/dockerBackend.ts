@@ -306,23 +306,38 @@ export class DockerBackend implements SessionBackend {
     })
     handle.availableSkills = availableSkills
 
-    const originalDestroy = handle.destroy.bind(handle)
-    handle.destroy = (force = false) => {
-      // 先执行原有销毁逻辑（停止容器）
-      if (force) {
-        const cleanup = spawn('docker', ['rm', '-f', containerName], {
-          stdio: 'ignore',
-          windowsHide: true,
-        })
-        cleanup.unref()
+    let cleanedUp = false
+    const cleanupRuntimeArtifacts = () => {
+      if (cleanedUp) {
+        return
       }
-      originalDestroy(force)
+      cleanedUp = true
 
-      // Session 模式下异步清理 configDir
+      // Best-effort extra cleanup for cases where `docker run --rm`
+      // doesn't reap the container promptly after the runtime exits.
+      const cleanup = spawn('docker', ['rm', '-f', containerName], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      cleanup.unref()
+
       if (mode === 'session' && configDir) {
         rm(configDir, { recursive: true, force: true }).catch(() => {
           // 忽略清理错误
         })
+      }
+    }
+
+    child.once('close', () => {
+      cleanupRuntimeArtifacts()
+    })
+
+    const originalDestroy = handle.destroy.bind(handle)
+    handle.destroy = (force = false) => {
+      originalDestroy(force)
+
+      if (force) {
+        cleanupRuntimeArtifacts()
       }
     }
 
