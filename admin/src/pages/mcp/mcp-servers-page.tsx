@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus,
@@ -69,8 +69,8 @@ import type { McpServer, McpServerFormData, McpConfigParseResult, UserConfigItem
 import { fetchMcpServers, createMcpServer, updateMcpServer, testMcpConnection as testConnection, fetchMcpTemplate, subscribeMcpEvents, uploadMcpIcon, parseMcpConfig, fetchUserConfig, setUserConfigValue, deleteUserConfigValue } from '@/lib/api/mcp'
 import { ApiRequestError } from '@/lib/api/client'
 import { getUsers, getDepartments } from '@/lib/api/auth'
-import { getTenantAssistants } from '@/lib/api/agent-hub'
-import { getTenantSkills } from '@/lib/api/skill-store'
+import { getInstalledAgents } from '@/lib/api/agent-hub'
+import { getInstalledSkills } from '@/lib/api/skill-store'
 import type { AuthUser, AuthDepartment } from '@/lib/api/types'
 import { useAuth } from '@/lib/hooks/use-auth'
 
@@ -263,6 +263,33 @@ function MultiSelectList({ options, selected, onChange, emptyText }: MultiSelect
   )
 }
 
+// 列表列：把绑定的助手/技能 id 翻译成名称，单行省略号展示，hover 浮现全部。
+// 映射里查不到的 id（如历史用 UUID 绑定的旧数据）按原样回退显示。
+function BoundNamesCell({
+  ids,
+  nameById,
+}: {
+  ids: string[] | null | undefined
+  nameById: Map<string, string>
+}) {
+  if (!ids || ids.length === 0) return <>-</>
+  const names = ids.map((id) => nameById.get(id) ?? id)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="max-w-[160px] truncate cursor-default">{names.join(', ')}</div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <div className="flex flex-col gap-0.5">
+          {names.map((n, i) => (
+            <span key={i}>{n}</span>
+          ))}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 // ===== Form helpers =====
 
 function parseArgsJson(raw: string | null | undefined): string[] {
@@ -355,10 +382,19 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
   // Options for visible_to / bound_assistants / bound_skills (loaded once for dialog)
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
-  const [assistants, setAssistants] = useState<{ id: string; name: string; display_name?: string }[]>([])
-  const [skills, setSkills] = useState<{ id: string; name: string; display_name?: string }[]>([])
+  const [assistants, setAssistants] = useState<{ id: string; name: string; displayName?: string }[]>([])
+  const [skills, setSkills] = useState<{ id: string; name: string; displayName?: string }[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
   const [isLoadingOptions, setIsLoadingOptions] = useState(false)
+
+  const assistantNameById = useMemo(
+    () => new Map(assistants.map((a) => [a.id, a.displayName || a.name])),
+    [assistants],
+  )
+  const skillNameById = useMemo(
+    () => new Map(skills.map((s) => [s.id, s.displayName || s.name])),
+    [skills],
+  )
 
   const loadOptions = useCallback(async () => {
     if (optionsLoaded || isLoadingOptions) return
@@ -367,13 +403,13 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
       const [depts, usrs, asts, skls] = await Promise.all([
         getDepartments().catch(() => ({ departments: [] })),
         getUsers().catch(() => ({ users: [] })),
-        getTenantAssistants().catch(() => [] as { id: string; name: string; display_name?: string }[]),
-        getTenantSkills().catch(() => [] as { id: string; name: string; display_name?: string }[]),
+        getInstalledAgents().catch(() => [] as { id: string; name: string; displayName?: string }[]),
+        getInstalledSkills().catch(() => [] as { id: string; name: string; displayName?: string }[]),
       ])
       setDepartments(depts.departments || [])
       setUsers(usrs.users || [])
-      setAssistants(asts || [])
-      setSkills(skls || [])
+      setAssistants((asts || []).filter((a) => a.id && a.id.trim()))
+      setSkills((skls || []).filter((s) => s.id && s.id.trim()))
       setOptionsLoaded(true)
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -957,7 +993,7 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
           <SelectContent>
             <SelectItem value="all">全部助手</SelectItem>
             {assistants.map((a) => (
-              <SelectItem key={a.id} value={a.id}>{a.display_name || a.name}</SelectItem>
+              <SelectItem key={a.id} value={a.id}>{a.displayName || a.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -1015,10 +1051,10 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
                   <TableCell><StatusBadge enabled={server.enabled} status={server.status} /></TableCell>
                   <TableCell className="text-sm">{formatVisibleTo(server.visible_to)}</TableCell>
                   <TableCell className="text-sm">
-                    {server.bound_assistants?.join(', ') || '-'}
+                    <BoundNamesCell ids={server.bound_assistants} nameById={assistantNameById} />
                   </TableCell>
                   <TableCell className="text-sm">
-                    {server.bound_skills?.join(', ') || '-'}
+                    <BoundNamesCell ids={server.bound_skills} nameById={skillNameById} />
                   </TableCell>
                   <TableCell className="text-sm">{getCredentialSource(server.secret_ref)}</TableCell>
                   <TableCell><RiskBadge level={server.risk_level} /></TableCell>
@@ -1464,7 +1500,7 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
                       <Label>绑定助手</Label>
                       <p className="text-xs text-muted-foreground">仅勾选的助手可以调用本 MCP；为空表示不限。</p>
                       <MultiSelectList
-                        options={assistants.map((a) => ({ id: a.id, label: a.display_name || a.name, sub: a.name }))}
+                        options={assistants.map((a) => ({ id: a.id, label: a.displayName || a.name, sub: a.name }))}
                         selected={formData.bound_assistants || []}
                         onChange={(ids) => setFormData({ ...formData, bound_assistants: ids })}
                         emptyText="没有可绑定的助手"
@@ -1475,7 +1511,7 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
                       <Label>绑定技能</Label>
                       <p className="text-xs text-muted-foreground">仅勾选的技能可以调用本 MCP；为空表示不限。</p>
                       <MultiSelectList
-                        options={skills.map((s) => ({ id: s.id, label: s.display_name || s.name, sub: s.name }))}
+                        options={skills.map((s) => ({ id: s.id, label: s.displayName || s.name, sub: s.name }))}
                         selected={formData.bound_skills || []}
                         onChange={(ids) => setFormData({ ...formData, bound_skills: ids })}
                         emptyText="没有可绑定的技能"
