@@ -3756,6 +3756,7 @@ export function startServer(
           const status =
             code === 'not_found' ? 404 :
             code === 'forbidden' ? 403 :
+            code === 'already_installed' ? 409 :
             code === 'user_config_unavailable' ? 503 :
             400
           writeJson(res, status, result)
@@ -3807,6 +3808,28 @@ export function startServer(
         if (req.method === 'GET' && !configKey) {
           const result = await mcpUserConfigApi.listForServer(auth, serverId)
           writeJson(res, 200, result)
+          return
+        }
+        // Batch update: PUT /me/mcp-servers/:id/user-config (no trailing key)
+        if (req.method === 'PUT' && !configKey) {
+          const body = await readJsonBody(req) as { config_values?: Record<string, string> } | null
+          if (!body || typeof body.config_values !== 'object' || body.config_values === null) {
+            writeJson(res, 400, { error: { code: 'bad_request', message: '请求体必须包含 config_values 字段' } })
+            return
+          }
+          const result = await mcpUserConfigApi.batchUpdate(auth, serverId, body.config_values)
+          if (result.success) {
+            writeJson(res, 200, result)
+          } else {
+            const code = (result as any).error?.code
+            const status =
+              code === 'not_found' ? 404 :
+              code === 'forbidden' ? 403 :
+              code === 'missing_config' ? 400 :
+              code === 'template_not_found' ? 400 :
+              400
+            writeJson(res, status, result)
+          }
           return
         }
         if (req.method === 'PUT' && configKey) {
