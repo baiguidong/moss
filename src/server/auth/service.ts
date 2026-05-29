@@ -417,9 +417,10 @@ export class AuthService {
     let targetOrg: AuthCenterOrganization | null = null
     if (identity.extOrgId) {
       targetOrg = this.db.getOrganizationByExtId(identity.extOrgId)
+      const incomingOrgName = identity.extOrgName?.trim() || ''
       if (!targetOrg) {
         const orgId = randomUUID()
-        const orgName = identity.extOrgName?.trim() || `org-${identity.extOrgId}`
+        const orgName = incomingOrgName || `org-${identity.extOrgId}`
         const createdAt = Date.now()
         try {
           this.db.createOrganization(orgId, orgName, createdAt, identity.extOrgId)
@@ -437,6 +438,16 @@ export class AuthService {
             targetOrg = this.db.getOrganizationByExtId(identity.extOrgId)
           }
           if (!targetOrg) throw err
+        }
+      } else if (incomingOrgName && incomingOrgName !== targetOrg.name) {
+        // IdP-authoritative rename. Empty incoming value preserves the moss
+        // row's name so a momentarily-missing IdP field doesn't clobber.
+        try {
+          this.db.updateOrganization(targetOrg.id, { name: incomingOrgName })
+          targetOrg = { ...targetOrg, name: incomingOrgName }
+        } catch {
+          // A naming collision with another moss org is non-fatal here —
+          // login proceeds with the stale name.
         }
       }
     }
@@ -503,9 +514,43 @@ export class AuthService {
         }
         if (!user) throw err
       }
-    } else if (user.orgId !== targetOrg.id) {
-      this.db.updateUserOrg(user.id, targetOrg.id)
-      user = { ...user, orgId: targetOrg.id }
+    } else {
+      // Existing user: re-sync IdP-authoritative profile fields (org membership,
+      // displayName, email) if any drifted. Empty IdP values are guards — a
+      // momentarily-missing IdP field won't clobber the moss row.
+      const profilePatch: { orgId?: string; name?: string; email?: string } = {}
+      if (user.orgId !== targetOrg.id) profilePatch.orgId = targetOrg.id
+
+      const incomingName = identity.displayName?.trim() || ''
+      if (incomingName && incomingName !== user.name) {
+        profilePatch.name = incomingName
+      }
+
+      // Email: only re-sync when the incoming email is real (non-synthetic).
+      // The stored email may itself be synthetic (created when the IdP didn't
+      // supply one) — upgrading to a real email on the next login is the
+      // desired behaviour. Catches collisions with the global email UNIQUE.
+      if (!isSynthetic && email !== user.email) {
+        try {
+          this.db.updateUser(user.id, { ...profilePatch, email })
+          user = { ...user, ...profilePatch, email }
+        } catch (err) {
+          // Email collision with another moss user: log-and-continue rather
+          // than fail the login. Profile patch (name / orgId) still applies.
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/UNIQUE constraint failed: users\.email/i.test(msg)) {
+            if (Object.keys(profilePatch).length > 0) {
+              this.db.updateUser(user.id, profilePatch)
+              user = { ...user, ...profilePatch }
+            }
+          } else {
+            throw err
+          }
+        }
+      } else if (Object.keys(profilePatch).length > 0) {
+        this.db.updateUser(user.id, profilePatch)
+        user = { ...user, ...profilePatch }
+      }
     }
 
     // ── 3. Department resolution ──────────────────────────────────────────

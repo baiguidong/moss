@@ -631,6 +631,7 @@ export class AuthCenterDb {
     id: string,
     patch: {
       name?: string
+      email?: string
       orgId?: string
       departmentId?: string | null
       role?: string
@@ -646,6 +647,7 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE users
       SET name = ?,
+          email = ?,
           org_id = ?,
           department_id = ?,
           role = ?,
@@ -654,6 +656,7 @@ export class AuthCenterDb {
       WHERE id = ?
     `).run(
       patch.name ?? user.name,
+      patch.email ?? user.email,
       patch.orgId ?? user.orgId,
       patch.departmentId === undefined ? user.departmentId : patch.departmentId,
       patch.role ?? user.role,
