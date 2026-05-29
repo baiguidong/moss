@@ -274,4 +274,61 @@ describe('McpStore', () => {
       expect(visible[0].name).toBe('enabled-s')
     })
   })
+
+  describe('mcp_user_disabled', () => {
+    it('addUserDisabledMcp inserts a record and getUserDisabledMcpIds returns it', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      const ids = store.getUserDisabledMcpIds(orgId, 'user-1')
+      expect(ids).toEqual(['server-1'])
+    })
+
+    it('addUserDisabledMcp is idempotent', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      const ids = store.getUserDisabledMcpIds(orgId, 'user-1')
+      expect(ids).toEqual(['server-1'])
+    })
+
+    it('removeUserDisabledMcp deletes the record', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.removeUserDisabledMcp(orgId, 'user-1', 'server-1')
+      const ids = store.getUserDisabledMcpIds(orgId, 'user-1')
+      expect(ids).toEqual([])
+    })
+
+    it('removeUserDisabledMcp does not throw on non-existent record', () => {
+      expect(() => store.removeUserDisabledMcp(orgId, 'user-1', 'nonexistent')).not.toThrow()
+    })
+
+    it('getUserDisabledMcpIds isolates by user', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.addUserDisabledMcp(orgId, 'user-2', 'server-1')
+      expect(store.getUserDisabledMcpIds(orgId, 'user-1')).toEqual(['server-1'])
+      expect(store.getUserDisabledMcpIds(orgId, 'user-2')).toEqual(['server-1'])
+      expect(store.getUserDisabledMcpIds(orgId, 'user-3')).toEqual([])
+    })
+
+    it('getUserDisabledMcpIds isolates by org', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.addUserDisabledMcp('org-2', 'user-1', 'server-1')
+      expect(store.getUserDisabledMcpIds(orgId, 'user-1')).toEqual(['server-1'])
+      expect(store.getUserDisabledMcpIds('org-2', 'user-1')).toEqual(['server-1'])
+    })
+
+    it('clearUserDisabledForMcpServer clears all records for a specific MCP', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.addUserDisabledMcp(orgId, 'user-2', 'server-1')
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-2')
+      store.clearUserDisabledForMcpServer(orgId, 'server-1')
+      expect(store.getUserDisabledMcpIds(orgId, 'user-1')).toEqual(['server-2'])
+      expect(store.getUserDisabledMcpIds(orgId, 'user-2')).toEqual([])
+    })
+
+    it('clearUserDisabledForMcpServer does not affect other MCPs', () => {
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-1')
+      store.addUserDisabledMcp(orgId, 'user-1', 'server-2')
+      store.clearUserDisabledForMcpServer(orgId, 'server-1')
+      expect(store.getUserDisabledMcpIds(orgId, 'user-1')).toEqual(['server-2'])
+    })
+  })
 })

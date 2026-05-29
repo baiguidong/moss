@@ -28,8 +28,9 @@ export async function resolveScodeMcpSettings(options: {
   // SQL pre-filters enabled=1; the app layer adds isVisibleTo (department/user
   // scoping) and status==='enabled' so only connection-verified MCPs are sent.
   const allServers = mcpStore.listVisibleMcpServers(orgId, userId, departmentId)
+  const userDisabledIds = new Set(mcpStore.getUserDisabledMcpIds(orgId, userId))
   const visibleServers = allServers.filter(
-    s => isVisibleTo(s.visible_to, visibilityFilter) && s.status === 'enabled',
+    s => isVisibleTo(s.visible_to, visibilityFilter) && s.status === 'enabled' && !userDisabledIds.has(s.id),
   )
 
   const policy = mcpStore.getMcpPolicy(orgId)

@@ -211,6 +211,12 @@ export function createMcpAdminApi(deps: McpAdminDeps) {
       }
 
       const server = mcpStore.updateMcpServer(auth.orgId, id, input, auth.userId)
+
+      // If allow_user_disable changed from true to false, clear all user-disabled records
+      if (existing.allow_user_disable === true && input.allow_user_disable === false) {
+        mcpStore.clearUserDisabledForMcpServer(auth.orgId, id)
+      }
+
       writeAudit(auth.orgId, auth.userId, 'update', server.id, server.name, { updated_fields: Object.keys(input) }, ip)
       broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
       return { success: true, data: server }
