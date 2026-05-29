@@ -595,6 +595,13 @@ export class McpStore {
     return rows.map(mapMcpServer)
   }
 
+  hasUserInstalledTemplate(orgId: string, userId: string, templateId: string): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 FROM mcp_servers WHERE org_id = ? AND template_id = ? AND owner_id = ? AND scope = 'user' LIMIT 1"
+    ).get(orgId, templateId, userId) as SqlRow | undefined
+    return !!row
+  }
+
   // ==================== MCP Policy CRUD ====================
 
   getMcpPolicy(orgId: string): McpPolicy {

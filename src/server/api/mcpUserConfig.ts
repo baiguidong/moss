@@ -115,6 +115,63 @@ export function createMcpUserConfigApi(deps: McpUserConfigDeps) {
       return { success: true }
     },
 
+    async batchUpdate(auth: AuthContext, mcpServerId: string, configValues: Record<string, string>) {
+      const server = mcpStore.getMcpServer(auth.orgId, mcpServerId)
+      if (!server) {
+        return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+      }
+      if (server.scope !== 'user' || server.owner_id !== auth.userId) {
+        return { success: false, error: { code: 'forbidden', message: '只能修改自己的个人 MCP 配置' } }
+      }
+
+      const schema = getSchemaForServer(server)
+      if (schema.length === 0) {
+        return { success: false, error: { code: 'template_not_found', message: '该服务关联的模板不存在或无配置项' } }
+      }
+
+      const missing: string[] = []
+      for (const item of schema) {
+        if (item.required) {
+          const v = configValues[item.key]
+          if (typeof v !== 'string' || v.length === 0) {
+            missing.push(item.key)
+          }
+        }
+      }
+      if (missing.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'missing_config',
+            message: `缺少必填配置项: ${missing.join(', ')}`,
+            missing_keys: missing,
+          },
+        }
+      }
+
+      const declaredKeys = new Set(schema.map(s => s.key))
+      const valuesToWrite: Array<{ key: string; value: string }> = []
+      for (const [k, v] of Object.entries(configValues)) {
+        if (declaredKeys.has(k) && typeof v === 'string' && v.length > 0) {
+          valuesToWrite.push({ key: k, value: v })
+        }
+      }
+      const newKeys = new Set(valuesToWrite.map(v => v.key))
+
+      const ns = namespace(auth.userId, mcpServerId)
+      const existingSecrets = await nexusClient.listSecrets(ns, auth.userId)
+      for (const s of existingSecrets) {
+        if (!newKeys.has(s.key)) {
+          await nexusClient.deleteSecret(ns, s.key, auth.userId)
+        }
+      }
+      for (const { key, value } of valuesToWrite) {
+        await nexusClient.putSecret(ns, key, value, auth.userId)
+      }
+
+      return { success: true }
+    },
+
     async getResolvedEnvAndHeaders(server: { template_id: string | null; org_id: string }, userId: string): Promise<{ env: Record<string, string>; headers: Record<string, string> }> {
       const schema = getSchemaForServer(server)
       if (schema.length === 0) return { env: {}, headers: {} }

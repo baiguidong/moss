@@ -23,6 +23,10 @@ const USER_VISIBLE_FIELDS = [
   'scope', 'mcp_type', 'url', 'risk_level',
   'bound_assistants', 'bound_skills',
   'allow_read', 'allow_write',
+  'require_confirmation_for_write', 'allow_read_sensitive_fields',
+  'allow_outbound_network', 'allow_scheduled_task',
+  'audit_request', 'audit_response_summary',
+  'redact_sensitive_fields', 'allow_user_disable',
   'enabled', 'status',
 ] as const
 
@@ -113,8 +117,8 @@ export function createMcpUserApi(deps: McpUserDeps) {
       // Get all enabled MCP servers for this org
       const allServers = mcpStore.listVisibleMcpServers(auth.orgId, auth.userId, userDeptId)
 
-      // Filter by visibility
-      const visibleServers = allServers.filter(server => isVisibleTo(server.visible_to, filter))
+      // Filter by visibility and status (only connection-verified MCPs)
+      const visibleServers = allServers.filter(server => isVisibleTo(server.visible_to, filter) && server.status === 'enabled')
 
       // Sanitize sensitive fields
       const sanitized = visibleServers.map(s => sanitizeForUser(s as unknown as Record<string, unknown>))
@@ -130,6 +134,10 @@ export function createMcpUserApi(deps: McpUserDeps) {
      * third parties need to render a config form).
      */
     listAvailableTemplates(auth: AuthContext, filter?: McpTemplateListFilter) {
+      const policy = mcpStore.getMcpPolicy(auth.orgId)
+      if (!policy.allow_personal_mcp) {
+        return { success: true, data: [], total: 0, page: filter?.page ?? 1, page_size: filter?.page_size ?? 20 }
+      }
       const result = mcpStore.listTemplates(auth.orgId, filter)
       return {
         success: true,
@@ -337,6 +345,10 @@ export function createMcpUserApi(deps: McpUserDeps) {
       }
       if ((template.mcp_type === 'http' || template.mcp_type === 'sse') && !policy.allow_http_sse_mcp) {
         return { success: false, error: { code: 'forbidden', message: '企业策略不允许使用 HTTP/SSE 类型 MCP' } }
+      }
+
+      if (mcpStore.hasUserInstalledTemplate(auth.orgId, auth.userId, templateId)) {
+        return { success: false, error: { code: 'already_installed', message: '你已经安装了此模板' } }
       }
 
       const schema = parseTemplateUserConfigItems(template.config_json)
