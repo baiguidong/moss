@@ -15,15 +15,23 @@ import {
   getDepartmentPolicies, getConfigItems, updateDepartmentPolicies,
   type Department, type ConfigItem,
 } from '@/lib/api/secrets'
-import { getDepartments as getAuthDepartments } from '@/lib/api/auth'
-import type { AuthDepartment } from '@/lib/api/types'
+import {
+  getDepartments as getAuthDepartments,
+  getOrganizations,
+} from '@/lib/api/auth'
+import type { AuthDepartment, AuthOrgWithCounts } from '@/lib/api/types'
+
+type TreeNode = Department & {
+  kind: 'org' | 'dept'
+  orgId?: string
+}
 
 function TreeSkeleton() {
   return <div className="space-y-2 p-4">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
 }
 
 export default function DepartmentPoliciesPage() {
-  const [departments, setDepartments] = useState<Department[]>([])
+  const [tree, setTree] = useState<TreeNode[]>([])
   const [configItems, setConfigItems] = useState<ConfigItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null)
@@ -32,30 +40,51 @@ export default function DepartmentPoliciesPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
-  const buildDeptTree = (depts: AuthDepartment[]): Department[] => {
-    const map = new Map<string, Department>()
+  // Build a tree with organizations as virtual roots; departments hang under
+  // their org, nested by parent_id. Org nodes are display-only (clicking them
+  // does not select a policy target).
+  const buildOrgFirstTree = (depts: AuthDepartment[], orgs: AuthOrgWithCounts[]): TreeNode[] => {
+    const deptMap = new Map<string, TreeNode>()
     for (const d of depts) {
-      map.set(d.id, { id: d.id, name: d.name, parent_id: d.parentId, children: [] })
+      deptMap.set(d.id, {
+        id: d.id,
+        name: d.name,
+        parent_id: d.parentId,
+        children: [],
+        kind: 'dept',
+        orgId: d.orgId,
+      })
     }
-    const roots: Department[] = []
+    const orgRoots = new Map<string, TreeNode>()
+    for (const org of orgs) {
+      orgRoots.set(org.id, {
+        id: `org:${org.id}`,
+        name: org.name,
+        parent_id: null,
+        children: [],
+        kind: 'org',
+        orgId: org.id,
+      })
+    }
     for (const d of depts) {
-      const node = map.get(d.id)!
-      if (d.parentId && map.has(d.parentId)) {
-        map.get(d.parentId)!.children!.push(node)
-      } else {
-        roots.push(node)
+      const node = deptMap.get(d.id)!
+      if (d.parentId && deptMap.has(d.parentId)) {
+        deptMap.get(d.parentId)!.children!.push(node)
+      } else if (orgRoots.has(d.orgId)) {
+        orgRoots.get(d.orgId)!.children!.push(node)
       }
     }
-    return roots
+    return Array.from(orgRoots.values())
   }
 
   const fetchData = useCallback(async () => {
     try {
-      const [deptsRes, itemsRes] = await Promise.all([
+      const [deptsRes, itemsRes, orgsRes] = await Promise.all([
         getAuthDepartments(),
         getConfigItems({ scope: 'system', status: '1' }),
+        getOrganizations(),
       ])
-      setDepartments(buildDeptTree(deptsRes.departments))
+      setTree(buildOrgFirstTree(deptsRes.departments, orgsRes.organizations))
       setConfigItems(itemsRes.items)
     } catch {
       toast.error('获取数据失败')
@@ -70,6 +99,11 @@ export default function DepartmentPoliciesPage() {
     setSelectedDeptId(deptId)
     const policy = await getDepartmentPolicies(deptId)
     setSelectedPolicyIds(policy?.config_item_ids ?? [])
+  }
+
+  const handleSelectOrg = (orgNodeId: string) => {
+    setSelectedDeptId(orgNodeId)
+    setSelectedPolicyIds([])
   }
 
   const toggleExpanded = (deptId: string) => {
@@ -100,58 +134,82 @@ export default function DepartmentPoliciesPage() {
     )
   }
 
-  const getSelectedDept = () => {
-    const find = (depts: Department[]): Department | null => {
-      for (const d of depts) {
+  const getSelectedNode = (): TreeNode | null => {
+    const find = (nodes: TreeNode[]): TreeNode | null => {
+      for (const d of nodes) {
         if (d.id === selectedDeptId) return d
-        if (d.children) { const found = find(d.children); if (found) return found }
+        if (d.children) {
+          const found = find(d.children as TreeNode[])
+          if (found) return found
+        }
       }
       return null
     }
-    return find(departments)
+    return find(tree)
   }
 
-  const filterDepartments = (depts: Department[]): Department[] => {
-    if (!searchQuery) return depts
-    return depts.reduce<Department[]>((acc, d) => {
-      const nameMatch = d.name.includes(searchQuery)
-      const filteredChildren = d.children ? filterDepartments(d.children) : []
+  const filterTree = (nodes: TreeNode[]): TreeNode[] => {
+    if (!searchQuery) return nodes
+    return nodes.reduce<TreeNode[]>((acc, n) => {
+      const nameMatch = n.name.includes(searchQuery)
+      const filteredChildren = n.children ? filterTree(n.children as TreeNode[]) : []
       if (nameMatch || filteredChildren.length > 0) {
-        acc.push({ ...d, children: filteredChildren.length > 0 ? filteredChildren : d.children })
+        acc.push({
+          ...n,
+          children: filteredChildren.length > 0 ? filteredChildren : n.children,
+        })
       }
       return acc
     }, [])
   }
 
-  const renderDeptTree = (depts: Department[], level = 0) => (
+  const renderTree = (nodes: TreeNode[], level = 0) => (
     <ul className="space-y-0.5">
-      {depts.map(dept => {
-        const hasChildren = dept.children && dept.children.length > 0
-        const isExpanded = expandedDepts.has(dept.id)
-        const isSelected = selectedDeptId === dept.id
+      {nodes.map(node => {
+        const hasChildren = node.children && node.children.length > 0
+        const isExpanded = expandedDepts.has(node.id)
+        const isSelected = selectedDeptId === node.id
+        const isOrg = node.kind === 'org'
         return (
-          <li key={dept.id}>
+          <li key={node.id}>
             <button
-              onClick={() => { handleSelectDept(dept.id); if (hasChildren) toggleExpanded(dept.id) }}
+              onClick={() => {
+                if (isOrg) handleSelectOrg(node.id)
+                else handleSelectDept(node.id)
+                if (hasChildren) toggleExpanded(node.id)
+              }}
               className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors ${
-                isSelected ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent text-foreground'
-              }`}
+                isSelected
+                  ? 'bg-primary/10 text-primary font-medium'
+                  : 'hover:bg-accent text-foreground'
+              } ${isOrg ? 'font-semibold' : ''}`}
               style={{ paddingLeft: `${level * 16 + 8}px` }}
             >
               {hasChildren ? (
-                isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />
-              ) : <span className="w-3.5 shrink-0" />}
-              <FolderTree className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">{dept.name}</span>
+                isExpanded ? (
+                  <ChevronDown className="size-3.5 shrink-0" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0" />
+                )
+              ) : (
+                <span className="w-3.5 shrink-0" />
+              )}
+              <FolderTree
+                className={`size-3.5 shrink-0 ${
+                  isOrg ? 'text-primary' : 'text-muted-foreground'
+                }`}
+              />
+              <span className="truncate">{node.name}</span>
             </button>
-            {hasChildren && isExpanded && renderDeptTree(dept.children!, level + 1)}
+            {hasChildren && isExpanded && renderTree(node.children as TreeNode[], level + 1)}
           </li>
         )
       })}
     </ul>
   )
 
-  const selectedDept = getSelectedDept()
+  const selectedNode = getSelectedNode()
+  const selectedDept = selectedNode?.kind === 'dept' ? selectedNode : null
   const systemConfigItems = configItems.filter(c => c.scope === 'system')
 
   if (isLoading) {
@@ -173,17 +231,21 @@ export default function DepartmentPoliciesPage() {
           <div className="p-3 border-b">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-              <Input placeholder="搜索部门..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="h-8 pl-8 text-sm" />
+              <Input placeholder="搜索组织或部门..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="h-8 pl-8 text-sm" />
             </div>
           </div>
           <ScrollArea className="flex-1 p-2">
-            {renderDeptTree(filterDepartments(departments))}
+            {renderTree(filterTree(tree))}
           </ScrollArea>
         </Card>
 
         {/* Policy Config */}
         <div className="flex flex-col">
-          {selectedDept ? (
+          {selectedNode && selectedNode.kind === 'org' ? (
+            <Card className="flex items-center justify-center text-muted-foreground p-12 h-full">
+              请选择一个部门以配置授权
+            </Card>
+          ) : selectedDept ? (
             <>
               <Card className="flex-1 overflow-hidden flex flex-col">
                 <div className="p-4 border-b">

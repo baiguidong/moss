@@ -7,6 +7,7 @@ import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 export type AuthCenterOrganization = {
   id: string
   name: string
+  extOrgId: string | null
   createdAt: number
 }
 
@@ -15,6 +16,7 @@ export type AuthCenterDepartment = {
   orgId: string
   parentId: string | null
   name: string
+  extDeptId: string | null
   tokenLimit: number | null
   createdAt: number
   updatedAt: number
@@ -34,8 +36,7 @@ export type AuthCenterUser = {
   passwordHash: string | null
   passwordUpdatedAt: number | null
   lastLoginAt: number | null
-  provider: string | null
-  providerUserId: string | null
+  extUserId: string | null
 }
 
 export type AuthCenterApiKey = {
@@ -110,6 +111,7 @@ function mapOrganization(row: SqlRow): AuthCenterOrganization {
   return {
     id: String(row.id),
     name: String(row.name),
+    extOrgId: row.ext_org_id == null ? null : String(row.ext_org_id),
     createdAt: Number(row.created_at),
   }
 }
@@ -120,6 +122,7 @@ function mapDepartment(row: SqlRow): AuthCenterDepartment {
     orgId: String(row.org_id),
     parentId: row.parent_id == null ? null : String(row.parent_id),
     name: String(row.name),
+    extDeptId: row.ext_dept_id == null ? null : String(row.ext_dept_id),
     tokenLimit: row.token_limit == null ? null : Number(row.token_limit),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -141,8 +144,7 @@ function mapUser(row: SqlRow): AuthCenterUser {
     passwordHash: row.password_hash == null ? null : String(row.password_hash),
     passwordUpdatedAt: row.password_updated_at == null ? null : Number(row.password_updated_at),
     lastLoginAt: row.last_login_at == null ? null : Number(row.last_login_at),
-    provider: row.provider == null ? null : String(row.provider),
-    providerUserId: row.provider_user_id == null ? null : String(row.provider_user_id),
+    extUserId: row.ext_user_id == null ? null : String(row.ext_user_id),
   }
 }
 
@@ -289,19 +291,46 @@ export class AuthCenterDb {
       'local_auth',
       'ALTER TABLE users ADD COLUMN local_auth INTEGER NOT NULL DEFAULT 0',
     )
+
+    // External-ID columns: stable identifiers from the upstream IdP (e.g.
+    // Ruigu's bizOrgCode / user_id / groupIds[0]). All nullable —
+    // locally-authenticated users + the bootstrap default org leave them
+    // NULL. Uniqueness is enforced by SQL partial UNIQUE indexes below;
+    // NULL values don't compete for uniqueness, so any number of rows can
+    // leave ext_* unset.
+    this.db.exec(`DROP INDEX IF EXISTS users_provider_idx`)
+    this.dropColumn('users', 'provider')
+    this.dropColumn('users', 'provider_user_id')
     this.ensureColumn(
-      'users',
-      'provider',
-      'ALTER TABLE users ADD COLUMN provider TEXT',
+      'organizations',
+      'ext_org_id',
+      'ALTER TABLE organizations ADD COLUMN ext_org_id TEXT',
     )
     this.ensureColumn(
       'users',
-      'provider_user_id',
-      'ALTER TABLE users ADD COLUMN provider_user_id TEXT',
+      'ext_user_id',
+      'ALTER TABLE users ADD COLUMN ext_user_id TEXT',
     )
+    this.ensureColumn(
+      'departments',
+      'ext_dept_id',
+      'ALTER TABLE departments ADD COLUMN ext_dept_id TEXT',
+    )
+    // Drop the original non-unique indexes (older builds had these), then
+    // create the partial UNIQUE replacements. A partial UNIQUE serves both
+    // as lookup index and as uniqueness constraint.
     this.db.exec(`
-      CREATE INDEX IF NOT EXISTS users_provider_idx ON users (provider, provider_user_id);
+      DROP INDEX IF EXISTS users_ext_idx;
+      DROP INDEX IF EXISTS departments_ext_idx;
+      DROP INDEX IF EXISTS organizations_ext_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_ext_uniq
+        ON users (org_id, ext_user_id) WHERE ext_user_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS departments_ext_uniq
+        ON departments (org_id, ext_dept_id) WHERE ext_dept_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS organizations_ext_uniq
+        ON organizations (ext_org_id) WHERE ext_org_id IS NOT NULL;
     `)
+
     this.db.exec(`
       UPDATE users
       SET role = 'user'
@@ -336,6 +365,14 @@ export class AuthCenterDb {
     }
   }
 
+  private dropColumn(tableName: string, columnName: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as SqlRow[]
+    const hasColumn = columns.some(column => String(column.name) === columnName)
+    if (hasColumn) {
+      this.db.exec(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`)
+    }
+  }
+
   close(): void {
     if (this.#ownsConnection) {
       this.db.close()
@@ -343,10 +380,15 @@ export class AuthCenterDb {
   }
 
   // Organization operations
-  createOrganization(id: string, name: string, createdAt: number): void {
+  createOrganization(
+    id: string,
+    name: string,
+    createdAt: number,
+    extOrgId: string | null = null,
+  ): void {
     this.db.prepare(`
-      INSERT INTO organizations (id, name, created_at) VALUES (?, ?, ?)
-    `).run(id, name, createdAt)
+      INSERT INTO organizations (id, name, ext_org_id, created_at) VALUES (?, ?, ?, ?)
+    `).run(id, name, extOrgId, createdAt)
   }
 
   getOrganization(id: string): AuthCenterOrganization | null {
@@ -370,19 +412,75 @@ export class AuthCenterDb {
     return row ? mapOrganization(row) : null
   }
 
+  getOrganizationByExtId(extOrgId: string): AuthCenterOrganization | null {
+    const row = this.db.prepare(`
+      SELECT * FROM organizations WHERE ext_org_id = ? LIMIT 1
+    `).get(extOrgId) as SqlRow | undefined
+    return row ? mapOrganization(row) : null
+  }
+
+  updateOrganization(
+    id: string,
+    patch: { name?: string; extOrgId?: string | null },
+  ): void {
+    const org = this.getOrganization(id)
+    if (!org) {
+      return
+    }
+    const nextName = patch.name === undefined ? org.name : patch.name
+    const nextExtOrgId = patch.extOrgId === undefined ? org.extOrgId : patch.extOrgId
+    this.db.prepare(`
+      UPDATE organizations SET name = ?, ext_org_id = ? WHERE id = ?
+    `).run(nextName, nextExtOrgId, id)
+  }
+
+  /**
+   * Delete an organization. Relies on the SQL FK constraint (org_id
+   * NOT NULL REFERENCES organizations(id) on both users and departments,
+   * with PRAGMA foreign_keys=ON) to reject deletion of a non-empty org —
+   * callers should translate the SQLite FOREIGN KEY error into a clean
+   * application-level 409. The last-remaining-org case is also covered
+   * by the FK (the bootstrap admin row pins it).
+   */
+  deleteOrganization(id: string): void {
+    this.db.prepare(`DELETE FROM organizations WHERE id = ?`).run(id)
+  }
+
+  countUsersByOrg(orgId: string): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS c FROM users WHERE org_id = ?
+    `).get(orgId) as SqlRow | undefined
+    return row ? Number(row.c) : 0
+  }
+
+  countDepartmentsByOrg(orgId: string): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS c FROM departments WHERE org_id = ?
+    `).get(orgId) as SqlRow | undefined
+    return row ? Number(row.c) : 0
+  }
+
   // Department operations
   createDepartment(department: AuthCenterDepartment): void {
     this.db.prepare(`
-      INSERT INTO departments (id, org_id, parent_id, name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO departments (id, org_id, parent_id, name, ext_dept_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       department.id,
       department.orgId,
       department.parentId,
       department.name,
+      department.extDeptId,
       department.createdAt,
       department.updatedAt,
     )
+  }
+
+  getDepartmentByExtId(orgId: string, extDeptId: string): AuthCenterDepartment | null {
+    const row = this.db.prepare(`
+      SELECT * FROM departments WHERE org_id = ? AND ext_dept_id = ? LIMIT 1
+    `).get(orgId, extDeptId) as SqlRow | undefined
+    return row ? mapDepartment(row) : null
   }
 
   getDepartmentById(id: string): AuthCenterDepartment | null {
@@ -422,6 +520,7 @@ export class AuthCenterDb {
     patch: {
       name?: string
       parentId?: string | null
+      extDeptId?: string | null
     },
   ): void {
     const department = this.getDepartmentById(id)
@@ -433,11 +532,13 @@ export class AuthCenterDb {
       UPDATE departments
       SET name = ?,
           parent_id = ?,
+          ext_dept_id = ?,
           updated_at = ?
       WHERE id = ?
     `).run(
       patch.name ?? department.name,
       patch.parentId === undefined ? department.parentId : patch.parentId,
+      patch.extDeptId === undefined ? department.extDeptId : patch.extDeptId,
       now(),
       id,
     )
@@ -453,8 +554,8 @@ export class AuthCenterDb {
   createUser(user: AuthCenterUser): void {
     this.db.prepare(`
       INSERT INTO users (id, org_id, email, name, department_id, role, status, password_hash,
-                         password_updated_at, last_login_at, created_at, provider, provider_user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         password_updated_at, last_login_at, created_at, ext_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.id,
       user.orgId,
@@ -467,8 +568,7 @@ export class AuthCenterDb {
       user.passwordUpdatedAt,
       user.lastLoginAt,
       user.createdAt,
-      user.provider ?? null,
-      user.providerUserId ?? null,
+      user.extUserId ?? null,
     )
   }
 
@@ -486,17 +586,11 @@ export class AuthCenterDb {
     return row ? mapUser(row) : null
   }
 
-  getUserByProvider(provider: string, providerUserId: string): AuthCenterUser | null {
+  getUserByExtId(orgId: string, extUserId: string): AuthCenterUser | null {
     const row = this.db.prepare(`
-      SELECT * FROM users WHERE provider = ? AND provider_user_id = ? LIMIT 1
-    `).get(provider, providerUserId) as SqlRow | undefined
+      SELECT * FROM users WHERE org_id = ? AND ext_user_id = ? LIMIT 1
+    `).get(orgId, extUserId) as SqlRow | undefined
     return row ? mapUser(row) : null
-  }
-
-  linkProviderToUser(id: string, provider: string, providerUserId: string): void {
-    this.db.prepare(`
-      UPDATE users SET provider = ?, provider_user_id = ? WHERE id = ?
-    `).run(provider, providerUserId, id)
   }
 
   listUsersByName(name: string): AuthCenterUser[] {
@@ -537,9 +631,12 @@ export class AuthCenterDb {
     id: string,
     patch: {
       name?: string
+      email?: string
+      orgId?: string
       departmentId?: string | null
       role?: string
       status?: 'active' | 'disabled'
+      extUserId?: string | null
     },
   ): void {
     const user = this.getUserById(id)
@@ -550,15 +647,21 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE users
       SET name = ?,
+          email = ?,
+          org_id = ?,
           department_id = ?,
           role = ?,
-          status = ?
+          status = ?,
+          ext_user_id = ?
       WHERE id = ?
     `).run(
       patch.name ?? user.name,
+      patch.email ?? user.email,
+      patch.orgId ?? user.orgId,
       patch.departmentId === undefined ? user.departmentId : patch.departmentId,
       patch.role ?? user.role,
       patch.status ?? user.status,
+      patch.extUserId === undefined ? user.extUserId : patch.extUserId,
       id,
     )
   }
@@ -801,8 +904,7 @@ export class AuthCenterDb {
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),
         lastLoginAt: null,
-        provider: null,
-        providerUserId: null,
+        extUserId: null,
       })
       this.createApiKey(apiKey)
       this.setConfig('issuer', 'moss-server')
@@ -871,8 +973,7 @@ export class AuthCenterDb {
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),
         lastLoginAt: null,
-        provider: null,
-        providerUserId: null,
+        extUserId: null,
       })
       this.createApiKey(apiKey)
       this.db.exec('COMMIT')
@@ -1064,14 +1165,21 @@ export async function readJsonAuthCenterStore(
     version: 3,
     issuer: parsed.issuer,
     jwtSecret: parsed.jwtSecret,
-    organizations: parsed.organizations,
-    departments: parsed.departments ?? [],
+    organizations: parsed.organizations.map(org => ({
+      ...org,
+      extOrgId: (org as Partial<AuthCenterOrganization>).extOrgId ?? null,
+    })),
+    departments: (parsed.departments ?? []).map(dept => ({
+      ...dept,
+      extDeptId: (dept as Partial<AuthCenterDepartment>).extDeptId ?? null,
+    })),
     users: parsed.users.map(user => ({
       ...user,
       departmentId: user.departmentId ?? null,
       passwordHash: user.passwordHash ?? null,
       passwordUpdatedAt: user.passwordUpdatedAt ?? null,
       lastLoginAt: user.lastLoginAt ?? null,
+      extUserId: (user as Partial<AuthCenterUser>).extUserId ?? null,
     })),
     apiKeys: parsed.apiKeys,
   }
