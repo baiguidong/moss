@@ -1,0 +1,306 @@
+#!/bin/bash
+# =============================================================================
+# moss OAuth2 credential script — SAMPLE / TEMPLATE
+#
+# Copy this file, rename it (e.g. oauth2_resolve_refresh.sh), make it
+# executable (chmod +x), and point moss admin → 系统设置 → OAuth2 登录 →
+# 凭证脚本路径 at it.
+#
+# This is a *provider adapter*. moss is intentionally provider-agnostic:
+# it knows nothing about which IdP you've integrated with. The script's
+# job is to translate between (a) whatever your IdP returned on the
+# OAuth2 redirect / refresh and (b) moss's canonical OAuth2Identity
+# shape. moss handles all the org / user / dept create-or-update logic.
+#
+# See also: src/server/auth/oauth2Bridge.ts (OAuth2Identity type + coercer)
+#           src/server/auth/service.ts:applyScriptIdentity (consumer)
+# =============================================================================
+
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# 1. INVOCATION CONTRACT — how moss calls this script
+# -----------------------------------------------------------------------------
+#
+# moss-server spawns this script as:
+#
+#     $ <script_path> <mode>
+#
+# with one environment variable:
+#
+#     OAUTH2_PARAMS — JSON object (string → string dict). Never argv,
+#                     so tokens stay out of `ps`.
+#
+# `<mode>` is exactly one of:
+#
+#   resolve   — initial login. OAUTH2_PARAMS holds whatever the IdP
+#               redirect delivered (after stripping `state`). Typical
+#               shapes:
+#                 standard OAuth2 code flow:    {"code": "..."}
+#                 implicit / token-direct:      {"access_token": "...", "refresh_token": "..."}
+#               The script's job: resolve the params to a user identity
+#               and emit the OAuth2Identity JSON on stdout.
+#
+#   refresh   — keep the session alive. OAUTH2_PARAMS holds the previous
+#               refresh_token (e.g. {"refresh_token": "..."}). The script
+#               should mint a fresh access_token + identity. If the
+#               provider has no refresh API, exit 0 with `{}` and moss
+#               will end the session (the user re-logs in next time).
+#
+# Hard timeout: 10s (SCRIPT_TIMEOUT_MS in oauth2Bridge.ts). Stay quick.
+
+mode="${1:-}"
+[ -n "$mode" ] || { echo "usage: $0 <resolve|refresh>" >&2; exit 1; }
+[ -n "${OAUTH2_PARAMS:-}" ] || { echo "OAUTH2_PARAMS env var not set" >&2; exit 1; }
+
+# -----------------------------------------------------------------------------
+# 2. INPUT EXTRACTION — pull what the IdP sent from OAUTH2_PARAMS
+# -----------------------------------------------------------------------------
+#
+# The shape of OAUTH2_PARAMS depends entirely on your IdP's redirect.
+# Pick the keys your IdP actually returns. Examples:
+#
+# Standard authorization-code flow:
+#   code=$(echo "$OAUTH2_PARAMS" | jq -r '.code // empty')
+#   # Then exchange `code` at the IdP's token endpoint:
+#   # access_token=$(curl -sS -X POST "$IDP_TOKEN_URL" \
+#   #   -d "grant_type=authorization_code&code=$code&..." \
+#   #   | jq -r '.access_token')
+#
+# Implicit / token-direct flow (e.g. Ruigu):
+#   access_token=$(echo "$OAUTH2_PARAMS" | jq -r '.access_token // empty')
+#   refresh_token=$(echo "$OAUTH2_PARAMS" | jq -r '.refresh_token // empty')
+#
+# Refresh mode:
+#   refresh_token=$(echo "$OAUTH2_PARAMS" | jq -r '.refresh_token // empty')
+
+# -----------------------------------------------------------------------------
+# 3. OUTPUT CONTRACT — the JSON your script writes to stdout
+# -----------------------------------------------------------------------------
+#
+# A single JSON object on stdout (no trailing newlines, no extra logging).
+# If you must log, send it to stderr. moss-server parses the LAST JSON
+# object it finds on stdout.
+#
+# Fields moss reads (see oauth2Bridge.ts:OAuth2Identity + coerceIdentity):
+#
+# ┌────────────────┬──────────┬────────────────────────────────────────────────┐
+# │ Field          │ Required │ Meaning                                        │
+# ├────────────────┼──────────┼────────────────────────────────────────────────┤
+# │ extUserId      │   YES    │ IdP's stable user id (string). Together with   │
+# │                │          │ extOrgId this is moss's lookup key. moss errors│
+# │                │          │ with 401 if missing or empty after trim.       │
+# │                │          │                                                │
+# │ access_token   │   YES    │ The provider's access token. moss stores it    │
+# │ (alias:        │          │ encrypted server-side and replays it when      │
+# │ accessToken)   │          │ calling provider resources. NEVER reaches the  │
+# │                │          │ client. snake_case or camelCase both accepted. │
+# │                │          │                                                │
+# │ expiresIn      │   YES    │ Token lifetime in seconds (number, > 0). Used  │
+# │                │          │ for the moss JWT expiry, not stored long-term. │
+# │                │          │                                                │
+# │ extOrgId       │ optional │ IdP's organization id. moss auto-creates a     │
+# │                │          │ moss organization if no existing row has this  │
+# │                │          │ ext_org_id. When omitted, moss falls back to   │
+# │                │          │ the existing first org. OMIT (don't send an    │
+# │                │          │ empty string) if the IdP doesn't supply one.   │
+# │                │          │                                                │
+# │ extOrgName     │ optional │ IdP's organization display name. Used for the  │
+# │                │          │ moss org's `name` column. Authoritative on     │
+# │                │          │ every login — if it differs from the stored    │
+# │                │          │ row, moss updates the row. Empty / missing →   │
+# │                │          │ moss keeps its existing name.                  │
+# │                │          │                                                │
+# │ extDeptId      │ optional │ IdP's department / group id. Resolves a moss   │
+# │                │          │ department within the org; auto-creates if    │
+# │                │          │ none matches. When omitted, falls back to     │
+# │                │          │ resolve-or-create by `department` name.       │
+# │                │          │                                                │
+# │ department     │ optional │ Department display name. Authoritative when   │
+# │                │          │ extDeptId is set — moss renames the moss row  │
+# │                │          │ to match on drift.                             │
+# │                │          │                                                │
+# │ displayName    │ optional │ User's display name for the moss `users.name`  │
+# │                │          │ column. Authoritative on every login (drift-   │
+# │                │          │ sync). Empty / missing → moss keeps existing.  │
+# │                │          │                                                │
+# │ email          │ optional │ User's real email. When omitted moss          │
+# │                │          │ synthesizes oauth2-<extUserId>@users.internal. │
+# │                │          │ moss. If you later supply a real one, moss     │
+# │                │          │ upgrades the synthetic to real. Subject to the │
+# │                │          │ global users.email UNIQUE constraint.          │
+# │                │          │                                                │
+# │ refreshToken   │ optional │ Provider refresh token. Stored encrypted by    │
+# │                │          │ moss; replayed back into OAUTH2_PARAMS on the  │
+# │                │          │ next refresh-mode invocation.                  │
+# └────────────────┴──────────┴────────────────────────────────────────────────┘
+#
+# RULE: omit-on-empty for optional fields. Send no key at all rather than
+# `"extOrgName": ""`. Empty incoming values would be treated as "moss
+# preserves the existing row" — but it's cleaner to just leave the key
+# out so the intent is unambiguous.
+
+# -----------------------------------------------------------------------------
+# 4. MODE HANDLERS — adapt these to your IdP's API
+# -----------------------------------------------------------------------------
+
+die() { echo "$1" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
+
+# ─── PUT YOUR IDP'S BASE URL / CLIENT CREDS HERE ───────────────────────────────
+IDP_BASE_URL="${IDP_BASE_URL:-https://your-idp.example.com}"
+# CLIENT_ID="..."
+# CLIENT_SECRET="..."
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RESOLVE — initial login
+# ──────────────────────────────────────────────────────────────────────────────
+resolve_mode() {
+  # ── Step A: get the provider access_token ───────────────────────────────────
+  # If your IdP uses the OAuth2 code flow:
+  #   code=$(echo "$OAUTH2_PARAMS" | jq -r '.code // empty')
+  #   [ -n "$code" ] || die "OAUTH2_PARAMS has no code"
+  #   token_resp=$(curl -sS -X POST "$IDP_BASE_URL/oauth/token" \
+  #     -d "grant_type=authorization_code" \
+  #     -d "code=$code" \
+  #     -d "client_id=$CLIENT_ID" \
+  #     -d "client_secret=$CLIENT_SECRET" \
+  #     -d "redirect_uri=sudowork://oauth2-callback")
+  #   access_token=$(echo "$token_resp" | jq -r '.access_token')
+  #   refresh_token=$(echo "$token_resp" | jq -r '.refresh_token // empty')
+  #   expires_in=$(echo "$token_resp" | jq -r '.expires_in // 3600')
+  #
+  # If your IdP returns the token directly in the redirect (implicit/Ruigu-style):
+  #   access_token=$(echo "$OAUTH2_PARAMS" | jq -r '.access_token // empty')
+  #   refresh_token=$(echo "$OAUTH2_PARAMS" | jq -r '.refresh_token // empty')
+  #   expires_in= ...  # may need a separate /check-token or default
+
+  local access_token expires_in refresh_token
+  access_token="REPLACE_ME"
+  expires_in=3600
+  refresh_token=""
+
+  [ -n "$access_token" ] || die "no access_token resolved"
+
+  # ── Step B: fetch userinfo + org/dept metadata from the IdP ─────────────────
+  # Pull whatever your IdP exposes. Typical endpoints:
+  #   /userinfo                 → user_id, name, email
+  #   /profile/groups/:user_id  → department / group memberships
+  #
+  # Required: pull a stable user id and (optionally) an org id and dept id.
+  #
+  # GUARD REQUIRED IDS DEFENSIVELY: if the IdP ever returns `null` for the
+  # user id, die loudly here rather than emitting the literal string "null"
+  # to moss. Pattern (jq's `// empty` collapses null/missing to empty):
+  #
+  #   user_id=$(echo "$userinfo" | jq -r '.user_id // empty')
+  #   [ -n "$user_id" ] || die "userinfo .user_id is missing or null"
+  #
+  # Optional fields can use the omit-if-empty pattern in the emit step
+  # below; only the required ones (extUserId, expiresIn, access_token)
+  # warrant a hard die here.
+
+  local user_id="REPLACE_ME_user_id"
+  local nickname="REPLACE_ME_display_name"
+  local email=""                      # leave empty to let moss synthesize
+  local biz_org_id=""                 # IdP's org id; empty → omit extOrgId
+  local biz_org_name=""               # IdP's org name; empty → omit extOrgName
+  local group_id=""                   # IdP's dept id; empty → omit extDeptId
+  local group_name=""                 # IdP's dept name; empty → omit department
+
+  # ── Step C: emit the OAuth2Identity JSON ────────────────────────────────────
+  emit_identity \
+    "$user_id" \
+    "$expires_in" \
+    "$access_token" \
+    "$refresh_token" \
+    "$nickname" \
+    "$email" \
+    "$biz_org_id" \
+    "$biz_org_name" \
+    "$group_id" \
+    "$group_name"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# REFRESH — extend the session
+# ──────────────────────────────────────────────────────────────────────────────
+refresh_mode() {
+  # Default: provider does NOT expose a refresh API.
+  #
+  # Exit 0 with an empty JSON object. moss treats "no access_token in
+  # the refresh-mode output" as "refresh unavailable" and ends the
+  # session, so the user re-logs in when their current access_token
+  # expires. This is the right behaviour for any IdP without a refresh
+  # endpoint (Ruigu-style).
+  echo '{}'
+
+  # ─── If your IdP DOES support refresh, replace the line above with: ─────────
+  #   refresh_token=$(echo "$OAUTH2_PARAMS" | jq -r '.refresh_token // empty')
+  #   [ -n "$refresh_token" ] || die "OAUTH2_PARAMS has no refresh_token"
+  #   token_resp=$(curl -sS -X POST "$IDP_BASE_URL/oauth/token" \
+  #     -d "grant_type=refresh_token" \
+  #     -d "refresh_token=$refresh_token" \
+  #     -d "client_id=$CLIENT_ID" \
+  #     -d "client_secret=$CLIENT_SECRET")
+  #   local access_token expires_in new_refresh_token
+  #   access_token=$(echo "$token_resp" | jq -r '.access_token')
+  #   expires_in=$(echo "$token_resp" | jq -r '.expires_in // 3600')
+  #   new_refresh_token=$(echo "$token_resp" | jq -r '.refresh_token // empty')
+  #   [ -n "$access_token" ] || die "refresh returned no access_token"
+  #   # Then re-fetch userinfo + org/dept metadata (same as resolve_mode
+  #   # Step B), guarding required ids defensively, and call emit_identity
+  #   # with the new access_token / refresh_token / expires_in. moss will
+  #   # re-sync any drifted profile / org / dept fields on this call too.
+}
+
+# -----------------------------------------------------------------------------
+# 5. emit_identity — assemble the JSON with proper omit-on-empty handling
+# -----------------------------------------------------------------------------
+#
+# Always emits the three required fields. Each optional field is emitted
+# ONLY when its source string is non-empty — this matches moss's drift-
+# sync semantics where missing == "preserve the moss row's value".
+#
+# Args: 1=user_id   2=expires_in   3=access_token  4=refresh_token
+#       5=display   6=email        7=ext_org_id    8=ext_org_name
+#       9=ext_dept  10=department
+emit_identity() {
+  local user_id="$1" expires_in="$2" access_token="$3" refresh_token="$4"
+  local display="$5" email="$6"
+  local ext_org_id="$7" ext_org_name="$8"
+  local ext_dept_id="$9" department="${10}"
+
+  jq -n \
+    --arg extUserId "$user_id" \
+    --argjson expiresIn "$expires_in" \
+    --arg accessToken "$access_token" \
+    --arg refreshToken "$refresh_token" \
+    --arg displayName "$display" \
+    --arg email "$email" \
+    --arg extOrgId "$ext_org_id" \
+    --arg extOrgName "$ext_org_name" \
+    --arg extDeptId "$ext_dept_id" \
+    --arg department "$department" \
+    '{
+       extUserId: $extUserId,
+       expiresIn: $expiresIn,
+       access_token: $accessToken
+     }
+     + (if $displayName  != "" then { displayName:  $displayName  } else {} end)
+     + (if $refreshToken != "" then { refreshToken: $refreshToken } else {} end)
+     + (if $email        != "" then { email:        $email        } else {} end)
+     + (if $extOrgId     != "" then { extOrgId:     $extOrgId     } else {} end)
+     + (if $extOrgName   != "" then { extOrgName:   $extOrgName   } else {} end)
+     + (if $extDeptId    != "" then { extDeptId:    $extDeptId    } else {} end)
+     + (if $department   != "" then { department:   $department   } else {} end)'
+}
+
+# -----------------------------------------------------------------------------
+# 6. DISPATCH
+# -----------------------------------------------------------------------------
+case "$mode" in
+  resolve) resolve_mode ;;
+  refresh) refresh_mode ;;
+  *) die "unknown mode: $mode (expected resolve|refresh)" ;;
+esac
