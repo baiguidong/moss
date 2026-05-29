@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus,
@@ -263,6 +263,33 @@ function MultiSelectList({ options, selected, onChange, emptyText }: MultiSelect
   )
 }
 
+// 列表列：把绑定的助手/技能 id 翻译成名称，单行省略号展示，hover 浮现全部。
+// 映射里查不到的 id（如历史用 UUID 绑定的旧数据）按原样回退显示。
+function BoundNamesCell({
+  ids,
+  nameById,
+}: {
+  ids: string[] | null | undefined
+  nameById: Map<string, string>
+}) {
+  if (!ids || ids.length === 0) return <>-</>
+  const names = ids.map((id) => nameById.get(id) ?? id)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="max-w-[160px] truncate cursor-default">{names.join(', ')}</div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <div className="flex flex-col gap-0.5">
+          {names.map((n, i) => (
+            <span key={i}>{n}</span>
+          ))}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 // ===== Form helpers =====
 
 function parseArgsJson(raw: string | null | undefined): string[] {
@@ -359,6 +386,15 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
   const [skills, setSkills] = useState<{ id: string; name: string; displayName?: string }[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
   const [isLoadingOptions, setIsLoadingOptions] = useState(false)
+
+  const assistantNameById = useMemo(
+    () => new Map(assistants.map((a) => [a.id, a.displayName || a.name])),
+    [assistants],
+  )
+  const skillNameById = useMemo(
+    () => new Map(skills.map((s) => [s.id, s.displayName || s.name])),
+    [skills],
+  )
 
   const loadOptions = useCallback(async () => {
     if (optionsLoaded || isLoadingOptions) return
@@ -1015,10 +1051,10 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
                   <TableCell><StatusBadge enabled={server.enabled} status={server.status} /></TableCell>
                   <TableCell className="text-sm">{formatVisibleTo(server.visible_to)}</TableCell>
                   <TableCell className="text-sm">
-                    {server.bound_assistants?.join(', ') || '-'}
+                    <BoundNamesCell ids={server.bound_assistants} nameById={assistantNameById} />
                   </TableCell>
                   <TableCell className="text-sm">
-                    {server.bound_skills?.join(', ') || '-'}
+                    <BoundNamesCell ids={server.bound_skills} nameById={skillNameById} />
                   </TableCell>
                   <TableCell className="text-sm">{getCredentialSource(server.secret_ref)}</TableCell>
                   <TableCell><RiskBadge level={server.risk_level} /></TableCell>
