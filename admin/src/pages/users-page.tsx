@@ -98,10 +98,13 @@ import { toast } from 'sonner'
 import {
   createApiKey,
   createDepartment,
+  createOrganization,
   createUser,
   deleteDepartment,
+  deleteOrganization,
   getApiKeys,
   getDepartments,
+  getOrganizations,
   getRoles,
   getUsers,
   resetPassword,
@@ -110,6 +113,7 @@ import {
   setUserLocalAuth,
   setUserTokenLimit,
   updateDepartment,
+  updateOrganization,
   updateUser,
 } from '@/lib/api/auth'
 import { hasScope } from '@/lib/api/client'
@@ -118,6 +122,7 @@ import { useAuth } from '@/lib/hooks/use-auth'
 import type {
   ApiKey,
   AuthDepartment,
+  AuthOrgWithCounts,
   AuthUser,
   RoleDefinition,
   Session,
@@ -210,12 +215,21 @@ const userFormSchema = z.object({
   email: z.union([z.literal(''), z.string().trim().email('请输入有效的邮箱地址')]),
   password: z.union([z.literal(''), z.string().min(6, '密码至少 6 位')]),
   role: z.enum(['admin', 'dept_admin', 'user']),
+  orgId: z.string().optional(),
   departmentId: z.string().nullable().optional(),
+  extUserId: z.string().optional(),
 })
 
 const departmentFormSchema = z.object({
   name: z.string().trim().min(1, '请输入部门名称'),
+  orgId: z.string().optional(),
   parentId: z.string().nullable().optional(),
+  extDeptId: z.string().optional(),
+})
+
+const organizationFormSchema = z.object({
+  name: z.string().trim().min(1, '请输入组织名称'),
+  extOrgId: z.string().optional(),
 })
 
 const apiKeyFormSchema = z.object({
@@ -236,6 +250,7 @@ const tokenLimitFormSchema = z.object({
 
 type UserFormData = z.infer<typeof userFormSchema>
 type DepartmentFormData = z.infer<typeof departmentFormSchema>
+type OrganizationFormData = z.infer<typeof organizationFormSchema>
 type ApiKeyFormData = z.infer<typeof apiKeyFormSchema>
 type PasswordFormData = z.infer<typeof passwordFormSchema>
 type TokenLimitFormData = z.infer<typeof tokenLimitFormSchema>
@@ -480,6 +495,7 @@ export default function UsersPage() {
 
   const [users, setUsers] = useState<AuthUser[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
+  const [organizations, setOrganizations] = useState<AuthOrgWithCounts[]>([])
   const [roles, setRoles] = useState<RoleDefinition[]>([])
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
   const [userSessions, setUserSessions] = useState<Session[]>([])
@@ -488,6 +504,14 @@ export default function UsersPage() {
   const [roleFilter, setRoleFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [activeTab, setActiveTab] = useState('users')
+  const [organizationDialog, setOrganizationDialog] = useState<{
+    open: boolean
+    mode: 'create' | 'edit'
+    organization: AuthOrgWithCounts | null
+  }>({ open: false, mode: 'create', organization: null })
+  const [isSubmittingOrganization, setIsSubmittingOrganization] = useState(false)
+  const [pendingOrganizationActionId, setPendingOrganizationActionId] = useState<string | null>(null)
+  const [organizationToDelete, setOrganizationToDelete] = useState<AuthOrgWithCounts | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
@@ -551,6 +575,14 @@ export default function UsersPage() {
     },
   })
 
+  const organizationForm = useForm<OrganizationFormData>({
+    resolver: zodResolver(organizationFormSchema),
+    defaultValues: {
+      name: '',
+      extOrgId: '',
+    },
+  })
+
   const apiKeyForm = useForm<ApiKeyFormData>({
     resolver: zodResolver(apiKeyFormSchema),
     defaultValues: {
@@ -595,17 +627,19 @@ export default function UsersPage() {
     }
 
     try {
-      const [usersRes, departmentsRes, apiKeysRes, rolesRes] = await Promise.all([
+      const [usersRes, departmentsRes, apiKeysRes, rolesRes, organizationsRes] = await Promise.all([
         getUsers(),
         getDepartments(),
         getApiKeys(),
         getRoles().catch(() => ({ roles: FALLBACK_ROLES })),
+        getOrganizations().catch(() => ({ organizations: [] as AuthOrgWithCounts[] })),
       ])
 
       setUsers(usersRes.users)
       setDepartments(departmentsRes.departments)
       setApiKeys(apiKeysRes.api_keys)
       setRoles(rolesRes.roles)
+      setOrganizations(organizationsRes.organizations)
       setSelectedUser(previousSelectedUser => {
         if (!previousSelectedUser) {
           return null
@@ -638,7 +672,9 @@ export default function UsersPage() {
         email: '',
         password: '',
         role: 'user',
+        orgId: organizations[0]?.id ?? '',
         departmentId: null,
+        extUserId: '',
       })
       return
     }
@@ -648,27 +684,47 @@ export default function UsersPage() {
       email: userDialog.user?.email ?? '',
       password: '',
       role: userDialog.user?.role ?? 'user',
+      orgId: userDialog.user?.orgId ?? organizations[0]?.id ?? '',
       departmentId: userDialog.user?.departmentId ?? null,
+      extUserId: userDialog.user?.extUserId ?? '',
     })
-  }, [userDialog, userForm])
+  }, [userDialog, userForm, organizations])
 
   useEffect(() => {
     if (!departmentDialog.open) {
       departmentForm.reset({
         name: '',
+        orgId: organizations[0]?.id ?? '',
         parentId: null,
+        extDeptId: '',
       })
       return
     }
 
     departmentForm.reset({
       name: departmentDialog.department?.name ?? '',
+      orgId:
+        departmentDialog.department?.orgId ??
+        departmentDialog.parent?.orgId ??
+        organizations[0]?.id ?? '',
       parentId:
         departmentDialog.department?.parentId ??
         departmentDialog.parent?.id ??
         null,
+      extDeptId: departmentDialog.department?.extDeptId ?? '',
     })
-  }, [departmentDialog, departmentForm])
+  }, [departmentDialog, departmentForm, organizations])
+
+  useEffect(() => {
+    if (!organizationDialog.open) {
+      organizationForm.reset({ name: '', extOrgId: '' })
+      return
+    }
+    organizationForm.reset({
+      name: organizationDialog.organization?.name ?? '',
+      extOrgId: organizationDialog.organization?.extOrgId ?? '',
+    })
+  }, [organizationDialog, organizationForm])
 
   useEffect(() => {
     if (!apiKeyUser) {
@@ -762,20 +818,25 @@ export default function UsersPage() {
 
     setIsSubmittingUser(true)
     try {
+      const extUserId = values.extUserId?.trim() || null
       if (userDialog.mode === 'create') {
         await createUser({
           name: values.name,
           email: values.email || undefined,
+          org_id: values.orgId || undefined,
           department_id: values.departmentId ?? null,
           role: values.role,
           password: values.password || '',
+          ext_user_id: extUserId,
         })
         toast.success('用户创建成功')
       } else if (userDialog.user) {
         await updateUser(userDialog.user.id, {
           name: values.name,
+          target_org_id: values.orgId && values.orgId !== userDialog.user.orgId ? values.orgId : undefined,
           department_id: values.departmentId ?? null,
           role: values.role,
+          ext_user_id: extUserId,
         })
         toast.success('用户信息已更新')
       }
@@ -796,16 +857,20 @@ export default function UsersPage() {
   const handleSubmitDepartment = async (values: DepartmentFormData) => {
     setIsSubmittingDepartment(true)
     try {
+      const extDeptId = values.extDeptId?.trim() || null
       if (departmentDialog.mode === 'create') {
         await createDepartment({
           name: values.name,
+          org_id: values.orgId || undefined,
           parent_id: values.parentId ?? null,
+          ext_dept_id: extDeptId,
         })
         toast.success('部门创建成功')
       } else if (departmentDialog.department) {
         await updateDepartment(departmentDialog.department.id, {
           name: values.name,
           parent_id: values.parentId ?? null,
+          ext_dept_id: extDeptId,
         })
         toast.success('部门已更新')
       }
@@ -821,6 +886,44 @@ export default function UsersPage() {
       toast.error(error instanceof Error ? error.message : '保存部门失败')
     } finally {
       setIsSubmittingDepartment(false)
+    }
+  }
+
+  const handleSubmitOrganization = async (values: OrganizationFormData) => {
+    setIsSubmittingOrganization(true)
+    try {
+      const extOrgId = values.extOrgId?.trim() || null
+      if (organizationDialog.mode === 'create') {
+        await createOrganization({ name: values.name, ext_org_id: extOrgId })
+        toast.success('组织创建成功')
+      } else if (organizationDialog.organization) {
+        await updateOrganization(organizationDialog.organization.id, {
+          name: values.name,
+          ext_org_id: extOrgId,
+        })
+        toast.success('组织已更新')
+      }
+      setOrganizationDialog({ open: false, mode: 'create', organization: null })
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存组织失败')
+    } finally {
+      setIsSubmittingOrganization(false)
+    }
+  }
+
+  const handleConfirmDeleteOrganization = async () => {
+    if (!organizationToDelete) return
+    setPendingOrganizationActionId(organizationToDelete.id)
+    try {
+      await deleteOrganization(organizationToDelete.id)
+      toast.success(`已删除组织 ${organizationToDelete.name}`)
+      setOrganizationToDelete(null)
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除组织失败')
+    } finally {
+      setPendingOrganizationActionId(null)
     }
   }
 
@@ -1064,6 +1167,7 @@ export default function UsersPage() {
             <TabsList>
               <TabsTrigger value="users">用户管理</TabsTrigger>
               {isOrgAdmin ? <TabsTrigger value="departments">部门管理</TabsTrigger> : null}
+              {isOrgAdmin ? <TabsTrigger value="organizations">组织管理</TabsTrigger> : null}
               {isOrgAdmin ? <TabsTrigger value="roles">角色管理</TabsTrigger> : null}
             </TabsList>
             <div className="flex flex-wrap items-center gap-2">
@@ -1098,6 +1202,16 @@ export default function UsersPage() {
                 >
                   <Plus className="mr-2 size-4" />
                   新建部门
+                </Button>
+              ) : null}
+              {activeTab === 'organizations' && isOrgAdmin ? (
+                <Button
+                  onClick={() =>
+                    setOrganizationDialog({ open: true, mode: 'create', organization: null })
+                  }
+                >
+                  <Plus className="mr-2 size-4" />
+                  新建组织
                 </Button>
               ) : null}
             </div>
@@ -1153,6 +1267,7 @@ export default function UsersPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>用户名</TableHead>
+                        <TableHead>所属组织</TableHead>
                         <TableHead>所属部门</TableHead>
                         <TableHead>角色</TableHead>
                         <TableHead>API Keys</TableHead>
@@ -1175,6 +1290,12 @@ export default function UsersPage() {
                               >
                                 {user.name}
                               </button>
+                              {user.extUserId ? (
+                                <div className="text-xs text-muted-foreground font-mono">{user.extUserId}</div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell>
+                              {organizations.find(o => o.id === user.orgId)?.name ?? '—'}
                             </TableCell>
                             <TableCell>{getDepartmentName(user.departmentId)}</TableCell>
                             <TableCell>
@@ -1331,6 +1452,83 @@ export default function UsersPage() {
           ) : null}
 
           {isOrgAdmin ? (
+            <TabsContent value="organizations" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>组织管理</CardTitle>
+                  <CardDescription>
+                    管理 moss 内的组织（租户）。OAuth2 登录会按外部组织 ID 自动创建新的组织。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>名称</TableHead>
+                        <TableHead>外部组织 ID</TableHead>
+                        <TableHead className="text-right">用户数</TableHead>
+                        <TableHead className="text-right">部门数</TableHead>
+                        <TableHead>创建时间</TableHead>
+                        <TableHead className="w-12 text-right"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {organizations.map(org => (
+                        <TableRow key={org.id}>
+                          <TableCell className="font-medium">{org.name}</TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {org.extOrgId ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-right">{org.userCount}</TableCell>
+                          <TableCell className="text-right">{org.departmentCount}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatTimestamp(org.createdAt)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    setOrganizationDialog({
+                                      open: true,
+                                      mode: 'edit',
+                                      organization: org,
+                                    })
+                                  }
+                                >
+                                  编辑
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => setOrganizationToDelete(org)}
+                                  className="text-destructive"
+                                >
+                                  删除
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {organizations.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground">
+                            暂无组织
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          ) : null}
+
+          {isOrgAdmin ? (
             <TabsContent value="roles" className="space-y-6">
               <div className="grid gap-4 xl:grid-cols-3">
                 {roleCatalog.map(role => {
@@ -1470,34 +1668,85 @@ export default function UsersPage() {
                 <FormField
                   control={userForm.control}
                   name="departmentId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>所属部门</FormLabel>
-                      <Select
-                        onValueChange={(value) =>
-                          field.onChange(value === NONE_VALUE ? null : value)
-                        }
-                        value={field.value ?? NONE_VALUE}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="选择部门" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE_VALUE}>未分配部门</SelectItem>
-                          {departmentOptions.map(option => (
-                            <SelectItem key={option.id} value={option.id}>
-                              {`${'— '.repeat(option.depth)}${option.name}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    const selectedOrgId = userForm.watch('orgId') || userDialog.user?.orgId
+                    const filteredOptions = departmentOptions.filter(option => {
+                      const dept = departments.find(d => d.id === option.id)
+                      return !selectedOrgId || !dept || dept.orgId === selectedOrgId
+                    })
+                    return (
+                      <FormItem>
+                        <FormLabel>所属部门</FormLabel>
+                        <Select
+                          onValueChange={(value) =>
+                            field.onChange(value === NONE_VALUE ? null : value)
+                          }
+                          value={field.value ?? NONE_VALUE}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="选择部门" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value={NONE_VALUE}>未分配部门</SelectItem>
+                            {filteredOptions.map(option => (
+                              <SelectItem key={option.id} value={option.id}>
+                                {`${'— '.repeat(option.depth)}${option.name}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )
+                  }}
                 />
               </div>
+              <FormField
+                control={userForm.control}
+                name="orgId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>所属组织</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ''}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择组织" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {organizations.map(org => (
+                          <SelectItem key={org.id} value={org.id}>
+                            {org.name}
+                            {org.extOrgId ? ` (${org.extOrgId})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      切换组织后，请重新选择该组织下的部门。
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={userForm.control}
+                name="extUserId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>外部用户 ID（OAuth2）</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="留空表示无外部 ID" />
+                    </FormControl>
+                    <FormDescription>
+                      由 OAuth2 登录脚本自动填充，通常无需手动修改。
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <DialogFooter>
                 <Button
                   type="button"
@@ -1570,30 +1819,87 @@ export default function UsersPage() {
               />
               <FormField
                 control={departmentForm.control}
-                name="parentId"
+                name="orgId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>上级部门</FormLabel>
+                    <FormLabel>所属组织</FormLabel>
                     <Select
-                      onValueChange={(value) =>
-                        field.onChange(value === ROOT_VALUE ? null : value)
-                      }
-                      value={field.value ?? ROOT_VALUE}
+                      onValueChange={field.onChange}
+                      value={field.value || ''}
+                      disabled={departmentDialog.mode === 'edit'}
                     >
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="选择上级部门" />
+                          <SelectValue placeholder="选择组织" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value={ROOT_VALUE}>作为一级部门</SelectItem>
-                        {availableParentDepartments.map(option => (
-                          <SelectItem key={option.id} value={option.id}>
-                            {`${'— '.repeat(option.depth)}${option.name}`}
+                        {organizations.map(org => (
+                          <SelectItem key={org.id} value={org.id}>
+                            {org.name}
+                            {org.extOrgId ? ` (${org.extOrgId})` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {departmentDialog.mode === 'edit' ? (
+                      <FormDescription>
+                        部门所属组织不可修改。如需迁移，请删除后在目标组织重新创建。
+                      </FormDescription>
+                    ) : null}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={departmentForm.control}
+                name="parentId"
+                render={({ field }) => {
+                  const selectedOrgId = departmentForm.watch('orgId')
+                  const filtered = availableParentDepartments.filter(option => {
+                    const dept = departments.find(d => d.id === option.id)
+                    return !selectedOrgId || !dept || dept.orgId === selectedOrgId
+                  })
+                  return (
+                    <FormItem>
+                      <FormLabel>上级部门</FormLabel>
+                      <Select
+                        onValueChange={(value) =>
+                          field.onChange(value === ROOT_VALUE ? null : value)
+                        }
+                        value={field.value ?? ROOT_VALUE}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="选择上级部门" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value={ROOT_VALUE}>作为一级部门</SelectItem>
+                          {filtered.map(option => (
+                            <SelectItem key={option.id} value={option.id}>
+                              {`${'— '.repeat(option.depth)}${option.name}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
+              />
+              <FormField
+                control={departmentForm.control}
+                name="extDeptId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>外部部门 ID（OAuth2）</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="留空表示无外部 ID" />
+                    </FormControl>
+                    <FormDescription>
+                      由 OAuth2 登录脚本自动填充，通常无需手动修改。
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -1624,6 +1930,104 @@ export default function UsersPage() {
           </Form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={organizationDialog.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOrganizationDialog({ open: false, mode: 'create', organization: null })
+            return
+          }
+          setOrganizationDialog(prev => ({ ...prev, open: true }))
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {organizationDialog.mode === 'create' ? '新建组织' : '编辑组织'}
+            </DialogTitle>
+            <DialogDescription>
+              组织（租户）是 moss 内独立的用户与部门空间。OAuth2 登录会按外部组织 ID 自动创建组织。
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...organizationForm}>
+            <form onSubmit={organizationForm.handleSubmit(handleSubmitOrganization)} className="space-y-4">
+              <FormField
+                control={organizationForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>名称</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="请输入组织名称" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={organizationForm.control}
+                name="extOrgId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>外部组织 ID（OAuth2）</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="留空表示无外部 ID" />
+                    </FormControl>
+                    <FormDescription>
+                      由 OAuth2 登录脚本自动填充，可留空。
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setOrganizationDialog({ open: false, mode: 'create', organization: null })
+                  }
+                >
+                  取消
+                </Button>
+                <Button type="submit" disabled={isSubmittingOrganization}>
+                  {isSubmittingOrganization ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : null}
+                  {organizationDialog.mode === 'create' ? '创建组织' : '保存修改'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={!!organizationToDelete}
+        onOpenChange={(open) => !open && setOrganizationToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除组织</AlertDialogTitle>
+            <AlertDialogDescription>
+              确认删除「{organizationToDelete?.name ?? ''}」？组织下若仍有用户或部门，删除将被拒绝。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteOrganization}
+              disabled={pendingOrganizationActionId === organizationToDelete?.id}
+            >
+              {pendingOrganizationActionId === organizationToDelete?.id ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!tokenLimitTarget} onOpenChange={(open) => !open && setTokenLimitTarget(null)}>
         <DialogContent>

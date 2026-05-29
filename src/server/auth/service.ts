@@ -9,6 +9,7 @@ import {
   type AuthCenterApiKey,
   type AuthCenterBootstrap,
   type AuthCenterDepartment,
+  type AuthCenterOrganization,
   type BootstrapAdminConfig,
   type AuthCenterUser,
   type SanitizedAuthCenterDepartment,
@@ -48,6 +49,31 @@ function toAuthServiceError(error: unknown): AuthServiceError {
     return new AuthServiceError(error.statusCode, error.message)
   }
   return new AuthServiceError(500, 'OAuth2 authentication failed')
+}
+
+/**
+ * Run a DAO write and translate the SQLite partial-UNIQUE constraint
+ * violation for one of the ext_* columns into a clean 409. Used by the
+ * org/user/dept mutators since the partial UNIQUEs (users_ext_uniq,
+ * departments_ext_uniq, organizations_ext_uniq) are the authoritative
+ * source of truth for ext-id uniqueness.
+ */
+function withExtIdConflict<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/UNIQUE constraint failed: users\.org_id, users\.ext_user_id/i.test(msg)) {
+      throw new AuthServiceError(409, 'External user id already exists in this organization')
+    }
+    if (/UNIQUE constraint failed: departments\.org_id, departments\.ext_dept_id/i.test(msg)) {
+      throw new AuthServiceError(409, 'External department id already exists in this organization')
+    }
+    if (/UNIQUE constraint failed: organizations\.ext_org_id/i.test(msg)) {
+      throw new AuthServiceError(409, 'External organization id already exists')
+    }
+    throw err
+  }
 }
 
 function defaultScopesForRole(role: string): string[] {
@@ -371,49 +397,81 @@ export class AuthService {
 
   /**
    * Find-or-link a user for an OAuth2 identity and apply the IdP-authoritative
-   * org / department / scopes. Lookup order: by (provider, providerUserId),
-   * then by email (linking the provider columns onto the matched local user),
-   * then create. Email is synthesized (same helper as admin create-user) when
-   * the provider does not supply one. Org, department and scopes are
-   * re-synced on every login and refresh — the IdP is authoritative.
+   * org / department / scopes. New lookup contract (IdP-authoritative,
+   * multi-tenant):
+   *   1. Org by `extOrgId` → auto-create if missing (was: fail; only by-name).
+   *   2. User by `(orgId, extUserId)`; if miss AND email is real, attempt
+   *      email-link only when the target moss user has `extUserId == null`
+   *      AND `localAuth == false` (so local-auth users — incl. the bootstrap
+   *      admin — never get silently pulled into an IdP org).
+   *   3. Dept by `(orgId, extDeptId)` when extDeptId set: rename existing
+   *      row's name if it drifted from the IdP. Otherwise fall back to the
+   *      legacy by-name resolve-or-create.
+   * Org, dept name, and dept membership are re-synced on every login.
    */
   private applyScriptIdentity(identity: OAuth2Identity): {
     user: AuthCenterUser
     scopes: string[]
   } {
-    const provider = identity.providerId || 'oauth2'
-    let user = this.db.getUserByProvider(provider, identity.providerUserId)
-
-    // Resolve the email up front: prefer the provider's, otherwise synthesize a
-    // stable internal one keyed on the provider user id (matches admin create).
-    const email = identity.email?.trim() || createSyntheticUserEmail(`${provider}-${identity.providerUserId}`)
-
-    if (!user) {
-      const byEmail = this.db.getUserByEmail(email)
-      if (byEmail) {
-        this.db.linkProviderToUser(byEmail.id, provider, identity.providerUserId)
-        user = this.db.getUserById(byEmail.id)
+    // ── 1. Org resolution ─────────────────────────────────────────────────
+    let targetOrg: AuthCenterOrganization | null = null
+    if (identity.extOrgId) {
+      targetOrg = this.db.getOrganizationByExtId(identity.extOrgId)
+      if (!targetOrg) {
+        const orgId = randomUUID()
+        const orgName = identity.extOrgName?.trim() || `org-${identity.extOrgId}`
+        const createdAt = Date.now()
+        try {
+          this.db.createOrganization(orgId, orgName, createdAt, identity.extOrgId)
+          targetOrg = {
+            id: orgId,
+            name: orgName,
+            extOrgId: identity.extOrgId,
+            createdAt,
+          }
+        } catch (err) {
+          // Race: another concurrent OAuth2 login created the same org first.
+          // Re-read and continue with whichever row won.
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/UNIQUE constraint failed: organizations\.ext_org_id/i.test(msg)) {
+            targetOrg = this.db.getOrganizationByExtId(identity.extOrgId)
+          }
+          if (!targetOrg) throw err
+        }
       }
     }
-
-    // Resolve the target org from the script (authoritative), falling back to
-    // the existing org or the default org. We do not auto-create orgs.
-    const targetOrg =
-      (identity.organization
-        ? this.db.getOrganizationByName(identity.organization)
-        : null) ??
-      (user ? this.db.getOrganization(user.orgId) : null) ??
-      this.db.listOrganizations()[0] ??
-      null
+    if (!targetOrg) {
+      // Legacy fallback for IdPs that don't send extOrgId: use the existing
+      // user's org if we can find one later, otherwise the first org.
+      targetOrg = this.db.listOrganizations()[0] ?? null
+    }
     if (!targetOrg) {
       throw new AuthServiceError(500, 'No organization available for OAuth2 user')
     }
 
-    // Resolve-or-create the department by name within the target org (the IdP
-    // only supplies a flat group name, so OAuth2 departments are top-level).
-    const departmentId = identity.department
-      ? this.resolveOrCreateDepartment(targetOrg.id, identity.department).id
-      : null
+    // ── 2. User resolution ────────────────────────────────────────────────
+    const realEmail = identity.email?.trim() || ''
+    const isSynthetic = realEmail.length === 0
+    const email = realEmail || createSyntheticUserEmail(`oauth2-${identity.extUserId}`)
+
+    let user = this.db.getUserByExtId(targetOrg.id, identity.extUserId)
+
+    if (!user && !isSynthetic) {
+      // Email-link guard: only link when the existing row has never been
+      // claimed by any IdP AND isn't a local-auth (password) user. This keeps
+      // the bootstrap admin@local from being pulled into a Ruigu org by an
+      // accidental email collision, and protects manually-created password
+      // users from silent IdP-takeover.
+      const byEmail = this.db.getUserByEmail(email)
+      if (byEmail && byEmail.extUserId == null && !byEmail.localAuth) {
+        const patch: { extUserId: string; orgId?: string } = {
+          extUserId: identity.extUserId,
+        }
+        if (byEmail.orgId !== targetOrg.id) patch.orgId = targetOrg.id
+        this.db.updateUser(byEmail.id, patch)
+        user = this.db.getUserById(byEmail.id)
+      }
+    }
 
     if (!user) {
       const userId = randomUUID()
@@ -423,7 +481,7 @@ export class AuthService {
         orgId: targetOrg.id,
         email,
         name: identity.displayName?.trim() || email,
-        departmentId,
+        departmentId: null,
         role: 'user',
         status: 'active',
         localAuth: false,
@@ -432,22 +490,71 @@ export class AuthService {
         passwordHash: null,
         passwordUpdatedAt: null,
         lastLoginAt: null,
-        provider,
-        providerUserId: identity.providerUserId,
+        extUserId: identity.extUserId,
       }
-      this.db.createUser(newUser)
-      user = newUser
-    } else {
-      if (user.orgId !== targetOrg.id) {
-        this.db.updateUserOrg(user.id, targetOrg.id)
-        user = { ...user, orgId: targetOrg.id }
+      try {
+        this.db.createUser(newUser)
+        user = newUser
+      } catch (err) {
+        // Race: concurrent login created the same user. Re-read.
+        const msg = err instanceof Error ? err.message : String(err)
+        if (/UNIQUE constraint failed: users\.org_id, users\.ext_user_id/i.test(msg)) {
+          user = this.db.getUserByExtId(targetOrg.id, identity.extUserId)
+        }
+        if (!user) throw err
       }
-      // Re-sync department membership (IdP authoritative). Only write when it
-      // actually changed to avoid needless updates.
-      if (user.departmentId !== departmentId) {
-        this.db.updateUser(user.id, { departmentId })
-        user = { ...user, departmentId }
+    } else if (user.orgId !== targetOrg.id) {
+      this.db.updateUserOrg(user.id, targetOrg.id)
+      user = { ...user, orgId: targetOrg.id }
+    }
+
+    // ── 3. Department resolution ──────────────────────────────────────────
+    let departmentId: string | null = null
+    if (identity.extDeptId) {
+      const existingDept = this.db.getDepartmentByExtId(targetOrg.id, identity.extDeptId)
+      const intendedName = identity.department?.trim() || `dept-${identity.extDeptId}`
+      if (existingDept) {
+        // IdP-authoritative rename. Don't renest (IdP path stays flat —
+        // parent_id NULL). May create same-named siblings; acceptable since
+        // by-extDeptId lookup runs first for IdP-managed depts.
+        if (existingDept.name !== intendedName) {
+          this.db.updateDepartment(existingDept.id, { name: intendedName })
+        }
+        departmentId = existingDept.id
+      } else {
+        const timestamp = Date.now()
+        const dept: AuthCenterDepartment = {
+          id: randomUUID(),
+          orgId: targetOrg.id,
+          parentId: null,
+          name: intendedName,
+          extDeptId: identity.extDeptId,
+          tokenLimit: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        try {
+          this.db.createDepartment(dept)
+          departmentId = dept.id
+        } catch (err) {
+          // Race: concurrent login created the same dept. Re-read.
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/UNIQUE constraint failed: departments\.org_id, departments\.ext_dept_id/i.test(msg)) {
+            const existing = this.db.getDepartmentByExtId(targetOrg.id, identity.extDeptId)
+            if (existing) departmentId = existing.id
+            else throw err
+          } else {
+            throw err
+          }
+        }
       }
+    } else if (identity.department) {
+      departmentId = this.resolveOrCreateDepartment(targetOrg.id, identity.department).id
+    }
+
+    if (user.departmentId !== departmentId) {
+      this.db.updateUser(user.id, { departmentId })
+      user = { ...user, departmentId }
     }
 
     if (user.status !== 'active') {
@@ -464,8 +571,9 @@ export class AuthService {
 
   /**
    * Resolve a top-level department by name within an org, creating it if absent.
-   * Mirrors the admin createDepartment write path but is idempotent (no 409),
-   * since OAuth2 login re-runs on every authentication.
+   * Used only by the legacy OAuth2 path that has no extDeptId. Mirrors the
+   * admin createDepartment write path but is idempotent (no 409), since
+   * OAuth2 login re-runs on every authentication.
    */
   private resolveOrCreateDepartment(orgId: string, name: string): AuthCenterDepartment {
     const trimmed = name.trim()
@@ -479,6 +587,7 @@ export class AuthService {
       orgId,
       parentId: null,
       name: trimmed,
+      extDeptId: null,
       tokenLimit: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -541,6 +650,118 @@ export class AuthService {
         userCount: userCountByDepartment.get(department.id) ?? 0,
       })),
     }
+  }
+
+  // ── Organization CRUD ───────────────────────────────────────────────────
+  // Multi-tenancy was always in the schema; these methods surface it through
+  // the admin UI for the first time. Org delete relies on the SQL FK
+  // constraint to reject non-empty orgs (PRAGMA foreign_keys=ON in db.ts);
+  // we translate that SQLite error into a clean 409 here.
+
+  listAllOrganizations(): {
+    organizations: Array<AuthCenterOrganization & {
+      userCount: number
+      departmentCount: number
+    }>
+  } {
+    return {
+      organizations: this.db.listOrganizations().map(org => ({
+        ...org,
+        userCount: this.db.countUsersByOrg(org.id),
+        departmentCount: this.db.countDepartmentsByOrg(org.id),
+      })),
+    }
+  }
+
+  createOrganization(input: {
+    name: string
+    extOrgId?: string | null
+  }): {
+    organization: AuthCenterOrganization & { userCount: number; departmentCount: number }
+  } {
+    const name = input.name.trim()
+    const extOrgId = input.extOrgId?.trim() || null
+    if (!name) {
+      throw new AuthServiceError(400, 'Missing organization name')
+    }
+    // Org name uniqueness has no SQL constraint (the column isn't unique),
+    // so this check is the source of truth. extOrgId uniqueness is enforced
+    // by the SQL partial UNIQUE (organizations_ext_uniq) — caught below.
+    if (this.db.getOrganizationByName(name)) {
+      throw new AuthServiceError(409, 'Organization name already exists')
+    }
+    const id = randomUUID()
+    const createdAt = Date.now()
+    withExtIdConflict(() => this.db.createOrganization(id, name, createdAt, extOrgId))
+    return {
+      organization: { id, name, extOrgId, createdAt, userCount: 0, departmentCount: 0 },
+    }
+  }
+
+  updateOrganization(input: {
+    orgId: string
+    name?: string
+    extOrgId?: string | null
+  }): {
+    organization: AuthCenterOrganization & { userCount: number; departmentCount: number }
+  } {
+    const org = this.db.getOrganization(input.orgId)
+    if (!org) {
+      throw new AuthServiceError(404, 'Unknown organization')
+    }
+    const patch: { name?: string; extOrgId?: string | null } = {}
+    if (typeof input.name === 'string') {
+      const name = input.name.trim()
+      if (!name) {
+        throw new AuthServiceError(400, 'Organization name cannot be empty')
+      }
+      if (name !== org.name) {
+        const conflict = this.db.getOrganizationByName(name)
+        if (conflict && conflict.id !== org.id) {
+          throw new AuthServiceError(409, 'Organization name already exists')
+        }
+        patch.name = name
+      }
+    }
+    if (input.extOrgId !== undefined) {
+      const extOrgId = input.extOrgId?.trim() || null
+      if (extOrgId !== org.extOrgId) {
+        // extOrgId conflicts get caught by the partial UNIQUE in withExtIdConflict.
+        patch.extOrgId = extOrgId
+      }
+    }
+    if (patch.name === undefined && patch.extOrgId === undefined) {
+      throw new AuthServiceError(400, 'Missing organization update fields')
+    }
+    withExtIdConflict(() => this.db.updateOrganization(org.id, patch))
+    const updated = this.db.getOrganization(org.id) ?? org
+    return {
+      organization: {
+        ...updated,
+        userCount: this.db.countUsersByOrg(updated.id),
+        departmentCount: this.db.countDepartmentsByOrg(updated.id),
+      },
+    }
+  }
+
+  deleteOrganization(input: { orgId: string }): { ok: true } {
+    const org = this.db.getOrganization(input.orgId)
+    if (!org) {
+      throw new AuthServiceError(404, 'Unknown organization')
+    }
+    try {
+      this.db.deleteOrganization(org.id)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/FOREIGN KEY constraint failed/i.test(msg)) {
+        throw new AuthServiceError(
+          409,
+          'Cannot delete organization: users or departments still reference it',
+        )
+      }
+      throw err
+    }
+    return { ok: true }
   }
 
   listRoles(): {
@@ -609,6 +830,7 @@ export class AuthService {
     departmentId?: string | null
     role: string
     password: string
+    extUserId?: string | null
   }, auth?: AuthContext): {
     user: SanitizedAuthCenterUser
   } {
@@ -616,6 +838,7 @@ export class AuthService {
     const name = input.name.trim()
     const departmentId = input.departmentId?.trim() || null
     const role = input.role.trim()
+    const extUserId = input.extUserId?.trim() || null
     if (!name || !input.password) {
       throw new AuthServiceError(400, 'Missing name or password')
     }
@@ -646,6 +869,8 @@ export class AuthService {
     if (this.db.listUsersByName(name).length > 0) {
       throw new AuthServiceError(409, 'Username already exists')
     }
+    // extUserId uniqueness is enforced by the partial UNIQUE
+    // (users_ext_uniq); the constraint violation is translated to 409 below.
 
     const createdAt = Date.now()
     const userId = randomUUID()
@@ -663,10 +888,9 @@ export class AuthService {
       passwordHash: hashPassword(input.password),
       passwordUpdatedAt: createdAt,
       lastLoginAt: null,
-      provider: null,
-      providerUserId: null,
+      extUserId,
     }
-    this.db.createUser(user)
+    withExtIdConflict(() => this.db.createUser(user))
     return { user: sanitizeUser(user) }
   }
 
@@ -677,6 +901,8 @@ export class AuthService {
     departmentId?: string | null
     role?: string
     status?: string
+    targetOrgId?: string
+    extUserId?: string | null
   }, auth?: AuthContext): {
     user: SanitizedAuthCenterUser
   } {
@@ -687,9 +913,11 @@ export class AuthService {
 
     const patch: {
       name?: string
+      orgId?: string
       departmentId?: string | null
       role?: AuthRole
       status?: 'active' | 'disabled'
+      extUserId?: string | null
     } = {}
 
     if (typeof input.name === 'string') {
@@ -712,15 +940,34 @@ export class AuthService {
       }
       patch.role = role
     }
+
+    // Org move: validated below alongside department, since the dept must
+    // belong to the new org if both change.
+    let nextOrgId = user.orgId
+    if (typeof input.targetOrgId === 'string') {
+      const targetOrgId = input.targetOrgId.trim()
+      if (targetOrgId && targetOrgId !== user.orgId) {
+        if (!this.db.getOrganization(targetOrgId)) {
+          throw new AuthServiceError(400, 'Unknown target organization')
+        }
+        patch.orgId = targetOrgId
+        nextOrgId = targetOrgId
+      }
+    }
+
     if (input.departmentId !== undefined) {
       const departmentId = input.departmentId?.trim() || null
       if (
         departmentId &&
-        !this.db.getDepartmentByIdAndOrg(departmentId, input.orgId)
+        !this.db.getDepartmentByIdAndOrg(departmentId, nextOrgId)
       ) {
-        throw new AuthServiceError(400, 'Unknown department_id')
+        throw new AuthServiceError(400, 'Unknown department_id for target organization')
       }
       patch.departmentId = departmentId
+    } else if (patch.orgId !== undefined && user.departmentId !== null) {
+      // Moving the user to a new org makes their old dept reference dangling —
+      // clear it. Caller should re-set if they want a specific dept.
+      patch.departmentId = null
     }
     if (typeof input.status === 'string') {
       const status = input.status.trim()
@@ -728,6 +975,10 @@ export class AuthService {
         throw new AuthServiceError(400, `Unsupported status: ${status}`)
       }
       patch.status = status
+    }
+    if (input.extUserId !== undefined) {
+      // Conflict is caught by users_ext_uniq via withExtIdConflict.
+      patch.extUserId = input.extUserId?.trim() || null
     }
 
     const nextRole = patch.role ?? user.role
@@ -738,7 +989,7 @@ export class AuthService {
     }
     this.assertCanManageExistingUser(user, auth)
     this.assertCanManageUserMutation(
-      input.orgId,
+      nextOrgId,
       {
         role: nextRole,
         departmentId: nextDepartmentId,
@@ -748,16 +999,18 @@ export class AuthService {
 
     if (
       patch.name === undefined &&
+      patch.orgId === undefined &&
       patch.departmentId === undefined &&
       patch.role === undefined &&
-      patch.status === undefined
+      patch.status === undefined &&
+      patch.extUserId === undefined
     ) {
       throw new AuthServiceError(400, 'Missing user update fields')
     }
 
-    this.db.updateUser(user.id, patch)
+    withExtIdConflict(() => this.db.updateUser(user.id, patch))
     return {
-      user: sanitizeUser(this.db.getUserByIdAndOrg(user.id, input.orgId) ?? user),
+      user: sanitizeUser(this.db.getUserByIdAndOrg(user.id, nextOrgId) ?? user),
     }
   }
 
@@ -899,11 +1152,13 @@ export class AuthService {
     orgId: string
     name: string
     parentId?: string | null
+    extDeptId?: string | null
   }): {
     department: SanitizedAuthCenterDepartment
   } {
     const name = input.name.trim()
     const parentId = input.parentId?.trim() || null
+    const extDeptId = input.extDeptId?.trim() || null
     if (!name) {
       throw new AuthServiceError(400, 'Missing department name')
     }
@@ -916,6 +1171,7 @@ export class AuthService {
     if (existingSibling) {
       throw new AuthServiceError(409, 'Department name already exists under the same parent')
     }
+    // extDeptId uniqueness is enforced by departments_ext_uniq (caught below).
 
     const timestamp = Date.now()
     const department: AuthCenterDepartment = {
@@ -923,11 +1179,13 @@ export class AuthService {
       orgId: input.orgId,
       parentId,
       name,
+      extDeptId,
+      tokenLimit: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     }
 
-    this.db.createDepartment(department)
+    withExtIdConflict(() => this.db.createDepartment(department))
     return {
       department: {
         ...department,
@@ -941,6 +1199,7 @@ export class AuthService {
     departmentId: string
     name?: string
     parentId?: string | null
+    extDeptId?: string | null
   }): {
     department: SanitizedAuthCenterDepartment
   } {
@@ -952,6 +1211,7 @@ export class AuthService {
     const patch: {
       name?: string
       parentId?: string | null
+      extDeptId?: string | null
     } = {}
 
     if (typeof input.name === 'string') {
@@ -976,6 +1236,11 @@ export class AuthService {
       patch.parentId = parentId
     }
 
+    if (input.extDeptId !== undefined) {
+      // Conflict is caught by departments_ext_uniq via withExtIdConflict.
+      patch.extDeptId = input.extDeptId?.trim() || null
+    }
+
     const nextName = patch.name ?? department.name
     const nextParentId =
       patch.parentId === undefined ? department.parentId : patch.parentId
@@ -984,11 +1249,11 @@ export class AuthService {
       throw new AuthServiceError(409, 'Department name already exists under the same parent')
     }
 
-    if (patch.name === undefined && patch.parentId === undefined) {
+    if (patch.name === undefined && patch.parentId === undefined && patch.extDeptId === undefined) {
       throw new AuthServiceError(400, 'Missing department update fields')
     }
 
-    this.db.updateDepartment(department.id, patch)
+    withExtIdConflict(() => this.db.updateDepartment(department.id, patch))
     const updatedDepartment = this.db.getDepartmentByIdAndOrg(department.id, input.orgId) ?? department
     return {
       department: {

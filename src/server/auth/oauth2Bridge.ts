@@ -7,10 +7,22 @@ import { createServerLogger, type ServerLogger } from '../serverLog.js'
  * `accessToken` is the provider's access token, which moss stores server-side
  * (encrypted, keyed by the moss JWT jti) so it can later call provider
  * resources. It is NOT placed in the moss JWT and never reaches the client.
+ *
+ * Identity keys: moss looks the user up by `(orgId, extUserId)`, where `orgId`
+ * is the moss organization auto-resolved from `extOrgId`. Org / dept are
+ * created on first sight; renames propagate from the IdP (the moss row's
+ * `name` is rewritten when `extOrgId` / `extDeptId` match but names differ).
  */
 export type OAuth2Identity = {
-  providerId: string
-  providerUserId: string
+  /** IdP's organization id (e.g. Ruigu's bizOrgCode). Required for auto-create. */
+  extOrgId?: string
+  /** IdP's organization display name; used when auto-creating the moss org. */
+  extOrgName?: string
+  /** IdP's user id within that org (e.g. Ruigu's user_id). Required. */
+  extUserId: string
+  /** IdP's group id (e.g. Ruigu's groupIds[0]). Optional; when absent falls
+   *  back to by-name dept lookup. */
+  extDeptId?: string
   /** Optional — when omitted, moss synthesizes a synthetic internal email. */
   email?: string
   expiresIn: number
@@ -18,8 +30,8 @@ export type OAuth2Identity = {
   accessToken: string
   displayName?: string
   refreshToken?: string
-  organization?: string
-  /** Department name from the provider; moss resolves-or-creates it by name. */
+  /** Department display name from the IdP. With extDeptId set this is the
+   *  authoritative name (existing dept gets renamed on mismatch). */
   department?: string
 }
 
@@ -39,8 +51,20 @@ export class OAuth2BridgeError extends Error {
 const SCRIPT_TIMEOUT_MS = 10_000
 
 function coerceIdentity(raw: Record<string, unknown>): OAuth2Identity {
-  const providerUserId =
-    typeof raw.providerUserId === 'string' ? raw.providerUserId.trim() : ''
+  const extUserId =
+    typeof raw.extUserId === 'string' ? raw.extUserId.trim() : ''
+  const extOrgId =
+    typeof raw.extOrgId === 'string' && raw.extOrgId.trim()
+      ? raw.extOrgId.trim()
+      : undefined
+  const extOrgName =
+    typeof raw.extOrgName === 'string' && raw.extOrgName.trim()
+      ? raw.extOrgName.trim()
+      : undefined
+  const extDeptId =
+    typeof raw.extDeptId === 'string' && raw.extDeptId.trim()
+      ? raw.extDeptId.trim()
+      : undefined
   const email = typeof raw.email === 'string' ? raw.email.trim() : ''
   const expiresIn =
     typeof raw.expiresIn === 'number' && Number.isFinite(raw.expiresIn)
@@ -53,8 +77,8 @@ function coerceIdentity(raw: Record<string, unknown>): OAuth2Identity {
       : typeof raw.accessToken === 'string'
         ? raw.accessToken
         : ''
-  if (!providerUserId) {
-    throw new OAuth2BridgeError(401, 'OAuth2 script returned no providerUserId')
+  if (!extUserId) {
+    throw new OAuth2BridgeError(401, 'OAuth2 script returned no extUserId')
   }
   // email is optional: moss synthesizes a synthetic email when it is absent.
   if (expiresIn <= 0) {
@@ -64,8 +88,10 @@ function coerceIdentity(raw: Record<string, unknown>): OAuth2Identity {
     throw new OAuth2BridgeError(401, 'OAuth2 script returned no access_token')
   }
   return {
-    providerId: typeof raw.providerId === 'string' ? raw.providerId : 'oauth2',
-    providerUserId,
+    extOrgId,
+    extOrgName,
+    extUserId,
+    extDeptId,
     email: email || undefined,
     expiresIn,
     accessToken,
@@ -73,8 +99,6 @@ function coerceIdentity(raw: Record<string, unknown>): OAuth2Identity {
       typeof raw.displayName === 'string' ? raw.displayName : undefined,
     refreshToken:
       typeof raw.refreshToken === 'string' ? raw.refreshToken : undefined,
-    organization:
-      typeof raw.organization === 'string' ? raw.organization : undefined,
     department:
       typeof raw.department === 'string' && raw.department.trim()
         ? raw.department.trim()

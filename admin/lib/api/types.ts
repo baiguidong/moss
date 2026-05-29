@@ -14,12 +14,19 @@ export interface AuthUser {
   createdAt: number
   passwordUpdatedAt: number | null
   lastLoginAt: number | null
+  extUserId: string | null
 }
 
 export interface AuthOrg {
   id: string
   name: string
+  extOrgId: string | null
   createdAt: number
+}
+
+export interface AuthOrgWithCounts extends AuthOrg {
+  userCount: number
+  departmentCount: number
 }
 
 export interface AuthDepartment {
@@ -27,6 +34,7 @@ export interface AuthDepartment {
   orgId: string
   parentId: string | null
   name: string
+  extDeptId: string | null
   tokenLimit: number | null
   createdAt: number
   updatedAt: number
@@ -74,9 +82,11 @@ export interface UsersListResponse {
 export interface CreateUserRequest {
   email?: string
   name: string
+  org_id?: string
   department_id?: string | null
   role: UserRole
   password: string
+  ext_user_id?: string | null
 }
 
 export interface CreateUserResponse {
@@ -85,9 +95,11 @@ export interface CreateUserResponse {
 
 export interface UpdateUserRequest {
   name?: string
+  target_org_id?: string
   department_id?: string | null
   role?: UserRole
   status?: 'active' | 'disabled'
+  ext_user_id?: string | null
 }
 
 export interface DepartmentsListResponse {
@@ -96,12 +108,16 @@ export interface DepartmentsListResponse {
 
 export interface CreateDepartmentRequest {
   name: string
+  org_id?: string
   parent_id?: string | null
+  ext_dept_id?: string | null
 }
 
 export interface UpdateDepartmentRequest {
   name?: string
+  org_id?: string
   parent_id?: string | null
+  ext_dept_id?: string | null
 }
 
 export interface DepartmentResponse {
@@ -110,6 +126,24 @@ export interface DepartmentResponse {
 
 export interface RolesListResponse {
   roles: RoleDefinition[]
+}
+
+export interface OrganizationsListResponse {
+  organizations: AuthOrgWithCounts[]
+}
+
+export interface CreateOrganizationRequest {
+  name: string
+  ext_org_id?: string | null
+}
+
+export interface UpdateOrganizationRequest {
+  name?: string
+  ext_org_id?: string | null
+}
+
+export interface OrganizationResponse {
+  organization: AuthOrgWithCounts
 }
 
 export interface ApiKey {

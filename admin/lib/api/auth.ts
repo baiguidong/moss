@@ -15,6 +15,10 @@ import type {
   UpdateDepartmentRequest,
   DepartmentResponse,
   RolesListResponse,
+  OrganizationsListResponse,
+  CreateOrganizationRequest,
+  UpdateOrganizationRequest,
+  OrganizationResponse,
 } from './types'
 
 function storeLoginResponse(response: LoginResponse): void {
@@ -144,6 +148,32 @@ export async function deleteDepartment(
 
 export async function getRoles(): Promise<RolesListResponse> {
   return authClient.get<RolesListResponse>('/api/v1/roles')
+}
+
+export async function getOrganizations(): Promise<OrganizationsListResponse> {
+  return authClient.get<OrganizationsListResponse>('/api/v1/organizations')
+}
+
+export async function createOrganization(
+  data: CreateOrganizationRequest,
+): Promise<OrganizationResponse> {
+  return authClient.post<OrganizationResponse>('/api/v1/organizations', data)
+}
+
+export async function updateOrganization(
+  orgId: string,
+  data: UpdateOrganizationRequest,
+): Promise<OrganizationResponse> {
+  return authClient.patch<OrganizationResponse>(
+    `/api/v1/organizations/${orgId}`,
+    data,
+  )
+}
+
+export async function deleteOrganization(
+  orgId: string,
+): Promise<{ ok: boolean }> {
+  return authClient.delete<{ ok: boolean }>(`/api/v1/organizations/${orgId}`)
 }
 
 export async function setUserTokenLimit(

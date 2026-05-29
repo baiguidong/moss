@@ -1591,15 +1591,20 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/departments') {
         authService.requireScope(auth, 'admin:users')
         const body = await readJsonBody(req)
+        const targetOrgId = typeof body.org_id === 'string' && body.org_id.trim() ? body.org_id.trim() : auth.orgId
         writeJson(
           res,
           200,
           authService.createDepartment({
-            orgId: auth.orgId,
+            orgId: targetOrgId,
             name: typeof body.name === 'string' ? body.name : '',
             parentId:
               body.parent_id === null || typeof body.parent_id === 'string'
                 ? body.parent_id
+                : undefined,
+            extDeptId:
+              body.ext_dept_id === null || typeof body.ext_dept_id === 'string'
+                ? body.ext_dept_id
                 : undefined,
           }),
         )
@@ -1611,16 +1616,21 @@ export function startServer(
         authService.requireScope(auth, 'admin:users')
         const departmentId = departmentMatch[1] || ''
         const body = await readJsonBody(req)
+        const targetOrgId = typeof body.org_id === 'string' && body.org_id.trim() ? body.org_id.trim() : auth.orgId
         writeJson(
           res,
           200,
           authService.updateDepartment({
-            orgId: auth.orgId,
+            orgId: targetOrgId,
             departmentId,
             name: typeof body.name === 'string' ? body.name : undefined,
             parentId:
               body.parent_id === null || typeof body.parent_id === 'string'
                 ? body.parent_id
+                : undefined,
+            extDeptId:
+              body.ext_dept_id === null || typeof body.ext_dept_id === 'string'
+                ? body.ext_dept_id
                 : undefined,
           }),
         )
@@ -1630,14 +1640,73 @@ export function startServer(
       if (req.method === 'DELETE' && departmentMatch) {
         authService.requireScope(auth, 'admin:users')
         const departmentId = departmentMatch[1] || ''
+        const body = await readJsonBody(req).catch(() => ({} as JsonBody))
+        const targetOrgId = typeof body.org_id === 'string' && body.org_id.trim() ? body.org_id.trim() : auth.orgId
         writeJson(
           res,
           200,
           authService.deleteDepartment({
-            orgId: auth.orgId,
+            orgId: targetOrgId,
             departmentId,
           }),
         )
+        return
+      }
+
+      // ============================================================
+      // Organizations CRUD: /api/v1/organizations/*
+      // Surfaces the already-multi-tenant schema. scope: admin:settings.
+      // Delete relies on the FK constraint to reject non-empty orgs
+      // (translated to HTTP 409 by the service).
+      // ============================================================
+
+      if (req.method === 'GET' && pathname === '/api/v1/organizations') {
+        authService.requireScope(auth, 'admin:settings')
+        writeJson(res, 200, authService.listAllOrganizations())
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/organizations') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        writeJson(
+          res,
+          200,
+          authService.createOrganization({
+            name: typeof body.name === 'string' ? body.name : '',
+            extOrgId:
+              body.ext_org_id === null || typeof body.ext_org_id === 'string'
+                ? body.ext_org_id
+                : undefined,
+          }),
+        )
+        return
+      }
+
+      const organizationMatch = pathname.match(/^\/api\/v1\/organizations\/([^/]+)$/)
+      if (req.method === 'PATCH' && organizationMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const orgId = organizationMatch[1] || ''
+        const body = await readJsonBody(req)
+        writeJson(
+          res,
+          200,
+          authService.updateOrganization({
+            orgId,
+            name: typeof body.name === 'string' ? body.name : undefined,
+            extOrgId:
+              body.ext_org_id === null || typeof body.ext_org_id === 'string'
+                ? body.ext_org_id
+                : undefined,
+          }),
+        )
+        return
+      }
+
+      if (req.method === 'DELETE' && organizationMatch) {
+        authService.requireScope(auth, 'admin:settings')
+        const orgId = organizationMatch[1] || ''
+        writeJson(res, 200, authService.deleteOrganization({ orgId }))
         return
       }
 
@@ -2949,11 +3018,12 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/users') {
         authService.requireScope(auth, 'admin:users')
         const body = await readJsonBody(req)
+        const targetOrgId = typeof body.org_id === 'string' && body.org_id.trim() ? body.org_id.trim() : auth.orgId
         writeJson(
           res,
           200,
           authService.createUser({
-            orgId: auth.orgId,
+            orgId: targetOrgId,
             email: typeof body.email === 'string' ? body.email : '',
             name: typeof body.name === 'string' ? body.name : '',
             departmentId:
@@ -2962,6 +3032,10 @@ export function startServer(
                 : undefined,
             role: typeof body.role === 'string' ? body.role : 'user',
             password: typeof body.password === 'string' ? body.password : '',
+            extUserId:
+              body.ext_user_id === null || typeof body.ext_user_id === 'string'
+                ? body.ext_user_id
+                : undefined,
           }, auth),
         )
         return
@@ -2983,6 +3057,12 @@ export function startServer(
           role: typeof body.role === 'string' ? body.role : undefined,
           status:
             typeof body.status === 'string' ? body.status : undefined,
+          targetOrgId:
+            typeof body.target_org_id === 'string' ? body.target_org_id : undefined,
+          extUserId:
+            body.ext_user_id === null || typeof body.ext_user_id === 'string'
+              ? body.ext_user_id
+              : undefined,
         }, auth)
 
         // User disable cascade: disable Nexus secrets + terminate sessions + revoke Auth Proxy tokens
