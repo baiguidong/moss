@@ -43,6 +43,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -287,6 +292,17 @@ function parseEnvJson(raw: string | null | undefined): Record<string, string> {
   }
 }
 
+// 鉴权方式选项（Step 3 下拉，stdio 禁用态与正常态共用，避免重复）
+const AUTH_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'none', label: '无鉴权' },
+  { value: 'api_key', label: 'API Key' },
+  { value: 'bearer', label: 'Bearer Token' },
+  { value: 'basic', label: 'Basic Auth' },
+  { value: 'oauth', label: 'OAuth' },
+  { value: 'custom_header', label: '自定义 Header' },
+  { value: 'secret_ref', label: 'Secret Center 引用' },
+]
+
 // ===== Main page component =====
 
 interface McpServersPageProps {
@@ -493,6 +509,10 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
 
   const steps = ['基础信息', '连接配置', '鉴权配置', '权限范围', '安全策略']
 
+  // 有效传输类型：JSON 模式以解析结果为准，表单模式以 formData 为准（JSON 模式下 formData.mcp_type 是过期默认值）
+  const effectiveType = configMode === 'json' ? parseResult?.mcp_type : formData.mcp_type
+  const isStdio = effectiveType === 'stdio'
+
   // JSON/表单 模式转换函数
   const formToJson = useCallback(() => {
     const config: Record<string, unknown> = {}
@@ -625,6 +645,10 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
       toast.error('请选择所属部门')
       return
     }
+    if (!formData.name?.trim()) {
+      toast.error('请输入名称')
+      return
+    }
     setIsSubmitting(true)
     try {
       let payload: McpServerFormData
@@ -643,7 +667,7 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
         const parsedAuth = parsed.auth_config_json ? JSON.parse(parsed.auth_config_json) : {}
         payload = {
           ...formData,
-          name: formData.name || formData.display_name,
+          name: formData.name,
           display_name: formData.name || formData.display_name,
           mcp_type: parsed.mcp_type,
           url: parsed.url || null,
@@ -670,6 +694,15 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
           env_json: Object.keys(cleanedEnv).length > 0 ? JSON.stringify(cleanedEnv) : null,
           auth_config_json: Object.keys(cleanedAuth).length > 0 ? JSON.stringify(cleanedAuth) : null,
         }
+      }
+
+      // 按传输类型剔除无关字段：stdio 只走环境变量，http/sse 只走 header 鉴权，杜绝死配置
+      if (payload.mcp_type === 'stdio') {
+        payload.auth_config_json = null
+        payload.auth_type = 'none'
+        payload.secret_ref = null
+      } else {
+        payload.env_json = null
       }
 
       if (editingServer) {
@@ -1223,7 +1256,17 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
                   <>
                     <div className="space-y-2">
                       <Label>类型 <span className="text-red-500">*</span></Label>
-                      <Select value={formData.mcp_type || 'http'} onValueChange={(v) => setFormData({ ...formData, mcp_type: v as any })}>
+                      <Select value={formData.mcp_type || 'http'} onValueChange={(v) => {
+                        const next = v as 'http' | 'sse' | 'stdio'
+                        // 按传输类型隔离：切到 stdio 清空鉴权并重置鉴权方式；切到 http/sse 清空环境变量
+                        if (next === 'stdio') {
+                          setAuthConfigMap({})
+                          setFormData({ ...formData, mcp_type: next, auth_type: 'none', secret_ref: '' })
+                        } else {
+                          setEnvMap({})
+                          setFormData({ ...formData, mcp_type: next })
+                        }
+                      }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="http">HTTP</SelectItem>
@@ -1280,26 +1323,40 @@ export default function McpServersPage({ fixedScope }: McpServersPageProps) {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>鉴权方式</Label>
-                  <Select value={formData.auth_type || 'none'} onValueChange={(v) => setFormData({ ...formData, auth_type: v as any })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">无鉴权</SelectItem>
-                      <SelectItem value="api_key">API Key</SelectItem>
-                      <SelectItem value="bearer">Bearer Token</SelectItem>
-                      <SelectItem value="basic">Basic Auth</SelectItem>
-                      <SelectItem value="oauth">OAuth</SelectItem>
-                      <SelectItem value="custom_header">自定义 Header</SelectItem>
-                      <SelectItem value="secret_ref">Secret Center 引用</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {isStdio ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="cursor-not-allowed">
+                          <Select value={formData.auth_type || 'none'} disabled>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {AUTH_TYPE_OPTIONS.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>STDIO 通过环境变量鉴权，请在「连接配置」的环境变量中传入密钥</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Select value={formData.auth_type || 'none'} onValueChange={(v) => setFormData({ ...formData, auth_type: v as any })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {AUTH_TYPE_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
-                {formData.auth_type === 'secret_ref' && (
+                {!isStdio && formData.auth_type === 'secret_ref' && (
                   <div className="space-y-2">
                     <Label>Secret Center 凭据引用</Label>
                     <Input placeholder="system:secret_name" value={formData.secret_ref || ''} onChange={(e) => setFormData({ ...formData, secret_ref: e.target.value })} />
                   </div>
                 )}
-                {formData.auth_type && formData.auth_type !== 'none' && formData.auth_type !== 'secret_ref' && (
+                {!isStdio && formData.auth_type && formData.auth_type !== 'none' && formData.auth_type !== 'secret_ref' && (
                   <div className="space-y-2">
                     <Label>额外配置</Label>
                     <KVEditor value={authConfigMap} onChange={setAuthConfigMap} />
