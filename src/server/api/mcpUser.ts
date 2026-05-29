@@ -6,6 +6,7 @@ import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
 import type { AuthService } from '../auth/service.js'
 import type { NexusClient } from '../nexus/nexusClient.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
+import { broadcastMcpEvent } from './mcpEvents.js'
 
 interface McpUserDeps {
   mcpStore: McpStore
@@ -120,8 +121,15 @@ export function createMcpUserApi(deps: McpUserDeps) {
       // Filter by visibility and status (only connection-verified MCPs)
       const visibleServers = allServers.filter(server => isVisibleTo(server.visible_to, filter) && server.status === 'enabled')
 
+      // Attach per-user disabled state
+      const userDisabledIds = new Set(mcpStore.getUserDisabledMcpIds(auth.orgId, auth.userId))
+
       // Sanitize sensitive fields
-      const sanitized = visibleServers.map(s => sanitizeForUser(s as unknown as Record<string, unknown>))
+      const sanitized = visibleServers.map(s => {
+        const dto = sanitizeForUser(s as unknown as Record<string, unknown>)
+        dto.user_disabled = userDisabledIds.has(s.id)
+        return dto
+      })
 
       return { success: true, data: sanitized }
     },
@@ -458,6 +466,98 @@ export function createMcpUserApi(deps: McpUserDeps) {
 
       const fresh = mcpStore.getMcpServer(auth.orgId, server.id) ?? server
       return { success: true, data: sanitizeForUser(fresh as unknown as Record<string, unknown>) }
+    },
+
+    /**
+     * PUT /api/v1/me/mcp-servers/:id/disable
+     * User disables an MCP for themselves.
+     */
+    async disableUserMcp(auth: AuthContext, id: string, ip?: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, id)
+      if (!server) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+
+      if (!server.enabled) {
+        return { success: false, error: { code: 'forbidden', message: '该 MCP 已被管理员禁用' } }
+      }
+
+      // Visibility check
+      if (server.scope === 'user') {
+        if (server.owner_id !== auth.userId) {
+          return { success: false, error: { code: 'forbidden', message: '只能操作自己的个人 MCP' } }
+        }
+      } else {
+        const filter = buildVisibilityFilter(auth, getUserByIdAndOrg, listDepartmentsByOrg)
+        if (!isVisibleTo(server.visible_to, filter)) {
+          return { success: false, error: { code: 'forbidden', message: '无权操作该 MCP' } }
+        }
+        // Org/department MCP: check allow_user_disable
+        if (!server.allow_user_disable) {
+          return { success: false, error: { code: 'forbidden', message: '该 MCP 不允许用户禁用' } }
+        }
+      }
+
+      mcpStore.addUserDisabledMcp(auth.orgId, auth.userId, id)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'user_disable_mcp',
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true }
+    },
+
+    /**
+     * PUT /api/v1/me/mcp-servers/:id/enable
+     * User re-enables an MCP for themselves.
+     */
+    async enableUserMcp(auth: AuthContext, id: string, ip?: string) {
+      const server = mcpStore.getMcpServer(auth.orgId, id)
+      if (!server) return { success: false, error: { code: 'not_found', message: 'MCP 服务不存在' } }
+
+      if (!server.enabled) {
+        return { success: false, error: { code: 'forbidden', message: '该 MCP 已被管理员禁用' } }
+      }
+
+      // Visibility check
+      if (server.scope === 'user') {
+        if (server.owner_id !== auth.userId) {
+          return { success: false, error: { code: 'forbidden', message: '只能操作自己的个人 MCP' } }
+        }
+      } else {
+        const filter = buildVisibilityFilter(auth, getUserByIdAndOrg, listDepartmentsByOrg)
+        if (!isVisibleTo(server.visible_to, filter)) {
+          return { success: false, error: { code: 'forbidden', message: '无权操作该 MCP' } }
+        }
+        // Org/department MCP: check allow_user_disable
+        if (!server.allow_user_disable) {
+          return { success: false, error: { code: 'forbidden', message: '该 MCP 不允许用户控制' } }
+        }
+      }
+
+      mcpStore.removeUserDisabledMcp(auth.orgId, auth.userId, id)
+
+      try {
+        mcpStore.insertAuditLog({
+          org_id: auth.orgId,
+          mcp_server_id: id,
+          mcp_server_name: server.name,
+          user_id: auth.userId,
+          user_name: getUserName(auth.userId),
+          action: 'user_enable_mcp',
+          ip_address: ip,
+        })
+      } catch { /* ignore */ }
+
+      broadcastMcpEvent({ org_id: auth.orgId, type: 'mcp.changed' })
+      return { success: true }
     },
   }
 

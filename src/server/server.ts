@@ -3852,6 +3852,20 @@ export function startServer(
         return
       }
 
+      // User: enable/disable MCP for current user (must be before the generic :id match)
+      const meMcpEnableMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/enable$/)
+      if (meMcpEnableMatch && req.method === 'PUT') {
+        const result = await mcpUserApi.enableUserMcp(auth, meMcpEnableMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 400, result)
+        return
+      }
+      const meMcpDisableMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)\/disable$/)
+      if (meMcpDisableMatch && req.method === 'PUT') {
+        const result = await mcpUserApi.disableUserMcp(auth, meMcpDisableMatch[1], clientIp)
+        writeJson(res, result.success ? 200 : 400, result)
+        return
+      }
+
       // User: update/delete/test personal MCP (Phase 2)
       const meMcpMatch = pathname.match(/^\/api\/v1\/me\/mcp-servers\/([^/]+)$/)
       if (meMcpMatch) {

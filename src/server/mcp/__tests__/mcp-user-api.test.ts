@@ -205,4 +205,211 @@ describe('McpUserApi', () => {
       expect(result.success).toBe(true)
     })
   })
+
+  describe('enableUserMcp / disableUserMcp', () => {
+    /** Helper: create an org-level MCP with status='enabled' and optionally set allow_user_disable */
+    function setupOrgMcp(opts?: { allow_user_disable?: boolean }) {
+      const server = store.createMcpServer('org-1', {
+        ...orgServerInput,
+        allow_user_disable: opts?.allow_user_disable ?? true,
+      }, 'admin-1')
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+      return server
+    }
+
+    it('disables an org MCP for user', async () => {
+      const server = setupOrgMcp()
+      const result = await api.disableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(true)
+    })
+
+    it('enables a previously disabled org MCP', async () => {
+      const server = setupOrgMcp()
+      await api.disableUserMcp(userAuth, server.id)
+      const result = await api.enableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(true)
+    })
+
+    it('rejects disable when allow_user_disable=false', async () => {
+      const server = setupOrgMcp({ allow_user_disable: false })
+      const result = await api.disableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('rejects enable when allow_user_disable=false', async () => {
+      const server = setupOrgMcp({ allow_user_disable: false })
+      const result = await api.enableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('disables a department MCP visible to user', async () => {
+      const server = store.createMcpServer('org-1', {
+        ...orgServerInput,
+        name: 'dept-mcp',
+        scope: 'department',
+        owner_type: 'department',
+        owner_id: 'dept-1',
+        visible_to: { department_ids: ['dept-1'] },
+      }, 'admin-1')
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      const result = await api.disableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(true)
+    })
+
+    it('disables a personal MCP without allow_user_disable check', async () => {
+      store.upsertMcpPolicy('org-1', { allow_personal_mcp: true, allow_http_sse_mcp: true }, 'admin-1')
+      const created = await api.createPersonalMcp(userAuth, {
+        name: 'my-mcp',
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: 'user-1',
+        mcp_type: 'http',
+        url: 'https://my-mcp.example.com',
+      })
+      const serverId = (created.data as any).id
+
+      const result = await api.disableUserMcp(userAuth, serverId)
+      expect(result.success).toBe(true)
+    })
+
+    it('enables a personal MCP', async () => {
+      store.upsertMcpPolicy('org-1', { allow_personal_mcp: true, allow_http_sse_mcp: true }, 'admin-1')
+      const created = await api.createPersonalMcp(userAuth, {
+        name: 'my-mcp2',
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: 'user-1',
+        mcp_type: 'http',
+        url: 'https://my-mcp.example.com',
+      })
+      const serverId = (created.data as any).id
+
+      await api.disableUserMcp(userAuth, serverId)
+      const result = await api.enableUserMcp(userAuth, serverId)
+      expect(result.success).toBe(true)
+    })
+
+    it('rejects disable for admin-disabled MCP', async () => {
+      const server = setupOrgMcp()
+      store.setMcpServerEnabled('org-1', server.id, false, 'admin-1')
+      const result = await api.disableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('rejects enable for admin-disabled MCP', async () => {
+      const server = setupOrgMcp()
+      store.setMcpServerEnabled('org-1', server.id, false, 'admin-1')
+      const result = await api.enableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('rejects disable for another user personal MCP', async () => {
+      const server = store.createMcpServer('org-1', {
+        ...orgServerInput,
+        name: 'other-mcp',
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: 'user-2',
+        visible_to: { user_ids: ['user-2'] },
+      }, 'user-2')
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      const result = await api.disableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('rejects enable for another user personal MCP', async () => {
+      const server = store.createMcpServer('org-1', {
+        ...orgServerInput,
+        name: 'other-mcp2',
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: 'user-2',
+        visible_to: { user_ids: ['user-2'] },
+      }, 'user-2')
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      const result = await api.enableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('forbidden')
+    })
+
+    it('returns not_found for non-existent MCP', async () => {
+      const result = await api.disableUserMcp(userAuth, 'nonexistent')
+      expect(result.success).toBe(false)
+      expect((result as any).error.code).toBe('not_found')
+    })
+
+    it('disable is idempotent', async () => {
+      const server = setupOrgMcp({ allow_user_disable: true })
+      const r1 = await api.disableUserMcp(userAuth, server.id)
+      const r2 = await api.disableUserMcp(userAuth, server.id)
+      expect(r1.success).toBe(true)
+      expect(r2.success).toBe(true)
+    })
+
+    it('enable is idempotent', async () => {
+      const server = setupOrgMcp({ allow_user_disable: true })
+      const result = await api.enableUserMcp(userAuth, server.id)
+      expect(result.success).toBe(true)
+    })
+  })
+
+  describe('listMyMcpServers with user_disabled', () => {
+    it('returns user_disabled=false when no records exist', async () => {
+      store.createMcpServer('org-1', orgServerInput, 'admin-1')
+      const server = store.getMcpServerByName('org-1', 'org-mcp')!
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      const result = await api.listMyMcpServers(userAuth)
+      expect(result.success).toBe(true)
+      expect((result.data as any[]).length).toBe(1)
+      expect((result.data as any[])[0].user_disabled).toBe(false)
+    })
+
+    it('returns user_disabled=true after user disables', async () => {
+      store.createMcpServer('org-1', orgServerInput, 'admin-1')
+      const server = store.getMcpServerByName('org-1', 'org-mcp')!
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      await api.disableUserMcp(userAuth, server.id)
+
+      const result = await api.listMyMcpServers(userAuth)
+      expect(result.success).toBe(true)
+      expect((result.data as any[]).length).toBe(1)
+      expect((result.data as any[])[0].user_disabled).toBe(true)
+    })
+
+    it('returns user_disabled=false after user re-enables', async () => {
+      store.createMcpServer('org-1', orgServerInput, 'admin-1')
+      const server = store.getMcpServerByName('org-1', 'org-mcp')!
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      await api.disableUserMcp(userAuth, server.id)
+      await api.enableUserMcp(userAuth, server.id)
+
+      const result = await api.listMyMcpServers(userAuth)
+      expect(result.success).toBe(true)
+      expect((result.data as any[])[0].user_disabled).toBe(false)
+    })
+
+    it('other user disable records do not affect current user', async () => {
+      store.createMcpServer('org-1', orgServerInput, 'admin-1')
+      const server = store.getMcpServerByName('org-1', 'org-mcp')!
+      store.setMcpServerStatus('org-1', server.id, 'enabled', null)
+
+      // Another user disables the same MCP
+      store.addUserDisabledMcp('org-1', 'user-2', server.id)
+
+      const result = await api.listMyMcpServers(userAuth)
+      expect(result.success).toBe(true)
+      expect((result.data as any[])[0].user_disabled).toBe(false)
+    })
+  })
 })

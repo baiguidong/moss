@@ -322,6 +322,17 @@ export class McpStore {
 
     // Migration: add template_id column to mcp_servers
     try { this.db.exec('ALTER TABLE mcp_servers ADD COLUMN template_id TEXT') } catch { /* column already exists */ }
+
+    // Per-user disable records — tracks which MCP servers each user has disabled for themselves.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_user_disabled (
+        org_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        mcp_server_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (org_id, user_id, mcp_server_id)
+      );
+    `)
   }
 
   // ==================== MCP Server CRUD ====================
@@ -988,5 +999,37 @@ export class McpStore {
     this.db.prepare(
       'UPDATE mcp_templates SET downloads = downloads + 1 WHERE org_id = ? AND id = ?'
     ).run(orgId, id)
+  }
+
+  // ==================== Per-User Disable ====================
+
+  /** User disables an MCP for themselves (idempotent, INSERT OR IGNORE). */
+  addUserDisabledMcp(orgId: string, userId: string, mcpServerId: string): void {
+    this.db.prepare(
+      `INSERT OR IGNORE INTO mcp_user_disabled (org_id, user_id, mcp_server_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(orgId, userId, mcpServerId, Date.now())
+  }
+
+  /** User re-enables an MCP for themselves (deletes the disable record). */
+  removeUserDisabledMcp(orgId: string, userId: string, mcpServerId: string): void {
+    this.db.prepare(
+      `DELETE FROM mcp_user_disabled WHERE org_id = ? AND user_id = ? AND mcp_server_id = ?`,
+    ).run(orgId, userId, mcpServerId)
+  }
+
+  /** Get all MCP server IDs that the user has disabled. */
+  getUserDisabledMcpIds(orgId: string, userId: string): string[] {
+    const rows = this.db.prepare(
+      `SELECT mcp_server_id FROM mcp_user_disabled WHERE org_id = ? AND user_id = ?`,
+    ).all(orgId, userId) as SqlRow[]
+    return rows.map(r => r.mcp_server_id as string)
+  }
+
+  /** Clear all user-disabled records for a specific MCP server (used when admin toggles allow_user_disable). */
+  clearUserDisabledForMcpServer(orgId: string, mcpServerId: string): void {
+    this.db.prepare(
+      `DELETE FROM mcp_user_disabled WHERE org_id = ? AND mcp_server_id = ?`,
+    ).run(orgId, mcpServerId)
   }
 }
