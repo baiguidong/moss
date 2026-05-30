@@ -1,12 +1,16 @@
 import { randomBytes } from 'crypto'
 import type { McpStore } from '../mcp/db.js'
 import type { AuthContext } from '../auth/token.js'
-import type { McpServerInput, McpTemplate, McpTemplateListFilter } from '../mcp/types.js'
+import type { McpServer, McpServerInput, McpTemplate, McpTemplateListFilter } from '../mcp/types.js'
 import { isVisibleTo, buildVisibilityFilter } from '../visibilityFilter.js'
 import type { AuthService } from '../auth/service.js'
 import type { NexusClient } from '../nexus/nexusClient.js'
 import { testMcpConnection } from '../mcp/testConnection.js'
 import { broadcastMcpEvent } from './mcpEvents.js'
+import { parseMcpConfig } from '../mcp/mcpConfigParser.js'
+
+/** Default icon for personal MCP installed via JSON API */
+const DEFAULT_MCP_ICON = 'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBzdGFuZGFsb25lPSJubyI/PjwhRE9DVFlQRSBzdmcgUFVCTElDICItLy9XM0MvL0RURCBTVkcgMS4xLy9FTiIgImh0dHA6Ly93d3cudzMub3JnL0dyYXBoaWNzL1NWRy8xLjEvRFREL3N2ZzExLmR0ZCI+PHN2ZyB0PSIxNzgwMTA2MjI4MzE4IiBjbGFzcz0iaWNvbiIgdmlld0JveD0iMCAwIDEwMjQgMTAyNCIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHAtaWQ9IjMwNzkiIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCI+PHBhdGggZD0iTTk2NS41NDc1MiA3NTcuMzMzMzMzYTUxLjIgNTEuMiAwIDAgMSA1MS4xMTQ2NjcgNTEuMzcwNjY3djE2My44NGE1MS4yIDUxLjIgMCAwIDEtNTEuMTE0NjY3IDUxLjQ1Nkg1MS4wMzAxODdBNTEuMiA1MS4yIDAgMCAxIDAuMDAwODUzIDk3Mi41NDR2LTE2My44NGE1MS4yIDUxLjIgMCAwIDEgNTEuMDI5MzM0LTUxLjM3MDY2NyA1MS4yIDUxLjIgMCAwIDEgNTEuMTE0NjY2IDUxLjM3MDY2N3YxMTIuNDY5MzMzaDgxMi4zNzMzMzRWODA4LjcwNGMwLTI4LjMzMDY2NyAyMi44NjkzMzMtNTEuMzcwNjY3IDUxLjAyOTMzMy01MS4zNzA2Njd6TTYxOS4wOTQxODcgMzU5LjI1MzMzM2MxOC40MzIgMS4xOTQ2NjcgMzQuOTAxMzMzIDQuMjY2NjY3IDQ5LjE1MiA5LjM4NjY2NyA5LjcyOCAzLjQxMzMzMyAxOC45NDQgNy41OTQ2NjcgMjcuNzMzMzMzIDEyLjQ1ODY2NyAxNy4wNjY2NjcgOS42NDI2NjcgMTkuNzEyIDMwLjgwNTMzMyAxMC4wNjkzMzMgNDUuOTA5MzMzYTQwLjk2IDQwLjk2IDAgMCAxLTI3LjY0OCAxNy41Nzg2NjcgNjUuMTk0NjY3IDY1LjE5NDY2NyAwIDAgMS0zMy4wMjQtMi44MTZsLTAuNTk3MzMzLTAuMjU2YTExNC4xNzYgMTE0LjE3NiAwIDAgMC0yOS4zNTQ2NjctNS44MDI2NjdMNjA0LjUwMjE4NyA0MzUuMmMtMTEuNTIgMC0yMS45MzA2NjcgMS4yOC0zMS40ODggMy43NTQ2NjdsLTkuMTMwNjY3IDIuODE2YTc3LjE0MTMzMyA3Ny4xNDEzMzMgMCAwIDAtNDQuOCAzOC44MjY2NjZsLTMuNzU0NjY3IDguMTkyYTEwMC42OTMzMzMgMTAwLjY5MzMzMyAwIDAgMC02LjA1ODY2NiAyNy45ODkzMzRsLTAuNDI2NjY3IDEwLjU4MTMzM2MwIDE5Ljg4MjY2NyA0LjAxMDY2NyAzNi41MjI2NjcgMTEuNjA1MzMzIDUwLjA5MDY2N2E3OC41MDY2NjcgNzguNTA2NjY3IDAgMCAwIDMzLjEwOTMzNCAzMC45NzZjMTQuNTA2NjY3IDcuMzM4NjY3IDMyIDExLjA5MzMzMyA1Mi43MzYgMTEuMDkzMzMzIDE0LjMzNiAwIDI4LjQxNi0yLjA0OCA0Mi4wNjkzMzMtNi4zMTQ2NjdsOC4xOTItMi43MzA2NjZjMjAuMzA5MzMzLTcuOTM2IDQ3LjE4OTMzMy00LjA5NiA1OC43OTQ2NjcgMTYuNDY5MzMzIDguOTYgMTUuOTU3MzMzIDUuMTIgMzcuMTItMTIuNTQ0IDQ2LjMzNi05LjcyOCA0Ljk0OTMzMy0yMC4xMzg2NjcgOS4zODY2NjctMzEuMzE3MzM0IDEzLjA1Ni0yMS4wNzczMzMgNi44MjY2NjctNDUuMzk3MzMzIDEwLjA2OTMzMy03Mi41MzMzMzMgMTAuMDY5MzMzLTI5Ljg2NjY2NyAwLTU2LjgzMi01LjEyLTgwLjcyNTMzMy0xNS43MDEzMzNsLTEwLjA2OTMzNC00Ljg2NGExNTIuMDY0IDE1Mi4wNjQgMCAwIDEtNjEuNjEwNjY2LTU4Ljc5NDY2NyAxNjkuODEzMzMzIDE2OS44MTMzMzMgMCAwIDEtMjEuNjc0NjY3LTc2LjQ1ODY2NmwtMC4yNTYtMTIuNDU4NjY3YzAtMjQuNTc2IDQuMjY2NjY3LTQ3LjI3NDY2NyAxMi44LTY3LjkyNTMzMyA2LjQ4NTMzMy0xNS41MzA2NjcgMTQuOTMzMzMzLTI5LjYxMDY2NyAyNS40MjkzMzMtNDEuOTg0bDExLjE3ODY2Ny0xMS45NDY2NjdjMTUuODcyLTE1LjI3NDY2NyAzNC4zODkzMzMtMjYuOTY1MzMzIDU1LjYzNzMzMy0zNS4xNTczMzNsMTYuNDY5MzM0LTUuNDYxMzM0YzE2Ljg5Ni00LjY5MzMzMyAzNC44MTYtNi45OTczMzMgNTMuNzYtNi45OTczMzNsMTkuMiAwLjU5NzMzM3ogbS01NDMuNDg4IDYuMTQ0YzExLjI2NCAwIDIxLjU4OTMzMyA1LjcxNzMzMyAyNy40NzczMzMgMTUuMDE4NjY3TDIwMS4zODc1MiA1MzcuMzQ0bDkzLjI2OTMzMy0xNTYuNTAxMzMzYTMyIDMyIDAgMCAxIDI3LjU2MjY2Ny0xNS4zNmgxNS45NTczMzNjMjIuNjEzMzMzIDAgNDAuOTYgMTcuODM0NjY3IDQwLjk2IDM5Ljc2NTMzM3YyNDYuMzU3MzMzYTM4LjU3MDY2NyAzOC41NzA2NjcgMCAwIDEtMzEuNDAyNjY2IDM3LjU0NjY2N2wtNy45MzYgMC42ODI2NjdhMzguNzQxMzMzIDM4Ljc0MTMzMyAwIDAgMS0zOS4zMzg2NjctMzguMzE0NjY3bDAuNjgyNjY3LTE0Ni45NDQtNjEuNzgxMzM0IDEwMS4yMDUzMzNhNDcuNTMwNjY3IDQ3LjUzMDY2NyAwIDAgMS0zNC42NDUzMzMgMjIuMTg2NjY3bC02LjIyOTMzMyAwLjQyNjY2N2E0Ny43ODY2NjcgNDcuNzg2NjY3IDAgMCAxLTQwLjUzMzMzNC0yMi4xODY2NjdsLTY1LjYyMTMzMy0xMDQuMTA2NjY3IDAuODUzMzMzIDE1MS4wNGEzNi43Nzg2NjcgMzYuNzc4NjY3IDAgMCAxLTI5Ljk1MiAzNi4wMTA2NjdsLTcuNjggMC42ODI2NjdhMzcuMDM0NjY3IDM3LjAzNDY2NyAwIDAgMS0zNy41NDY2NjYtMzYuMzUydi0yNDguMzJjMC0yMS44NDUzMzMgMTguNDMyLTM5LjY4IDQxLjA0NTMzMy0zOS42OGgxNi41NTQ2Njd6TTg5Ni4zNDIxODcgMzY1LjQ4MjY2N2MyNC4zMiAwIDQ2LjA4IDQuMDk2IDY1LjI4IDEyLjU0NCAxOC40MzIgNy42OCAzNC4zMDQgMjAuMzk0NjY3IDQ1LjczODY2NiAzNi42OTMzMzNsNC4wMTA2NjcgNi4zMTQ2NjdjOC41MzMzMzMgMTQuODQ4IDEyLjYyOTMzMyAzMi4wODUzMzMgMTIuNjI5MzMzIDUxLjQ1NiAwIDIyLjM1NzMzMy00Ljk0OTMzMyA0MS44MTMzMzMtMTUuMzYgNTguMDI2NjY2LTEwLjQxMDY2NyAxNi4wNDI2NjctMjUuNiAyOC4yNDUzMzMtNDQuODg1MzMzIDM2LjYwOGExNzYuMjk4NjY3IDE3Ni4yOTg2NjcgMCAwIDEtNjkuMTIgMTIuMDMyaC00OC40NjkzMzN2NzEuMzM4NjY3YTM5Ljc2NTMzMyAzOS43NjUzMzMgMCAwIDEtMzIuNDI2NjY3IDM4LjY1NmwtOC4xMDY2NjcgMC42ODI2NjdhMzkuOTM2IDM5LjkzNiAwIDAgMS00MC41MzMzMzMtMzkuMjUzMzM0VjQxNC43MmMwLTI3LjMwNjY2NyAyMi43ODQtNDkuMzIyNjY3IDUwLjg1ODY2Ny00OS4zMjI2NjdoODAuMzg0eiBtLTQzLjUyIDY5LjQ2MTMzM2E2LjU3MDY2NyA2LjU3MDY2NyAwIDAgMC02LjY1NiA2LjR2NjkuNzE3MzMzaDQ3LjM2YzE2LjgxMDY2NyAwIDI5LjAxMzMzMy0zLjQxMzMzMyAzNy4yOTA2NjYtOS4zMDEzMzMgNy42OC01LjQ2MTMzMyAxMi4yODgtMTQuMzM2IDEyLjI4OC0yOC4wNzQ2NjdzLTQuNjA4LTIyLjk1NDY2Ny0xMi43MTQ2NjYtMjguOTI4Yy04LjUzMzMzMy02LjMxNDY2Ny0yMC40OC05LjgxMzMzMy0zNi4zNTItOS44MTMzMzNoLTQxLjMwMTMzNHpNOTY1LjU0NzUyIDBhNTEuMiA1MS4yIDAgMCAxIDUxLjExNDY2NyA1MS40NTZ2MTYzLjg0YTUxLjIgNTEuMiAwIDAgMS01MS4xMTQ2NjcgNTEuMzcwNjY3IDUxLjIgNTEuMiAwIDAgMS01MS4wMjkzMzMtNTEuMzcwNjY3VjEwMi44MjY2NjdoLTgxMi4zNzMzMzR2MTEyLjQ2OTMzM2E1MS4yIDUxLjIgMCAwIDEtNTEuMTE0NjY2IDUxLjM3MDY2N0E1MS4yIDUxLjIgMCAwIDEgMC4wMDA4NTMgMjE1LjI5NlY1MS40NTZBNTEuMiA1MS4yIDAgMCAxIDUxLjAzMDE4NyAwaDkxNC41MTczMzN6IiBwLWlkPSIzMDgwIiBmaWxsPSIjMGJhMmYxIj48L3BhdGg+PC9zdmc+'
 
 interface McpUserDeps {
   mcpStore: McpStore
@@ -159,6 +163,132 @@ export function createMcpUserApi(deps: McpUserDeps) {
     // ==================== Personal MCP CRUD (Phase 2) ====================
 
     /**
+     * POST /api/v1/me/mcp-servers/install-json
+     * Install a personal MCP by uploading a JSON config string.
+     */
+    async installByJson(
+      auth: AuthContext,
+      body: { json_config: string; name?: string },
+      ip?: string,
+    ) {
+      // Step 1: Get policy
+      const policy = mcpStore.getMcpPolicy(auth.orgId)
+
+      // Step 2: Policy check - allow_personal_mcp
+      if (!policy.allow_personal_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许安装个人MCP' } }
+      }
+
+      // Step 3: Parse JSON config
+      const parseResult = parseMcpConfig(body.json_config)
+      if (!parseResult.success || !parseResult.data) {
+        return { success: false, error: { code: 'bad_request', message: parseResult.error ?? '无效的JSON配置' } }
+      }
+
+      // Step 4: Policy check - mcp_type
+      if (parseResult.data.mcp_type === 'stdio' && !policy.allow_stdio_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许安装 STDIO 类型的个人MCP' } }
+      }
+      if ((parseResult.data.mcp_type === 'http' || parseResult.data.mcp_type === 'sse') && !policy.allow_http_sse_mcp) {
+        return { success: false, error: { code: 'forbidden', message: '企业策略不允许安装 HTTP/SSE 类型的个人MCP' } }
+      }
+
+      // Step 5: Determine display_name
+      const displayName = body.name ?? parseResult.data.name
+      if (!displayName) {
+        return { success: false, error: { code: 'bad_request', message: '无法提取MCP名称，请提供 name 参数' } }
+      }
+
+      // Step 6: Generate unique name (reuse installFromTemplate pattern)
+      let serverName: string | null = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = `${displayName}-${randomBytes(4).toString('hex')}`
+        if (!mcpStore.getMcpServerByName(auth.orgId, candidate)) {
+          serverName = candidate
+          break
+        }
+      }
+      if (!serverName) {
+        return { success: false, error: { code: 'name_conflict', message: '生成唯一名称失败，请重试' } }
+      }
+
+      // Step 7: Assemble McpServerInput
+      const input: McpServerInput = {
+        name: serverName,
+        display_name: displayName,
+        description: null,
+        icon: DEFAULT_MCP_ICON,
+        scope: 'user',
+        owner_type: 'user',
+        owner_id: auth.userId,
+        mcp_type: parseResult.data.mcp_type,
+        url: parseResult.data.url,
+        command: parseResult.data.command,
+        args_json: parseResult.data.args_json,
+        env_json: parseResult.data.env_json,
+        auth_config_json: parseResult.data.auth_config_json,
+        timeout_ms: parseResult.data.timeout_ms,
+        visible_to: { user_ids: [auth.userId] },
+      }
+
+      // Step 8: Connection test before creating
+      const testServer = {
+        id: '',
+        org_id: auth.orgId,
+        name: input.name,
+        display_name: input.display_name ?? null,
+        description: input.description ?? null,
+        icon: input.icon ?? null,
+        category: input.category ?? null,
+        risk_level: input.risk_level ?? 'low',
+        responsible_person: input.responsible_person ?? null,
+        scope: input.scope,
+        owner_type: input.owner_type,
+        owner_id: input.owner_id,
+        mcp_type: input.mcp_type,
+        url: input.url ?? null,
+        command: input.command ?? null,
+        args_json: input.args_json ?? null,
+        env_json: input.env_json ?? null,
+        timeout_ms: input.timeout_ms ?? 30000,
+        health_check_url: input.health_check_url ?? null,
+        use_proxy: input.use_proxy ?? false,
+        auth_type: input.auth_type ?? 'none',
+        secret_ref: input.secret_ref ?? null,
+        auth_config_json: input.auth_config_json ?? null,
+        visible_to: input.visible_to ?? null,
+        bound_assistants: input.bound_assistants ?? null,
+        bound_skills: input.bound_skills ?? null,
+        allow_read: input.allow_read ?? true,
+        allow_write: input.allow_write ?? true,
+        require_confirmation_for_write: input.require_confirmation_for_write ?? false,
+        allow_read_sensitive_fields: input.allow_read_sensitive_fields ?? false,
+        allow_outbound_network: input.allow_outbound_network ?? true,
+        allow_scheduled_task: input.allow_scheduled_task ?? false,
+        audit_request: input.audit_request ?? false,
+        audit_response_summary: input.audit_response_summary ?? false,
+        redact_sensitive_fields: input.redact_sensitive_fields ?? false,
+        allow_user_disable: input.allow_user_disable ?? true,
+        status: 'pending' as const,
+        enabled: true,
+        last_invocation_at: null,
+        template_id: input.template_id ?? null,
+        created_by: auth.userId,
+        updated_by: null,
+        created_at: 0,
+        updated_at: 0,
+      } satisfies McpServer
+
+      const testResult = await testMcpConnection(testServer)
+      if (!testResult.ok) {
+        return { success: false, error: { code: 'connection_test_failed', message: `MCP 连接测试失败：${testResult.message}` } }
+      }
+
+      // Step 9: Delegate to createPersonalMcp (handles audit log, approval, etc.)
+      return this.createPersonalMcp(auth, input, ip)
+    },
+
+    /**
      * POST /api/v1/me/mcp-servers
      * Create a personal MCP server (scope=user).
      */
@@ -217,10 +347,13 @@ export function createMcpUserApi(deps: McpUserDeps) {
           user_name: getUserName(auth.userId),
           mcp_server_id: server.id,
         })
-        return { success: true, data: { ...server, status: 'pending', _requires_approval: true } }
+        const sanitized = sanitizeForUser({ ...server, status: 'pending' } as unknown as Record<string, unknown>)
+        return { success: true, data: { ...sanitized, _requires_approval: true } }
       }
 
-      return { success: true, data: sanitizeForUser(server as unknown as Record<string, unknown>) }
+      // No approval required — activate immediately
+      mcpStore.setMcpServerStatus(auth.orgId, server.id, 'enabled', null)
+      return { success: true, data: sanitizeForUser({ ...server, status: 'enabled' } as unknown as Record<string, unknown>) }
     },
 
     /**
