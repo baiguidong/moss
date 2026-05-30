@@ -3844,6 +3844,14 @@ export function startServer(
         return
       }
 
+      // User: install personal MCP by JSON config
+      if (req.method === 'POST' && pathname === '/api/v1/me/mcp-servers/install-json') {
+        const body = await readJsonBody(req)
+        const result = await mcpUserApi.installByJson(auth, body, clientIp)
+        writeJson(res, result.success ? 201 : 400, result)
+        return
+      }
+
       // User: create personal MCP (Phase 2)
       if (req.method === 'POST' && pathname === '/api/v1/me/mcp-servers') {
         const body = await readJsonBody(req)

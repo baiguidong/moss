@@ -124,7 +124,7 @@ export function parseMcpConfig(jsonStr: string): McpConfigParseResult {
     }
   }
 
-  if (!config || typeof config !== 'object') {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
     return {
       success: false,
       error: '配置必须是一个 JSON 对象',
@@ -172,7 +172,7 @@ export function parseMcpConfig(jsonStr: string): McpConfigParseResult {
       }
     }
 
-    if (!actualConfig || Object.keys(actualConfig).length === 0) {
+    if (!serviceName) {
       return {
         success: false,
         error: '无法识别配置：未找到有效的 MCP 配置结构',
