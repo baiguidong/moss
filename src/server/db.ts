@@ -415,6 +415,31 @@ export class DirectConnectStore {
       this.db.exec(`ALTER TABLE tenant_assistants ADD COLUMN workflow TEXT`)
     }
 
+    // Migration: config_items mint/auth columns. createConfigItem/updateConfigItem
+    // have long referenced these columns in their INSERT/UPDATE, but the CREATE
+    // TABLE never defined them — so those writes throw against an unmigrated DB.
+    // Add them here (idempotent try/catch ALTER). auth_type drives the auth proxy:
+    // absent/'static' keeps today's inject-stored-secret behavior; the oauth2_* /
+    // 'script' values enable per-(user,service) token minting (token_url +
+    // token_request_json recipe, or mint_script fallback).
+    for (const col of [
+      'auth_type TEXT',
+      'auth_url TEXT',
+      'token_url TEXT',
+      'client_id TEXT',
+      'client_secret_key TEXT',
+      'refresh_token_key TEXT',
+      'default_scopes TEXT',
+      'token_request_json TEXT',
+      'mint_script TEXT',
+    ]) {
+      try {
+        this.db.exec(`ALTER TABLE config_items ADD COLUMN ${col}`)
+      } catch {
+        // Column already exists, ignore.
+      }
+    }
+
     // ============================================================
     // Document Center (P0): document tree, documents, wikis, build jobs
     // Assistant ↔ Wiki association lives in assistant `_moss_meta.json` (enabledWikis: string[]),
@@ -2629,15 +2654,18 @@ export class DirectConnectStore {
     client_secret_key?: string
     refresh_token_key?: string
     default_scopes?: string
+    token_request_json?: string
+    mint_script?: string
   }): number {
     const ts = now()
     const result = this.db.prepare(`
       INSERT INTO config_items (
         name, description, icon, pinyin, scope, url_pattern, scheme, bearer_prefix, status,
         auth_type, auth_url, token_url, client_id, client_secret_key, refresh_token_key, default_scopes,
+        token_request_json, mint_script,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.name,
       row.description ?? null,
@@ -2655,6 +2683,8 @@ export class DirectConnectStore {
       row.client_secret_key ?? null,
       row.refresh_token_key ?? null,
       row.default_scopes ?? null,
+      row.token_request_json ?? null,
+      row.mint_script ?? null,
       ts, ts,
     )
     return Number(result.lastInsertRowid)
@@ -2677,6 +2707,8 @@ export class DirectConnectStore {
     client_secret_key?: string | null
     refresh_token_key?: string | null
     default_scopes?: string
+    token_request_json?: string | null
+    mint_script?: string | null
   }): void {
     const existing = this.getConfigItem(id)
     if (!existing) return
@@ -2687,6 +2719,7 @@ export class DirectConnectStore {
           url_pattern = ?, scheme = ?, bearer_prefix = ?, status = ?,
           auth_type = ?, auth_url = ?, token_url = ?, client_id = ?,
           client_secret_key = ?, refresh_token_key = ?, default_scopes = ?,
+          token_request_json = ?, mint_script = ?,
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -2706,6 +2739,8 @@ export class DirectConnectStore {
       updates.client_secret_key !== undefined ? updates.client_secret_key : (existing.client_secret_key as string | null),
       updates.refresh_token_key !== undefined ? updates.refresh_token_key : (existing.refresh_token_key as string | null),
       updates.default_scopes !== undefined ? updates.default_scopes : (existing.default_scopes as string | null),
+      updates.token_request_json !== undefined ? updates.token_request_json : (existing.token_request_json as string | null),
+      updates.mint_script !== undefined ? updates.mint_script : (existing.mint_script as string | null),
       ts, id,
     )
   }

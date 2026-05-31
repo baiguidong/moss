@@ -62,6 +62,10 @@ function mapConfigItem(row: SqlRow) {
     url_pattern: row.url_pattern as string | null,
     scheme: row.scheme as string | null,
     bearer_prefix: row.bearer_prefix as string | null,
+    auth_type: (row.auth_type as string | null) ?? null,
+    token_url: (row.token_url as string | null) ?? null,
+    token_request_json: (row.token_request_json as string | null) ?? null,
+    mint_script: (row.mint_script as string | null) ?? null,
     status: row.status as number,
     created_at: row.created_at as number,
     updated_at: row.updated_at as number,
@@ -85,7 +89,7 @@ export function createConfigItemsApi(db: {
   listConfigItems: (opts: { name?: string; scope?: string; status?: string; page?: number; pageSize?: number }) => { items: SqlRow[]; total: number }
   getConfigItem: (id: number) => SqlRow | null
   getConfigItemByPinyin: (pinyin: string) => SqlRow | null
-  createConfigItem: (row: { name: string; description?: string; icon?: string; pinyin: string; scope: string; url_pattern?: string; scheme?: string; bearer_prefix?: string; status?: number }) => number
+  createConfigItem: (row: { name: string; description?: string; icon?: string; pinyin: string; scope: string; url_pattern?: string; scheme?: string; bearer_prefix?: string; status?: number; auth_type?: string; token_url?: string; token_request_json?: string; mint_script?: string }) => number
   updateConfigItem: (id: number, updates: Record<string, unknown>) => void
   deleteConfigItem: (id: number) => void
   getConfigEntries: (configItemId: number) => SqlRow[]
@@ -136,12 +140,20 @@ export function createConfigItemsApi(db: {
       url_pattern?: string
       scheme?: string
       bearer_prefix?: string
+      auth_type?: string
+      token_url?: string
+      token_request_json?: string
+      mint_script?: string
       entries: { config_key: string; name: string; config_desc?: string; required?: boolean }[]
     }) {
       if (!body.name?.trim()) {
         return { success: false, error: { code: 'validation_error', message: '名称不能为空' } }
       }
-      if (body.url_pattern?.trim() && !body.scheme) {
+      // A URL-matched 凭据 needs an auth method: either a static injection
+      // scheme (bearer/basic/header/query) OR a login-type auth_type that mints
+      // a token (oauth2_* / script).
+      const isLoginType = typeof body.auth_type === 'string' && body.auth_type !== '' && body.auth_type !== 'static'
+      if (body.url_pattern?.trim() && !body.scheme && !isLoginType) {
         return { success: false, error: { code: 'validation_error', message: 'URL 模式已填写，请选择认证方案' } }
       }
       if (body.url_pattern?.trim() && !isValidUrlPattern(body.url_pattern.trim())) {
@@ -181,6 +193,10 @@ export function createConfigItemsApi(db: {
           url_pattern: body.url_pattern,
           scheme: body.scheme,
           bearer_prefix: body.bearer_prefix,
+          auth_type: body.auth_type,
+          token_url: body.token_url,
+          token_request_json: body.token_request_json,
+          mint_script: body.mint_script,
         })
 
         if (body.entries?.length > 0) {
@@ -206,6 +222,10 @@ export function createConfigItemsApi(db: {
       url_pattern?: string
       scheme?: string
       bearer_prefix?: string
+      auth_type?: string
+      token_url?: string
+      token_request_json?: string
+      mint_script?: string
       entries?: { config_key: string; name: string; config_desc?: string; required?: boolean }[]
     }) {
       const existing = db.getConfigItem(id)
@@ -237,6 +257,10 @@ export function createConfigItemsApi(db: {
       if (body.url_pattern !== undefined) updates.url_pattern = body.url_pattern
       if (body.scheme !== undefined) updates.scheme = body.scheme
       if (body.bearer_prefix !== undefined) updates.bearer_prefix = body.bearer_prefix
+      if (body.auth_type !== undefined) updates.auth_type = body.auth_type
+      if (body.token_url !== undefined) updates.token_url = body.token_url
+      if (body.token_request_json !== undefined) updates.token_request_json = body.token_request_json
+      if (body.mint_script !== undefined) updates.mint_script = body.mint_script
       updates.updated_at = now()
 
       try {

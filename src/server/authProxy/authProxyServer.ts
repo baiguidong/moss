@@ -7,6 +7,7 @@ import { injectAuth, injectMultiAuth, type InjectAuthResult } from './authInject
 import { handleSecretsRequest } from './secretsApi.js'
 import { secretSubject } from '../secrets/secretSubject.js'
 import type { NexusClient } from '../nexus/nexusClient.js'
+import type { TokenMinter } from './tokenMinter.js'
 
 export interface AuthProxyRule {
   configItemId: number
@@ -16,6 +17,42 @@ export interface AuthProxyRule {
   bearerPrefix: string
   secretNamespace: string
   entries: Array<{ configKey: string; name: string; required: boolean }>
+  // Login-type services: when authType is set and not 'static', the stored
+  // secrets are credentials to mint an access_token from (rather than inject
+  // directly). See tokenMinter.
+  authType?: string | null
+  tokenUrl?: string | null
+  tokenRequestJson?: string | null
+  mintScript?: string | null
+}
+
+/**
+ * Map a `config_items` row (+ its entries) to an AuthProxyRule. Shared by the
+ * startup loader and the `refreshAuthProxyRules` reload path so the mapping —
+ * including the mint fields — stays in one place.
+ */
+export function configItemToRule(
+  item: Record<string, unknown>,
+  getEntries: (configItemId: number) => Array<Record<string, unknown>>,
+): AuthProxyRule {
+  const id = item.id as number
+  return {
+    configItemId: id,
+    name: item.name as string,
+    urlPattern: (item.url_pattern as string) || '',
+    scheme: (item.scheme as string) || '',
+    bearerPrefix: (item.bearer_prefix as string) || '',
+    secretNamespace: item.scope === 'user' ? `user:{userId}:${item.pinyin}` : `system:${item.pinyin}`,
+    entries: (getEntries(id) || []).map(e => ({
+      configKey: e.config_key as string,
+      name: e.name as string,
+      required: !!e.required,
+    })),
+    authType: (item.auth_type as string | null) ?? null,
+    tokenUrl: (item.token_url as string | null) ?? null,
+    tokenRequestJson: (item.token_request_json as string | null) ?? null,
+    mintScript: (item.mint_script as string | null) ?? null,
+  }
 }
 
 interface TokenEntry {
@@ -31,11 +68,17 @@ interface DepartmentPolicyProvider {
 
 const CONTROL_HEADERS = new Set([
   'authorization', 'x-secret-namespace', 'x-secret-key', 'x-secret-scheme',
-  'x-auth-scheme', 'x-remote-url', 'host', 'connection',
+  'x-auth-scheme', 'x-remote-url', 'x-remote-method', 'host', 'connection',
 ])
 
 const UPSTREAM_TIMEOUT_MS = 30_000
 const AUTH_PROXY_PORT = 12013
+// Bind host for the proxy listener. Defaults to loopback (the safe local-runner
+// case). In the Docker runtime, moss-server and the session containers are peers
+// on the `moss-network` bridge, so the proxy must bind on all interfaces
+// (MOSS_AUTH_PROXY_HOST=0.0.0.0) for containers to reach it by container name.
+// It remains protected by the per-session bearer token in every case.
+const AUTH_PROXY_HOST = process.env.MOSS_AUTH_PROXY_HOST?.trim() || '127.0.0.1'
 
 export class AuthProxyServer {
   private server: Server | null = null
@@ -43,11 +86,16 @@ export class AuthProxyServer {
   private rules = new Map<number, AuthProxyRule>()
   private nexusClient: NexusClient | null = null
   private policyProvider: DepartmentPolicyProvider | null = null
+  private tokenMinter: TokenMinter | null = null
 
   constructor() {}
 
   setNexusClient(client: NexusClient): void {
     this.nexusClient = client
+  }
+
+  setTokenMinter(minter: TokenMinter): void {
+    this.tokenMinter = minter
   }
 
   setPolicyProvider(provider: DepartmentPolicyProvider): void {
@@ -93,8 +141,8 @@ export class AuthProxyServer {
         }
       })
 
-      this.server.listen(AUTH_PROXY_PORT, '127.0.0.1', () => {
-        console.log(`[AuthProxy] Listening on 127.0.0.1:${AUTH_PROXY_PORT}`)
+      this.server.listen(AUTH_PROXY_PORT, AUTH_PROXY_HOST, () => {
+        console.log(`[AuthProxy] Listening on ${AUTH_PROXY_HOST}:${AUTH_PROXY_PORT}`)
         resolve()
       })
     })
@@ -135,8 +183,11 @@ export class AuthProxyServer {
       return
     }
 
-    if (req.url !== '/proxy' || req.method !== 'POST') {
-      if (req.method === 'GET' && req.url === '/') {
+    // The forwarding endpoint is /proxy (any method). The intended upstream
+    // method travels in X-Remote-Method (set by fetchurl), so a GET upstream
+    // isn't forced to POST. Match by pathname so a query string doesn't break it.
+    if (parsedUrl.pathname !== '/proxy') {
+      if (req.method === 'GET' && parsedUrl.pathname === '/') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ status: 'ok', service: 'moss-auth-proxy' }))
         return
@@ -246,7 +297,37 @@ export class AuthProxyServer {
         return
       }
 
-      if (['bearer', 'basic'].includes(match.scheme)) {
+      const isLoginType =
+        typeof match.authType === 'string' && match.authType !== '' && match.authType !== 'static'
+      if (isLoginType) {
+        // The stored "secrets" are login credentials: mint (or reuse a cached)
+        // access_token from them and inject it as a Bearer token. The raw
+        // credential never reaches the upstream request or the skill.
+        if (!this.tokenMinter) {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'mint_unavailable', message: 'Token minting is not configured' }))
+          return
+        }
+        const creds: Record<string, string> = {}
+        for (const s of secrets) creds[s.configKey] = s.value
+        const minted = await this.tokenMinter.getOrMint(
+          tokenEntry.userId,
+          {
+            configItemId: match.configItemId,
+            authType: match.authType!,
+            tokenUrl: match.tokenUrl,
+            tokenRequestJson: match.tokenRequestJson,
+            mintScript: match.mintScript,
+          },
+          creds,
+        )
+        if (!minted) {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'mint_failed', message: 'Could not obtain an access token; the user may need to set or refresh their credential' }))
+          return
+        }
+        injectResult = injectAuth({ scheme: 'bearer', secret: minted.token })
+      } else if (['bearer', 'basic'].includes(match.scheme)) {
         injectResult = injectAuth({
           scheme: match.scheme,
           secret: secrets[0].value,
@@ -281,7 +362,9 @@ export class AuthProxyServer {
       hostname: targetFinal.hostname,
       port: targetFinal.port || (targetFinal.protocol === 'https:' ? '443' : '80'),
       path: targetFinal.pathname + targetFinal.search,
-      method: req.method,
+      // Upstream method comes from X-Remote-Method (fetchurl sets it); fall back
+      // to the incoming method for direct callers.
+      method: (req.headers['x-remote-method'] as string | undefined)?.toUpperCase() || req.method,
       headers: upstreamHeaders,
       timeout: UPSTREAM_TIMEOUT_MS,
     }

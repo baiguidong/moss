@@ -68,6 +68,11 @@ interface EntryForm {
   required: boolean
 }
 
+// 认证方式: 'static' = 注入已存密钥 (scheme)；'login' = 用已存凭据换取 access_token
+type AuthMode = 'static' | 'login'
+// login 子类型映射到后端 auth_type
+type LoginAuthType = 'oauth2_password' | 'script'
+
 interface ConfigItemForm {
   name: string
   pinyin: string
@@ -75,8 +80,14 @@ interface ConfigItemForm {
   icon: string
   scope: 'system' | 'user'
   url_pattern: string
+  authMode: AuthMode
   scheme: '' | 'bearer' | 'basic' | 'header' | 'query'
   bearer_prefix: string
+  // login-type fields
+  loginAuthType: LoginAuthType
+  token_url: string
+  token_request_json: string
+  mint_script: string
   entries: EntryForm[]
 }
 
@@ -84,7 +95,9 @@ const emptyEntry: EntryForm = { config_key: '', name: '', config_desc: '', requi
 
 const emptyForm: ConfigItemForm = {
   name: '', pinyin: '', description: '', icon: '', scope: 'system',
-  url_pattern: '', scheme: '', bearer_prefix: '', entries: [{ ...emptyEntry }],
+  url_pattern: '', authMode: 'static', scheme: '', bearer_prefix: '',
+  loginAuthType: 'oauth2_password', token_url: '', token_request_json: '', mint_script: '',
+  entries: [{ ...emptyEntry }],
 }
 
 function nameToPinyin(name: string): string {
@@ -157,6 +170,8 @@ export default function ConfigItemsPage() {
 
   const handleEdit = (item: ConfigItem) => {
     setEditingItem(item)
+    const isLogin = !!item.auth_type && item.auth_type !== 'static'
+    const loginAuthType: LoginAuthType = item.auth_type === 'script' ? 'script' : 'oauth2_password'
     setForm({
       name: item.name,
       pinyin: item.pinyin || '',
@@ -164,8 +179,13 @@ export default function ConfigItemsPage() {
       icon: item.icon || '',
       scope: item.scope,
       url_pattern: item.url_pattern || '',
+      authMode: isLogin ? 'login' : 'static',
       scheme: item.scheme || '',
       bearer_prefix: item.bearer_prefix || '',
+      loginAuthType,
+      token_url: item.token_url || '',
+      token_request_json: item.token_request_json || '',
+      mint_script: item.mint_script || '',
       entries: item.entries.length > 0
         ? item.entries.map(e => ({ config_key: e.config_key, name: e.name, config_desc: e.config_desc || '', required: !!e.required }))
         : [{ ...emptyEntry }],
@@ -176,8 +196,9 @@ export default function ConfigItemsPage() {
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error('请输入配置项名称'); return }
     if (!form.pinyin.trim()) { toast.error('请输入拼音标识'); return }
-    // URL 和 scheme 联动校验：有 URL 时 scheme 必填，与 sudowork-server 一致
-    if (form.url_pattern.trim() && !form.scheme) {
+    const isLogin = form.authMode === 'login'
+    // URL 和认证方式联动校验：有 URL 时必须选择静态方案或登录换取令牌
+    if (form.url_pattern.trim() && !isLogin && !form.scheme) {
       toast.error('URL 模式已填写，请选择认证方案')
       return
     }
@@ -185,7 +206,7 @@ export default function ConfigItemsPage() {
       toast.error('URL 模式格式不正确，需以 http:// 或 https:// 开头，路径中可使用 * 和 ? 通配符')
       return
     }
-    if (form.scheme && form.scheme !== 'bearer' && form.bearer_prefix.trim()) {
+    if (!isLogin && form.scheme && form.scheme !== 'bearer' && form.bearer_prefix.trim()) {
       toast.error('仅 Bearer 方案可以设置 Bearer 前缀')
       return
     }
@@ -193,10 +214,42 @@ export default function ConfigItemsPage() {
       toast.error('请填写所有字段的标识和名称')
       return
     }
-    if (['bearer', 'basic'].includes(form.scheme) && form.entries.length > 1) {
+    if (!isLogin && ['bearer', 'basic'].includes(form.scheme) && form.entries.length > 1) {
       toast.error('Bearer/Basic 方案只允许 1 个字段')
       return
     }
+    // 登录换取令牌的校验
+    if (isLogin) {
+      if (form.loginAuthType === 'script' && !form.mint_script.trim()) {
+        toast.error('请填写登录脚本路径 (mint_script)')
+        return
+      }
+      if (form.loginAuthType === 'oauth2_password' && !form.token_url.trim()) {
+        toast.error('请填写令牌端点 URL (token_url)')
+        return
+      }
+      if (form.token_request_json.trim()) {
+        try { JSON.parse(form.token_request_json) } catch { toast.error('请求配方 (token_request_json) 不是合法 JSON'); return }
+      }
+    }
+    // login-type 与 static 二选一：互斥地清空对侧字段
+    const authPayload = isLogin
+      ? {
+          auth_type: form.loginAuthType,
+          token_url: form.loginAuthType === 'oauth2_password' ? (form.token_url.trim() || undefined) : undefined,
+          token_request_json: form.token_request_json.trim() || undefined,
+          mint_script: form.loginAuthType === 'script' ? (form.mint_script.trim() || undefined) : undefined,
+          scheme: undefined,
+          bearer_prefix: undefined,
+        }
+      : {
+          auth_type: 'static',
+          token_url: undefined,
+          token_request_json: undefined,
+          mint_script: undefined,
+          scheme: form.scheme || undefined,
+          bearer_prefix: form.bearer_prefix.trim() || undefined,
+        }
     setIsSaving(true)
     try {
       const apiEntries = form.entries.map(e => ({ ...e, required: e.required ? 1 : 0 }))
@@ -208,8 +261,7 @@ export default function ConfigItemsPage() {
           pinyin: form.pinyin.trim() || undefined,
           scope: form.scope,
           url_pattern: form.url_pattern.trim() || undefined,
-          scheme: form.scheme || undefined,
-          bearer_prefix: form.bearer_prefix.trim() || undefined,
+          ...authPayload,
           entries: apiEntries,
         })
       } else {
@@ -220,8 +272,7 @@ export default function ConfigItemsPage() {
           pinyin: form.pinyin.trim() || undefined,
           scope: form.scope,
           url_pattern: form.url_pattern.trim() || undefined,
-          scheme: form.scheme || undefined,
-          bearer_prefix: form.bearer_prefix.trim() || undefined,
+          ...authPayload,
           entries: apiEntries,
         })
       }
@@ -338,7 +389,9 @@ export default function ConfigItemsPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    {item.scheme ? <Badge variant="secondary">{schemeLabels[item.scheme]}</Badge> : <span className="text-xs text-muted-foreground">-</span>}
+                    {item.auth_type && item.auth_type !== 'static'
+                      ? <Badge variant="secondary">{item.auth_type === 'script' ? '登录(脚本)' : '登录(换取令牌)'}</Badge>
+                      : item.scheme ? <Badge variant="secondary">{schemeLabels[item.scheme]}</Badge> : <span className="text-xs text-muted-foreground">-</span>}
                   </TableCell>
                   <TableCell><span className="text-xs text-muted-foreground font-mono truncate max-w-[200px] block">{item.url_pattern || '-'}</span></TableCell>
                   <TableCell>{item.entries.length}</TableCell>
@@ -447,44 +500,121 @@ export default function ConfigItemsPage() {
               <Label>描述</Label>
               <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="配置项说明" rows={2} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>URL 模式</Label>
-                <Input value={form.url_pattern} onChange={e => setForm(f => ({ ...f, url_pattern: e.target.value }))} placeholder="https://api.example.com/*" />
-                {form.url_pattern.trim() && !isValidUrlPattern(form.url_pattern) && (
-                  <p className="text-xs text-destructive">URL 格式不正确，需以 http:// 或 https:// 开头，路径中可使用 * 和 ? 通配符</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>认证方案 {form.url_pattern.trim() ? <span className="text-destructive">*</span> : ''}</Label>
-                <div className="flex gap-2">
-                  <Select
-                    value={form.scheme || undefined}
-                    onValueChange={v => setForm(f => ({ ...f, scheme: v as ConfigItemForm['scheme'] }))}
-                  >
-                    <SelectTrigger className="flex-1"><SelectValue placeholder="不设置（可选）" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="bearer">Bearer Token</SelectItem>
-                      <SelectItem value="basic">Basic Auth</SelectItem>
-                      <SelectItem value="header">自定义 Header</SelectItem>
-                      <SelectItem value="query">Query 参数</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {form.scheme && (
-                    <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setForm(f => ({ ...f, scheme: '', bearer_prefix: '' }))} title="清除">
-                      <X className="size-4" />
-                    </Button>
+            <div className="space-y-2">
+              <Label>URL 模式</Label>
+              <Input value={form.url_pattern} onChange={e => setForm(f => ({ ...f, url_pattern: e.target.value }))} placeholder="https://api.example.com/*" />
+              {form.url_pattern.trim() && !isValidUrlPattern(form.url_pattern) && (
+                <p className="text-xs text-destructive">URL 格式不正确，需以 http:// 或 https:// 开头，路径中可使用 * 和 ? 通配符</p>
+              )}
+            </div>
+
+            {/* 认证方式: 静态注入 vs 登录换取令牌 */}
+            <div className="space-y-2">
+              <Label>认证方式 {form.url_pattern.trim() ? <span className="text-destructive">*</span> : ''}</Label>
+              <Select
+                value={form.authMode}
+                onValueChange={v => setForm(f => ({ ...f, authMode: v as AuthMode }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="static">静态注入（直接使用已存密钥/令牌）</SelectItem>
+                  <SelectItem value="login">登录换取令牌（用已存凭据登录，获取短期 access_token）</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {form.authMode === 'static'
+                  ? '把用户已保存的密钥按所选方案直接注入到外部请求。'
+                  : '代理用已保存的凭据（如用户名/密码）登录目标服务，换取短期 access_token 并注入；令牌过期自动重新登录（cron 等无人值守场景也可用）。'}
+              </p>
+            </div>
+
+            {form.authMode === 'static' && (
+              <>
+                <div className="space-y-2">
+                  <Label>认证方案 {form.url_pattern.trim() ? <span className="text-destructive">*</span> : ''}</Label>
+                  <div className="flex gap-2">
+                    <Select
+                      value={form.scheme || undefined}
+                      onValueChange={v => setForm(f => ({ ...f, scheme: v as ConfigItemForm['scheme'] }))}
+                    >
+                      <SelectTrigger className="flex-1"><SelectValue placeholder="不设置（可选）" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bearer">Bearer Token</SelectItem>
+                        <SelectItem value="basic">Basic Auth</SelectItem>
+                        <SelectItem value="header">自定义 Header</SelectItem>
+                        <SelectItem value="query">Query 参数</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {form.scheme && (
+                      <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setForm(f => ({ ...f, scheme: '', bearer_prefix: '' }))} title="清除">
+                        <X className="size-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {form.url_pattern.trim() && !form.scheme && (
+                    <p className="text-xs text-destructive">填写了 URL 模式后，认证方案为必填项</p>
                   )}
                 </div>
-                {form.url_pattern.trim() && !form.scheme && (
-                  <p className="text-xs text-destructive">填写了 URL 模式后，认证方案为必填项</p>
+                {form.scheme === 'bearer' && (
+                  <div className="space-y-2">
+                    <Label>Bearer 前缀</Label>
+                    <Input value={form.bearer_prefix} onChange={e => setForm(f => ({ ...f, bearer_prefix: e.target.value }))} placeholder="Bearer" />
+                  </div>
                 )}
-              </div>
-            </div>
-            {form.scheme === 'bearer' && (
-              <div className="space-y-2">
-                <Label>Bearer 前缀</Label>
-                <Input value={form.bearer_prefix} onChange={e => setForm(f => ({ ...f, bearer_prefix: e.target.value }))} placeholder="Bearer" />
+              </>
+            )}
+
+            {form.authMode === 'login' && (
+              <div className="space-y-3 rounded-lg border p-3">
+                <div className="space-y-2">
+                  <Label>登录方式</Label>
+                  <Select
+                    value={form.loginAuthType}
+                    onValueChange={v => setForm(f => ({ ...f, loginAuthType: v as LoginAuthType }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="oauth2_password">声明式令牌端点（单次 POST 换取令牌）</SelectItem>
+                      <SelectItem value="script">登录脚本（多步/加签等复杂流程）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {form.loginAuthType === 'oauth2_password' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>令牌端点 URL <span className="text-destructive">*</span></Label>
+                      <Input value={form.token_url} onChange={e => setForm(f => ({ ...f, token_url: e.target.value }))} placeholder="https://idp.example.com/oauth/token" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>请求配方（token_request_json，可选）</Label>
+                      <Textarea
+                        value={form.token_request_json}
+                        onChange={e => setForm(f => ({ ...f, token_request_json: e.target.value }))}
+                        placeholder={'{\n  "placement": "form",\n  "params": { "grant_type": "password", "client_id": "..." },\n  "cred_map": { "username": "username", "password": "password" },\n  "token_path": "access_token",\n  "expiry_path": "expires_in"\n}'}
+                        rows={6}
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        描述如何构造登录请求：placement(form/json/basic)、静态 params、把已存字段映射到请求参数的 cred_map、以及响应里令牌/有效期的取值路径。留空则按默认（form 提交，读取 access_token / expires_in）。
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {form.loginAuthType === 'script' && (
+                  <div className="space-y-2">
+                    <Label>登录脚本路径（mint_script） <span className="text-destructive">*</span></Label>
+                    <Input value={form.mint_script} onChange={e => setForm(f => ({ ...f, mint_script: e.target.value }))} placeholder="/app/deploy/your_login.sh" />
+                    <p className="text-xs text-muted-foreground">
+                      服务端可执行脚本的绝对路径（在 moss-server 容器内）。脚本从环境变量 <code>MINT_CREDS</code>(JSON) 读取已存凭据，向标准输出打印一行 <code>{'{"access_token":"...","expiresIn":<秒>}'}</code>。需要在 moss-server 容器内可访问（如通过挂载）。
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  下方“字段定义”是用户需要在「我的凭据」中填写的登录凭据字段（如 username、password），脚本/请求配方会用到它们。
+                </p>
               </div>
             )}
 
@@ -492,11 +622,11 @@ export default function ConfigItemsPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label>字段定义</Label>
-                <Button variant="outline" size="sm" onClick={addEntry} disabled={!!form.scheme && ['bearer', 'basic'].includes(form.scheme) && form.entries.length >= 1}>
+                <Button variant="outline" size="sm" onClick={addEntry} disabled={form.authMode === 'static' && !!form.scheme && ['bearer', 'basic'].includes(form.scheme) && form.entries.length >= 1}>
                   <Plus className="size-3 mr-1" />添加字段
                 </Button>
               </div>
-              {form.scheme && ['bearer', 'basic'].includes(form.scheme) && form.entries.length >= 1 && (
+              {form.authMode === 'static' && form.scheme && ['bearer', 'basic'].includes(form.scheme) && form.entries.length >= 1 && (
                 <p className="text-xs text-muted-foreground">{schemeLabels[form.scheme]} 方案仅支持 1 个字段</p>
               )}
               {form.entries.map((entry, idx) => (

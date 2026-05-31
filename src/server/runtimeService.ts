@@ -876,11 +876,17 @@ export class RuntimeService {
       runnerEnv.ANTHROPIC_MODEL = systemSettings.model
     }
 
-    // Inject Auth Proxy token for scode process
+    // Inject Auth Proxy token for scode process. The URL must be reachable from
+    // wherever the session runs: for the local runner that's loopback, but for
+    // the Docker runtime moss-server and the session container are peers on the
+    // `moss-network` bridge, so MOSS_AUTH_PROXY_URL should point at the
+    // moss-server container by name (e.g. http://moss-server:12013). Defaults to
+    // localhost for the non-Docker path.
     if (this.authProxy) {
       const authToken = randomUUID()
-      runnerEnv.SUDOWORK_AUTH_PROXY_URL = 'http://localhost:12013'
-      runnerEnv.SUDOWORK_AUTH_PROXY_BASE_URL = 'http://localhost:12013'
+      const proxyUrl = process.env.MOSS_AUTH_PROXY_URL?.trim() || 'http://localhost:12013'
+      runnerEnv.SUDOWORK_AUTH_PROXY_URL = proxyUrl
+      runnerEnv.SUDOWORK_AUTH_PROXY_BASE_URL = proxyUrl
       runnerEnv.SUDOWORK_AUTH_PROXY_TOKEN = authToken
       // Token will be registered after spawn (needs pid)
       this.sessionTokens.set(session.sessionId, { token: authToken, pid: -1 })

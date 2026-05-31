@@ -85,6 +85,7 @@ import './sources/wecomDrive.js'
 import './corpapps/wecomApp.js'
 import { getUserProfile } from './api/userProfile.js'
 import { createConfigItemsApi } from './api/configItems.js'
+import { configItemToRule } from './authProxy/authProxyServer.js'
 import { createSecretsApi } from './api/secrets.js'
 import { createCronApi } from './api/cron.js'
 import { CronService } from './services/cron/CronService.js'
@@ -1153,19 +1154,7 @@ export function startServer(
     const ap = runtime.authProxy
     if (!ap) return
     const items = runtime.store.getAllActiveConfigItems()
-    ap.updateRules(items.map(item => ({
-      configItemId: item.id as number,
-      name: item.name as string,
-      urlPattern: (item.url_pattern as string) || '',
-      scheme: (item.scheme as string) || '',
-      bearerPrefix: (item.bearer_prefix as string) || '',
-      secretNamespace: item.scope === 'user' ? `user:{userId}:${item.pinyin}` : `system:${item.pinyin}`,
-      entries: (runtime.store.getConfigEntries(item.id as number) || []).map((e: any) => ({
-        configKey: e.config_key as string,
-        name: e.name as string,
-        required: (e.required as number) === 1,
-      })),
-    })))
+    ap.updateRules(items.map(item => configItemToRule(item, id => runtime.store.getConfigEntries(id))))
   }
 
   const documentStore = new DocumentStore(runtime.store)
@@ -2809,6 +2798,48 @@ export function startServer(
         return
       }
 
+      // ---- Agent-facing corp-auth endpoint (called by the `corpauth` CLI inside scode) ----
+      // Returns the current user's corp OAuth2 provider access_token so an
+      // assistant can authenticate calls to internal corp services. Gated
+      // per-assistant: an in-container session (auth.assistantId set) is allowed
+      // only if its `_moss_meta.json` has `enableCorpAuth === true`; admins
+      // (admin:settings) are allowed; everyone else is denied (403). A gated-in
+      // caller with no/expired provider token gets 200 `{ access_token: null }`
+      // (e.g. password-login users) so the skill can decide to ask for re-login.
+      const resolveAgentCorpAuthAccess = async (): Promise<boolean | undefined> => {
+        if (typeof auth.assistantId === 'string' && auth.assistantId.length > 0) {
+          try {
+            const dir = await findAssistantDir(auth.assistantId)
+            if (!dir) return false
+            const meta = await readAssistantMeta(dir.dir)
+            return (meta as { enableCorpAuth?: unknown } | null)?.enableCorpAuth === true
+          } catch {
+            return false
+          }
+        }
+        if (hasScope(auth.scopes, 'admin:settings')) {
+          return true
+        }
+        return undefined
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/agent/corp-auth/token') {
+        const allowed = await resolveAgentCorpAuthAccess()
+        if (allowed === undefined || allowed === false) {
+          writeJson(res, 403, {
+            error: { code: 'forbidden', message: 'corp auth not enabled for this assistant' },
+          })
+          return
+        }
+        const tok = authService.getProviderTokenForUser(auth.userId)
+        if (!tok) {
+          writeJson(res, 200, { access_token: null })
+          return
+        }
+        writeJson(res, 200, { access_token: tok.token, expires_at: tok.expiresAt })
+        return
+      }
+
       // ---- Agent-facing corp-app endpoints (called by the `corpapp` CLI inside scode) ----
       // Auth model mirrors wikis: an in-container session token (auth.assistantId
       // set) is restricted to that assistant's `enabledCorpApps` from its
@@ -4252,6 +4283,8 @@ export function startServer(
           enabledCorpApps: Array.isArray(body.enabledCorpApps)
             ? body.enabledCorpApps.filter((s): s is string => typeof s === 'string')
             : undefined,
+          enableCorpAuth:
+            typeof body.enableCorpAuth === 'boolean' ? body.enableCorpAuth : undefined,
           agent_type:
             body.agent_type === 'chat' || body.agent_type === 'workflow'
               ? body.agent_type
@@ -4338,6 +4371,8 @@ export function startServer(
               Array.isArray(updates.enabledCorpApps)
                 ? updates.enabledCorpApps.filter((s: unknown) => typeof s === 'string')
                 : undefined,
+            enableCorpAuth:
+              typeof updates.enableCorpAuth === 'boolean' ? updates.enableCorpAuth : undefined,
             skills:
               Array.isArray(updates.skills)
                 ? updates.skills.filter((s: unknown) => typeof s === 'string')
@@ -4565,6 +4600,7 @@ export function startServer(
           enabledSkills: Array.isArray(body.enabled_skills) ? body.enabled_skills : [],
           enabledWikis: Array.isArray(body.enabled_wikis) ? body.enabled_wikis : [],
           enabledCorpApps: Array.isArray(body.enabled_corp_apps) ? body.enabled_corp_apps : [],
+          enableCorpAuth: body.enable_corp_auth === true,
           agent_type: body.agent_type || 'chat',
           memory_mode: body.memory_mode || 'session',
           visible_to: body.visible_to || null,
@@ -4788,6 +4824,7 @@ export function startServer(
               if (body.enabledSkills !== undefined) meta.enabledSkills = body.enabledSkills as string[]
               if (body.enabledWikis !== undefined) meta.enabledWikis = body.enabledWikis as string[]
               if (body.enabledCorpApps !== undefined) meta.enabledCorpApps = body.enabledCorpApps as string[]
+              if (body.enableCorpAuth !== undefined) meta.enableCorpAuth = body.enableCorpAuth as boolean
               if (body.skills !== undefined) meta.skills = body.skills as string[]
               if (body.workflow !== undefined) meta.workflow = body.workflow as AssistantStoreMeta['workflow']
               if (typeof body.rules === 'string') {

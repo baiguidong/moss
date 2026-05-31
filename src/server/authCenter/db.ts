@@ -246,11 +246,25 @@ export class AuthCenterDb {
       );
 
       CREATE TABLE IF NOT EXISTS oauth_provider_tokens (
-        jti TEXT PRIMARY KEY,
+        user_id TEXT PRIMARY KEY,
         token_enc TEXT NOT NULL,
         token_iv TEXT NOT NULL,
         expires_at INTEGER NOT NULL
       );
+
+      -- Per-(user, service) access tokens minted by the auth proxy from the
+      -- user's stored login credential, keyed by config_item_id (the 凭据).
+      -- Distinct from oauth_provider_tokens (the single moss-login IdP token,
+      -- cleared on logout) — these have their own per-service lifecycle.
+      CREATE TABLE IF NOT EXISTS minted_service_tokens (
+        user_id TEXT NOT NULL,
+        config_item_id INTEGER NOT NULL,
+        token_enc TEXT NOT NULL,
+        token_iv TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, config_item_id)
+      );
+      CREATE INDEX IF NOT EXISTS minted_service_tokens_expiry_idx ON minted_service_tokens (expires_at);
 
       CREATE TABLE IF NOT EXISTS server_config (
         key TEXT PRIMARY KEY,
@@ -266,6 +280,32 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS revoked_tokens_expiry_idx ON revoked_tokens (expires_at);
       CREATE INDEX IF NOT EXISTS oauth_provider_tokens_expiry_idx ON oauth_provider_tokens (expires_at);
     `)
+
+    // oauth_provider_tokens was originally keyed by the login JWT's jti; it is
+    // now keyed by user_id (so any of a user's sessions — including the runtime
+    // container's SESSION_TOKEN — can resolve the token, and refreshes upsert
+    // the same row). SQLite can't change a PRIMARY KEY in place, so on an older
+    // DB we drop + recreate. Existing rows are short-lived, now-unreachable
+    // session tokens — safe to discard (callers re-login/refresh; the null
+    // contract covers the gap). Self-healing and idempotent on every boot.
+    {
+      const cols = this.db
+        .prepare('PRAGMA table_info(oauth_provider_tokens)')
+        .all() as SqlRow[]
+      const hasUserId = cols.some(c => String(c.name) === 'user_id')
+      if (cols.length > 0 && !hasUserId) {
+        this.db.exec(`
+          DROP TABLE oauth_provider_tokens;
+          CREATE TABLE oauth_provider_tokens (
+            user_id TEXT PRIMARY KEY,
+            token_enc TEXT NOT NULL,
+            token_iv TEXT NOT NULL,
+            expires_at INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS oauth_provider_tokens_expiry_idx ON oauth_provider_tokens (expires_at);
+        `)
+      }
+    }
 
     // Older databases may need the column added before SQLite can create the index.
     this.ensureColumn(
@@ -778,43 +818,93 @@ export class AuthCenterDb {
     this.db.prepare(`
       DELETE FROM oauth_provider_tokens WHERE expires_at < ?
     `).run(nowSec)
+    this.db.prepare(`
+      DELETE FROM minted_service_tokens WHERE expires_at < ?
+    `).run(nowSec)
   }
 
   // OAuth2 provider-token store: holds the provider access_token encrypted,
-  // keyed by the moss access JWT's jti, so moss can call provider resources
-  // later. The token never enters the moss JWT or reaches the client.
-  putProviderToken(jti: string, token: string, expiresAt: number): void {
+  // keyed by user_id, so any of a user's sessions (including the runtime
+  // container's SESSION_TOKEN) can resolve it and refreshes overwrite the same
+  // row. expires_at == the provider token's lifetime. The token never enters
+  // the moss JWT or reaches the client.
+  putProviderToken(userId: string, token: string, expiresAt: number): void {
     const { enc, iv } = this.#encryptProviderToken(token)
     this.db.prepare(`
-      INSERT INTO oauth_provider_tokens (jti, token_enc, token_iv, expires_at)
+      INSERT INTO oauth_provider_tokens (user_id, token_enc, token_iv, expires_at)
       VALUES (?, ?, ?, ?)
-      ON CONFLICT(jti) DO UPDATE SET
+      ON CONFLICT(user_id) DO UPDATE SET
         token_enc = excluded.token_enc,
         token_iv = excluded.token_iv,
         expires_at = excluded.expires_at
-    `).run(jti, enc, iv, expiresAt)
+    `).run(userId, enc, iv, expiresAt)
   }
 
-  getProviderToken(jti: string): string | null {
+  getProviderToken(userId: string): { token: string; expiresAt: number } | null {
     const row = this.db.prepare(`
-      SELECT token_enc, token_iv, expires_at FROM oauth_provider_tokens WHERE jti = ? LIMIT 1
-    `).get(jti) as SqlRow | undefined
+      SELECT token_enc, token_iv, expires_at FROM oauth_provider_tokens WHERE user_id = ? LIMIT 1
+    `).get(userId) as SqlRow | undefined
     if (!row) return null
     if (Number(row.expires_at) < Math.floor(Date.now() / 1000)) {
-      this.deleteProviderToken(jti)
+      this.deleteProviderToken(userId)
       return null
     }
     try {
-      return this.#decryptProviderToken(String(row.token_enc), String(row.token_iv))
+      return {
+        token: this.#decryptProviderToken(String(row.token_enc), String(row.token_iv)),
+        expiresAt: Number(row.expires_at),
+      }
     } catch {
       return null
     }
   }
 
-  deleteProviderToken(jti: string): void {
+  deleteProviderToken(userId: string): void {
     this.db.prepare(`
-      DELETE FROM oauth_provider_tokens WHERE jti = ?
-    `).run(jti)
+      DELETE FROM oauth_provider_tokens WHERE user_id = ?
+    `).run(userId)
+  }
+
+  // Per-(user, service) minted access tokens. Same AES-256-GCM encryption as
+  // oauth_provider_tokens (reuses #encrypt/#decryptProviderToken), but keyed by
+  // (user_id, config_item_id) so each third-party service has its own cached
+  // token with its own expiry.
+  putMintedToken(userId: string, configItemId: number, token: string, expiresAt: number): void {
+    const { enc, iv } = this.#encryptProviderToken(token)
+    this.db.prepare(`
+      INSERT INTO minted_service_tokens (user_id, config_item_id, token_enc, token_iv, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, config_item_id) DO UPDATE SET
+        token_enc = excluded.token_enc,
+        token_iv = excluded.token_iv,
+        expires_at = excluded.expires_at
+    `).run(userId, configItemId, enc, iv, expiresAt)
+  }
+
+  getMintedToken(userId: string, configItemId: number): { token: string; expiresAt: number } | null {
+    const row = this.db.prepare(`
+      SELECT token_enc, token_iv, expires_at FROM minted_service_tokens
+      WHERE user_id = ? AND config_item_id = ? LIMIT 1
+    `).get(userId, configItemId) as SqlRow | undefined
+    if (!row) return null
+    if (Number(row.expires_at) < Math.floor(Date.now() / 1000)) {
+      this.deleteMintedToken(userId, configItemId)
+      return null
+    }
+    try {
+      return {
+        token: this.#decryptProviderToken(String(row.token_enc), String(row.token_iv)),
+        expiresAt: Number(row.expires_at),
+      }
+    } catch {
+      return null
+    }
+  }
+
+  deleteMintedToken(userId: string, configItemId: number): void {
+    this.db.prepare(`
+      DELETE FROM minted_service_tokens WHERE user_id = ? AND config_item_id = ?
+    `).run(userId, configItemId)
   }
 
   // AES-256-GCM. The key is derived from the existing jwt_secret via HKDF, so

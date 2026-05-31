@@ -23,6 +23,24 @@ COPY ./cli/corpapp/*.go ./
 COPY ./cli/corpapp/client/*.go ./client/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/corpapp .
 
+# Stage 1c: build the Corp Auth (企业鉴权) CLI (Go, no deps)
+FROM golang:1.22-alpine AS corpauth-builder
+WORKDIR /src
+COPY ./cli/corpauth/go.mod ./
+# go.sum intentionally absent — corpauth CLI has zero external deps
+COPY ./cli/corpauth/*.go ./
+COPY ./cli/corpauth/client/*.go ./client/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/corpauth .
+
+# Stage 1d: build the fetchurl CLI (Go, no deps) — curl-compatible HTTP through
+# the auth proxy so skills reach authenticated services without handling creds.
+FROM golang:1.22-alpine AS fetchurl-builder
+WORKDIR /src
+COPY ./cli/fetchurl/go.mod ./
+# go.sum intentionally absent — fetchurl CLI has zero external deps
+COPY ./cli/fetchurl/*.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/fetchurl .
+
 # Stage 2: runtime image
 FROM ubuntu:24.04
 
@@ -59,13 +77,14 @@ RUN ARCH=$(echo ${TARGETARCH} | sed 's/amd64/x64/' | sed 's/arm64/arm64/') && \
 # 4. 设置别名或链接，确保直接输入 scode 就能运行
 RUN ln -s /usr/local/bin/scode /usr/bin/scode
 
-# 5. Document Center wiki CLI (built in stage 1)
+# 5. Agent-facing CLIs (built in the wiki / corpapp / corpauth / fetchurl stages):
+#    wiki (Document Center), corpapp (企业应用), corpauth (企业鉴权),
+#    fetchurl (authenticated HTTP via the auth proxy).
 COPY --from=wiki-builder /out/wiki /usr/local/bin/wiki
-RUN chmod +x /usr/local/bin/wiki
-
-# 5b. Corp App (企业应用) CLI (built in stage 1b)
 COPY --from=corpapp-builder /out/corpapp /usr/local/bin/corpapp
-RUN chmod +x /usr/local/bin/corpapp
+COPY --from=corpauth-builder /out/corpauth /usr/local/bin/corpauth
+COPY --from=fetchurl-builder /out/fetchurl /usr/local/bin/fetchurl
+RUN chmod +x /usr/local/bin/wiki /usr/local/bin/corpapp /usr/local/bin/corpauth /usr/local/bin/fetchurl
 
 # 6. 设置工作目录（Moss 创建会话容器时通常会挂载这里）
 WORKDIR /workspace

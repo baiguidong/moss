@@ -146,6 +146,12 @@ export class DockerBackend implements SessionBackend {
       'ANTHROPIC_BASE_URL',
       'ANTHROPIC_AUTH_TOKEN',
       'PROXY_AUTH_TOKEN',
+      // Auth proxy (skills reach external services through it; URL must be the
+      // moss-server container name on moss-network, not localhost — see
+      // MOSS_AUTH_PROXY_URL in runtimeService).
+      'SUDOWORK_AUTH_PROXY_URL',
+      'SUDOWORK_AUTH_PROXY_BASE_URL',
+      'SUDOWORK_AUTH_PROXY_TOKEN',
     ]
 
     const env = buildSessionEnv(options, {
