@@ -128,10 +128,12 @@ export class SourceSyncWorker {
         .finally(() => {
           if (!this.stopped) {
             this.timer = setTimeout(tick, TICK_INTERVAL_MS)
+            this.timer.unref()
           }
         })
     }
     this.timer = setTimeout(tick, 1_000)
+    this.timer.unref()
 
     const cleanupTick = () => {
       if (this.stopped) return
@@ -148,11 +150,13 @@ export class SourceSyncWorker {
       } finally {
         if (!this.stopped) {
           this.cleanupTimer = setTimeout(cleanupTick, DAILY_CLEANUP_INTERVAL_MS)
+          this.cleanupTimer.unref()
         }
       }
     }
     // First cleanup fires a minute after boot so it doesn't compete with startup work.
     this.cleanupTimer = setTimeout(cleanupTick, 60_000)
+    this.cleanupTimer.unref()
 
     console.log('[SourceSyncWorker] started')
   }
