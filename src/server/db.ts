@@ -267,34 +267,34 @@ export class DirectConnectStore {
     `).run(nowTs, nowTs)
 
     // Migration: add assistant_name column if it doesn't exist
-    try {
+    const sessionsColumns = this.db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[]
+    if (!sessionsColumns.some(col => col.name === 'assistant_name')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`)
-    } catch {
-      // Column already exists, ignore
+      console.log('[DB] Added assistant_name column to sessions')
     }
 
     // Migration: add source and channel_chat_id columns if they don't exist
-    try {
+    if (!sessionsColumns.some(col => col.name === 'source')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN source TEXT`)
       console.log('[DB] Added source column to sessions')
-    } catch (error) {
-      // Column already exists, ignore
     }
-    try {
+    if (!sessionsColumns.some(col => col.name === 'channel_chat_id')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN channel_chat_id TEXT`)
       console.log('[DB] Added channel_chat_id column to sessions')
-    } catch (error) {
-      // Column already exists, ignore
     }
-    try {
+
+    // Migration: add org_id to channel_plugins
+    const channelPluginsColumns = this.db.prepare(`PRAGMA table_info(channel_plugins)`).all() as { name: string }[]
+    if (!channelPluginsColumns.some(col => col.name === 'org_id')) {
       this.db.exec(`ALTER TABLE channel_plugins ADD COLUMN org_id TEXT`)
-    } catch {
-      // Column already exists, ignore
+      console.log('[DB] Added org_id column to channel_plugins')
     }
-    try {
+
+    // Migration: add user_id to channel_pairing_requests
+    const pairingRequestsColumns = this.db.prepare(`PRAGMA table_info(channel_pairing_requests)`).all() as { name: string }[]
+    if (!pairingRequestsColumns.some(col => col.name === 'user_id')) {
       this.db.exec(`ALTER TABLE channel_pairing_requests ADD COLUMN user_id TEXT`)
-    } catch {
-      // Column already exists, ignore
+      console.log('[DB] Added user_id column to channel_pairing_requests')
     }
     // Migrate channel_users UNIQUE constraint from (platform_user_id, platform_type)
     // to (platform_user_id, platform_type, user_id) for multi-user isolation.
@@ -418,25 +418,26 @@ export class DirectConnectStore {
     // Migration: config_items mint/auth columns. createConfigItem/updateConfigItem
     // have long referenced these columns in their INSERT/UPDATE, but the CREATE
     // TABLE never defined them — so those writes throw against an unmigrated DB.
-    // Add them here (idempotent try/catch ALTER). auth_type drives the auth proxy:
+    // Add them here (idempotent check via PRAGMA). auth_type drives the auth proxy:
     // absent/'static' keeps today's inject-stored-secret behavior; the oauth2_* /
     // 'script' values enable per-(user,service) token minting (token_url +
     // token_request_json recipe, or mint_script fallback).
-    for (const col of [
-      'auth_type TEXT',
-      'auth_url TEXT',
-      'token_url TEXT',
-      'client_id TEXT',
-      'client_secret_key TEXT',
-      'refresh_token_key TEXT',
-      'default_scopes TEXT',
-      'token_request_json TEXT',
-      'mint_script TEXT',
-    ]) {
-      try {
-        this.db.exec(`ALTER TABLE config_items ADD COLUMN ${col}`)
-      } catch {
-        // Column already exists, ignore.
+    const configItemsColumns = this.db.prepare(`PRAGMA table_info(config_items)`).all() as { name: string }[]
+    const columnsToAdd = [
+      ['auth_type', 'auth_type TEXT'],
+      ['auth_url', 'auth_url TEXT'],
+      ['token_url', 'token_url TEXT'],
+      ['client_id', 'client_id TEXT'],
+      ['client_secret_key', 'client_secret_key TEXT'],
+      ['refresh_token_key', 'refresh_token_key TEXT'],
+      ['default_scopes', 'default_scopes TEXT'],
+      ['token_request_json', 'token_request_json TEXT'],
+      ['mint_script', 'mint_script TEXT'],
+    ] as const
+    for (const [colName, colDef] of columnsToAdd) {
+      if (!configItemsColumns.some(col => col.name === colName)) {
+        this.db.exec(`ALTER TABLE config_items ADD COLUMN ${colDef}`)
+        console.log(`[DB] Added ${colName} column to config_items`)
       }
     }
 
@@ -817,13 +818,11 @@ export class DirectConnectStore {
         ON cron_job_runs (session_id);
     `)
 
-    try {
+    // Migration: add lease_until to cron_jobs
+    const cronJobsColumns = this.db.prepare(`PRAGMA table_info(cron_jobs)`).all() as { name: string }[]
+    if (!cronJobsColumns.some(col => col.name === 'lease_until')) {
       this.db.exec(`ALTER TABLE cron_jobs ADD COLUMN lease_until INTEGER;`)
-    } catch (err) {
-      // Column already exists - this is expected for migrated databases
-      if (err instanceof Error && !err.message.includes('duplicate column')) {
-        console.warn('[DB] Failed to add lease_until column to cron_jobs:', err)
-      }
+      console.log('[DB] Added lease_until column to cron_jobs')
     }
 
     // MCP Management tables
