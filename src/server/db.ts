@@ -819,7 +819,12 @@ export class DirectConnectStore {
 
     try {
       this.db.exec(`ALTER TABLE cron_jobs ADD COLUMN lease_until INTEGER;`)
-    } catch {}
+    } catch (err) {
+      // Column already exists - this is expected for migrated databases
+      if (err instanceof Error && !err.message.includes('duplicate column')) {
+        console.warn('[DB] Failed to add lease_until column to cron_jobs:', err)
+      }
+    }
 
     // MCP Management tables
     McpStore.ensureTables(this.db)
