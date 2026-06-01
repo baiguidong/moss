@@ -61,6 +61,7 @@ export class CronService {
     this.checkInterval = setInterval(() => {
       this.checkDueJobs()
     }, 60000)
+    this.checkInterval.unref()
 
     // Initial check immediately
     this.checkDueJobs()

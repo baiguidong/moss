@@ -44,6 +44,7 @@ function startHeartbeat(): void {
       heartbeatTimer = null
     }
   }, HEARTBEAT_INTERVAL_MS)
+  heartbeatTimer.unref()
 }
 
 export function broadcastMcpEvent(event: McpSseEvent): void {
