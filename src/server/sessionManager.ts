@@ -296,7 +296,10 @@ export class SessionManager {
       for (const socket of record.sockets) {
         try {
           socket.close()
-        } catch {}
+        } catch (err) {
+          // Socket may already be closed or disconnected
+          console.warn('[SessionManager] Failed to close socket on exit:', err)
+        }
       }
       this.#clearTimeout(record)
       this.#sessions.delete(record.id)

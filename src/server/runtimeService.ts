@@ -167,7 +167,12 @@ async function readRunnerFailure(
         statusError = `Runner failed before attach (code=${parsed.code ?? 'null'}, signal=${parsed.signal ?? 'null'})`
       }
     }
-  } catch {}
+  } catch (err) {
+    // Status file may not exist or be malformed - this is expected during normal startup
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn('[readRunnerFailure] Failed to read status file:', err)
+    }
+  }
 
   let stderrTail: string | null = null
   try {
@@ -178,7 +183,12 @@ async function readRunnerFailure(
         stderrTail = lines.slice(-20).join('\n').trim() || null
       }
     }
-  } catch {}
+  } catch (err) {
+    // Stderr log may not exist - this is expected
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn('[readRunnerFailure] Failed to read stderr log:', err)
+    }
+  }
 
   if (statusError && stderrTail) {
     return `${statusError}\n${stderrTail}`
@@ -450,7 +460,10 @@ export class RuntimeService {
     if (runtime.engine === 'scode') {
       try {
         await mkdir(runtime.configDir!, { recursive: true })
-      } catch {}
+      } catch (err) {
+        // Directory may already exist or parent may be read-only
+        console.warn('[RuntimeService] Failed to create config directory:', runtime.configDir, err)
+      }
     }
 
     try {
@@ -510,7 +523,12 @@ export class RuntimeService {
     if (attempt?.runnerPid) {
       try {
         process.kill(attempt.runnerPid, 'SIGTERM')
-      } catch {}
+      } catch (err) {
+        // Process may have already exited or doesn't exist
+        if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code !== 'ESRCH') {
+          console.warn('[RuntimeService] Failed to terminate runner process:', err)
+        }
+      }
     }
   }
 

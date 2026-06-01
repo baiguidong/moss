@@ -286,7 +286,10 @@ export class SessionRunnerDaemon {
     for (const client of this.#clients) {
       try {
         client.destroy()
-      } catch {}
+      } catch (err) {
+        // Client may already be disconnected
+        console.warn('[SessionRunnerDaemon] Failed to destroy client on shutdown:', err)
+      }
     }
     this.#clients.clear()
     if (this.#server) {
