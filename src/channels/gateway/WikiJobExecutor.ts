@@ -15,11 +15,19 @@
  *   to that dir before spawning scode, which has full write access there)
  */
 
-import { readFile, mkdir, readdir, writeFile } from 'fs/promises'
+import { readFile, mkdir, readdir, writeFile, rename, rm, stat } from 'fs/promises'
 import path from 'path'
 import { RuntimeService } from '../../server/runtimeService.js'
 import { DocumentStore, type DocumentRecord, type WikiBuildJob, type WikiRecord } from '../../server/documentStore.js'
 import type { DirectConnectStore } from '../../server/db.js'
+import { MOSS_WIKIS_DIR } from '../../utils/wikis/localWikiDirectories.js'
+
+// Each build runs in its own private staging dir under wikis/.stage/ (same
+// filesystem as wikis/, so the publish rename is atomic). The wiki's live
+// dir is never touched until a build fully succeeds, so a failed rebuild
+// can't corrupt the existing wiki, and concurrent builds of the same wiki
+// no longer interleave their writes.
+const STAGE_DIR = path.join(MOSS_WIKIS_DIR, '.stage')
 
 const MAX_CONCURRENT_BUILDS = 2
 const TICK_INTERVAL_MS = 3_000
@@ -63,6 +71,13 @@ export class WikiJobExecutor {
   start(): void {
     if (this.timer) return
     this.stopped = false
+    // Reclaim orphaned staging artifacts from a prior crash before we start
+    // accepting jobs (in particular, recover any wiki left absent by an
+    // interrupted publish swap). Fire-and-forget — polling starts in
+    // parallel; the sweep only touches .stage/ and missing live dirs.
+    void this.sweepStaging().catch((err) => {
+      console.error('[WikiJobExecutor] staging sweep failed:', err)
+    })
     const tick = () => {
       if (this.stopped) return
       this.tickOnce().catch(err => {
@@ -113,6 +128,12 @@ export class WikiJobExecutor {
   private async runJob(job: WikiBuildJob): Promise<void> {
     console.log(`[WikiJobExecutor] picking up job ${job.id} (wiki=${job.wikiId})`)
 
+    // Recency marker for last-started-wins on publish. Sourced from the
+    // running-state stamp set in tickOnce (falls back to now). Recorded in
+    // _moss_meta.json.startedAt and compared in publishStaged so a slow,
+    // earlier-started build cannot clobber a newer one's output.
+    const startedAt = this.running.get(job.id)?.startedAt ?? Date.now()
+
     // Mark job + wiki as running
     this.docStore.updateBuildJob(job.id, {
       status: 'running',
@@ -123,17 +144,22 @@ export class WikiJobExecutor {
     this.docStore.setWikiBuildResult(job.wikiId, { status: 'running' })
 
     let wiki: WikiRecord | null = null
+    // Private staging dir for this build. Built in full here; only swapped
+    // into the live wiki dir on success (see publishStaged). Cleaned up on
+    // every exit path (success swap consumes it; failure rm -rf's it).
+    const stageDir = path.join(STAGE_DIR, `${job.wikiId}.${job.id}`)
     try {
       wiki = this.docStore.getWikiById(job.wikiId)
       if (!wiki) throw new Error(`wiki ${job.wikiId} not found`)
 
       // Stage 1: prepare cwd/input with predigested markdown
-      await this.prepareInputs(wiki)
+      await mkdir(stageDir, { recursive: true })
+      await this.prepareInputs(wiki, stageDir)
       this.docStore.updateBuildJob(job.id, { progress: 25, currentStep: '调用 AI 生成 Wiki' })
 
       // Stage 2: spawn agent session
       const created = await this.runtime.createSession({
-        cwd: wiki.storagePath,
+        cwd: stageDir,
         dangerouslySkipPermissions: true,
         userId: 'system:wiki-builder',
         orgId: wiki.orgId,
@@ -165,23 +191,27 @@ export class WikiJobExecutor {
         throw new Error(result.error ?? 'build session failed')
       }
 
-      // Stage 4: verify output presence
-      const wikiIndexPath = path.join(wiki.storagePath, 'WIKI.md')
+      // Stage 4: verify output presence (in the staging dir — the live
+      // wiki dir is untouched until the swap below).
+      const wikiIndexPath = path.join(stageDir, 'WIKI.md')
       try {
         await readFile(wikiIndexPath, 'utf-8')
       } catch {
         throw new Error('build finished but WIKI.md was not produced')
       }
 
-      // Stage 5: write _moss_meta.json so wikiCli and tooling can
-      // inspect the wiki without re-scanning the directory each time.
-      // Includes the page list (WIKI.md + chunk-*.md) with type/title.
-      try {
-        await this.writeWikiMeta(wiki)
-      } catch (err) {
-        console.error('[WikiJobExecutor] failed to write _moss_meta.json:', err)
-        // Non-fatal — wiki is still usable via wikiCli's directory scan.
-      }
+      // Stage 5: write _moss_meta.json into the staging dir so wikiCli and
+      // tooling can inspect the wiki without re-scanning the directory each
+      // time. Includes the page list (WIKI.md + chunk-*.md) with type/title.
+      // Unlike the live-dir write before, this MUST succeed: it carries
+      // `startedAt`, which publishStaged uses to avoid clobbering a newer
+      // build. If it fails, fail the whole build rather than publish a wiki
+      // with no recency marker.
+      await this.writeWikiMeta(wiki, stageDir, startedAt)
+
+      // Stage 6: atomically publish the staging dir into the live wiki dir.
+      // Fail-safe against concurrent same-wiki swaps (see publishStaged).
+      await this.publishStaged(wiki, stageDir, startedAt)
 
       this.docStore.updateBuildJob(job.id, {
         status: 'succeeded',
@@ -201,6 +231,14 @@ export class WikiJobExecutor {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[WikiJobExecutor] job ${job.id} failed:`, message)
       this.failJob(job.id, job.wikiId, message)
+    } finally {
+      // Always reclaim the staging dir. On a successful publish it has
+      // already been renamed into the live dir (rm of a missing path is a
+      // no-op with force); on failure or a lost recency race it's still
+      // here and must be removed so .stage/ doesn't accumulate orphans.
+      await rm(stageDir, { recursive: true, force: true }).catch((e) => {
+        console.error(`[WikiJobExecutor] failed to clean staging dir ${stageDir}:`, e)
+      })
     }
   }
 
@@ -210,6 +248,9 @@ export class WikiJobExecutor {
    *   {
    *     version: 1,
    *     wikiId, name, description,
+   *     startedAt (epoch ms — when this build started; publishStaged
+   *                compares it to the live wiki's to avoid clobbering a
+   *                newer build),
    *     builtAt (epoch ms),
    *     sourceDocumentIds: [...],
    *     pages: [{ file, type: 'index'|'chunk', title }]
@@ -219,9 +260,12 @@ export class WikiJobExecutor {
    * back to the file name (sans `.md`). wikiCli reads this file to
    * give the agent a structured table of contents without re-parsing
    * every chunk on each request.
+   *
+   * `dir` is the staging dir being built (not the live wiki dir): meta is
+   * written alongside the pages it describes, then published atomically.
    */
-  private async writeWikiMeta(wiki: WikiRecord): Promise<void> {
-    const entries = await readdir(wiki.storagePath, { withFileTypes: true })
+  private async writeWikiMeta(wiki: WikiRecord, dir: string, startedAt: number): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true })
     const mdFiles = entries
       .filter((e) => e.isFile() && e.name.endsWith('.md'))
       .map((e) => e.name)
@@ -234,7 +278,7 @@ export class WikiJobExecutor {
       let type: 'index' | 'chunk' = file === 'WIKI.md' ? 'index' : 'chunk'
       let topic: string | undefined
       try {
-        const content = await readFile(path.join(wiki.storagePath, file), 'utf-8')
+        const content = await readFile(path.join(dir, file), 'utf-8')
         // Try YAML frontmatter first (preferred, set by wiki-builder prompt)
         const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
         if (fmMatch && fmMatch[1]) {
@@ -266,15 +310,185 @@ export class WikiJobExecutor {
       wikiId: wiki.id,
       name: wiki.name,
       description: wiki.description,
+      startedAt,
       builtAt: Date.now(),
       sourceDocumentIds: wiki.sourceDocumentIds,
       pages,
     }
     await writeFile(
-      path.join(wiki.storagePath, '_moss_meta.json'),
+      path.join(dir, '_moss_meta.json'),
       JSON.stringify(meta, null, 2),
       'utf-8',
     )
+  }
+
+  /**
+   * Read the `startedAt` recency marker from an existing wiki's
+   * `_moss_meta.json`. Returns null if the dir/file is absent or
+   * unparseable (treated as "no existing build" / oldest possible).
+   */
+  private async readPublishedStartedAt(wikiDir: string): Promise<number | null> {
+    try {
+      const raw = await readFile(path.join(wikiDir, '_moss_meta.json'), 'utf-8')
+      const parsed = JSON.parse(raw) as { startedAt?: unknown }
+      return typeof parsed.startedAt === 'number' ? parsed.startedAt : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Atomically publish a fully-built staging dir into the live wiki dir,
+   * lock-free, with last-started-wins semantics.
+   *
+   * Swap sequence (all on the same filesystem, so each rename is atomic):
+   *   1. rename  wikis/<id>            → <stage>.old      (if live dir exists)
+   *   2. rename  <stage>               → wikis/<id>
+   *   3. rm -rf  <stage>.old                              (best-effort)
+   *
+   * Recency gate: before swapping, compare this build's startedAt to the
+   * live wiki's _moss_meta.json.startedAt. If a newer build already
+   * published, skip the swap entirely (the caller's finally rm's the
+   * stage). This is a read-then-act check WITHOUT a lock, so two swaps
+   * racing in the sub-ms window between read and rename can both proceed —
+   * an accepted, rare staleness race (an earlier build may win). What we
+   * must NOT do is lose the wiki: every failure path is fail-safe.
+   *
+   * Fail-safe rules (the important part):
+   *   - Step 1 ENOENT (no live dir — first build) is normal: proceed.
+   *   - If step 2 fails AFTER step 1 moved the live dir aside, restore it
+   *     (.old → wikis/<id>) so the wiki is never left absent, then throw.
+   *   - On ANY swap error, if wikis/<id> currently EXISTS, another swap
+   *     already won — do NOT revert over it; just drop our stage and return.
+   *   - Step 3 (.old cleanup) failing is cosmetic: log, never throw.
+   */
+  private async publishStaged(wiki: WikiRecord, stageDir: string, startedAt: number): Promise<void> {
+    const liveDir = wiki.storagePath
+    const oldDir = `${stageDir}.old`
+
+    // Recency gate (best-effort, lock-free). A newer published build wins.
+    const publishedStartedAt = await this.readPublishedStartedAt(liveDir)
+    if (publishedStartedAt !== null && publishedStartedAt > startedAt) {
+      console.log(
+        `[WikiJobExecutor] skipping publish for wiki=${wiki.id}: ` +
+          `live build (startedAt=${publishedStartedAt}) is newer than this one (startedAt=${startedAt})`,
+      )
+      return // caller's finally removes stageDir
+    }
+
+    let movedAside = false
+    try {
+      // Step 1: move the current live dir aside (skip if first build).
+      try {
+        await rename(liveDir, oldDir)
+        movedAside = true
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        // ENOENT: no existing wiki dir — first build. Proceed to step 2.
+      }
+
+      // Step 2: move our freshly-built dir into place.
+      await rename(stageDir, liveDir)
+    } catch (err) {
+      // A concurrent swap already populated the live dir — it won. Don't
+      // clobber the winner; abandon our publish and let finally clean up.
+      if (await this.pathExists(liveDir)) {
+        console.warn(
+          `[WikiJobExecutor] publish race for wiki=${wiki.id}: live dir present after error, ` +
+            `another build won; abandoning this publish`,
+        )
+        // If we'd moved our copy of the old dir aside, drop it.
+        if (movedAside) {
+          await rm(oldDir, { recursive: true, force: true }).catch(() => {})
+        }
+        return
+      }
+      // Live dir is absent and we moved the old one aside — restore it so
+      // the wiki is never left missing, then surface the failure.
+      if (movedAside) {
+        await rename(oldDir, liveDir).catch((revertErr) => {
+          console.error(
+            `[WikiJobExecutor] CRITICAL: failed to restore wiki=${wiki.id} from ${oldDir} after swap error:`,
+            revertErr,
+          )
+        })
+      }
+      throw err
+    }
+
+    // Step 3: best-effort cleanup of the previous version. The new wiki is
+    // already live; a cleanup failure must not fail the build.
+    if (movedAside) {
+      await rm(oldDir, { recursive: true, force: true }).catch((e) => {
+        console.error(`[WikiJobExecutor] failed to remove old wiki dir ${oldDir}:`, e)
+      })
+    }
+  }
+
+  private async pathExists(p: string): Promise<boolean> {
+    try {
+      await stat(p)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Reclaim orphaned staging artifacts left by a crash mid-build or
+   * mid-swap. Called once on start().
+   *
+   * The one dangerous crash window is between publishStaged step 1 and step
+   * 2: the live wiki dir has been renamed to `<stage>.old` and the live
+   * path is absent. Recover that first — restore `<wikiId>.<jobId>.old` →
+   * `wikis/<wikiId>` if the live dir is missing — before deleting any other
+   * `.stage/` leftovers (abandoned builds, post-publish `.old` dirs).
+   */
+  private async sweepStaging(): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await readdir(STAGE_DIR)
+    } catch {
+      return // .stage/ doesn't exist yet — nothing to sweep
+    }
+
+    // Pass 1: recover any interrupted swaps from `<wikiId>.<jobId>.old`.
+    for (const name of entries) {
+      if (!name.endsWith('.old')) continue
+      // name = "<wikiId>.<jobId>.old" → recover wikiId (everything before
+      // the last two dot-segments).
+      const base = name.slice(0, -'.old'.length) // <wikiId>.<jobId>
+      const dotIdx = base.lastIndexOf('.')
+      if (dotIdx <= 0) continue
+      const wikiId = base.slice(0, dotIdx)
+      const liveDir = path.join(MOSS_WIKIS_DIR, wikiId)
+      const oldPath = path.join(STAGE_DIR, name)
+      if (!(await this.pathExists(liveDir))) {
+        // Crash between step 1 and step 2: restore the only surviving copy.
+        try {
+          await rename(oldPath, liveDir)
+          console.warn(`[WikiJobExecutor] recovered wiki=${wikiId} from interrupted swap (${name})`)
+          continue
+        } catch (e) {
+          console.error(`[WikiJobExecutor] failed to recover wiki=${wikiId} from ${name}:`, e)
+        }
+      }
+      // Live dir already present (publish completed) — stale .old, drop it.
+      await rm(oldPath, { recursive: true, force: true }).catch(() => {})
+    }
+
+    // Pass 2: drop everything else still under .stage/ (abandoned builds).
+    let remaining: string[]
+    try {
+      remaining = await readdir(STAGE_DIR)
+    } catch {
+      return
+    }
+    for (const name of remaining) {
+      await rm(path.join(STAGE_DIR, name), { recursive: true, force: true }).catch((e) => {
+        console.error(`[WikiJobExecutor] failed to sweep staging entry ${name}:`, e)
+      })
+    }
   }
 
   /**
@@ -290,8 +504,8 @@ export class WikiJobExecutor {
    *   - parser failure / no parser found → raw bytes copied with original
    *     name as a last resort, so the agent can at least see the file
    */
-  private async prepareInputs(wiki: WikiRecord): Promise<void> {
-    const inputDir = path.join(wiki.storagePath, 'input')
+  private async prepareInputs(wiki: WikiRecord, baseDir: string): Promise<void> {
+    const inputDir = path.join(baseDir, 'input')
     await mkdir(inputDir, { recursive: true })
 
     const { parseAndWrite } = await import('../../server/sources/docParsers.js')
