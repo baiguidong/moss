@@ -73,6 +73,9 @@ const CONTROL_HEADERS = new Set([
 
 const UPSTREAM_TIMEOUT_MS = 30_000
 const AUTH_PROXY_PORT = 12013
+// Token TTL: tokens older than this are considered expired and will be cleaned up
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const TOKEN_CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 // Bind host for the proxy listener. Defaults to loopback (the safe local-runner
 // case). In the Docker runtime, moss-server and the session containers are peers
 // on the `moss-network` bridge, so the proxy must bind on all interfaces
@@ -87,6 +90,7 @@ export class AuthProxyServer {
   private nexusClient: NexusClient | null = null
   private policyProvider: DepartmentPolicyProvider | null = null
   private tokenMinter: TokenMinter | null = null
+  private tokenCleanupTimer: ReturnType<typeof setInterval> | null = null
 
   constructor() {}
 
@@ -118,10 +122,37 @@ export class AuthProxyServer {
   }
 
   isValidToken(token: string): boolean {
-    return this.tokenRegistry.has(token)
+    const entry = this.tokenRegistry.get(token)
+    if (!entry) return false
+    // Check if token has expired
+    if (Date.now() - entry.registeredAt > TOKEN_TTL_MS) {
+      this.tokenRegistry.delete(token)
+      return false
+    }
+    return true
+  }
+
+  private cleanupExpiredTokens(): void {
+    const now = Date.now()
+    let cleaned = 0
+    for (const [token, entry] of this.tokenRegistry) {
+      if (now - entry.registeredAt > TOKEN_TTL_MS) {
+        this.tokenRegistry.delete(token)
+        cleaned++
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[AuthProxy] Cleaned up ${cleaned} expired tokens`)
+    }
   }
 
   async start(): Promise<void> {
+    // Start token cleanup timer
+    this.tokenCleanupTimer = setInterval(() => {
+      this.cleanupExpiredTokens()
+    }, TOKEN_CLEANUP_INTERVAL_MS)
+    this.tokenCleanupTimer.unref()
+
     return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         this.handleRequest(req, res).catch(err => {
@@ -149,6 +180,11 @@ export class AuthProxyServer {
   }
 
   async stop(): Promise<void> {
+    // Stop token cleanup timer
+    if (this.tokenCleanupTimer) {
+      clearInterval(this.tokenCleanupTimer)
+      this.tokenCleanupTimer = null
+    }
     if (!this.server) return
     return new Promise(resolve => {
       this.server?.closeAllConnections?.()

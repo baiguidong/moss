@@ -106,9 +106,12 @@ function rowToSource(row: Record<string, unknown>): ExternalSourceRow {
 export class SourceSyncWorker {
   private timer: NodeJS.Timeout | null = null
   private cleanupTimer: NodeJS.Timeout | null = null
+  private inflightCleanupTimer: NodeJS.Timeout | null = null
   private stopped = false
   /** Per-source mutex to prevent overlap with manual triggers. */
-  private inflight = new Set<string>()
+  private inflight = new Map<string, number>() // sourceId -> startTime
+  /** Timeout for inflight syncs (30 minutes) */
+  private static readonly INFLIGHT_TIMEOUT_MS = 30 * 60 * 1000
 
   constructor(
     private db: DirectConnectStore,
@@ -158,7 +161,23 @@ export class SourceSyncWorker {
     this.cleanupTimer = setTimeout(cleanupTick, 60_000)
     this.cleanupTimer.unref()
 
+    // Start inflight cleanup timer (every 5 minutes)
+    this.inflightCleanupTimer = setInterval(() => {
+      this.cleanupStaleInflight()
+    }, 5 * 60 * 1000)
+    this.inflightCleanupTimer.unref()
+
     console.log('[SourceSyncWorker] started')
+  }
+
+  private cleanupStaleInflight(): void {
+    const now = Date.now()
+    for (const [sourceId, startTime] of this.inflight) {
+      if (now - startTime > SourceSyncWorker.INFLIGHT_TIMEOUT_MS) {
+        this.inflight.delete(sourceId)
+        console.warn(`[SourceSyncWorker] Cleaned up stale inflight sync for source ${sourceId}`)
+      }
+    }
   }
 
   stop(): void {
@@ -170,6 +189,10 @@ export class SourceSyncWorker {
     if (this.cleanupTimer) {
       clearTimeout(this.cleanupTimer)
       this.cleanupTimer = null
+    }
+    if (this.inflightCleanupTimer) {
+      clearInterval(this.inflightCleanupTimer)
+      this.inflightCleanupTimer = null
     }
     console.log('[SourceSyncWorker] stopped')
   }
@@ -212,7 +235,7 @@ export class SourceSyncWorker {
   // ============================================================
 
   private async runSync(source: ExternalSourceRow): Promise<SyncRunStats> {
-    this.inflight.add(source.id)
+    this.inflight.set(source.id, Date.now())
     const stats = emptyStats()
 
     this.db.updateExternalSourceSyncStatus(source.id, {
