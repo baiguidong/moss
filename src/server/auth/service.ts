@@ -170,8 +170,9 @@ export class AuthService {
     const access = verifyAccessToken(accessToken, this.db.getJwtSecret(), this.db.getIssuer(), 'access')
     if (access) {
       this.db.revokeToken(access.jti, access.exp)
-      // Drop any stored provider token for this session.
-      this.db.deleteProviderToken(access.jti)
+      // Drop the user's stored provider token. Provider tokens are now keyed by
+      // user_id (one per user), so this clears it for all of the user's sessions.
+      this.db.deleteProviderToken(access.userId)
     }
 
     if (refreshToken) {
@@ -333,10 +334,16 @@ export class AuthService {
       keyId: 'oauth2-login',
       accessTtlSec: identity.expiresIn,
     })
-    // Stash the provider access_token server-side, keyed by the moss JWT jti,
-    // so moss can call provider resources later. The provider refresh_token is
-    // NOT stored here — the client holds it (symmetric with other login types).
-    this.storeProviderToken(issued.access_token, identity.accessToken)
+    // Stash the provider access_token server-side, keyed by user_id, so moss
+    // (and runtime sessions via the corpauth CLI) can call provider resources
+    // later. expiry == the provider token's own lifetime. The provider
+    // refresh_token is NOT stored here — the client holds it (symmetric with
+    // other login types).
+    this.storeProviderToken(
+      user.id,
+      identity.accessToken,
+      Math.floor(Date.now() / 1000) + identity.expiresIn,
+    )
     // Echo the provider refresh_token so the client can persist it.
     return { ...issued, refresh_token: identity.refreshToken ?? '' }
   }
@@ -375,27 +382,47 @@ export class AuthService {
       keyId: 'oauth2-login',
       accessTtlSec: result.expiresIn,
     })
-    // Store the rotated provider access_token under the new jti.
-    this.storeProviderToken(issued.access_token, result.accessToken)
+    // Store the rotated provider access_token (overwrites the user's row).
+    this.storeProviderToken(
+      user.id,
+      result.accessToken,
+      Math.floor(Date.now() / 1000) + result.expiresIn,
+    )
     // Echo the (possibly rotated) provider refresh_token so the client persists it.
     const echoedRefresh = result.refreshToken ?? input.params.refresh_token ?? ''
     return { ...issued, refresh_token: echoedRefresh }
   }
 
   /**
-   * Persist a provider access_token keyed by the just-issued moss access JWT's
-   * jti, with expiry equal to that JWT's exp. Decodes the moss JWT (which we
-   * just signed) to recover jti/exp without changing issueToken's signature.
+   * Persist a provider access_token keyed by user_id, with expiry equal to the
+   * provider token's own lifetime. Keying by user_id (rather than the login
+   * JWT's jti) lets any of the user's sessions — including a runtime
+   * container's SESSION_TOKEN — resolve it, and makes a mid-session refresh
+   * overwrite the same row. `expiresAt` is an absolute Unix-seconds timestamp.
    */
-  private storeProviderToken(mossAccessJwt: string, providerAccessToken: string): void {
-    const auth = verifyAccessToken(mossAccessJwt, this.db.getJwtSecret(), this.db.getIssuer())
-    if (!auth) return // should never happen for a token we just signed
-    this.db.putProviderToken(auth.jti, providerAccessToken, auth.exp)
+  private storeProviderToken(userId: string, providerAccessToken: string, expiresAt: number): void {
+    this.db.putProviderToken(userId, providerAccessToken, expiresAt)
   }
 
-  /** Recover the provider access_token for a session (by the moss JWT jti). */
-  getProviderTokenForSession(jti: string): string | null {
-    return this.db.getProviderToken(jti)
+  /** Recover the provider access_token for a user, or null if absent/expired. */
+  getProviderTokenForUser(userId: string): { token: string; expiresAt: number } | null {
+    return this.db.getProviderToken(userId)
+  }
+
+  /**
+   * Minimal per-(user, service) minted-token store for the auth proxy's
+   * TokenMinter. Exposes just the cache get/put over the encrypted
+   * minted_service_tokens table without leaking the AuthCenterDb handle.
+   */
+  getMintedTokenStore(): {
+    getMintedToken(userId: string, configItemId: number): { token: string; expiresAt: number } | null
+    putMintedToken(userId: string, configItemId: number, token: string, expiresAt: number): void
+  } {
+    return {
+      getMintedToken: (userId, configItemId) => this.db.getMintedToken(userId, configItemId),
+      putMintedToken: (userId, configItemId, token, expiresAt) =>
+        this.db.putMintedToken(userId, configItemId, token, expiresAt),
+    }
   }
 
   /**

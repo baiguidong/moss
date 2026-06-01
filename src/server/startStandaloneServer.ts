@@ -11,7 +11,8 @@ import { initHubConfig } from './hubConfig.js'
 import { NexusManager } from './nexus/nexusManager.js'
 import { NexusClient } from './nexus/nexusClient.js'
 import { InMemorySecretsStore } from './nexus/inMemorySecretsStore.js'
-import { AuthProxyServer } from './authProxy/authProxyServer.js'
+import { AuthProxyServer, configItemToRule } from './authProxy/authProxyServer.js'
+import { TokenMinter } from './authProxy/tokenMinter.js'
 import { setSecretsApiDependencies } from './authProxy/secretsApi.js'
 import type { NexusClient as NexusClientType } from './nexus/nexusClient.js'
 
@@ -85,21 +86,16 @@ export async function startStandaloneDirectConnectServer(
   })
   const instance = store.registerServerInstance(config.host)
 
+  // Token minter for login-type 凭据 (mints + caches a per-user access_token
+  // from the user's stored credential), backed by the encrypted
+  // minted_service_tokens cache via AuthService.
+  authProxy.setTokenMinter(new TokenMinter(authService.getMintedTokenStore()))
+
   // Load config item rules into Auth Proxy now that DB is available
   const activeItems = store.getAllActiveConfigItems()
-  authProxy.updateRules(activeItems.map(item => ({
-    configItemId: item.id as number,
-    name: item.name as string,
-    urlPattern: (item.url_pattern as string) || '',
-    scheme: (item.scheme as string) || '',
-    bearerPrefix: (item.bearer_prefix as string) || '',
-    secretNamespace: item.scope === 'user' ? `user:{userId}:${item.pinyin}` : `system:${item.pinyin}`,
-    entries: store.getConfigEntries(item.id as number).map(e => ({
-      configKey: e.config_key as string,
-      name: e.name as string,
-      required: !!e.required,
-    })),
-  })))
+  authProxy.updateRules(
+    activeItems.map(item => configItemToRule(item, id => store.getConfigEntries(id))),
+  )
   const policyProvider = {
     getAuthorizedConfigItemIds(departmentId: string): number[] {
       return store.getDepartmentPolicies(departmentId).map(r => r.config_item_id as number)

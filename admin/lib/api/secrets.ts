@@ -28,6 +28,14 @@ export interface ConfigItem {
   url_pattern: string | null
   scheme: 'bearer' | 'basic' | 'header' | 'query' | null
   bearer_prefix: string | null
+  // Login-type 凭据 (mint an access_token from the stored credential):
+  // auth_type 'static' (or null) = inject the stored secret via `scheme`;
+  // 'oauth2_*' = declarative token-endpoint mint (token_url + token_request_json);
+  // 'script' = run mint_script.
+  auth_type: string | null
+  token_url: string | null
+  token_request_json: string | null
+  mint_script: string | null
   status: number
   entries: ConfigEntry[]
   created_at: number
@@ -149,6 +157,10 @@ export async function createConfigItem(data: {
   url_pattern?: string
   scheme?: string
   bearer_prefix?: string
+  auth_type?: string
+  token_url?: string
+  token_request_json?: string
+  mint_script?: string
   entries?: { config_key: string; name: string; config_desc?: string; required?: number }[]
 }): Promise<ConfigItem> {
   const res = await dcClient.post<{ success: boolean; data?: ConfigItem; error?: { code: string; message: string } }>('/api/v1/config-items', data)
@@ -165,6 +177,10 @@ export async function updateConfigItem(id: number, data: {
   url_pattern?: string
   scheme?: string
   bearer_prefix?: string
+  auth_type?: string
+  token_url?: string
+  token_request_json?: string
+  mint_script?: string
   entries?: { config_key: string; name: string; config_desc?: string; required?: number }[]
 }): Promise<ConfigItem> {
   const res = await dcClient.put<{ success: boolean; data?: ConfigItem; error?: { code: string; message: string } }>(`/api/v1/config-items/${id}`, data)
