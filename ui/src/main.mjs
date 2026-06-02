@@ -36,6 +36,7 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
+import { initFileManagerDatabase, registerFileManagerIpcHandlers } from '../../filemanage/main/index.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -3695,6 +3696,16 @@ app.whenReady().then(() => {
     readWorkspaceFile,
     fsp,
   });
+
+  // Initialize file manager database and IPC handlers
+  try {
+    const db = new DatabaseSync(SESSION_DB_PATH);
+    initFileManagerDatabase(db);
+    registerFileManagerIpcHandlers(ipcMain, db);
+    mossLog('info', 'app', 'File manager module initialized');
+  } catch (err) {
+    mossLog('error', 'app', 'Failed to initialize file manager', { error: err.message });
+  }
 
   mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
 

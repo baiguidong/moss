@@ -1,6 +1,21 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('agentDesktop', {
+  // 通用 IPC 调用方法
+  ipcInvoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+  ipcOn: (channel, callback) => {
+    const handler = (_event, ...args) => {
+      // 如果只有一个参数，直接传递，否则传递数组
+      const data = args.length === 1 ? args[0] : args;
+      callback(data);
+    };
+    ipcRenderer.on(channel, handler);
+    return handler;
+  },
+  ipcOff: (channel, handler) => {
+    ipcRenderer.removeListener(channel, handler);
+  },
+
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),

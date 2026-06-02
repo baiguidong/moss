@@ -12,6 +12,7 @@ import {
   SunMedium,
   Trash2,
   X,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,7 @@ export interface SidebarSession {
 interface AppSidebarProps {
   sessions: SidebarSession[];
   activeSessionId: string | null;
-  activeView: "chat" | "apps" | "settings" | "snake";
+  activeView: "chat" | "files" | "apps" | "settings" | "snake";
   appsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
@@ -48,7 +49,7 @@ interface AppSidebarProps {
   localEnabled?: boolean;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
-  onChangeView: (view: "chat" | "apps" | "settings") => void;
+  onChangeView: (view: "chat" | "files" | "apps" | "settings") => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -390,7 +391,20 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
+        {/* 文件管理入口 - 在 Apps 和 设置 之前 */}
+        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
+          <Button
+            variant={activeView === "files" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
+            onClick={() => onChangeView("files")}
+          >
+            <FolderOpen className="h-4 w-4" />
+            {!collapsed && "文件管理"}
+          </Button>
+        </div>
+
+        {/* Apps 和 设置 */}
+        <div className={cn("grid gap-2 mt-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
           <Button
             variant={activeView === "apps" ? "secondary" : "ghost"}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}

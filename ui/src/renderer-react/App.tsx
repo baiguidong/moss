@@ -9,6 +9,7 @@ import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { ExecutionPetPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
+import { FileManager } from '@/filemanage/FileManager';
 import {
   buildMainChatRenderMessagesFromHistory,
   buildWorkerRenderMessagesFromSubagentEvents,
@@ -228,7 +229,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'apps' | 'settings'>('chat');
+  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings'>('chat');
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -1657,6 +1658,8 @@ export default function App() {
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
+          ) : activeView === 'files' ? (
+            <FileManager />
           ) : activeView === 'apps' ? (
             <AppsPanel
               apps={apps}

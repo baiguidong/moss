@@ -190,6 +190,11 @@ declare namespace JSX {
 declare global {
   interface Window {
     agentDesktop: {
+      // 通用 IPC 方法
+      ipcInvoke: (channel: string, payload?: any) => Promise<any>;
+      ipcOn: (channel: string, callback: (payload: any) => void) => void;
+      ipcOff: (channel: string, handler: any) => void;
+
       getStatus: () => Promise<any>;
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
