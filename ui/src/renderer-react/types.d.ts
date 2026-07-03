@@ -80,6 +80,15 @@ export type DesktopSettings = {
     apiKey: string;
     model: string;
   };
+  voice: {
+    provider: string;
+    baseURL: string;
+    apiKey: string;
+    model: string;
+  };
+  mineru?: {
+    serverUrl: string;
+  };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
   // Legacy key name; stores either username or email for password login.
@@ -187,6 +196,18 @@ declare namespace JSX {
   }
 }
 
+export type BackgroundTaskInfo = {
+  id: string;
+  description: string;
+  command: string;
+  kind: 'shell' | 'monitor';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'killed';
+  isBackgrounded: boolean;
+  startTime: number | null;
+  endTime: number | null;
+  exitCode: number | null;
+};
+
 declare global {
   interface Window {
     agentDesktop: {
@@ -272,6 +293,10 @@ declare global {
         saveImageToWorkspace: (sessionId: string, fileName: string, data: number[]) => Promise<{ path: string } | { error: string }>;
         getAppIcon: () => Promise<string | null>;
       };
+      listBackgroundTasks: (payload: { sessionId: string }) => Promise<{ tasks: BackgroundTaskInfo[] }>;
+      getTaskOutput: (payload: { sessionId: string; taskId: string; maxBytes?: number }) => Promise<{ content: string; truncated: boolean }>;
+      killTask: (payload: { sessionId: string; taskId: string }) => Promise<{ ok: boolean; error?: string }>;
+      onBackgroundTasks: (callback: (payload: { sessionId: string; tasks: BackgroundTaskInfo[] }) => void) => () => void;
       onEvent: (callback: (payload: any) => void) => () => void;
       onState: (callback: (payload: any) => void) => () => void;
       onPermission: (callback: (payload: any) => void) => () => void;

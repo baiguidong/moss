@@ -29,6 +29,8 @@ export const SKILL_SEARCH_DIRS = [
 
 export const SKILL_HUB_META_FILE = '_moss_meta.json';
 
+const MAX_IMPORT_ZIP_BYTES = 200 * 1024 * 1024; // 本地导入 zip 大小上限, 防止 OOM
+
 function normalizeSkillVersion(version) {
   const normalized = (version || '').trim();
   if (!normalized) return '';
@@ -74,6 +76,18 @@ function isUnsafeZipEntryPath(entryPath) {
 function isPathInsideDir(rootDir, targetPath) {
   const relativePath = path.relative(path.resolve(rootDir), targetPath);
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+// 技能名会被拼进磁盘路径(安装/卸载), 必须限制为单个无分隔符的目录段,
+// 否则 ../ 之类的名字会逃逸出技能目录, 造成任意目录写入/删除。
+function sanitizeSkillDirName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed === '.' || trimmed === '..') return null;
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) return null;
+  // 合法技能名本身就是一个路径段; basename 不一致说明含有分隔符/穿越, 拒绝。
+  if (trimmed !== path.basename(trimmed)) return null;
+  return trimmed;
 }
 
 function resolveSafeZipEntryPath(targetDir, entryPath) {
@@ -336,7 +350,18 @@ export async function getInstalledSkills() {
 
 async function uninstallSkill(skillName, sourcePath) {
   try {
-    await fsp.rm(sourcePath, { recursive: true, force: true });
+    if (!sourcePath || typeof sourcePath !== 'string') {
+      return { success: false, error: 'Invalid skill path' };
+    }
+    const resolved = path.resolve(sourcePath);
+    // 只允许删除严格位于已知技能目录内部的路径(排除目录本身), 防止 rm 任意目录。
+    const insideAllowed = SKILL_SEARCH_DIRS.some(
+      (root) => resolved !== path.resolve(root) && isPathInsideDir(root, resolved),
+    );
+    if (!insideAllowed) {
+      return { success: false, error: 'Refusing to remove path outside skill directories' };
+    }
+    await fsp.rm(resolved, { recursive: true, force: true });
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -346,14 +371,15 @@ async function uninstallSkill(skillName, sourcePath) {
 export async function installSkillFromZip(zipBuffer, skillName, skillMeta, version) {
   console.log('[SkillStore IPC] installSkillFromZip called:', { skillName, version });
   try {
-    if (!skillName || typeof skillName !== 'string') {
+    const safeName = sanitizeSkillDirName(skillName);
+    if (!safeName) {
       throw new Error(`skillName is invalid: ${JSON.stringify(skillName)}`);
     }
 
     console.log('[SkillStore IPC] hubSkillsDir:', MOSS_SKILLS_HUB_DIR);
     await fsp.mkdir(MOSS_SKILLS_HUB_DIR, { recursive: true });
 
-    const skillDir = path.join(MOSS_SKILLS_HUB_DIR, skillName);
+    const skillDir = path.join(MOSS_SKILLS_HUB_DIR, safeName);
     console.log('[SkillStore IPC] skillDir:', skillDir);
     await fsp.rm(skillDir, { recursive: true, force: true });
     await fsp.mkdir(skillDir, { recursive: true });
@@ -479,7 +505,8 @@ export function registerSkillStoreIpcHandlers() {
       if (checksum) {
         const isValid = await verifyChecksum(zipBuffer, checksum);
         if (!isValid) {
-          console.warn('[SkillStore IPC] Checksum mismatch, continuing anyway');
+          console.error('[SkillStore IPC] Checksum mismatch, aborting install:', skillName);
+          return { success: false, error: 'Checksum verification failed' };
         }
       }
 
@@ -496,7 +523,12 @@ export function registerSkillStoreIpcHandlers() {
   ipcMain.handle('skill-store:uninstall', async (_event, { skillName, sourcePath }) => {
     try {
       // If sourcePath not provided, find it in hub directory
-      const actualPath = sourcePath || path.join(MOSS_SKILLS_HUB_DIR, skillName);
+      let actualPath = sourcePath;
+      if (!actualPath) {
+        const safeName = sanitizeSkillDirName(skillName);
+        if (!safeName) return { success: false, error: 'Invalid skill name' };
+        actualPath = path.join(MOSS_SKILLS_HUB_DIR, safeName);
+      }
       const result = await uninstallSkill(skillName, actualPath);
       return result;
     } catch (err) {
@@ -514,6 +546,9 @@ export function registerSkillStoreIpcHandlers() {
         if (stat.isDirectory()) {
           await copyDirectoryRecursive(sourcePath, tempDir);
         } else if (stat.isFile() && path.extname(sourcePath).toLowerCase() === '.zip') {
+          if (stat.size > MAX_IMPORT_ZIP_BYTES) {
+            return { success: false, error: 'Zip file is too large (max 200MB)' };
+          }
           const buffer = await fsp.readFile(sourcePath);
           await extractSkillZip(buffer, tempDir);
         } else {

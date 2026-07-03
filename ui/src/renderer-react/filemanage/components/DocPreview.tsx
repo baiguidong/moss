@@ -26,11 +26,14 @@ export function DocPreview({ filePath, fileType, className }: DocPreviewProps) {
       try {
         // 文本文件直接读取
         if (['.txt', '.md', '.json', '.csv'].includes(fileType)) {
-          const result = await window.electronAPI?.ipcInvoke('fileManager:readFileContent', { filePath });
-          if (result?.success) {
-            setContent(result.content);
+          const result = (await window.fileManager?.readFile(filePath, false)) as
+            | { data?: string; error?: string }
+            | undefined;
+          if (result?.data) {
+            const bytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
+            setContent(new TextDecoder('utf-8').decode(bytes));
           } else {
-            setError('无法读取文件内容');
+            setError(result?.error || '无法读取文件内容');
           }
         } else {
           // 其他文件类型显示信息
@@ -49,7 +52,7 @@ export function DocPreview({ filePath, fileType, className }: DocPreviewProps) {
   // 打开外部应用
   const openExternal = async () => {
     try {
-      await window.electronAPI?.ipcInvoke('shell:openExternal', { path: filePath });
+      await window.fileManager?.openFile(filePath);
     } catch (err) {
       console.error('Failed to open external:', err);
     }

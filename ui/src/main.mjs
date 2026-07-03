@@ -1,6 +1,7 @@
 import electron from 'electron';
-const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu } = electron;
-import { execSync } from 'node:child_process';
+const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu, protocol } = electron;
+import { exec, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -36,7 +37,19 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
-import { initFileManagerDatabase, registerFileManagerIpcHandlers } from '../../filemanage/main/index.mjs';
+import {
+  initFileManagerDatabase,
+  registerFileManagerIpcHandlers,
+  registerTranscribeIpcHandlers,
+  registerMediaScheme,
+  installMediaProtocol,
+} from './filemanage/main/index.mjs';
+import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
+import { initComicDramaDatabase, registerComicDramaIpcHandlers } from './comicdrama/main/index.mjs';
+import { initKnowledgeDatabase, registerKnowledgeIpcHandlers } from './knowledge/main/index.mjs';
+
+// 注册自定义流媒体协议 (必须在 app.whenReady 之前)
+registerMediaScheme(protocol);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +71,9 @@ const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.e
 const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 const MAX_FILE_BYTES = 200 * 1024;
+// 通用 fs IPC 读取上限, 防止指向超大文件时把主进程内存撑爆。
+const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
+const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
 const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
@@ -88,6 +104,12 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   image: {
     provider: 'minimax',
     url: 'https://api.minimaxi.com/v1/image_generation',
+    apiKey: '',
+    model: '',
+  },
+  voice: {
+    provider: 'minimax',
+    baseURL: '',
     apiKey: '',
     model: '',
   },
@@ -444,6 +466,48 @@ function normalizeDesktopSettings(input, existing = {}) {
           ? existingImage.model
           : DEFAULT_DESKTOP_SETTINGS.image.model,
   };
+
+  const sourceVoice = source.voice && typeof source.voice === 'object' ? source.voice : {};
+  const existingVoice = result.voice && typeof result.voice === 'object' ? result.voice : {};
+  result.voice = {
+    provider:
+      typeof sourceVoice.provider === 'string'
+        ? sourceVoice.provider.trim()
+        : typeof existingVoice.provider === 'string'
+          ? existingVoice.provider
+          : DEFAULT_DESKTOP_SETTINGS.voice.provider,
+    baseURL:
+      typeof sourceVoice.baseURL === 'string'
+        ? sourceVoice.baseURL.trim()
+        : typeof existingVoice.baseURL === 'string'
+          ? existingVoice.baseURL
+          : DEFAULT_DESKTOP_SETTINGS.voice.baseURL,
+    apiKey:
+      typeof sourceVoice.apiKey === 'string'
+        ? sourceVoice.apiKey.trim()
+        : typeof existingVoice.apiKey === 'string'
+          ? existingVoice.apiKey
+          : DEFAULT_DESKTOP_SETTINGS.voice.apiKey,
+    model:
+      typeof sourceVoice.model === 'string'
+        ? sourceVoice.model.trim()
+        : typeof existingVoice.model === 'string'
+          ? existingVoice.model
+          : DEFAULT_DESKTOP_SETTINGS.voice.model,
+  };
+
+  const sourceMineru = source.mineru && typeof source.mineru === 'object' ? source.mineru : null;
+  const existingMineru = result.mineru && typeof result.mineru === 'object' ? result.mineru : {};
+  if (sourceMineru || result.mineru !== undefined) {
+    result.mineru = {
+      serverUrl:
+        sourceMineru && typeof sourceMineru.serverUrl === 'string'
+          ? sourceMineru.serverUrl.trim()
+          : typeof existingMineru.serverUrl === 'string'
+            ? existingMineru.serverUrl
+            : '',
+    };
+  }
 
   if (typeof source.remoteDirectServerUrl === 'string') {
     result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
@@ -1404,6 +1468,20 @@ async function getClaudeRuntimeModule() {
 
   installRuntimeMacros();
   claudeRuntimeModulePromise = import(sdkPath)
+    .then((mod) => {
+      // The bundle guards all config reads behind enableConfigs(); ClaudeSession.send()
+      // reads config (session cost restore) and throws "Config accessed before allowed."
+      // if it hasn't run. Prime it once here so the first send never races the guard.
+      try {
+        if (typeof mod.enableConfigs === 'function') {
+          mod.enableConfigs();
+        } else if (typeof mod.getAuthDebugSnapshot === 'function') {
+          // getAuthDebugSnapshot() calls enableConfigs() as its first step.
+          mod.getAuthDebugSnapshot();
+        }
+      } catch {}
+      return mod;
+    })
     .catch((error) => {
       claudeRuntimeModulePromise = null;
       throw error;
@@ -1762,9 +1840,10 @@ async function runSessionPrompt({
   attachments = [],
 }) {
   const runtime = await ensureRuntime(sessionRecord);
+  const cronIdsBeforeTurn = await readMossCronTaskIds();
 
-  if (typeof visibleUserPrompt === 'string' && visibleUserPrompt.trim()) {
-    const trimmedUserPrompt = visibleUserPrompt.trim();
+  const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
+  if (trimmedUserPrompt || attachments.length > 0) {
     const userEvent = {
       type: 'user',
       prompt: trimmedUserPrompt,
@@ -1778,8 +1857,8 @@ async function runSessionPrompt({
     sessionRecord.history.push(userEvent);
     sessionRecord.messageCount += 1;
     sessionRecord.updatedAt = Date.now();
-    sessionRecord.preview = trimmedUserPrompt;
-    if (sessionRecord.title === 'New Session') {
+    sessionRecord.preview = trimmedUserPrompt || `[${attachments.length} attachment(s)]`;
+    if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
     }
     schedulePersistSession(sessionRecord, true);
@@ -1878,6 +1957,7 @@ async function runSessionPrompt({
       busy: false,
       summary: getSessionSummary(sessionRecord),
     });
+    void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
   }
 }
 
@@ -2817,7 +2897,7 @@ async function runPlanExecution(execSessionRecord, execWindow, execState, origin
   // Notify main window of execution state changes
   const notifyMainWindow = (type, data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.send(type, data);
+      mainWindow.webContents.send(type, data);
     }
   };
 
@@ -2873,6 +2953,7 @@ Important:
     // Push completion message to main session history so main agent can see it
     const mainSessionRecord = getSessionRecord(execState.originalSessionId);
     if (mainSessionRecord) {
+      const mainTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
       pushSessionHistoryEvent(mainSessionRecord, {
         type: 'user',
         message: {
@@ -2880,7 +2961,7 @@ Important:
           content: [{ type: 'text', text: `[Sub-agent completed] ${summaryMessage}` }],
         },
         timestamp: Date.now(),
-      }, mainWindow.webContents);
+      }, mainTarget);
       schedulePersistSession(mainSessionRecord);
       // Notify main window to refresh
       notifyMainWindow('agent:event', {
@@ -2902,8 +2983,160 @@ Important:
   }
 }
 
+const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
+
+function snapshotBackgroundTasks(sessionRecord) {
+  try {
+    const state = sessionRecord.runtime?.getAppState?.();
+    if (!state?.tasks) return [];
+    return Object.values(state.tasks)
+      .filter((t) => t && t.type === 'local_bash')
+      .map((t) => ({
+        id: t.id,
+        description: t.description || '',
+        command: typeof t.command === 'string' ? t.command : '',
+        kind: t.kind === 'monitor' ? 'monitor' : 'shell',
+        status: t.status,
+        isBackgrounded: t.isBackgrounded !== false,
+        startTime: t.startTime ?? null,
+        endTime: t.endTime ?? null,
+        exitCode: t.result?.code ?? null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function attachBackgroundTaskWatcher(sessionRecord) {
+  const runtime = sessionRecord?.runtime;
+  if (!runtime || typeof runtime.subscribe !== 'function') return;
+  if (sessionRecord.backgroundTaskWatcherRuntime === runtime) return;
+  sessionRecord.backgroundTaskUnsubscribe?.();
+
+  let lastJson = '';
+  let timer = null;
+  const emitSnapshot = () => {
+    timer = null;
+    if (sessionRecord.runtime !== runtime) return;
+    const tasks = snapshotBackgroundTasks(sessionRecord);
+    const json = JSON.stringify(tasks);
+    if (json === lastJson) return;
+    lastJson = json;
+    emitToRenderer('agent:background-tasks', { sessionId: sessionRecord.id, tasks });
+  };
+  const unsubscribe = runtime.subscribe(() => {
+    if (!timer) {
+      timer = setTimeout(emitSnapshot, BACKGROUND_TASK_EMIT_DELAY_MS);
+    }
+  });
+  sessionRecord.backgroundTaskWatcherRuntime = runtime;
+  sessionRecord.backgroundTaskUnsubscribe = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    try {
+      unsubscribe?.();
+    } catch {}
+    sessionRecord.backgroundTaskWatcherRuntime = null;
+    sessionRecord.backgroundTaskUnsubscribe = null;
+  };
+}
+
+// Task output files live at <claudeTmp>/<sanitized-cwd>/<engineSessionId>/tasks/<taskId>.output.
+// The sanitized-cwd segment is version-dependent, so locate it by scanning the
+// project dirs for the known engine session id instead of reconstructing it.
+const taskOutputPathCache = new Map();
+
+function getClaudeTempDirForLookup() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.CLAUDE_CODE_TMPDIR || os.tmpdir(), 'claude');
+  }
+  let base = process.env.CLAUDE_CODE_TMPDIR || '/tmp';
+  try {
+    base = fs.realpathSync(base);
+  } catch {}
+  return path.join(base, `claude-${process.getuid?.() ?? 0}`);
+}
+
+function findTaskOutputPath(sessionRecord, taskId) {
+  if (!/^[\w.-]+$/.test(String(taskId))) return null;
+  const cached = taskOutputPathCache.get(taskId);
+  if (cached && fs.existsSync(cached)) return cached;
+
+  const engineSessionIds = [
+    sessionRecord.runtime?.sessionId,
+    sessionRecord.underlyingSessionId,
+  ].filter(Boolean);
+  const claudeTmp = getClaudeTempDirForLookup();
+  let projectDirs = [];
+  try {
+    projectDirs = fs.readdirSync(claudeTmp);
+  } catch {
+    return null;
+  }
+  for (const dir of projectDirs) {
+    for (const sid of engineSessionIds) {
+      const candidate = path.join(claudeTmp, dir, sid, 'tasks', `${taskId}.output`);
+      if (fs.existsSync(candidate)) {
+        taskOutputPathCache.set(taskId, candidate);
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+async function readTaskOutputTail(filePath, maxBytes = 16 * 1024) {
+  const handle = await fsp.open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    if (length === 0) return { content: '', truncated: false, size };
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+    return { content: buffer.toString('utf8'), truncated: start > 0, size };
+  } finally {
+    await handle.close();
+  }
+}
+
+ipcMain.handle('agent:list-background-tasks', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  return { tasks: snapshotBackgroundTasks(sessionRecord) };
+});
+
+ipcMain.handle('agent:task-output', async (_event, { sessionId, taskId, maxBytes }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  const filePath = findTaskOutputPath(sessionRecord, taskId);
+  if (!filePath) return { content: '', truncated: false };
+  try {
+    return await readTaskOutputTail(filePath, Number(maxBytes) > 0 ? Number(maxBytes) : undefined);
+  } catch {
+    return { content: '', truncated: false };
+  }
+});
+
+ipcMain.handle('agent:kill-task', async (_event, { sessionId, taskId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  const state = sessionRecord.runtime?.getAppState?.();
+  const task = state?.tasks?.[taskId];
+  if (!task || task.type !== 'local_bash' || task.status !== 'running') {
+    return { ok: false, error: 'Task is not running.' };
+  }
+  try {
+    task.shellCommand?.kill();
+    task.shellCommand?.cleanup?.();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
 function disposeSessionRuntime(sessionRecord) {
   if (sessionRecord?.runtime) {
+    try {
+      sessionRecord.backgroundTaskUnsubscribe?.();
+    } catch {}
     try {
       sessionRecord.runtime.abort();
     } catch {}
@@ -3216,6 +3449,7 @@ async function ensureRuntime(sessionRecord) {
     onPermissionRequest,
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
+  attachBackgroundTaskWatcher(sessionRecord);
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
   // All teammate events are already routed through the main coordinator session via the SDK
@@ -3287,6 +3521,7 @@ async function resumeSessionRecord(sessionRecord) {
     }
 
     sessionRecord.runtime = resumed.session;
+    attachBackgroundTaskWatcher(sessionRecord);
     sessionRecord.resumeReadOnlyReason = null;
     sessionRecord.historyLoadedFromSource = true;
     sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
@@ -3669,6 +3904,410 @@ async function readWorkspaceFile(sessionRecord, filePath) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Moss cron scheduler
+//
+// The embedded runtime's CronCreate tool mirrors every job into
+// ~/.moss/cron_tasks.json, but its own firing loop only runs in the CLI REPL
+// (idle-loop injection). In SDK mode nothing consumes the file, so scheduled
+// prompts silently never fire. This scheduler reads the file, matches cron
+// expressions each tick, and injects the prompt into the session that created
+// the job (located by scanning session history for the job id).
+// ---------------------------------------------------------------------------
+const MOSS_CRON_FILE = path.join(os.homedir(), '.moss', 'cron_tasks.json');
+const MOSS_CRON_BINDINGS_FILE = path.join(os.homedir(), '.moss', 'cron_bindings.json');
+const MOSS_CRON_TICK_MS = 20 * 1000;
+const MOSS_CRON_RECURRING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MOSS_CRON_ONESHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MOSS_CRON_UNRESOLVED_GRACE_MS = 10 * 60 * 1000;
+const cronSessionBindings = new Map();
+const cronFiredMinutes = new Map();
+const cronUnresolvableSince = new Map();
+let cronTickRunning = false;
+let cronBindingsLoaded = false;
+
+function loadCronBindings() {
+  if (cronBindingsLoaded) return;
+  cronBindingsLoaded = true;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(MOSS_CRON_BINDINGS_FILE, 'utf8'));
+    if (parsed && typeof parsed === 'object') {
+      for (const [taskId, sessionId] of Object.entries(parsed)) {
+        if (typeof sessionId === 'string') cronSessionBindings.set(taskId, sessionId);
+      }
+    }
+  } catch {}
+}
+
+function persistCronBindings() {
+  try {
+    fs.writeFileSync(
+      MOSS_CRON_BINDINGS_FILE,
+      `${JSON.stringify(Object.fromEntries(cronSessionBindings), null, 2)}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    console.warn('[moss-cron] failed to persist bindings:', err?.message || err);
+  }
+}
+
+async function readMossCronTaskIds() {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(MOSS_CRON_FILE, 'utf8'));
+    const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
+    return new Set(tasks.map((t) => t?.id).filter((id) => typeof id === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+// Deterministic binding: any cron task that appeared in the file during this
+// session's turn was created by this session.
+async function bindNewCronTasks(idsBefore, sessionRecord) {
+  try {
+    const idsAfter = await readMossCronTaskIds();
+    let changed = false;
+    for (const id of idsAfter) {
+      if (!idsBefore.has(id) && !cronSessionBindings.has(id)) {
+        cronSessionBindings.set(id, sessionRecord.id);
+        changed = true;
+        console.log(`[moss-cron] bound task ${id} → session ${sessionRecord.id}`);
+      }
+    }
+    if (changed) persistCronBindings();
+  } catch {}
+}
+
+function parseMossCronField(part, min, max) {
+  if (part === '*') return { any: true };
+  const values = new Set();
+  for (const chunk of part.split(',')) {
+    const m = chunk.match(/^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/);
+    if (!m) return null;
+    const step = m[3] ? parseInt(m[3], 10) : 1;
+    let start;
+    let end;
+    if (m[1] === '*') {
+      start = min;
+      end = max;
+    } else {
+      start = parseInt(m[1], 10);
+      end = m[2] ? parseInt(m[2], 10) : (m[3] ? max : start);
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || step <= 0 || start > end) return null;
+    for (let v = start; v <= end; v += step) {
+      if (v < min || v > max) return null;
+      values.add(v);
+    }
+  }
+  return { any: false, values };
+}
+
+function parseMossCronExpression(expr) {
+  const parts = String(expr || '').trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+  const fields = [];
+  for (let i = 0; i < 5; i += 1) {
+    const field = parseMossCronField(parts[i], ranges[i][0], ranges[i][1]);
+    if (!field) return null;
+    fields.push(field);
+  }
+  return fields;
+}
+
+function mossCronMatches(fields, date) {
+  const [minute, hour, dom, month, dow] = fields;
+  const match = (f, v) => f.any || f.values.has(v);
+  if (!match(minute, date.getMinutes())) return false;
+  if (!match(hour, date.getHours())) return false;
+  if (!match(month, date.getMonth() + 1)) return false;
+  const day = date.getDay();
+  const dowMatch = dow.any || dow.values.has(day) || (day === 0 && dow.values.has(7));
+  const domMatch = match(dom, date.getDate());
+  // Standard cron semantics: when both day fields are restricted, either may match.
+  if (!dom.any && !dow.any) return domMatch || dowMatch;
+  return domMatch && dowMatch;
+}
+
+// Returns the owning session, or null. Never guesses: a task with no
+// resolvable owner is left unfired (and cleaned up if its session was
+// deleted) — misdelivering a scheduled prompt into an unrelated session is
+// worse than not firing.
+function findSessionForCronTask(taskId) {
+  const boundId = cronSessionBindings.get(taskId);
+  if (boundId) {
+    return sessions.get(boundId) ?? null;
+  }
+  // In-memory history scan (session created the task before bindings existed).
+  for (const [id, record] of sessions) {
+    if (record.agentMode === 'remote-direct') continue;
+    const history = record.history;
+    if (!Array.isArray(history)) continue;
+    const start = Math.max(0, history.length - 500);
+    for (let i = history.length - 1; i >= start; i -= 1) {
+      const ev = history[i];
+      if (ev?.type !== 'user' && ev?.type !== 'assistant') continue;
+      try {
+        if (JSON.stringify(ev.message?.content ?? '').includes(taskId)) {
+          cronSessionBindings.set(taskId, id);
+          persistCronBindings();
+          return record;
+        }
+      } catch {}
+    }
+  }
+  // Durable scan: histories are hydrated lazily after restart, so search the
+  // persisted history_json in SQLite for the task id.
+  try {
+    const row = sessionDb
+      .prepare(`SELECT id FROM sessions WHERE is_sub_agent = 0 AND history_json LIKE ? ORDER BY updated_at DESC LIMIT 1`)
+      .get(`%${taskId}%`);
+    if (row?.id && sessions.has(row.id)) {
+      cronSessionBindings.set(taskId, row.id);
+      persistCronBindings();
+      return sessions.get(row.id);
+    }
+  } catch (err) {
+    console.warn('[moss-cron] history_json scan failed:', err?.message || err);
+  }
+  return null;
+}
+
+async function mossCronTick() {
+  if (cronTickRunning) return;
+  cronTickRunning = true;
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    let raw;
+    try {
+      raw = await fsp.readFile(MOSS_CRON_FILE, 'utf8');
+    } catch {
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
+    if (tasks.length === 0) return;
+
+    const now = new Date();
+    const nowMs = now.getTime();
+    const minuteKey = Math.floor(nowMs / 60000);
+    const removedIds = new Set();
+    let dirty = false;
+
+    for (const task of tasks) {
+      if (!task || typeof task.id !== 'string' || typeof task.cron !== 'string' || typeof task.prompt !== 'string') continue;
+      if (task.enabled === false) continue;
+      const createdAt = typeof task.createdAt === 'number' ? task.createdAt : 0;
+      const maxAge = task.recurring ? MOSS_CRON_RECURRING_MAX_AGE_MS : MOSS_CRON_ONESHOT_MAX_AGE_MS;
+      if (createdAt && nowMs - createdAt > maxAge) {
+        removedIds.add(task.id);
+        continue;
+      }
+      if (!task.recurring && typeof task.lastFiredAt === 'number') {
+        removedIds.add(task.id);
+        continue;
+      }
+      const fields = parseMossCronExpression(task.cron);
+      if (!fields) continue;
+      if (!mossCronMatches(fields, now)) continue;
+      if (cronFiredMinutes.get(task.id) === minuteKey) continue;
+
+      const sessionRecord = findSessionForCronTask(task.id);
+      if (!sessionRecord) {
+        const boundId = cronSessionBindings.get(task.id);
+        if (boundId && !sessions.has(boundId)) {
+          // Owning session was deleted — drop the orphaned task.
+          console.warn(`[moss-cron] task ${task.id} owner session ${boundId} is gone; removing task`);
+          removedIds.add(task.id);
+          cronSessionBindings.delete(task.id);
+          cronUnresolvableSince.delete(task.id);
+          persistCronBindings();
+          continue;
+        }
+        // Unbindable (e.g. owner session deleted before a binding was ever
+        // recorded). Give it a grace window in case histories are still
+        // loading, then clean it up instead of skipping forever.
+        const firstSeen = cronUnresolvableSince.get(task.id) ?? nowMs;
+        cronUnresolvableSince.set(task.id, firstSeen);
+        if (nowMs - firstSeen >= MOSS_CRON_UNRESOLVED_GRACE_MS) {
+          console.warn(`[moss-cron] task ${task.id} unresolvable for over 10 minutes (owner session likely deleted); removing task`);
+          removedIds.add(task.id);
+          cronUnresolvableSince.delete(task.id);
+        } else if (firstSeen === nowMs) {
+          console.warn(`[moss-cron] task ${task.id} has no resolvable owner session; will retry, then clean up after grace period`);
+        }
+        continue;
+      }
+      cronUnresolvableSince.delete(task.id);
+      if (sessionRecord.busy) continue; // retry on the next tick within this minute
+
+      cronFiredMinutes.set(task.id, minuteKey);
+      task.lastFiredAt = nowMs;
+      dirty = true;
+      if (!task.recurring) removedIds.add(task.id);
+
+      console.log(`[moss-cron] firing task ${task.id} (${task.cron}) → session ${sessionRecord.id}`);
+      void runSessionPrompt({
+        sessionRecord,
+        sender: mainWindow.webContents,
+        runtimePrompt: task.prompt,
+        visibleUserPrompt: `⏰ 定时任务：${task.prompt}`,
+      }).catch((err) => {
+        console.warn('[moss-cron] task run failed:', err?.message || err);
+      });
+    }
+
+    if (dirty || removedIds.size > 0) {
+      const remaining = tasks.filter((t) => !removedIds.has(t?.id));
+      try {
+        await fsp.writeFile(MOSS_CRON_FILE, `${JSON.stringify({ tasks: remaining }, null, 2)}\n`, 'utf8');
+      } catch (err) {
+        console.warn('[moss-cron] failed to persist cron file:', err?.message || err);
+      }
+    }
+  } finally {
+    cronTickRunning = false;
+  }
+}
+
+function startMossCronScheduler() {
+  loadCronBindings();
+  const timer = setInterval(() => {
+    void mossCronTick();
+  }, MOSS_CRON_TICK_MS);
+  timer.unref?.();
+}
+
+function computeNextCronRunMs(fields, fromMs) {
+  // Minute-resolution walk; bounded to one year ahead.
+  const cursor = new Date(fromMs);
+  cursor.setSeconds(0, 0);
+  cursor.setMinutes(cursor.getMinutes() + 1);
+  const limit = fromMs + 366 * 24 * 60 * 60 * 1000;
+  while (cursor.getTime() <= limit) {
+    if (mossCronMatches(fields, cursor)) return cursor.getTime();
+    cursor.setMinutes(cursor.getMinutes() + 1);
+  }
+  return null;
+}
+
+async function readMossCronTasks() {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(MOSS_CRON_FILE, 'utf8'));
+    return Array.isArray(parsed?.tasks) ? parsed.tasks.filter((t) => t && typeof t.id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeMossCronTasks(tasks) {
+  await fsp.mkdir(path.dirname(MOSS_CRON_FILE), { recursive: true });
+  await fsp.writeFile(MOSS_CRON_FILE, `${JSON.stringify({ tasks }, null, 2)}\n`, 'utf8');
+}
+
+function resolveCronOwnerSessionId(taskId) {
+  loadCronBindings();
+  const record = findSessionForCronTask(taskId);
+  return record?.id ?? null;
+}
+
+async function removeCronTasksForSession(sessionId) {
+  loadCronBindings();
+  const tasks = await readMossCronTasks();
+  if (tasks.length === 0) return [];
+  const removed = [];
+  const remaining = tasks.filter((task) => {
+    const owner = resolveCronOwnerSessionId(task.id);
+    if (owner === sessionId) {
+      removed.push(task);
+      cronSessionBindings.delete(task.id);
+      cronUnresolvableSince.delete(task.id);
+      return false;
+    }
+    return true;
+  });
+  if (removed.length > 0) {
+    await writeMossCronTasks(remaining);
+    persistCronBindings();
+    console.log(`[moss-cron] removed ${removed.length} task(s) bound to deleted session ${sessionId}`);
+  }
+  return removed;
+}
+
+ipcMain.handle('agent:cron-list', async () => {
+  loadCronBindings();
+  const tasks = await readMossCronTasks();
+  const nowMs = Date.now();
+  return {
+    tasks: tasks.map((task) => {
+      const ownerId = resolveCronOwnerSessionId(task.id);
+      const ownerRecord = ownerId ? sessions.get(ownerId) : null;
+      const fields = parseMossCronExpression(task.cron);
+      const enabled = task.enabled !== false;
+      return {
+        id: task.id,
+        cron: task.cron,
+        prompt: task.prompt,
+        recurring: Boolean(task.recurring),
+        createdAt: task.createdAt ?? null,
+        lastFiredAt: task.lastFiredAt ?? null,
+        enabled,
+        orphaned: !ownerRecord,
+        ownerSessionId: ownerRecord?.id ?? null,
+        ownerSessionTitle: ownerRecord?.title ?? null,
+        nextRunAt: enabled && fields ? computeNextCronRunMs(fields, nowMs) : null,
+      };
+    }),
+  };
+});
+
+ipcMain.handle('agent:cron-remove', async (_event, { taskId }) => {
+  const tasks = await readMossCronTasks();
+  const remaining = tasks.filter((t) => t.id !== taskId);
+  if (remaining.length === tasks.length) return { ok: false, error: 'Task not found.' };
+  await writeMossCronTasks(remaining);
+  cronSessionBindings.delete(taskId);
+  cronUnresolvableSince.delete(taskId);
+  persistCronBindings();
+  return { ok: true };
+});
+
+ipcMain.handle('agent:cron-toggle', async (_event, { taskId, enabled }) => {
+  const tasks = await readMossCronTasks();
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return { ok: false, error: 'Task not found.' };
+  task.enabled = Boolean(enabled);
+  await writeMossCronTasks(tasks);
+  return { ok: true, enabled: task.enabled };
+});
+
+ipcMain.handle('agent:cron-run-now', async (_event, { taskId }) => {
+  const tasks = await readMossCronTasks();
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return { ok: false, error: 'Task not found.' };
+  const sessionRecord = findSessionForCronTask(task.id);
+  if (!sessionRecord) return { ok: false, error: '归属会话不存在（孤儿任务）' };
+  if (sessionRecord.busy) return { ok: false, error: '归属会话正在执行其他请求，请稍后再试' };
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'Window not ready.' };
+  task.lastFiredAt = Date.now();
+  await writeMossCronTasks(tasks);
+  void runSessionPrompt({
+    sessionRecord,
+    sender: mainWindow.webContents,
+    runtimePrompt: task.prompt,
+    visibleUserPrompt: `⏰ 定时任务（手动触发）：${task.prompt}`,
+  }).catch((err) => {
+    console.warn('[moss-cron] manual run failed:', err?.message || err);
+  });
+  return { ok: true, sessionId: sessionRecord.id };
+});
+
 app.whenReady().then(() => {
   // Initialize bundled apps from src/apps to generated-apps
   initializeBundledApps();
@@ -3684,6 +4323,7 @@ app.whenReady().then(() => {
   registerSkillStoreIpcHandlers();
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
+  startMossCronScheduler();
   initUpdateIpcHandlers();
   registerDocumentIpcHandlers();
   registerLibreOfficeIpcHandlers();
@@ -3699,9 +4339,17 @@ app.whenReady().then(() => {
 
   // Initialize file manager database and IPC handlers
   try {
+    installMediaProtocol(protocol);
     const db = new DatabaseSync(SESSION_DB_PATH);
     initFileManagerDatabase(db);
     registerFileManagerIpcHandlers(ipcMain, db);
+    registerTranscribeIpcHandlers(ipcMain, db);
+    initAiMemoDatabase(db);
+    registerAiMemoIpcHandlers(ipcMain, db);
+    initComicDramaDatabase(db);
+    registerComicDramaIpcHandlers(ipcMain, db);
+    initKnowledgeDatabase(db);
+    registerKnowledgeIpcHandlers(ipcMain, db);
     mossLog('info', 'app', 'File manager module initialized');
   } catch (err) {
     mossLog('error', 'app', 'Failed to initialize file manager', { error: err.message });
@@ -3726,6 +4374,12 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   for (const sessionRecord of sessions.values()) {
+    closeWorkspaceWatcher(sessionRecord);
+    disposeRuntime(sessionRecord);
+  }
+  // Sub-agent / execution sessions each own a child runtime process. On macOS the
+  // app stays alive after all windows close, so without this they leak as zombies.
+  for (const sessionRecord of subAgentSessions.values()) {
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
   }
@@ -3785,8 +4439,12 @@ ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => {
   if (payload.telegram) merged.telegram = { ...current.telegram, ...payload.telegram };
   if (payload.feishu) merged.feishu = { ...current.feishu, ...payload.feishu };
   if (payload.pairing !== undefined) merged.pairing = { ...current.pairing, ...payload.pairing };
-  fs.mkdirSync(MOSS_HOME, { recursive: true });
-  fs.writeFileSync(adapterConfigPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  try {
+    fs.mkdirSync(MOSS_HOME, { recursive: true });
+    fs.writeFileSync(adapterConfigPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  } catch (err) {
+    return { error: String(err?.message || err) };
+  }
   // Re-read to return (masking secrets like the server does)
   try {
     const fresh = JSON.parse(fs.readFileSync(adapterConfigPath, 'utf8'));
@@ -3903,15 +4561,28 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
   };
 });
 
-ipcMain.handle('agent:delete-session', (_event, { sessionId }) => {
+ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   mossLog('info', 'session', 'Session deleted', { sessionId, workspace: sessionRecord.workspace });
+  // Cascade: remove cron tasks bound to this session before the session
+  // disappears (owner resolution still works at this point), so they don't
+  // become orphans.
+  let removedCronTasks = [];
+  try {
+    removedCronTasks = await removeCronTasksForSession(sessionId);
+  } catch (err) {
+    console.warn('[moss-cron] cascade cleanup failed:', err?.message || err);
+  }
   closeWorkspaceWatcher(sessionRecord);
   disposeRuntime(sessionRecord);
   sessions.delete(sessionId);
   deletePersistedSession(sessionId);
   emitToRenderer('agent:session-removed', { sessionId });
-  return { ok: true };
+  return {
+    ok: true,
+    removedCronTasks: removedCronTasks.length,
+    removedCronTaskPrompts: removedCronTasks.map((t) => String(t.prompt || '').slice(0, 60)),
+  };
 });
 
 ipcMain.handle('agent:pick-directory', async () => {
@@ -3995,37 +4666,53 @@ ipcMain.handle('app:list', async () => {
 });
 
 ipcMain.handle('app:list-versions', async (_event, { name }) => {
-  return listAppVersionSnapshots(name);
+  try {
+    return listAppVersionSnapshots(name);
+  } catch {
+    return [];
+  }
 });
 
 ipcMain.handle('app:launch', async (_event, { name }) => {
-  launchAppWindowByEntry(getStoredApp(name));
-  return { ok: true };
+  try {
+    launchAppWindowByEntry(getStoredApp(name));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
-  const rolledBack = rollbackAppToVersion(name, versionId);
-  refreshOpenAppWindow(name);
-  launchAppWindowByEntry(rolledBack);
-  emitAppsChanged({
-    action: 'rolled-back',
-    app: rolledBack,
-    versionId,
-  });
-  return {
-    ok: true,
-    app: rolledBack,
-  };
+  try {
+    const rolledBack = rollbackAppToVersion(name, versionId);
+    refreshOpenAppWindow(name);
+    launchAppWindowByEntry(rolledBack);
+    emitAppsChanged({
+      action: 'rolled-back',
+      app: rolledBack,
+      versionId,
+    });
+    return {
+      ok: true,
+      app: rolledBack,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle('app:delete', async (_event, { name }) => {
-  const existingWindow = appWindows.get(name);
-  if (existingWindow && !existingWindow.isDestroyed()) {
-    existingWindow.close();
+  try {
+    const existingWindow = appWindows.get(name);
+    if (existingWindow && !existingWindow.isDestroyed()) {
+      existingWindow.close();
+    }
+    await deleteStoredApp(name);
+    emitAppsChanged({ action: 'deleted', name });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
-  await deleteStoredApp(name);
-  emitAppsChanged({ action: 'deleted', name });
-  return { ok: true };
 });
 
 ipcMain.handle('app:save', async (_event, { sessionId, launch = true }) => {
@@ -4113,12 +4800,17 @@ ipcMain.on('debug:send-to-agent', (event, { prompt, appName }) => {
   const appState = appWindowStates.get(parentWindow.webContents.id);
   if (!appState || !appState.runtime) return;
 
-  // Forward events to debug window
+  // Forward runtime events to the current debug window. Install the emit wrapper
+  // only once — reassigning it on every send stacks wrappers unboundedly, causing
+  // duplicate forwarding and a memory leak.
+  appState.debugWindow = debugWindow;
   const originalEmit = appState.runtime.emit;
-  if (originalEmit) {
+  if (originalEmit && !appState.runtime.__debugForwardingInstalled) {
+    appState.runtime.__debugForwardingInstalled = true;
     appState.runtime.emit = function(...args) {
-      if (debugWindow && !debugWindow.isDestroyed()) {
-        debugWindow.webContents.send('debug:agent-event', args[0]);
+      const dbg = appState.debugWindow;
+      if (dbg && !dbg.isDestroyed()) {
+        dbg.webContents.send('debug:agent-event', args[0]);
       }
       return originalEmit.apply(this, args);
     };
@@ -4224,6 +4916,10 @@ ipcMain.handle('fs:getImageBase64', async (event, { path: filePath }) => {
       svg: 'image/svg+xml', ico: 'image/x-icon',
     };
     const mime = mimeMap[ext] || 'application/octet-stream';
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile() || stat.size > MAX_IMAGE_BASE64_BYTES) {
+      return null;
+    }
     const base64 = await fsp.readFile(filePath, { encoding: 'base64' });
     return `data:${mime};base64,${base64}`;
   } catch {
@@ -4262,6 +4958,13 @@ ipcMain.handle('fs:getAppIcon', async () => {
 
 ipcMain.handle('fs:readText', async (event, { path: filePath }) => {
   try {
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile()) {
+      return { ok: false, error: 'Not a file' };
+    }
+    if (stat.size > MAX_READ_TEXT_BYTES) {
+      return { ok: false, error: 'File is too large' };
+    }
     const content = await fsp.readFile(filePath, 'utf-8');
     return { ok: true, content };
   } catch (err) {
@@ -4333,13 +5036,120 @@ ipcMain.handle('workspace:copyFileToWorkspace', async (event, { sessionId, sourc
     }
     const safeName = String(fileName || path.basename(sourcePath)).replace(/[<>:"/\\|?*]/g, '_');
     const destPath = path.join(sessionRecord.workspace, safeName);
-    const data = await fsp.readFile(sourcePath);
-    await fsp.writeFile(destPath, data);
+    // 用 copyFile 而非 readFile+writeFile, 避免把整个文件读进内存(大文件会撑爆主进程)。
+    await fsp.copyFile(sourcePath, destPath);
     return { path: destPath };
   } catch (err) {
     return { error: String(err) };
   }
 });
+
+const execAsync = promisify(exec);
+const BASH_MODE_TIMEOUT_MS = 120 * 1000;
+const BASH_MODE_MAX_OUTPUT_CHARS = 200 * 1024;
+const BASH_MODE_CONTEXT_CHARS = 8 * 1024;
+
+// "!" prefix runs the command directly in the session workspace (CLI REPL
+// bash mode). The result is shown in the UI and injected as context into the
+// next model turn instead of querying the model now.
+async function runDirectBashCommand(sessionRecord, sender, command) {
+  let output = '';
+  let exitCode = 0;
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: sessionRecord.workspace,
+      timeout: BASH_MODE_TIMEOUT_MS,
+      maxBuffer: 5 * 1024 * 1024,
+      windowsHide: true,
+    });
+    output = [stdout, stderr].filter(Boolean).join('\n');
+  } catch (err) {
+    exitCode = typeof err?.code === 'number' ? err.code : 1;
+    output = [err?.stdout, err?.stderr].filter(Boolean).join('\n') || String(err?.message || err);
+    if (err?.killed) {
+      output += '\n(命令超时，已终止)';
+    }
+  }
+  if (output.length > BASH_MODE_MAX_OUTPUT_CHARS) {
+    output = `${output.slice(0, BASH_MODE_MAX_OUTPUT_CHARS)}\n…(输出已截断)`;
+  }
+
+  const bashEvent = {
+    type: 'bash_command',
+    command,
+    output,
+    exitCode,
+    timestamp: Date.now(),
+  };
+  sessionRecord.history.push(bashEvent);
+  sessionRecord.messageCount += 1;
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.preview = `$ ${command}`;
+  if (!Array.isArray(sessionRecord.pendingBashContexts)) {
+    sessionRecord.pendingBashContexts = [];
+  }
+  sessionRecord.pendingBashContexts.push({
+    command,
+    output: output.slice(0, BASH_MODE_CONTEXT_CHARS),
+    exitCode,
+  });
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  if (!sender.isDestroyed()) {
+    sender.send('agent:event', { sessionId: sessionRecord.id, payload: bashEvent });
+  }
+  return { ok: true, bash: true, exitCode };
+}
+
+function consumePendingBashContexts(sessionRecord) {
+  const pending = sessionRecord.pendingBashContexts;
+  if (!Array.isArray(pending) || pending.length === 0) return '';
+  sessionRecord.pendingBashContexts = [];
+  const blocks = pending.map(({ command, output, exitCode }) => {
+    const body = output?.trim() ? output : '(no output)';
+    const exit = exitCode ? `\n(exit code: ${exitCode})` : '';
+    return `$ ${command}\n${body}${exit}`;
+  });
+  return `[Shell commands the user ran directly in the workspace]\n${blocks.join('\n\n')}\n\n---\n\n`;
+}
+
+const INLINE_IMAGE_MEDIA_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+// Anthropic API rejects oversized images; the runtime downsamples inline
+// blocks, but reading huge files into memory is wasteful — fall back to the
+// Read tool (which streams with a token budget) beyond this size.
+const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+async function buildInlineImageBlocks(filePaths) {
+  const blocks = [];
+  const inlinedPaths = new Set();
+  for (const filePath of filePaths) {
+    const mediaType = INLINE_IMAGE_MEDIA_TYPES[path.extname(filePath).toLowerCase()];
+    if (!mediaType) continue;
+    try {
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile() || stat.size === 0 || stat.size > MAX_INLINE_IMAGE_BYTES) continue;
+      const data = await fsp.readFile(filePath);
+      blocks.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mediaType,
+          data: data.toString('base64'),
+        },
+      });
+      inlinedPaths.add(filePath);
+    } catch (err) {
+      console.warn('[agent:send] Failed to inline image attachment:', filePath, err?.message || err);
+    }
+  }
+  return { blocks, inlinedPaths };
+}
 
 ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode, assistantName }) => {
   const sessionRecord = getSessionRecord(sessionId);
@@ -4363,6 +5173,15 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
   if (!trimmedPrompt && filePaths.length === 0) {
     throw new Error('Prompt is required.');
   }
+
+  if (trimmedPrompt.startsWith('!') && sessionRecord.agentMode !== 'remote-direct') {
+    const command = trimmedPrompt.slice(1).trim();
+    if (!command) {
+      throw new Error('Shell command is empty.');
+    }
+    return runDirectBashCommand(sessionRecord, event.sender, command);
+  }
+
   const isPlanOnly = mode === 'plan';
   const isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
 
@@ -4420,9 +5239,41 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
 
   // For remote-direct mode, assistant rules are injected via MOSS_ASSISTANT_NAME env var
   // in CLI process, so don't concatenate them to the user prompt here
-  const runtimePrompt = isPlanOnly
-    ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-    : (sessionRecord.agentMode === 'remote-direct' ? '' : assistantContextPrefix) + appContextPrefix + trimmedPrompt;
+  // Images are inlined as base64 content blocks so the model sees them
+  // directly (same as pasting an image in the CLI REPL). Other files are
+  // listed by path for the Read tool.
+  const { blocks: imageBlocks, inlinedPaths } = filePaths.length > 0
+    ? await buildInlineImageBlocks(filePaths)
+    : { blocks: [], inlinedPaths: new Set() };
+  const readableFilePaths = filePaths.filter((p) => !inlinedPaths.has(p));
+
+  let attachmentSuffix = '';
+  if (filePaths.length > 0) {
+    const lines = ['\n\n[Attached files]'];
+    for (const p of filePaths) {
+      lines.push(`- ${p}${inlinedPaths.has(p) ? ' (image included in this message)' : ''}`);
+    }
+    if (imageBlocks.length > 0) {
+      lines.push('The attached image(s) are included in this message — you can see them directly.');
+    }
+    if (readableFilePaths.length > 0) {
+      lines.push('Use the Read tool to view the other attached files.');
+    }
+    attachmentSuffix = lines.join('\n');
+  }
+
+  const bashContextPrefix = isPlanOnly ? '' : consumePendingBashContexts(sessionRecord);
+
+  const promptText = isPlanOnly
+    ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
+    : (sessionRecord.agentMode === 'remote-direct' ? '' : assistantContextPrefix) + appContextPrefix + bashContextPrefix + trimmedPrompt + attachmentSuffix;
+
+  // The embedded runtime's processUserInput natively accepts content-block
+  // arrays; the trailing text block becomes the prompt text, preceding image
+  // blocks are auto-resized and attached to the same user message.
+  const runtimePrompt = imageBlocks.length > 0
+    ? [...imageBlocks, { type: 'text', text: promptText || 'Please review the attached image(s).' }]
+    : promptText;
 
   const visibleUserPrompt = trimmedPrompt;
 
@@ -4870,16 +5721,17 @@ ipcMain.handle('execution:send', async (event, { message }) => {
       sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
       sendEvent('execution:event', { sessionId: sessionRecord.id, payload: msg });
     }
-    sessionRecord.busy = false;
     sendEvent('execution:event', { sessionId: sessionRecord.id, payload: { type: 'message_stop' } });
-    sendEvent('execution:state', { busy: false });
     return { ok: true };
   } catch (error) {
-    sessionRecord.busy = false;
     const errMsg = error instanceof Error ? error.message : String(error);
     sendEvent('execution:event', { sessionId: sessionRecord.id, payload: { type: 'error', message: errMsg } });
-    sendEvent('execution:state', { busy: false });
     return { error: errMsg };
+  } finally {
+    // Always clear busy — a throw before/after the loop would otherwise wedge the
+    // session, rejecting all future sends as "already processing".
+    sessionRecord.busy = false;
+    sendEvent('execution:state', { busy: false });
   }
 });
 

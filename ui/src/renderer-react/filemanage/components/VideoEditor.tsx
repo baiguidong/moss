@@ -26,6 +26,8 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { mediaUrl } from '../lib/mediaUrl';
+import { TranscriptPanel } from './TranscriptPanel';
 
 // 时间线轨道类型
 interface TimelineTrack {
@@ -47,6 +49,7 @@ interface TimelineClip {
 
 interface VideoEditorProps {
   videoPath?: string;
+  fileId?: number;
   className?: string;
 }
 
@@ -68,7 +71,7 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-export function VideoEditor({ videoPath, className }: VideoEditorProps) {
+export function VideoEditor({ videoPath, fileId, className }: VideoEditorProps) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const timelineRef = React.useRef<HTMLDivElement>(null);
 
@@ -93,56 +96,81 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
   const [aiPrompt, setAiPrompt] = React.useState('');
   const [aiProcessing, setAiProcessing] = React.useState(false);
 
-  // 历史记录
+  // 历史记录 (index 指向 history 中的当前状态; refs 避免闭包过期)
   const [history, setHistory] = React.useState<TimelineTrack[][]>([]);
   const [historyIndex, setHistoryIndex] = React.useState(-1);
+  const historyRef = React.useRef<TimelineTrack[][]>([]);
+  const historyIndexRef = React.useRef(-1);
+
+  const clone = (t: TimelineTrack[]): TimelineTrack[] => JSON.parse(JSON.stringify(t));
+
+  // 用某个状态重置历史基线 (加载/切换视频时)
+  const resetHistory = React.useCallback((baseline: TimelineTrack[]) => {
+    const snap = [clone(baseline)];
+    historyRef.current = snap;
+    historyIndexRef.current = 0;
+    setHistory(snap);
+    setHistoryIndex(0);
+  }, []);
+
+  // 提交一次编辑: 落地新状态并压入历史 (截断 redo 尾部, 保留最近 50 条)
+  const commit = React.useCallback((next: TimelineTrack[]) => {
+    setTracks(next);
+    const trimmed = [...historyRef.current.slice(0, historyIndexRef.current + 1), clone(next)].slice(-50);
+    historyRef.current = trimmed;
+    historyIndexRef.current = trimmed.length - 1;
+    setHistory(trimmed);
+    setHistoryIndex(trimmed.length - 1);
+  }, []);
 
   // 初始化视频
   React.useEffect(() => {
     if (videoPath && videoRef.current) {
-      videoRef.current.src = videoPath;
-      // 添加默认片段
-      const clip: TimelineClip = {
-        id: generateId(),
-        trackId: 'video-1',
-        startTime: 0,
-        duration: 0,
-        sourceStart: 0,
-        sourceEnd: 0,
-        name: 'Main Video',
-        color: '#4f46e5',
-      };
-      setTracks((prev) => {
-        const newTracks = [...prev];
-        newTracks[0] = { ...newTracks[0], clips: [clip] };
-        return newTracks;
-      });
+      videoRef.current.src = mediaUrl(videoPath) ?? '';
+      // 切换视频源: 重置时间线与选中态, 避免上一段视频残留
+      const baseline: TimelineTrack[] = [
+        {
+          id: 'video-1',
+          type: 'video',
+          clips: [{
+            id: generateId(),
+            trackId: 'video-1',
+            startTime: 0,
+            duration: 0,
+            sourceStart: 0,
+            sourceEnd: 0,
+            name: 'Main Video',
+            color: '#4f46e5',
+          }],
+        },
+        { id: 'audio-1', type: 'audio', clips: [] },
+        { id: 'subtitle-1', type: 'subtitle', clips: [] },
+      ];
+      setTracks(baseline);
+      setSelectedClip(null);
+      setCurrentTime(0);
+      setDuration(0);
+      resetHistory(baseline);
     }
-  }, [videoPath]);
-
-  // 保存历史
-  const saveHistory = React.useCallback(() => {
-    setHistory((prev) => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(JSON.parse(JSON.stringify(tracks)));
-      return newHistory.slice(-50); // 保留最近 50 条
-    });
-    setHistoryIndex((prev) => prev + 1);
-  }, [tracks, historyIndex]);
+  }, [videoPath, resetHistory]);
 
   // 撤销
   const handleUndo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1);
-      setTracks(history[historyIndex - 1]);
+    if (historyIndexRef.current > 0) {
+      const idx = historyIndexRef.current - 1;
+      historyIndexRef.current = idx;
+      setHistoryIndex(idx);
+      setTracks(clone(historyRef.current[idx]));
     }
   };
 
   // 重做
   const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1);
-      setTracks(history[historyIndex + 1]);
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      const idx = historyIndexRef.current + 1;
+      historyIndexRef.current = idx;
+      setHistoryIndex(idx);
+      setTracks(clone(historyRef.current[idx]));
     }
   };
 
@@ -151,10 +179,10 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
+        setIsPlaying(false);
       } else {
-        videoRef.current.play();
+        videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
       }
-      setIsPlaying(!isPlaying);
     }
   };
 
@@ -180,46 +208,42 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
   const handleCut = () => {
     if (!selectedClip) return;
 
-    saveHistory();
-    setTracks((prev) => {
-      return prev.map((track) => ({
-        ...track,
-        clips: track.clips.flatMap((clip) => {
-          if (clip.id === selectedClip) {
-            // 在当前时间点分割
-            if (currentTime > clip.startTime && currentTime < clip.startTime + clip.duration) {
-              const firstPart: TimelineClip = {
-                ...clip,
-                duration: currentTime - clip.startTime,
-                sourceEnd: clip.sourceStart + (currentTime - clip.startTime),
-              };
-              const secondPart: TimelineClip = {
-                ...clip,
-                id: generateId(),
-                startTime: currentTime,
-                duration: clip.duration - (currentTime - clip.startTime),
-                sourceStart: clip.sourceStart + (currentTime - clip.startTime),
-              };
-              return [firstPart, secondPart];
-            }
+    const next = tracks.map((track) => ({
+      ...track,
+      clips: track.clips.flatMap((clip) => {
+        if (clip.id === selectedClip) {
+          // 在当前时间点分割
+          if (currentTime > clip.startTime && currentTime < clip.startTime + clip.duration) {
+            const firstPart: TimelineClip = {
+              ...clip,
+              duration: currentTime - clip.startTime,
+              sourceEnd: clip.sourceStart + (currentTime - clip.startTime),
+            };
+            const secondPart: TimelineClip = {
+              ...clip,
+              id: generateId(),
+              startTime: currentTime,
+              duration: clip.duration - (currentTime - clip.startTime),
+              sourceStart: clip.sourceStart + (currentTime - clip.startTime),
+            };
+            return [firstPart, secondPart];
           }
-          return clip;
-        }),
-      }));
-    });
+        }
+        return clip;
+      }),
+    }));
+    commit(next);
   };
 
   // 删除片段
   const handleDelete = () => {
     if (!selectedClip) return;
 
-    saveHistory();
-    setTracks((prev) =>
-      prev.map((track) => ({
-        ...track,
-        clips: track.clips.filter((clip) => clip.id !== selectedClip),
-      }))
-    );
+    const next = tracks.map((track) => ({
+      ...track,
+      clips: track.clips.filter((clip) => clip.id !== selectedClip),
+    }));
+    commit(next);
     setSelectedClip(null);
   };
 
@@ -228,7 +252,6 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
     const subtitleText = prompt('输入字幕文本：');
     if (!subtitleText) return;
 
-    saveHistory();
     const newClip: TimelineClip = {
       id: generateId(),
       trackId: 'subtitle-1',
@@ -240,14 +263,12 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
       color: '#f59e0b',
     };
 
-    setTracks((prev) => {
-      const newTracks = [...prev];
-      const subtitleTrack = newTracks.find((t) => t.type === 'subtitle');
-      if (subtitleTrack) {
-        subtitleTrack.clips = [...subtitleTrack.clips, newClip];
-      }
-      return newTracks;
-    });
+    const next = tracks.map((track) =>
+      track.type === 'subtitle'
+        ? { ...track, clips: [...track.clips, newClip] }
+        : track
+    );
+    commit(next);
   };
 
   // AI 处理
@@ -435,6 +456,9 @@ export function VideoEditor({ videoPath, className }: VideoEditorProps) {
               </div>
             </div>
           </div>
+
+          {/* 语音转写面板 */}
+          <TranscriptPanel fileId={fileId} />
         </div>
       </div>
 

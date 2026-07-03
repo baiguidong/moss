@@ -15,14 +15,24 @@ import {
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import type { ScanTask, ScanProgress } from '../ipc/types';
+import type { ScanTask, ScanProgress } from './ipc/types';
 
 interface ScanViewProps {
   onScanComplete?: () => void;
 }
 
+const FILE_TYPE_OPTIONS = [
+  { id: 'image', label: '图片' },
+  { id: 'video', label: '视频' },
+  { id: 'audio', label: '音频' },
+  { id: 'document', label: '文档' },
+  { id: 'other', label: '其他' },
+];
+const COMMON_TYPES = ['image', 'video', 'audio', 'document'];
+
 export function ScanView({ onScanComplete }: ScanViewProps) {
   const [selectedPaths, setSelectedPaths] = React.useState<string[]>([]);
+  const [fileTypes, setFileTypes] = React.useState<string[]>(COMMON_TYPES);
   const [currentTask, setCurrentTask] = React.useState<ScanTask | null>(null);
   const [scanTasks, setScanTasks] = React.useState<ScanTask[]>([]);
   const [isScanning, setIsScanning] = React.useState(false);
@@ -98,9 +108,9 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
             };
           });
 
-          if (progress.status === 'completed') {
+          if (progress.status === 'completed' || progress.status === 'cancelled' || progress.status === 'error') {
             setIsScanning(false);
-            onScanComplete?.();
+            if (progress.status === 'completed') onScanComplete?.();
             // 刷新任务列表
             window.fileManager?.getScanTasks().then(tasks => {
               if (tasks) setScanTasks(tasks);
@@ -134,6 +144,14 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
     setSelectedPaths((prev) => prev.filter((p) => p !== path));
   };
 
+  // 切换文件类型
+  const toggleFileType = (id: string) => {
+    setFileTypes((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
+  const allSelected = fileTypes.length === FILE_TYPE_OPTIONS.length;
+
   // 开始扫描
   const handleStartScan = async () => {
     if (selectedPaths.length === 0) return;
@@ -149,20 +167,18 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
       const task = await window.fileManager?.startScan(selectedPaths, {
         name: `扫描 ${new Date().toLocaleString()}`,
         recursive: true,
+        fileTypes,
       });
 
       if (task) {
         console.log('[ScanView] Task created:', task);
         setCurrentTask(task as ScanTask);
 
-        // 执行扫描 (异步，不等待)
-        window.fileManager?.executeScan(task.id).then(async (result) => {
-          console.log('[ScanView] Scan result:', result);
-          setIsScanning(false);
-          // 刷新任务列表
-          const tasks = await window.fileManager?.getScanTasks();
-          if (tasks) {
-            setScanTasks(tasks);
+        // 执行扫描 (worker 异步执行, executeScan 立即返回; 进度/完成由事件驱动)
+        window.fileManager?.executeScan(task.id).then((result) => {
+          console.log('[ScanView] Scan started:', result);
+          if (result && (result as { error?: string }).error) {
+            setIsScanning(false);
           }
         }).catch(err => {
           console.error('[ScanView] Scan error:', err);
@@ -183,7 +199,8 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
   };
 
   // 获取当前进度值
-  const progressValue = scanProgress?.progress ?? currentTask?.progress ?? 0;
+  const indeterminate = scanProgress?.indeterminate ?? (isScanning && (scanProgress?.totalFiles ?? 0) === 0);
+  const progressValue = indeterminate ? undefined : (scanProgress?.progress ?? currentTask?.progress ?? 0);
   const processedFiles = scanProgress?.processedFiles ?? currentTask?.processed_files ?? 0;
   const totalFiles = scanProgress?.totalFiles ?? currentTask?.total_files ?? 0;
 
@@ -229,6 +246,42 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
         </div>
       </div>
 
+      {/* 文件类型选择 */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-medium">文件类型</h3>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setFileTypes(allSelected ? COMMON_TYPES : FILE_TYPE_OPTIONS.map((o) => o.id))}
+            disabled={isScanning}
+            className="text-xs"
+          >
+            {allSelected ? '常用类型' : '全部'}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {FILE_TYPE_OPTIONS.map((opt) => {
+            const active = fileTypes.includes(opt.id);
+            return (
+              <button
+                key={opt.id}
+                onClick={() => toggleFileType(opt.id)}
+                disabled={isScanning}
+                className={cn(
+                  'rounded-full border px-3 py-1 text-sm transition-colors disabled:opacity-50',
+                  active
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border/60 text-muted-foreground hover:bg-muted/50'
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* 扫描控制 */}
       <div className="mb-4">
         {isScanning ? (
@@ -239,7 +292,7 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
         ) : (
           <Button
             onClick={handleStartScan}
-            disabled={selectedPaths.length === 0}
+            disabled={selectedPaths.length === 0 || fileTypes.length === 0}
           >
             <Play className="mr-2 h-4 w-4" />
             开始扫描
@@ -267,10 +320,20 @@ export function ScanView({ onScanComplete }: ScanViewProps) {
             </div>
           </div>
 
-          <Progress value={progressValue} className="mb-2" />
+          {indeterminate ? (
+            <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-primary/20">
+              <div className="h-full w-full animate-pulse rounded-full bg-primary/60" />
+            </div>
+          ) : (
+            <Progress value={progressValue ?? 0} className="mb-2" />
+          )}
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>已处理: {processedFiles} / {totalFiles || '...'}</span>
+            <span>
+              {indeterminate
+                ? `已发现 ${processedFiles} 个文件...`
+                : `已处理: ${processedFiles} / ${totalFiles || '...'}`}
+            </span>
             {(currentTask?.error_files ?? 0) > 0 && (
               <span className="text-destructive">错误: {currentTask?.error_files}</span>
             )}

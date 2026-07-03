@@ -210,12 +210,66 @@ moss({
 
 ## Host API
 
-App 内可使用：
+App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异步的（返回 Promise），需 `await`。App 本身仍是零外部依赖的单文件 HTML；`mossApp` 只在宿主运行时存在，写代码时要做存在性判断（`if (window.mossApp) { ... }`），以便在纯浏览器预览下降级。
 
-- `window.mossApp.getAppInfo()`
-- `window.mossApp.storage.getItem(key)` / `setItem(key, value)`
-- `window.mossApp.files.list()` / `readText(path)` / `writeText(path, content)`
-- `window.mossApp.agent.send({ prompt })`
+### 应用信息与版本
+
+- `mossApp.getAppInfo()` → `{ name, description, width, height, prd, dataDir, filesDir, ... }`
+- `mossApp.getMeta()` → 同 `getAppInfo`（别名）
+- `mossApp.getVersions()` → 历史版本快照列表
+- `mossApp.rollback(versionId)` → 回滚到指定版本
+
+### 本地存储（键值，持久化在 App 私有目录）
+
+- `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
+- 优先用它替代 `localStorage` 做持久化；`localStorage` 仅适合临时/预览态。
+
+### 文件
+
+沙箱文件（限定在 App 的 `filesDir` 内，推荐用于 App 自身数据；注意方法挂在 `mossApp.fs` 下，没有 `mossApp.files`）：
+
+- `mossApp.fs.list(dir)` / `readText(path)` / `writeText(path, content)` / `mkdir(dir)` / `delete(path)`
+
+全局文件（绝对路径，能力更强，谨慎使用）：
+
+- `mossApp.fs.readGlobalText(path)` / `writeGlobalBinary(path, data)` / `deleteGlobal(path)` / `listGlobal(dir)`
+- `mossApp.fs.getHomeDir()` / `getImageBase64(path)` / `getFileMetadata(path)` / `getAppIcon()` / `createTempFile(fileName)`
+
+### AI Agent（App 专属，支持流式）
+
+- `mossApp.agent.send({ prompt, systemPrompt?, context?, requestId?, stream? })`
+- `mossApp.agent.cancel(requestId)` / `mossApp.agent.reset()`
+- 需要逐字流式输出时必须传 `stream: true`，否则只在完成时一次性返回。
+- 流式与运行时事件通过 `mossApp.onRuntimeEvent(cb)` 订阅（返回取消函数）：事件形如 `{ type, ... }`，`type` 包括 `agent:start` / `agent:delta`（`text` 为累计全文，`delta` 为增量）/ `agent:complete`（`finalResult.text` 为最终结果）/ `agent:error` / `agent:cancelled` / `files:changed` / `app:rolled-back` / `agent:reset`。
+- 其他事件订阅：`onAgentEvent(cb)`、`onAgentState(cb)`、`onPermission(cb)`，均返回取消函数。
+
+### 系统 shell
+
+- `mossApp.shell.openExternal(url)` → 在默认浏览器打开外链（仅允许 http/https/mailto）
+- `mossApp.shell.openFile(path)` → 用系统默认程序打开文件
+- `mossApp.shell.showItemInFolder(path)` → 在文件管理器中定位
+
+### 文档转换
+
+- `mossApp.document.isLibreOfficeAvailable()` → 转换前探测
+- `mossApp.document.convert(filePath, to)` → `to` 取值 `markdown` / `word-html` / `excel-json` / `ppt-json` / `pptx-arraybuffer`
+
+### 定时任务
+
+- `mossApp.cron.list()` / `get(id)` / `add(item)` / `update(id, updates)` / `delete(id)`
+
+### 预览与日志
+
+- `mossApp.preview.open(data)` / `mossApp.preview.close()`
+- `mossApp.log.write(level, category, message, data)` → 写入宿主日志，便于调试
+
+### 通用工具网关（进阶）
+
+- `mossApp.listTools()` / `mossApp.listResources()` → 发现可用工具/资源
+- `mossApp.callTool(name, args)` → 直接调用任意运行时工具（如 `versions.list`、`storage.get`），是新增能力的统一入口
+- `mossApp.readResource(uri)` → 读取运行时资源
+
+> 说明：另有 `mossApp.skillStore.*` 与 `mossApp.agentStore.*`，仅用于「技能商店 / 助手商店」这类特定 App，普通 App 不需要。
 
 ## 规范
 

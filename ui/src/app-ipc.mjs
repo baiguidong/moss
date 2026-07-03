@@ -98,6 +98,15 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
     ? path.join(os.homedir(), filePath.slice(2))
     : filePath;
 
+  // Serialize read-modify-write mutations so concurrent IPC calls can't interleave
+  // and clobber each other's writes (lost updates).
+  let writeQueue = Promise.resolve();
+  function withLock(fn) {
+    const run = writeQueue.then(fn, fn);
+    writeQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   async function readData() {
     try {
       const raw = await fsp.readFile(resolvedPath, 'utf-8');
@@ -135,7 +144,7 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
     return data.find(item => item[idField] === id) || null;
   });
 
-  ipcMain.handle(`${name}:add`, async (_event, { item }) => {
+  ipcMain.handle(`${name}:add`, async (_event, { item }) => withLock(async () => {
     const data = await readData();
     const newItem = {
       ...item,
@@ -144,23 +153,23 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
     data.push(newItem);
     await writeData(data);
     return newItem;
-  });
+  }));
 
-  ipcMain.handle(`${name}:update`, async (_event, { id, updates }) => {
+  ipcMain.handle(`${name}:update`, async (_event, { id, updates }) => withLock(async () => {
     const data = await readData();
     const index = data.findIndex(item => item[idField] === id);
     if (index === -1) return null;
     data[index] = { ...data[index], ...updates };
     await writeData(data);
     return data[index];
-  });
+  }));
 
-  ipcMain.handle(`${name}:delete`, async (_event, { id }) => {
+  ipcMain.handle(`${name}:delete`, async (_event, { id }) => withLock(async () => {
     const data = await readData();
     const filtered = data.filter(item => item[idField] !== id);
     await writeData(filtered);
     return { ok: true };
-  });
+  }));
 }
 
 // ============================================================================
@@ -232,8 +241,20 @@ function ensureAppDataRootDir() {
   return MOSS_APP_DATA_DIR
 }
 
+// 应用名来自 HTML 内嵌 metadata(未 slug 化), 会被拼进数据/版本/文件目录路径。
+// 在此收口做穿越校验, 防止 ../ 之类的名字逃逸出应用数据根目录。
+function resolveAppDataDir(name) {
+  const root = ensureAppDataRootDir()
+  const dataDir = path.resolve(root, String(name))
+  const rel = path.relative(root, dataDir)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Invalid app name: ${name}`)
+  }
+  return dataDir
+}
+
 function ensureAppDataDir(name) {
-  const dataDir = path.join(ensureAppDataRootDir(), name)
+  const dataDir = resolveAppDataDir(name)
   fs.mkdirSync(dataDir, { recursive: true })
   return dataDir
 }
@@ -702,7 +723,7 @@ export async function deleteStoredApp(name) {
   }
   await Promise.all([
     fsp.rm(appEntry.filePath, { force: true }),
-    fsp.rm(path.join(ensureAppDataRootDir(), name), { recursive: true, force: true }),
+    fsp.rm(resolveAppDataDir(name), { recursive: true, force: true }),
   ])
   clearVersionSnapshotCache(name)
 }
@@ -820,22 +841,35 @@ export function extractAppToWorkspace(name, sessionRecord, versionId) {
  * Build app metadata and HTML into a merged file.
  * Returns the path to the built file for later publishing.
  */
-export function buildAppFile(appRecord) {
-  const buildDir = path.join(MOSS_HOME, 'app-build')
+export function buildAppFile(appRecord, workspaceDir) {
+  // 优先输出到当前会话工作区, 让用户能在工作区文件面板直接看到产物;
+  // 无会话上下文(如应用窗口内 agent)时回退到全局 app-build 目录。
+  const buildDir = workspaceDir || path.join(MOSS_HOME, 'app-build')
   fs.mkdirSync(buildDir, { recursive: true })
   const filePath = path.join(buildDir, `${slugifyAppName(appRecord.name) || 'app'}.html`)
   fs.writeFileSync(filePath, buildStoredAppHtml(appRecord), 'utf8')
   return filePath
 }
 
+const MAX_APP_HTML_BYTES = 20 * 1024 * 1024 // 单个应用 HTML 上限, 防止异常大文件撑爆主进程内存
+
+// 读取外部传入路径的应用 HTML 前先校验存在性与大小上限。
+function readAppHtmlFileSync(filePath) {
+  const stat = fs.statSync(filePath)
+  if (!stat.isFile()) {
+    throw new Error(`App file not found: ${filePath}`)
+  }
+  if (stat.size > MAX_APP_HTML_BYTES) {
+    throw new Error(`App file is too large: ${filePath}`)
+  }
+  return fs.readFileSync(filePath, 'utf8')
+}
+
 /**
  * Publish a built app file to the app store with version.
  */
 export function publishAppFromFile(filePath, options = {}) {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`App file not found: ${filePath}`)
-  }
-  const fileContent = fs.readFileSync(filePath, 'utf8')
+  const fileContent = readAppHtmlFileSync(filePath)
   const parsed = parseStoredAppHtml(fileContent, filePath)
 
   ensureAppsDir()
@@ -1016,7 +1050,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
         case 'app_build': {
           // Build app metadata and HTML into a merged file in workspace
           // Returns the file path for later publishing
-          const filePath = buildAppFile(event.input)
+          const filePath = buildAppFile(event.input, sessionRecord?.workspace)
           return { ok: true, filePath }
         }
 
@@ -1056,10 +1090,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           let normalizedUpdates = definedUpdates
 
           if (filePath) {
-            if (!fs.existsSync(filePath)) {
-              throw new Error(`App file not found: ${filePath}`)
-            }
-            const fileContent = fs.readFileSync(filePath, 'utf8')
+            const fileContent = readAppHtmlFileSync(filePath)
             normalizedUpdates = {
               ...parseStoredAppHtml(fileContent, filePath),
               ...definedUpdates,

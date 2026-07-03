@@ -79,13 +79,35 @@ export function AssistantMessage({ message }: { message: AssistantTextRenderMess
         )}
 
         {hasText && (
-          <MessageActionBar
-            copyText={message.content}
-            copyLabel="复制回复"
-            align="start"
-          />
+          <div className="flex w-full items-center gap-2">
+            <MessageActionBar
+              copyText={message.content}
+              copyLabel="复制回复"
+              align="start"
+              className="w-auto"
+            />
+            {message.tokenUsage && !message.streaming && (
+              <span
+                className="cursor-default rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                title={`输入 ${formatTokens(message.tokenUsage.inputTokens)} · 输出 ${formatTokens(message.tokenUsage.outputTokens)} · 缓存读 ${formatTokens(message.tokenUsage.cacheRead)} · 缓存写 ${formatTokens(message.tokenUsage.cacheWrite)}`}
+              >
+                {formatTokens(
+                  message.tokenUsage.inputTokens
+                  + message.tokenUsage.outputTokens
+                  + message.tokenUsage.cacheRead
+                  + message.tokenUsage.cacheWrite,
+                )} tokens
+              </span>
+            )}
+          </div>
         )}
       </div>
     </div>
   );
+}
+
+function formatTokens(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }

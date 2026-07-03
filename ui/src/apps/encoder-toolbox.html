@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:;">
+  <title>编码工具箱</title>
+  <script type="application/ld+json">
+  {
+    "@context": "urn:goose.ai:schema",
+    "@type": "GooseApp",
+    "name": "encoder-toolbox",
+    "icon": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧰</text></svg>",
+    "description": "编码工具箱 - Base64 / URL / JWT 解码 / 时间戳 / 哈希 / UUID，灵感来自 it-tools，纯本地",
+    "width": 1000,
+    "height": 720,
+    "resizable": true,
+    "mcpServers": ["apps"],
+    "runtime": {
+      "hostApi": "window.mossApp",
+      "capabilities": []
+    }
+  }
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b1120;
+      --card: #151c2c;
+      --card-hover: #1c2438;
+      --border: #2a3548;
+      --primary: #6366f1;
+      --primary-hover: #818cf8;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+      --ok: #22c55e;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); height: 100vh;
+      display: flex; overflow: hidden;
+    }
+    .sidebar {
+      width: 180px; border-right: 1px solid var(--border); flex-shrink: 0;
+      display: flex; flex-direction: column; padding: 16px 0;
+    }
+    .sidebar .brand { padding: 0 18px 14px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .nav-item {
+      padding: 10px 18px; font-size: 13px; cursor: pointer; color: var(--text-muted);
+      border-left: 2px solid transparent;
+    }
+    .nav-item:hover { background: var(--card-hover); color: var(--text); }
+    .nav-item.active { color: var(--text); border-left-color: var(--primary); background: var(--card); }
+    .content { flex: 1; overflow-y: auto; padding: 24px 32px; }
+    .tool { display: none; }
+    .tool.active { display: block; }
+    .tool h2 { font-size: 18px; margin-bottom: 4px; }
+    .tool .sub { font-size: 12px; color: var(--text-muted); margin-bottom: 18px; }
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    label { font-size: 12px; color: var(--text-muted); }
+    textarea, input, select {
+      font-family: inherit; background: var(--card); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; font-size: 13px; padding: 10px 12px; outline: none;
+    }
+    textarea { width: 100%; resize: vertical; min-height: 90px; line-height: 1.5; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+    input { flex: 1; }
+    textarea:focus, input:focus, select:focus { border-color: var(--primary); }
+    button {
+      font-family: inherit; background: var(--card); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; font-size: 13px; padding: 8px 14px; cursor: pointer; transition: all 0.15s;
+    }
+    button:hover { background: var(--card-hover); border-color: var(--primary); }
+    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    button.primary:hover { background: var(--primary-hover); }
+    .field-label { font-size: 12px; color: var(--text-muted); margin: 14px 0 6px; display: block; }
+    .out { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; white-space: pre-wrap; min-height: 44px; line-height: 1.5; }
+    .out.err { color: var(--danger); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .kv:last-child { border-bottom: none; }
+    .kv .kk { color: var(--text-muted); }
+    .kv .vv { font-family: 'SF Mono', Menlo, Consolas, monospace; text-align: right; word-break: break-all; }
+    .hint { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="brand">🧰 编码工具箱</div>
+    <div class="nav-item active" data-tool="base64">Base64</div>
+    <div class="nav-item" data-tool="url">URL 编码</div>
+    <div class="nav-item" data-tool="jwt">JWT 解码</div>
+    <div class="nav-item" data-tool="timestamp">时间戳</div>
+    <div class="nav-item" data-tool="hash">哈希 / SHA</div>
+    <div class="nav-item" data-tool="uuid">UUID / 随机</div>
+  </div>
+  <div class="content">
+    <!-- Base64 -->
+    <section class="tool active" id="tool-base64">
+      <h2>Base64 编解码</h2>
+      <div class="sub">支持 UTF-8 文本，编码/解码互转</div>
+      <span class="field-label">输入</span>
+      <textarea id="b64-input" placeholder="要编码或解码的文本…"></textarea>
+      <div class="row" style="margin-top:12px;">
+        <button class="primary" id="b64-enc">编码 →</button>
+        <button id="b64-dec">← 解码</button>
+        <label><input type="checkbox" id="b64-urlsafe" style="flex:none;width:auto;"> URL-safe</label>
+      </div>
+      <span class="field-label">输出</span>
+      <div class="out" id="b64-out"></div>
+    </section>
+
+    <!-- URL -->
+    <section class="tool" id="tool-url">
+      <h2>URL 编码</h2>
+      <div class="sub">encodeURIComponent / decodeURIComponent</div>
+      <span class="field-label">输入</span>
+      <textarea id="url-input" placeholder="要处理的字符串或 URL 片段…"></textarea>
+      <div class="row" style="margin-top:12px;">
+        <button class="primary" id="url-enc">编码 →</button>
+        <button id="url-dec">← 解码</button>
+      </div>
+      <span class="field-label">输出</span>
+      <div class="out" id="url-out"></div>
+    </section>
+
+    <!-- JWT -->
+    <section class="tool" id="tool-jwt">
+      <h2>JWT 解码</h2>
+      <div class="sub">仅本地解析 header 与 payload，不校验签名</div>
+      <span class="field-label">Token</span>
+      <textarea id="jwt-input" placeholder="粘贴 JWT（eyJ...）"></textarea>
+      <div class="row" style="margin-top:12px;"><button class="primary" id="jwt-dec">解码</button></div>
+      <span class="field-label">Header</span>
+      <div class="out" id="jwt-header"></div>
+      <span class="field-label">Payload</span>
+      <div class="out" id="jwt-payload"></div>
+      <div class="hint" id="jwt-exp"></div>
+    </section>
+
+    <!-- Timestamp -->
+    <section class="tool" id="tool-timestamp">
+      <h2>时间戳转换</h2>
+      <div class="sub">Unix 时间戳 ↔ 本地/UTC 时间</div>
+      <div class="row">
+        <input id="ts-input" placeholder="输入秒或毫秒时间戳，或留空取当前">
+        <button class="primary" id="ts-parse">解析</button>
+        <button id="ts-now">当前时间</button>
+      </div>
+      <div class="out" id="ts-out" style="margin-top:12px;"></div>
+      <span class="field-label">从日期时间生成</span>
+      <div class="row">
+        <input type="datetime-local" id="ts-dt">
+        <button id="ts-fromdt">→ 时间戳</button>
+      </div>
+      <div class="out" id="ts-out2"></div>
+    </section>
+
+    <!-- Hash -->
+    <section class="tool" id="tool-hash">
+      <h2>哈希 / SHA</h2>
+      <div class="sub">基于 Web Crypto SubtleCrypto，支持 SHA-1/256/384/512</div>
+      <span class="field-label">输入</span>
+      <textarea id="hash-input" placeholder="要计算哈希的文本…"></textarea>
+      <div class="row" style="margin-top:12px;">
+        <select id="hash-algo">
+          <option>SHA-256</option>
+          <option>SHA-1</option>
+          <option>SHA-384</option>
+          <option>SHA-512</option>
+        </select>
+        <button class="primary" id="hash-run">计算</button>
+      </div>
+      <span class="field-label">结果（hex）</span>
+      <div class="out" id="hash-out"></div>
+    </section>
+
+    <!-- UUID -->
+    <section class="tool" id="tool-uuid">
+      <h2>UUID / 随机字符串</h2>
+      <div class="sub">crypto.randomUUID 与随机 token 生成</div>
+      <div class="row">
+        <label>数量</label>
+        <input type="number" id="uuid-count" value="5" min="1" max="100" style="flex:none;width:90px;">
+        <button class="primary" id="uuid-gen">生成 UUID</button>
+      </div>
+      <div class="out" id="uuid-out" style="margin-top:12px;"></div>
+      <span class="field-label">随机 token</span>
+      <div class="row">
+        <label>字节数</label>
+        <input type="number" id="tok-bytes" value="16" min="1" max="128" style="flex:none;width:90px;">
+        <button id="tok-gen">生成 Hex Token</button>
+      </div>
+      <div class="out" id="tok-out"></div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // nav
+    document.querySelectorAll('.nav-item').forEach((item) => {
+      item.onclick = () => {
+        document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+        document.querySelectorAll('.tool').forEach((t) => t.classList.remove('active'));
+        item.classList.add('active');
+        $('tool-' + item.dataset.tool).classList.add('active');
+      };
+    });
+
+    function show(el, text, isErr) {
+      el.textContent = text;
+      el.classList.toggle('err', !!isErr);
+    }
+
+    // ---- Base64 (UTF-8 safe) ----
+    function utf8ToB64(str, urlsafe) {
+      const bytes = new TextEncoder().encode(str);
+      let bin = '';
+      bytes.forEach((b) => bin += String.fromCharCode(b));
+      let out = btoa(bin);
+      if (urlsafe) out = out.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      return out;
+    }
+    function b64ToUtf8(str, urlsafe) {
+      let s = str.trim();
+      if (urlsafe) s = s.replace(/-/g, '+').replace(/_/g, '/');
+      while (s.length % 4) s += '=';
+      const bin = atob(s);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    }
+    $('b64-enc').onclick = () => {
+      try { show($('b64-out'), utf8ToB64($('b64-input').value, $('b64-urlsafe').checked)); }
+      catch (e) { show($('b64-out'), '编码失败：' + e.message, true); }
+    };
+    $('b64-dec').onclick = () => {
+      try { show($('b64-out'), b64ToUtf8($('b64-input').value, $('b64-urlsafe').checked)); }
+      catch (e) { show($('b64-out'), '解码失败：不是有效的 Base64', true); }
+    };
+
+    // ---- URL ----
+    $('url-enc').onclick = () => {
+      try { show($('url-out'), encodeURIComponent($('url-input').value)); }
+      catch (e) { show($('url-out'), '失败：' + e.message, true); }
+    };
+    $('url-dec').onclick = () => {
+      try { show($('url-out'), decodeURIComponent($('url-input').value)); }
+      catch (e) { show($('url-out'), '解码失败：包含无效的转义序列', true); }
+    };
+
+    // ---- JWT ----
+    function b64urlDecode(str) {
+      let s = str.replace(/-/g, '+').replace(/_/g, '/');
+      while (s.length % 4) s += '=';
+      const bin = atob(s);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    }
+    $('jwt-dec').onclick = () => {
+      const parts = $('jwt-input').value.trim().split('.');
+      if (parts.length < 2) { show($('jwt-header'), 'JWT 至少需要 header.payload 两段', true); show($('jwt-payload'), ''); $('jwt-exp').textContent = ''; return; }
+      try {
+        const header = JSON.parse(b64urlDecode(parts[0]));
+        const payload = JSON.parse(b64urlDecode(parts[1]));
+        show($('jwt-header'), JSON.stringify(header, null, 2));
+        show($('jwt-payload'), JSON.stringify(payload, null, 2));
+        let notes = [];
+        if (payload.exp) {
+          const d = new Date(payload.exp * 1000);
+          notes.push(`exp: ${d.toLocaleString()} ${d < new Date() ? '（已过期）' : '（有效）'}`);
+        }
+        if (payload.iat) notes.push(`iat: ${new Date(payload.iat * 1000).toLocaleString()}`);
+        $('jwt-exp').textContent = notes.join('　·　');
+      } catch (e) {
+        show($('jwt-header'), '解析失败：' + e.message, true);
+        show($('jwt-payload'), '');
+        $('jwt-exp').textContent = '';
+      }
+    };
+
+    // ---- Timestamp ----
+    function renderTs(ms) {
+      const d = new Date(ms);
+      if (isNaN(d.getTime())) { show($('ts-out'), '无效时间戳', true); return; }
+      const rows = [
+        ['秒', Math.floor(ms / 1000)],
+        ['毫秒', ms],
+        ['本地时间', d.toLocaleString()],
+        ['UTC', d.toUTCString()],
+        ['ISO 8601', d.toISOString()],
+      ];
+      $('ts-out').classList.remove('err');
+      $('ts-out').innerHTML = '';
+      rows.forEach(([k, v]) => {
+        const div = document.createElement('div');
+        div.className = 'kv';
+        const kk = document.createElement('span'); kk.className = 'kk'; kk.textContent = k;
+        const vv = document.createElement('span'); vv.className = 'vv'; vv.textContent = String(v);
+        div.appendChild(kk); div.appendChild(vv);
+        $('ts-out').appendChild(div);
+      });
+    }
+    $('ts-parse').onclick = () => {
+      const raw = $('ts-input').value.trim();
+      if (!raw) { renderTs(Date.now()); return; }
+      const num = Number(raw);
+      if (!Number.isFinite(num)) { show($('ts-out'), '请输入数字时间戳', true); return; }
+      // heuristic: >= 1e12 treat as ms, else seconds
+      renderTs(Math.abs(num) >= 1e12 ? num : num * 1000);
+    };
+    $('ts-now').onclick = () => { $('ts-input').value = String(Date.now()); renderTs(Date.now()); };
+    $('ts-fromdt').onclick = () => {
+      const v = $('ts-dt').value;
+      if (!v) { show($('ts-out2'), '请选择日期时间', true); return; }
+      const ms = new Date(v).getTime();
+      show($('ts-out2'), `秒: ${Math.floor(ms / 1000)}    毫秒: ${ms}`);
+    };
+
+    // ---- Hash ----
+    $('hash-run').onclick = async () => {
+      const text = $('hash-input').value;
+      if (!text) { show($('hash-out'), '请输入文本', true); return; }
+      try {
+        const buf = new TextEncoder().encode(text);
+        const digest = await crypto.subtle.digest($('hash-algo').value, buf);
+        const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+        show($('hash-out'), hex);
+      } catch (e) { show($('hash-out'), '计算失败：' + e.message, true); }
+    };
+
+    // ---- UUID / token ----
+    $('uuid-gen').onclick = () => {
+      const n = Math.max(1, Math.min(100, parseInt($('uuid-count').value, 10) || 1));
+      const out = [];
+      for (let i = 0; i < n; i++) out.push(crypto.randomUUID());
+      show($('uuid-out'), out.join('\n'));
+    };
+    $('tok-gen').onclick = () => {
+      const n = Math.max(1, Math.min(128, parseInt($('tok-bytes').value, 10) || 16));
+      const bytes = crypto.getRandomValues(new Uint8Array(n));
+      const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+      show($('tok-out'), hex);
+    };
+
+    // init
+    renderTs(Date.now());
+  </script>
+</body>
+</html>

@@ -67,7 +67,7 @@ export function FilePreviewDialog({
               >
                 <X className="h-4 w-4" />
               </Button>
-              <VideoPlayer src={file.path} className="w-full" />
+              <VideoPlayer src={file.path} poster={file.thumbnail_path} className="w-full" />
             </div>
           </div>
         );

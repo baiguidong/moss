@@ -3,11 +3,14 @@ import https from 'node:https';
 
 export const MAX_DOWNLOAD_REDIRECTS = 8;
 
+export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024; // 200MB 上限, 防止不可信响应撑爆内存
+
 export async function downloadFileBuffer(url, options = {}) {
   const {
     userAgent = 'Moss/1.0',
     timeoutMs = 60000,
     maxRedirects = MAX_DOWNLOAD_REDIRECTS,
+    maxBytes = MAX_DOWNLOAD_BYTES,
   } = options;
 
   let currentUrl = url;
@@ -50,8 +53,24 @@ export async function downloadFileBuffer(url, options = {}) {
           return;
         }
 
+        const declaredLength = Number(response.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+          response.destroy();
+          reject(new Error(`Download exceeds size limit (${declaredLength} > ${maxBytes} bytes)`));
+          return;
+        }
+
         const chunks = [];
-        response.on('data', (chunk) => chunks.push(chunk));
+        let received = 0;
+        response.on('data', (chunk) => {
+          received += chunk.length;
+          if (received > maxBytes) {
+            response.destroy();
+            reject(new Error(`Download exceeds size limit (> ${maxBytes} bytes)`));
+            return;
+          }
+          chunks.push(chunk);
+        });
         response.on('end', () => resolve({ buffer: Buffer.concat(chunks) }));
         response.on('error', reject);
       });

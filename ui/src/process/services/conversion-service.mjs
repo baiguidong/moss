@@ -4,13 +4,14 @@ import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import os from 'node:os';
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import TurndownService from 'turndown';
 import * as XLSX from 'xlsx-republish';
 import * as yauzl from 'yauzl';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 class ConversionService {
   constructor() {
@@ -411,11 +412,11 @@ class ConversionService {
     else if (['.doc', '.docx', '.odt'].includes(ext)) pdfFilter = 'writer_pdf_Export';
     else if (['.ppt', '.pptx', '.odp'].includes(ext)) pdfFilter = 'impress_pdf_Export';
 
-    const command = `"${libreOfficePath}" --headless --norestore --nofirststartwizard --convert-to pdf:${pdfFilter} --outdir "${tempDir}" "${sourcePath}"`;
-    await execAsync(command, {
-      timeout: 120000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    await execFileAsync(
+      libreOfficePath,
+      ['--headless', '--norestore', '--nofirststartwizard', '--convert-to', `pdf:${pdfFilter}`, '--outdir', tempDir, sourcePath],
+      { timeout: 120000, maxBuffer: 10 * 1024 * 1024 },
+    );
 
     const files = await fs.readdir(tempDir);
     const directPath = path.join(tempDir, `${baseName}.pdf`);

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
+import { CronView } from '@/components/cron-view';
 import { ChatArea } from '@/components/chat-area';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
@@ -10,6 +11,9 @@ import { ExecutionPetPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
+import { AiMemo } from '@/aimemo/AiMemo';
+import { ComicDrama } from '@/comicdrama/ComicDrama';
+import { KnowledgeBase } from '@/knowledge/KnowledgeBase';
 import {
   buildMainChatRenderMessagesFromHistory,
   buildWorkerRenderMessagesFromSubagentEvents,
@@ -22,6 +26,7 @@ import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTh
 import type {
   AgentEvent,
   AppVersion,
+  BackgroundTaskInfo,
   CoordinatorTask,
   DesktopSettings,
   ExecutionSummary,
@@ -102,6 +107,12 @@ function toSidebarSessions(
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type ComposerIntent = 'chat' | 'plan' | 'coordinator';
+type QueuedMessage = {
+  id: string;
+  prompt: string;
+  files?: Array<{ name: string; path: string }>;
+  intent: ComposerIntent;
+};
 type LayoutState = {
   leftWidth: number;
   previewWidth: number;
@@ -186,6 +197,7 @@ function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>
   const lower = query.trim().toLowerCase();
   return items
     .map((item) => {
+      if (!item || typeof item.name !== 'string') return null;
       const cached = cache.get(item.path);
       const children = item.type === 'directory' && expandedDirs.has(item.path) && cached?.items
         ? filterVisibleNodes(cached.items, query, cache, expandedDirs)
@@ -229,7 +241,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings'>('chat');
+  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings' | 'memos' | 'comic' | 'knowledge' | 'cron'>('chat');
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -260,6 +272,17 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
+  const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
+  const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
+  const [composerAttachments, setComposerAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  // Ref mirrors state so event handlers (registered once) and abort can read
+  // and mutate the queue synchronously, ahead of React's re-render.
+  const queuedMessagesRef = React.useRef<Record<string, QueuedMessage[]>>({});
+  const updateQueue = React.useCallback((sessionId: string, updater: (prev: QueuedMessage[]) => QueuedMessage[]) => {
+    const next = updater(queuedMessagesRef.current[sessionId] ?? []);
+    queuedMessagesRef.current = { ...queuedMessagesRef.current, [sessionId]: next };
+    setQueuedMessages(queuedMessagesRef.current);
+  }, []);
   const [pinnedIds, setPinnedIds] = React.useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem('ui.pinnedSessions');
@@ -384,6 +407,58 @@ export default function App() {
     setSettingsDraft((prev) => (prev ? { ...prev, ...next } : next));
   }, []);
 
+  // Per-session composer drafts: text + attachments survive session switches
+  // (borrowed from sudowork's useSendBoxDraft). Snapshotted on switch, so live
+  // edits stay in normal state and send-clearing works untouched.
+  const composerDraftsRef = React.useRef<Record<string, { text: string; files: Array<{ name: string; path: string }> }>>({});
+  const draftSessionKeyRef = React.useRef<string>('home');
+  const inputDraftRef = React.useRef('');
+  inputDraftRef.current = input;
+  const composerAttachmentsRef = React.useRef<Array<{ name: string; path: string }>>([]);
+  composerAttachmentsRef.current = composerAttachments;
+
+  React.useEffect(() => {
+    const prevKey = draftSessionKeyRef.current;
+    const nextKey = activeSessionId ?? 'home';
+    if (prevKey === nextKey) return;
+    composerDraftsRef.current[prevKey] = {
+      text: inputDraftRef.current,
+      files: composerAttachmentsRef.current,
+    };
+    draftSessionKeyRef.current = nextKey;
+    const draft = composerDraftsRef.current[nextKey];
+    setInput(draft?.text ?? '');
+    setComposerAttachments(draft?.files ?? []);
+  }, [activeSessionId]);
+
+  // Latest context usage derived from the newest main-thread assistant
+  // message (input + cache read/write + output ≈ current context footprint).
+  // Result events are deliberately skipped: their usage is summed across all
+  // API calls of the turn and vastly overstates the live context size.
+  const contextUsage = React.useMemo(() => {
+    const history = activeDetail?.history;
+    if (!Array.isArray(history)) return null;
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const ev = history[i] as any;
+      if (ev?.type !== 'assistant' || ev?.parent_tool_use_id != null) continue;
+      const usage = ev?.message?.usage;
+      if (usage && typeof usage.input_tokens === 'number') {
+        const inputTokens = usage.input_tokens ?? 0;
+        const cacheRead = usage.cache_read_input_tokens ?? 0;
+        const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+        const outputTokens = usage.output_tokens ?? 0;
+        return {
+          used: inputTokens + cacheRead + cacheWrite + outputTokens,
+          inputTokens,
+          cacheRead,
+          cacheWrite,
+          outputTokens,
+        };
+      }
+    }
+    return null;
+  }, [activeDetail?.history]);
+
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
     if (!options?.forceDiscardDirty && !confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认离开当前会话？')) {
       return false;
@@ -397,6 +472,7 @@ export default function App() {
     }
     if (options?.resetInput) {
       setInput('');
+      composerDraftsRef.current['home'] = { text: '', files: [] };
     }
     if (options?.resetApp) {
       setSelectedAppName('');
@@ -411,7 +487,13 @@ export default function App() {
       }
     }
     const requestId = ++openSessionRequestIdRef.current;
-    const detail = await window.agentDesktop.getSession({ sessionId });
+    let detail;
+    try {
+      detail = await window.agentDesktop.getSession({ sessionId });
+    } catch {
+      // 会话可能已被删除或后端出错; 忽略并保持当前视图
+      return false;
+    }
     if (requestId !== openSessionRequestIdRef.current) {
       return false;
     }
@@ -437,8 +519,14 @@ export default function App() {
   }, [openSession, desktopSettings?.agentMode, sessionAgentModes, persistSessionAgentModes]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
-    const data = await window.agentDesktop.listWorkspaceDir({ sessionId, dirPath: workspace });
-    setDirectoryCache(new Map([[workspace, data]]));
+    try {
+      const data = await window.agentDesktop.listWorkspaceDir({ sessionId, dirPath: workspace });
+      // 会话在请求返回前已切换则丢弃, 避免用旧会话的目录树覆盖当前会话
+      if (activeSessionIdRef.current !== sessionId) return;
+      setDirectoryCache(new Map([[workspace, data]]));
+    } catch {
+      /* 忽略目录加载失败 */
+    }
   }, []);
 
   React.useEffect(() => {
@@ -773,6 +861,14 @@ export default function App() {
           setActiveDetail((prev) => (prev ? { ...prev, ...payload.summary } : prev));
         }
       }
+      if (payload?.busy === false && payload?.sessionId) {
+        flushQueuedMessagesRef.current(payload.sessionId);
+      }
+    });
+
+    const offBackgroundTasks = window.agentDesktop.onBackgroundTasks((payload) => {
+      if (!payload?.sessionId) return;
+      setBackgroundTasks((prev) => ({ ...prev, [payload.sessionId]: payload.tasks ?? [] }));
     });
 
     const offPermission = window.agentDesktop.onPermission((payload) => {
@@ -893,6 +989,7 @@ export default function App() {
       }
       offEvent();
       offState();
+      offBackgroundTasks();
       offPermission();
       offMeta();
       offRemoved();
@@ -1067,10 +1164,24 @@ export default function App() {
   // The coordinator agent produces its own formatted summary in the history;
   // the UI must not generate its own summary on top of it.
   // Worker status is shown in WorkerThreadPanel, not injected into chatMessages.
-  const chatMessages = React.useMemo(
-    () => buildMainChatRenderMessagesFromHistory(activeDetail?.history || []),
-    [activeDetail?.history],
-  );
+  const chatMessages = React.useMemo(() => {
+    const messages = buildMainChatRenderMessagesFromHistory(activeDetail?.history || []);
+    // Orphaned tool calls: an aborted turn may end without a result event, so
+    // running/pending tools would spin forever. Once the session is idle,
+    // mark them as interrupted.
+    if (!activeDetail?.busy) {
+      for (const message of messages) {
+        if (message.type === 'tool_use' && (message.status === 'running' || message.status === 'pending')) {
+          message.status = 'error';
+          message.statusText = '已中断';
+        }
+        if ((message.type === 'assistant_text' || message.type === 'thinking') && message.streaming) {
+          message.streaming = false;
+        }
+      }
+    }
+    return messages;
+  }, [activeDetail?.history, activeDetail?.busy]);
 
   React.useEffect(() => {
     if (resolvedWorkerThreads.length === 0) {
@@ -1251,7 +1362,15 @@ export default function App() {
   }, [openSession]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
-    await window.agentDesktop.deleteSession({ sessionId });
+    const result = await window.agentDesktop.deleteSession({ sessionId }) as
+      { ok?: boolean; removedCronTasks?: number } | undefined;
+    if (result?.removedCronTasks) {
+      const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
+      setPermissionNotice(notice);
+      window.setTimeout(() => {
+        setPermissionNotice((current) => (current === notice ? '' : current));
+      }, 5000);
+    }
     if (activeSessionId === sessionId) {
       navigateToHome({ forceDiscardDirty: true });
     }
@@ -1293,13 +1412,78 @@ export default function App() {
     persistPinned(next);
   }, [persistPinned, pinnedIds]);
 
-  const submitPrompt = React.useCallback(async (intent: ComposerIntent, files?: Array<{ name: string; path: string }>, workspace?: string) => {
+  const dispatchToSession = React.useCallback(async (
+    sessionId: string,
+    prompt: string,
+    intent: ComposerIntent,
+    files?: Array<{ name: string; path: string }>,
+  ) => {
+    // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
+    // intentionally NOT cleared here so multi-turn coordinators keep their
+    // worker panel visible during follow-up turns. The resolvedWorkerThreads
+    // memo resets frozen automatically when genuinely new task IDs appear.
+    refreshedTerminalWorkerIdsRef.current = new Set();
+    prevCoordinatorTaskIdsRef.current = new Set();
+    setStickyWorkerTaskStatuses({});
+    setWorkerSubagentResults({});
+
+    await window.agentDesktop.send({
+      sessionId,
+      prompt,
+      mode: intent === 'chat' ? undefined : intent,
+      appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
+      files: files?.map(f => f.path),
+      coordinatorMode: intent === 'coordinator' ? true : undefined,
+      assistantName: selectedAssistant?.name,
+    });
+  }, [selectedAppName, selectedAssistant]);
+
+  // Dispatch the next queued message when a turn ends. Kept in a ref so the
+  // once-registered agent:state listener always calls the latest version.
+  const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
+  React.useEffect(() => {
+    flushQueuedMessagesRef.current = (sessionId: string) => {
+      const queue = queuedMessagesRef.current[sessionId] ?? [];
+      if (queue.length === 0) return;
+      const [next, ...rest] = queue;
+      updateQueue(sessionId, () => rest);
+      void dispatchToSession(sessionId, next.prompt, next.intent, next.files).catch((err) => {
+        console.error('[queued message] send failed:', err);
+        updateQueue(sessionId, (prev) => [next, ...prev]);
+      });
+    };
+  }, [dispatchToSession, updateQueue]);
+
+  const submitPrompt = React.useCallback(async (
+    intent: ComposerIntent,
+    files?: Array<{ name: string; path: string }>,
+    workspace?: string,
+    skills?: Array<{ name: string; displayName?: string; source?: string }>,
+  ) => {
     const hasText = input.trim().length > 0;
     const hasFiles = files && files.length > 0;
     if (!hasText && !hasFiles) return;
-    if (activeDetail?.busy || planDecisionBusy) return;
+    if (planDecisionBusy) return;
 
-    const prompt = input.trim();
+    const skillPrefix = skills && skills.length > 0
+      ? `${skills.map((s) => `请使用技能「${s.displayName || s.name}」${s.source ? `（SKILL.md 位于 ${s.source}）` : ''}`).join('\n')}\n\n`
+      : '';
+    const prompt = skillPrefix + input.trim();
+
+    // Session is busy: queue the message; it is dispatched automatically when
+    // the current turn ends (same as typing while the CLI REPL is running).
+    if (activeDetail?.busy && activeSessionId) {
+      const queued: QueuedMessage = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        prompt,
+        files,
+        intent,
+      };
+      updateQueue(activeSessionId, (prev) => [...prev, queued]);
+      setInput('');
+      return;
+    }
+
     setInput('');
 
     let sessionId = activeSessionId;
@@ -1327,28 +1511,15 @@ export default function App() {
       filesToSend = newFiles;
     }
 
-    // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
-    // intentionally NOT cleared here so multi-turn coordinators keep their
-    // worker panel visible during follow-up turns. The resolvedWorkerThreads
-    // memo resets frozen automatically when genuinely new task IDs appear.
-    refreshedTerminalWorkerIdsRef.current = new Set();
-    prevCoordinatorTaskIdsRef.current = new Set();
-    setStickyWorkerTaskStatuses({});
-    setWorkerSubagentResults({});
+    await dispatchToSession(sessionId, prompt, intent, filesToSend);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, input, planDecisionBusy, selectedAssistant, updateQueue]);
 
-    await window.agentDesktop.send({
-      sessionId,
-      prompt,
-      mode: intent === 'chat' ? undefined : intent,
-      appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
-      files: filesToSend?.map(f => f.path),
-      coordinatorMode: intent === 'coordinator' ? true : undefined,
-      assistantName: selectedAssistant?.name,
-    });
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, input, planDecisionBusy, selectedAppName, selectedAssistant]);
-
-  const handleSend = React.useCallback(async (files?: Array<{ name: string; path: string }>, workspace?: string) => {
-    await submitPrompt(composerIntent, files, workspace);
+  const handleSend = React.useCallback(async (
+    files?: Array<{ name: string; path: string }>,
+    workspace?: string,
+    skills?: Array<{ name: string; displayName?: string; source?: string }>,
+  ) => {
+    await submitPrompt(composerIntent, files, workspace, skills);
   }, [composerIntent, submitPrompt]);
 
   const handleApprovePlan = React.useCallback(async () => {
@@ -1379,8 +1550,23 @@ export default function App() {
 
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
+    // Interrupt drops queued messages back into the input (REPL Esc behavior).
+    // Clear the queue before aborting so the busy=false event doesn't flush it.
+    const queue = queuedMessagesRef.current[activeSessionId] ?? [];
+    if (queue.length > 0) {
+      updateQueue(activeSessionId, () => []);
+      const restored = queue.map((q) => q.prompt).filter(Boolean).join('\n');
+      if (restored) {
+        setInput((prev) => (prev.trim() ? `${prev}\n${restored}` : restored));
+      }
+    }
     await window.agentDesktop.abort({ sessionId: activeSessionId });
-  }, [activeSessionId]);
+  }, [activeSessionId, updateQueue]);
+
+  const handleRemoveQueuedMessage = React.useCallback((id: string) => {
+    if (!activeSessionId) return;
+    updateQueue(activeSessionId, (prev) => prev.filter((q) => q.id !== id));
+  }, [activeSessionId, updateQueue]);
 
   const handlePickWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -1417,11 +1603,19 @@ export default function App() {
     }
     next.add(path);
     setExpandedDirs(next);
-    const data = await window.agentDesktop.listWorkspaceDir({
-      sessionId: activeSessionId,
-      dirPath: path,
-    });
-    setDirectoryCache((prev) => new Map(prev).set(path, data));
+    try {
+      const data = await window.agentDesktop.listWorkspaceDir({
+        sessionId: activeSessionId,
+        dirPath: path,
+      });
+      setDirectoryCache((prev) => new Map(prev).set(path, data));
+    } catch {
+      setExpandedDirs((prev) => {
+        const rolled = new Set(prev);
+        rolled.delete(path);
+        return rolled;
+      });
+    }
   }, [activeSessionId, expandedDirs]);
 
   const handleSelectFile = React.useCallback(async (path: string) => {
@@ -1465,6 +1659,14 @@ export default function App() {
     setActiveView('chat');
   }, [navigateToHome, createAndOpenSession, installedAssistants]);
 
+  const handleRunMemoTask = React.useCallback(async (prompt: string, title: string): Promise<string | null> => {
+    const sessionId = await createAndOpenSession(`备忘任务: ${title}`);
+    if (!sessionId) return null;
+    setActiveView('chat');
+    await window.agentDesktop.send({ sessionId, prompt });
+    return sessionId;
+  }, [createAndOpenSession]);
+
   const handleDeleteApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.deleteApp({ name });
     setVersionsByApp((prev) => {
@@ -1503,6 +1705,15 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
+  const autoSaveVoiceSettings = React.useCallback(async (voice: DesktopSettings['voice']) => {
+    try {
+      const saved = await window.agentDesktop.updateSettings({ voice });
+      applyDesktopSettings(saved);
+    } catch (error: any) {
+      setSettingsNotice(error?.message || String(error));
+    }
+  }, [applyDesktopSettings]);
+
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
     await autoSaveSettings('agentMode', mode);
     // Refresh assistants list based on new mode
@@ -1516,6 +1727,7 @@ export default function App() {
       settingsNotice={settingsNotice}
       autoSaveSettings={autoSaveSettings}
       autoSaveImageSettings={autoSaveImageSettings}
+      autoSaveVoiceSettings={autoSaveVoiceSettings}
       themeMode={themeMode}
       setThemeMode={setThemeMode}
       cssThemeId={cssThemeId}
@@ -1621,6 +1833,12 @@ export default function App() {
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
+                queuedMessages={queuedMessages[activeSessionId] ?? []}
+                onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                backgroundTasks={backgroundTasks[activeSessionId] ?? []}
+                composerAttachments={composerAttachments}
+                onComposerAttachmentsChange={setComposerAttachments}
+                contextUsage={contextUsage}
               />
             ) : (
               <ChatArea
@@ -1660,6 +1878,14 @@ export default function App() {
             )
           ) : activeView === 'files' ? (
             <FileManager />
+          ) : activeView === 'memos' ? (
+            <AiMemo onRunTaskWithAgent={handleRunMemoTask} />
+          ) : activeView === 'comic' ? (
+            <ComicDrama />
+          ) : activeView === 'knowledge' ? (
+            <KnowledgeBase />
+          ) : activeView === 'cron' ? (
+            <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'apps' ? (
             <AppsPanel
               apps={apps}

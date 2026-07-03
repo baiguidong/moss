@@ -8,7 +8,17 @@ export function registerShellIpcHandlers() {
   });
 
   ipcMain.handle('shell.open-external', async (_event, url) => {
-    await shell.openExternal(url);
+    let parsed;
+    try {
+      parsed = new URL(String(url));
+    } catch {
+      return { ok: false, error: 'Invalid URL' };
+    }
+    const allowedProtocols = new Set(['http:', 'https:', 'mailto:']);
+    if (!allowedProtocols.has(parsed.protocol)) {
+      return { ok: false, error: `Protocol not allowed: ${parsed.protocol}` };
+    }
+    await shell.openExternal(parsed.href);
     return { ok: true };
   });
 

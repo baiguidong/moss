@@ -3,9 +3,11 @@ import {
   Bot,
   Check,
   FileText,
+  BookOpen,
   Image as ImageIcon,
   Link2,
   MessageSquare,
+  Mic,
   Monitor,
   MoonStar,
   Palette,
@@ -23,10 +25,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { PRESET_THEMES } from '@/theme/presets';
+import { knowledgeAPI } from '@/knowledge/ipc/knowledge.ipc';
 import type { DesktopSettings } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'permission' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'permission' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -34,6 +37,7 @@ type SettingsViewProps = {
   settingsNotice: string;
   autoSaveSettings: (key: keyof DesktopSettings, value: DesktopSettings[keyof DesktopSettings]) => Promise<void>;
   autoSaveImageSettings: (image: DesktopSettings['image']) => Promise<void>;
+  autoSaveVoiceSettings: (voice: DesktopSettings['voice']) => Promise<void>;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
   cssThemeId: string;
@@ -105,6 +109,13 @@ const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
   model: '',
 };
 
+const DEFAULT_VOICE_SETTINGS: DesktopSettings['voice'] = {
+  provider: 'minimax',
+  baseURL: '',
+  apiKey: '',
+  model: '',
+};
+
 const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
   {
     id: 'connection',
@@ -133,6 +144,20 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: ImageIcon,
     iconGradientClassName: 'from-pink-400 to-rose-600',
     keywords: ['图片模型', 'image', 'provider', 'api', 'key', 'url'],
+  },
+  {
+    id: 'voice-model',
+    title: '语音模型',
+    icon: Mic,
+    iconGradientClassName: 'from-indigo-400 to-blue-600',
+    keywords: ['语音模型', '语音', 'voice', 'asr', 'stt', '转写', 'speech', 'provider', 'api', 'key', 'url'],
+  },
+  {
+    id: 'knowledge',
+    title: '知识库',
+    icon: BookOpen,
+    iconGradientClassName: 'from-amber-400 to-yellow-600',
+    keywords: ['知识库', 'knowledge', 'mineru', '解析', 'parse', 'server', 'url', '文档'],
   },
   {
     id: 'prompt',
@@ -366,6 +391,7 @@ export function SettingsView({
   settingsNotice,
   autoSaveSettings,
   autoSaveImageSettings,
+  autoSaveVoiceSettings,
   themeMode,
   setThemeMode,
   cssThemeId,
@@ -382,6 +408,8 @@ export function SettingsView({
     permission: null,
     'text-model': null,
     'image-model': null,
+    'voice-model': null,
+    knowledge: null,
     prompt: null,
     'im-adapter': null,
     buddy: null,
@@ -397,6 +425,9 @@ export function SettingsView({
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
+  const voiceDraft = settingsDraft?.voice || DEFAULT_VOICE_SETTINGS;
+  const mineruUrl = settingsDraft?.mineru?.serverUrl || '';
+  const [mineruTest, setMineruTest] = React.useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
 
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
@@ -464,6 +495,30 @@ export function SettingsView({
     };
     setSettingsDraft((current) => (current ? { ...current, image: nextImage } : current));
     void autoSaveImageSettings(nextImage);
+  };
+
+  const updateMineruSettings = (patch: Partial<NonNullable<DesktopSettings['mineru']>>) => {
+    const nextMineru = { serverUrl: '', ...settingsDraft?.mineru, ...patch };
+    updateSetting('mineru', nextMineru);
+  };
+
+  const handleTestMineru = async () => {
+    setMineruTest({ state: 'testing' });
+    try {
+      const res = await knowledgeAPI.testConnection(mineruUrl || undefined);
+      setMineruTest(res.ok ? { state: 'ok' } : { state: 'fail', msg: res.error || '连接失败' });
+    } catch (err) {
+      setMineruTest({ state: 'fail', msg: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const updateVoiceSettings = (patch: Partial<DesktopSettings['voice']>) => {
+    const nextVoice = {
+      ...voiceDraft,
+      ...patch,
+    };
+    setSettingsDraft((current) => (current ? { ...current, voice: nextVoice } : current));
+    void autoSaveVoiceSettings(nextVoice);
   };
 
   const copyText = (value: string) => {
@@ -957,6 +1012,133 @@ export function SettingsView({
                           onChange={(event) => updateImageSettings({ model: event.target.value })}
                           placeholder="image-01"
                         />
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'voice-model') ? (
+                  <SettingsSection
+                    id="voice-model"
+                    title="语音模型"
+                    sectionRef={(element) => {
+                      sectionRefs.current['voice-model'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="语音厂商"
+                        description="配置后备忘录支持语音输入,留空则仅支持文字输入。"
+                        controlClassName="sm:w-[180px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={voiceDraft.provider ?? 'minimax'}
+                          onChange={(event) => updateVoiceSettings({ provider: event.target.value })}
+                        >
+                          <option value="minimax">MiniMax</option>
+                          <option value="openai">OpenAI 兼容</option>
+                        </select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="API URL"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={voiceDraft.baseURL || ''}
+                          onChange={(event) => updateVoiceSettings({ baseURL: event.target.value })}
+                          placeholder="https://api.minimaxi.com/v1/audio/transcriptions"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="API Key"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <div className="flex w-full gap-2">
+                          <Input
+                            type="password"
+                            className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
+                            value={voiceDraft.apiKey || ''}
+                            onChange={(event) => updateVoiceSettings({ apiKey: event.target.value })}
+                            placeholder="sk-..."
+                          />
+                          {voiceDraft.apiKey ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
+                              onClick={() => copyText(voiceDraft.apiKey || '')}
+                            >
+                              复制
+                            </Button>
+                          ) : null}
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="语音模型"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={voiceDraft.model || ''}
+                          onChange={(event) => updateVoiceSettings({ model: event.target.value })}
+                          placeholder="whisper-1"
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'knowledge') ? (
+                  <SettingsSection
+                    id="knowledge"
+                    title="知识库"
+                    sectionRef={(element) => {
+                      sectionRefs.current['knowledge'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="MinerU 服务地址"
+                        description="文档解析由独立启动的 MinerU 服务提供,留空则使用默认 http://127.0.0.1:8000。"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={mineruUrl}
+                          onChange={(event) => {
+                            setMineruTest({ state: 'idle' });
+                            updateMineruSettings({ serverUrl: event.target.value });
+                          }}
+                          placeholder="http://127.0.0.1:8000"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="连接测试"
+                        description="检查 MinerU 服务是否可用。"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <div className="flex w-full items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
+                            onClick={handleTestMineru}
+                            disabled={mineruTest.state === 'testing'}
+                          >
+                            {mineruTest.state === 'testing' ? '测试中...' : '测试连接'}
+                          </Button>
+                          {mineruTest.state === 'ok' ? (
+                            <span className="text-xs text-emerald-500">已连接</span>
+                          ) : mineruTest.state === 'fail' ? (
+                            <span className="truncate text-xs text-destructive">{mineruTest.msg}</span>
+                          ) : null}
+                        </div>
                       </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>

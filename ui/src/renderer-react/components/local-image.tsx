@@ -4,8 +4,19 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { useWorkspacePath } from "@/components/workspace-path-context";
 
+const IMAGE_CACHE_MAX = 100;
 const imageDataUrlCache = new Map<string, string>();
 const imageDataUrlPending = new Map<string, Promise<string | null>>();
+
+function cacheImageDataUrl(key: string, dataUrl: string) {
+  if (imageDataUrlCache.has(key)) imageDataUrlCache.delete(key);
+  imageDataUrlCache.set(key, dataUrl);
+  while (imageDataUrlCache.size > IMAGE_CACHE_MAX) {
+    const oldest = imageDataUrlCache.keys().next().value;
+    if (oldest === undefined) break;
+    imageDataUrlCache.delete(oldest);
+  }
+}
 
 function decodeFileUrlToPath(src: string): string | null {
   try {
@@ -137,7 +148,7 @@ export function LocalImage({
     const pending = imageDataUrlPending.get(localPath)
       || window.agentDesktop.fs.getImageBase64(localPath).then((dataUrl) => {
         if (dataUrl) {
-          imageDataUrlCache.set(localPath, dataUrl);
+          cacheImageDataUrl(localPath, dataUrl);
         }
         imageDataUrlPending.delete(localPath);
         return dataUrl;

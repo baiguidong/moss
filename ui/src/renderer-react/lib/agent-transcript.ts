@@ -47,12 +47,20 @@ export type UserTextRenderMessage = TranscriptRenderMessageBase & {
   attachments?: TranscriptAttachment[];
 };
 
+export type TurnTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+
 export type AssistantTextRenderMessage = TranscriptRenderMessageBase & {
   type: 'assistant_text';
   role: 'assistant';
   content: string;
   streaming?: boolean;
   attachments?: TranscriptAttachment[];
+  tokenUsage?: TurnTokenUsage;
 };
 
 export type ThinkingRenderMessage = TranscriptRenderMessageBase & {
@@ -94,13 +102,22 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   content: string;
 };
 
+export type BashRenderMessage = TranscriptRenderMessageBase & {
+  type: 'bash';
+  role: 'user';
+  command: string;
+  output: string;
+  exitCode: number | null;
+};
+
 export type TranscriptRenderMessage =
   | UserTextRenderMessage
   | AssistantTextRenderMessage
   | ThinkingRenderMessage
   | ToolUseRenderMessage
   | ToolResultRenderMessage
-  | SystemRenderMessage;
+  | SystemRenderMessage
+  | BashRenderMessage;
 
 export type WorkerThreadStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -151,6 +168,9 @@ type RenderBuilderState = {
   currentAssistantTurn: AssistantTurnState | null;
   nextId: number;
   toolUsesById: Map<string, ToolUseRenderMessage>;
+  // 按 content_block 的 index 追踪当前流中的 tool_use, 使 input_json_delta 能精确路由到
+  // 对应块(而非最后一个块), 避免并行 tool_use 时输入串位或被丢弃。
+  toolUsesByIndex: Map<number, ToolUseRenderMessage>;
 };
 
 function safeDate(input: unknown): Date {
@@ -952,6 +972,7 @@ export function buildTranscriptRenderMessages(
     currentAssistantTurn: null,
     nextId: 0,
     toolUsesById: new Map<string, ToolUseRenderMessage>(),
+    toolUsesByIndex: new Map<number, ToolUseRenderMessage>(),
   };
 
   for (let index = 0; index < history.length; index += 1) {
@@ -983,6 +1004,20 @@ export function buildTranscriptRenderMessages(
           : block?.content;
         addToolResultMessage(state, turn, timestamp, block, rawContent);
       }
+      continue;
+    }
+
+    if (event?.type === 'bash_command') {
+      finalizeAssistantTurn(state, { complete: true });
+      state.items.push({
+        id: nextRenderId(state, 'bash'),
+        type: 'bash',
+        role: 'user',
+        command: typeof event.command === 'string' ? event.command : '',
+        output: typeof event.output === 'string' ? event.output : '',
+        exitCode: typeof event.exitCode === 'number' ? event.exitCode : null,
+        timestamp,
+      });
       continue;
     }
 
@@ -1018,10 +1053,17 @@ export function buildTranscriptRenderMessages(
         );
         toolUse.status = 'running';
         toolUse.statusText = '进行中';
+        if (typeof streamEvent.index === 'number') {
+          state.toolUsesByIndex.set(streamEvent.index, toolUse);
+        }
       } else if (
         streamEvent?.type === 'content_block_start' &&
         streamEvent.content_block?.type === 'thinking'
       ) {
+        // 该 index 现在是非 tool_use 块, 清除旧映射以防串位的 input_json_delta 误写。
+        if (typeof streamEvent.index === 'number') {
+          state.toolUsesByIndex.delete(streamEvent.index);
+        }
         appendThinkingItem(
           state,
           turn,
@@ -1056,9 +1098,18 @@ export function buildTranscriptRenderMessages(
           streamEvent.delta?.type === 'input_json_delta' &&
           typeof streamEvent.delta.partial_json === 'string'
         ) {
-          const last = lastTurnItem(turn);
-          if (last?.type === 'tool_use') {
-            last.inputText = `${last.inputText || ''}${streamEvent.delta.partial_json}`;
+          // 优先按 content_block index 精确路由(支持并行/交错的 tool_use);
+          // 无 index 时退回到最后一个 tool_use 块以兼容旧数据。
+          const target =
+            (typeof streamEvent.index === 'number'
+              ? state.toolUsesByIndex.get(streamEvent.index)
+              : undefined) ??
+            (() => {
+              const last = lastTurnItem(turn);
+              return last?.type === 'tool_use' ? last : undefined;
+            })();
+          if (target) {
+            target.inputText = `${target.inputText || ''}${streamEvent.delta.partial_json}`;
           }
         }
       }
@@ -1174,6 +1225,22 @@ export function buildTranscriptRenderMessages(
 
       if (event?.error?.message) {
         appendTurnMeta(turn, `错误: ${String(event.error.message)}`);
+      }
+
+      const usage = event?.message?.usage;
+      if (usage && typeof usage.input_tokens === 'number') {
+        for (let j = turn.items.length - 1; j >= 0; j -= 1) {
+          const item = turn.items[j];
+          if (item && item.type === 'assistant_text') {
+            item.tokenUsage = {
+              inputTokens: usage.input_tokens ?? 0,
+              outputTokens: usage.output_tokens ?? 0,
+              cacheRead: usage.cache_read_input_tokens ?? 0,
+              cacheWrite: usage.cache_creation_input_tokens ?? 0,
+            };
+            break;
+          }
+        }
       }
       continue;
     }

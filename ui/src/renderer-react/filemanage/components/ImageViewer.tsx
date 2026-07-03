@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { mediaUrl } from '../lib/mediaUrl';
 
 interface ImageViewerProps {
   src: string;
@@ -39,45 +40,38 @@ export function ImageViewer({
   const [zoom, setZoom] = React.useState(1);
   const [rotation, setRotation] = React.useState(0);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
-  const [imageUrl, setImageUrl] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  // 加载图片
+  // 直接走 moss-media:// 协议加载原图, 切换图片时重置状态
+  const imageUrl = mediaUrl(src);
   React.useEffect(() => {
-    const loadImage = async () => {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
+    setZoom(1);
+    setRotation(0);
+  }, [src]);
 
-      try {
-        // 如果已经是 data URL 或 http URL，直接使用
-        if (src.startsWith('data:') || src.startsWith('http')) {
-          setImageUrl(src);
-          setLoading(false);
-          return;
-        }
-
-        // 否则通过 IPC 读取本地文件
-        if (window.fileManager?.readFile) {
-          const result = await window.fileManager.readFile(src, true);
-          if (result?.dataUrl) {
-            setImageUrl(result.dataUrl);
-          } else if (result?.error) {
-            setError(result.error);
-          }
-        } else {
-          // 降级方案：直接使用路径（可能在某些 Electron 配置下工作）
-          setImageUrl(`file://${src}`);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '加载图片失败');
-      } finally {
-        setLoading(false);
+  // 在 document 捕获阶段拦截键盘: Esc 只关闭本预览, 阻止冒泡到宿主窗口(否则会误关整个窗口)
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose?.();
+      } else if (e.key === 'ArrowLeft' && hasPrev) {
+        e.preventDefault();
+        e.stopPropagation();
+        onPrev?.();
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        e.preventDefault();
+        e.stopPropagation();
+        onNext?.();
       }
     };
-
-    loadImage();
-  }, [src]);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose, onPrev, onNext, hasPrev, hasNext]);
 
   const handleZoomIn = () => {
     setZoom(Math.min(zoom + 0.25, 4));
@@ -110,6 +104,10 @@ export function ImageViewer({
         'fixed inset-0 z-50 flex items-center justify-center bg-black/90',
         isFullscreen && 'bg-black'
       )}
+      onClick={(e) => {
+        // 点击背景空白处关闭(点到图片/控制栏不关)
+        if (e.target === e.currentTarget) onClose?.();
+      }}
     >
       {/* 控制栏 */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-lg bg-black/50 px-4 py-2 z-10">
@@ -150,12 +148,18 @@ export function ImageViewer({
             <p className="text-sm text-gray-400">{error}</p>
           </div>
         )}
-        {imageUrl && !loading && !error && (
+        {imageUrl && !error && (
           <img
             src={imageUrl}
             alt={alt}
+            onLoad={() => setLoading(false)}
+            onError={() => {
+              setLoading(false);
+              setError('加载图片失败');
+            }}
             style={{
               transform: `scale(${zoom}) rotate(${rotation}deg)`,
+              visibility: loading ? 'hidden' : 'visible',
             }}
             className="max-h-full max-w-full object-contain transition-transform duration-200"
           />
@@ -185,16 +189,6 @@ export function ImageViewer({
         </Button>
       )}
 
-      {/* 键盘导航 */}
-      <div
-        tabIndex={0}
-        className="sr-only"
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft' && hasPrev && onPrev) onPrev();
-          if (e.key === 'ArrowRight' && hasNext && onNext) onNext();
-          if (e.key === 'Escape' && onClose) onClose();
-        }}
-      />
     </div>
   );
 }

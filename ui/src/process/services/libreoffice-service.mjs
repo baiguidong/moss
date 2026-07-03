@@ -214,10 +214,15 @@ export class LibreOfficeService {
           res.pipe(file);
           file.on('finish', () => file.close(() => resolve()));
           file.on('error', (error) => {
+            file.destroy();
             fs.rmSync(dest, { force: true });
             reject(error);
           });
-          res.on('error', reject);
+          res.on('error', (error) => {
+            file.destroy();
+            fs.rmSync(dest, { force: true });
+            reject(error);
+          });
         }).on('error', reject);
       };
       doRequest(url);

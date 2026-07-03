@@ -915,6 +915,28 @@ export async function* executeNonStreamingRequest(
 }
 
 /**
+ * Guard the value returned by the non-streaming fallback before dereferencing
+ * `.content`. A proxy that answers HTTP 200 with an empty or non-JSON body makes
+ * the SDK resolve `undefined` here. Without this guard the caller's
+ * `result.content` throws a raw "Cannot read properties of undefined (reading
+ * 'content')" that surfaces to the user as a cryptic assistant error — most
+ * often on long sessions, where the larger request makes the upstream drop more
+ * likely. Converting it to a labeled Error lets the normal query error path
+ * report something actionable instead.
+ */
+function assertNonStreamingFallbackResult(
+  result: BetaMessage | undefined,
+): asserts result is BetaMessage {
+  if (!result || !Array.isArray(result.content)) {
+    throw new Error(
+      'The API returned an empty response with no content (non-streaming fallback). ' +
+        'This usually means the upstream API or proxy dropped the request. ' +
+        'If it recurs, run /compact or start a new session to shrink the request.',
+    )
+  }
+}
+
+/**
  * Extracts the request ID from the most recent assistant message in the
  * conversation. Used to link consecutive API requests in analytics so we can
  * join them for cache-hit-rate analysis and incremental token tracking.
@@ -2539,6 +2561,8 @@ async function* queryModel(
         streamRequestId,
       )
 
+      assertNonStreamingFallbackResult(result)
+
       const m: AssistantMessage = {
         message: {
           ...result,
@@ -2635,6 +2659,8 @@ async function* queryModel(
           params => captureAPIRequest(params, options.querySource),
           failedRequestId,
         )
+
+        assertNonStreamingFallbackResult(result)
 
         const m: AssistantMessage = {
           message: {

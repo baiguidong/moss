@@ -7,23 +7,24 @@ import * as React from 'react';
 import {
   Music,
   Film,
-  FolderOpen,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { AudioPlayer } from './components/AudioPlayer';
 import { VideoEditor } from './components/VideoEditor';
-import type { FileManagerFile } from './ipc/types';
+import { HighlightWizard } from './components/HighlightWizard';
+import type { FileManagerFile, AudioTrackMeta } from './ipc/types';
 
-type StudioTab = 'audio' | 'video';
+type StudioTab = 'highlight' | 'audio' | 'video';
 
 interface MediaStudioProps {
   className?: string;
 }
 
 export function MediaStudio({ className }: MediaStudioProps) {
-  const [activeTab, setActiveTab] = React.useState<StudioTab>('audio');
-  const [audioFiles, setAudioFiles] = React.useState<FileManagerFile[]>([]);
+  const [activeTab, setActiveTab] = React.useState<StudioTab>('highlight');
+  const [audioMeta, setAudioMeta] = React.useState<AudioTrackMeta[]>([]);
   const [videoFiles, setVideoFiles] = React.useState<FileManagerFile[]>([]);
   const [selectedVideo, setSelectedVideo] = React.useState<string | null>(null);
 
@@ -31,11 +32,15 @@ export function MediaStudio({ className }: MediaStudioProps) {
   React.useEffect(() => {
     const loadMediaFiles = async () => {
       try {
-        const files = await window.fileManager?.getFiles({ limit: 1000 });
-        if (files) {
-          setAudioFiles(files.filter((f: FileManagerFile) => f.file_type === 'audio'));
-          setVideoFiles(files.filter((f: FileManagerFile) => f.file_type === 'video'));
+        if (!window.fileManager) {
+          await import('./ipc/fileManager.ipc');
         }
+        const [files, tracks] = await Promise.all([
+          window.fileManager?.getFiles({ fileType: 'video', limit: 1000 }),
+          window.fileManager?.getAudioTracks(),
+        ]);
+        if (files) setVideoFiles(files as FileManagerFile[]);
+        if (tracks) setAudioMeta(tracks as AudioTrackMeta[]);
       } catch (err) {
         console.error('Failed to load media files:', err);
       }
@@ -43,22 +48,33 @@ export function MediaStudio({ className }: MediaStudioProps) {
     loadMediaFiles();
   }, []);
 
-  // 转换为音频轨道格式
+  // 转换为音频轨道格式 (优先使用 ID3 元数据, 缺失时回退文件名)
   const audioTracks = React.useMemo(() => {
-    return audioFiles.map((file) => ({
-      id: file.id,
-      title: file.filename.replace(/\.[^/.]+$/, ''), // 移除扩展名
-      artist: '未知艺术家',
-      duration: file.duration || 0,
-      path: file.path,
+    return audioMeta.map((m) => ({
+      id: m.id,
+      title: m.title || m.filename.replace(/\.[^/.]+$/, ''),
+      artist: m.artist || '未知艺术家',
+      album: m.album,
+      duration: m.duration || 0,
+      path: m.path,
+      coverPath: m.cover_path || m.thumbnail_path,
     }));
-  }, [audioFiles]);
+  }, [audioMeta]);
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
       {/* 标签页切换 */}
       <div className="flex items-center justify-between border-b border-border/40 px-4 py-2">
         <div className="flex items-center gap-2">
+          <Button
+            variant={activeTab === 'highlight' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setActiveTab('highlight')}
+            className="gap-2"
+          >
+            <Sparkles className="h-4 w-4" />
+            成长集锦
+          </Button>
           <Button
             variant={activeTab === 'audio' ? 'secondary' : 'ghost'}
             size="sm"
@@ -84,7 +100,9 @@ export function MediaStudio({ className }: MediaStudioProps) {
 
       {/* 内容区域 */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'audio' ? (
+        {activeTab === 'highlight' ? (
+          <HighlightWizard className="h-full" />
+        ) : activeTab === 'audio' ? (
           <AudioPlayer tracks={audioTracks} className="h-full" />
         ) : (
           <div className="flex h-full">
@@ -125,7 +143,11 @@ export function MediaStudio({ className }: MediaStudioProps) {
 
             {/* 视频编辑器 */}
             <div className="flex-1">
-              <VideoEditor videoPath={selectedVideo || undefined} className="h-full" />
+              <VideoEditor
+                videoPath={selectedVideo || undefined}
+                fileId={videoFiles.find((f) => f.path === selectedVideo)?.id}
+                className="h-full"
+              />
             </div>
           </div>
         )}

@@ -68,7 +68,7 @@ export const MossTool = buildTool({
   maxResultSizeChars: 100_000,
   async description() {
     return `Moss tool for managing desktop apps. Supports:
-- app_build: Build app metadata and HTML into a merged file in workspace. Requires both name and html.
+- app_build: Build app metadata and HTML into a merged file inside the current session workspace (returned as filePath). Requires both name and html. Do not copy the built file elsewhere; it is already in the workspace.
 - app_preview: Preview an HTML file
 - app_publish: Publish a built app file to the app store with version. Requires name, filePath, and description.
 - app_launch: Open an installed app

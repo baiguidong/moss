@@ -96,6 +96,14 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getAppIcon: () => ipcRenderer.invoke('fs:getAppIcon'),
     saveImageToWorkspace: (sessionId, fileName, data) => ipcRenderer.invoke('workspace:saveImage', { sessionId, fileName, data }),
   },
+  listBackgroundTasks: (payload) => ipcRenderer.invoke('agent:list-background-tasks', payload),
+  getTaskOutput: (payload) => ipcRenderer.invoke('agent:task-output', payload),
+  killTask: (payload) => ipcRenderer.invoke('agent:kill-task', payload),
+  onBackgroundTasks: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:background-tasks', handler);
+    return () => ipcRenderer.off('agent:background-tasks', handler);
+  },
   onEvent: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:event', handler);

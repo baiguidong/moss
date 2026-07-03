@@ -31,6 +31,7 @@
         "react-markdown": "^9.0.1",
         "react-resizable-panels": "^2.1.7",
         "react-syntax-highlighter": "^16.1.1",
+        "react-virtuoso": "^4.18.10",
         "remark-gfm": "^4.0.0",
         "semver": "^7.7.4",
         "tailwind-merge": "^3.3.1",
@@ -1269,6 +1270,8 @@
     "react-style-singleton": ["react-style-singleton@2.2.3", "https://registry.npmmirror.com/react-style-singleton/-/react-style-singleton-2.2.3.tgz", { "dependencies": { "get-nonce": "^1.0.0", "tslib": "^2.0.0" }, "peerDependencies": { "@types/react": "*", "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc" }, "optionalPeers": ["@types/react"] }, "sha512-b6jSvxvVnyptAiLjbkWLE/lOnR4lfTtDAl+eUC7RZy+QQWc6wRzIV2CE6xBuMmDxc2qIihtDCZD5NPOFl7fRBQ=="],
 
     "react-syntax-highlighter": ["react-syntax-highlighter@16.1.1", "https://registry.npmmirror.com/react-syntax-highlighter/-/react-syntax-highlighter-16.1.1.tgz", { "dependencies": { "@babel/runtime": "^7.28.4", "highlight.js": "^10.4.1", "highlightjs-vue": "^1.0.0", "lowlight": "^1.17.0", "prismjs": "^1.30.0", "refractor": "^5.0.0" }, "peerDependencies": { "react": ">= 0.14.0" } }, "sha512-PjVawBGy80C6YbC5DDZJeUjBmC7skaoEUdvfFQediQHgCL7aKyVHe57SaJGfQsloGDac+gCpTfRdtxzWWKmCXA=="],
+
+    "react-virtuoso": ["react-virtuoso@4.18.10", "https://registry.npmmirror.com/react-virtuoso/-/react-virtuoso-4.18.10.tgz", { "peerDependencies": { "react": ">=16 || >=17 || >= 18 || >= 19", "react-dom": ">=16 || >=17 || >= 18 || >=19" } }, "sha512-P6GIZ7kWAPOYB2H16yRQNgy+VF9pJOuTFw1EUc1EAtCj5WxVSAF1Sql3x3fbLwaLeBFsiPnu+3U9o6sIOyTdFw=="],
 
     "read-binary-file-arch": ["read-binary-file-arch@1.0.6", "https://registry.npmmirror.com/read-binary-file-arch/-/read-binary-file-arch-1.0.6.tgz", { "dependencies": { "debug": "^4.3.4" }, "bin": { "read-binary-file-arch": "cli.js" } }, "sha512-BNg9EN3DD3GsDXX7Aa8O4p92sryjkmzYYgmgTAc6CA4uGLEDzFfxOxugu21akOxpcXHiEgsYkC6nPsQvLLLmEg=="],
 

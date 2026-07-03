@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import DOMPurify from "dompurify";
 import { ExternalLink, History, MonitorPlay, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AppVersion, StoredApp } from "../types";
@@ -23,7 +24,8 @@ function AppIcon({ icon, name }: { icon: string; name: string }) {
     );
   }
   // icon is a data URI like "data:image/svg+xml,<svg>...</svg>"
-  const svgContent = icon.replace(/^data:image\/svg\+xml,?/, '');
+  const rawSvg = icon.replace(/^data:image\/svg\+xml,?/, '');
+  const svgContent = DOMPurify.sanitize(rawSvg, { USE_PROFILES: { svg: true, svgFilters: true } });
   return (
     <div
       className="h-10 w-10 shrink-0 overflow-hidden rounded-xl"

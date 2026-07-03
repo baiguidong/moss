@@ -14,9 +14,14 @@ const mossApp = {
     mkdir: (dirPath) => ipcRenderer.invoke('app-runtime:files:mkdir', { path: dirPath }),
     delete: (filePath) => ipcRenderer.invoke('app-runtime:files:delete', { path: filePath }),
     readGlobalText: (filePath) => ipcRenderer.invoke('fs:readText', { path: filePath }),
+    writeGlobalBinary: (filePath, data) => ipcRenderer.invoke('fs:writeFile', { path: filePath, data }),
     deleteGlobal: (filePath) => ipcRenderer.invoke('fs:delete', { path: filePath }),
     listGlobal: (dirPath) => ipcRenderer.invoke('fs:list', { path: dirPath }),
     getHomeDir: () => ipcRenderer.invoke('fs:getHomeDir'),
+    getImageBase64: (filePath) => ipcRenderer.invoke('fs:getImageBase64', { path: filePath }),
+    getFileMetadata: (filePath) => ipcRenderer.invoke('fs:getFileMetadata', { path: filePath }),
+    getAppIcon: () => ipcRenderer.invoke('fs:getAppIcon'),
+    createTempFile: (fileName) => ipcRenderer.invoke('fs:createTempFile', { fileName }),
   },
   agent: {
     send: (payload) => ipcRenderer.invoke('app-runtime:agent:send', payload),
@@ -25,7 +30,26 @@ const mossApp = {
   },
   cron: {
     list: () => ipcRenderer.invoke('cron:list'),
+    get: (id) => ipcRenderer.invoke('cron:get', { id }),
+    add: (item) => ipcRenderer.invoke('cron:add', { item }),
+    update: (id, updates) => ipcRenderer.invoke('cron:update', { id, updates }),
     delete: (id) => ipcRenderer.invoke('cron:delete', { id }),
+  },
+  shell: {
+    openExternal: (url) => ipcRenderer.invoke('shell.open-external', url),
+    openFile: (filePath) => ipcRenderer.invoke('shell.open-file', filePath),
+    showItemInFolder: (filePath) => ipcRenderer.invoke('shell.show-item-in-folder', filePath),
+  },
+  document: {
+    convert: (filePath, to) => ipcRenderer.invoke('document.convert', { filePath, to }),
+    isLibreOfficeAvailable: () => ipcRenderer.invoke('document.libreoffice.is-available'),
+  },
+  preview: {
+    open: (data) => ipcRenderer.invoke('preview.open', data),
+    close: () => ipcRenderer.invoke('preview.close'),
+  },
+  log: {
+    write: (level, category, message, data) => ipcRenderer.invoke('log:write', { level, category, message, data }),
   },
   skillStore: {
     fetchSkills: (params) => ipcRenderer.invoke('skill-store:fetchSkills', params),
@@ -64,12 +88,19 @@ const mossApp = {
     ipcRenderer.on('agent:permission', handler);
     return () => ipcRenderer.off('agent:permission', handler);
   },
+  onRuntimeEvent: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('app-runtime:event', handler);
+    return () => ipcRenderer.off('app-runtime:event', handler);
+  },
+  callTool: (name, args) => ipcRenderer.invoke('app-runtime:call-tool', { name, args }),
+  readResource: (uri) => ipcRenderer.invoke('app-runtime:read-resource', { uri }),
   listResources: () => ipcRenderer.invoke('app-runtime:list-resources'),
   listTools: () => ipcRenderer.invoke('app-runtime:list-tools'),
   getAppInfo: () => ipcRenderer.invoke('app-runtime:get-info'),
-  getMeta: () => ipcRenderer.invoke('app-runtime:get-meta'),
-  getVersions: () => ipcRenderer.invoke('app-runtime:get-versions'),
-  rollback: (versionId) => ipcRenderer.invoke('app-runtime:rollback', { versionId }),
+  getMeta: () => ipcRenderer.invoke('app-runtime:get-info'),
+  getVersions: () => ipcRenderer.invoke('app-runtime:call-tool', { name: 'versions.list' }),
+  rollback: (versionId) => ipcRenderer.invoke('app-runtime:call-tool', { name: 'versions.rollback', args: { versionId } }),
 };
 
 contextBridge.exposeInMainWorld('mossApp', mossApp);
@@ -82,39 +113,3 @@ contextBridge.exposeInMainWorld('appVersionInfo', {
 contextBridge.exposeInMainWorld('mossDebug', {
   open: () => ipcRenderer.invoke('app:open-debug', { name: document.title }),
 });
-
-// Inject floating debug button
-function injectDebugButton() {
-  const btn = document.createElement('button');
-  btn.textContent = 'Moss';
-  btn.style.cssText = `
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-    color: white;
-    border: none;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
-  btn.title = 'Open Moss Debug Window';
-  btn.onclick = () => {
-    ipcRenderer.invoke('app:open-debug', { name: document.title });
-  };
-  document.body.appendChild(btn);
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectDebugButton);
-} else {
-  injectDebugButton();
-}

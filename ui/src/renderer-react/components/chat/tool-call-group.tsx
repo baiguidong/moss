@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, FilePen, FilePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToolCallBlock } from "@/components/chat/tool-call-block";
-import { getToolKind, ToolKind } from "@/components/chat/tool-utils";
+import { getToolFilePath, getToolKind, ToolKind } from "@/components/chat/tool-utils";
+import { useWorkspacePath } from "@/components/workspace-path-context";
 import type { ToolResultRenderMessage, ToolUseRenderMessage } from "@/lib/agent-transcript";
 
 type Props = {
@@ -25,6 +26,66 @@ const kindLabels: Record<ToolKind, string> = {
   db: "数据库",
   other: "工具",
 };
+
+export function collectFileChanges(
+  toolCalls: ToolUseRenderMessage[],
+  childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
+): Array<{ path: string; kind: "write" | "edit" }> {
+  const seen = new Map<string, "write" | "edit">();
+  const visit = (toolCall: ToolUseRenderMessage) => {
+    const kind = getToolKind(toolCall.toolName, toolCall.input);
+    if (kind === "write" || kind === "edit") {
+      const filePath = getToolFilePath(toolCall);
+      if (filePath && !seen.has(filePath)) {
+        seen.set(filePath, kind);
+      }
+    }
+    for (const child of childToolCallsByParent.get(toolCall.toolUseId) ?? []) {
+      visit(child);
+    }
+  };
+  for (const toolCall of toolCalls) visit(toolCall);
+  return [...seen.entries()].map(([path, kind]) => ({ path, kind }));
+}
+
+export function FileChangeChips({
+  changes,
+}: {
+  changes: Array<{ path: string; kind: "write" | "edit" }>;
+}) {
+  const workspace = useWorkspacePath();
+  if (changes.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {changes.map(({ path, kind }) => {
+        const baseName = path.split("/").pop() || path;
+        const absolutePath = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)
+          ? path
+          : workspace
+            ? `${workspace}/${path}`
+            : path;
+        return (
+          <button
+            key={path}
+            type="button"
+            title={`${kind === "write" ? "新建/写入" : "修改"}：${path}（点击打开）`}
+            className="inline-flex max-w-[220px] items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            onClick={() => {
+              void window.agentDesktop.shell.openFile(absolutePath);
+            }}
+          >
+            {kind === "write" ? (
+              <FilePlus className="h-3 w-3 shrink-0 text-emerald-500" />
+            ) : (
+              <FilePen className="h-3 w-3 shrink-0 text-sky-500" />
+            )}
+            <span className="min-w-0 truncate font-mono">{baseName}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function summarizeGroup(toolCalls: ToolUseRenderMessage[]) {
   const counts = new Map<ToolKind, number>();
@@ -96,28 +157,47 @@ export function ToolCallGroup({
   }).length;
 
   const [expanded, setExpanded] = React.useState(isStreaming);
+  // Force-expand while streaming; auto-collapse when the group finishes,
+  // unless the user has manually toggled it (their choice wins).
+  const userToggledRef = React.useRef(false);
+  const prevStreamingRef = React.useRef(isStreaming);
 
   React.useEffect(() => {
     if (isStreaming) {
       setExpanded(true);
+    } else if (prevStreamingRef.current && !userToggledRef.current) {
+      setExpanded(false);
     }
+    prevStreamingRef.current = isStreaming;
   }, [isStreaming]);
+
+  const fileChanges = React.useMemo(
+    () => collectFileChanges(toolCalls, childToolCallsByParent),
+    [toolCalls, childToolCallsByParent],
+  );
 
   if (toolCalls.length === 1) {
     return (
-      <ToolCallTree
-        toolCall={toolCalls[0]!}
-        resultMap={resultMap}
-        childToolCallsByParent={childToolCallsByParent}
-      />
+      <div>
+        <ToolCallTree
+          toolCall={toolCalls[0]!}
+          resultMap={resultMap}
+          childToolCallsByParent={childToolCallsByParent}
+        />
+        <FileChangeChips changes={fileChanges} />
+      </div>
     );
   }
 
   if (!expanded) {
     return (
+      <div>
       <button
         type="button"
-        onClick={() => setExpanded(true)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setExpanded(true);
+        }}
         className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none"
       >
         {hasError ? (
@@ -134,6 +214,8 @@ export function ToolCallGroup({
           {completedCount}/{toolCalls.length}
         </span>
       </button>
+      <FileChangeChips changes={fileChanges} />
+      </div>
     );
   }
 
@@ -141,7 +223,10 @@ export function ToolCallGroup({
     <div className="rounded-xl border border-border/60">
       <button
         type="button"
-        onClick={() => setExpanded(false)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setExpanded(false);
+        }}
         className="flex w-full items-center gap-2 px-3 py-2 text-left select-none hover:bg-muted/30 transition-colors rounded-t-xl"
       >
         {hasError ? (
@@ -170,6 +255,7 @@ export function ToolCallGroup({
             compact
           />
         ))}
+        <FileChangeChips changes={fileChanges} />
       </div>
     </div>
   );

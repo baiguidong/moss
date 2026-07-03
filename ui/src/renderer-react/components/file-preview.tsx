@@ -33,15 +33,23 @@ export function FilePreview({ path, onRemove, readonly = false }: FilePreviewPro
   const [fileSize, setFileSize] = React.useState<string>('');
 
   React.useEffect(() => {
-    window.agentDesktop.fs.getFileMetadata(path).then((metadata: any) => {
-      if (metadata?.size) setFileSize(formatFileSize(metadata.size));
-    });
+    let cancelled = false;
+    setImageUrl('');
+    window.agentDesktop.fs.getFileMetadata(path)
+      .then((metadata: any) => {
+        if (!cancelled && metadata?.size) setFileSize(formatFileSize(metadata.size));
+      })
+      .catch(() => { /* 忽略元数据读取失败 */ });
 
     if (isImage) {
-      window.agentDesktop.fs.getImageBase64(path).then((base64: string | null) => {
-        if (base64) setImageUrl(base64);
-      });
+      window.agentDesktop.fs.getImageBase64(path)
+        .then((base64: string | null) => {
+          // path 已切换或组件卸载则丢弃, 避免显示错误图片
+          if (!cancelled && base64) setImageUrl(base64);
+        })
+        .catch(() => { /* 忽略图片加载失败 */ });
     }
+    return () => { cancelled = true; };
   }, [path, isImage]);
 
   const handleRemove = (e: React.MouseEvent) => {

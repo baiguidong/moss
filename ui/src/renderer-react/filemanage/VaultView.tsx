@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { EncryptedFile, FileManagerFile } from '../ipc/types';
+import type { EncryptedFile, FileManagerFile } from './ipc/types';
 
 export function VaultView() {
   const [encryptedFiles, setEncryptedFiles] = React.useState<EncryptedFile[]>([]);

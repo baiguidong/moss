@@ -83,6 +83,9 @@ export function MermaidRenderer({ code }: { code: string }) {
     );
     return () => {
       cancelled = true;
+      // mermaid 在解析出错时可能把临时测量节点遗留在 document.body, 主动清理
+      document.getElementById(id)?.remove();
+      document.getElementById(`d${id}`)?.remove();
     };
   }, [code]);
 

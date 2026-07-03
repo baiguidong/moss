@@ -36,6 +36,22 @@ async function verifyChecksum(buffer, expectedChecksum) {
   return actualChecksum === expectedChecksum;
 }
 
+// 严格判断 targetPath 是否位于 rootDir 内部(不含 rootDir 本身)。
+function isPathInsideDir(rootDir, targetPath) {
+  const rel = path.relative(path.resolve(rootDir), path.resolve(targetPath));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+// 助手名会被拼进磁盘路径, 必须限制为单个无分隔符的目录段, 防止 ../ 逃逸。
+function sanitizeAssistantDirName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed === '.' || trimmed === '..') return null;
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) return null;
+  if (trimmed !== path.basename(trimmed)) return null;
+  return trimmed;
+}
+
 function isUnsafeZipEntryPath(entryPath) {
   if (!entryPath || entryPath === '.') return false;
   if (/^[a-zA-Z]:[\\/]/.test(entryPath)) return true;
@@ -96,6 +112,12 @@ async function extractAssistantZip(buffer, targetDir) {
     if (!targetPath) continue;
 
     const fullPath = path.join(targetDir, targetPath);
+    // 二次校验: isUnsafeZipEntryPath 只拦截开头的 ../, 但 normalize 会折叠中间的 ..
+    // (如 a/../../evil -> ../evil), 必须确认最终路径仍在 targetDir 内以防 zip-slip。
+    const rel = path.relative(targetDir, fullPath);
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error(`Unsafe zip entry path: ${zipEntry.name}`);
+    }
     const fullDir = path.dirname(fullPath);
     await fsp.mkdir(fullDir, { recursive: true });
 
@@ -121,31 +143,34 @@ async function scanAssistantDirs(baseDir) {
 }
 
 function findAssistantDir(name) {
+  const safeName = sanitizeAssistantDirName(name);
   const searchDirs = [
     { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
     { dir: ASSISTANT_HUB_DIR, category: 'hub' },
     { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
   ];
 
-  for (const { dir, category } of searchDirs) {
-    const assistantDir = path.join(dir, name);
-    try {
-      fs.accessSync(assistantDir);
-      return { dir: assistantDir, category };
-    } catch {
-      // Not found in this directory
+  if (safeName) {
+    for (const { dir, category } of searchDirs) {
+      const assistantDir = path.join(dir, safeName);
+      try {
+        fs.accessSync(assistantDir);
+        return { dir: assistantDir, category };
+      } catch {
+        // Not found in this directory
+      }
     }
-  }
 
-  // Try stripping 'builtin-' prefix for system dir lookup
-  if (name.startsWith('builtin-')) {
-    const stripped = name.slice('builtin-'.length);
-    const systemPath = path.join(ASSISTANT_SYSTEM_DIR, stripped);
-    try {
-      fs.accessSync(systemPath);
-      return { dir: systemPath, category: 'system' };
-    } catch {
-      // Not found
+    // Try stripping 'builtin-' prefix for system dir lookup
+    if (safeName.startsWith('builtin-')) {
+      const stripped = safeName.slice('builtin-'.length);
+      const systemPath = path.join(ASSISTANT_SYSTEM_DIR, stripped);
+      try {
+        fs.accessSync(systemPath);
+        return { dir: systemPath, category: 'system' };
+      } catch {
+        // Not found
+      }
     }
   }
 
@@ -339,13 +364,19 @@ export function registerAgentIpcHandlers() {
       if (checksum) {
         const isValid = await verifyChecksum(zipBuffer, checksum);
         if (!isValid) {
-          console.warn('[AgentStore IPC] Checksum mismatch, continuing anyway');
+          console.error('[AgentStore IPC] Checksum mismatch, aborting install:', assistantName);
+          return { success: false, error: 'Checksum verification failed' };
         }
+      }
+
+      const safeAssistantName = sanitizeAssistantDirName(assistantName);
+      if (!safeAssistantName) {
+        return { success: false, error: `assistantName is invalid: ${JSON.stringify(assistantName)}` };
       }
 
       await fsp.mkdir(ASSISTANT_HUB_DIR, { recursive: true });
 
-      const assistantDir = path.join(ASSISTANT_HUB_DIR, assistantName);
+      const assistantDir = path.join(ASSISTANT_HUB_DIR, safeAssistantName);
       await fsp.rm(assistantDir, { recursive: true, force: true });
       await fsp.mkdir(assistantDir, { recursive: true });
 
@@ -406,7 +437,9 @@ export function registerAgentIpcHandlers() {
               if (latestVersion.checksum) {
                 const isValid = await verifyChecksum(skillZipBuffer, latestVersion.checksum);
                 if (!isValid) {
-                  console.warn('[AgentStore IPC] Skill checksum mismatch:', skillName);
+                  console.error('[AgentStore IPC] Skill checksum mismatch, skipping:', skillName);
+                  failedSkillIds.push(skillId);
+                  continue;
                 }
               }
 
@@ -471,6 +504,12 @@ export function registerAgentIpcHandlers() {
 
       if (!result) {
         return { success: false, error: 'Assistant not found' };
+      }
+
+      // 只允许删除严格位于已知助手目录内部的路径, 防止 rm 任意目录。
+      const insideAllowed = ASSISTANT_SEARCH_DIRS.some((root) => isPathInsideDir(root, result.dir));
+      if (!insideAllowed) {
+        return { success: false, error: 'Refusing to remove path outside assistant directories' };
       }
 
       // Check if builtin

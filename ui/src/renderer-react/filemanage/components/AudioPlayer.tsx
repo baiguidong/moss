@@ -19,7 +19,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
-import type { FileManagerFile } from '../ipc/types';
+import { mediaUrl } from '../lib/mediaUrl';
+import { TranscriptPanel } from './TranscriptPanel';
 
 // 播放模式
 type PlayMode = 'order' | 'shuffle' | 'single';
@@ -85,8 +86,12 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
   const [showLyrics, setShowLyrics] = React.useState(false);
   const [currentLyricIndex, setCurrentLyricIndex] = React.useState(-1);
   const [lyrics, setLyrics] = React.useState<Array<{ time: number; text: string }>>([]);
+  const [wavesurferReady, setWavesurferReady] = React.useState(false);
 
   const currentTrack = tracks[currentTrackIndex];
+
+  // 让 wavesurfer 的 'finish' 回调始终调用到最新的 handleNext（避免闭包捕获旧的 playMode/tracks）
+  const handleNextRef = React.useRef<() => void>(() => {});
 
   // 初始化 wavesurfer
   React.useEffect(() => {
@@ -119,8 +124,10 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
           });
 
           wavesurferRef.current.on('finish', () => {
-            handleNext();
+            handleNextRef.current();
           });
+
+          setWavesurferReady(true);
         }
       } catch (err) {
         console.warn('WaveSurfer not available, using fallback audio player');
@@ -131,20 +138,24 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
 
     return () => {
       mounted = false;
+      setWavesurferReady(false);
       if (wavesurferRef.current) {
         wavesurferRef.current.destroy();
       }
     };
   }, []);
 
-  // 加载音频
+  // 加载音频 (经 moss-media:// 协议流式加载)
+  // 依赖 wavesurferReady:wavesurfer 异步初始化,首挂载时 ref 尚为 null,
+  // 需在实例就绪后重跑本 effect 才能加载首曲。
   React.useEffect(() => {
-    if (currentTrack && wavesurferRef.current) {
-      wavesurferRef.current.load(currentTrack.path);
+    if (currentTrack && wavesurferRef.current && wavesurferReady) {
+      const url = mediaUrl(currentTrack.path);
+      if (url) wavesurferRef.current.load(url);
       setLyrics(currentTrack.lyrics ? parseLrc(currentTrack.lyrics) : []);
       setCurrentLyricIndex(-1);
     }
-  }, [currentTrack]);
+  }, [currentTrack, wavesurferReady]);
 
   // 更新歌词
   React.useEffect(() => {
@@ -169,7 +180,7 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
       if (isPlaying) {
         audioRef.current.pause();
       } else {
-        audioRef.current.play();
+        audioRef.current.play().catch(() => {});
       }
       setIsPlaying(!isPlaying);
     }
@@ -200,6 +211,8 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
       setCurrentTrackIndex((prev) => (prev < tracks.length - 1 ? prev + 1 : 0));
     }
   };
+
+  handleNextRef.current = handleNext;
 
   // 跳转
   const handleSeek = (value: number[]) => {
@@ -267,7 +280,7 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
             {/* 封面 */}
             <div className="w-32 h-32 rounded-lg bg-muted/50 flex items-center justify-center overflow-hidden">
               {currentTrack?.coverPath ? (
-                <img src={currentTrack.coverPath} alt={currentTrack.title} className="w-full h-full object-cover" />
+                <img src={mediaUrl(currentTrack.coverPath)} alt={currentTrack.title} className="w-full h-full object-cover" />
               ) : (
                 <div className="text-4xl">🎵</div>
               )}
@@ -305,6 +318,9 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
             </div>
           </div>
         )}
+
+        {/* 语音转写面板 */}
+        <TranscriptPanel fileId={currentTrack?.id} />
 
         {/* 播放控制 */}
         <div className="p-4 border-t border-border/40 bg-muted/10">
@@ -398,7 +414,7 @@ export function AudioPlayer({ tracks = [], className }: AudioPlayerProps) {
       {/* Fallback audio element */}
       <audio
         ref={audioRef}
-        src={currentTrack?.path}
+        src={mediaUrl(currentTrack?.path)}
         onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
         onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
         onEnded={handleNext}

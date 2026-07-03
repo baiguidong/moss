@@ -1,10 +1,16 @@
 node_modules/
 dist/
+package-lock.json
 .DS_Store
 *.log
 .claude/
 /memory/
 tmp/
+.nexus/
+.nexus-data/
+.scode/
+data/
+logs/
 ui/dist/
 ui/node_modules/
 bin/cli-node.js

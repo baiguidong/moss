@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { FileManagerFile } from '../ipc/types';
+import { mediaUrl } from './lib/mediaUrl';
+import type { FileManagerFile } from './ipc/types';
 
 interface GroupedFiles {
   date: string;
@@ -46,25 +47,29 @@ export function TimelineView() {
 
   // 按日期分组
   const groupedFiles = React.useMemo(() => {
-    const groups: Map<string, FileManagerFile[]> = new Map();
+    const groups: Map<string, { ts: number; files: FileManagerFile[] }> = new Map();
 
     files.forEach((file) => {
       const date = file.exif_date || file.modified_at || file.created_at;
-      const dateKey = new Date(date).toLocaleDateString('zh-CN', {
+      const parsed = new Date(date).getTime();
+      const ts = Number.isNaN(parsed) ? 0 : parsed;
+      const dateKey = new Date(ts).toLocaleDateString('zh-CN', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       });
 
-      if (!groups.has(dateKey)) {
-        groups.set(dateKey, []);
+      const existing = groups.get(dateKey);
+      if (existing) {
+        existing.files.push(file);
+      } else {
+        groups.set(dateKey, { ts, files: [file] });
       }
-      groups.get(dateKey)!.push(file);
     });
 
     return Array.from(groups.entries())
-      .map(([date, files]) => ({ date, files }))
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      .map(([date, { ts, files }]) => ({ date, ts, files }))
+      .sort((a, b) => b.ts - a.ts);
   }, [files]);
 
   // 获取所有日期
@@ -126,7 +131,7 @@ export function TimelineView() {
                   >
                     {file.thumbnail_path ? (
                       <img
-                        src={file.thumbnail_path}
+                        src={mediaUrl(file.thumbnail_path)}
                         alt={file.filename}
                         className="w-full h-full object-cover"
                       />
@@ -159,7 +164,7 @@ export function TimelineView() {
                     >
                       {file.thumbnail_path ? (
                         <img
-                          src={file.thumbnail_path}
+                          src={mediaUrl(file.thumbnail_path)}
                           alt={file.filename}
                           className="w-full h-full object-cover"
                         />

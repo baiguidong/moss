@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-electron-mvp",
+  "name": "moss-desktop",
   "version": "0.0.3",
   "description": "Moss - AI coding agent desktop client",
   "author": "Moss AI Team",
@@ -26,6 +26,12 @@
       "buildResources": "build"
     },
     "icon": "build/icon",
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/ffprobe-static/**",
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**"
+    ],
     "dmg": {
       "background": null,
       "iconSize": 100,
@@ -129,6 +135,7 @@
     "react-markdown": "^9.0.1",
     "react-resizable-panels": "^2.1.7",
     "react-syntax-highlighter": "^16.1.1",
+    "react-virtuoso": "^4.18.10",
     "remark-gfm": "^4.0.0",
     "semver": "^7.7.4",
     "tailwind-merge": "^3.3.1",

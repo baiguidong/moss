@@ -138,13 +138,14 @@ export function SlashCommandSubMenu({
 }) {
   const cmdKey = commandName.startsWith("/") ? commandName.slice(1) : commandName;
   const cmd = COMMANDS_WITH_ARGS[cmdKey];
-  if (!cmd?.optionList) return null;
-
-  const options = cmd.optionList;
 
   React.useEffect(() => {
     onSetSelectedIndex(0);
   }, [onSetSelectedIndex]);
+
+  if (!cmd?.optionList) return null;
+
+  const options = cmd.optionList;
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur">

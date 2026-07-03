@@ -173,7 +173,9 @@ const ensureUniquePath = (target) => {
 const downloads = new Map();
 
 const emitProgress = (evt) => {
-  mainWindow?.webContents.send('update:download-progress', evt);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update:download-progress', evt);
+  }
 };
 
 const startDownloadInBackground = async (downloadId, url, filePath, abortController) => {
@@ -241,10 +243,16 @@ const startDownloadInBackground = async (downloadId, url, filePath, abortControl
       if (!res.body) throw new Error('Download response has no body');
 
       stream = fs.createWriteStream(filePath);
+      // Attach an error listener immediately: a write error (ENOSPC/EACCES) emitted
+      // before any listener exists would otherwise crash the process as an
+      // uncaught 'error' event that the surrounding try/catch cannot catch.
+      let streamError = null;
+      stream.on('error', (e) => { streamError = e; });
       const reader = res.body.getReader();
 
       let doneReading = false;
       while (!doneReading) {
+        if (streamError) throw streamError;
         const { done, value } = await reader.read();
         doneReading = done;
         if (doneReading) break;
@@ -254,16 +262,26 @@ const startDownloadInBackground = async (downloadId, url, filePath, abortControl
 
         const buf = Buffer.from(value);
         if (!stream.write(buf)) {
-          await new Promise((resolve) => stream?.once('drain', () => resolve()));
+          await new Promise((resolve) => {
+            const finish = () => {
+              stream?.off('drain', finish);
+              stream?.off('error', finish);
+              resolve();
+            };
+            stream?.once('drain', finish);
+            stream?.once('error', finish);
+          });
         }
 
         emitThrottled('downloading');
       }
 
+      if (streamError) throw streamError;
+
       await new Promise((resolve, reject) => {
         if (!stream) { resolve(); return; }
+        stream.once('error', reject);
         stream.end(() => resolve());
-        stream.on('error', reject);
       });
 
       emitThrottled('completed');
@@ -299,7 +317,9 @@ export function setMainWindowRef(win) {
 export function initUpdateIpcHandlers() {
   // Auto-update status broadcast via webContents
   autoUpdaterService.setStatusBroadcastCallback((status) => {
-    mainWindow?.webContents.send('auto-update:status', status);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('auto-update:status', status);
+    }
   });
 
   // update.check - check for updates via GitHub Releases (stable only)
@@ -327,7 +347,7 @@ export function initUpdateIpcHandlers() {
 
       const latest = candidates[0];
       const updateAvailable = semver.gt(latest.version, currentSemver);
-      mossLog('Update', `GitHub latest: ${latest.version}, current: ${currentSemver}, update available: ${updateAvailable}`);
+      mossLog('info', 'Update', `GitHub latest: ${latest.version}, current: ${currentSemver}, update available: ${updateAvailable}`);
 
       return {
         success: true,
@@ -360,7 +380,7 @@ export function initUpdateIpcHandlers() {
       if (fs.existsSync(targetPath)) {
         const stats = fs.statSync(targetPath);
         if (stats.size > 0) {
-          mossLog('Update', `File already exists: ${targetPath}`);
+          mossLog('info', 'Update', `File already exists: ${targetPath}`);
           return { success: true, data: { downloadId: 'cached', filePath: targetPath } };
         }
       }
@@ -380,7 +400,9 @@ export function initUpdateIpcHandlers() {
 
   // update.open - open the update modal
   ipcMain.on('update:open', () => {
-    mainWindow?.webContents.send('update:open-modal');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:open-modal');
+    }
   });
 
   // autoUpdate.check - check using electron-updater

@@ -20,8 +20,9 @@ import { GalleryView } from './GalleryView';
 import { VaultView } from './VaultView';
 import { TimelineView } from './TimelineView';
 import { MediaStudio } from './MediaStudio';
+import { SmartAlbumView } from './SmartAlbumView';
 
-type TabId = 'scan' | 'gallery' | 'vault' | 'timeline' | 'studio';
+type TabId = 'scan' | 'gallery' | 'albums' | 'vault' | 'timeline' | 'studio';
 
 interface Tab {
   id: TabId;
@@ -32,9 +33,10 @@ interface Tab {
 const tabs: Tab[] = [
   { id: 'scan', label: '扫描', icon: Scan },
   { id: 'gallery', label: '画廊', icon: Image },
+  { id: 'albums', label: '智能相册', icon: Sparkles },
   { id: 'vault', label: '保险箱', icon: Lock },
   { id: 'timeline', label: '时间线', icon: Clock },
-  { id: 'studio', label: '媒体工作室', icon: Sparkles },
+  { id: 'studio', label: '媒体工作室', icon: Film },
 ];
 
 interface FileManagerProps {
@@ -85,6 +87,8 @@ export function FileManager({ className }: FileManagerProps) {
         }} />;
       case 'gallery':
         return <GalleryView />;
+      case 'albums':
+        return <SmartAlbumView />;
       case 'vault':
         return <VaultView />;
       case 'timeline':
