@@ -9,7 +9,7 @@ process.env.CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE = 'true'
 
 import { randomUUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
-import { getEmptyToolPermissionContext, setGlobalAppEventBridge, type MossAppEvent, type MossAppEventResult } from './Tool.js'
+import { getEmptyToolPermissionContext, setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
@@ -24,10 +24,15 @@ import type { CanUseToolFn } from './utils/permissions/permissions.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
+import { findGitRoot } from './utils/git.js'
+import {
+  discardWorktreeSessionState,
+  getWorktreeSessionForSessionId,
+} from './utils/worktree.js'
 import type { Message } from './types/message.js'
 
 import { bootstrapHeadless } from './bootstrap/headless.js'
-import { switchSession } from './bootstrap/state.js'
+import { discardSessionCostState, switchSession } from './bootstrap/state.js'
 import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
@@ -50,11 +55,14 @@ import {
 import {
   adoptResumedSessionFile,
   clearSessionMetadata,
+  discardSessionStorageRecord,
+  getProjectDir,
   recordContentReplacement,
   resetSessionFilePointer,
   restoreSessionMetadata,
   saveMode,
 } from './utils/sessionStorage.js'
+import { discardMicrocompactSessionState } from './services/compact/microCompact.js'
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 import { initBundledSkills } from './skills/bundled/index.js'
 import { initBuiltinPlugins } from './plugins/bundled/index.js'
@@ -171,8 +179,6 @@ type ResolvedClaudeSessionOptions = {
   resumeState?: PreparedSessionResume
 }
 
-let activeSessionStorageKey: string | null = null
-
 function normalizeAnthropicBaseUrl(value: string | undefined): string | undefined {
   if (!value) return value
   const trimmed = value.trim()
@@ -250,6 +256,10 @@ export class ClaudeSession {
   #disposed = false
   #forkContentReplacementsSeeded = false
   #abortController: AbortController | null = null
+  // Session's git root (or cwd), resolved during engine bootstrap. Passed
+  // into the per-send ALS context so getProjectRoot() resolves per-session.
+  #projectRoot: string | undefined
+  #storageActivated = false
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -257,12 +267,16 @@ export class ClaudeSession {
 
   constructor(opts: ClaudeSessionOptions = {}) {
     applySessionApiOverrides(opts)
-    if (opts.onAppEvent) {
-      setGlobalAppEventBridge(opts.onAppEvent)
-    }
     this.sessionId = opts.sessionId ?? randomUUID()
+    if (opts.onAppEvent) {
+      // Register keyed by this session's id so concurrent sessions'
+      // app events don't all route to the most recently created session.
+      // Primary routing is per-engine via emitAppEvent; this is a fallback.
+      setGlobalAppEventBridge(opts.onAppEvent, this.sessionId)
+    }
+    const cwd = opts.cwd ?? process.cwd()
     this.#opts = {
-      cwd: opts.cwd ?? process.cwd(),
+      cwd,
       model: opts.model ?? 'claude-sonnet-4-6',
       url: opts.url,
       apiKey: opts.apiKey,
@@ -275,14 +289,19 @@ export class ClaudeSession {
       onAppEvent: opts.onAppEvent,
       sessionId: opts.sessionId,
       initialMessages: opts.initialMessages,
-      projectDir: opts.projectDir,
+      // 始终显式解析 projectDir, 避免并发多会话时 getTranscriptPath()
+      // 回退到全局 originalCwd 而把 transcript 写进其他会话的项目目录。
+      projectDir: opts.projectDir ?? getProjectDir(cwd),
       resumeState: opts.resumeState,
     }
   }
 
   async #activateSessionStorage(): Promise<void> {
-    const activationKey = `${this.sessionId}:${this.#opts.projectDir ?? ''}`
-    if (activeSessionStorageKey === activationKey) {
+    // Per-instance latch: session storage (file pointer, metadata) is now
+    // per-session inside Project, so activation is one-time setup for this
+    // session — not a global "switch" that must re-run when another
+    // concurrent session was activated in between.
+    if (this.#storageActivated) {
       return
     }
 
@@ -326,7 +345,7 @@ export class ClaudeSession {
     }
 
     saveMode(coordinatorMode ? 'coordinator' : 'normal')
-    activeSessionStorageKey = activationKey
+    this.#storageActivated = true
   }
 
   /** 懒初始化：第一次 send() 时构建 QueryEngine */
@@ -334,7 +353,6 @@ export class ClaudeSession {
     if (this.#engine) return this.#engine
 
     const {
-      cwd,
       model,
       url,
       apiKey,
@@ -347,11 +365,20 @@ export class ClaudeSession {
       initialMessages: resumedMessages,
       resumeState,
     } = this.#opts
+    // A worktree restored on resume must also shape engine bootstrap
+    // (CLAUDE.md discovery, SessionStart hooks, commands) — not just the
+    // per-turn cwd context.
+    const cwd =
+      getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+      this.#opts.cwd
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
     const bootstrapResult = await bootstrapHeadless(cwd)
     const { initialMessages: bootstrapMessages, mcp, agents: customAgents } =
       bootstrapResult
+    // send() already resolved #projectRoot from the session's base cwd;
+    // keep it stable (project identity must not move to a worktree root).
+    this.#projectRoot = this.#projectRoot ?? bootstrapResult.projectRoot
 
     // bootstrap/init reapplies userSettings env from the configured home dir.
     // Restore explicit session provider overrides afterward so they stay
@@ -459,12 +486,34 @@ export class ClaudeSession {
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
         )
 
-      await runWithCwdOverride(this.#opts.cwd, () =>
-        runInSessionContext(() => this.#activateSessionStorage()),
+      // Resolve the project root before entering the ALS wrappers so even
+      // the first send's activation phase sees this session's root instead
+      // of falling back to the process-global (last-bootstrapped) value.
+      if (this.#projectRoot === undefined) {
+        this.#projectRoot = findGitRoot(this.#opts.cwd) || this.#opts.cwd
+      }
+
+      // Per-send ALS contexts are rebuilt from the session options, so a
+      // worktree entered in a previous turn (EnterWorktreeTool) or restored
+      // on resume must be re-applied from the session's worktree slot —
+      // otherwise the in-context setCwd from those flows would evaporate
+      // when the next context is created.
+      const effectiveCwd = () =>
+        getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+        this.#opts.cwd
+
+      await runWithCwdOverride(
+        effectiveCwd(),
+        () => runInSessionContext(() => this.#activateSessionStorage()),
+        this.#projectRoot,
       )
 
-      const engine = await runWithCwdOverride(this.#opts.cwd, () =>
-        runInSessionContext(() => this.#getEngine()),
+      // Re-evaluate after activation: resume may have just restored a
+      // worktree into the slot, and the engine/turn contexts must run there.
+      const engine = await runWithCwdOverride(
+        effectiveCwd(),
+        () => runInSessionContext(() => this.#getEngine()),
+        this.#projectRoot,
       )
 
       // Reset the engine's abort controller from any previous interrupt so
@@ -510,7 +559,7 @@ export class ClaudeSession {
       }
 
       // QueryEngine.submitMessage 是 AsyncGenerator
-      yield* runWithCwdOverrideGenerator(this.#opts.cwd, () =>
+      yield* runWithCwdOverrideGenerator(effectiveCwd(), () =>
         runWithSessionIdContextGenerator(sessionId, projectDir, () =>
           (async function* () {
             const runTurn = async function* (
@@ -591,6 +640,7 @@ export class ClaudeSession {
             }
           })(),
         ),
+        this.#projectRoot,
       )
     } finally {
       this.#processing = false
@@ -610,10 +660,16 @@ export class ClaudeSession {
     this.#disposed = true
     this.#engine = null
     this.#pendingListeners = []
-    const activationKey = `${this.sessionId}:${this.#opts.projectDir ?? ''}`
-    if (activeSessionStorageKey === activationKey) {
-      activeSessionStorageKey = null
+    if (this.#opts.onAppEvent) {
+      unregisterAppEventBridge(this.sessionId, this.#opts.onAppEvent)
     }
+    // Drop per-session state so long-lived desktop processes don't
+    // accumulate records for disposed sessions.
+    discardSessionStorageRecord(this.sessionId)
+    discardMicrocompactSessionState(this.sessionId)
+    discardSessionCostState(this.sessionId)
+    discardWorktreeSessionState(this.sessionId)
+    this.#storageActivated = false
   }
 
   /** 中止正在进行的请求 */

@@ -21,6 +21,7 @@ export type ToolInputJSONSchema = {
 }
 
 import type { Notification } from './context/notifications.js'
+import { getSessionIdContext } from './utils/sessionIdContext.js'
 import type {
   MCPServerConnection,
   ServerResource,
@@ -395,20 +396,58 @@ export type MossAppEventResult =
     }
   | { ok: false; error: string }
 
-let globalAppEventBridge:
-  | ((event: MossAppEvent) => Promise<MossAppEventResult>)
-  | undefined
+// App event bridges keyed by sessionId: the embedded desktop runtime runs
+// multiple concurrent sessions in one process, and a single shared bridge
+// would route every session's app events to whichever session was
+// constructed last. Keys resolve through the ALS session context
+// (sessionIdContext is a leaf module — no import cycle); callers outside
+// any session context (e.g. the CLI) share the single fallback slot.
+const APP_EVENT_BRIDGE_FALLBACK_KEY = '__global__'
+
+const appEventBridges = new Map<
+  string,
+  (event: MossAppEvent) => Promise<MossAppEventResult>
+>()
 
 export function setGlobalAppEventBridge(
   handler: ((event: MossAppEvent) => Promise<MossAppEventResult>) | undefined,
+  sessionId?: string,
 ): void {
-  globalAppEventBridge = handler
+  const key =
+    sessionId ?? getSessionIdContext() ?? APP_EVENT_BRIDGE_FALLBACK_KEY
+  if (handler) {
+    appEventBridges.set(key, handler)
+  } else {
+    appEventBridges.delete(key)
+  }
 }
 
 export function getGlobalAppEventBridge():
   | ((event: MossAppEvent) => Promise<MossAppEventResult>)
   | undefined {
-  return globalAppEventBridge
+  const contextSessionId = getSessionIdContext()
+  if (contextSessionId) {
+    return (
+      appEventBridges.get(contextSessionId) ??
+      appEventBridges.get(APP_EVENT_BRIDGE_FALLBACK_KEY)
+    )
+  }
+  return appEventBridges.get(APP_EVENT_BRIDGE_FALLBACK_KEY)
+}
+
+/**
+ * Unregister a bridge only if it is still the one registered for the
+ * session. Guards against an out-of-order dispose() of an older
+ * ClaudeSession instance removing a newer instance's bridge for the
+ * same sessionId.
+ */
+export function unregisterAppEventBridge(
+  sessionId: string,
+  handler: (event: MossAppEvent) => Promise<MossAppEventResult>,
+): void {
+  if (appEventBridges.get(sessionId) === handler) {
+    appEventBridges.delete(sessionId)
+  }
 }
 
 // Re-export ToolProgressData from centralized location

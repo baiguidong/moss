@@ -305,13 +305,7 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
-      listExecutions: (sessionId?: string) => Promise<{ executions: ExecutionSummary[] }>;
-      focusExecution: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
-      createExecutionForTeammate: (payload: { sessionId: string; taskId: string; description: string; prompt: string }) => Promise<{ ok?: boolean; executionSessionId?: string; error?: string }>;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
-      onTeammateSpawned: (callback: (payload: { sessionId: string; taskId: string; description: string; prompt: string; color?: string }) => void) => () => void;
-      onTeammateCompleted: (callback: (payload: { sessionId: string; taskId: string; description: string; status: string }) => void) => () => void;
-      updateTeammateState: (payload: { sessionId: string; taskId: string; completed?: boolean }) => Promise<{ ok?: boolean; error?: string }>;
       getWorkerResults: (payload: { sessionId: string }) => Promise<{ results: Record<string, WorkerSubagentResult> }>;
       setWorkerSummaries: (payload: { sessionId: string; workerSummariesJson: string | null }) => Promise<{ ok: boolean }>;
       cronList: () => Promise<CronTask[]>;
@@ -338,15 +332,6 @@ declare global {
     };
   }
 }
-
-export type ExecutionSummary = {
-  id: string;
-  originalPrompt: string;
-  busy: boolean;
-  workspace: string;
-  hasBubble: boolean;
-  createdAt: number;
-};
 
 export type CoordinatorTask = {
   id: string;

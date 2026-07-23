@@ -2,8 +2,7 @@
 
 import * as React from "react";
 import { Check, CircleAlert, Loader2, X } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageList } from "@/components/chat/message-list";
+import { MessageListPane } from "@/components/chat/message-list";
 import { cn } from "@/lib/utils";
 import type { WorkerThread } from "@/lib/agent-transcript";
 
@@ -157,18 +156,17 @@ export function WorkerThreadPanel({
             </button>
           </div>
 
-          <ScrollArea className="h-[30vh] min-h-[120px] flex-1">
-            <div className="bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)] py-1">
-              <MessageList
-                messages={activeThread.messages}
-                emptyState={(
-                  <div className="rounded-xl border border-dashed border-border/70 bg-card/50 px-3 py-4 text-xs text-muted-foreground">
-                    该 worker 还没有可展示的消息。
-                  </div>
-                )}
-              />
-            </div>
-          </ScrollArea>
+          <MessageListPane
+            key={activeThread.id}
+            className="h-[30vh] min-h-[120px] bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]"
+            messages={activeThread.messages}
+            loading={activeThread.status === "running" || activeThread.status === "queued"}
+            emptyState={(
+              <div className="rounded-xl border border-dashed border-border/70 bg-card/50 px-3 py-4 text-xs text-muted-foreground">
+                该 worker 还没有可展示的消息。
+              </div>
+            )}
+          />
         </div>
       )}
 

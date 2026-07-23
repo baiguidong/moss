@@ -11,6 +11,10 @@ import type { Tool } from '../../Tool.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { count } from '../../utils/array.js'
 import { clearMemoryFileCaches } from '../../utils/claudemd.js'
+import {
+  setCurrentOriginalCwdOverride,
+  setCurrentProjectRootOverride,
+} from '../../utils/cwdContext.js'
 import { execFileNoThrow } from '../../utils/execFileNoThrow.js'
 import { updateHooksConfigSnapshot } from '../../utils/hooks/hooksConfigSnapshot.js'
 import { lazySchema } from '../../utils/lazySchema.js'
@@ -125,15 +129,21 @@ function restoreSessionToOriginalCwd(
 ): void {
   setCwd(originalCwd)
   // EnterWorktree sets originalCwd to the *worktree* path (intentional — see
-  // state.ts getProjectRoot comment). Reset to the real original.
-  setOriginalCwd(originalCwd)
+  // state.ts getProjectRoot comment). Reset to the real original. Inside an
+  // ALS session context (embedded multi-session runtime) update the session's
+  // override instead of the shared process-global.
+  if (!setCurrentOriginalCwdOverride(originalCwd)) {
+    setOriginalCwd(originalCwd)
+  }
   // --worktree startup sets projectRoot to the worktree; mid-session
   // EnterWorktreeTool does not. Only restore when it was actually changed —
   // otherwise we'd move projectRoot to wherever the user had cd'd before
   // entering the worktree (session.originalCwd), breaking the "stable project
   // identity" contract.
   if (projectRootIsWorktree) {
-    setProjectRoot(originalCwd)
+    if (!setCurrentProjectRootOverride(originalCwd)) {
+      setProjectRoot(originalCwd)
+    }
     // setup.ts's --worktree block called updateHooksConfigSnapshot() to re-read
     // hooks from the worktree. Restore symmetrically. (Mid-session
     // EnterWorktreeTool never touched the snapshot, so no-op there.)

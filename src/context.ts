@@ -10,10 +10,11 @@ import {
   getClaudeMds,
   getMemoryFiles,
 } from './utils/claudemd.js'
+import { getCwd } from './utils/cwd.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
 import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
 import { execFileNoThrow } from './utils/execFileNoThrow.js'
-import { getBranch, getDefaultBranch, getIsGit, gitExe } from './utils/git.js'
+import { getIsGit, gitExe } from './utils/git.js'
 import { shouldIncludeGitInstructions } from './utils/gitSettings.js'
 import { logError } from './utils/log.js'
 
@@ -58,21 +59,62 @@ export const getGitStatus = memoize(async (): Promise<string | null> => {
 
   try {
     const gitCmdsStart = Date.now()
+    // Branch and default branch are resolved with direct git commands (which
+    // run in the ALS cwd) instead of getBranch()/getDefaultBranch(): those go
+    // through the process-global single-repo gitWatcher cache, which would
+    // serve another concurrent session's repo state.
     const [branch, mainBranch, status, log, userName] = await Promise.all([
-      getBranch(),
-      getDefaultBranch(),
+      // branch --show-current reads the HEAD symref, so it works in
+      // freshly-initialized repos with no commits (empty only on detached HEAD).
+      execFileNoThrow(
+        gitExe(),
+        ['--no-optional-locks', 'branch', '--show-current'],
+        { preserveOutputOnError: false, useCwd: true },
+      ).then(({ stdout }) => stdout.trim()),
+      (async () => {
+        const { stdout } = await execFileNoThrow(
+          gitExe(),
+          [
+            '--no-optional-locks',
+            'symbolic-ref',
+            '--short',
+            'refs/remotes/origin/HEAD',
+          ],
+          { preserveOutputOnError: false, useCwd: true },
+        )
+        const symref = stdout.trim().replace(/^origin\//, '')
+        if (symref) return symref
+        for (const candidate of ['main', 'master']) {
+          const ref = await execFileNoThrow(
+            gitExe(),
+            [
+              '--no-optional-locks',
+              'rev-parse',
+              '--verify',
+              '--quiet',
+              `refs/remotes/origin/${candidate}`,
+            ],
+            { preserveOutputOnError: false, useCwd: true },
+          )
+          if (ref.stdout.trim()) return candidate
+        }
+        return 'main'
+      })(),
       execFileNoThrow(gitExe(), ['--no-optional-locks', 'status', '--short'], {
         preserveOutputOnError: false,
+        useCwd: true,
       }).then(({ stdout }) => stdout.trim()),
       execFileNoThrow(
         gitExe(),
         ['--no-optional-locks', 'log', '--oneline', '-n', '5'],
         {
           preserveOutputOnError: false,
+          useCwd: true,
         },
       ).then(({ stdout }) => stdout.trim()),
       execFileNoThrow(gitExe(), ['config', 'user.name'], {
         preserveOutputOnError: false,
+        useCwd: true,
       }).then(({ stdout }) => stdout.trim()),
     ])
 
@@ -108,7 +150,9 @@ export const getGitStatus = memoize(async (): Promise<string | null> => {
     logError(error)
     return null
   }
-})
+  // Keyed by cwd: concurrent embedded sessions run in different working
+  // directories and must not share each other's git status.
+}, () => getCwd())
 
 /**
  * This context is prepended to each conversation, and cached for the duration of the conversation.
@@ -147,6 +191,8 @@ export const getSystemContext = memoize(
         : {}),
     }
   },
+  // Keyed by cwd for concurrent embedded sessions.
+  () => getCwd(),
 )
 
 /**
@@ -186,4 +232,7 @@ export const getUserContext = memoize(
       currentDate: `Today's date is ${getLocalISODate()}.`,
     }
   },
+  // Keyed by cwd: CLAUDE.md discovery walks from the session's cwd, so
+  // concurrent embedded sessions must not share one cached result.
+  () => getCwd(),
 )

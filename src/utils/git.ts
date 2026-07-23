@@ -226,7 +226,10 @@ export const getIsGit = memoize(async (): Promise<boolean> => {
     is_git: isGit,
   })
   return isGit
-})
+  // Keyed by cwd: concurrent embedded sessions run in different working
+  // directories; a single shared entry would leak one session's answer
+  // into the others.
+}, () => getCwd())
 
 export function getGitDir(cwd: string): Promise<string | null> {
   return resolveGitDir(cwd)

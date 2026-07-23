@@ -18,6 +18,7 @@ import type { HookCallbackMatcher } from 'src/types/hooks.js'
 import { randomUUID } from 'src/utils/crypto.js'
 import type { ModelSetting } from 'src/utils/model/model.js'
 import type { ModelStrings } from 'src/utils/model/modelStrings.js'
+import { getProjectRootOverride } from 'src/utils/cwdContext.js'
 import {
   getSessionIdContext,
   getSessionProjectDirContext,
@@ -511,9 +512,13 @@ export function getOriginalCwd(): string {
  * (so skills/history stay stable when entering a throwaway worktree).
  * It IS set at startup by --worktree, since that worktree is the session's project.
  * Use for project identity (history, skills, sessions) not file operations.
+ *
+ * ALS-first: the embedded multi-session runtime supplies a per-session
+ * project root via the cwd override context; the CLI (no ALS context)
+ * falls back to the process-global value.
  */
 export function getProjectRoot(): string {
-  return STATE.projectRoot
+  return getProjectRootOverride() ?? STATE.projectRoot
 }
 
 export function setOriginalCwd(cwd: string): void {
@@ -544,18 +549,119 @@ export function setDirectConnectServerUrl(url: string): void {
   STATE.directConnectServerUrl = url
 }
 
+// --- Per-session cost/usage accounting ---
+// The embedded desktop runtime runs multiple concurrent sessions in one
+// process; a single accumulator would merge their costs and turn stats.
+// Sessions inside an ALS context get their own slot; the CLI (no ALS)
+// falls back to the fields on STATE, preserving its semantics exactly.
+type SessionCostState = {
+  totalCostUSD: number
+  totalAPIDuration: number
+  totalAPIDurationWithoutRetries: number
+  totalToolDuration: number
+  turnHookDurationMs: number
+  turnToolDurationMs: number
+  turnClassifierDurationMs: number
+  turnToolCount: number
+  turnHookCount: number
+  turnClassifierCount: number
+  startTime: number
+  totalLinesAdded: number
+  totalLinesRemoved: number
+  hasUnknownModelCost: boolean
+  modelUsage: { [modelName: string]: ModelUsage }
+  outputTokensAtTurnStart: number
+  currentTurnTokenBudget: number | null
+  budgetContinuationCount: number
+}
+
+const sessionCostStates = new Map<string, SessionCostState>()
+
+function createSessionCostState(): SessionCostState {
+  return {
+    totalCostUSD: 0,
+    totalAPIDuration: 0,
+    totalAPIDurationWithoutRetries: 0,
+    totalToolDuration: 0,
+    turnHookDurationMs: 0,
+    turnToolDurationMs: 0,
+    turnClassifierDurationMs: 0,
+    turnToolCount: 0,
+    turnHookCount: 0,
+    turnClassifierCount: 0,
+    startTime: Date.now(),
+    totalLinesAdded: 0,
+    totalLinesRemoved: 0,
+    hasUnknownModelCost: false,
+    modelUsage: {},
+    outputTokensAtTurnStart: 0,
+    currentTurnTokenBudget: null,
+    budgetContinuationCount: 0,
+  }
+}
+
+function costState(): SessionCostState {
+  const sessionId = getSessionIdContext()
+  if (!sessionId) {
+    // CLI / out-of-session code path: STATE structurally satisfies
+    // SessionCostState (the turn-budget fields live in costStateGlobalExtra).
+    return globalCostStateView
+  }
+  let slot = sessionCostStates.get(sessionId)
+  if (!slot) {
+    slot = createSessionCostState()
+    sessionCostStates.set(sessionId, slot)
+  }
+  return slot
+}
+
+// Turn-budget fields were module-level variables (not on STATE); this view
+// merges them with STATE so the global fallback exposes the same shape.
+const costStateGlobalExtra = {
+  outputTokensAtTurnStart: 0,
+  currentTurnTokenBudget: null as number | null,
+  budgetContinuationCount: 0,
+}
+
+const globalCostStateView: SessionCostState = new Proxy(
+  costStateGlobalExtra as unknown as SessionCostState,
+  {
+    get(extra, prop: string) {
+      if (prop in costStateGlobalExtra) {
+        return (extra as Record<string, unknown>)[prop]
+      }
+      return STATE[prop as keyof State]
+    },
+    set(extra, prop: string, value) {
+      if (prop in costStateGlobalExtra) {
+        ;(extra as Record<string, unknown>)[prop] = value
+      } else {
+        ;(STATE as Record<string, unknown>)[prop] = value
+      }
+      return true
+    },
+  },
+)
+
+/** Drop a disposed embedded session's cost slot. */
+export function discardSessionCostState(sessionId: string): void {
+  sessionCostStates.delete(sessionId)
+}
+
 export function addToTotalDurationState(
   duration: number,
   durationWithoutRetries: number,
 ): void {
-  STATE.totalAPIDuration += duration
-  STATE.totalAPIDurationWithoutRetries += durationWithoutRetries
+  const cost = costState()
+  cost.totalAPIDuration += duration
+  cost.totalAPIDurationWithoutRetries += durationWithoutRetries
 }
 
 export function resetTotalDurationStateAndCost_FOR_TESTS_ONLY(): void {
-  STATE.totalAPIDuration = 0
-  STATE.totalAPIDurationWithoutRetries = 0
-  STATE.totalCostUSD = 0
+  const cost = costState()
+  cost.totalAPIDuration = 0
+  cost.totalAPIDurationWithoutRetries = 0
+  cost.totalCostUSD = 0
 }
 
 export function addToTotalCostState(
@@ -563,83 +669,90 @@ export function addToTotalCostState(
   modelUsage: ModelUsage,
   model: string,
 ): void {
-  STATE.modelUsage[model] = modelUsage
-  STATE.totalCostUSD += cost
+  const state = costState()
+  state.modelUsage[model] = modelUsage
+  state.totalCostUSD += cost
 }
 
 export function getTotalCostUSD(): number {
-  return STATE.totalCostUSD
+  return costState().totalCostUSD
 }
 
 export function getTotalAPIDuration(): number {
-  return STATE.totalAPIDuration
+  return costState().totalAPIDuration
 }
 
 export function getTotalDuration(): number {
-  return Date.now() - STATE.startTime
+  return Date.now() - costState().startTime
 }
 
 export function getTotalAPIDurationWithoutRetries(): number {
-  return STATE.totalAPIDurationWithoutRetries
+  return costState().totalAPIDurationWithoutRetries
 }
 
 export function getTotalToolDuration(): number {
-  return STATE.totalToolDuration
+  return costState().totalToolDuration
 }
 
 export function addToToolDuration(duration: number): void {
-  STATE.totalToolDuration += duration
-  STATE.turnToolDurationMs += duration
-  STATE.turnToolCount++
+  const cost = costState()
+  cost.totalToolDuration += duration
+  cost.turnToolDurationMs += duration
+  cost.turnToolCount++
 }
 
 export function getTurnHookDurationMs(): number {
-  return STATE.turnHookDurationMs
+  return costState().turnHookDurationMs
 }
 
 export function addToTurnHookDuration(duration: number): void {
-  STATE.turnHookDurationMs += duration
-  STATE.turnHookCount++
+  const cost = costState()
+  cost.turnHookDurationMs += duration
+  cost.turnHookCount++
 }
 
 export function resetTurnHookDuration(): void {
-  STATE.turnHookDurationMs = 0
-  STATE.turnHookCount = 0
+  const cost = costState()
+  cost.turnHookDurationMs = 0
+  cost.turnHookCount = 0
 }
 
 export function getTurnHookCount(): number {
-  return STATE.turnHookCount
+  return costState().turnHookCount
 }
 
 export function getTurnToolDurationMs(): number {
-  return STATE.turnToolDurationMs
+  return costState().turnToolDurationMs
 }
 
 export function resetTurnToolDuration(): void {
-  STATE.turnToolDurationMs = 0
-  STATE.turnToolCount = 0
+  const cost = costState()
+  cost.turnToolDurationMs = 0
+  cost.turnToolCount = 0
 }
 
 export function getTurnToolCount(): number {
-  return STATE.turnToolCount
+  return costState().turnToolCount
 }
 
 export function getTurnClassifierDurationMs(): number {
-  return STATE.turnClassifierDurationMs
+  return costState().turnClassifierDurationMs
 }
 
 export function addToTurnClassifierDuration(duration: number): void {
-  STATE.turnClassifierDurationMs += duration
-  STATE.turnClassifierCount++
+  const cost = costState()
+  cost.turnClassifierDurationMs += duration
+  cost.turnClassifierCount++
 }
 
 export function resetTurnClassifierDuration(): void {
-  STATE.turnClassifierDurationMs = 0
-  STATE.turnClassifierCount = 0
+  const cost = costState()
+  cost.turnClassifierDurationMs = 0
+  cost.turnClassifierCount = 0
 }
 
 export function getTurnClassifierCount(): number {
-  return STATE.turnClassifierCount
+  return costState().turnClassifierCount
 }
 
 export function getStatsStore(): {
@@ -693,65 +806,64 @@ function flushInteractionTime_inner(): void {
 }
 
 export function addToTotalLinesChanged(added: number, removed: number): void {
-  STATE.totalLinesAdded += added
-  STATE.totalLinesRemoved += removed
+  const cost = costState()
+  cost.totalLinesAdded += added
+  cost.totalLinesRemoved += removed
 }
 
 export function getTotalLinesAdded(): number {
-  return STATE.totalLinesAdded
+  return costState().totalLinesAdded
 }
 
 export function getTotalLinesRemoved(): number {
-  return STATE.totalLinesRemoved
+  return costState().totalLinesRemoved
 }
 
 export function getTotalInputTokens(): number {
-  return sumBy(Object.values(STATE.modelUsage), 'inputTokens')
+  return sumBy(Object.values(costState().modelUsage), 'inputTokens')
 }
 
 export function getTotalOutputTokens(): number {
-  return sumBy(Object.values(STATE.modelUsage), 'outputTokens')
+  return sumBy(Object.values(costState().modelUsage), 'outputTokens')
 }
 
 export function getTotalCacheReadInputTokens(): number {
-  return sumBy(Object.values(STATE.modelUsage), 'cacheReadInputTokens')
+  return sumBy(Object.values(costState().modelUsage), 'cacheReadInputTokens')
 }
 
 export function getTotalCacheCreationInputTokens(): number {
-  return sumBy(Object.values(STATE.modelUsage), 'cacheCreationInputTokens')
+  return sumBy(Object.values(costState().modelUsage), 'cacheCreationInputTokens')
 }
 
 export function getTotalWebSearchRequests(): number {
-  return sumBy(Object.values(STATE.modelUsage), 'webSearchRequests')
+  return sumBy(Object.values(costState().modelUsage), 'webSearchRequests')
 }
 
-let outputTokensAtTurnStart = 0
-let currentTurnTokenBudget: number | null = null
 export function getTurnOutputTokens(): number {
-  return getTotalOutputTokens() - outputTokensAtTurnStart
+  return getTotalOutputTokens() - costState().outputTokensAtTurnStart
 }
 export function getCurrentTurnTokenBudget(): number | null {
-  return currentTurnTokenBudget
+  return costState().currentTurnTokenBudget
 }
-let budgetContinuationCount = 0
 export function snapshotOutputTokensForTurn(budget: number | null): void {
-  outputTokensAtTurnStart = getTotalOutputTokens()
-  currentTurnTokenBudget = budget
-  budgetContinuationCount = 0
+  const cost = costState()
+  cost.outputTokensAtTurnStart = getTotalOutputTokens()
+  cost.currentTurnTokenBudget = budget
+  cost.budgetContinuationCount = 0
 }
 export function getBudgetContinuationCount(): number {
-  return budgetContinuationCount
+  return costState().budgetContinuationCount
 }
 export function incrementBudgetContinuationCount(): void {
-  budgetContinuationCount++
+  costState().budgetContinuationCount++
 }
 
 export function setHasUnknownModelCost(): void {
-  STATE.hasUnknownModelCost = true
+  costState().hasUnknownModelCost = true
 }
 
 export function hasUnknownModelCost(): boolean {
-  return STATE.hasUnknownModelCost
+  return costState().hasUnknownModelCost
 }
 
 export function getLastMainRequestId(): string | undefined {
@@ -828,11 +940,11 @@ export async function waitForScrollIdle(): Promise<void> {
 }
 
 export function getModelUsage(): { [modelName: string]: ModelUsage } {
-  return STATE.modelUsage
+  return costState().modelUsage
 }
 
 export function getUsageForModel(model: string): ModelUsage | undefined {
-  return STATE.modelUsage[model]
+  return costState().modelUsage[model]
 }
 
 /**
@@ -866,15 +978,16 @@ export function setSdkBetas(betas: string[] | undefined): void {
 }
 
 export function resetCostState(): void {
-  STATE.totalCostUSD = 0
-  STATE.totalAPIDuration = 0
-  STATE.totalAPIDurationWithoutRetries = 0
-  STATE.totalToolDuration = 0
-  STATE.startTime = Date.now()
-  STATE.totalLinesAdded = 0
-  STATE.totalLinesRemoved = 0
-  STATE.hasUnknownModelCost = false
-  STATE.modelUsage = {}
+  const cost = costState()
+  cost.totalCostUSD = 0
+  cost.totalAPIDuration = 0
+  cost.totalAPIDurationWithoutRetries = 0
+  cost.totalToolDuration = 0
+  cost.startTime = Date.now()
+  cost.totalLinesAdded = 0
+  cost.totalLinesRemoved = 0
+  cost.hasUnknownModelCost = false
+  cost.modelUsage = {}
   STATE.promptId = null
 }
 
@@ -901,21 +1014,22 @@ export function setCostStateForRestore({
   lastDuration: number | undefined
   modelUsage: { [modelName: string]: ModelUsage } | undefined
 }): void {
-  STATE.totalCostUSD = totalCostUSD
-  STATE.totalAPIDuration = totalAPIDuration
-  STATE.totalAPIDurationWithoutRetries = totalAPIDurationWithoutRetries
-  STATE.totalToolDuration = totalToolDuration
-  STATE.totalLinesAdded = totalLinesAdded
-  STATE.totalLinesRemoved = totalLinesRemoved
+  const cost = costState()
+  cost.totalCostUSD = totalCostUSD
+  cost.totalAPIDuration = totalAPIDuration
+  cost.totalAPIDurationWithoutRetries = totalAPIDurationWithoutRetries
+  cost.totalToolDuration = totalToolDuration
+  cost.totalLinesAdded = totalLinesAdded
+  cost.totalLinesRemoved = totalLinesRemoved
 
   // Restore per-model usage breakdown
   if (modelUsage) {
-    STATE.modelUsage = modelUsage
+    cost.modelUsage = modelUsage
   }
 
   // Adjust startTime to make wall duration accumulate
   if (lastDuration) {
-    STATE.startTime = Date.now() - lastDuration
+    cost.startTime = Date.now() - lastDuration
   }
 }
 
@@ -927,9 +1041,10 @@ export function resetStateForTests(): void {
   Object.entries(getInitialState()).forEach(([key, value]) => {
     STATE[key as keyof State] = value as never
   })
-  outputTokensAtTurnStart = 0
-  currentTurnTokenBudget = null
-  budgetContinuationCount = 0
+  costStateGlobalExtra.outputTokensAtTurnStart = 0
+  costStateGlobalExtra.currentTurnTokenBudget = null
+  costStateGlobalExtra.budgetContinuationCount = 0
+  sessionCostStates.clear()
   sessionSwitched.clear()
 }
 

@@ -7,7 +7,6 @@ import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
-import { ExecutionPetPanel } from '@/components/execution-pet-panel';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
@@ -29,7 +28,6 @@ import type {
   BackgroundTaskInfo,
   CoordinatorTask,
   DesktopSettings,
-  ExecutionSummary,
   FileTreeNode,
   InstalledAssistant,
   SessionDetail,
@@ -319,7 +317,6 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
-  const [executions, setExecutions] = React.useState<ExecutionSummary[]>([]);
   const [coordinatorTasks, setCoordinatorTasks] = React.useState<CoordinatorTask[]>([]);
   const [activeWorkerThreadId, setActiveWorkerThreadId] = React.useState<string | null>(null);
   const [stickyWorkerTaskStatuses, setStickyWorkerTaskStatuses] = React.useState<Record<string, 'completed' | 'failed'>>({});
@@ -348,6 +345,11 @@ export default function App() {
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
   const openSessionRequestIdRef = React.useRef(0);
+  // Guards against creating a second session (and a second workspace dir) when
+  // submitPrompt re-enters before the first createAndOpenSession has set
+  // activeSessionId — e.g. a fast double-send, or a retry after an errored
+  // first turn. Holds the id of the session created in-flight.
+  const creatingSessionRef = React.useRef<Promise<string | undefined> | null>(null);
   const getDirtyPreviewTabs = React.useCallback(
     () => previewTabsRef.current.filter((tab) => isDirtyPreviewTab(tab)),
     []
@@ -600,31 +602,6 @@ export default function App() {
       setSelectedAppName('');
     }
   }, [apps, selectedAppName]);
-
-  // Poll for active sub-agent executions (pets)
-  React.useEffect(() => {
-    if (!activeSessionId) {
-      setExecutions([]);
-      return;
-    }
-    let mounted = true;
-    const loadExecutions = async () => {
-      try {
-        const result = await window.agentDesktop.listExecutions(activeSessionId);
-        if (mounted && result?.executions) {
-          setExecutions(result.executions);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    loadExecutions();
-    const timer = window.setInterval(loadExecutions, 3000);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
-  }, [activeSessionId]);
 
   // Poll for coordinator mode in-process teammate tasks
   React.useEffect(() => {
@@ -920,68 +897,6 @@ export default function App() {
       applyDesktopSettings(payload);
     });
 
-    // Listen for teammate spawn events to auto-create execution windows
-    const offTeammateSpawned = window.agentDesktop.onTeammateSpawned(async (payload) => {
-      const { sessionId, taskId, description, prompt } = payload;
-      if (sessionId !== activeSessionIdRef.current) return;
-      // Create execution window for this teammate
-      try {
-        await window.agentDesktop.createExecutionForTeammate({
-          sessionId,
-          taskId,
-          description,
-          prompt,
-        });
-        // Refresh executions list
-        const executions = await window.agentDesktop.listExecutions(sessionId);
-        if (executions?.executions) {
-          setExecutions(executions.executions);
-        }
-      } catch (err) {
-        void window.agentDesktop.logWrite({
-          level: 'error',
-          category: 'renderer',
-          message: 'Failed to create execution window for teammate',
-          data: {
-            sessionId,
-            taskId,
-            description,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      }
-    });
-
-    // Listen for teammate completion events
-    const offTeammateCompleted = window.agentDesktop.onTeammateCompleted(async (payload) => {
-      const { sessionId, taskId, description, status } = payload;
-      if (sessionId !== activeSessionIdRef.current) return;
-
-      // Update the execution window state via IPC
-      try {
-        await window.agentDesktop.updateTeammateState({ taskId, sessionId, completed: true });
-      } catch (err) {
-        void window.agentDesktop.logWrite({
-          level: 'error',
-          category: 'renderer',
-          message: 'Failed to update teammate state',
-          data: {
-            sessionId,
-            taskId,
-            description,
-            status,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      }
-
-      // Refresh executions list
-      const executions = await window.agentDesktop.listExecutions(sessionId);
-      if (executions?.executions) {
-        setExecutions(executions.executions);
-      }
-    });
-
     return () => {
       if (workspaceRefreshTimerRef.current) {
         window.clearTimeout(workspaceRefreshTimerRef.current);
@@ -996,8 +911,6 @@ export default function App() {
       offAppsChanged();
       offWorkspaceChanged();
       offSettingsChanged();
-      offTeammateSpawned();
-      offTeammateCompleted();
     };
   }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant]);
 
@@ -1489,8 +1402,20 @@ export default function App() {
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
     if (!sessionId) {
-      sessionId = await createAndOpenSession(undefined, workspace, selectedAssistant?.name);
-      sessionJustCreated = true;
+      // Reuse an in-flight creation so a re-entrant submit (double-send or a
+      // retry after an errored first turn) binds to the SAME session/workspace
+      // instead of spawning a second directory.
+      if (!creatingSessionRef.current) {
+        creatingSessionRef.current = createAndOpenSession(
+          undefined,
+          workspace,
+          selectedAssistant?.name,
+        ).finally(() => {
+          creatingSessionRef.current = null;
+        });
+        sessionJustCreated = true;
+      }
+      sessionId = await creatingSessionRef.current;
     }
     if (!sessionId) return;
 
@@ -1973,12 +1898,6 @@ export default function App() {
           </>
         )}
 
-        <ExecutionPetPanel
-          executions={executions}
-          onFocus={(executionId) => {
-            void window.agentDesktop.focusExecution(executionId);
-          }}
-        />
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}

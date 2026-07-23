@@ -6,6 +6,10 @@ import type { Tool } from '../../Tool.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { clearMemoryFileCaches } from '../../utils/claudemd.js'
 import { getCwd } from '../../utils/cwd.js'
+import {
+  hasCwdOverrideContext,
+  setCurrentOriginalCwdOverride,
+} from '../../utils/cwdContext.js'
 import { findCanonicalGitRoot } from '../../utils/git.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { getPlanSlug, getPlansDirectory } from '../../utils/plans.js'
@@ -83,7 +87,12 @@ export const EnterWorktreeTool: Tool<InputSchema, Output> = buildTool({
     // Resolve to main repo root so worktree creation works from within a worktree
     const mainRepoRoot = findCanonicalGitRoot(getCwd())
     if (mainRepoRoot && mainRepoRoot !== getCwd()) {
-      process.chdir(mainRepoRoot)
+      // Embedded multi-session runtime (ALS context present): never move the
+      // process-wide cwd — concurrent sessions share the process. setCwd is
+      // ALS-aware and validates existence via realpathSync.
+      if (!hasCwdOverrideContext()) {
+        process.chdir(mainRepoRoot)
+      }
       setCwd(mainRepoRoot)
     }
 
@@ -91,9 +100,14 @@ export const EnterWorktreeTool: Tool<InputSchema, Output> = buildTool({
 
     const worktreeSession = await createWorktreeForSession(getSessionId(), slug)
 
-    process.chdir(worktreeSession.worktreePath)
-    setCwd(worktreeSession.worktreePath)
-    setOriginalCwd(getCwd())
+    if (hasCwdOverrideContext()) {
+      setCwd(worktreeSession.worktreePath)
+      setCurrentOriginalCwdOverride(getCwd())
+    } else {
+      process.chdir(worktreeSession.worktreePath)
+      setCwd(worktreeSession.worktreePath)
+      setOriginalCwd(getCwd())
+    }
     saveWorktreeState(worktreeSession)
     // Clear cached system prompt sections so env_info_simple recomputes with worktree context
     clearSystemPromptSections()

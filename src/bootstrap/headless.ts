@@ -3,6 +3,11 @@ import { setProjectRoot, setOriginalCwd, setCwdState } from './state.js'
 import { findGitRoot } from '../utils/git.js'
 import { processSessionStartHooks } from '../utils/sessionStart.js'
 import type { Message } from '../types/message.js'
+import {
+  hasCwdOverrideContext,
+  setCurrentOriginalCwdOverride,
+  setCurrentProjectRootOverride,
+} from '../utils/cwdContext.js'
 import { setCwd } from '../utils/Shell.js'
 import { getAllMcpConfigs } from '../services/mcp/config.js'
 import { captureHooksConfigSnapshot } from '../utils/hooks/hooksConfigSnapshot.js'
@@ -23,6 +28,10 @@ export interface BootstrapResult {
     commands: Command[]
   }
   agents: AgentDefinition[]
+  // Session's git root (or cwd when not a git repo). Callers running
+  // multiple concurrent sessions pass this into the per-session ALS
+  // context instead of relying on the process-global project root.
+  projectRoot: string
 }
 
 /**
@@ -48,16 +57,29 @@ export async function bootstrapHeadless(cwd: string): Promise<BootstrapResult> {
     initializeLspServerManager()
   }
 
-  // 2. Set context for the current session
-  setCwd(cwd)
-  setOriginalCwd(cwd)
-  setCwdState(cwd)
+  // 2. Set context for the current session.
+  // When bootstrap runs inside a per-session ALS context (the embedded
+  // desktop runtime always wraps send() in runWithCwdOverride), write ONLY
+  // that session's ALS slot — never the process globals. Concurrent sessions
+  // each carry their own cwd/originalCwd/projectRoot, so one session's
+  // bootstrap (or a mid-session model error) can never repoint another
+  // session at the wrong workspace. The CLI (no ALS context) still writes
+  // the globals, preserving its single-session semantics exactly.
+  const inSessionContext = hasCwdOverrideContext()
 
   const gitRoot = await findGitRoot(cwd)
-  if (gitRoot) {
-    setProjectRoot(gitRoot)
+  const projectRoot = gitRoot || cwd
+
+  if (inSessionContext) {
+    // setCwd() prefers the ALS override (setCurrentCwdOverride) already.
+    setCwd(cwd)
+    setCurrentOriginalCwdOverride(cwd)
+    setCurrentProjectRootOverride(projectRoot)
   } else {
-    setProjectRoot(cwd)
+    setCwd(cwd)
+    setOriginalCwd(cwd)
+    setCwdState(cwd)
+    setProjectRoot(projectRoot)
   }
 
   // 3. Load MCP configurations and prefetch resources
@@ -76,5 +98,6 @@ export async function bootstrapHeadless(cwd: string): Promise<BootstrapResult> {
     initialMessages: hookMessages,
     mcp: mcpResources,
     agents: agentDefinitions.activeAgents,
+    projectRoot,
   }
 }

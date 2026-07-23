@@ -1,5 +1,6 @@
 import { feature } from 'bun:bundle'
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
+import { getSessionId } from '../../bootstrap/state.js'
 import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
@@ -54,10 +55,27 @@ const COMPACTABLE_TOOLS = new Set<string>([
 // Lazy-initialized cached MC module and state to avoid importing in external builds.
 // The imports and state live inside feature() checks for dead code elimination.
 let cachedMCModule: typeof import('./cachedMicrocompact.js') | null = null
-let cachedMCState: import('./cachedMicrocompact.js').CachedMCState | null = null
-let pendingCacheEdits:
-  | import('./cachedMicrocompact.js').CacheEditsBlock
-  | null = null
+
+// Cache-edit state is keyed by sessionId: the embedded desktop runtime runs
+// multiple concurrent sessions in one process, and a shared slot would inject
+// one session's cache-edit blocks into another session's API request.
+// getSessionId() is ALS-aware with a global fallback, so the CLI's
+// single-session case transparently resolves to one slot.
+type MCSlot = {
+  state: import('./cachedMicrocompact.js').CachedMCState | null
+  pendingCacheEdits: import('./cachedMicrocompact.js').CacheEditsBlock | null
+}
+const mcSlotsBySession = new Map<string, MCSlot>()
+
+function mcSlot(): MCSlot {
+  const sessionId = getSessionId()
+  let slot = mcSlotsBySession.get(sessionId)
+  if (!slot) {
+    slot = { state: null, pendingCacheEdits: null }
+    mcSlotsBySession.set(sessionId, slot)
+  }
+  return slot
+}
 
 async function getCachedMCModule(): Promise<
   typeof import('./cachedMicrocompact.js')
@@ -69,15 +87,16 @@ async function getCachedMCModule(): Promise<
 }
 
 function ensureCachedMCState(): import('./cachedMicrocompact.js').CachedMCState {
-  if (!cachedMCState && cachedMCModule) {
-    cachedMCState = cachedMCModule.createCachedMCState()
+  const slot = mcSlot()
+  if (!slot.state && cachedMCModule) {
+    slot.state = cachedMCModule.createCachedMCState()
   }
-  if (!cachedMCState) {
+  if (!slot.state) {
     throw new Error(
       'cachedMCState not initialized — getCachedMCModule() must be called first',
     )
   }
-  return cachedMCState
+  return slot.state
 }
 
 /**
@@ -88,8 +107,9 @@ function ensureCachedMCState(): import('./cachedMicrocompact.js').CachedMCState 
 export function consumePendingCacheEdits():
   | import('./cachedMicrocompact.js').CacheEditsBlock
   | null {
-  const edits = pendingCacheEdits
-  pendingCacheEdits = null
+  const slot = mcSlot()
+  const edits = slot.pendingCacheEdits
+  slot.pendingCacheEdits = null
   return edits
 }
 
@@ -98,10 +118,11 @@ export function consumePendingCacheEdits():
  * original positions for cache hits.
  */
 export function getPinnedCacheEdits(): import('./cachedMicrocompact.js').PinnedCacheEdits[] {
-  if (!cachedMCState) {
+  const slot = mcSlot()
+  if (!slot.state) {
     return []
   }
-  return cachedMCState.pinnedEdits
+  return slot.state.pinnedEdits
 }
 
 /**
@@ -112,8 +133,9 @@ export function pinCacheEdits(
   userMessageIndex: number,
   block: import('./cachedMicrocompact.js').CacheEditsBlock,
 ): void {
-  if (cachedMCState) {
-    cachedMCState.pinnedEdits.push({ userMessageIndex, block })
+  const slot = mcSlot()
+  if (slot.state) {
+    slot.state.pinnedEdits.push({ userMessageIndex, block })
   }
 }
 
@@ -122,16 +144,26 @@ export function pinCacheEdits(
  * Called after a successful API response.
  */
 export function markToolsSentToAPIState(): void {
-  if (cachedMCState && cachedMCModule) {
-    cachedMCModule.markToolsSentToAPI(cachedMCState)
+  const slot = mcSlot()
+  if (slot.state && cachedMCModule) {
+    cachedMCModule.markToolsSentToAPI(slot.state)
   }
 }
 
 export function resetMicrocompactState(): void {
-  if (cachedMCState && cachedMCModule) {
-    cachedMCModule.resetCachedMCState(cachedMCState)
+  const slot = mcSlot()
+  if (slot.state && cachedMCModule) {
+    cachedMCModule.resetCachedMCState(slot.state)
   }
-  pendingCacheEdits = null
+  slot.pendingCacheEdits = null
+}
+
+/**
+ * Drop a disposed session's microcompact slot (embedded multi-session
+ * runtime) so long-lived desktop processes don't accumulate state.
+ */
+export function discardMicrocompactSessionState(sessionId: string): void {
+  mcSlotsBySession.delete(sessionId)
 }
 
 // Helper to calculate tool result tokens
@@ -335,7 +367,7 @@ async function cachedMicrocompactPath(
     // Create and queue the cache_edits block for the API layer
     const cacheEdits = mod.createCacheEditsBlock(state, toolsToDelete)
     if (cacheEdits) {
-      pendingCacheEdits = cacheEdits
+      mcSlot().pendingCacheEdits = cacheEdits
     }
 
     logForDebugging(

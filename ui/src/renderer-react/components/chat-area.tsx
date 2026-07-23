@@ -5,7 +5,6 @@ import {
   Activity,
   Bot,
   Check,
-  ChevronDown,
   ChevronRight,
   Clock,
   Copy,
@@ -26,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
-import { VirtualMessageList, type VirtualMessageListHandle } from "@/components/chat/message-list";
+import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { FilePreview } from "@/components/file-preview";
 import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
@@ -1737,10 +1736,6 @@ export function ChatArea({
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
-  const [listAtBottom, setListAtBottom] = React.useState(true);
-  React.useEffect(() => {
-    setListAtBottom(true);
-  }, [sessionId]);
 
   const [showToolCalls, setShowToolCalls] = React.useState(() => {
     try {
@@ -1833,35 +1828,24 @@ export function ChatArea({
         messages={messages}
       />
 
-      <div className="relative min-h-0 min-w-0 flex-1">
-        <VirtualMessageList
-          key={sessionId || "default"}
-          ref={virtualListRef}
-          messages={messages}
-          workspace={sessionWorkspace}
-          loading={loading}
-          hideToolCalls={!showToolCalls}
-          onAtBottomChange={setListAtBottom}
-          footer={pendingPlanApproval ? (
-            <PlanApprovalCard
-              pendingPlanApproval={pendingPlanApproval}
-              busy={planDecisionBusy || loading}
-              onApprove={onApprovePlan}
-              onReject={onRejectPlan}
-            />
-          ) : undefined}
-        />
-        {!listAtBottom && (
-          <button
-            type="button"
-            className="absolute bottom-4 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-card/95 text-muted-foreground shadow-lg backdrop-blur transition-colors hover:text-foreground"
-            title="回到底部"
-            onClick={() => virtualListRef.current?.scrollToBottom("smooth")}
-          >
-            <ChevronDown className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+      <MessageListPane
+        key={sessionId || "default"}
+        ref={virtualListRef}
+        className="flex-1"
+        messages={messages}
+        workspace={sessionWorkspace}
+        loading={loading}
+        hideToolCalls={!showToolCalls}
+        footer={pendingPlanApproval ? (
+          <PlanApprovalCard
+            pendingPlanApproval={pendingPlanApproval}
+            busy={planDecisionBusy || loading}
+            onApprove={onApprovePlan}
+            onReject={onRejectPlan}
+          />
+        ) : undefined}
+      />
+
 
       <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto max-w-[980px] min-w-0">

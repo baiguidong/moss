@@ -41,6 +41,10 @@ import type { FileHistorySnapshot } from './fileHistory.js'
 import { fileHistoryRestoreStateFromLog } from './fileHistory.js'
 import { createSystemMessage } from './messages.js'
 import { parseUserSpecifiedModel } from './model/model.js'
+import {
+  hasCwdOverrideContext,
+  setCurrentOriginalCwdOverride,
+} from './cwdContext.js'
 import { getPlansDirectory } from './plans.js'
 import { setCwd } from './Shell.js'
 import { prepareLoadedSessionResume } from './sessionResumeCore.js'
@@ -339,18 +343,32 @@ export function restoreWorktreeForResume(
   }
   if (!worktreeSession) return
 
-  try {
-    process.chdir(worktreeSession.worktreePath)
-  } catch {
-    // Directory is gone. Override the stale cache so the next
-    // reAppendSessionMetadata records "exited" instead of re-persisting
-    // a path that no longer exists.
-    saveWorktreeState(null)
-    return
-  }
+  if (hasCwdOverrideContext()) {
+    // Embedded multi-session runtime: never move the process-wide cwd —
+    // concurrent sessions would be yanked out of their own directories.
+    // setCwd resolves via realpathSync and throws ENOENT, so it doubles as
+    // the existence check that process.chdir provides on the CLI path.
+    try {
+      setCwd(worktreeSession.worktreePath)
+    } catch {
+      saveWorktreeState(null)
+      return
+    }
+    setCurrentOriginalCwdOverride(getCwd())
+  } else {
+    try {
+      process.chdir(worktreeSession.worktreePath)
+    } catch {
+      // Directory is gone. Override the stale cache so the next
+      // reAppendSessionMetadata records "exited" instead of re-persisting
+      // a path that no longer exists.
+      saveWorktreeState(null)
+      return
+    }
 
-  setCwd(worktreeSession.worktreePath)
-  setOriginalCwd(getCwd())
+    setCwd(worktreeSession.worktreePath)
+    setOriginalCwd(getCwd())
+  }
   // projectRoot is intentionally NOT set here. The transcript doesn't record
   // whether the worktree was entered via --worktree (which sets projectRoot)
   // or EnterWorktreeTool (which doesn't). Leaving projectRoot stable matches
@@ -387,6 +405,19 @@ export function exitRestoredWorktree(): void {
   clearMemoryFileCaches()
   clearSystemPromptSections()
   getPlansDirectory.cache.clear?.()
+
+  if (hasCwdOverrideContext()) {
+    // Embedded multi-session runtime: adjust only this session's ALS cwd.
+    try {
+      setCwd(current.originalCwd)
+    } catch {
+      // Original dir is gone (rare). Stay put — restoreWorktreeForResume
+      // will cd into the target worktree next if there is one.
+      return
+    }
+    setCurrentOriginalCwdOverride(getCwd())
+    return
+  }
 
   try {
     process.chdir(current.originalCwd)

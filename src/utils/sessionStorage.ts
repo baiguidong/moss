@@ -501,7 +501,10 @@ function getProject(): Project {
         // shows the auto-generated firstPrompt instead.
         await project?.flush()
         try {
-          project?.reAppendSessionMetadata()
+          // Iterate all session records: the cleanup handler runs outside
+          // any ALS session context, so per-record iteration (not the
+          // global-fallback current session) covers concurrent sessions.
+          project?.reAppendAllSessionMetadata()
         } catch {
           // Best-effort — don't let metadata re-append crash the cleanup
         }
@@ -531,6 +534,14 @@ export function resetProjectForTesting(): void {
 
 export function setSessionFileForTesting(path: string): void {
   getProject().sessionFile = path
+}
+
+/**
+ * Drop a disposed session's storage record (embedded multi-session runtime).
+ * Deliberately does not instantiate the Project singleton.
+ */
+export function discardSessionStorageRecord(sessionId: string): void {
+  project?.discardSessionRecord(sessionId)
 }
 
 type InternalEventWriter = (
@@ -575,27 +586,88 @@ export function setRemoteIngressUrlForTesting(url: string): void {
 
 const REMOTE_FLUSH_INTERVAL_MS = 10
 
-class Project {
-  // Minimal cache for current session only (not all sessions)
-  currentSessionTag: string | undefined
-  currentSessionTitle: string | undefined
-  currentSessionAgentName: string | undefined
-  currentSessionAgentColor: string | undefined
-  currentSessionLastPrompt: string | undefined
-  currentSessionAgentSetting: string | undefined
-  currentSessionMode: 'coordinator' | 'normal' | undefined
+// Per-session storage state. The embedded desktop runtime runs multiple
+// concurrent sessions in one process — a single shared sessionFile pointer
+// or metadata cache would interleave transcripts across sessions. Records
+// are keyed by sessionId and resolved through the ALS session context
+// (getSessionId() falls back to the global STATE.sessionId for the CLI's
+// single-session-per-process case).
+type SessionStorageRecord = {
+  sessionFile: string | null
+  // Entries buffered while sessionFile is null. Flushed by materializeSessionFile
+  // on the first user/assistant message — prevents metadata-only session files.
+  pendingEntries: Entry[]
+  tag: string | undefined
+  title: string | undefined
+  agentName: string | undefined
+  agentColor: string | undefined
+  lastPrompt: string | undefined
+  agentSetting: string | undefined
+  mode: 'coordinator' | 'normal' | undefined
   // Tri-state: undefined = never touched (don't write), null = exited worktree,
   // object = currently in worktree. reAppendSessionMetadata writes null so
   // --resume knows the session exited (vs. crashed while inside).
-  currentSessionWorktree: PersistedWorktreeSession | null | undefined
-  currentSessionPrNumber: number | undefined
-  currentSessionPrUrl: string | undefined
-  currentSessionPrRepository: string | undefined
+  worktree: PersistedWorktreeSession | null | undefined
+  prNumber: number | undefined
+  prUrl: string | undefined
+  prRepository: string | undefined
+}
 
-  sessionFile: string | null = null
-  // Entries buffered while sessionFile is null. Flushed by materializeSessionFile
-  // on the first user/assistant message — prevents metadata-only session files.
-  private pendingEntries: Entry[] = []
+class Project {
+  private sessionRecords = new Map<string, SessionStorageRecord>()
+
+  private recordFor(sessionId: string = getSessionId()): SessionStorageRecord {
+    let record = this.sessionRecords.get(sessionId)
+    if (!record) {
+      record = {
+        sessionFile: null,
+        pendingEntries: [],
+        tag: undefined,
+        title: undefined,
+        agentName: undefined,
+        agentColor: undefined,
+        lastPrompt: undefined,
+        agentSetting: undefined,
+        mode: undefined,
+        worktree: undefined,
+        prNumber: undefined,
+        prUrl: undefined,
+        prRepository: undefined,
+      }
+      this.sessionRecords.set(sessionId, record)
+    }
+    return record
+  }
+
+  // Back-compat accessors: existing call sites (internal and external) keep
+  // reading/writing these names; resolution routes to the ALS session record.
+  get currentSessionTag() { return this.recordFor().tag }
+  set currentSessionTag(v: string | undefined) { this.recordFor().tag = v }
+  get currentSessionTitle() { return this.recordFor().title }
+  set currentSessionTitle(v: string | undefined) { this.recordFor().title = v }
+  get currentSessionAgentName() { return this.recordFor().agentName }
+  set currentSessionAgentName(v: string | undefined) { this.recordFor().agentName = v }
+  get currentSessionAgentColor() { return this.recordFor().agentColor }
+  set currentSessionAgentColor(v: string | undefined) { this.recordFor().agentColor = v }
+  get currentSessionLastPrompt() { return this.recordFor().lastPrompt }
+  set currentSessionLastPrompt(v: string | undefined) { this.recordFor().lastPrompt = v }
+  get currentSessionAgentSetting() { return this.recordFor().agentSetting }
+  set currentSessionAgentSetting(v: string | undefined) { this.recordFor().agentSetting = v }
+  get currentSessionMode() { return this.recordFor().mode }
+  set currentSessionMode(v: 'coordinator' | 'normal' | undefined) { this.recordFor().mode = v }
+  get currentSessionWorktree() { return this.recordFor().worktree }
+  set currentSessionWorktree(v: PersistedWorktreeSession | null | undefined) { this.recordFor().worktree = v }
+  get currentSessionPrNumber() { return this.recordFor().prNumber }
+  set currentSessionPrNumber(v: number | undefined) { this.recordFor().prNumber = v }
+  get currentSessionPrUrl() { return this.recordFor().prUrl }
+  set currentSessionPrUrl(v: string | undefined) { this.recordFor().prUrl = v }
+  get currentSessionPrRepository() { return this.recordFor().prRepository }
+  set currentSessionPrRepository(v: string | undefined) { this.recordFor().prRepository = v }
+
+  get sessionFile(): string | null { return this.recordFor().sessionFile }
+  set sessionFile(v: string | null) { this.recordFor().sessionFile = v }
+  private get pendingEntries(): Entry[] { return this.recordFor().pendingEntries }
+  private set pendingEntries(v: Entry[]) { this.recordFor().pendingEntries = v }
   private remoteIngressUrl: string | null = null
   private internalEventWriter: InternalEventWriter | null = null
   private internalEventReader: InternalEventReader | null = null
@@ -764,15 +836,20 @@ class Project {
    * the SDK cannot touch (last-prompt, agent-*, mode, pr-link) have no
    * external-writer concern — their caches are authoritative.
    */
-  reAppendSessionMetadata(skipTitleRefresh = false): void {
-    if (!this.sessionFile) return
-    const sessionId = getSessionId() as UUID
+  reAppendSessionMetadata(
+    skipTitleRefresh = false,
+    forSessionId?: string,
+  ): void {
+    const sessionId = (forSessionId ?? getSessionId()) as UUID
     if (!sessionId) return
+    const rec = this.recordFor(sessionId)
+    const sessionFile = rec.sessionFile
+    if (!sessionFile) return
 
     // One sync tail read to refresh SDK-mutable fields. Same
     // LITE_READ_BUF_SIZE window readLiteMetadata uses. Empty string on
     // failure → extract returns null → cache is the only source of truth.
-    const tail = readFileTailSync(this.sessionFile)
+    const tail = readFileTailSync(sessionFile)
 
     // Absorb any fresher SDK-written title/tag into our cache. If the SDK
     // wrote while we had the session open, our cache is stale — the tail
@@ -794,7 +871,7 @@ class Project {
         // external writer with customTitle:"" should clear the cache so the
         // re-append below skips it (instead of resurrecting a stale title).
         if (tailTitle !== undefined) {
-          this.currentSessionTitle = tailTitle || undefined
+          rec.title = tailTitle || undefined
         }
       }
     }
@@ -803,84 +880,108 @@ class Project {
       const tailTag = extractLastJsonStringField(tagLine, 'tag')
       // Same: tagSession(id, null) writes `tag:""` to clear.
       if (tailTag !== undefined) {
-        this.currentSessionTag = tailTag || undefined
+        rec.tag = tailTag || undefined
       }
     }
 
     // lastPrompt is re-appended so readLiteMetadata can show what the
     // user was most recently doing. Written first so customTitle/tag/etc
     // land closer to EOF (they're the more critical fields for tail reads).
-    if (this.currentSessionLastPrompt) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.lastPrompt) {
+      appendEntryToFile(sessionFile, {
         type: 'last-prompt',
-        lastPrompt: this.currentSessionLastPrompt,
+        lastPrompt: rec.lastPrompt,
         sessionId,
       })
     }
     // Unconditional: cache was refreshed from tail above; re-append keeps
     // the entry at EOF so compaction-pushed content doesn't evict it.
-    if (this.currentSessionTitle) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.title) {
+      appendEntryToFile(sessionFile, {
         type: 'custom-title',
-        customTitle: this.currentSessionTitle,
+        customTitle: rec.title,
         sessionId,
       })
     }
-    if (this.currentSessionTag) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.tag) {
+      appendEntryToFile(sessionFile, {
         type: 'tag',
-        tag: this.currentSessionTag,
+        tag: rec.tag,
         sessionId,
       })
     }
-    if (this.currentSessionAgentName) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.agentName) {
+      appendEntryToFile(sessionFile, {
         type: 'agent-name',
-        agentName: this.currentSessionAgentName,
+        agentName: rec.agentName,
         sessionId,
       })
     }
-    if (this.currentSessionAgentColor) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.agentColor) {
+      appendEntryToFile(sessionFile, {
         type: 'agent-color',
-        agentColor: this.currentSessionAgentColor,
+        agentColor: rec.agentColor,
         sessionId,
       })
     }
-    if (this.currentSessionAgentSetting) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.agentSetting) {
+      appendEntryToFile(sessionFile, {
         type: 'agent-setting',
-        agentSetting: this.currentSessionAgentSetting,
+        agentSetting: rec.agentSetting,
         sessionId,
       })
     }
-    if (this.currentSessionMode) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.mode) {
+      appendEntryToFile(sessionFile, {
         type: 'mode',
-        mode: this.currentSessionMode,
+        mode: rec.mode,
         sessionId,
       })
     }
-    if (this.currentSessionWorktree !== undefined) {
-      appendEntryToFile(this.sessionFile, {
+    if (rec.worktree !== undefined) {
+      appendEntryToFile(sessionFile, {
         type: 'worktree-state',
-        worktreeSession: this.currentSessionWorktree,
+        worktreeSession: rec.worktree,
         sessionId,
       })
     }
     if (
-      this.currentSessionPrNumber !== undefined &&
-      this.currentSessionPrUrl &&
-      this.currentSessionPrRepository
+      rec.prNumber !== undefined &&
+      rec.prUrl &&
+      rec.prRepository
     ) {
-      appendEntryToFile(this.sessionFile, {
+      appendEntryToFile(sessionFile, {
         type: 'pr-link',
         sessionId,
-        prNumber: this.currentSessionPrNumber,
-        prUrl: this.currentSessionPrUrl,
-        prRepository: this.currentSessionPrRepository,
+        prNumber: rec.prNumber,
+        prUrl: rec.prUrl,
+        prRepository: rec.prRepository,
         timestamp: new Date().toISOString(),
       })
+    }
+  }
+
+  /**
+   * Drop a session's storage record. Called when an embedded session is
+   * disposed so long-lived desktop processes don't accumulate records
+   * (and so the exit cleanup doesn't re-append stale metadata for them).
+   */
+  discardSessionRecord(sessionId: string): void {
+    this.sessionRecords.delete(sessionId)
+  }
+
+  /**
+   * Re-append metadata for every session record with a materialized file.
+   * Used by the process-exit cleanup handler, which runs outside any ALS
+   * session context and must not rely on the global session fallback.
+   */
+  reAppendAllSessionMetadata(): void {
+    for (const sessionId of this.sessionRecords.keys()) {
+      try {
+        this.reAppendSessionMetadata(false, sessionId)
+      } catch {
+        // Best-effort per session
+      }
     }
   }
 

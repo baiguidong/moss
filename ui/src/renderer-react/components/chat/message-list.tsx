@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { ChevronDown } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { cn } from "@/lib/utils";
 import { AssistantMessage } from "@/components/chat/assistant-message";
 import { ThinkingBlock } from "@/components/chat/thinking-block";
 import { collectFileChanges, FileChangeChips, ToolCallGroup } from "@/components/chat/tool-call-group";
@@ -481,6 +483,49 @@ export const VirtualMessageList = React.forwardRef<
         }}
       />
     </WorkspacePathProvider>
+  );
+});
+
+// Shared message-region shell: the virtual list plus the "back to bottom"
+// affordance. Used by the main chat, the inline worker panel, and the detached
+// execution window so all three scroll and behave identically.
+export const MessageListPane = React.forwardRef<
+  VirtualMessageListHandle,
+  {
+    messages: TranscriptRenderMessage[];
+    workspace?: string;
+    loading?: boolean;
+    footer?: React.ReactNode;
+    emptyState?: React.ReactNode;
+    hideToolCalls?: boolean;
+    className?: string;
+  }
+>(function MessageListPane({ className, ...listProps }, ref) {
+  const innerRef = React.useRef<VirtualMessageListHandle>(null);
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      scrollToBottom: (behavior) => innerRef.current?.scrollToBottom(behavior),
+      scrollToMessage: (messageId) => innerRef.current?.scrollToMessage(messageId),
+    }),
+    [],
+  );
+  const [atBottom, setAtBottom] = React.useState(true);
+
+  return (
+    <div className={cn("relative min-h-0 min-w-0", className)}>
+      <VirtualMessageList ref={innerRef} onAtBottomChange={setAtBottom} {...listProps} />
+      {!atBottom && (
+        <button
+          type="button"
+          className="absolute bottom-4 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-card/95 text-muted-foreground shadow-lg backdrop-blur transition-colors hover:text-foreground"
+          title="回到底部"
+          onClick={() => innerRef.current?.scrollToBottom("smooth")}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      )}
+    </div>
   );
 });
 

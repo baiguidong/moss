@@ -144,22 +144,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.on('agent:settings-changed', handler);
     return () => ipcRenderer.off('agent:settings-changed', handler);
   },
-  // Sub-agent execution window management
-  listExecutions: (sessionId) => ipcRenderer.invoke('execution:list', { sessionId }),
-  focusExecution: (executionId) => ipcRenderer.invoke('execution:focus', { executionId }),
-  createExecutionForTeammate: (payload) => ipcRenderer.invoke('execution:create-for-teammate', payload),
-  updateTeammateState: (payload) => ipcRenderer.invoke('execution:update-teammate-state', payload),
   listCoordinatorTasks: (sessionId) => ipcRenderer.invoke('coordinator:list-tasks', { sessionId }),
-  onTeammateSpawned: (callback) => {
-    const handler = (_event, payload) => callback(payload);
-    ipcRenderer.on('coordinator:teammate-spawned', handler);
-    return () => ipcRenderer.off('coordinator:teammate-spawned', handler);
-  },
-  onTeammateCompleted: (callback) => {
-    const handler = (_event, payload) => callback(payload);
-    ipcRenderer.on('coordinator:teammate-completed', handler);
-    return () => ipcRenderer.off('coordinator:teammate-completed', handler);
-  },
   // Worker (sub-agent) results from SDK subagents directory
   getWorkerResults: (payload) => ipcRenderer.invoke('agent:get-worker-results', payload),
   setWorkerSummaries: (payload) => ipcRenderer.invoke('agent:set-worker-summaries', payload),

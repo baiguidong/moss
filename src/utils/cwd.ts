@@ -1,12 +1,8 @@
-import { AsyncLocalStorage } from 'async_hooks'
 import { getCwdState, getOriginalCwd } from '../bootstrap/state.js'
-
-type CwdOverrideContext = {
-  cwd: string
-  originalCwd: string
-}
-
-const cwdOverrideStorage = new AsyncLocalStorage<CwdOverrideContext>()
+import {
+  type CwdOverrideContext,
+  cwdOverrideStorage,
+} from './cwdContext.js'
 
 function normalizeCwd(cwd: string): string {
   return cwd.normalize('NFC')
@@ -18,10 +14,14 @@ function normalizeCwd(cwd: string): string {
  * return the overridden cwd instead of the global one. This enables concurrent
  * agents to each see their own working directory without affecting each other.
  */
-export function runWithCwdOverride<T>(cwd: string, fn: () => T): T {
+export function runWithCwdOverride<T>(
+  cwd: string,
+  fn: () => T,
+  projectRoot?: string,
+): T {
   const normalized = normalizeCwd(cwd)
   return cwdOverrideStorage.run(
-    { cwd: normalized, originalCwd: normalized },
+    { cwd: normalized, originalCwd: normalized, projectRoot },
     fn,
   )
 }
@@ -45,11 +45,13 @@ export function setCurrentCwdOverride(cwd: string): boolean {
 export async function* runWithCwdOverrideGenerator<T, TReturn = void>(
   cwd: string,
   fn: () => AsyncGenerator<T, TReturn, unknown>,
+  projectRoot?: string,
 ): AsyncGenerator<T, TReturn, unknown> {
   const normalized = normalizeCwd(cwd)
   const context: CwdOverrideContext = {
     cwd: normalized,
     originalCwd: normalized,
+    projectRoot,
   }
   const iterator = runWithExistingCwdOverride(context, fn)
 

@@ -37,7 +37,9 @@ import {
   hasWorktreeCreateHook,
 } from './hooks.js'
 import { containsPathTraversal } from './path.js'
+import { hasCwdOverrideContext } from './cwdContext.js'
 import { getPlatform } from './platform.js'
+import { getSessionIdContext } from './sessionIdContext.js'
 import {
   getInitialSettings,
   getRelativeSettingsFilePathForSource,
@@ -153,19 +155,63 @@ export type WorktreeSession = {
   usedSparsePaths?: boolean
 }
 
-let currentWorktreeSession: WorktreeSession | null = null
+// Active worktree sessions keyed by session context: the embedded desktop
+// runtime runs multiple concurrent sessions in one process, and a single
+// shared slot would let one session's worktree state leak into another's
+// prompts/tools. Keys resolve through the ALS session context
+// (sessionIdContext is a leaf module); the CLI (no ALS) uses the fallback
+// slot, preserving its single-session-per-process semantics.
+const WORKTREE_FALLBACK_KEY = '__global__'
+const worktreeSessionsByContext = new Map<string, WorktreeSession | null>()
+
+function worktreeContextKey(): string {
+  return getSessionIdContext() ?? WORKTREE_FALLBACK_KEY
+}
+
+function getWorktreeSlot(): WorktreeSession | null {
+  return worktreeSessionsByContext.get(worktreeContextKey()) ?? null
+}
+
+function setWorktreeSlot(session: WorktreeSession | null): void {
+  const key = worktreeContextKey()
+  if (session === null) {
+    // Delete instead of storing null so the map doesn't accumulate dead
+    // entries and the stale-worktree cleanup sweep sees only live sessions.
+    worktreeSessionsByContext.delete(key)
+  } else {
+    worktreeSessionsByContext.set(key, session)
+  }
+}
 
 export function getCurrentWorktreeSession(): WorktreeSession | null {
-  return currentWorktreeSession
+  return getWorktreeSlot()
+}
+
+/**
+ * Look up a session's worktree by its sessionId without needing to be inside
+ * that session's ALS context. The embedded runtime uses this to derive the
+ * effective cwd for each send: per-send ALS contexts are rebuilt from the
+ * session options, so a worktree entered in a previous turn (or restored on
+ * resume) must be re-applied from this slot.
+ */
+export function getWorktreeSessionForSessionId(
+  sessionId: string,
+): WorktreeSession | null {
+  return worktreeSessionsByContext.get(sessionId) ?? null
+}
+
+/** Drop a disposed embedded session's worktree slot. */
+export function discardWorktreeSessionState(sessionId: string): void {
+  worktreeSessionsByContext.delete(sessionId)
 }
 
 /**
  * Restore the worktree session on --resume. The caller must have already
- * verified the directory exists (via process.chdir) and set the bootstrap
- * state (cwd, originalCwd).
+ * verified the directory exists (via process.chdir or ALS setCwd) and set
+ * the bootstrap state (cwd, originalCwd).
  */
 export function restoreWorktreeSession(session: WorktreeSession | null): void {
-  currentWorktreeSession = session
+  setWorktreeSlot(session)
 }
 
 export function generateTmuxSessionName(
@@ -718,14 +764,14 @@ export async function createWorktreeForSession(
       `Created hook-based worktree at: ${hookResult.worktreePath}`,
     )
 
-    currentWorktreeSession = {
+    setWorktreeSlot({
       originalCwd,
       worktreePath: hookResult.worktreePath,
       worktreeName: slug,
       sessionId,
       tmuxSessionName,
       hookBased: true,
-    }
+    })
   } else {
     // Fall back to git worktree
     const gitRoot = findGitRoot(getCwd())
@@ -753,7 +799,7 @@ export async function createWorktreeForSession(
       creationDurationMs = Date.now() - createStart
     }
 
-    currentWorktreeSession = {
+    setWorktreeSlot({
       originalCwd,
       worktreePath,
       worktreeName: slug,
@@ -765,31 +811,41 @@ export async function createWorktreeForSession(
       creationDurationMs,
       usedSparsePaths:
         (getInitialSettings().worktree?.sparsePaths?.length ?? 0) > 0,
-    }
+    })
+  }
+
+  const created = getWorktreeSlot()
+  if (!created) {
+    throw new Error('Worktree session was not initialized')
   }
 
   // Save to project config for persistence
   saveCurrentProjectConfig(current => ({
     ...current,
-    activeWorktreeSession: currentWorktreeSession ?? undefined,
+    activeWorktreeSession: created,
   }))
 
-  return currentWorktreeSession
+  return created
 }
 
 export async function keepWorktree(): Promise<void> {
-  if (!currentWorktreeSession) {
+  const worktreeSession = getWorktreeSlot()
+  if (!worktreeSession) {
     return
   }
 
   try {
-    const { worktreePath, originalCwd, worktreeBranch } = currentWorktreeSession
+    const { worktreePath, originalCwd, worktreeBranch } = worktreeSession
 
-    // Change back to original directory first
-    process.chdir(originalCwd)
+    // Change back to original directory first. In the embedded multi-session
+    // runtime (ALS context present) the process cwd is shared by concurrent
+    // sessions — the caller (ExitWorktreeTool) restores the ALS cwd instead.
+    if (!hasCwdOverrideContext()) {
+      process.chdir(originalCwd)
+    }
 
     // Clear the session but keep the worktree intact
-    currentWorktreeSession = null
+    setWorktreeSlot(null)
 
     // Update config
     saveCurrentProjectConfig(current => ({
@@ -811,16 +867,20 @@ export async function keepWorktree(): Promise<void> {
 }
 
 export async function cleanupWorktree(): Promise<void> {
-  if (!currentWorktreeSession) {
+  const worktreeSession = getWorktreeSlot()
+  if (!worktreeSession) {
     return
   }
 
   try {
     const { worktreePath, originalCwd, worktreeBranch, hookBased } =
-      currentWorktreeSession
+      worktreeSession
 
-    // Change back to original directory first
-    process.chdir(originalCwd)
+    // Change back to original directory first (see keepWorktree for why the
+    // process-wide chdir is skipped inside an ALS session context).
+    if (!hasCwdOverrideContext()) {
+      process.chdir(originalCwd)
+    }
 
     if (hookBased) {
       // Hook-based worktree: delegate cleanup to WorktreeRemove hook
@@ -855,7 +915,7 @@ export async function cleanupWorktree(): Promise<void> {
     }
 
     // Clear the session
-    currentWorktreeSession = null
+    setWorktreeSlot(null)
 
     // Update config
     saveCurrentProjectConfig(current => ({
@@ -1072,7 +1132,12 @@ export async function cleanupStaleAgentWorktrees(
   }
 
   const cutoffMs = cutoffDate.getTime()
-  const currentPath = currentWorktreeSession?.worktreePath
+  // Protect every live session's worktree, not just the current context's.
+  const activeWorktreePaths = new Set(
+    [...worktreeSessionsByContext.values()]
+      .filter((session): session is WorktreeSession => session !== null)
+      .map(session => session.worktreePath),
+  )
   let removed = 0
 
   for (const slug of entries) {
@@ -1081,7 +1146,7 @@ export async function cleanupStaleAgentWorktrees(
     }
 
     const worktreePath = join(dir, slug)
-    if (currentPath === worktreePath) {
+    if (activeWorktreePaths.has(worktreePath)) {
       continue
     }
 
