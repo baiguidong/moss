@@ -8,6 +8,7 @@ import { getFsImplementation } from '../../utils/fsOperations.js'
 import { getSessionMemoryPath } from '../../utils/permissions/filesystem.js'
 import { sleep } from '../../utils/sleep.js'
 import { logEvent } from '../analytics/index.js'
+import { getSessionId } from '../../bootstrap/state.js'
 
 const EXTRACTION_WAIT_TIMEOUT_MS = 15000
 const EXTRACTION_STALE_THRESHOLD_MS = 60000 // 1 minute
@@ -40,23 +41,33 @@ let sessionMemoryConfig: SessionMemoryConfig = {
   ...DEFAULT_SESSION_MEMORY_CONFIG,
 }
 
-// Track the last summarized message ID (shared state)
-let lastSummarizedMessageId: string | undefined
+type SessionMemoryRuntimeState = {
+  lastSummarizedMessageId?: string
+  extractionStartedAt?: number
+  tokensAtLastExtraction: number
+  initialized: boolean
+}
 
-// Track extraction state with timestamp (set by sessionMemory.ts)
-let extractionStartedAt: number | undefined
+const sessionMemoryStates = new Map<string, SessionMemoryRuntimeState>()
 
-// Track context size at last memory extraction (for minimumTokensBetweenUpdate)
-let tokensAtLastExtraction = 0
-
-// Track whether session memory has been initialized (met minimumMessageTokensToInit)
-let sessionMemoryInitialized = false
+function getState(): SessionMemoryRuntimeState {
+  const sessionId = getSessionId()
+  let state = sessionMemoryStates.get(sessionId)
+  if (!state) {
+    state = {
+      tokensAtLastExtraction: 0,
+      initialized: false,
+    }
+    sessionMemoryStates.set(sessionId, state)
+  }
+  return state
+}
 
 /**
  * Get the message ID up to which the session memory is current
  */
 export function getLastSummarizedMessageId(): string | undefined {
-  return lastSummarizedMessageId
+  return getState().lastSummarizedMessageId
 }
 
 /**
@@ -65,21 +76,21 @@ export function getLastSummarizedMessageId(): string | undefined {
 export function setLastSummarizedMessageId(
   messageId: string | undefined,
 ): void {
-  lastSummarizedMessageId = messageId
+  getState().lastSummarizedMessageId = messageId
 }
 
 /**
  * Mark extraction as started (called from sessionMemory.ts)
  */
 export function markExtractionStarted(): void {
-  extractionStartedAt = Date.now()
+  getState().extractionStartedAt = Date.now()
 }
 
 /**
  * Mark extraction as completed (called from sessionMemory.ts)
  */
 export function markExtractionCompleted(): void {
-  extractionStartedAt = undefined
+  getState().extractionStartedAt = undefined
 }
 
 /**
@@ -88,8 +99,8 @@ export function markExtractionCompleted(): void {
  */
 export async function waitForSessionMemoryExtraction(): Promise<void> {
   const startTime = Date.now()
-  while (extractionStartedAt) {
-    const extractionAge = Date.now() - extractionStartedAt
+  while (getState().extractionStartedAt) {
+    const extractionAge = Date.now() - getState().extractionStartedAt!
     if (extractionAge > EXTRACTION_STALE_THRESHOLD_MS) {
       // Extraction is stale, don't wait
       return
@@ -149,21 +160,21 @@ export function getSessionMemoryConfig(): SessionMemoryConfig {
  * Used to measure context growth for minimumTokensBetweenUpdate threshold.
  */
 export function recordExtractionTokenCount(currentTokenCount: number): void {
-  tokensAtLastExtraction = currentTokenCount
+  getState().tokensAtLastExtraction = currentTokenCount
 }
 
 /**
  * Check if session memory has been initialized (met minimumTokensToInit threshold)
  */
 export function isSessionMemoryInitialized(): boolean {
-  return sessionMemoryInitialized
+  return getState().initialized
 }
 
 /**
  * Mark session memory as initialized
  */
 export function markSessionMemoryInitialized(): void {
-  sessionMemoryInitialized = true
+  getState().initialized = true
 }
 
 /**
@@ -182,7 +193,8 @@ export function hasMetInitializationThreshold(
  * (same metric as autocompact and initialization threshold).
  */
 export function hasMetUpdateThreshold(currentTokenCount: number): boolean {
-  const tokensSinceLastExtraction = currentTokenCount - tokensAtLastExtraction
+  const tokensSinceLastExtraction =
+    currentTokenCount - getState().tokensAtLastExtraction
   return (
     tokensSinceLastExtraction >= sessionMemoryConfig.minimumTokensBetweenUpdate
   )
@@ -200,8 +212,9 @@ export function getToolCallsBetweenUpdates(): number {
  */
 export function resetSessionMemoryState(): void {
   sessionMemoryConfig = { ...DEFAULT_SESSION_MEMORY_CONFIG }
-  tokensAtLastExtraction = 0
-  sessionMemoryInitialized = false
-  lastSummarizedMessageId = undefined
-  extractionStartedAt = undefined
+  sessionMemoryStates.clear()
+}
+
+export function discardSessionMemoryState(sessionId: string): void {
+  sessionMemoryStates.delete(sessionId)
 }

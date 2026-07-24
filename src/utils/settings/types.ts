@@ -962,6 +962,47 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Enable background memory consolidation (auto-dream). When set, overrides the server-side default.',
         ),
+      sessionMemory: z
+        .object({
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              'Enable per-session memory summaries for long-running sessions.',
+            ),
+          compactEnabled: z
+            .boolean()
+            .optional()
+            .describe(
+              'Use session memory summaries as the preferred source for conversation compaction.',
+            ),
+          minimumMessageTokensToInit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              'Minimum context-window tokens before creating session memory.',
+            ),
+          minimumTokensBetweenUpdate: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              'Minimum context-window token growth between session memory updates.',
+            ),
+          toolCallsBetweenUpdates: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              'Minimum tool calls between session memory updates.',
+            ),
+        })
+        .optional()
+        .describe('Per-session memory behavior and extraction thresholds.'),
       showThinkingSummaries: z
         .boolean()
         .optional()

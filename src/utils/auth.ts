@@ -73,6 +73,7 @@ import {
   getSettings_DEPRECATED,
   getSettingsForSource,
 } from './settings/settings.js'
+import { getSessionAnthropicAuthToken } from './sessionApiOverrides.js'
 import { sleep } from './sleep.js'
 import { jsonParse } from './slowOperations.js'
 import { clearToolSchemaCache } from './toolSchemaCache.js'
@@ -128,6 +129,7 @@ export function isAnthropicAuthEnabled(): boolean {
   const settings = getSettings_DEPRECATED() || {}
   const apiKeyHelper = settings.apiKeyHelper
   const hasExternalAuthToken =
+    getSessionAnthropicAuthToken() ||
     process.env.ANTHROPIC_AUTH_TOKEN ||
     apiKeyHelper ||
     process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR
@@ -161,7 +163,7 @@ export function getAuthTokenSource() {
     if (getConfiguredApiKeyHelper()) {
       return { source: 'apiKeyHelper' as const, hasToken: true }
     }
-    if (process.env.ANTHROPIC_AUTH_TOKEN) {
+    if (getSessionAnthropicAuthToken() || process.env.ANTHROPIC_AUTH_TOKEN) {
       return { source: 'ANTHROPIC_AUTH_TOKEN' as const, hasToken: true }
     }
     return { source: 'none' as const, hasToken: false }
@@ -177,7 +179,10 @@ export function getAuthTokenSource() {
     return { source: 'none' as const, hasToken: false }
   }
 
-  if (process.env.ANTHROPIC_AUTH_TOKEN && !isManagedOAuthContext()) {
+  if (
+    (getSessionAnthropicAuthToken() || process.env.ANTHROPIC_AUTH_TOKEN) &&
+    !isManagedOAuthContext()
+  ) {
     return { source: 'ANTHROPIC_AUTH_TOKEN' as const, hasToken: true }
   }
 

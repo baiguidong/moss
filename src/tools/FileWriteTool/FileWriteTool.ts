@@ -1,6 +1,7 @@
 import { dirname, sep } from 'path'
 import { logEvent } from 'src/services/analytics/index.js'
 import { z } from 'zod/v4'
+import { withAutoMemoryWriteLock } from '../../memdir/writeQueue.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { diagnosticTracker } from '../../services/diagnosticTracking.js'
 import { clearDeliveredDiagnosticsForFile } from '../../services/lsp/LSPDiagnosticRegistry.js'
@@ -263,157 +264,159 @@ export const FileWriteTool = buildTool({
       )
     }
 
-    // Load current state and confirm no changes since last read.
-    // Please avoid async operations between here and writing to disk to preserve atomicity.
-    let meta: ReturnType<typeof readFileSyncWithMetadata> | null
-    try {
-      meta = readFileSyncWithMetadata(fullFilePath)
-    } catch (e) {
-      if (isENOENT(e)) {
-        meta = null
-      } else {
-        throw e
-      }
-    }
-
-    if (meta !== null) {
-      const lastWriteTime = getFileModificationTime(fullFilePath)
-      const lastRead = readFileState.get(fullFilePath)
-      if (!lastRead || lastWriteTime > lastRead.timestamp) {
-        // Timestamp indicates modification, but on Windows timestamps can change
-        // without content changes (cloud sync, antivirus, etc.). For full reads,
-        // compare content as a fallback to avoid false positives.
-        const isFullRead =
-          lastRead &&
-          lastRead.offset === undefined &&
-          lastRead.limit === undefined
-        // meta.content is CRLF-normalized — matches readFileState's normalized form.
-        if (!isFullRead || meta.content !== lastRead.content) {
-          throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+    return withAutoMemoryWriteLock(fullFilePath, async () => {
+      // Load current state and confirm no changes since last read.
+      // Please avoid async operations between here and writing to disk to preserve atomicity.
+      let meta: ReturnType<typeof readFileSyncWithMetadata> | null
+      try {
+        meta = readFileSyncWithMetadata(fullFilePath)
+      } catch (e) {
+        if (isENOENT(e)) {
+          meta = null
+        } else {
+          throw e
         }
       }
-    }
 
-    const enc = meta?.encoding ?? 'utf8'
-    const oldContent = meta?.content ?? null
+      if (meta !== null) {
+        const lastWriteTime = getFileModificationTime(fullFilePath)
+        const lastRead = readFileState.get(fullFilePath)
+        if (!lastRead || lastWriteTime > lastRead.timestamp) {
+          // Timestamp indicates modification, but on Windows timestamps can change
+          // without content changes (cloud sync, antivirus, etc.). For full reads,
+          // compare content as a fallback to avoid false positives.
+          const isFullRead =
+            lastRead &&
+            lastRead.offset === undefined &&
+            lastRead.limit === undefined
+          // meta.content is CRLF-normalized — matches readFileState's normalized form.
+          if (!isFullRead || meta.content !== lastRead.content) {
+            throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+          }
+        }
+      }
 
-    // Write is a full content replacement — the model sent explicit line endings
-    // in `content` and meant them. Do not rewrite them. Previously we preserved
-    // the old file's line endings (or sampled the repo via ripgrep for new
-    // files), which silently corrupted e.g. bash scripts with \r on Linux when
-    // overwriting a CRLF file or when binaries in cwd poisoned the repo sample.
-    writeTextContent(fullFilePath, content, enc, 'LF')
+      const enc = meta?.encoding ?? 'utf8'
+      const oldContent = meta?.content ?? null
 
-    // Notify LSP servers about file modification (didChange) and save (didSave)
-    const lspManager = getLspServerManager()
-    if (lspManager) {
-      // Clear previously delivered diagnostics so new ones will be shown
-      clearDeliveredDiagnosticsForFile(`file://${fullFilePath}`)
-      // didChange: Content has been modified
-      lspManager.changeFile(fullFilePath, content).catch((err: Error) => {
-        logForDebugging(
-          `LSP: Failed to notify server of file change for ${fullFilePath}: ${err.message}`,
-        )
-        logError(err)
+      // Write is a full content replacement — the model sent explicit line endings
+      // in `content` and meant them. Do not rewrite them. Previously we preserved
+      // the old file's line endings (or sampled the repo via ripgrep for new
+      // files), which silently corrupted e.g. bash scripts with \r on Linux when
+      // overwriting a CRLF file or when binaries in cwd poisoned the repo sample.
+      writeTextContent(fullFilePath, content, enc, 'LF')
+
+      // Notify LSP servers about file modification (didChange) and save (didSave)
+      const lspManager = getLspServerManager()
+      if (lspManager) {
+        // Clear previously delivered diagnostics so new ones will be shown
+        clearDeliveredDiagnosticsForFile(`file://${fullFilePath}`)
+        // didChange: Content has been modified
+        lspManager.changeFile(fullFilePath, content).catch((err: Error) => {
+          logForDebugging(
+            `LSP: Failed to notify server of file change for ${fullFilePath}: ${err.message}`,
+          )
+          logError(err)
+        })
+        // didSave: File has been saved to disk (triggers diagnostics in TypeScript server)
+        lspManager.saveFile(fullFilePath).catch((err: Error) => {
+          logForDebugging(
+            `LSP: Failed to notify server of file save for ${fullFilePath}: ${err.message}`,
+          )
+          logError(err)
+        })
+      }
+
+      // Notify VSCode about the file change for diff view
+      notifyVscodeFileUpdated(fullFilePath, oldContent, content)
+
+      // Update read timestamp, to invalidate stale writes
+      readFileState.set(fullFilePath, {
+        content,
+        timestamp: getFileModificationTime(fullFilePath),
+        offset: undefined,
+        limit: undefined,
       })
-      // didSave: File has been saved to disk (triggers diagnostics in TypeScript server)
-      lspManager.saveFile(fullFilePath).catch((err: Error) => {
-        logForDebugging(
-          `LSP: Failed to notify server of file save for ${fullFilePath}: ${err.message}`,
-        )
-        logError(err)
-      })
-    }
 
-    // Notify VSCode about the file change for diff view
-    notifyVscodeFileUpdated(fullFilePath, oldContent, content)
+      // Log when writing to CLAUDE.md
+      if (fullFilePath.endsWith(`${sep}CLAUDE.md`)) {
+        logEvent('tengu_write_claudemd', {})
+      }
 
-    // Update read timestamp, to invalidate stale writes
-    readFileState.set(fullFilePath, {
-      content,
-      timestamp: getFileModificationTime(fullFilePath),
-      offset: undefined,
-      limit: undefined,
-    })
+      let gitDiff: ToolUseDiff | undefined
+      if (
+        isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
+        getFeatureValue_CACHED_MAY_BE_STALE('tengu_quartz_lantern', false)
+      ) {
+        const startTime = Date.now()
+        const diff = await fetchSingleFileGitDiff(fullFilePath)
+        if (diff) gitDiff = diff
+        logEvent('tengu_tool_use_diff_computed', {
+          isWriteTool: true,
+          durationMs: Date.now() - startTime,
+          hasDiff: !!diff,
+        })
+      }
 
-    // Log when writing to CLAUDE.md
-    if (fullFilePath.endsWith(`${sep}CLAUDE.md`)) {
-      logEvent('tengu_write_claudemd', {})
-    }
+      if (oldContent) {
+        const patch = getPatchForDisplay({
+          filePath: file_path,
+          fileContents: oldContent,
+          edits: [
+            {
+              old_string: oldContent,
+              new_string: content,
+              replace_all: false,
+            },
+          ],
+        })
 
-    let gitDiff: ToolUseDiff | undefined
-    if (
-      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
-      getFeatureValue_CACHED_MAY_BE_STALE('tengu_quartz_lantern', false)
-    ) {
-      const startTime = Date.now()
-      const diff = await fetchSingleFileGitDiff(fullFilePath)
-      if (diff) gitDiff = diff
-      logEvent('tengu_tool_use_diff_computed', {
-        isWriteTool: true,
-        durationMs: Date.now() - startTime,
-        hasDiff: !!diff,
-      })
-    }
+        const data = {
+          type: 'update' as const,
+          filePath: file_path,
+          content,
+          structuredPatch: patch,
+          originalFile: oldContent,
+          ...(gitDiff && { gitDiff }),
+        }
+        // Track lines added and removed for file updates, right before yielding result
+        countLinesChanged(patch)
 
-    if (oldContent) {
-      const patch = getPatchForDisplay({
-        filePath: file_path,
-        fileContents: oldContent,
-        edits: [
-          {
-            old_string: oldContent,
-            new_string: content,
-            replace_all: false,
-          },
-        ],
-      })
+        logFileOperation({
+          operation: 'write',
+          tool: 'FileWriteTool',
+          filePath: fullFilePath,
+          type: 'update',
+        })
+
+        return {
+          data,
+        }
+      }
 
       const data = {
-        type: 'update' as const,
+        type: 'create' as const,
         filePath: file_path,
         content,
-        structuredPatch: patch,
-        originalFile: oldContent,
+        structuredPatch: [],
+        originalFile: null,
         ...(gitDiff && { gitDiff }),
       }
-      // Track lines added and removed for file updates, right before yielding result
-      countLinesChanged(patch)
+
+      // For creation of new files, count all lines as additions, right before yielding the result
+      countLinesChanged([], content)
 
       logFileOperation({
         operation: 'write',
         tool: 'FileWriteTool',
         filePath: fullFilePath,
-        type: 'update',
+        type: 'create',
       })
 
       return {
         data,
       }
-    }
-
-    const data = {
-      type: 'create' as const,
-      filePath: file_path,
-      content,
-      structuredPatch: [],
-      originalFile: null,
-      ...(gitDiff && { gitDiff }),
-    }
-
-    // For creation of new files, count all lines as additions, right before yielding the result
-    countLinesChanged([], content)
-
-    logFileOperation({
-      operation: 'write',
-      tool: 'FileWriteTool',
-      filePath: fullFilePath,
-      type: 'create',
     })
-
-    return {
-      data,
-    }
   },
   mapToolResultToToolResultBlockParam({ filePath, type }, toolUseID) {
     switch (type) {

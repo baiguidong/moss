@@ -1,15 +1,45 @@
 import type { SettingSource } from './constants.js'
 import type { SettingsJson } from './types.js'
 import type { SettingsWithErrors, ValidationError } from './validation.js'
+import { getSessionIdContext } from '../sessionIdContext.js'
 
-let sessionSettingsCache: SettingsWithErrors | null = null
+type SettingsCacheSlot = {
+  sessionSettingsCache: SettingsWithErrors | null
+  perSourceCache: Map<SettingSource, SettingsJson | null>
+  pluginSettingsBase: Record<string, unknown> | undefined
+}
+
+function createSettingsCacheSlot(): SettingsCacheSlot {
+  return {
+    sessionSettingsCache: null,
+    perSourceCache: new Map(),
+    pluginSettingsBase: undefined,
+  }
+}
+
+const globalSettingsCacheSlot = createSettingsCacheSlot()
+const sessionSettingsCacheSlots = new Map<string, SettingsCacheSlot>()
+
+function settingsCacheSlot(): SettingsCacheSlot {
+  const sessionId = getSessionIdContext()
+  if (!sessionId) {
+    return globalSettingsCacheSlot
+  }
+
+  let slot = sessionSettingsCacheSlots.get(sessionId)
+  if (!slot) {
+    slot = createSettingsCacheSlot()
+    sessionSettingsCacheSlots.set(sessionId, slot)
+  }
+  return slot
+}
 
 export function getSessionSettingsCache(): SettingsWithErrors | null {
-  return sessionSettingsCache
+  return settingsCacheSlot().sessionSettingsCache
 }
 
 export function setSessionSettingsCache(value: SettingsWithErrors): void {
-  sessionSettingsCache = value
+  settingsCacheSlot().sessionSettingsCache = value
 }
 
 /**
@@ -17,11 +47,11 @@ export function setSessionSettingsCache(value: SettingsWithErrors): void {
  * merged sessionSettingsCache — same resetSettingsCache() triggers
  * (settings write, --add-dir, plugin init, hooks refresh).
  */
-const perSourceCache = new Map<SettingSource, SettingsJson | null>()
 
 export function getCachedSettingsForSource(
   source: SettingSource,
 ): SettingsJson | null | undefined {
+  const perSourceCache = settingsCacheSlot().perSourceCache
   // undefined = cache miss; null = cached "no settings for this source"
   return perSourceCache.has(source) ? perSourceCache.get(source) : undefined
 }
@@ -30,7 +60,7 @@ export function setCachedSettingsForSource(
   source: SettingSource,
   value: SettingsJson | null,
 ): void {
-  perSourceCache.set(source, value)
+  settingsCacheSlot().perSourceCache.set(source, value)
 }
 
 /**
@@ -53,8 +83,12 @@ export function setCachedParsedFile(path: string, value: ParsedSettings): void {
 }
 
 export function resetSettingsCache(): void {
-  sessionSettingsCache = null
-  perSourceCache.clear()
+  globalSettingsCacheSlot.sessionSettingsCache = null
+  globalSettingsCacheSlot.perSourceCache.clear()
+  for (const slot of sessionSettingsCacheSlots.values()) {
+    slot.sessionSettingsCache = null
+    slot.perSourceCache.clear()
+  }
   parseFileCache.clear()
 }
 
@@ -63,18 +97,23 @@ export function resetSettingsCache(): void {
  * pluginLoader writes here after loading plugins;
  * loadSettingsFromDisk reads it as the lowest-priority base.
  */
-let pluginSettingsBase: Record<string, unknown> | undefined
-
 export function getPluginSettingsBase(): Record<string, unknown> | undefined {
-  return pluginSettingsBase
+  return settingsCacheSlot().pluginSettingsBase
 }
 
 export function setPluginSettingsBase(
   settings: Record<string, unknown> | undefined,
 ): void {
-  pluginSettingsBase = settings
+  settingsCacheSlot().pluginSettingsBase = settings
 }
 
 export function clearPluginSettingsBase(): void {
-  pluginSettingsBase = undefined
+  globalSettingsCacheSlot.pluginSettingsBase = undefined
+  for (const slot of sessionSettingsCacheSlots.values()) {
+    slot.pluginSettingsBase = undefined
+  }
+}
+
+export function discardSessionSettingsCache(sessionId: string): void {
+  sessionSettingsCacheSlots.delete(sessionId)
 }

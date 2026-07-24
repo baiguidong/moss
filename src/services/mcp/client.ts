@@ -126,6 +126,7 @@ import type { AssistantMessage } from 'src/types/message.js'
 import { classifyMcpToolForCollapse } from '../../tools/MCPTool/classifyForCollapse.js'
 import { clearKeychainCache } from '../../utils/secureStorage/macOsKeychainHelpers.js'
 import { sleep } from '../../utils/sleep.js'
+import { getSessionIdContext } from '../../utils/sessionIdContext.js'
 import {
   ClaudeAuthProvider,
   hasMcpDiscoveryButNoToken,
@@ -582,7 +583,19 @@ export function getServerCacheKey(
   name: string,
   serverRef: ScopedMcpServerConfig,
 ): string {
-  return `${name}-${jsonStringify(serverRef)}`
+  return `${getMcpCacheSessionId()}-${name}-${jsonStringify(serverRef)}`
+}
+
+function getMcpCacheSessionId(): string {
+  return getSessionIdContext() ?? 'global'
+}
+
+export function getMcpClientFetchCacheKey(
+  clientOrName: Pick<MCPServerConnection, 'name'> & {
+    cacheSessionId?: string
+  },
+): string {
+  return `${clientOrName.cacheSessionId ?? getMcpCacheSessionId()}-${clientOrName.name}`
 }
 
 /**
@@ -606,6 +619,7 @@ export const connectToServer = memoize(
     },
   ): Promise<MCPServerConnection> => {
     const connectStartTime = Date.now()
+    const cacheSessionId = getMcpCacheSessionId()
     let inProcessServer:
       | { connect(t: Transport): Promise<void>; close(): Promise<void> }
       | undefined
@@ -1381,14 +1395,18 @@ export const connectToServer = memoize(
         )
 
         // Clear the memoization cache so next operation reconnects
-        const key = getServerCacheKey(name, serverRef)
+        const key = `${cacheSessionId}-${name}-${jsonStringify(serverRef)}`
+        const fetchKey = getMcpClientFetchCacheKey({
+          name,
+          cacheSessionId,
+        })
 
         // Also clear fetch caches (keyed by server name). Reconnection
         // creates a new connection object; without clearing, the next
         // fetch would return stale tools/resources from the old connection.
-        fetchToolsForClient.cache.delete(name)
-        fetchResourcesForClient.cache.delete(name)
-        fetchCommandsForClient.cache.delete(name)
+        fetchToolsForClient.cache.delete(fetchKey)
+        fetchResourcesForClient.cache.delete(fetchKey)
+        fetchCommandsForClient.cache.delete(fetchKey)
         if (feature('MCP_SKILLS')) {
           fetchMcpSkillsForClient!.cache.delete(name)
         }
@@ -1600,6 +1618,7 @@ export const connectToServer = memoize(
         serverInfo: serverVersion,
         instructions,
         config: serverRef,
+        cacheSessionId,
         cleanup: wrappedCleanup,
       }
     } catch (error) {
@@ -1664,9 +1683,10 @@ export async function clearServerCache(
   // Clear from cache (both connection and fetch caches so reconnect
   // fetches fresh tools/resources/commands instead of stale ones)
   connectToServer.cache.delete(key)
-  fetchToolsForClient.cache.delete(name)
-  fetchResourcesForClient.cache.delete(name)
-  fetchCommandsForClient.cache.delete(name)
+  const fetchKey = getMcpClientFetchCacheKey({ name })
+  fetchToolsForClient.cache.delete(fetchKey)
+  fetchResourcesForClient.cache.delete(fetchKey)
+  fetchCommandsForClient.cache.delete(fetchKey)
   if (feature('MCP_SKILLS')) {
     fetchMcpSkillsForClient!.cache.delete(name)
   }
@@ -1993,7 +2013,7 @@ export const fetchToolsForClient = memoizeWithLRU(
       return []
     }
   },
-  (client: MCPServerConnection) => client.name,
+  getMcpClientFetchCacheKey,
   MCP_FETCH_CACHE_SIZE,
 )
 
@@ -2026,7 +2046,7 @@ export const fetchResourcesForClient = memoizeWithLRU(
       return []
     }
   },
-  (client: MCPServerConnection) => client.name,
+  getMcpClientFetchCacheKey,
   MCP_FETCH_CACHE_SIZE,
 )
 
@@ -2102,7 +2122,7 @@ export const fetchCommandsForClient = memoizeWithLRU(
       return []
     }
   },
-  (client: MCPServerConnection) => client.name,
+  getMcpClientFetchCacheKey,
   MCP_FETCH_CACHE_SIZE,
 )
 
@@ -3273,6 +3293,7 @@ export async function setupSdkMcpClients(
   const tools: Tool[] = []
 
   // Connect to all servers in parallel
+  const cacheSessionId = getMcpCacheSessionId()
   const results = await Promise.allSettled(
     Object.entries(sdkMcpConfigs).map(async ([name, config]) => {
       const transport = new SdkControlClientTransport(name, sendMcpMessage)
@@ -3304,6 +3325,7 @@ export async function setupSdkMcpClients(
           capabilities: capabilities || {},
           client,
           config: { ...config, scope: 'dynamic' as const },
+          cacheSessionId,
           cleanup: async () => {
             await client.close()
           },

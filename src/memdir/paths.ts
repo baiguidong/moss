@@ -1,18 +1,13 @@
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { isAbsolute, join, normalize, sep } from 'path'
-import {
-  getIsNonInteractiveSession,
-  getProjectRoot,
-} from '../bootstrap/state.js'
+import { getIsNonInteractiveSession } from '../bootstrap/state.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import {
   getClaudeConfigHomeDir,
   isEnvDefinedFalsy,
   isEnvTruthy,
 } from '../utils/envUtils.js'
-import { findCanonicalGitRoot } from '../utils/git.js'
-import { sanitizePath } from '../utils/path.js'
 import {
   getInitialSettings,
   getSettingsForSource,
@@ -196,27 +191,19 @@ export function hasAutoMemPathOverride(): boolean {
 }
 
 /**
- * Returns the canonical git repo root if available, otherwise falls back to
- * the stable project root. Uses findCanonicalGitRoot so all worktrees of the
- * same repo share one auto-memory directory (anthropics/claude-code#24382).
- */
-function getAutoMemBase(): string {
-  return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot()
-}
-
-/**
  * Returns the auto-memory directory path.
  *
  * Resolution order:
  *   1. CLAUDE_COWORK_MEMORY_PATH_OVERRIDE env var (full-path override, used by Cowork)
  *   2. autoMemoryDirectory in settings.json (trusted sources only: policy/local/user)
- *   3. <memoryBase>/projects/<sanitized-git-root>/memory/
- *      where memoryBase is resolved by getMemoryBaseDir()
+ *   3. <memoryBase>/memory/
+ *      where memoryBase is resolved by getMemoryBaseDir(). For Moss this is
+ *      ~/.moss/memory/ by default, shared by all local sessions.
  *
  * Memoized: render-path callers (collapseReadSearchGroups → isAutoManagedMemoryFile)
  * fire per tool-use message per Messages re-render; each miss costs
  * getSettingsForSource × 4 → parseSettingsFile (realpathSync + readFileSync).
- * Keyed on projectRoot so tests that change its mock mid-block recompute;
+ * Keyed on memory base so tests that change its mock mid-block recompute;
  * env vars / settings.json / CLAUDE_CONFIG_DIR are session-stable in
  * production and covered by per-test cache.clear.
  */
@@ -226,12 +213,9 @@ export const getAutoMemPath = memoize(
     if (override) {
       return override
     }
-    const projectsDir = join(getMemoryBaseDir(), 'projects')
-    return (
-      join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
-    ).normalize('NFC')
+    return (join(getMemoryBaseDir(), AUTO_MEM_DIRNAME) + sep).normalize('NFC')
   },
-  () => getProjectRoot(),
+  () => getMemoryBaseDir(),
 )
 
 /**

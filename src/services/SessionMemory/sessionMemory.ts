@@ -6,7 +6,7 @@
 
 import { writeFile } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
-import { getIsRemoteMode } from '../../bootstrap/state.js'
+import { getIsRemoteMode, getSessionId } from '../../bootstrap/state.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
@@ -36,11 +36,10 @@ import {
   getSessionMemoryDir,
   getSessionMemoryPath,
 } from '../../utils/permissions/filesystem.js'
-import { sequential } from '../../utils/sequential.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { getTokenUsage, tokenCountWithEstimation } from '../../utils/tokens.js'
 import { logEvent } from '../analytics/index.js'
-import { isAutoCompactEnabled } from '../compact/autoCompact.js'
+import { isSessionMemoryEnabled } from './config.js'
 import {
   buildSessionMemoryUpdatePrompt,
   loadSessionMemoryTemplate,
@@ -70,16 +69,9 @@ import {
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
 import {
   getDynamicConfig_CACHED_MAY_BE_STALE,
-  getFeatureValue_CACHED_MAY_BE_STALE,
 } from '../analytics/growthbook.js'
-
-/**
- * Check if session memory feature is enabled.
- * Uses cached gate value - returns immediately without blocking.
- */
-function isSessionMemoryGateEnabled(): boolean {
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_session_memory', false)
-}
+import { getInitialSettings } from '../../utils/settings/settings.js'
+import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
 
 /**
  * Get session memory config from cache.
@@ -92,17 +84,38 @@ function getSessionMemoryRemoteConfig(): Partial<SessionMemoryConfig> {
   )
 }
 
+function getPositiveIntegerSetting(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    return undefined
+  }
+  return value
+}
+
+function resolvePositiveIntegerConfig(
+  setting: unknown,
+  remote: number | undefined,
+  fallback: number,
+): number {
+  return getPositiveIntegerSetting(setting) ?? (remote && remote > 0
+    ? remote
+    : fallback)
+}
+
 // ============================================================================
 // Module State
 // ============================================================================
 
-let lastMemoryMessageUuid: string | undefined
+const lastMemoryMessageUuidBySession = new Map<string, string | undefined>()
 
 /**
  * Reset the last memory message UUID (for testing)
  */
 export function resetLastMemoryMessageUuid(): void {
-  lastMemoryMessageUuid = undefined
+  lastMemoryMessageUuidBySession.clear()
+}
+
+export function discardSessionMemoryRuntimeState(sessionId: string): void {
+  lastMemoryMessageUuidBySession.delete(sessionId)
 }
 
 function countToolCallsSince(
@@ -132,11 +145,25 @@ function countToolCallsSince(
 }
 
 export function shouldExtractMemory(messages: Message[]): boolean {
+  const sessionId = getSessionId()
+  const lastMemoryMessageUuid = lastMemoryMessageUuidBySession.get(sessionId)
+
   // Check if we've met the initialization threshold
   // Uses total context window tokens (same as autocompact) for consistent behavior
   const currentTokenCount = tokenCountWithEstimation(messages)
+  const config = getSessionMemoryConfig()
   if (!isSessionMemoryInitialized()) {
     if (!hasMetInitializationThreshold(currentTokenCount)) {
+      logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
+        session_id: sessionId,
+        should_extract: false,
+        reason: 'initialization_threshold',
+        message_count: messages.length,
+        token_count: currentTokenCount,
+        minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
+        minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
+        tool_calls_between_updates: config.toolCallsBetweenUpdates,
+      })
       return false
     }
     markSessionMemoryInitialized()
@@ -172,10 +199,34 @@ export function shouldExtractMemory(messages: Message[]): boolean {
   if (shouldExtract) {
     const lastMessage = messages[messages.length - 1]
     if (lastMessage?.uuid) {
-      lastMemoryMessageUuid = lastMessage.uuid
+      lastMemoryMessageUuidBySession.set(sessionId, lastMessage.uuid)
     }
+    logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
+      session_id: sessionId,
+      should_extract: true,
+      message_count: messages.length,
+      token_count: currentTokenCount,
+      tool_calls_since_last_update: toolCallsSinceLastUpdate,
+      has_tool_calls_in_last_turn: hasToolCallsInLastTurn,
+      minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
+      minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
+      tool_calls_between_updates: config.toolCallsBetweenUpdates,
+    })
     return true
   }
+
+  logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
+    session_id: sessionId,
+    should_extract: false,
+    reason: 'update_threshold',
+    message_count: messages.length,
+    token_count: currentTokenCount,
+    tool_calls_since_last_update: toolCallsSinceLastUpdate,
+    has_tool_calls_in_last_turn: hasToolCallsInLastTurn,
+    minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
+    minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
+    tool_calls_between_updates: config.toolCallsBetweenUpdates,
+  })
 
   return false
 }
@@ -240,25 +291,26 @@ async function setupSessionMemoryFile(
 const initSessionMemoryConfigIfNeeded = memoize((): void => {
   // Load config from cache (non-blocking, may be stale)
   const remoteConfig = getSessionMemoryRemoteConfig()
+  const settingsConfig = getInitialSettings().sessionMemory ?? {}
 
   // Only use remote values if they are explicitly set (non-zero positive numbers)
   // This ensures sensible defaults aren't overridden by zero values
   const config: SessionMemoryConfig = {
-    minimumMessageTokensToInit:
-      remoteConfig.minimumMessageTokensToInit &&
-      remoteConfig.minimumMessageTokensToInit > 0
-        ? remoteConfig.minimumMessageTokensToInit
-        : DEFAULT_SESSION_MEMORY_CONFIG.minimumMessageTokensToInit,
-    minimumTokensBetweenUpdate:
-      remoteConfig.minimumTokensBetweenUpdate &&
-      remoteConfig.minimumTokensBetweenUpdate > 0
-        ? remoteConfig.minimumTokensBetweenUpdate
-        : DEFAULT_SESSION_MEMORY_CONFIG.minimumTokensBetweenUpdate,
-    toolCallsBetweenUpdates:
-      remoteConfig.toolCallsBetweenUpdates &&
-      remoteConfig.toolCallsBetweenUpdates > 0
-        ? remoteConfig.toolCallsBetweenUpdates
-        : DEFAULT_SESSION_MEMORY_CONFIG.toolCallsBetweenUpdates,
+    minimumMessageTokensToInit: resolvePositiveIntegerConfig(
+      settingsConfig.minimumMessageTokensToInit,
+      remoteConfig.minimumMessageTokensToInit,
+      DEFAULT_SESSION_MEMORY_CONFIG.minimumMessageTokensToInit,
+    ),
+    minimumTokensBetweenUpdate: resolvePositiveIntegerConfig(
+      settingsConfig.minimumTokensBetweenUpdate,
+      remoteConfig.minimumTokensBetweenUpdate,
+      DEFAULT_SESSION_MEMORY_CONFIG.minimumTokensBetweenUpdate,
+    ),
+    toolCallsBetweenUpdates: resolvePositiveIntegerConfig(
+      settingsConfig.toolCallsBetweenUpdates,
+      remoteConfig.toolCallsBetweenUpdates,
+      DEFAULT_SESSION_MEMORY_CONFIG.toolCallsBetweenUpdates,
+    ),
   }
   setSessionMemoryConfig(config)
 })
@@ -268,20 +320,22 @@ const initSessionMemoryConfigIfNeeded = memoize((): void => {
  */
 // Track if we've logged the gate check failure this session (to avoid spam)
 let hasLoggedGateFailure = false
+let sessionMemoryHookRegistered = false
 
-const extractSessionMemory = sequential(async function (
+const extractSessionMemory = async function (
   context: REPLHookContext,
 ): Promise<void> {
   const { messages, toolUseContext, querySource } = context
 
-  // Only run session memory on main REPL thread
-  if (querySource !== 'repl_main_thread') {
+  // Only run session memory on main user-facing thread. Desktop embedded
+  // sessions go through QueryEngine and use querySource "sdk".
+  if (!querySource?.startsWith('repl_main_thread') && querySource !== 'sdk') {
     // Don't log this - it's expected for subagents, teammates, etc.
     return
   }
 
   // Check gate lazily when hook runs (cached, non-blocking)
-  if (!isSessionMemoryGateEnabled()) {
+  if (!isSessionMemoryEnabled()) {
     // Log gate failure once per session (ant-only)
     if (process.env.USER_TYPE === 'ant' && !hasLoggedGateFailure) {
       hasLoggedGateFailure = true
@@ -299,55 +353,61 @@ const extractSessionMemory = sequential(async function (
 
   markExtractionStarted()
 
-  // Create isolated context for setup to avoid polluting parent's cache
-  const setupContext = createSubagentContext(toolUseContext)
+  try {
+    // Create isolated context for setup to avoid polluting parent's cache
+    const setupContext = createSubagentContext(toolUseContext)
 
-  // Set up file system and read current state with isolated context
-  const { memoryPath, currentMemory } =
-    await setupSessionMemoryFile(setupContext)
+    // Set up file system and read current state with isolated context
+    const { memoryPath, currentMemory } =
+      await setupSessionMemoryFile(setupContext)
 
-  // Create extraction message
-  const userPrompt = await buildSessionMemoryUpdatePrompt(
-    currentMemory,
-    memoryPath,
-  )
+    // Create extraction message
+    const userPrompt = await buildSessionMemoryUpdatePrompt(
+      currentMemory,
+      memoryPath,
+    )
 
-  // Run session memory extraction using runForkedAgent for prompt caching
-  // runForkedAgent creates an isolated context to prevent mutation of parent state
-  // Pass setupContext.readFileState so the forked agent can edit the memory file
-  await runForkedAgent({
-    promptMessages: [createUserMessage({ content: userPrompt })],
-    cacheSafeParams: createCacheSafeParams(context),
-    canUseTool: createMemoryFileCanUseTool(memoryPath),
-    querySource: 'session_memory',
-    forkLabel: 'session_memory',
-    overrides: { readFileState: setupContext.readFileState },
-  })
+    // Run session memory extraction using runForkedAgent for prompt caching
+    // runForkedAgent creates an isolated context to prevent mutation of parent state
+    // Pass setupContext.readFileState so the forked agent can edit the memory file
+    await runForkedAgent({
+      promptMessages: [createUserMessage({ content: userPrompt })],
+      cacheSafeParams: createCacheSafeParams(context),
+      canUseTool: createMemoryFileCanUseTool(memoryPath),
+      querySource: 'session_memory',
+      forkLabel: 'session_memory',
+      overrides: { readFileState: setupContext.readFileState },
+    })
 
-  // Log extraction event for tracking frequency
-  // Use the token usage from the last message in the conversation
-  const lastMessage = messages[messages.length - 1]
-  const usage = lastMessage ? getTokenUsage(lastMessage) : undefined
-  const config = getSessionMemoryConfig()
-  logEvent('tengu_session_memory_extraction', {
-    input_tokens: usage?.input_tokens,
-    output_tokens: usage?.output_tokens,
-    cache_read_input_tokens: usage?.cache_read_input_tokens ?? undefined,
-    cache_creation_input_tokens:
-      usage?.cache_creation_input_tokens ?? undefined,
-    config_min_message_tokens_to_init: config.minimumMessageTokensToInit,
-    config_min_tokens_between_update: config.minimumTokensBetweenUpdate,
-    config_tool_calls_between_updates: config.toolCallsBetweenUpdates,
-  })
+    // Log extraction event for tracking frequency
+    // Use the token usage from the last message in the conversation
+    const lastMessage = messages[messages.length - 1]
+    const usage = lastMessage ? getTokenUsage(lastMessage) : undefined
+    const config = getSessionMemoryConfig()
+    logEvent('tengu_session_memory_extraction', {
+      input_tokens: usage?.input_tokens,
+      output_tokens: usage?.output_tokens,
+      cache_read_input_tokens: usage?.cache_read_input_tokens ?? undefined,
+      cache_creation_input_tokens:
+        usage?.cache_creation_input_tokens ?? undefined,
+      config_min_message_tokens_to_init: config.minimumMessageTokensToInit,
+      config_min_tokens_between_update: config.minimumTokensBetweenUpdate,
+      config_tool_calls_between_updates: config.toolCallsBetweenUpdates,
+    })
 
-  // Record the context size at extraction for tracking minimumTokensBetweenUpdate
-  recordExtractionTokenCount(tokenCountWithEstimation(messages))
+    logForDiagnosticsNoPII('info', 'session_memory_extraction_completed', {
+      session_id: getSessionId(),
+    })
 
-  // Update lastSummarizedMessageId after successful completion
-  updateLastSummarizedMessageIdIfSafe(messages)
+    // Record the context size at extraction for tracking minimumTokensBetweenUpdate
+    recordExtractionTokenCount(tokenCountWithEstimation(messages))
 
-  markExtractionCompleted()
-})
+    // Update lastSummarizedMessageId after successful completion
+    updateLastSummarizedMessageIdIfSafe(messages)
+  } finally {
+    markExtractionCompleted()
+  }
+}
 
 /**
  * Initialize session memory by registering the post-sampling hook.
@@ -356,22 +416,16 @@ const extractSessionMemory = sequential(async function (
  */
 export function initSessionMemory(): void {
   if (getIsRemoteMode()) return
-  // Session memory is used for compaction, so respect auto-compact settings
-  const autoCompactEnabled = isAutoCompactEnabled()
+  if (sessionMemoryHookRegistered) return
 
   // Log initialization state (ant-only to avoid noise in external logs)
   if (process.env.USER_TYPE === 'ant') {
-    logEvent('tengu_session_memory_init', {
-      auto_compact_enabled: autoCompactEnabled,
-    })
-  }
-
-  if (!autoCompactEnabled) {
-    return
+    logEvent('tengu_session_memory_init', {})
   }
 
   // Register hook unconditionally - gate check happens lazily when hook runs
   registerPostSamplingHook(extractSessionMemory)
+  sessionMemoryHookRegistered = true
 }
 
 export type ManualExtractionResult = {

@@ -18,6 +18,10 @@ export function getProjectRootOverride(): string | undefined {
   return cwdOverrideStorage.getStore()?.projectRoot
 }
 
+export function getOriginalCwdOverride(): string | undefined {
+  return cwdOverrideStorage.getStore()?.originalCwd
+}
+
 export function setCurrentProjectRootOverride(root: string): boolean {
   const context = cwdOverrideStorage.getStore()
   if (!context) {

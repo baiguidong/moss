@@ -10,7 +10,10 @@ import { getPlatform } from './platform.js'
 // undefined = not yet loaded (need to check disk)
 // null = checked disk, no files exist (don't check again)
 // string = loaded and cached (use cached value)
-let sessionEnvScript: string | null | undefined = undefined
+const sessionEnvScriptCache = new Map<
+  string,
+  string | null | undefined
+>()
 
 export async function getSessionEnvDirPath(): Promise<string> {
   const sessionEnvDir = join(
@@ -54,7 +57,11 @@ export async function clearCwdEnvFiles(): Promise<void> {
 
 export function invalidateSessionEnvCache(): void {
   logForDebugging('Invalidating session environment cache')
-  sessionEnvScript = undefined
+  sessionEnvScriptCache.delete(getSessionId())
+}
+
+export function discardSessionEnvCache(sessionId: string): void {
+  sessionEnvScriptCache.delete(sessionId)
 }
 
 export async function getSessionEnvironmentScript(): Promise<string | null> {
@@ -63,8 +70,10 @@ export async function getSessionEnvironmentScript(): Promise<string | null> {
     return null
   }
 
-  if (sessionEnvScript !== undefined) {
-    return sessionEnvScript
+  const sessionId = getSessionId()
+  const cached = sessionEnvScriptCache.get(sessionId)
+  if (cached !== undefined) {
+    return cached
   }
 
   const scripts: string[] = []
@@ -132,11 +141,12 @@ export async function getSessionEnvironmentScript(): Promise<string | null> {
 
   if (scripts.length === 0) {
     logForDebugging('No session environment scripts found')
-    sessionEnvScript = null
-    return sessionEnvScript
+    sessionEnvScriptCache.set(sessionId, null)
+    return null
   }
 
-  sessionEnvScript = scripts.join('\n')
+  const sessionEnvScript = scripts.join('\n')
+  sessionEnvScriptCache.set(sessionId, sessionEnvScript)
   logForDebugging(
     `Session environment script ready (${sessionEnvScript.length} chars total)`,
   )

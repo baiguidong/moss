@@ -1,6 +1,6 @@
 import electron from 'electron';
 const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu, protocol } = electron;
-import { exec, execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -113,6 +113,13 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     apiKey: '',
     model: '',
   },
+  sessionMemory: {
+    enabled: true,
+    compactEnabled: true,
+    minimumMessageTokensToInit: 10000,
+    minimumTokensBetweenUpdate: 5000,
+    toolCallsBetweenUpdates: 3,
+  },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserEmail: '',
@@ -174,6 +181,9 @@ function getTranscriptPathForWorkspace(workspace, sessionId) {
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
 process.env.CLAUDE_CODE_ENTRYPOINT = 'local-agent';
 process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY = 'true';
+// Desktop local-agent sessions use app-managed workspaces; skip CLI-style git
+// status context so first-turn startup does not block on the current directory.
+process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
 
 let mainWindow = null;
 let claudeSessionCtorPromise = null;
@@ -551,6 +561,46 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.coordinatorMode = DEFAULT_DESKTOP_SETTINGS.coordinatorMode;
   }
 
+  const sourceSessionMemory = source.sessionMemory && typeof source.sessionMemory === 'object' ? source.sessionMemory : {};
+  const existingSessionMemory = result.sessionMemory && typeof result.sessionMemory === 'object' ? result.sessionMemory : {};
+  const normalizePositiveInt = (value, fallback, min = 1, max = 1_000_000) => {
+    const parsed = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsed) || parsed < min) return fallback;
+    return Math.min(parsed, max);
+  };
+  result.sessionMemory = {
+    enabled:
+      sourceSessionMemory.enabled !== undefined
+        ? Boolean(sourceSessionMemory.enabled)
+        : existingSessionMemory.enabled !== undefined
+          ? Boolean(existingSessionMemory.enabled)
+          : DEFAULT_DESKTOP_SETTINGS.sessionMemory.enabled,
+    compactEnabled:
+      sourceSessionMemory.compactEnabled !== undefined
+        ? Boolean(sourceSessionMemory.compactEnabled)
+        : existingSessionMemory.compactEnabled !== undefined
+          ? Boolean(existingSessionMemory.compactEnabled)
+          : DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactEnabled,
+    minimumMessageTokensToInit: normalizePositiveInt(
+      sourceSessionMemory.minimumMessageTokensToInit ?? existingSessionMemory.minimumMessageTokensToInit,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.minimumMessageTokensToInit,
+      1,
+      1_000_000,
+    ),
+    minimumTokensBetweenUpdate: normalizePositiveInt(
+      sourceSessionMemory.minimumTokensBetweenUpdate ?? existingSessionMemory.minimumTokensBetweenUpdate,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.minimumTokensBetweenUpdate,
+      1,
+      1_000_000,
+    ),
+    toolCallsBetweenUpdates: normalizePositiveInt(
+      sourceSessionMemory.toolCallsBetweenUpdates ?? existingSessionMemory.toolCallsBetweenUpdates,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.toolCallsBetweenUpdates,
+      1,
+      10_000,
+    ),
+  };
+
   if (source.logRotationMaxSize !== undefined) {
     let size = Number.parseInt(String(source.logRotationMaxSize), 10);
     if (Number.isFinite(size) && size >= 1024 * 1024) {
@@ -614,25 +664,8 @@ function loadDesktopSettings() {
   }
 }
 
-function syncClaudeAuthEnv(settings = desktopSettings) {
-  const nextUrl = normalizeAnthropicBaseUrl(settings?.url);
-  if (nextUrl) {
-    process.env.ANTHROPIC_BASE_URL = nextUrl;
-  } else {
-    delete process.env.ANTHROPIC_BASE_URL;
-  }
-
-  const nextApiKey = typeof settings?.apiKey === 'string' ? settings.apiKey.trim() : '';
-  if (nextApiKey) {
-    process.env.ANTHROPIC_AUTH_TOKEN = nextApiKey;
-  } else {
-    delete process.env.ANTHROPIC_AUTH_TOKEN;
-  }
-}
-
 let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
-syncClaudeAuthEnv(desktopSettings);
 mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
 
 function getDesktopSettingsPayload(extra = {}) {
@@ -698,7 +731,6 @@ function saveDesktopSettings(nextSettings) {
     value: normalizedSettings,
   };
   desktopSettings = normalizedSettings;
-  syncClaudeAuthEnv(normalizedSettings);
 }
 
 function buildThinkingConfig() {
@@ -1530,6 +1562,25 @@ async function getAuthDebugSnapshot() {
     return mod.getAuthDebugSnapshot();
   }
   return null;
+}
+
+function prewarmLocalAgentGlobalInit() {
+  if (getDesktopAgentMode() !== 'local') return;
+  void getClaudeRuntimeModule()
+    .then((mod) => {
+      if (typeof mod.prewarmHeadlessGlobalInit === 'function') {
+        return mod.prewarmHeadlessGlobalInit();
+      }
+      return undefined;
+    })
+    .then(() => {
+      mossLog('info', 'agent', 'Local agent global init prewarmed');
+    })
+    .catch((err) => {
+      mossLog('warn', 'agent', 'Local agent global init prewarm failed', {
+        error: err?.message || String(err),
+      });
+    });
 }
 
 function formatAuthDebug(authDebug) {
@@ -2972,15 +3023,6 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
   const normalizedWorkspace = normalizeWorkspace(workspace);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
 
-  // 核心改动：在工作区初始化 git
-  try {
-    if (!fs.existsSync(path.join(normalizedWorkspace, '.git'))) {
-      execSync('git init', { cwd: normalizedWorkspace, stdio: 'ignore' });
-    }
-  } catch (error) {
-    console.warn(`Failed to initialize git in ${normalizedWorkspace}:`, error);
-  }
-
   const sessionRecord = {
     id: randomUUID(),
     title: title || 'New Session',
@@ -4183,6 +4225,7 @@ app.whenReady().then(() => {
     }
   });
   mossLog('info', 'app', 'Application ready');
+  prewarmLocalAgentGlobalInit();
 });
 
 app.on('window-all-closed', () => {

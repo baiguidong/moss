@@ -34,6 +34,7 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../analytics/index.js'
+import { getSessionAnthropicBaseUrl } from '../../utils/sessionApiOverrides.js'
 import { sanitizeToolNameForAnalytics } from '../analytics/metadata.js'
 import { EMPTY_USAGE } from './emptyUsage.js'
 import { classifyAPIError } from './errors.js'
@@ -139,11 +140,13 @@ function detectGateway({
 }
 
 function getAnthropicEnvMetadata() {
+  const anthropicBaseUrl =
+    getSessionAnthropicBaseUrl() || process.env.ANTHROPIC_BASE_URL
   return {
-    ...(process.env.ANTHROPIC_BASE_URL
+    ...(anthropicBaseUrl
       ? {
-          baseUrl: process.env
-            .ANTHROPIC_BASE_URL as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          baseUrl:
+            anthropicBaseUrl as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         }
       : {}),
     ...(process.env.ANTHROPIC_MODEL
@@ -274,7 +277,7 @@ export function logAPIError({
   const gateway = detectGateway({
     headers:
       error instanceof APIError && error.headers ? error.headers : headers,
-    baseUrl: process.env.ANTHROPIC_BASE_URL,
+    baseUrl: getSessionAnthropicBaseUrl() || process.env.ANTHROPIC_BASE_URL,
   })
 
   const errStr = getErrorMessage(error)
@@ -640,7 +643,7 @@ export function logAPISuccessAndDuration({
 }): void {
   const gateway = detectGateway({
     headers,
-    baseUrl: process.env.ANTHROPIC_BASE_URL,
+    baseUrl: getSessionAnthropicBaseUrl() || process.env.ANTHROPIC_BASE_URL,
   })
 
   let textContentLength: number | undefined

@@ -2,6 +2,7 @@ import memoize from 'lodash-es/memoize.js'
 import type { HookEvent } from 'src/entrypoints/agentSdkTypes.js'
 import {
   clearRegisteredPluginHooks,
+  getSessionId,
   getRegisteredHooks,
   registerHookCallbacks,
 } from '../../bootstrap/state.js'
@@ -154,7 +155,7 @@ export const loadPluginHooks = memoize(async (): Promise<void> => {
   logForDebugging(
     `Registered ${totalHooks} hooks from ${enabled.length} plugins`,
   )
-})
+}, getSessionId)
 
 export function clearPluginHookCache(): void {
   // Only invalidate the memoize — do NOT wipe STATE.registeredHooks here.
@@ -164,6 +165,10 @@ export function clearPluginHookCache(): void {
   // clear-then-register, so old hooks stay valid until the fresh load swaps
   // them out.
   loadPluginHooks.cache?.clear?.()
+}
+
+export function discardSessionPluginHookCache(sessionId: string): void {
+  loadPluginHooks.cache?.delete?.(sessionId)
 }
 
 /**

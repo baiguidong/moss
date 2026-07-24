@@ -60,6 +60,7 @@ import {
   type FileStateCache,
 } from './utils/fileStateCache.js'
 import { headlessProfilerCheckpoint } from './utils/headlessProfiler.js'
+import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
 import { registerStructuredOutputEnforcement } from './utils/hooks/hookHelpers.js'
 import { getInMemoryErrors } from './utils/log.js'
 import { countToolCalls, SYNTHETIC_MESSAGES } from './utils/messages.js'
@@ -244,6 +245,10 @@ export class QueryEngine {
     setCwd(cwd)
     const persistSession = !isSessionPersistenceDisabled()
     const startTime = Date.now()
+    logForDiagnosticsNoPII('info', 'query_engine_submit_started', {
+      had_prior_messages: this.mutableMessages.length > 0,
+      persist_session: persistSession,
+    })
 
     // Wrap canUseTool to track permission denials
     const wrappedCanUseTool: CanUseToolFn = async (
@@ -287,6 +292,7 @@ export class QueryEngine {
         : { type: 'disabled' }
 
     headlessProfilerCheckpoint('before_getSystemPrompt')
+    const systemPromptStart = Date.now()
     // Narrow once so TS tracks the type through the conditionals below.
     const customPrompt =
       typeof customSystemPrompt === 'string' ? customSystemPrompt : undefined
@@ -303,6 +309,17 @@ export class QueryEngine {
       mcpClients,
       customSystemPrompt: customPrompt,
     })
+    logForDiagnosticsNoPII(
+      'info',
+      'query_engine_system_prompt_parts_completed',
+      {
+        duration_ms: Date.now() - systemPromptStart,
+        has_custom_system_prompt: customPrompt !== undefined,
+        user_context_keys: Object.keys(baseUserContext).length,
+        system_context_keys: Object.keys(systemContext).length,
+        default_system_prompt_parts: defaultSystemPrompt.length,
+      },
+    )
     headlessProfilerCheckpoint('after_getSystemPrompt')
     const userContext = {
       ...baseUserContext,
@@ -413,6 +430,7 @@ export class QueryEngine {
       }
     }
 
+    const processInputStart = Date.now()
     const {
       messages: messagesFromUserInput,
       shouldQuery,
@@ -431,6 +449,12 @@ export class QueryEngine {
       uuid: options?.uuid,
       isMeta: options?.isMeta,
       querySource: 'sdk',
+    })
+    logForDiagnosticsNoPII('info', 'query_engine_process_user_input_completed', {
+      duration_ms: Date.now() - processInputStart,
+      message_count: messagesFromUserInput.length,
+      should_query: shouldQuery,
+      allowed_tool_count: allowedTools?.length ?? 0,
     })
 
     // Push new messages, including user input and any attachments
@@ -454,6 +478,7 @@ export class QueryEngine {
     // — the single largest controllable critical-path cost after module eval.
     // Transcript is still written (for post-hoc debugging); just not blocking.
     if (persistSession && messagesFromUserInput.length > 0) {
+      const transcriptStart = Date.now()
       const transcriptPromise = recordTranscript(messages)
       if (isBareMode()) {
         void transcriptPromise
@@ -466,6 +491,14 @@ export class QueryEngine {
           await flushSessionStorage()
         }
       }
+      logForDiagnosticsNoPII(
+        'info',
+        'query_engine_initial_transcript_recorded',
+        {
+          duration_ms: Date.now() - transcriptStart,
+          awaited: !isBareMode(),
+        },
+      )
     }
 
     // Filter messages that should be acknowledged after transcript
@@ -533,6 +566,7 @@ export class QueryEngine {
     }
 
     headlessProfilerCheckpoint('before_skills_plugins')
+    const skillsPluginsStart = Date.now()
     // Cache-only: headless/SDK/CCR startup must not block on network for
     // ref-tracked plugins. CCR populates the cache via CLAUDE_CODE_SYNC_PLUGIN_INSTALL
     // (headlessPluginInstall) or CLAUDE_CODE_PLUGIN_SEED_DIR before this runs;
@@ -541,6 +575,11 @@ export class QueryEngine {
       getSlashCommandToolSkills(getCwd()),
       loadAllPluginsCacheOnly(),
     ])
+    logForDiagnosticsNoPII('info', 'query_engine_skills_plugins_completed', {
+      duration_ms: Date.now() - skillsPluginsStart,
+      skill_count: skills.length,
+      plugin_count: enabledPlugins.length,
+    })
     headlessProfilerCheckpoint('after_skills_plugins')
 
     yield buildSystemInitMessage({
@@ -621,6 +660,12 @@ export class QueryEngine {
         }
       }
 
+      logForDiagnosticsNoPII('info', 'query_engine_submit_completed', {
+        duration_ms: Date.now() - startTime,
+        result_subtype: 'success',
+        should_query: false,
+        num_turns: messages.length - 1,
+      })
       yield {
         type: 'result',
         subtype: 'success',
@@ -678,6 +723,7 @@ export class QueryEngine {
       ? countToolCalls(this.mutableMessages, SYNTHETIC_OUTPUT_TOOL_NAME)
       : 0
 
+    const queryLoopStart = Date.now()
     for await (const message of query({
       messages,
       systemPrompt,
@@ -1053,6 +1099,9 @@ export class QueryEngine {
         }
       }
     }
+    logForDiagnosticsNoPII('info', 'query_engine_query_loop_completed', {
+      duration_ms: Date.now() - queryLoopStart,
+    })
 
     // Stop hooks yield progress/attachment messages AFTER the assistant
     // response (via yield* handleStopHooks in query.ts). Since #23537 pushes
@@ -1086,6 +1135,12 @@ export class QueryEngine {
     }
 
     if (!isResultSuccessful(result, lastStopReason)) {
+      logForDiagnosticsNoPII('info', 'query_engine_submit_completed', {
+        duration_ms: Date.now() - startTime,
+        result_subtype: 'error_during_execution',
+        should_query: true,
+        num_turns: turnCount,
+      })
       yield {
         type: 'result',
         subtype: 'error_during_execution',
@@ -1138,6 +1193,13 @@ export class QueryEngine {
       isApiError = Boolean(result.isApiErrorMessage)
     }
 
+    logForDiagnosticsNoPII('info', 'query_engine_submit_completed', {
+      duration_ms: Date.now() - startTime,
+      result_subtype: 'success',
+      should_query: true,
+      is_error: isApiError,
+      num_turns: turnCount,
+    })
     yield {
       type: 'result',
       subtype: 'success',

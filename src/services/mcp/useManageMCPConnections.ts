@@ -10,6 +10,7 @@ import {
   fetchResourcesForClient,
   fetchToolsForClient,
   getMcpToolsCommandsAndResources,
+  getMcpClientFetchCacheKey,
   reconnectMcpServerImpl,
 } from './client.js'
 import type {
@@ -625,10 +626,10 @@ export function useManageMCPConnections(
                 )
                 try {
                   // Grab cached promise before invalidating to log previous count
-                  const previousToolsPromise = fetchToolsForClient.cache.get(
-                    client.name,
-                  )
-                  fetchToolsForClient.cache.delete(client.name)
+                  const fetchKey = getMcpClientFetchCacheKey(client)
+                  const previousToolsPromise =
+                    fetchToolsForClient.cache.get(fetchKey)
+                  fetchToolsForClient.cache.delete(fetchKey)
                   const newTools = await fetchToolsForClient(client)
                   const newCount = newTools.length
                   if (previousToolsPromise) {
@@ -678,7 +679,8 @@ export function useManageMCPConnections(
                 try {
                   // Skills come from resources, not prompts — don't invalidate their
                   // cache here. fetchMcpSkillsForClient returns the cached result.
-                  fetchCommandsForClient.cache.delete(client.name)
+                  const fetchKey = getMcpClientFetchCacheKey(client)
+                  fetchCommandsForClient.cache.delete(fetchKey)
                   const [mcpPrompts, mcpSkills] = await Promise.all([
                     fetchCommandsForClient(client),
                     feature('MCP_SKILLS')
@@ -714,14 +716,15 @@ export function useManageMCPConnections(
                   type: 'resources' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
                 })
                 try {
-                  fetchResourcesForClient.cache.delete(client.name)
+                  const fetchKey = getMcpClientFetchCacheKey(client)
+                  fetchResourcesForClient.cache.delete(fetchKey)
                   if (feature('MCP_SKILLS')) {
                     // Skills are discovered from resources, so refresh them too.
                     // Invalidate prompts cache as well: we write commands here,
                     // and a concurrent prompts/list_changed could otherwise have
                     // us stomp its fresh result with our cached stale one.
                     fetchMcpSkillsForClient!.cache.delete(client.name)
-                    fetchCommandsForClient.cache.delete(client.name)
+                    fetchCommandsForClient.cache.delete(fetchKey)
                     const [newResources, mcpPrompts, mcpSkills] =
                       await Promise.all([
                         fetchResourcesForClient(client),

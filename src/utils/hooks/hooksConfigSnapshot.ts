@@ -4,8 +4,31 @@ import { isRestrictedToPluginOnly } from '../settings/pluginOnlyPolicy.js'
 import * as settingsModule from '../settings/settings.js'
 import { resetSettingsCache } from '../settings/settingsCache.js'
 import type { HooksSettings } from '../settings/types.js'
+import { getSessionIdContext } from '../sessionIdContext.js'
 
 let initialHooksConfig: HooksSettings | null = null
+const sessionHooksConfig = new Map<string, HooksSettings | null>()
+
+function getSessionHooksConfigSlot(): string | undefined {
+  return getSessionIdContext()
+}
+
+function setHooksConfigSnapshot(config: HooksSettings | null): void {
+  const sessionId = getSessionHooksConfigSlot()
+  if (sessionId) {
+    sessionHooksConfig.set(sessionId, config)
+    return
+  }
+  initialHooksConfig = config
+}
+
+function getHooksConfigSnapshot(): HooksSettings | null | undefined {
+  const sessionId = getSessionHooksConfigSlot()
+  if (sessionId) {
+    return sessionHooksConfig.get(sessionId)
+  }
+  return initialHooksConfig
+}
 
 /**
  * Get hooks from allowed sources.
@@ -93,7 +116,7 @@ export function shouldDisableAllHooksIncludingManaged(): boolean {
  * Respects the allowManagedHooksOnly setting
  */
 export function captureHooksConfigSnapshot(): void {
-  initialHooksConfig = getHooksFromAllowedSources()
+  setHooksConfigSnapshot(getHooksFromAllowedSources())
 }
 
 /**
@@ -108,7 +131,7 @@ export function updateHooksConfigSnapshot(): void {
   // may not have been invalidated yet (e.g., if the file watcher's stability
   // threshold hasn't elapsed).
   resetSettingsCache()
-  initialHooksConfig = getHooksFromAllowedSources()
+  setHooksConfigSnapshot(getHooksFromAllowedSources())
 }
 
 /**
@@ -117,10 +140,11 @@ export function updateHooksConfigSnapshot(): void {
  * @returns The hooks configuration
  */
 export function getHooksConfigFromSnapshot(): HooksSettings | null {
-  if (initialHooksConfig === null) {
+  const config = getHooksConfigSnapshot()
+  if (config === undefined || config === null) {
     captureHooksConfigSnapshot()
   }
-  return initialHooksConfig
+  return getHooksConfigSnapshot() ?? null
 }
 
 /**
@@ -129,5 +153,10 @@ export function getHooksConfigFromSnapshot(): HooksSettings | null {
  */
 export function resetHooksConfigSnapshot(): void {
   initialHooksConfig = null
+  sessionHooksConfig.clear()
   resetSdkInitState()
+}
+
+export function discardSessionHooksConfigSnapshot(sessionId: string): void {
+  sessionHooksConfig.delete(sessionId)
 }

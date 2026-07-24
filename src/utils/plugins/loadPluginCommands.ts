@@ -674,7 +674,7 @@ export const getPluginCommands = memoize(async (): Promise<Command[]> => {
   const allCommands = perPluginCommands.flat()
   logForDebugging(`Total plugin commands loaded: ${allCommands.length}`)
   return allCommands
-})
+}, getSessionId)
 
 export function clearPluginCommandCache(): void {
   getPluginCommands.cache?.clear?.()
@@ -939,8 +939,13 @@ export const getPluginSkills = memoize(async (): Promise<Command[]> => {
   const allSkills = perPluginSkills.flat()
   logForDebugging(`Total plugin skills loaded: ${allSkills.length}`)
   return allSkills
-})
+}, getSessionId)
 
 export function clearPluginSkillsCache(): void {
   getPluginSkills.cache?.clear?.()
+}
+
+export function discardSessionPluginCommandCache(sessionId: string): void {
+  getPluginCommands.cache?.delete?.(sessionId)
+  getPluginSkills.cache?.delete?.(sessionId)
 }

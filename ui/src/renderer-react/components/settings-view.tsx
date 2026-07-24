@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
   Bot,
+  Brain,
   Check,
   FileText,
   BookOpen,
@@ -29,7 +30,7 @@ import { knowledgeAPI } from '@/knowledge/ipc/knowledge.ipc';
 import type { DesktopSettings } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'permission' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'permission' | 'memory' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -116,6 +117,14 @@ const DEFAULT_VOICE_SETTINGS: DesktopSettings['voice'] = {
   model: '',
 };
 
+const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
+  enabled: true,
+  compactEnabled: true,
+  minimumMessageTokensToInit: 10000,
+  minimumTokensBetweenUpdate: 5000,
+  toolCallsBetweenUpdates: 3,
+};
+
 const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
   {
     id: 'connection',
@@ -130,6 +139,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Shield,
     iconGradientClassName: 'from-violet-400 to-fuchsia-600',
     keywords: ['权限', 'permission', 'allow', 'turns', 'thinking', '轮次'],
+  },
+  {
+    id: 'memory',
+    title: '记忆',
+    icon: Brain,
+    iconGradientClassName: 'from-teal-400 to-cyan-600',
+    keywords: ['记忆', 'memory', 'session', 'compact', 'summary', '上下文', '压缩'],
   },
   {
     id: 'text-model',
@@ -406,6 +422,7 @@ export function SettingsView({
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     connection: null,
     permission: null,
+    memory: null,
     'text-model': null,
     'image-model': null,
     'voice-model': null,
@@ -426,6 +443,10 @@ export function SettingsView({
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
   const voiceDraft = settingsDraft?.voice || DEFAULT_VOICE_SETTINGS;
+  const sessionMemoryDraft = {
+    ...DEFAULT_SESSION_MEMORY_SETTINGS,
+    ...(settingsDraft?.sessionMemory || {}),
+  };
   const mineruUrl = settingsDraft?.mineru?.serverUrl || '';
   const [mineruTest, setMineruTest] = React.useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
 
@@ -469,6 +490,7 @@ export function SettingsView({
     settingsDraft?.remoteEnabled,
     settingsDraft?.remoteDirectCredentialMode,
     settingsDraft?.thinkingMode,
+    settingsDraft?.sessionMemory,
     buddyEnabled,
   ]);
 
@@ -500,6 +522,14 @@ export function SettingsView({
   const updateMineruSettings = (patch: Partial<NonNullable<DesktopSettings['mineru']>>) => {
     const nextMineru = { serverUrl: '', ...settingsDraft?.mineru, ...patch };
     updateSetting('mineru', nextMineru);
+  };
+
+  const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
+    const nextSessionMemory = {
+      ...sessionMemoryDraft,
+      ...patch,
+    };
+    updateSetting('sessionMemory', nextSessionMemory);
   };
 
   const handleTestMineru = async () => {
@@ -879,6 +909,100 @@ export function SettingsView({
                           />
                         </SettingsRow>
                       ) : null}
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'memory') ? (
+                  <SettingsSection
+                    id="memory"
+                    title="记忆"
+                    sectionRef={(element) => {
+                      sectionRefs.current.memory = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="会话记忆"
+                        description="为每个会话维护独立摘要，用于长会话压缩和恢复当前上下文。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(sessionMemoryDraft.enabled)}
+                            onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
+                            label="会话记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="压缩时使用会话记忆"
+                        description="开启后，/compact 和自动压缩会优先使用当前会话摘要。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(sessionMemoryDraft.compactEnabled)}
+                            onCheckedChange={(checked) => updateSessionMemorySettings({ compactEnabled: checked })}
+                            label="压缩时使用会话记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="初始化 token 阈值"
+                        description="会话上下文达到该规模后，才开始创建 session-memory/summary.md。调小后更容易测试。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1000000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.minimumMessageTokensToInit ?? DEFAULT_SESSION_MEMORY_SETTINGS.minimumMessageTokensToInit}
+                          onChange={(event) => {
+                            const value = Number.parseInt(event.target.value || '1', 10);
+                            updateSessionMemorySettings({ minimumMessageTokensToInit: value });
+                          }}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="更新 token 间隔"
+                        description="距离上次提取新增的上下文 token 达到该值后，允许再次更新会话记忆。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1000000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.minimumTokensBetweenUpdate ?? DEFAULT_SESSION_MEMORY_SETTINGS.minimumTokensBetweenUpdate}
+                          onChange={(event) => {
+                            const value = Number.parseInt(event.target.value || '1', 10);
+                            updateSessionMemorySettings({ minimumTokensBetweenUpdate: value });
+                          }}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="工具调用间隔"
+                        description="两次会话记忆更新之间至少需要的工具调用次数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.toolCallsBetweenUpdates ?? DEFAULT_SESSION_MEMORY_SETTINGS.toolCallsBetweenUpdates}
+                          onChange={(event) => {
+                            const value = Number.parseInt(event.target.value || '1', 10);
+                            updateSessionMemorySettings({ toolCallsBetweenUpdates: value });
+                          }}
+                        />
+                      </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>
                 ) : null}

@@ -1,6 +1,7 @@
 import memoize from 'lodash-es/memoize.js'
 import { basename } from 'path'
 import { isAutoMemoryEnabled } from '../../memdir/paths.js'
+import { getSessionId } from '../../bootstrap/state.js'
 import type { AgentColorName } from '../../tools/AgentTool/agentColorManager.js'
 import {
   type AgentMemoryScope,
@@ -341,8 +342,13 @@ export const loadPluginAgents = memoize(
     logForDebugging(`Total plugin agents loaded: ${allAgents.length}`)
     return allAgents
   },
+  getSessionId,
 )
 
 export function clearPluginAgentCache(): void {
   loadPluginAgents.cache?.clear?.()
+}
+
+export function discardSessionPluginAgentCache(sessionId: string): void {
+  loadPluginAgents.cache?.delete?.(sessionId)
 }

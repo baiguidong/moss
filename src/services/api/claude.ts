@@ -1796,6 +1796,12 @@ async function* queryModel(
         // awaits until response headers arrive, so this MUST be before the await
         // or the "Network TTFB" phase measurement is wrong.
         queryCheckpoint('query_api_request_sent')
+        logForDiagnosticsNoPII('info', 'query_api_request_sent', {
+          attempt: attemptNumber,
+          query_source:
+            options.querySource as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          is_subagent: Boolean(options.agentId),
+        })
         if (!options.agentId) {
           headlessProfilerCheckpoint('api_request_sent')
         }
@@ -1962,6 +1968,11 @@ async function* queryModel(
         if (isFirstChunk) {
           logForDebugging('Stream started - received first chunk')
           queryCheckpoint('query_first_chunk_received')
+          logForDiagnosticsNoPII('info', 'query_first_chunk_received', {
+            attempt: attemptNumber,
+            ttft_ms: Date.now() - start,
+            is_subagent: Boolean(options.agentId),
+          })
           if (!options.agentId) {
             headlessProfilerCheckpoint('first_chunk')
           }

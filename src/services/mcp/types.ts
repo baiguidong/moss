@@ -188,6 +188,7 @@ export type ConnectedMCPServer = {
   }
   instructions?: string
   config: ScopedMcpServerConfig
+  cacheSessionId?: string
   cleanup: () => Promise<void>
 }
 

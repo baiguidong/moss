@@ -80,6 +80,7 @@ import {
   resetSettingsCache,
   setPluginSettingsBase,
 } from '../settings/settingsCache.js'
+import { getSessionIdContext } from '../sessionIdContext.js'
 import type { HooksSettings } from '../settings/types.js'
 import { SettingsSchema } from '../settings/types.js'
 import { jsonParse, jsonStringify } from '../slowOperations.js'
@@ -3093,6 +3094,10 @@ export function mergePluginSources(sources: {
  *   - disabled: Array of disabled LoadedPlugin objects
  *   - errors: Array of loading errors with source information
  */
+function getPluginLoadCacheKey(): string {
+  return getSessionIdContext() ?? 'global'
+}
+
 export const loadAllPlugins = memoize(async (): Promise<PluginLoadResult> => {
   const result = await assemblePluginLoadResult(() =>
     loadPluginsFromMarketplaces({ cacheOnly: false }),
@@ -3103,9 +3108,12 @@ export const loadAllPlugins = memoize(async (): Promise<PluginLoadResult> => {
   // getAgentDefinitionsWithOverrides() — which now call
   // loadAllPluginsCacheOnly — see just-cloned plugins instead of reading
   // an installed_plugins.json that nothing writes mid-session.
-  loadAllPluginsCacheOnly.cache?.set(undefined, Promise.resolve(result))
+  loadAllPluginsCacheOnly.cache?.set(
+    getPluginLoadCacheKey(),
+    Promise.resolve(result),
+  )
   return result
-})
+}, getPluginLoadCacheKey)
 
 /**
  * Cache-only variant of loadAllPlugins.
@@ -3143,6 +3151,7 @@ export const loadAllPluginsCacheOnly = memoize(
       loadPluginsFromMarketplaces({ cacheOnly: true }),
     )
   },
+  getPluginLoadCacheKey,
 )
 
 /**
@@ -3240,6 +3249,11 @@ export function clearPluginCache(reason?: string): void {
   }
   clearPluginSettingsBase()
   // TODO: Clear installed plugins cache when installedPluginsManager is implemented
+}
+
+export function discardSessionPluginLoaderCache(sessionId: string): void {
+  loadAllPlugins.cache?.delete?.(sessionId)
+  loadAllPluginsCacheOnly.cache?.delete?.(sessionId)
 }
 
 /**

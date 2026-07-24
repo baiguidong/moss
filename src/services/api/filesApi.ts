@@ -16,6 +16,7 @@ import { getCwd } from '../../utils/cwd.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
+import { getSessionAnthropicBaseUrl } from '../../utils/sessionApiOverrides.js'
 import { sleep } from '../../utils/sleep.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -31,6 +32,7 @@ const ANTHROPIC_VERSION = '2023-06-01'
 // Falls back to public API for standalone usage
 function getDefaultApiBaseUrl(): string {
   return (
+    getSessionAnthropicBaseUrl() ||
     process.env.ANTHROPIC_BASE_URL ||
     process.env.CLAUDE_CODE_API_BASE_URL ||
     'https://api.anthropic.com'

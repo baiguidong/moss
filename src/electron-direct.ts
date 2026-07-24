@@ -31,13 +31,25 @@ import {
 } from './utils/worktree.js'
 import type { Message } from './types/message.js'
 
-import { bootstrapHeadless } from './bootstrap/headless.js'
-import { discardSessionCostState, switchSession } from './bootstrap/state.js'
+import {
+  bootstrapHeadless,
+  prewarmHeadlessGlobalInit as prewarmHeadlessGlobalInitBase,
+} from './bootstrap/headless.js'
+import {
+  discardSessionCostState,
+  discardSessionRegisteredHooks,
+  switchSession,
+} from './bootstrap/state.js'
 import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
 import { asSessionId, type SessionId } from './types/ids.js'
 import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './utils/sessionIdContext.js'
+import {
+  runWithSessionApiOverrides,
+  runWithSessionApiOverridesGenerator,
+  type SessionApiOverrides,
+} from './utils/sessionApiOverrides.js'
 import { updateSessionName } from './utils/concurrentSessions.js'
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
@@ -63,9 +75,28 @@ import {
   saveMode,
 } from './utils/sessionStorage.js'
 import { discardMicrocompactSessionState } from './services/compact/microCompact.js'
+import { discardSessionSettingsCache } from './utils/settings/settingsCache.js'
+import { discardSessionHooksConfigSnapshot } from './utils/hooks/hooksConfigSnapshot.js'
+import { discardSessionFileChangedWatcher } from './utils/hooks/fileChangedWatcher.js'
+import { discardSessionEnvCache } from './utils/sessionEnvironment.js'
+import { discardSessionPluginLoaderCache } from './utils/plugins/pluginLoader.js'
+import { discardSessionPluginCommandCache } from './utils/plugins/loadPluginCommands.js'
+import { discardSessionPluginHookCache } from './utils/plugins/loadPluginHooks.js'
+import { discardSessionPluginAgentCache } from './utils/plugins/loadPluginAgents.js'
+import { discardSessionLspServerManager } from './services/lsp/manager.js'
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 import { initBundledSkills } from './skills/bundled/index.js'
 import { initBuiltinPlugins } from './plugins/bundled/index.js'
+import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
+import {
+  headlessProfilerStartTurn,
+  logHeadlessProfilerTurn,
+} from './utils/headlessProfiler.js'
+import {
+  discardSessionMemoryRuntimeState,
+  initSessionMemory,
+} from './services/SessionMemory/sessionMemory.js'
+import { discardSessionMemoryState } from './services/SessionMemory/sessionMemoryUtils.js'
 
 // Bundled skills 必须在模块初始化阶段注册，不能等到 bootstrapHeadless()，
 // 因为 loadAllCommands 是 memoized 的，如果在 initBundledSkills() 执行之前
@@ -97,6 +128,20 @@ export {
   parseConnectUrl,
 } from './server/parseConnectUrl.js'
 export { runConnectHeadless } from './server/connectHeadless.js'
+
+let localAgentRuntimeInitialized = false
+
+function initLocalAgentRuntimeOnce(): void {
+  enableConfigs()
+  if (localAgentRuntimeInitialized) return
+  initSessionMemory()
+  localAgentRuntimeInitialized = true
+}
+
+export async function prewarmHeadlessGlobalInit(): Promise<void> {
+  initLocalAgentRuntimeOnce()
+  await prewarmHeadlessGlobalInitBase()
+}
 
 // 全局初始化，只执行一次
 export function getAuthDebugSnapshot() {
@@ -133,9 +178,9 @@ export interface ClaudeSessionOptions {
   cwd?: string
   /** 模型名，如 'claude-sonnet-4-6' */
   model?: string
-  /** 覆盖默认 API base URL（写入当前进程环境） */
+  /** 覆盖默认 API base URL（仅应用于当前 embedded session） */
   url?: string
-  /** 覆盖默认 API token（写入当前进程环境） */
+  /** 覆盖默认 API token（仅应用于当前 embedded session） */
   apiKey?: string
   /** 系统提示词（追加到默认之后） */
   appendSystemPrompt?: string
@@ -193,27 +238,22 @@ function normalizeAnthropicBaseUrl(value: string | undefined): string | undefine
   }
 }
 
-function applySessionApiOverrides(opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey'>): void {
-  // Direct-embed sessions share a process with the UI host, so provider
-  // overrides must be reflected into process.env before bootstrap/init.
-  if (Object.prototype.hasOwnProperty.call(opts, 'url')) {
-    const url = normalizeAnthropicBaseUrl(
-      typeof opts.url === 'string' ? opts.url : undefined,
-    )
-    if (url) {
-      process.env.ANTHROPIC_BASE_URL = url
-    } else {
-      delete process.env.ANTHROPIC_BASE_URL
-    }
+function buildSessionApiOverrides(
+  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey'>,
+): SessionApiOverrides | undefined {
+  const anthropicBaseUrl = normalizeAnthropicBaseUrl(
+    typeof opts.url === 'string' ? opts.url : undefined,
+  )
+  const anthropicAuthToken =
+    typeof opts.apiKey === 'string' ? opts.apiKey.trim() || undefined : undefined
+
+  if (!anthropicBaseUrl && !anthropicAuthToken) {
+    return undefined
   }
 
-  if (Object.prototype.hasOwnProperty.call(opts, 'apiKey')) {
-    const apiKey = typeof opts.apiKey === 'string' ? opts.apiKey.trim() : ''
-    if (apiKey) {
-      process.env.ANTHROPIC_AUTH_TOKEN = apiKey
-    } else {
-      delete process.env.ANTHROPIC_AUTH_TOKEN
-    }
+  return {
+    ...(anthropicBaseUrl ? { anthropicBaseUrl } : {}),
+    ...(anthropicAuthToken ? { anthropicAuthToken } : {}),
   }
 }
 
@@ -260,14 +300,15 @@ export class ClaudeSession {
   // into the per-send ALS context so getProjectRoot() resolves per-session.
   #projectRoot: string | undefined
   #storageActivated = false
+  #sessionApiOverrides: SessionApiOverrides | undefined
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
   }
 
   constructor(opts: ClaudeSessionOptions = {}) {
-    applySessionApiOverrides(opts)
     this.sessionId = opts.sessionId ?? randomUUID()
+    this.#sessionApiOverrides = buildSessionApiOverrides(opts)
     if (opts.onAppEvent) {
       // Register keyed by this session's id so concurrent sessions'
       // app events don't all route to the most recently created session.
@@ -351,6 +392,9 @@ export class ClaudeSession {
   /** 懒初始化：第一次 send() 时构建 QueryEngine */
   async #getEngine(): Promise<QueryEngine> {
     if (this.#engine) return this.#engine
+    initLocalAgentRuntimeOnce()
+    const engineStart = Date.now()
+    logForDiagnosticsNoPII('info', 'local_agent_engine_init_started')
 
     const {
       model,
@@ -373,17 +417,21 @@ export class ClaudeSession {
       this.#opts.cwd
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
+    const bootstrapStart = Date.now()
     const bootstrapResult = await bootstrapHeadless(cwd)
+    logForDiagnosticsNoPII('info', 'local_agent_engine_bootstrap_completed', {
+      duration_ms: Date.now() - bootstrapStart,
+      mcp_client_count: bootstrapResult.mcp.clients.length,
+      mcp_tool_count: bootstrapResult.mcp.tools.length,
+      mcp_command_count: bootstrapResult.mcp.commands.length,
+      agent_count: bootstrapResult.agents.length,
+      initial_message_count: bootstrapResult.initialMessages.length,
+    })
     const { initialMessages: bootstrapMessages, mcp, agents: customAgents } =
       bootstrapResult
     // send() already resolved #projectRoot from the session's base cwd;
     // keep it stable (project identity must not move to a worktree root).
     this.#projectRoot = this.#projectRoot ?? bootstrapResult.projectRoot
-
-    // bootstrap/init reapplies userSettings env from the configured home dir.
-    // Restore explicit session provider overrides afterward so they stay
-    // authoritative inside the shared desktop process.
-    applySessionApiOverrides({ url, apiKey })
 
     // 权限上下文
     const permissionContext = {
@@ -400,6 +448,7 @@ export class ClaudeSession {
     }
 
     // AppState store（每个 session 独立）
+    const storeStart = Date.now()
     this.#store = createStore(
       {
         ...getDefaultAppState(),
@@ -413,10 +462,17 @@ export class ClaudeSession {
       },
       () => {},
     )
+    logForDiagnosticsNoPII('info', 'local_agent_engine_store_created', {
+      duration_ms: Date.now() - storeStart,
+    })
     const store = this.#store
 
     if (resumeState) {
+      const resumeRestoreStart = Date.now()
       restoreSessionStateFromLog(resumeState, f => store.setState(f))
+      logForDiagnosticsNoPII('info', 'local_agent_engine_resume_restored', {
+        duration_ms: Date.now() - resumeRestoreStart,
+      })
     }
 
     // Attach all pending listeners to the newly created store
@@ -426,11 +482,21 @@ export class ClaudeSession {
     this.#pendingListeners = []
 
     // 工具列表
+    const toolsStart = Date.now()
     const tools = getTools(permissionContext)
+    logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {
+      duration_ms: Date.now() - toolsStart,
+      tool_count: tools.length,
+    })
 
     // 斜线命令（加载失败时降级为空列表）
     let commands: Awaited<ReturnType<typeof getCommands>> = []
+    const commandsStart = Date.now()
     try { commands = await getCommands(cwd) } catch {}
+    logForDiagnosticsNoPII('info', 'local_agent_engine_commands_loaded', {
+      duration_ms: Date.now() - commandsStart,
+      command_count: commands.length,
+    })
 
     // 文件状态缓存（100MB 上限）
     const fileCache = createFileStateCacheWithSizeLimit(1000, 100 * 1024 * 1024)
@@ -440,6 +506,7 @@ export class ClaudeSession {
       ? getCoordinatorSystemPrompt()
       : undefined
 
+    const queryEngineStart = Date.now()
     this.#engine = new QueryEngine({
       cwd,
       tools,
@@ -458,6 +525,12 @@ export class ClaudeSession {
       initialMessages: resumedMessages ?? bootstrapMessages,
       emitAppEvent: onAppEvent,
     })
+    logForDiagnosticsNoPII('info', 'local_agent_engine_query_engine_created', {
+      duration_ms: Date.now() - queryEngineStart,
+    })
+    logForDiagnosticsNoPII('info', 'local_agent_engine_init_completed', {
+      duration_ms: Date.now() - engineStart,
+    })
 
     return this.#engine
   }
@@ -473,9 +546,20 @@ export class ClaudeSession {
     if (this.#disposed) throw new Error('Session has been disposed')
 
     // 串行队列
+    const queueStart = Date.now()
     await new Promise<void>(resolve => {
       this.#queue.push(resolve)
       if (!this.#processing) this.#flush()
+    })
+    logForDiagnosticsNoPII('info', 'local_agent_send_queue_acquired', {
+      duration_ms: Date.now() - queueStart,
+    })
+    const sendStart = Date.now()
+    const hadEngineAtStart = this.#engine !== null
+    headlessProfilerStartTurn()
+    logForDiagnosticsNoPII('info', 'local_agent_send_started', {
+      had_engine: hadEngineAtStart,
+      coordinator_mode: this.#opts.coordinatorMode,
     })
 
     try {
@@ -490,7 +574,13 @@ export class ClaudeSession {
       // the first send's activation phase sees this session's root instead
       // of falling back to the process-global (last-bootstrapped) value.
       if (this.#projectRoot === undefined) {
-        this.#projectRoot = findGitRoot(this.#opts.cwd) || this.#opts.cwd
+        const projectRootStart = Date.now()
+        const gitRoot = findGitRoot(this.#opts.cwd)
+        this.#projectRoot = gitRoot || this.#opts.cwd
+        logForDiagnosticsNoPII('info', 'local_agent_send_project_root_resolved', {
+          duration_ms: Date.now() - projectRootStart,
+          is_git_repo: gitRoot !== null,
+        })
       }
 
       // Per-send ALS contexts are rebuilt from the session options, so a
@@ -502,19 +592,32 @@ export class ClaudeSession {
         getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
         this.#opts.cwd
 
-      await runWithCwdOverride(
-        effectiveCwd(),
-        () => runInSessionContext(() => this.#activateSessionStorage()),
-        this.#projectRoot,
+      const activateStorageStart = Date.now()
+      await runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+        runWithCwdOverride(
+          effectiveCwd(),
+          () => runInSessionContext(() => this.#activateSessionStorage()),
+          this.#projectRoot,
+        ),
       )
+      logForDiagnosticsNoPII('info', 'local_agent_send_storage_activated', {
+        duration_ms: Date.now() - activateStorageStart,
+      })
 
       // Re-evaluate after activation: resume may have just restored a
       // worktree into the slot, and the engine/turn contexts must run there.
-      const engine = await runWithCwdOverride(
-        effectiveCwd(),
-        () => runInSessionContext(() => this.#getEngine()),
-        this.#projectRoot,
+      const getEngineStart = Date.now()
+      const engine = await runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+        runWithCwdOverride(
+          effectiveCwd(),
+          () => runInSessionContext(() => this.#getEngine()),
+          this.#projectRoot,
+        ),
       )
+      logForDiagnosticsNoPII('info', 'local_agent_send_engine_ready', {
+        duration_ms: Date.now() - getEngineStart,
+        reused_engine: hadEngineAtStart,
+      })
 
       // Reset the engine's abort controller from any previous interrupt so
       // this turn can run cleanly.
@@ -559,9 +662,10 @@ export class ClaudeSession {
       }
 
       // QueryEngine.submitMessage 是 AsyncGenerator
-      yield* runWithCwdOverrideGenerator(effectiveCwd(), () =>
-        runWithSessionIdContextGenerator(sessionId, projectDir, () =>
-          (async function* () {
+      yield* runWithSessionApiOverridesGenerator(this.#sessionApiOverrides, () =>
+        runWithCwdOverrideGenerator(effectiveCwd(), () =>
+          runWithSessionIdContextGenerator(sessionId, projectDir, () =>
+            (async function* () {
             const runTurn = async function* (
               turnPrompt: string | Array<{ type: string; [k: string]: unknown }>,
               mode: 'prompt' | 'task-notification' | 'orphaned-permission',
@@ -638,11 +742,16 @@ export class ClaudeSession {
             if (finalResult) {
               yield finalResult
             }
-          })(),
+            })(),
+          ),
         ),
-        this.#projectRoot,
       )
     } finally {
+      logForDiagnosticsNoPII('info', 'local_agent_send_completed', {
+        duration_ms: Date.now() - sendStart,
+        reused_engine: hadEngineAtStart,
+      })
+      logHeadlessProfilerTurn()
       this.#processing = false
       this.#abortController = null
       this.#flush()
@@ -666,8 +775,20 @@ export class ClaudeSession {
     // Drop per-session state so long-lived desktop processes don't
     // accumulate records for disposed sessions.
     discardSessionStorageRecord(this.sessionId)
+    discardSessionMemoryRuntimeState(this.sessionId)
+    discardSessionMemoryState(this.sessionId)
     discardMicrocompactSessionState(this.sessionId)
     discardSessionCostState(this.sessionId)
+    discardSessionRegisteredHooks(this.sessionId)
+    discardSessionSettingsCache(this.sessionId)
+    discardSessionHooksConfigSnapshot(this.sessionId)
+    discardSessionFileChangedWatcher(this.sessionId)
+    discardSessionEnvCache(this.sessionId)
+    discardSessionPluginLoaderCache(this.sessionId)
+    discardSessionPluginCommandCache(this.sessionId)
+    discardSessionPluginHookCache(this.sessionId)
+    discardSessionPluginAgentCache(this.sessionId)
+    void discardSessionLspServerManager(this.sessionId)
     discardWorktreeSessionState(this.sessionId)
     this.#storageActivated = false
   }

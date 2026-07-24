@@ -89,6 +89,13 @@ export type DesktopSettings = {
   mineru?: {
     serverUrl: string;
   };
+  sessionMemory?: {
+    enabled?: boolean;
+    compactEnabled?: boolean;
+    minimumMessageTokensToInit?: number;
+    minimumTokensBetweenUpdate?: number;
+    toolCallsBetweenUpdates?: number;
+  };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
   // Legacy key name; stores either username or email for password login.

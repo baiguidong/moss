@@ -2,6 +2,7 @@ import { logForDebugging } from '../../utils/debug.js'
 import { isBareMode } from '../../utils/envUtils.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
+import { getSessionIdContext } from '../../utils/sessionIdContext.js'
 import {
   createLSPServerManager,
   type LSPServerManager,
@@ -13,31 +14,47 @@ import { registerLSPNotificationHandlers } from './passiveFeedback.js'
  */
 type InitializationState = 'not-started' | 'pending' | 'success' | 'failed'
 
-/**
- * Global singleton instance of the LSP server manager.
- * Initialized during Claude Code startup.
- */
-let lspManagerInstance: LSPServerManager | undefined
+type LspManagerSlot = {
+  managerInstance: LSPServerManager | undefined
+  initializationState: InitializationState
+  initializationError: Error | undefined
+  initializationGeneration: number
+  initializationPromise: Promise<void> | undefined
+}
 
-/**
- * Current initialization state
- */
-let initializationState: InitializationState = 'not-started'
+function createLspManagerSlot(): LspManagerSlot {
+  return {
+    managerInstance: undefined,
+    initializationState: 'not-started',
+    initializationError: undefined,
+    initializationGeneration: 0,
+    initializationPromise: undefined,
+  }
+}
 
-/**
- * Error from last initialization attempt, if any
- */
-let initializationError: Error | undefined
+const globalLspManagerSlot = createLspManagerSlot()
+const sessionLspManagerSlots = new Map<string, LspManagerSlot>()
 
-/**
- * Generation counter to prevent stale initialization promises from updating state
- */
-let initializationGeneration = 0
+function getLspManagerSlot(): LspManagerSlot {
+  const sessionId = getSessionIdContext()
+  if (!sessionId) {
+    return globalLspManagerSlot
+  }
+  let slot = sessionLspManagerSlots.get(sessionId)
+  if (!slot) {
+    slot = createLspManagerSlot()
+    sessionLspManagerSlots.set(sessionId, slot)
+  }
+  return slot
+}
 
-/**
- * Promise that resolves when initialization completes (success or failure)
- */
-let initializationPromise: Promise<void> | undefined
+function resetLspManagerSlot(slot: LspManagerSlot): void {
+  slot.managerInstance = undefined
+  slot.initializationState = 'not-started'
+  slot.initializationError = undefined
+  slot.initializationPromise = undefined
+  slot.initializationGeneration++
+}
 
 /**
  * Test-only sync reset. shutdownLspServerManager() is async and tears down
@@ -46,10 +63,11 @@ let initializationPromise: Promise<void> | undefined
  * tests on the same shard.
  */
 export function _resetLspManagerForTesting(): void {
-  initializationState = 'not-started'
-  initializationError = undefined
-  initializationPromise = undefined
-  initializationGeneration++
+  resetLspManagerSlot(globalLspManagerSlot)
+  for (const slot of sessionLspManagerSlots.values()) {
+    resetLspManagerSlot(slot)
+  }
+  sessionLspManagerSlots.clear()
 }
 
 /**
@@ -61,11 +79,12 @@ export function _resetLspManagerForTesting(): void {
  * distinguish between pending, failed, and not-started states.
  */
 export function getLspServerManager(): LSPServerManager | undefined {
+  const slot = getLspManagerSlot()
   // Don't return a broken instance if initialization failed
-  if (initializationState === 'failed') {
+  if (slot.initializationState === 'failed') {
     return undefined
   }
-  return lspManagerInstance
+  return slot.managerInstance
 }
 
 /**
@@ -78,16 +97,17 @@ export function getInitializationStatus():
   | { status: 'pending' }
   | { status: 'success' }
   | { status: 'failed'; error: Error } {
-  if (initializationState === 'failed') {
+  const slot = getLspManagerSlot()
+  if (slot.initializationState === 'failed') {
     return {
       status: 'failed',
-      error: initializationError || new Error('Initialization failed'),
+      error: slot.initializationError || new Error('Initialization failed'),
     }
   }
-  if (initializationState === 'not-started') {
+  if (slot.initializationState === 'not-started') {
     return { status: 'not-started' }
   }
-  if (initializationState === 'pending') {
+  if (slot.initializationState === 'pending') {
     return { status: 'pending' }
   }
   return { status: 'success' }
@@ -98,7 +118,7 @@ export function getInitializationStatus():
  * Backs LSPTool.isEnabled().
  */
 export function isLspConnected(): boolean {
-  if (initializationState === 'failed') return false
+  if (getLspManagerSlot().initializationState === 'failed') return false
   const manager = getLspServerManager()
   if (!manager) return false
   const servers = manager.getAllServers()
@@ -119,14 +139,18 @@ export function isLspConnected(): boolean {
  * @returns Promise that resolves when initialization is complete
  */
 export async function waitForInitialization(): Promise<void> {
+  const slot = getLspManagerSlot()
   // If already initialized or failed, return immediately
-  if (initializationState === 'success' || initializationState === 'failed') {
+  if (
+    slot.initializationState === 'success' ||
+    slot.initializationState === 'failed'
+  ) {
     return
   }
 
   // If pending and we have a promise, wait for it
-  if (initializationState === 'pending' && initializationPromise) {
-    await initializationPromise
+  if (slot.initializationState === 'pending' && slot.initializationPromise) {
+    await slot.initializationPromise
   }
 
   // If not started, return immediately (nothing to wait for)
@@ -149,9 +173,13 @@ export function initializeLspServerManager(): void {
     return
   }
   logForDebugging('[LSP MANAGER] initializeLspServerManager() called')
+  const slot = getLspManagerSlot()
 
   // Skip if already initialized or currently initializing
-  if (lspManagerInstance !== undefined && initializationState !== 'failed') {
+  if (
+    slot.managerInstance !== undefined &&
+    slot.initializationState !== 'failed'
+  ) {
     logForDebugging(
       '[LSP MANAGER] Already initialized or initializing, skipping',
     )
@@ -159,45 +187,45 @@ export function initializeLspServerManager(): void {
   }
 
   // Reset state for retry if previous initialization failed
-  if (initializationState === 'failed') {
-    lspManagerInstance = undefined
-    initializationError = undefined
+  if (slot.initializationState === 'failed') {
+    slot.managerInstance = undefined
+    slot.initializationError = undefined
   }
 
   // Create the manager instance and mark as pending
-  lspManagerInstance = createLSPServerManager()
-  initializationState = 'pending'
+  slot.managerInstance = createLSPServerManager()
+  slot.initializationState = 'pending'
   logForDebugging('[LSP MANAGER] Created manager instance, state=pending')
 
   // Increment generation to invalidate any pending initializations
-  const currentGeneration = ++initializationGeneration
+  const currentGeneration = ++slot.initializationGeneration
   logForDebugging(
     `[LSP MANAGER] Starting async initialization (generation ${currentGeneration})`,
   )
 
   // Start initialization asynchronously without blocking
   // Store the promise so callers can await it via waitForInitialization()
-  initializationPromise = lspManagerInstance
+  slot.initializationPromise = slot.managerInstance
     .initialize()
     .then(() => {
       // Only update state if this is still the current initialization
-      if (currentGeneration === initializationGeneration) {
-        initializationState = 'success'
+      if (currentGeneration === slot.initializationGeneration) {
+        slot.initializationState = 'success'
         logForDebugging('LSP server manager initialized successfully')
 
         // Register passive notification handlers for diagnostics
-        if (lspManagerInstance) {
-          registerLSPNotificationHandlers(lspManagerInstance)
+        if (slot.managerInstance) {
+          registerLSPNotificationHandlers(slot.managerInstance)
         }
       }
     })
     .catch((error: unknown) => {
       // Only update state if this is still the current initialization
-      if (currentGeneration === initializationGeneration) {
-        initializationState = 'failed'
-        initializationError = error as Error
+      if (currentGeneration === slot.initializationGeneration) {
+        slot.initializationState = 'failed'
+        slot.initializationError = error as Error
         // Clear the instance since it's not usable
-        lspManagerInstance = undefined
+        slot.managerInstance = undefined
 
         logError(error as Error)
         logForDebugging(
@@ -224,7 +252,8 @@ export function initializeLspServerManager(): void {
  * init: the generation counter invalidates the in-flight promise.
  */
 export function reinitializeLspServerManager(): void {
-  if (initializationState === 'not-started') {
+  const slot = getLspManagerSlot()
+  if (slot.initializationState === 'not-started') {
     // initializeLspServerManager() was never called (e.g. headless subcommand
     // path). Don't start it now.
     return
@@ -235,8 +264,8 @@ export function reinitializeLspServerManager(): void {
   // Best-effort shutdown of any running servers on the old instance so
   // /reload-plugins doesn't leak child processes. Fire-and-forget: the
   // primary use case (issue #15521) has 0 servers so this is usually a no-op.
-  if (lspManagerInstance) {
-    void lspManagerInstance.shutdown().catch(err => {
+  if (slot.managerInstance) {
+    void slot.managerInstance.shutdown().catch(err => {
       logForDebugging(
         `[LSP MANAGER] old instance shutdown during reinit failed: ${errorMessage(err)}`,
       )
@@ -245,9 +274,9 @@ export function reinitializeLspServerManager(): void {
 
   // Force the idempotence check in initializeLspServerManager() to fall
   // through. Generation counter handles invalidating any in-flight init.
-  lspManagerInstance = undefined
-  initializationState = 'not-started'
-  initializationError = undefined
+  slot.managerInstance = undefined
+  slot.initializationState = 'not-started'
+  slot.initializationError = undefined
 
   initializeLspServerManager()
 }
@@ -265,25 +294,58 @@ export function reinitializeLspServerManager(): void {
  * @returns Promise that resolves when shutdown completes (errors are swallowed)
  */
 export async function shutdownLspServerManager(): Promise<void> {
-  if (lspManagerInstance === undefined) {
+  const shutdownSlot = async (slot: LspManagerSlot): Promise<void> => {
+    if (slot.managerInstance === undefined) {
+      return
+    }
+
+    try {
+      await slot.managerInstance.shutdown()
+      logForDebugging('LSP server manager shut down successfully')
+    } catch (error: unknown) {
+      logError(error as Error)
+      logForDebugging(
+        `Failed to shutdown LSP server manager: ${errorMessage(error)}`,
+      )
+    } finally {
+      resetLspManagerSlot(slot)
+    }
+  }
+
+  const sessionId = getSessionIdContext()
+  if (sessionId) {
+    const slot = sessionLspManagerSlots.get(sessionId)
+    if (!slot) {
+      return
+    }
+    await shutdownSlot(slot)
+    sessionLspManagerSlots.delete(sessionId)
     return
   }
 
+  await shutdownSlot(globalLspManagerSlot)
+  for (const slot of sessionLspManagerSlots.values()) {
+    await shutdownSlot(slot)
+  }
+  sessionLspManagerSlots.clear()
+}
+
+export async function discardSessionLspServerManager(
+  sessionId: string,
+): Promise<void> {
+  const slot = sessionLspManagerSlots.get(sessionId)
+  if (!slot) {
+    return
+  }
   try {
-    await lspManagerInstance.shutdown()
-    logForDebugging('LSP server manager shut down successfully')
+    await slot.managerInstance?.shutdown()
   } catch (error: unknown) {
     logError(error as Error)
     logForDebugging(
-      `Failed to shutdown LSP server manager: ${errorMessage(error)}`,
+      `Failed to shutdown session LSP server manager: ${errorMessage(error)}`,
     )
   } finally {
-    // Always clear state even if shutdown failed
-    lspManagerInstance = undefined
-    initializationState = 'not-started'
-    initializationError = undefined
-    initializationPromise = undefined
-    // Increment generation to invalidate any pending initializations
-    initializationGeneration++
+    resetLspManagerSlot(slot)
+    sessionLspManagerSlots.delete(sessionId)
   }
 }

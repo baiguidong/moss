@@ -18,7 +18,10 @@ import type { HookCallbackMatcher } from 'src/types/hooks.js'
 import { randomUUID } from 'src/utils/crypto.js'
 import type { ModelSetting } from 'src/utils/model/model.js'
 import type { ModelStrings } from 'src/utils/model/modelStrings.js'
-import { getProjectRootOverride } from 'src/utils/cwdContext.js'
+import {
+  getOriginalCwdOverride,
+  getProjectRootOverride,
+} from 'src/utils/cwdContext.js'
 import {
   getSessionIdContext,
   getSessionProjectDirContext,
@@ -432,6 +435,35 @@ function getInitialState(): State {
 
 // AND ESPECIALLY HERE
 const STATE: State = getInitialState()
+const sessionRegisteredHooks = new Map<
+  string,
+  Partial<Record<HookEvent, RegisteredHookMatcher[]>>
+>()
+
+function getRegisteredHooksForCurrentSession():
+  | Partial<Record<HookEvent, RegisteredHookMatcher[]>>
+  | null {
+  const sessionId = getSessionIdContext()
+  if (sessionId) {
+    return sessionRegisteredHooks.get(sessionId) ?? null
+  }
+  return STATE.registeredHooks
+}
+
+function setRegisteredHooksForCurrentSession(
+  hooks: Partial<Record<HookEvent, RegisteredHookMatcher[]>> | null,
+): void {
+  const sessionId = getSessionIdContext()
+  if (sessionId) {
+    if (hooks) {
+      sessionRegisteredHooks.set(sessionId, hooks)
+    } else {
+      sessionRegisteredHooks.delete(sessionId)
+    }
+    return
+  }
+  STATE.registeredHooks = hooks
+}
 
 export function getSessionId(): SessionId {
   return getSessionIdContext() ?? STATE.sessionId
@@ -503,7 +535,7 @@ export function getSessionProjectDir(): string | null {
 }
 
 export function getOriginalCwd(): string {
-  return STATE.originalCwd
+  return getOriginalCwdOverride() ?? STATE.originalCwd
 }
 
 /**
@@ -646,6 +678,10 @@ const globalCostStateView: SessionCostState = new Proxy(
 /** Drop a disposed embedded session's cost slot. */
 export function discardSessionCostState(sessionId: string): void {
   sessionCostStates.delete(sessionId)
+}
+
+export function discardSessionRegisteredHooks(sessionId: string): void {
+  sessionRegisteredHooks.delete(sessionId)
 }
 
 export function addToTotalDurationState(
@@ -1538,37 +1574,40 @@ export function getInitJsonSchema(): Record<string, unknown> | null {
 export function registerHookCallbacks(
   hooks: Partial<Record<HookEvent, RegisteredHookMatcher[]>>,
 ): void {
-  if (!STATE.registeredHooks) {
-    STATE.registeredHooks = {}
+  let registeredHooks = getRegisteredHooksForCurrentSession()
+  if (!registeredHooks) {
+    registeredHooks = {}
+    setRegisteredHooksForCurrentSession(registeredHooks)
   }
 
   // `registerHookCallbacks` may be called multiple times, so we need to merge (not overwrite)
   for (const [event, matchers] of Object.entries(hooks)) {
     const eventKey = event as HookEvent
-    if (!STATE.registeredHooks[eventKey]) {
-      STATE.registeredHooks[eventKey] = []
+    if (!registeredHooks[eventKey]) {
+      registeredHooks[eventKey] = []
     }
-    STATE.registeredHooks[eventKey]!.push(...matchers)
+    registeredHooks[eventKey]!.push(...matchers)
   }
 }
 
 export function getRegisteredHooks(): Partial<
   Record<HookEvent, RegisteredHookMatcher[]>
 > | null {
-  return STATE.registeredHooks
+  return getRegisteredHooksForCurrentSession()
 }
 
 export function clearRegisteredHooks(): void {
-  STATE.registeredHooks = null
+  setRegisteredHooksForCurrentSession(null)
 }
 
 export function clearRegisteredPluginHooks(): void {
-  if (!STATE.registeredHooks) {
+  const registeredHooks = getRegisteredHooksForCurrentSession()
+  if (!registeredHooks) {
     return
   }
 
   const filtered: Partial<Record<HookEvent, RegisteredHookMatcher[]>> = {}
-  for (const [event, matchers] of Object.entries(STATE.registeredHooks)) {
+  for (const [event, matchers] of Object.entries(registeredHooks)) {
     // Keep only callback hooks (those without pluginRoot)
     const callbackHooks = matchers.filter(m => !('pluginRoot' in m))
     if (callbackHooks.length > 0) {
@@ -1576,12 +1615,15 @@ export function clearRegisteredPluginHooks(): void {
     }
   }
 
-  STATE.registeredHooks = Object.keys(filtered).length > 0 ? filtered : null
+  setRegisteredHooksForCurrentSession(
+    Object.keys(filtered).length > 0 ? filtered : null,
+  )
 }
 
 export function resetSdkInitState(): void {
   STATE.initJsonSchema = null
   STATE.registeredHooks = null
+  sessionRegisteredHooks.clear()
 }
 
 export function getPlanSlugCache(): Map<string, string> {

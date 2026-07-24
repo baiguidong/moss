@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, sep } from 'path'
 import { logEvent } from 'src/services/analytics/index.js'
+import { withAutoMemoryWriteLock } from '../../memdir/writeQueue.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { diagnosticTracker } from '../../services/diagnosticTracking.js'
 import { clearDeliveredDiagnosticsForFile } from '../../services/lsp/LSPDiagnosticRegistry.js'
@@ -439,138 +440,144 @@ export const FileEditTool = buildTool({
       )
     }
 
-    // 2. Load current state and confirm no changes since last read
-    // Please avoid async operations between here and writing to disk to preserve atomicity
-    const {
-      content: originalFileContents,
-      fileExists,
-      encoding,
-      lineEndings: endings,
-    } = readFileForEdit(absoluteFilePath)
+    return withAutoMemoryWriteLock(absoluteFilePath, async () => {
+      // 2. Load current state and confirm no changes since last read
+      // Please avoid async operations between here and writing to disk to preserve atomicity
+      const {
+        content: originalFileContents,
+        fileExists,
+        encoding,
+        lineEndings: endings,
+      } = readFileForEdit(absoluteFilePath)
 
-    if (fileExists) {
-      const lastWriteTime = getFileModificationTime(absoluteFilePath)
-      const lastRead = readFileState.get(absoluteFilePath)
-      if (!lastRead || lastWriteTime > lastRead.timestamp) {
-        // Timestamp indicates modification, but on Windows timestamps can change
-        // without content changes (cloud sync, antivirus, etc.). For full reads,
-        // compare content as a fallback to avoid false positives.
-        const isFullRead =
-          lastRead &&
-          lastRead.offset === undefined &&
-          lastRead.limit === undefined
-        const contentUnchanged =
-          isFullRead && originalFileContents === lastRead.content
-        if (!contentUnchanged) {
-          throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+      if (fileExists) {
+        const lastWriteTime = getFileModificationTime(absoluteFilePath)
+        const lastRead = readFileState.get(absoluteFilePath)
+        if (!lastRead || lastWriteTime > lastRead.timestamp) {
+          // Timestamp indicates modification, but on Windows timestamps can change
+          // without content changes (cloud sync, antivirus, etc.). For full reads,
+          // compare content as a fallback to avoid false positives.
+          const isFullRead =
+            lastRead &&
+            lastRead.offset === undefined &&
+            lastRead.limit === undefined
+          const contentUnchanged =
+            isFullRead && originalFileContents === lastRead.content
+          if (!contentUnchanged) {
+            throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+          }
         }
       }
-    }
 
-    // 3. Use findActualString to handle quote normalization
-    const actualOldString =
-      findActualString(originalFileContents, old_string) || old_string
+      // 3. Use findActualString to handle quote normalization
+      const actualOldString =
+        findActualString(originalFileContents, old_string) || old_string
 
-    // Preserve curly quotes in new_string when the file uses them
-    const actualNewString = preserveQuoteStyle(
-      old_string,
-      actualOldString,
-      new_string,
-    )
+      // Preserve curly quotes in new_string when the file uses them
+      const actualNewString = preserveQuoteStyle(
+        old_string,
+        actualOldString,
+        new_string,
+      )
 
-    // 4. Generate patch
-    const { patch, updatedFile } = getPatchForEdit({
-      filePath: absoluteFilePath,
-      fileContents: originalFileContents,
-      oldString: actualOldString,
-      newString: actualNewString,
-      replaceAll: replace_all,
-    })
+      // 4. Generate patch
+      const { patch, updatedFile } = getPatchForEdit({
+        filePath: absoluteFilePath,
+        fileContents: originalFileContents,
+        oldString: actualOldString,
+        newString: actualNewString,
+        replaceAll: replace_all,
+      })
 
-    // 5. Write to disk
-    writeTextContent(absoluteFilePath, updatedFile, encoding, endings)
+      // 5. Write to disk
+      writeTextContent(absoluteFilePath, updatedFile, encoding, endings)
 
-    // Notify LSP servers about file modification (didChange) and save (didSave)
-    const lspManager = getLspServerManager()
-    if (lspManager) {
-      // Clear previously delivered diagnostics so new ones will be shown
-      clearDeliveredDiagnosticsForFile(`file://${absoluteFilePath}`)
-      // didChange: Content has been modified
-      lspManager
-        .changeFile(absoluteFilePath, updatedFile)
-        .catch((err: Error) => {
+      // Notify LSP servers about file modification (didChange) and save (didSave)
+      const lspManager = getLspServerManager()
+      if (lspManager) {
+        // Clear previously delivered diagnostics so new ones will be shown
+        clearDeliveredDiagnosticsForFile(`file://${absoluteFilePath}`)
+        // didChange: Content has been modified
+        lspManager
+          .changeFile(absoluteFilePath, updatedFile)
+          .catch((err: Error) => {
+            logForDebugging(
+              `LSP: Failed to notify server of file change for ${absoluteFilePath}: ${err.message}`,
+            )
+            logError(err)
+          })
+        // didSave: File has been saved to disk (triggers diagnostics in TypeScript server)
+        lspManager.saveFile(absoluteFilePath).catch((err: Error) => {
           logForDebugging(
-            `LSP: Failed to notify server of file change for ${absoluteFilePath}: ${err.message}`,
+            `LSP: Failed to notify server of file save for ${absoluteFilePath}: ${err.message}`,
           )
           logError(err)
         })
-      // didSave: File has been saved to disk (triggers diagnostics in TypeScript server)
-      lspManager.saveFile(absoluteFilePath).catch((err: Error) => {
-        logForDebugging(
-          `LSP: Failed to notify server of file save for ${absoluteFilePath}: ${err.message}`,
-        )
-        logError(err)
+      }
+
+      // Notify VSCode about the file change for diff view
+      notifyVscodeFileUpdated(
+        absoluteFilePath,
+        originalFileContents,
+        updatedFile,
+      )
+
+      // 6. Update read timestamp, to invalidate stale writes
+      readFileState.set(absoluteFilePath, {
+        content: updatedFile,
+        timestamp: getFileModificationTime(absoluteFilePath),
+        offset: undefined,
+        limit: undefined,
       })
-    }
 
-    // Notify VSCode about the file change for diff view
-    notifyVscodeFileUpdated(absoluteFilePath, originalFileContents, updatedFile)
+      // 7. Log events
+      if (absoluteFilePath.endsWith(`${sep}CLAUDE.md`)) {
+        logEvent('tengu_write_claudemd', {})
+      }
+      countLinesChanged(patch)
 
-    // 6. Update read timestamp, to invalidate stale writes
-    readFileState.set(absoluteFilePath, {
-      content: updatedFile,
-      timestamp: getFileModificationTime(absoluteFilePath),
-      offset: undefined,
-      limit: undefined,
-    })
-
-    // 7. Log events
-    if (absoluteFilePath.endsWith(`${sep}CLAUDE.md`)) {
-      logEvent('tengu_write_claudemd', {})
-    }
-    countLinesChanged(patch)
-
-    logFileOperation({
-      operation: 'edit',
-      tool: 'FileEditTool',
-      filePath: absoluteFilePath,
-    })
-
-    logEvent('tengu_edit_string_lengths', {
-      oldStringBytes: Buffer.byteLength(old_string, 'utf8'),
-      newStringBytes: Buffer.byteLength(new_string, 'utf8'),
-      replaceAll: replace_all,
-    })
-
-    let gitDiff: ToolUseDiff | undefined
-    if (
-      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
-      getFeatureValue_CACHED_MAY_BE_STALE('tengu_quartz_lantern', false)
-    ) {
-      const startTime = Date.now()
-      const diff = await fetchSingleFileGitDiff(absoluteFilePath)
-      if (diff) gitDiff = diff
-      logEvent('tengu_tool_use_diff_computed', {
-        isEditTool: true,
-        durationMs: Date.now() - startTime,
-        hasDiff: !!diff,
+      logFileOperation({
+        operation: 'edit',
+        tool: 'FileEditTool',
+        filePath: absoluteFilePath,
       })
-    }
 
-    // 8. Yield result
-    const data = {
-      filePath: file_path,
-      oldString: actualOldString,
-      newString: new_string,
-      originalFile: originalFileContents,
-      structuredPatch: patch,
-      userModified: userModified ?? false,
-      replaceAll: replace_all,
-      ...(gitDiff && { gitDiff }),
-    }
-    return {
-      data,
-    }
+      logEvent('tengu_edit_string_lengths', {
+        oldStringBytes: Buffer.byteLength(old_string, 'utf8'),
+        newStringBytes: Buffer.byteLength(new_string, 'utf8'),
+        replaceAll: replace_all,
+      })
+
+      let gitDiff: ToolUseDiff | undefined
+      if (
+        isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
+        getFeatureValue_CACHED_MAY_BE_STALE('tengu_quartz_lantern', false)
+      ) {
+        const startTime = Date.now()
+        const diff = await fetchSingleFileGitDiff(absoluteFilePath)
+        if (diff) gitDiff = diff
+        logEvent('tengu_tool_use_diff_computed', {
+          isEditTool: true,
+          durationMs: Date.now() - startTime,
+          hasDiff: !!diff,
+        })
+      }
+
+      // 8. Yield result
+      const data = {
+        filePath: file_path,
+        oldString: actualOldString,
+        newString: new_string,
+        originalFile: originalFileContents,
+        structuredPatch: patch,
+        userModified: userModified ?? false,
+        replaceAll: replace_all,
+        ...(gitDiff && { gitDiff }),
+      }
+      return {
+        data,
+      }
+    })
   },
   mapToolResultToToolResultBlockParam(data: FileEditOutput, toolUseID) {
     const { filePath, userModified, replaceAll } = data
