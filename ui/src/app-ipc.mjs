@@ -25,6 +25,8 @@ async function generateImageWithProvider({
   prompt,
   aspect_ratio,
   subject_reference,
+  sourcePath,
+  operation = 'generate',
   apiKey,
   url,
   model,
@@ -35,10 +37,153 @@ async function generateImageWithProvider({
   const normalizedModel = typeof model === 'string' ? model.trim() : ''
 
   if (normalizedProvider === 'minimax') {
+    if (operation !== 'generate') {
+      throw new Error('MiniMax image editing is not supported by the Moss image handler yet')
+    }
     return generateMinimaxImage({ prompt, aspect_ratio, subject_reference, apiKey: normalizedApiKey, url: normalizedUrl, model: normalizedModel })
   }
 
+  if (normalizedProvider === 'openai') {
+    if (Array.isArray(subject_reference) && subject_reference.length > 0) {
+      throw new Error('OpenAI image generation does not support subject_reference; use image_edit with source_path for image-guided edits')
+    }
+    return generateOpenAIImage({
+      prompt,
+      aspect_ratio,
+      sourcePath,
+      operation,
+      apiKey: normalizedApiKey,
+      url: normalizedUrl,
+      model: normalizedModel,
+    })
+  }
+
   throw new Error(`Unsupported image provider: ${provider}`)
+}
+
+function openAIImageSizeFromAspectRatio(aspectRatio) {
+  switch (aspectRatio) {
+    case '16:9':
+    case '4:3':
+    case '3:2':
+    case '21:9':
+      return '1536x1024'
+    case '9:16':
+    case '3:4':
+    case '2:3':
+      return '1024x1536'
+    case '1:1':
+    default:
+      return '1024x1024'
+  }
+}
+
+function openAIImageEndpoint(url, operation) {
+  const segment = operation === 'edit' ? 'edits' : 'generations'
+  const oppositeSegment = operation === 'edit' ? 'generations' : 'edits'
+  const base = (url || 'https://api.openai.com/v1').replace(/\/+$/, '')
+  if (base.endsWith(`/images/${segment}`)) return base
+  if (base.endsWith(`/images/${oppositeSegment}`)) {
+    return `${base.slice(0, -oppositeSegment.length)}${segment}`
+  }
+  if (base.endsWith('/images')) return `${base}/${segment}`
+  return `${base}/images/${segment}`
+}
+
+async function extractOpenAIImageBase64(payload) {
+  if (payload?.error) {
+    const message =
+      typeof payload.error.message === 'string'
+        ? payload.error.message
+        : JSON.stringify(payload.error)
+    throw new Error(`OpenAI image request failed: ${message}`)
+  }
+
+  const data = Array.isArray(payload?.data) ? payload.data : []
+  const images = []
+  for (const item of data) {
+    if (typeof item?.b64_json === 'string' && item.b64_json) {
+      images.push(item.b64_json)
+      continue
+    }
+    if (typeof item?.url === 'string' && item.url) {
+      const response = await fetch(item.url)
+      if (!response.ok) {
+        const detail = await response.text()
+        throw new Error(`OpenAI image download failed: ${response.status} ${detail}`)
+      }
+      const bytes = Buffer.from(await response.arrayBuffer())
+      images.push(bytes.toString('base64'))
+    }
+  }
+
+  if (images.length === 0) {
+    throw new Error('OpenAI image request returned no images')
+  }
+
+  return images
+}
+
+async function generateOpenAIImage({ prompt, aspect_ratio, sourcePath, operation, apiKey, url, model }) {
+  if (!model) {
+    throw new Error('Image model is not configured in desktop settings (image.model)')
+  }
+  if (!apiKey) {
+    throw new Error('Image API key is not configured in desktop settings (image.apiKey)')
+  }
+
+  const size = openAIImageSizeFromAspectRatio(aspect_ratio || '1:1')
+  const endpoint = openAIImageEndpoint(url, operation)
+  let response
+
+  if (operation === 'edit') {
+    if (!sourcePath) {
+      throw new Error('sourcePath is required for OpenAI image editing')
+    }
+    const sourceBytes = await fsp.readFile(sourcePath)
+    const sourceExt = path.extname(sourcePath).toLowerCase()
+    const sourceMime =
+      sourceExt === '.jpg' || sourceExt === '.jpeg'
+        ? 'image/jpeg'
+        : sourceExt === '.webp'
+          ? 'image/webp'
+          : 'image/png'
+    const form = new FormData()
+    form.append('image', new Blob([sourceBytes], { type: sourceMime }), path.basename(sourcePath))
+    form.append('prompt', prompt)
+    form.append('model', model)
+    form.append('n', '1')
+    form.append('size', size)
+
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: form,
+    })
+  } else {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        n: 1,
+        size,
+      }),
+    })
+  }
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`OpenAI image request failed: ${response.status} ${detail}`)
+  }
+
+  return extractOpenAIImageBase64(await response.json())
 }
 
 async function generateMinimaxImage({ prompt, aspect_ratio, subject_reference, apiKey, url, model }) {
@@ -1027,6 +1172,7 @@ const MossAppEventTypes = [
   'app_extract_to_workspace',
   'app_get_versions',
   'image_generate',
+  'image_edit',
 ]
 
 /**
@@ -1043,6 +1189,9 @@ export function createMossAppEventHandler(windows, events, options = {}) {
   const getSettings = typeof options.getSettings === 'function'
     ? options.getSettings
     : () => ({})
+  const allowMediaRoot = typeof options.allowMediaRoot === 'function'
+    ? options.allowMediaRoot
+    : () => {}
 
   return async (event, sessionRecord = null) => {
     try {
@@ -1126,35 +1275,51 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           return { ok: true, versions }
         }
 
-        case 'image_generate': {
-          const { prompt, aspect_ratio, subject_reference, out_path } =
+        case 'image_generate':
+        case 'image_edit': {
+          const { prompt, aspect_ratio, subject_reference, source_path, out_path } =
             event.input || {}
 
           if (!prompt || typeof prompt !== 'string') {
-            throw new Error('image_generate requires a prompt string')
+            throw new Error(`${event.type} requires a prompt string`)
           }
           if (!sessionRecord?.workspace) {
-            throw new Error('Session context is required for image_generate')
+            throw new Error(`Session context is required for ${event.type}`)
           }
           if (sessionRecord.agentMode === 'remote-direct') {
             throw new Error('Remote Direct mode does not support writing generated images to the remote workspace yet.')
           }
           if (!out_path || typeof out_path !== 'string') {
-            throw new Error('image_generate requires out_path')
+            throw new Error(`${event.type} requires out_path`)
+          }
+          if (
+            event.type === 'image_edit' &&
+            (!source_path || typeof source_path !== 'string')
+          ) {
+            throw new Error('image_edit requires source_path')
           }
 
-          const resolvedOutputPath = path.resolve(sessionRecord.workspace, out_path)
-          const relativeOutputPath = path.relative(
-            sessionRecord.workspace,
-            resolvedOutputPath,
-          )
-          if (
-            relativeOutputPath.startsWith('..') ||
-            path.isAbsolute(relativeOutputPath)
-          ) {
-            throw new Error(
-              'image_generate out_path must stay inside the current session workspace',
-            )
+          const resolveWorkspaceFile = (inputPath, label) => {
+            const resolvedPath = path.resolve(sessionRecord.workspace, inputPath)
+            const relativePath = path.relative(sessionRecord.workspace, resolvedPath)
+            if (
+              relativePath.startsWith('..') ||
+              path.isAbsolute(relativePath)
+            ) {
+              throw new Error(
+                `${event.type} ${label} must stay inside the current session workspace`,
+              )
+            }
+            return resolvedPath
+          }
+
+          const resolvedOutputPath = resolveWorkspaceFile(out_path, 'out_path')
+          const resolvedSourcePath =
+            event.type === 'image_edit'
+              ? resolveWorkspaceFile(source_path, 'source_path')
+              : ''
+          if (event.type === 'image_edit' && !fs.existsSync(resolvedSourcePath)) {
+            throw new Error(`image_edit source_path does not exist: ${source_path}`)
           }
 
           const settings = getSettings() || {}
@@ -1173,11 +1338,14 @@ export function createMossAppEventHandler(windows, events, options = {}) {
             prompt,
             aspect_ratio,
             subject_reference,
+            sourcePath: resolvedSourcePath,
+            operation: event.type === 'image_edit' ? 'edit' : 'generate',
             apiKey: imageSettings.apiKey,
             url: imageSettings.url,
             model: imageSettings.model,
           })
 
+          allowMediaRoot(sessionRecord.workspace)
           await fsp.mkdir(path.dirname(resolvedOutputPath), { recursive: true })
 
           const parsedPath = path.parse(resolvedOutputPath)
@@ -1208,8 +1376,8 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           }
 
           const firstPath = filePaths[0]
-          const previewUrl = `moss-image://${encodeURI(firstPath)}`
-          const previewMarkdown = `![generated image](${previewUrl})`
+          const previewUrl = `moss-media://local/${encodeURIComponent(firstPath)}`
+          const previewMarkdown = `![${event.type === 'image_edit' ? 'edited' : 'generated'} image](${previewUrl})`
           const mediaType =
             mimeMap[path.extname(firstPath).toLowerCase()] || 'image/jpeg'
 

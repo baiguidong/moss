@@ -313,6 +313,7 @@ export type MossAppEvent =
   | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
   | { type: 'image_generate'; input: MossImageGenerateInput }
+  | { type: 'image_edit'; input: MossImageEditInput }
 
 export type MossAppBuildInput = {
   name: string
@@ -376,6 +377,13 @@ export type MossImageGenerateInput = {
     type: 'character'
     image_file: string
   }>
+  out_path: string
+}
+
+export type MossImageEditInput = {
+  prompt: string
+  source_path: string
+  aspect_ratio?: '1:1' | '16:9' | '4:3' | '3:2' | '2:3' | '3:4' | '9:16' | '21:9'
   out_path: string
 }
 

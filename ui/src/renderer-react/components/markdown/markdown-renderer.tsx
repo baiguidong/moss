@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
@@ -10,6 +10,13 @@ import { MermaidRenderer } from "@/components/chat/mermaid-renderer";
 
 function looksInline(code: string) {
   return !code.includes("\n");
+}
+
+function localImageUrlTransform(url: string) {
+  if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/.test(url)) {
+    return url;
+  }
+  return defaultUrlTransform(url);
 }
 
 export function MarkdownRenderer({
@@ -28,6 +35,7 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={localImageUrlTransform}
         components={{
           code: ({ className, children, ...props }: any) => {
             const code = String(children || "").replace(/\n$/, "");
@@ -95,7 +103,7 @@ export function MarkdownRenderer({
             <LocalImage
               src={typeof src === "string" ? src : ""}
               alt={alt}
-              className="my-3 rounded-2xl border border-border/60"
+              className="my-3 max-h-[420px] max-w-full rounded-2xl border border-border/60 object-contain"
             />
           ),
         }}

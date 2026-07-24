@@ -63,6 +63,17 @@ export type SideQueryOptions = {
   querySource: QuerySource
 }
 
+function assertSideQueryResponse(
+  response: BetaMessage | undefined,
+  querySource: QuerySource,
+): asserts response is BetaMessage {
+  if (!response || !Array.isArray(response.content) || !response.usage) {
+    throw new Error(
+      `The API returned an empty response with no content for side query "${querySource}".`,
+    )
+  }
+}
+
 /**
  * Extract text from first user message for fingerprint computation.
  */
@@ -196,6 +207,7 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
     },
     { signal },
   )
+  assertSideQueryResponse(response, opts.querySource)
 
   const requestId =
     (response as { _request_id?: string | null })._request_id ?? undefined

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * 构建脚本：读取 features.js，生成 bun build 命令
- * 用法：bun run build.js [--target=node]
+ * 用法：bun run build.js [--target=node|--target=electron-direct]
  */
 import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
@@ -26,7 +26,15 @@ function sanitizePaths(outfile) {
   }
 }
 
-const onlyNode = process.argv.includes('--target=node')
+const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
+const target = targetArg ? targetArg.slice('--target='.length) : 'all'
+const onlyNode = target === 'node'
+const onlyElectronDirect = target === 'electron-direct'
+
+if (!['all', 'node', 'electron-direct'].includes(target)) {
+  console.error(`Unsupported build target: ${target}`)
+  process.exit(1)
+}
 
 const enabledFeatures = Object.entries({ ...RECOMMENDED, ...EXPERIMENTAL, ...NATIVE_REQUIRED, ...INTERNAL_ONLY })
   .filter(([, v]) => v)
@@ -73,7 +81,7 @@ function ensureAdminBuildDependencies() {
 
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
-if (!onlyNode) {
+if (!onlyNode && !onlyElectronDirect) {
   // bin/cli.js（bun target，生产用）
   build('bin/cli.js', [
     'build', 'src/entrypoints/cli.tsx',
@@ -84,15 +92,17 @@ if (!onlyNode) {
   ])
 }
 
-// bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
-build('bin/cli-node.js', [
-  'build', 'src/entrypoints/cli.tsx',
-  '--outfile=bin/cli-node.js',
-  '--target=node',
-  ...aliases,
-  ...defines,
-])
-sanitizePaths('bin/cli-node.js')
+if (!onlyElectronDirect) {
+  // bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
+  build('bin/cli-node.js', [
+    'build', 'src/entrypoints/cli.tsx',
+    '--outfile=bin/cli-node.js',
+    '--target=node',
+    ...aliases,
+    ...defines,
+  ])
+  sanitizePaths('bin/cli-node.js')
+}
 
 // ui/electron-direct.mjs（供 Electron 桌面端打包）
 build('ui/electron-direct.mjs', [
@@ -104,6 +114,10 @@ build('ui/electron-direct.mjs', [
   ...defines,
 ])
 sanitizePaths('ui/electron-direct.mjs')
+
+if (onlyElectronDirect) {
+  process.exit(0)
+}
 
 // admin/dist（由 moss server 直接挂载到 /admin）
 ensureAdminBuildDependencies()

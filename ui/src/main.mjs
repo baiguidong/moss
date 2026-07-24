@@ -43,6 +43,7 @@ import {
   registerTranscribeIpcHandlers,
   registerMediaScheme,
   installMediaProtocol,
+  allowMediaRoot,
 } from './filemanage/main/index.mjs';
 import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
 import { initComicDramaDatabase, registerComicDramaIpcHandlers } from './comicdrama/main/index.mjs';
@@ -199,6 +200,9 @@ fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
 fs.mkdirSync(USER_TMP_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
+allowMediaRoot(MOSS_PROJECTS_DIR);
+allowMediaRoot(MOSS_WORKSPACES_DIR);
+allowMediaRoot(USER_TMP_DIR);
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 const persistSessionStmt = (() => {
   // Migration: add columns if table exists but columns are missing
@@ -2087,7 +2091,9 @@ function initializeBundledApps() {
       .forEach(entry => {
         const srcPath = path.join(bundledAppsDir, entry.name);
         const dstPath = path.join(MOSS_APPS_DIR, entry.name);
-        fs.copyFileSync(srcPath, dstPath, fs.constants.COPYFILE_EXCL);
+        if (!fs.existsSync(dstPath)) {
+          fs.copyFileSync(srcPath, dstPath);
+        }
       });
   } catch (err) {
     console.warn('[app-init] Failed to initialize bundled apps:', err.message);
@@ -3225,6 +3231,7 @@ const mossAppEventHandler = createMossAppEventHandler(
   },
   {
     getSettings: () => desktopSettings,
+    allowMediaRoot,
   },
 )
 

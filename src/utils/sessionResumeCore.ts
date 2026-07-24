@@ -13,6 +13,7 @@ import {
   type TurnInterruptionState,
 } from './conversationRecovery.js'
 import type { FileHistorySnapshot } from './fileHistory.js'
+import { sanitizeMessagesForResume } from './sessionResumeSanitizer.js'
 import type { ContentReplacementRecord } from './toolResultStorage.js'
 
 type LoadedResumeConversation = {
@@ -85,10 +86,12 @@ export function prepareLoadedSessionResume(
   }
 
   const forkSession = options.forkSession ?? false
+  const sanitized = sanitizeMessagesForResume(result.messages)
+  const messages = sanitized.messages
   const projectDir = result.fullPath ? dirname(result.fullPath) : null
   const cwd =
     result.worktreeSession?.worktreePath ??
-    inferResumeCwd(result.messages) ??
+    inferResumeCwd(messages) ??
     projectDir
 
   return {
@@ -99,8 +102,10 @@ export function prepareLoadedSessionResume(
     projectDir,
     cwd,
     fullPath: result.fullPath,
-    messages: result.messages,
-    turnInterruptionState: result.turnInterruptionState,
+    messages,
+    turnInterruptionState: sanitized.removedApiError
+      ? { kind: 'none' }
+      : result.turnInterruptionState,
     fileHistorySnapshots: result.fileHistorySnapshots,
     attributionSnapshots: result.attributionSnapshots,
     contentReplacements: result.contentReplacements,

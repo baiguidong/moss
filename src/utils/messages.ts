@@ -36,6 +36,7 @@ import {
   getPdfTooLargeErrorMessage,
   getRequestTooLargeErrorMessage,
 } from '../services/api/errors.js'
+import { logForDiagnosticsNoPII } from './diagLogs.js'
 import type { AnyObject, Progress } from '../Tool.js'
 import { isConnectorTextBlock } from '../types/connectorText.js'
 import type {
@@ -1489,6 +1490,21 @@ export function reorderAttachmentsForAPI(messages: Message[]): Message[] {
   // Scan from the bottom up
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!
+    if (
+      (message.type === 'user' || message.type === 'assistant') &&
+      !(
+        typeof message.message === 'object' &&
+        message.message !== null &&
+        'content' in message.message
+      )
+    ) {
+      logForDiagnosticsNoPII('error', 'normalize_messages_invalid_message', {
+        index: i,
+        type: message.type,
+        has_uuid: typeof message.uuid === 'string',
+      })
+      continue
+    }
 
     if (message.type === 'attachment') {
       // Collect attachment to bubble up

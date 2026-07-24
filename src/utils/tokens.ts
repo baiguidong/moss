@@ -9,6 +9,7 @@ export function getTokenUsage(message: Message): Usage | undefined {
     message?.type === 'assistant' &&
     'usage' in message.message &&
     !(
+      Array.isArray(message.message.content) &&
       message.message.content[0]?.type === 'text' &&
       SYNTHETIC_MESSAGES.has(message.message.content[0].text)
     ) &&

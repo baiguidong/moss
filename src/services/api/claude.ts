@@ -2196,6 +2196,8 @@ async function* queryModel(
             const m: AssistantMessage = {
               message: {
                 ...partialMessage,
+                usage,
+                stop_reason: stopReason,
                 content: normalizeContentFromAPI(
                   [contentBlock] as BetaContentBlock[],
                   tools,
@@ -2574,9 +2576,11 @@ async function* queryModel(
 
       assertNonStreamingFallbackResult(result)
 
+      const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
       const m: AssistantMessage = {
         message: {
           ...result,
+          usage: normalizedResultUsage,
           content: normalizeContentFromAPI(
             result.content,
             tools,
@@ -2673,9 +2677,11 @@ async function* queryModel(
 
         assertNonStreamingFallbackResult(result)
 
+        const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
         const m: AssistantMessage = {
           message: {
             ...result,
+            usage: normalizedResultUsage,
             content: normalizeContentFromAPI(
               result.content,
               tools,
@@ -2933,42 +2939,43 @@ export function updateUsage(
   usage: Readonly<NonNullableUsage>,
   partUsage: BetaMessageDeltaUsage | undefined,
 ): NonNullableUsage {
+  const previous = normalizeUsageFields(usage)
   if (!partUsage) {
-    return { ...usage }
+    return previous
   }
   return {
     input_tokens:
       partUsage.input_tokens !== null && partUsage.input_tokens > 0
         ? partUsage.input_tokens
-        : usage.input_tokens,
+        : previous.input_tokens,
     cache_creation_input_tokens:
       partUsage.cache_creation_input_tokens !== null &&
       partUsage.cache_creation_input_tokens > 0
         ? partUsage.cache_creation_input_tokens
-        : usage.cache_creation_input_tokens,
+        : previous.cache_creation_input_tokens,
     cache_read_input_tokens:
       partUsage.cache_read_input_tokens !== null &&
       partUsage.cache_read_input_tokens > 0
         ? partUsage.cache_read_input_tokens
-        : usage.cache_read_input_tokens,
-    output_tokens: partUsage.output_tokens ?? usage.output_tokens,
+        : previous.cache_read_input_tokens,
+    output_tokens: partUsage.output_tokens ?? previous.output_tokens,
     server_tool_use: {
       web_search_requests:
         partUsage.server_tool_use?.web_search_requests ??
-        usage.server_tool_use.web_search_requests,
+        previous.server_tool_use.web_search_requests,
       web_fetch_requests:
         partUsage.server_tool_use?.web_fetch_requests ??
-        usage.server_tool_use.web_fetch_requests,
+        previous.server_tool_use.web_fetch_requests,
     },
-    service_tier: usage.service_tier,
+    service_tier: previous.service_tier,
     cache_creation: {
       // SDK type BetaMessageDeltaUsage is missing cache_creation, but it's real!
       ephemeral_1h_input_tokens:
         (partUsage as BetaUsage).cache_creation?.ephemeral_1h_input_tokens ??
-        usage.cache_creation.ephemeral_1h_input_tokens,
+        previous.cache_creation.ephemeral_1h_input_tokens,
       ephemeral_5m_input_tokens:
         (partUsage as BetaUsage).cache_creation?.ephemeral_5m_input_tokens ??
-        usage.cache_creation.ephemeral_5m_input_tokens,
+        previous.cache_creation.ephemeral_5m_input_tokens,
     },
     // cache_deleted_input_tokens: returned by the API when cache editing
     // deletes KV cache content, but not in SDK types. Kept off NonNullableUsage
@@ -2984,13 +2991,45 @@ export function updateUsage(
               .cache_deleted_input_tokens > 0
               ? (partUsage as unknown as { cache_deleted_input_tokens: number })
                   .cache_deleted_input_tokens
-              : ((usage as unknown as { cache_deleted_input_tokens?: number })
+              : ((previous as unknown as { cache_deleted_input_tokens?: number })
                   .cache_deleted_input_tokens ?? 0),
         }
       : {}),
-    inference_geo: usage.inference_geo,
-    iterations: partUsage.iterations ?? usage.iterations,
-    speed: (partUsage as BetaUsage).speed ?? usage.speed,
+    inference_geo: previous.inference_geo,
+    iterations: partUsage.iterations ?? previous.iterations,
+    speed: (partUsage as BetaUsage).speed ?? previous.speed,
+  }
+}
+
+function normalizeUsageFields(
+  usage: Readonly<Partial<NonNullableUsage>> | undefined,
+): NonNullableUsage {
+  return {
+    input_tokens: usage?.input_tokens ?? 0,
+    cache_creation_input_tokens: usage?.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: usage?.cache_read_input_tokens ?? 0,
+    output_tokens: usage?.output_tokens ?? 0,
+    server_tool_use: {
+      web_search_requests: usage?.server_tool_use?.web_search_requests ?? 0,
+      web_fetch_requests: usage?.server_tool_use?.web_fetch_requests ?? 0,
+    },
+    service_tier: usage?.service_tier ?? 'standard',
+    cache_creation: {
+      ephemeral_1h_input_tokens:
+        usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+      ephemeral_5m_input_tokens:
+        usage?.cache_creation?.ephemeral_5m_input_tokens ?? 0,
+    },
+    ...(feature('CACHED_MICROCOMPACT')
+      ? {
+          cache_deleted_input_tokens:
+            (usage as unknown as { cache_deleted_input_tokens?: number })
+              ?.cache_deleted_input_tokens ?? 0,
+        }
+      : {}),
+    inference_geo: usage?.inference_geo ?? '',
+    iterations: usage?.iterations ?? [],
+    speed: usage?.speed ?? 'standard',
   }
 }
 
@@ -3002,30 +3041,31 @@ export function accumulateUsage(
   totalUsage: Readonly<NonNullableUsage>,
   messageUsage: Readonly<NonNullableUsage>,
 ): NonNullableUsage {
+  const total = normalizeUsageFields(totalUsage)
+  const message = normalizeUsageFields(messageUsage)
   return {
-    input_tokens: totalUsage.input_tokens + messageUsage.input_tokens,
+    input_tokens: total.input_tokens + message.input_tokens,
     cache_creation_input_tokens:
-      totalUsage.cache_creation_input_tokens +
-      messageUsage.cache_creation_input_tokens,
+      total.cache_creation_input_tokens + message.cache_creation_input_tokens,
     cache_read_input_tokens:
-      totalUsage.cache_read_input_tokens + messageUsage.cache_read_input_tokens,
-    output_tokens: totalUsage.output_tokens + messageUsage.output_tokens,
+      total.cache_read_input_tokens + message.cache_read_input_tokens,
+    output_tokens: total.output_tokens + message.output_tokens,
     server_tool_use: {
       web_search_requests:
-        totalUsage.server_tool_use.web_search_requests +
-        messageUsage.server_tool_use.web_search_requests,
+        total.server_tool_use.web_search_requests +
+        message.server_tool_use.web_search_requests,
       web_fetch_requests:
-        totalUsage.server_tool_use.web_fetch_requests +
-        messageUsage.server_tool_use.web_fetch_requests,
+        total.server_tool_use.web_fetch_requests +
+        message.server_tool_use.web_fetch_requests,
     },
-    service_tier: messageUsage.service_tier, // Use the most recent service tier
+    service_tier: message.service_tier, // Use the most recent service tier
     cache_creation: {
       ephemeral_1h_input_tokens:
-        totalUsage.cache_creation.ephemeral_1h_input_tokens +
-        messageUsage.cache_creation.ephemeral_1h_input_tokens,
+        total.cache_creation.ephemeral_1h_input_tokens +
+        message.cache_creation.ephemeral_1h_input_tokens,
       ephemeral_5m_input_tokens:
-        totalUsage.cache_creation.ephemeral_5m_input_tokens +
-        messageUsage.cache_creation.ephemeral_5m_input_tokens,
+        total.cache_creation.ephemeral_5m_input_tokens +
+        message.cache_creation.ephemeral_5m_input_tokens,
     },
     // See comment in updateUsage — field is not on NonNullableUsage to keep
     // the string out of external builds.
@@ -3039,9 +3079,9 @@ export function accumulateUsage(
             ).cache_deleted_input_tokens ?? 0),
         }
       : {}),
-    inference_geo: messageUsage.inference_geo, // Use the most recent
-    iterations: messageUsage.iterations, // Use the most recent
-    speed: messageUsage.speed, // Use the most recent
+    inference_geo: message.inference_geo, // Use the most recent
+    iterations: message.iterations, // Use the most recent
+    speed: message.speed, // Use the most recent
   }
 }
 

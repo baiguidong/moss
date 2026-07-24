@@ -84,6 +84,16 @@ const thinkingModeOptions: Array<{
   },
 ]
 
+const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  minimax: 'https://api.minimaxi.com/v1/image_generation',
+  openai: 'https://api.openai.com/v1',
+}
+
+const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  minimax: 'image-01',
+  openai: 'gpt-image-1',
+}
+
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
     bypassPermissions: settings.bypassPermissions,
@@ -585,21 +595,34 @@ export default function SystemSettingsPage() {
           title="图片模型"
           description="设置图片生成的供应商、接口地址和默认模型。"
         >
-          <SettingField label="图片厂商" description="当前与桌面端保持一致，只支持 MiniMax。">
+          <SettingField label="图片厂商" description="支持 MiniMax 和 OpenAI 兼容图片接口。">
             <Select
               value={draft.image.provider}
               onValueChange={(value) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        image: {
-                          ...current.image,
-                          provider: value,
-                        },
-                      }
-                    : current,
-                )
+                setDraft(current => {
+                  if (!current) return current
+                  const previousDefaultUrl =
+                    IMAGE_PROVIDER_DEFAULT_URLS[current.image.provider]
+                  const previousDefaultModel =
+                    IMAGE_PROVIDER_DEFAULT_MODELS[current.image.provider]
+                  return {
+                    ...current,
+                    image: {
+                      ...current.image,
+                      provider: value,
+                      url:
+                        !current.image.url ||
+                        current.image.url === previousDefaultUrl
+                          ? IMAGE_PROVIDER_DEFAULT_URLS[value] ?? current.image.url
+                          : current.image.url,
+                      model:
+                        !current.image.model ||
+                        current.image.model === previousDefaultModel
+                          ? IMAGE_PROVIDER_DEFAULT_MODELS[value] ?? current.image.model
+                          : current.image.model,
+                    },
+                  }
+                })
               }
             >
               <SelectTrigger>
@@ -607,6 +630,7 @@ export default function SystemSettingsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="minimax">MiniMax</SelectItem>
+                <SelectItem value="openai">OpenAI</SelectItem>
               </SelectContent>
             </Select>
           </SettingField>
@@ -627,7 +651,7 @@ export default function SystemSettingsPage() {
                     : current,
                 )
               }
-              placeholder="https://api.minimaxi.com/v1/image_generation"
+              placeholder={IMAGE_PROVIDER_DEFAULT_URLS[draft.image.provider] ?? 'https://api.openai.com/v1'}
             />
           </SettingField>
 
@@ -685,7 +709,7 @@ export default function SystemSettingsPage() {
                     : current,
                 )
               }
-              placeholder="image-01"
+              placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[draft.image.provider] ?? 'gpt-image-1'}
             />
           </SettingField>
         </SettingSection>

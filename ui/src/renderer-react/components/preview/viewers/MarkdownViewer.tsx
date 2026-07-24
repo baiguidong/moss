@@ -1,9 +1,16 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { LocalImage } from "@/components/local-image";
+
+function localImageUrlTransform(url: string) {
+  if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/.test(url)) {
+    return url;
+  }
+  return defaultUrlTransform(url);
+}
 
 export function MarkdownViewer({ content }: { content: string }) {
   return (
@@ -12,12 +19,13 @@ export function MarkdownViewer({ content }: { content: string }) {
         <div className="space-y-4 [&_a]:text-primary [&_code]:rounded-md [&_code]:bg-muted/80 [&_code]:px-1.5 [&_code]:py-0.5 [&_img]:rounded-xl [&_img]:border [&_img]:border-border/70 [&_img]:shadow-sm [&_li]:ml-5 [&_pre]:overflow-auto [&_pre]:rounded-2xl [&_pre]:border [&_pre]:border-border/70 [&_pre]:bg-card/80 [&_pre]:p-4">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            urlTransform={localImageUrlTransform}
             components={{
               img: ({ src, alt }) => (
                 <LocalImage
                   src={typeof src === "string" ? src : ""}
                   alt={alt}
-                  className="rounded-xl border border-border/70 shadow-sm"
+                  className="max-h-[520px] max-w-full rounded-xl border border-border/70 object-contain shadow-sm"
                 />
               ),
             }}

@@ -110,6 +110,16 @@ const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
   model: '',
 };
 
+const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  minimax: 'https://api.minimaxi.com/v1/image_generation',
+  openai: 'https://api.openai.com/v1',
+};
+
+const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  minimax: 'image-01',
+  openai: 'gpt-image-1',
+};
+
 const DEFAULT_VOICE_SETTINGS: DesktopSettings['voice'] = {
   provider: 'minimax',
   baseURL: '',
@@ -517,6 +527,24 @@ export function SettingsView({
     };
     setSettingsDraft((current) => (current ? { ...current, image: nextImage } : current));
     void autoSaveImageSettings(nextImage);
+  };
+
+  const updateImageProvider = (provider: string) => {
+    const previousDefaultUrl = IMAGE_PROVIDER_DEFAULT_URLS[imageDraft.provider ?? 'minimax'];
+    const nextDefaultUrl = IMAGE_PROVIDER_DEFAULT_URLS[provider] ?? '';
+    const previousDefaultModel = IMAGE_PROVIDER_DEFAULT_MODELS[imageDraft.provider ?? 'minimax'];
+    const nextDefaultModel = IMAGE_PROVIDER_DEFAULT_MODELS[provider] ?? '';
+    updateImageSettings({
+      provider,
+      url:
+        !imageDraft.url || imageDraft.url === previousDefaultUrl
+          ? nextDefaultUrl
+          : imageDraft.url,
+      model:
+        !imageDraft.model || imageDraft.model === previousDefaultModel
+          ? nextDefaultModel
+          : imageDraft.model,
+    });
   };
 
   const updateMineruSettings = (patch: Partial<NonNullable<DesktopSettings['mineru']>>) => {
@@ -1083,9 +1111,10 @@ export function SettingsView({
                         <select
                           className={SELECT_CLASS_NAME}
                           value={imageDraft.provider ?? 'minimax'}
-                          onChange={(event) => updateImageSettings({ provider: event.target.value })}
+                          onChange={(event) => updateImageProvider(event.target.value)}
                         >
                           <option value="minimax">MiniMax</option>
+                          <option value="openai">OpenAI</option>
                         </select>
                       </SettingsRow>
 
@@ -1097,7 +1126,7 @@ export function SettingsView({
                           className={FIELD_CLASS_NAME}
                           value={imageDraft.url || ''}
                           onChange={(event) => updateImageSettings({ url: event.target.value })}
-                          placeholder="https://api.minimaxi.com/v1/image_generation"
+                          placeholder={IMAGE_PROVIDER_DEFAULT_URLS[imageDraft.provider ?? 'minimax'] ?? 'https://api.openai.com/v1'}
                         />
                       </SettingsRow>
 
@@ -1134,7 +1163,7 @@ export function SettingsView({
                           className={FIELD_CLASS_NAME}
                           value={imageDraft.model || ''}
                           onChange={(event) => updateImageSettings({ model: event.target.value })}
-                          placeholder="image-01"
+                          placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[imageDraft.provider ?? 'minimax'] ?? 'gpt-image-1'}
                         />
                       </SettingsRow>
                     </SettingsGroup>

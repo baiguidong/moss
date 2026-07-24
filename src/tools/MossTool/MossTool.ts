@@ -22,7 +22,7 @@ const subjectReferenceSchema = z.strictObject({
 })
 
 const mossActionSchema = z.strictObject({
-  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'image_generate']),
+  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'image_generate', 'image_edit']),
   name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -39,7 +39,8 @@ const mossActionSchema = z.strictObject({
   prompt: z.string().optional().describe('Prompt for image generation. Required for image_generate.'),
   aspect_ratio: imageAspectRatioSchema.optional().describe('Aspect ratio for generated images. Optional for image_generate; defaults in the main process if omitted.'),
   subject_reference: z.array(subjectReferenceSchema).optional().describe('Reference images for image generation. Optional for image_generate.'),
-  out_path: z.string().optional().describe('Relative output path inside the current session workspace for generated image output. Required for image_generate.'),
+  source_path: z.string().optional().describe('Relative source image path inside the current session workspace. Required for image_edit.'),
+  out_path: z.string().optional().describe('Relative output path inside the current session workspace for image output. Required for image_generate and image_edit.'),
 })
 
 type MossActionInput = z.infer<typeof mossActionSchema>
@@ -75,7 +76,8 @@ export const MossTool = buildTool({
 - app_update: Update an existing app from filePath or metadata/html fields.
 - app_extract_to_workspace: Extract an installed app into the current session workspace as app-meta.json plus index.html.
 - app_get_versions: Get version history of an app
-- image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace`
+- image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace
+- image_edit: Edit a workspace image via the main-process image handler and write the result into the current session workspace`
   },
   async prompt() {
     return `Use moss tool to manage desktop apps.
@@ -89,8 +91,9 @@ Parameter requirements:
 - app_extract_to_workspace requires \`name\`
 - app_get_versions requires \`name\`
 - image_generate requires \`prompt\` and \`out_path\`; \`out_path\` must be a relative path inside the current session workspace, for example \`images/hero.png\`; optionally accepts \`aspect_ratio\` and \`subject_reference\`
-- image_generate returns image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
-- After image_generate succeeds, if you reference the generated image in markdown, prefer \`previewMarkdown\` or use \`moss-image:///absolute/path/to/file.png\` directly`
+- image_edit requires \`prompt\`, \`source_path\`, and \`out_path\`; both paths must be relative paths inside the current session workspace
+- image_generate and image_edit return image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
+- After image generation or editing succeeds, if you reference the image in markdown, prefer \`previewMarkdown\` or use \`moss-media://local/<encoded-absolute-path>\` directly`
   },
   get inputSchema() {
     return mossActionSchema
@@ -254,6 +257,27 @@ Parameter requirements:
         }
         break
 
+      case 'image_edit':
+        if (!input.prompt) {
+          return { data: { ok: false, error: 'prompt is required for image_edit' } }
+        }
+        if (!input.source_path) {
+          return { data: { ok: false, error: 'source_path is required for image_edit' } }
+        }
+        if (!input.out_path) {
+          return { data: { ok: false, error: 'out_path is required for image_edit' } }
+        }
+        event = {
+          type: 'image_edit',
+          input: {
+            prompt: input.prompt,
+            source_path: input.source_path,
+            aspect_ratio: input.aspect_ratio,
+            out_path: input.out_path,
+          },
+        }
+        break
+
       default:
         return { data: { ok: false, error: `Unknown action: ${input.action}` } }
     }
@@ -270,6 +294,10 @@ Parameter requirements:
           versions: result.versions,
           filePath: result.filePath,
           filePaths: result.filePaths,
+          fileKind: result.fileKind,
+          previewUrl: result.previewUrl,
+          previewMarkdown: result.previewMarkdown,
+          mediaType: result.mediaType,
           metadataPath: result.metadataPath,
           htmlPath: result.htmlPath,
         },

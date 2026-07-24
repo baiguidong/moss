@@ -8,6 +8,7 @@ import http from 'node:http';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(uiRoot, '..');
 const viteBin = path.join(uiRoot, 'node_modules', 'vite', 'bin', 'vite.js');
 const electronBin = path.join(uiRoot, 'node_modules', 'electron', 'cli.js');
 const watchedFiles = [
@@ -35,6 +36,26 @@ function spawnChild(command, args, extraEnv = {}) {
       ...process.env,
       ...extraEnv,
     },
+  });
+}
+
+function buildElectronDirect() {
+  console.log('Building electron-direct.mjs');
+  const result = spawn('bun', ['run', 'build:electron-direct'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  return new Promise((resolve, reject) => {
+    result.on('error', reject);
+    result.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`electron-direct build exited with code ${code}`));
+    });
   });
 }
 
@@ -117,6 +138,8 @@ function shutdown(viteProcess) {
 }
 
 async function main() {
+  await buildElectronDirect();
+
   let vitePort;
   try {
     vitePort = findAvailablePort(5173, 30);

@@ -5,6 +5,7 @@ import {
   Activity,
   Bot,
   Check,
+  ChevronDown,
   ChevronRight,
   Clock,
   Copy,

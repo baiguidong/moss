@@ -38,6 +38,7 @@ import type {
   TombstoneMessage,
 } from './types/message.js'
 import { logError } from './utils/log.js'
+import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
 import {
   PROMPT_TOO_LONG_ERROR_MESSAGE,
   isPromptTooLongMessage,
@@ -162,6 +163,22 @@ function* yieldMissingToolResultBlocks(
  * rules, ye will be punished with an entire day of debugging and hair pulling.
  */
 const MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
+
+function sanitizeStackForDiagnostics(stack: string | undefined): string | undefined {
+  if (!stack) {
+    return undefined
+  }
+  return stack
+    .split('\n')
+    .slice(0, 8)
+    .map(line =>
+      line
+        .replace(/file:\/\/\/.*\/([^/]+\.mjs:\d+:\d+)/g, '$1')
+        .replace(/\((?:file:\/\/)?\/.*\/([^/]+:\d+:\d+)\)/g, '($1)')
+        .replace(/(?:file:\/\/)?\/.*\/(src\/[^:)]+:\d+:\d+)/g, '$1'),
+    )
+    .join('\n')
+}
 
 /**
  * Is this a max_output_tokens error message? If so, the streaming loop should
@@ -956,10 +973,21 @@ async function* queryLoop(
       logError(error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
+      logForDiagnosticsNoPII('error', 'query_model_error_caught', {
+        error_name: error instanceof Error ? error.name : typeof error,
+        error_message: errorMessage,
+        stack_head:
+          error instanceof Error
+            ? sanitizeStackForDiagnostics(error.stack)
+            : undefined,
+        message_types: messagesForQuery.map(message => message.type).join(','),
+      })
       logEvent('tengu_query_error', {
         assistantMessages: assistantMessages.length,
         toolUses: assistantMessages.flatMap(_ =>
-          _.message.content.filter(content => content.type === 'tool_use'),
+          Array.isArray(_.message?.content)
+            ? _.message.content.filter(content => content.type === 'tool_use')
+            : [],
         ).length,
 
         queryChainId: queryChainIdForAnalytics,
