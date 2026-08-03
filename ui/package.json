@@ -110,6 +110,8 @@
     }
   },
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lint": "^6.9.7",
     "@fontsource-variable/material-symbols-outlined": "^5.2.42",
     "@radix-ui/react-avatar": "1.1.11",
     "@radix-ui/react-collapsible": "1.1.12",
@@ -122,6 +124,7 @@
     "@xmldom/xmldom": "^0.9.9",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "codemirror": "^6.0.2",
     "dompurify": "^3.4.1",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3",
@@ -133,6 +136,7 @@
     "mermaid": "^11.14.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-json-view-lite": "^2.5.0",
     "react-markdown": "^9.0.1",
     "react-resizable-panels": "^2.1.7",
     "react-syntax-highlighter": "^16.1.1",

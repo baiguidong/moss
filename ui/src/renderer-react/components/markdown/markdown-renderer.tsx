@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { MermaidRenderer } from "@/components/chat/mermaid-renderer";
+import { JsonRenderer } from "@/components/chat/json-renderer";
 
 function looksInline(code: string) {
   return !code.includes("\n");
@@ -55,6 +56,10 @@ export function MarkdownRenderer({
 
             if (language === "mermaid") {
               return <MermaidRenderer code={code} />;
+            }
+
+            if (language === "json") {
+              return <JsonRenderer code={code} />;
             }
 
             return <CodeViewer code={code} language={language} maxLines={24} showLineNumbers />;

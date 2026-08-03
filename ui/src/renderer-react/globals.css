@@ -284,3 +284,86 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+@layer components {
+  .moss-json-tree {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--color-code-fg);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .moss-json-row {
+    min-height: 1.45rem;
+  }
+
+  .moss-json-children {
+    margin: 0;
+    padding: 0 0 0 1.25rem;
+    border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  }
+
+  .moss-json-label {
+    margin-right: 0.35rem;
+    color: var(--color-code-property);
+    font-weight: 600;
+  }
+
+  .moss-json-label-clickable {
+    cursor: pointer;
+  }
+
+  .moss-json-string {
+    color: var(--color-code-string);
+  }
+
+  .moss-json-number {
+    color: var(--color-code-number);
+  }
+
+  .moss-json-boolean {
+    color: var(--color-code-keyword);
+  }
+
+  .moss-json-null {
+    color: var(--color-code-comment);
+    font-style: italic;
+  }
+
+  .moss-json-other {
+    color: var(--color-code-fg);
+  }
+
+  .moss-json-punctuation {
+    color: var(--color-code-punctuation);
+  }
+
+  .moss-json-expander {
+    display: inline-flex;
+    width: 1rem;
+    margin-right: 0.25rem;
+    cursor: pointer;
+    user-select: none;
+    color: var(--color-text-tertiary);
+  }
+
+  .moss-json-expand::after {
+    content: '▸';
+  }
+
+  .moss-json-collapse::after {
+    content: '▾';
+  }
+
+  .moss-json-collapsed {
+    margin: 0 0.25rem;
+    cursor: pointer;
+    color: var(--color-text-tertiary);
+  }
+
+  .moss-json-collapsed::after {
+    content: '…';
+  }
+}
