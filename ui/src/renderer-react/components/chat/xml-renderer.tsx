@@ -7,12 +7,12 @@ import { EditorState } from "@codemirror/state";
 import { html } from "@codemirror/lang-html";
 import { JsonView, type NodeExpandingEvent } from "react-json-view-lite";
 import formatXml from "xml-formatter";
-import { Code2, Download, FileCode2, Maximize2, X } from "lucide-react";
+import { Code2, Download, Eye, FileCode2, ImageIcon, Maximize2, X } from "lucide-react";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { CopyButton } from "@/components/shared/copy-button";
 
 type XmlKind = "xml" | "html" | "svg";
-type XmlMode = "tree" | "source";
+type XmlMode = "tree" | "source" | "preview";
 type ParsedXml = { ok: true; tree: unknown; formatted: string } | { ok: false; error: string; formatted: string };
 
 function getMime(kind: XmlKind) {
@@ -23,6 +23,10 @@ function getMime(kind: XmlKind) {
 
 function getLabel(kind: XmlKind) {
   return kind.toUpperCase();
+}
+
+function canPreview(kind: XmlKind) {
+  return kind === "html" || kind === "svg";
 }
 
 function formatStructuredXml(code: string, kind: XmlKind) {
@@ -178,6 +182,36 @@ function XmlCodeMirror({ value, dark }: { value: string; dark: boolean }) {
   return <div ref={hostRef} className="h-full min-h-[360px] overflow-hidden" />;
 }
 
+function XmlPreviewPane({ code, kind, expanded = false }: { code: string; kind: XmlKind; expanded?: boolean }) {
+  if (kind === "svg") {
+    const src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(code)}`;
+    return (
+      <div className="flex h-full min-h-[260px] items-center justify-center overflow-auto bg-white p-4 dark:bg-[#020617]">
+        <img
+          src={src}
+          alt="SVG preview"
+          className={expanded ? "max-h-none max-w-none" : "max-h-[380px] max-w-full"}
+        />
+      </div>
+    );
+  }
+
+  if (kind === "html") {
+    return (
+      <div className="h-full min-h-[320px] bg-white dark:bg-[#020617]">
+        <iframe
+          title="HTML preview"
+          srcDoc={code}
+          sandbox=""
+          className="h-full min-h-[320px] w-full border-0 bg-white"
+        />
+      </div>
+    );
+  }
+
+  return null;
+}
+
 type XmlState = {
   mode: XmlMode;
   sourceMode: "formatted" | "raw";
@@ -280,6 +314,7 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
   const label = getLabel(kind);
   const activeInlineCode = sourceMode === "raw" ? code : parsed.formatted;
   const parseError = "error" in parsed ? parsed.error : null;
+  const previewable = canPreview(kind);
 
   React.useEffect(() => {
     const sync = () => {
@@ -351,6 +386,18 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
                 {mode === "tree" ? "源码" : "树形"}
               </button>
             ) : null}
+            {previewable ? (
+              <button
+                type="button"
+                onClick={() => setXmlState(stateKey, { mode: "preview" })}
+                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label={`${label} 预览`}
+                title={`${label} 预览`}
+              >
+                {kind === "svg" ? <ImageIcon className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                预览
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -374,7 +421,7 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
             </button>
             <button
               type="button"
-              onClick={() => setActiveXmlPreview(stateKey, activeInlineCode, parsed.ok && mode === "tree" ? "tree" : "source")}
+              onClick={() => setActiveXmlPreview(stateKey, activeInlineCode, mode)}
               className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Maximize2 className="h-3 w-3" />
@@ -388,7 +435,11 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
             {parseError}
           </div>
         ) : null}
-        {parsed.ok && mode === "tree" ? (
+        {previewable && mode === "preview" ? (
+          <div className="max-h-[420px] overflow-auto border-t border-border/60">
+            <XmlPreviewPane code={activeInlineCode} kind={kind} />
+          </div>
+        ) : parsed.ok && mode === "tree" ? (
           <div className="max-h-[420px] overflow-auto bg-white p-3 text-left dark:bg-[#020617]">
             <JsonView
               data={parsed.tree}
@@ -427,8 +478,14 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
               <div className="mx-4 flex max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
                   <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground">
-                    {modalMode === "tree" ? <FileCode2 className="h-4 w-4" /> : <Code2 className="h-4 w-4" />}
-                    {modalMode === "tree" ? `${label} Tree` : `${label} Source`}
+                    {modalMode === "tree" ? (
+                      <FileCode2 className="h-4 w-4" />
+                    ) : modalMode === "preview" ? (
+                      kind === "svg" ? <ImageIcon className="h-4 w-4" /> : <Eye className="h-4 w-4" />
+                    ) : (
+                      <Code2 className="h-4 w-4" />
+                    )}
+                    {modalMode === "tree" ? `${label} Tree` : modalMode === "preview" ? `${label} Preview` : `${label} Source`}
                   </div>
                   <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                     {parsed.ok ? (
@@ -438,6 +495,15 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
                         className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                       >
                         {modalMode === "tree" ? "源码" : "树形"}
+                      </button>
+                    ) : null}
+                    {previewable ? (
+                      <button
+                        type="button"
+                        onClick={() => setActiveXmlPreviewMode("preview")}
+                        className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        预览
                       </button>
                     ) : null}
                     {parsed.ok && modalMode === "tree" ? (
@@ -494,7 +560,9 @@ export function XmlRenderer({ code, blockId, kind = "xml" }: { code: string; blo
                   </div>
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto">
-                  {parsed.ok && modalMode === "tree" ? (
+                  {previewable && modalMode === "preview" ? (
+                    <XmlPreviewPane code={modalCode} kind={kind} expanded />
+                  ) : parsed.ok && modalMode === "tree" ? (
                     <div className="min-h-[360px] bg-white p-4 text-left dark:bg-[#020617]">
                       <JsonView
                         data={parsed.tree}
