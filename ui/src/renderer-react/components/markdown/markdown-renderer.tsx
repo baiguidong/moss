@@ -13,7 +13,7 @@ function looksInline(code: string) {
 }
 
 function localImageUrlTransform(url: string) {
-  if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/.test(url)) {
+  if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/.test(url) || /^[~～][\\/]/.test(url)) {
     return url;
   }
   return defaultUrlTransform(url);

@@ -295,6 +295,7 @@ declare global {
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;
         getFileMetadata: (path: string) => Promise<{ size: number } | null>;
+        getHomeDir: () => Promise<string>;
         createTempFile: (fileName: string) => Promise<string | null>;
         writeFile: (path: string, data: number[]) => Promise<boolean>;
         saveImageToWorkspace: (sessionId: string, fileName: string, data: number[]) => Promise<{ path: string } | { error: string }>;

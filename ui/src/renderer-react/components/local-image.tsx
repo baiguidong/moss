@@ -57,9 +57,16 @@ function decodeLocalUrlPath(src: string, protocol: string): string | null {
   }
 }
 
-function resolveImagePath(src: string, workspace: string): string | null {
+function resolveImagePath(src: string, workspace: string, homeDir: string): string | null {
   const trimmed = String(src || "").trim();
   if (!trimmed) return null;
+
+  if (/^[~～]($|[\\/])/.test(trimmed)) {
+    if (!homeDir) return null;
+    const relativeToHome = trimmed.slice(1).replace(/^[\\/]/, "");
+    const sep = homeDir.endsWith("/") ? "" : "/";
+    return relativeToHome ? `${homeDir}${sep}${relativeToHome}` : homeDir;
+  }
 
   if (trimmed.startsWith("file://")) {
     return decodeFileUrlToPath(trimmed);
@@ -112,9 +119,25 @@ export function LocalImage({
 }) {
   const workspace = useWorkspacePath();
   const originalSrc = String(src || "").trim();
+  const [homeDir, setHomeDir] = React.useState("");
+  const usesHomePath = /^[~～]($|[\\/])/.test(originalSrc);
+
+  React.useEffect(() => {
+    if (!usesHomePath || homeDir) return;
+    let cancelled = false;
+    void window.agentDesktop.fs.getHomeDir().then((dir) => {
+      if (!cancelled && dir) setHomeDir(dir);
+    }).catch(() => {
+      // leave unresolved; the failure state below will render
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [homeDir, usesHomePath]);
+
   const localPath = React.useMemo(
-    () => resolveImagePath(originalSrc, workspace),
-    [originalSrc, workspace],
+    () => resolveImagePath(originalSrc, workspace, homeDir),
+    [homeDir, originalSrc, workspace],
   );
   const [resolvedSrc, setResolvedSrc] = React.useState<string | null>(
     localPath ? imageDataUrlCache.get(localPath) || null : originalSrc || null,
@@ -135,6 +158,12 @@ export function LocalImage({
     }
 
     if (!localPath) {
+      if (usesHomePath && !homeDir) {
+        setResolvedSrc(null);
+        return () => {
+          cancelled = true;
+        };
+      }
       // If originalSrc looks like a bare filename (no protocol, no leading /),
       // it's a relative path that we couldn't resolve — show failure state.
       if (originalSrc && !/^(data:|blob:|https?:|moss-media:)/i.test(originalSrc)) {
@@ -186,7 +215,7 @@ export function LocalImage({
     return () => {
       cancelled = true;
     };
-  }, [originalSrc, localPath]);
+  }, [homeDir, originalSrc, localPath, usesHomePath]);
 
   React.useEffect(() => {
     if (!previewOpen) {

@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   fs: {
     getImageBase64: (path) => ipcRenderer.invoke('fs:getImageBase64', { path }),
     getFileMetadata: (path) => ipcRenderer.invoke('fs:getFileMetadata', { path }),
+    getHomeDir: () => ipcRenderer.invoke('fs:getHomeDir'),
     createTempFile: (fileName) => ipcRenderer.invoke('fs:createTempFile', { fileName }),
     writeFile: (path, data) => ipcRenderer.invoke('fs:writeFile', { path, data }),
     getAppIcon: () => ipcRenderer.invoke('fs:getAppIcon'),
