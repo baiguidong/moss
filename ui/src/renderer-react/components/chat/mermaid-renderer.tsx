@@ -245,29 +245,30 @@ async function downloadSvgAsPng(svg: string, filename = "mermaid-diagram.png") {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function MermaidRenderer({ code }: { code: string }) {
+export function MermaidRenderer({ code, blockId }: { code: string; blockId?: string }) {
+  const stateKey = blockId || code;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const previewPanelRef = React.useRef<HTMLDivElement>(null);
   const previewCanvasRef = React.useRef<HTMLDivElement>(null);
   const initialEntry = mermaidRenderCache.get(code);
-  const initialInlineState = getInlineState(code);
+  const initialInlineState = getInlineState(stateKey);
   const [svg, setSvg] = React.useState<string | null>(initialEntry?.status === "success" ? initialEntry.svg : null);
   const [error, setError] = React.useState<string | null>(initialEntry?.status === "error" ? initialEntry.error : null);
   const [inlineZoom, setInlineZoom] = React.useState(initialInlineState.zoom);
   const [inlineMode, setInlineMode] = React.useState<"diagram" | "code">(initialInlineState.mode);
-  const [previewOpen, setPreviewOpen] = React.useState(() => activePreviewCode === code);
+  const [previewOpen, setPreviewOpen] = React.useState(() => activePreviewCode === stateKey);
   const [previewZoom, setPreviewZoom] = React.useState(activePreviewZoom);
   const [previewMode, setPreviewMode] = React.useState<"diagram" | "code">(activePreviewMode);
   const previewOpenRef = React.useRef(previewOpen);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
   const openPreview = React.useCallback(() => {
-    setActivePreviewCode(code);
-  }, [code]);
+    setActivePreviewCode(stateKey);
+  }, [stateKey]);
 
   const closePreview = React.useCallback(() => {
-    if (activePreviewCode === code) setActivePreviewCode(null);
-  }, [code]);
+    if (activePreviewCode === stateKey) setActivePreviewCode(null);
+  }, [stateKey]);
 
   React.useEffect(() => {
     previewOpenRef.current = previewOpen;
@@ -275,23 +276,23 @@ export function MermaidRenderer({ code }: { code: string }) {
 
   React.useEffect(() => {
     const syncPreviewOpen = () => {
-      setPreviewOpen(activePreviewCode === code);
+      setPreviewOpen(activePreviewCode === stateKey);
       setPreviewZoom(activePreviewZoom);
       setPreviewMode(activePreviewMode);
     };
     syncPreviewOpen();
     return subscribePreviewState(syncPreviewOpen);
-  }, [code]);
+  }, [stateKey]);
 
   React.useEffect(() => {
     const syncInlineState = () => {
-      const inlineState = getInlineState(code);
+      const inlineState = getInlineState(stateKey);
       setInlineZoom(inlineState.zoom);
       setInlineMode(inlineState.mode);
     };
     syncInlineState();
     return subscribeInlineState(syncInlineState);
-  }, [code]);
+  }, [stateKey]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -331,13 +332,13 @@ export function MermaidRenderer({ code }: { code: string }) {
   const svgMetrics = svg ? parseSvgMetrics(svg) : null;
 
   const updateInlineZoom = React.useCallback((next: number | ((value: number) => number)) => {
-    const current = getInlineState(code).zoom;
+    const current = getInlineState(stateKey).zoom;
     const value = typeof next === "function" ? next(current) : next;
-    setInlineState(code, { zoom: clampZoom(value) });
-  }, [code]);
+    setInlineState(stateKey, { zoom: clampZoom(value) });
+  }, [stateKey]);
   const inlineZoomIn = React.useCallback(() => updateInlineZoom((v) => v + ZOOM_STEP), [updateInlineZoom]);
   const inlineZoomOut = React.useCallback(() => updateInlineZoom((v) => v - ZOOM_STEP), [updateInlineZoom]);
-  const resetInlineZoom = React.useCallback(() => setInlineState(code, { zoom: 1 }), [code]);
+  const resetInlineZoom = React.useCallback(() => setInlineState(stateKey, { zoom: 1 }), [stateKey]);
   const updatePreviewZoom = React.useCallback((next: number | ((value: number) => number)) => {
     const value = typeof next === "function" ? next(activePreviewZoom) : next;
     setActivePreviewZoom(clampZoom(value));
@@ -369,8 +370,8 @@ export function MermaidRenderer({ code }: { code: string }) {
   }, [svg]);
 
   React.useEffect(() => {
-    if (!previewOpen && activePreviewCode === code) setActivePreviewCode(null);
-  }, [previewOpen]);
+    if (!previewOpen && activePreviewCode === stateKey) setActivePreviewCode(null);
+  }, [previewOpen, stateKey]);
 
   React.useEffect(() => {
     if (!previewOpen) return;
@@ -436,7 +437,7 @@ export function MermaidRenderer({ code }: { code: string }) {
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
             <button
               type="button"
-              onClick={() => setInlineState(code, { mode: inlineMode === "diagram" ? "code" : "diagram" })}
+              onClick={() => setInlineState(stateKey, { mode: inlineMode === "diagram" ? "code" : "diagram" })}
               className="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               aria-label={inlineMode === "diagram" ? "查看代码" : "查看图表"}
               title={inlineMode === "diagram" ? "查看代码" : "查看图表"}
@@ -625,7 +626,7 @@ export function MermaidRenderer({ code }: { code: string }) {
                   className="overflow-auto bg-white p-6 fullscreen:flex-1"
                   style={isFullscreen ? undefined : { maxHeight: "calc(85vh - 80px)" }}
                   onScroll={(event) => {
-                    if (!previewOpenRef.current || activePreviewCode !== code) return;
+                    if (!previewOpenRef.current || activePreviewCode !== stateKey) return;
                     const element = event.currentTarget;
                     setActivePreviewScroll(element.scrollLeft, element.scrollTop);
                   }}

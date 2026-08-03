@@ -4,28 +4,62 @@ import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { basicSetup, EditorView } from "codemirror";
 import { EditorState } from "@codemirror/state";
-import { json, jsonParseLinter } from "@codemirror/lang-json";
-import { linter } from "@codemirror/lint";
+import { yaml } from "@codemirror/lang-yaml";
 import { JsonView, type NodeExpandingEvent } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
-import { Code2, Download, FileJson, Maximize2, X } from "lucide-react";
+import { dump, load } from "js-yaml";
+import { Code2, Download, FileCode2, Maximize2, X } from "lucide-react";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { CopyButton } from "@/components/shared/copy-button";
 
-function parseJson(code: string): { ok: true; value: unknown; formatted: string } | { ok: false; error: string } {
+type ParseYamlResult = { ok: true; value: unknown; formatted: string } | { ok: false; error: string };
+
+function parseYaml(code: string): ParseYamlResult {
   try {
-    const value = JSON.parse(code);
-    return { ok: true, value, formatted: JSON.stringify(value, null, 2) };
+    const value = load(code);
+    return {
+      ok: true,
+      value,
+      formatted: dump(value, {
+        indent: 2,
+        lineWidth: 120,
+        noRefs: true,
+        sortKeys: false,
+      }).trimEnd(),
+    };
   } catch (err: any) {
     return { ok: false, error: String(err?.message || err) };
   }
 }
 
-function isJsonTreeValue(value: unknown): value is object | any[] {
-  return value !== null && (Array.isArray(value) || typeof value === "object");
+function isTreeValue(value: unknown): value is object | any[] {
+  return value !== null && value !== undefined && (Array.isArray(value) || typeof value === "object");
 }
 
-function downloadText(filename: string, text: string, type = "application/json") {
+function getNodeKey(level: number, field?: string) {
+  return `${level}:${field ?? "$value"}`;
+}
+
+function collectExpandableKeys(value: unknown, level = 0, field?: string, keys = new Set<string>()) {
+  if (!isTreeValue(value)) return keys;
+  keys.add(getNodeKey(level, field));
+  if (Array.isArray(value)) {
+    for (const item of value) collectExpandableKeys(item, level + 1, undefined, keys);
+    return keys;
+  }
+  for (const [key, child] of Object.entries(value)) collectExpandableKeys(child, level + 1, key, keys);
+  return keys;
+}
+
+function collectDefaultExpandedKeys(value: unknown) {
+  const keys = collectExpandableKeys(value);
+  for (const key of [...keys]) {
+    const [level] = key.split(":");
+    if (Number(level) > 1) keys.delete(key);
+  }
+  return keys;
+}
+
+function downloadText(filename: string, text: string, type = "application/yaml") {
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -37,7 +71,6 @@ function downloadText(filename: string, text: string, type = "application/json")
 
 function useIsDarkTheme() {
   const [dark, setDark] = React.useState(() => document.documentElement.getAttribute("data-theme") === "dark");
-
   React.useEffect(() => {
     const observer = new MutationObserver(() => {
       setDark(document.documentElement.getAttribute("data-theme") === "dark");
@@ -48,17 +81,10 @@ function useIsDarkTheme() {
     });
     return () => observer.disconnect();
   }, []);
-
   return dark;
 }
 
-function JsonCodeMirror({
-  value,
-  dark,
-}: {
-  value: string;
-  dark: boolean;
-}) {
+function YamlCodeMirror({ value, dark }: { value: string; dark: boolean }) {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -69,8 +95,7 @@ function JsonCodeMirror({
         doc: value,
         extensions: [
           basicSetup,
-          json(),
-          linter(jsonParseLinter()),
+          yaml(),
           EditorView.editable.of(false),
           EditorState.readOnly.of(true),
           EditorView.lineWrapping,
@@ -93,10 +118,6 @@ function JsonCodeMirror({
             ".cm-activeLine, .cm-activeLineGutter": {
               backgroundColor: dark ? "rgba(148, 163, 184, 0.10)" : "rgba(15, 23, 42, 0.04)",
             },
-            ".cm-tooltip": {
-              borderColor: dark ? "#334155" : "#cbd5e1",
-              backgroundColor: dark ? "#0f172a" : "#ffffff",
-            },
           }),
         ],
       }),
@@ -107,101 +128,72 @@ function JsonCodeMirror({
   return <div ref={hostRef} className="h-full min-h-[360px] overflow-hidden" />;
 }
 
-type JsonInlineState = {
+type YamlInlineState = {
   mode: "tree" | "raw";
   expanded?: Set<string>;
 };
 
-const jsonInlineState = new Map<string, JsonInlineState>();
-const jsonInlineListeners = new Set<() => void>();
-const JSON_INLINE_STATE_MAX = 80;
-let activeJsonPreviewCode: string | null = null;
-let activeJsonPreviewText = "";
-let activeJsonPreviewMode: "tree" | "source" = "source";
-const jsonPreviewListeners = new Set<() => void>();
+const yamlInlineState = new Map<string, YamlInlineState>();
+const yamlInlineListeners = new Set<() => void>();
+const YAML_INLINE_STATE_MAX = 80;
+let activeYamlPreviewCode: string | null = null;
+let activeYamlPreviewText = "";
+let activeYamlPreviewMode: "tree" | "source" = "source";
+const yamlPreviewListeners = new Set<() => void>();
 
-function getJsonNodeKey(level: number, field?: string) {
-  return `${level}:${field ?? "$value"}`;
+function getYamlInlineState(key: string): YamlInlineState {
+  return yamlInlineState.get(key) || { mode: "tree" };
 }
 
-function collectExpandableKeys(value: unknown, level = 0, field?: string, keys = new Set<string>()) {
-  if (!isJsonTreeValue(value)) return keys;
-  keys.add(getJsonNodeKey(level, field));
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectExpandableKeys(item, level + 1, undefined, keys);
-    }
-    return keys;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    collectExpandableKeys(child, level + 1, key, keys);
-  }
-  return keys;
-}
-
-function collectDefaultExpandedKeys(value: unknown) {
-  const keys = new Set<string>();
-  collectExpandableKeys(value, 0, undefined, keys);
-  for (const key of [...keys]) {
-    const [level] = key.split(":");
-    if (Number(level) > 1) keys.delete(key);
-  }
-  return keys;
-}
-
-function getJsonInlineState(code: string): JsonInlineState {
-  return jsonInlineState.get(code) || { mode: "tree" };
-}
-
-function setJsonInlineState(code: string, patch: Partial<{ mode: "tree" | "raw"; expanded?: Set<string> }>) {
-  const current = getJsonInlineState(code);
-  if (jsonInlineState.has(code)) jsonInlineState.delete(code);
-  jsonInlineState.set(code, {
+function setYamlInlineState(key: string, patch: Partial<YamlInlineState>) {
+  const current = getYamlInlineState(key);
+  if (yamlInlineState.has(key)) yamlInlineState.delete(key);
+  yamlInlineState.set(key, {
     mode: patch.mode ?? current.mode,
     expanded: patch.expanded ?? current.expanded,
   });
-  while (jsonInlineState.size > JSON_INLINE_STATE_MAX) {
-    const oldest = jsonInlineState.keys().next().value;
+  while (yamlInlineState.size > YAML_INLINE_STATE_MAX) {
+    const oldest = yamlInlineState.keys().next().value;
     if (oldest === undefined) break;
-    jsonInlineState.delete(oldest);
+    yamlInlineState.delete(oldest);
   }
-  for (const listener of jsonInlineListeners) listener();
+  for (const listener of yamlInlineListeners) listener();
 }
 
-function subscribeJsonInlineState(listener: () => void) {
-  jsonInlineListeners.add(listener);
+function subscribeYamlInlineState(listener: () => void) {
+  yamlInlineListeners.add(listener);
   return () => {
-    jsonInlineListeners.delete(listener);
+    yamlInlineListeners.delete(listener);
   };
 }
 
-function setActiveJsonPreview(code: string | null, text = "", mode: "tree" | "source" = "source") {
-  activeJsonPreviewCode = code;
-  activeJsonPreviewText = text;
-  activeJsonPreviewMode = mode;
-  for (const listener of jsonPreviewListeners) listener();
+function setActiveYamlPreview(key: string | null, text = "", mode: "tree" | "source" = "source") {
+  activeYamlPreviewCode = key;
+  activeYamlPreviewText = text;
+  activeYamlPreviewMode = mode;
+  for (const listener of yamlPreviewListeners) listener();
 }
 
-function setActiveJsonPreviewText(text: string) {
-  activeJsonPreviewText = text;
-  for (const listener of jsonPreviewListeners) listener();
+function setActiveYamlPreviewText(text: string) {
+  activeYamlPreviewText = text;
+  for (const listener of yamlPreviewListeners) listener();
 }
 
-function setActiveJsonPreviewMode(mode: "tree" | "source") {
-  activeJsonPreviewMode = mode;
-  for (const listener of jsonPreviewListeners) listener();
+function setActiveYamlPreviewMode(mode: "tree" | "source") {
+  activeYamlPreviewMode = mode;
+  for (const listener of yamlPreviewListeners) listener();
 }
 
-function subscribeJsonPreviewState(listener: () => void) {
-  jsonPreviewListeners.add(listener);
+function subscribeYamlPreviewState(listener: () => void) {
+  yamlPreviewListeners.add(listener);
   return () => {
-    jsonPreviewListeners.delete(listener);
+    yamlPreviewListeners.delete(listener);
   };
 }
 
 type JsonViewStyle = NonNullable<React.ComponentProps<typeof JsonView>["style"]>;
 
-const jsonTreeStyle: JsonViewStyle = {
+const treeStyle: JsonViewStyle = {
   container: "moss-json-tree",
   basicChildStyle: "moss-json-row",
   childFieldsContainer: "moss-json-children",
@@ -222,68 +214,65 @@ const jsonTreeStyle: JsonViewStyle = {
   stringifyStringValues: true,
 };
 
-export function JsonRenderer({ code, blockId }: { code: string; blockId?: string }) {
+export function YamlRenderer({ code, blockId }: { code: string; blockId?: string }) {
   const stateKey = blockId || code;
-  const parsed = React.useMemo(() => parseJson(code), [code]);
-  const initialInlineState = getJsonInlineState(stateKey);
+  const parsed = React.useMemo(() => parseYaml(code), [code]);
+  const initialInlineState = getYamlInlineState(stateKey);
   const [inlineMode, setInlineMode] = React.useState<"tree" | "raw">(initialInlineState.mode);
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string> | undefined>(initialInlineState.expanded);
-  const [previewOpen, setPreviewOpen] = React.useState(() => activeJsonPreviewCode === stateKey);
-  const [modalCode, setModalCode] = React.useState(() => activeJsonPreviewCode === stateKey ? activeJsonPreviewText : code);
-  const [modalMode, setModalMode] = React.useState<"tree" | "source">(() => activeJsonPreviewCode === stateKey ? activeJsonPreviewMode : "source");
+  const [previewOpen, setPreviewOpen] = React.useState(() => activeYamlPreviewCode === stateKey);
+  const [modalCode, setModalCode] = React.useState(() => activeYamlPreviewCode === stateKey ? activeYamlPreviewText : code);
+  const [modalMode, setModalMode] = React.useState<"tree" | "source">(() => activeYamlPreviewCode === stateKey ? activeYamlPreviewMode : "source");
   const dark = useIsDarkTheme();
 
   React.useEffect(() => {
     const syncInlineState = () => {
-      const state = getJsonInlineState(stateKey);
+      const state = getYamlInlineState(stateKey);
       setInlineMode(state.mode);
       setExpandedKeys(state.expanded);
     };
     syncInlineState();
-    return subscribeJsonInlineState(syncInlineState);
+    return subscribeYamlInlineState(syncInlineState);
   }, [stateKey]);
 
   React.useEffect(() => {
     const syncPreviewState = () => {
-      setPreviewOpen(activeJsonPreviewCode === stateKey);
-      if (activeJsonPreviewCode === stateKey) {
-        setModalCode(activeJsonPreviewText);
-        setModalMode(activeJsonPreviewMode);
+      setPreviewOpen(activeYamlPreviewCode === stateKey);
+      if (activeYamlPreviewCode === stateKey) {
+        setModalCode(activeYamlPreviewText);
+        setModalMode(activeYamlPreviewMode);
       }
     };
     syncPreviewState();
-    return subscribeJsonPreviewState(syncPreviewState);
+    return subscribeYamlPreviewState(syncPreviewState);
   }, [stateKey]);
 
   const closePreview = React.useCallback(() => {
-    if (activeJsonPreviewCode === stateKey) setActiveJsonPreview(null);
+    if (activeYamlPreviewCode === stateKey) setActiveYamlPreview(null);
   }, [stateKey]);
 
   const displayCode = parsed.ok ? parsed.formatted : code;
   const activeInlineCode = inlineMode === "raw" ? code : displayCode;
-  const shouldExpandJsonNode = React.useCallback((level: number, _value: any, field?: string) => {
+  const shouldExpandNode = React.useCallback((level: number, _value: any, field?: string) => {
     const keys = expandedKeys ?? (parsed.ok ? collectDefaultExpandedKeys(parsed.value) : new Set<string>());
-    return keys.has(getJsonNodeKey(level, field));
+    return keys.has(getNodeKey(level, field));
   }, [expandedKeys, parsed]);
   const beforeExpandChange = React.useCallback((event: NodeExpandingEvent) => {
-    const current = getJsonInlineState(stateKey).expanded ?? (parsed.ok ? collectDefaultExpandedKeys(parsed.value) : new Set<string>());
+    const current = getYamlInlineState(stateKey).expanded ?? (parsed.ok ? collectDefaultExpandedKeys(parsed.value) : new Set<string>());
     const next = new Set(current);
-    const key = getJsonNodeKey(event.level, event.field);
-    if (event.newExpandValue) {
-      next.add(key);
-    } else {
-      next.delete(key);
-    }
-    setJsonInlineState(stateKey, { expanded: next });
+    const nodeKey = getNodeKey(event.level, event.field);
+    if (event.newExpandValue) next.add(nodeKey);
+    else next.delete(nodeKey);
+    setYamlInlineState(stateKey, { expanded: next });
     return true;
-  }, [stateKey, parsed]);
+  }, [parsed, stateKey]);
 
   if (parsed.ok === false) {
     return (
       <div className="my-4 overflow-hidden rounded-[18px] border border-destructive/30">
         <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-destructive">
-            JSON Error
+            YAML Error
           </div>
           <CopyButton text={code} label="复制代码" />
         </div>
@@ -291,14 +280,14 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
           {parsed.error}
         </div>
         <div className="border-t border-destructive/20">
-          <CodeViewer code={code} language="json" title="JSON Source" maxLines={24} showLineNumbers />
+          <CodeViewer code={code} language="yaml" title="YAML Source" maxLines={24} showLineNumbers />
         </div>
       </div>
     );
   }
 
-  if (!isJsonTreeValue(parsed.value)) {
-    return <CodeViewer code={code} language="json" title="JSON Source" maxLines={24} showLineNumbers />;
+  if (!isTreeValue(parsed.value)) {
+    return <CodeViewer code={code} language="yaml" title="YAML Source" maxLines={24} showLineNumbers />;
   }
 
   return (
@@ -306,33 +295,29 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
       <div className="my-4 overflow-hidden rounded-[18px] border border-border/60 bg-[var(--color-surface-container-low)]">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-[var(--color-surface-container)] px-3 py-2">
           <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-secondary)]">
-            <FileJson className="h-3.5 w-3.5" />
-            JSON
+            <FileCode2 className="h-3.5 w-3.5" />
+            YAML
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
             <button
               type="button"
-              onClick={() => setJsonInlineState(stateKey, { mode: inlineMode === "tree" ? "raw" : "tree" })}
+              onClick={() => setYamlInlineState(stateKey, { mode: inlineMode === "tree" ? "raw" : "tree" })}
               className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              aria-label={inlineMode === "tree" ? "原文展示" : "树形展示"}
-              title={inlineMode === "tree" ? "原文展示" : "树形展示"}
             >
               {inlineMode === "tree" ? "原文" : "树形"}
             </button>
             <button
               type="button"
-              onClick={() => downloadText("data.json", activeInlineCode)}
+              onClick={() => downloadText("data.yaml", activeInlineCode)}
               className="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              aria-label="下载 JSON"
-              title="下载 JSON"
+              aria-label="下载 YAML"
+              title="下载 YAML"
             >
               <Download className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
-              onClick={() => {
-                setActiveJsonPreview(stateKey, activeInlineCode, inlineMode === "tree" ? "tree" : "source");
-              }}
+              onClick={() => setActiveYamlPreview(stateKey, activeInlineCode, inlineMode === "tree" ? "tree" : "source")}
               className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Maximize2 className="h-3 w-3" />
@@ -345,17 +330,17 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
           <div className="max-h-[420px] overflow-auto bg-white p-3 text-left dark:bg-[#020617]">
             <JsonView
               data={parsed.value}
-              shouldExpandNode={shouldExpandJsonNode}
+              shouldExpandNode={shouldExpandNode}
               beforeExpandChange={beforeExpandChange}
               clickToExpandNode
               compactTopLevel
-              style={jsonTreeStyle}
-              aria-label="JSON tree"
+              style={treeStyle}
+              aria-label="YAML tree"
             />
           </div>
         ) : (
           <div className="border-t border-border/60">
-            <CodeViewer code={code} language="json" title="JSON Source" maxLines={24} showLineNumbers />
+            <CodeViewer code={code} language="yaml" title="YAML Source" maxLines={24} showLineNumbers />
           </div>
         )}
       </div>
@@ -380,13 +365,13 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
               <div className="mx-4 flex max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
                   <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground">
-                    {modalMode === "tree" ? <FileJson className="h-4 w-4" /> : <Code2 className="h-4 w-4" />}
-                    {modalMode === "tree" ? "JSON Tree" : "JSON Source"}
+                    {modalMode === "tree" ? <FileCode2 className="h-4 w-4" /> : <Code2 className="h-4 w-4" />}
+                    {modalMode === "tree" ? "YAML Tree" : "YAML Source"}
                   </div>
                   <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => setActiveJsonPreviewMode(modalMode === "tree" ? "source" : "tree")}
+                      onClick={() => setActiveYamlPreviewMode(modalMode === "tree" ? "source" : "tree")}
                       className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
                       {modalMode === "tree" ? "源码" : "树形"}
@@ -395,14 +380,14 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
                       <>
                         <button
                           type="button"
-                          onClick={() => setJsonInlineState(stateKey, { expanded: collectExpandableKeys(parsed.value) })}
+                          onClick={() => setYamlInlineState(stateKey, { expanded: collectExpandableKeys(parsed.value) })}
                           className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           展开
                         </button>
                         <button
                           type="button"
-                          onClick={() => setJsonInlineState(stateKey, { expanded: new Set() })}
+                          onClick={() => setYamlInlineState(stateKey, { expanded: new Set() })}
                           className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           折叠
@@ -411,24 +396,24 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => setActiveJsonPreviewText(code)}
+                      onClick={() => setActiveYamlPreviewText(code)}
                       className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
                       原文
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActiveJsonPreviewText(displayCode)}
+                      onClick={() => setActiveYamlPreviewText(displayCode)}
                       className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
                       格式化
                     </button>
                     <button
                       type="button"
-                      onClick={() => downloadText("data.json", modalCode)}
+                      onClick={() => downloadText("data.yaml", modalCode)}
                       className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted/50 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      aria-label="下载 JSON"
-                      title="下载 JSON"
+                      aria-label="下载 YAML"
+                      title="下载 YAML"
                     >
                       <Download className="h-4 w-4" />
                     </button>
@@ -449,16 +434,16 @@ export function JsonRenderer({ code, blockId }: { code: string; blockId?: string
                     <div className="min-h-[360px] bg-white p-4 text-left dark:bg-[#020617]">
                       <JsonView
                         data={parsed.value}
-                        shouldExpandNode={shouldExpandJsonNode}
+                        shouldExpandNode={shouldExpandNode}
                         beforeExpandChange={beforeExpandChange}
                         clickToExpandNode
                         compactTopLevel
-                        style={jsonTreeStyle}
-                        aria-label="JSON tree"
+                        style={treeStyle}
+                        aria-label="YAML tree"
                       />
                     </div>
                   ) : (
-                    <JsonCodeMirror value={modalCode} dark={dark} />
+                    <YamlCodeMirror value={modalCode} dark={dark} />
                   )}
                 </div>
               </div>

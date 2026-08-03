@@ -6,8 +6,7 @@ import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
-import { MermaidRenderer } from "@/components/chat/mermaid-renderer";
-import { JsonRenderer } from "@/components/chat/json-renderer";
+import { normalizeCodeLanguage, renderStructuredCodeBlock } from "@/components/structured/structured-renderer-registry";
 
 function looksInline(code: string) {
   return !code.includes("\n");
@@ -23,9 +22,11 @@ function localImageUrlTransform(url: string) {
 export function MarkdownRenderer({
   content,
   variant = "default",
+  sourceId = "markdown",
 }: {
   content: string;
   variant?: "default" | "document";
+  sourceId?: string;
 }) {
   return (
     <div
@@ -41,7 +42,9 @@ export function MarkdownRenderer({
           code: ({ className, children, ...props }: any) => {
             const code = String(children || "").replace(/\n$/, "");
             const match = /language-([\w-]+)/.exec(className || "");
-            const language = match?.[1] || "text";
+            const language = normalizeCodeLanguage(match?.[1] || "text");
+            const offset = props.node?.position?.start?.offset ?? props.node?.position?.start?.line ?? code.length;
+            const blockId = `${sourceId}:code:${language}:${offset}`;
 
             if (looksInline(code)) {
               return (
@@ -54,13 +57,8 @@ export function MarkdownRenderer({
               );
             }
 
-            if (language === "mermaid") {
-              return <MermaidRenderer code={code} />;
-            }
-
-            if (language === "json") {
-              return <JsonRenderer code={code} />;
-            }
+            const structured = renderStructuredCodeBlock({ code, language, blockId });
+            if (structured) return structured;
 
             return <CodeViewer code={code} language={language} maxLines={24} showLineNumbers />;
           },

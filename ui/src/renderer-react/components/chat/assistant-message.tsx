@@ -44,7 +44,7 @@ export function AssistantMessage({ message }: { message: AssistantTextRenderMess
         {(hasText || attachments.length > 0) && (
           <div className="w-full max-w-full rounded-[20px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)] select-text">
             {hasText && (
-              <MarkdownRenderer content={message.content} variant={documentLayout ? "document" : "default"} />
+              <MarkdownRenderer content={message.content} variant={documentLayout ? "document" : "default"} sourceId={message.id} />
             )}
 
             {attachments.length > 0 && (
