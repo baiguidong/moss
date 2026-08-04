@@ -682,7 +682,16 @@ function loadDesktopSettings() {
 
 let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
+syncDesktopThinkingEnv(desktopSettings);
 mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
+
+function syncDesktopThinkingEnv(settings) {
+  if (settings?.thinkingMode === 'disabled') {
+    process.env.CLAUDE_CODE_DISABLE_THINKING = '1';
+  } else {
+    delete process.env.CLAUDE_CODE_DISABLE_THINKING;
+  }
+}
 
 function getDesktopSettingsPayload(extra = {}) {
   return {
@@ -747,6 +756,7 @@ function saveDesktopSettings(nextSettings) {
     value: normalizedSettings,
   };
   desktopSettings = normalizedSettings;
+  syncDesktopThinkingEnv(normalizedSettings);
 }
 
 function readJsonFile(filePath, fallbackValue) {
@@ -1472,7 +1482,7 @@ function refreshDesktopSettings(payload = {}) {
       sessionRecord.remoteWorkspace = getRemoteDirectWorkspace(nextSettings) || null;
     }
     if (!sessionRecord.runtime) continue;
-    if (sessionRecord.busy || sessionRecord.messageCount > 0) {
+    if (sessionRecord.busy) {
       skippedSessionCount += 1;
       continue;
     }

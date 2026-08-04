@@ -1550,6 +1550,9 @@ async function* queryModel(
   // inside it would cause the first call to steal edits from subsequent calls.
   const consumedCacheEdits = cachedMCEnabled ? consumePendingCacheEdits() : null
   const consumedPinnedEdits = cachedMCEnabled ? getPinnedCacheEdits() : []
+  const dropUnexpectedThinkingBlocks =
+    thinkingConfig.type === 'disabled' ||
+    isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
 
   // Capture the betas sent in the last API request, including the ones that
   // were dynamically added, so we can log and send it to telemetry.
@@ -1939,6 +1942,16 @@ async function* queryModel(
       for await (const part of stream) {
         resetStreamIdleTimer()
         const now = Date.now()
+        const isUnexpectedThinkingPart =
+          dropUnexpectedThinkingBlocks &&
+          ((part.type === 'content_block_start' &&
+            part.content_block.type === 'thinking') ||
+            (part.type === 'content_block_delta' &&
+              (part.delta.type === 'thinking_delta' ||
+                part.delta.type === 'signature_delta') &&
+              contentBlocks[part.index]?.type === 'thinking') ||
+            (part.type === 'content_block_stop' &&
+              contentBlocks[part.index]?.type === 'thinking'))
 
         // Detect and log streaming stalls (only after first event to avoid counting TTFB)
         if (lastEventTime !== null) {
@@ -2032,6 +2045,14 @@ async function* queryModel(
                 }
                 break
               case 'thinking':
+                if (dropUnexpectedThinkingBlocks) {
+                  contentBlocks[part.index] = {
+                    ...part.content_block,
+                    thinking: '',
+                    signature: '',
+                  }
+                  break
+                }
                 contentBlocks[part.index] = {
                   ...part.content_block,
                   // also awkward
@@ -2184,6 +2205,13 @@ async function* queryModel(
               })
               throw new RangeError('Content block not found')
             }
+            if (
+              dropUnexpectedThinkingBlocks &&
+              contentBlock.type === 'thinking'
+            ) {
+              delete contentBlocks[part.index]
+              break
+            }
             if (!partialMessage) {
               logEvent('tengu_streaming_error', {
                 error_type:
@@ -2302,10 +2330,12 @@ async function* queryModel(
             break
         }
 
-        yield {
-          type: 'stream_event',
-          event: part,
-          ...(part.type === 'message_start' ? { ttftMs } : undefined),
+        if (!isUnexpectedThinkingPart) {
+          yield {
+            type: 'stream_event',
+            event: part,
+            ...(part.type === 'message_start' ? { ttftMs } : undefined),
+          }
         }
       }
       // Clear the idle timeout watchdog now that the stream loop has exited
