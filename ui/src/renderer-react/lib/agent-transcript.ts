@@ -1247,12 +1247,6 @@ export function buildTranscriptRenderMessages(
 
     if (event?.type === 'result') {
       const turn = ensureAssistantTurn(state, timestamp);
-      if (typeof event.duration_ms === 'number') {
-        appendTurnMeta(turn, `耗时 ${event.duration_ms}ms`);
-      }
-      if (typeof event.total_cost_usd === 'number') {
-        appendTurnMeta(turn, `费用 $${event.total_cost_usd.toFixed(4)}`);
-      }
       if (event.subtype && event.subtype !== 'success') {
         appendTurnMeta(turn, `状态 ${String(event.subtype)}`);
       }
@@ -1667,8 +1661,6 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
 
     if (event?.type === 'result') {
       const assistant = getCurrentAssistant(timestamp);
-      if (typeof event.duration_ms === 'number') addMeta(assistant, `耗时 ${event.duration_ms}ms`);
-      if (typeof event.total_cost_usd === 'number') addMeta(assistant, `费用 $${event.total_cost_usd.toFixed(4)}`);
       if (event.subtype && event.subtype !== 'success') addMeta(assistant, `状态 ${String(event.subtype)}`);
       if (assistant.toolSteps?.length) {
         for (const step of assistant.toolSteps) {
