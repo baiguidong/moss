@@ -1228,13 +1228,15 @@ export async function getClaudeCodeMcpConfigs(
     })
   }
 
-  // Merge in order of precedence: plugin < user < project < local
+  // Merge in order of precedence: plugin < user < project < local < dynamic.
+  // Desktop embeds MCP servers from ~/.moss/settings.json as dynamic config.
   const configs = Object.assign(
     {},
     dedupedPluginServers,
     userServers,
     approvedProjectServers,
     localServers,
+    dynamicServers,
   )
 
   // Apply policy filtering to merged configs
@@ -1255,20 +1257,22 @@ export async function getClaudeCodeMcpConfigs(
  * This may be slow due to network calls - use getClaudeCodeMcpConfigs() for fast startup.
  * @returns All server configurations with appropriate scopes
  */
-export async function getAllMcpConfigs(): Promise<{
+export async function getAllMcpConfigs(
+  dynamicServers: Record<string, ScopedMcpServerConfig> = {},
+): Promise<{
   servers: Record<string, ScopedMcpServerConfig>
   errors: PluginError[]
 }> {
   // In enterprise mode, don't load claude.ai servers (enterprise has exclusive control)
   if (doesEnterpriseMcpConfigExist()) {
-    return getClaudeCodeMcpConfigs()
+    return getClaudeCodeMcpConfigs(dynamicServers)
   }
 
   // Kick off the claude.ai fetch before getClaudeCodeMcpConfigs so it overlaps
   // with loadAllPluginsCacheOnly() inside. Memoized — the awaited call below is a cache hit.
   const claudeaiPromise = fetchClaudeAIMcpConfigsIfEligible()
   const { servers: claudeCodeServers, errors } = await getClaudeCodeMcpConfigs(
-    {},
+    dynamicServers,
     claudeaiPromise,
   )
   const { allowed: claudeaiMcpServers } = filterMcpServersByPolicy(

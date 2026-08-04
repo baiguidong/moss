@@ -62,6 +62,34 @@ export type AdapterFileConfig = {
   }
 }
 
+export type McpServerConfig =
+  | {
+      type?: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | {
+      type: 'http' | 'sse';
+      url: string;
+      headers?: Record<string, string>;
+    };
+
+export type McpServerEntry = {
+  name: string;
+  enabled: boolean;
+  config: McpServerConfig;
+  updatedAt?: number;
+};
+
+export type McpSettingsPayload = {
+  servers: McpServerEntry[];
+  configPath: string;
+  agentConfigPath: string;
+  resetSessionCount?: number;
+  skippedBusySessionCount?: number;
+};
+
 export type DesktopSettings = {
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
@@ -95,6 +123,14 @@ export type DesktopSettings = {
     minimumMessageTokensToInit?: number;
     minimumTokensBetweenUpdate?: number;
     toolCallsBetweenUpdates?: number;
+  };
+  mcp?: {
+    version?: number;
+    servers?: Record<string, {
+      enabled?: boolean;
+      config?: McpServerConfig;
+      updatedAt?: number;
+    }>;
   };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
@@ -227,6 +263,10 @@ declare global {
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
+      listMcpServers: () => Promise<McpSettingsPayload>;
+      upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
+      removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
+      setMcpServerEnabled: (payload: { name: string; enabled: boolean }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
       listSessions: () => Promise<SessionSummary[]>;

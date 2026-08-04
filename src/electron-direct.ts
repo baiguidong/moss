@@ -13,7 +13,8 @@ import { getEmptyToolPermissionContext, setGlobalAppEventBridge, unregisterAppEv
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
-import { getTools } from './tools.js'
+import { assembleToolPool } from './tools.js'
+import { mergeAndFilterTools } from './utils/toolPool.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -35,6 +36,10 @@ import {
   bootstrapHeadless,
   prewarmHeadlessGlobalInit as prewarmHeadlessGlobalInitBase,
 } from './bootstrap/headless.js'
+import type {
+  McpServerConfig,
+  ScopedMcpServerConfig,
+} from './services/mcp/types.js'
 import {
   discardSessionCostState,
   discardSessionRegisteredHooks,
@@ -204,6 +209,8 @@ export interface ClaudeSessionOptions {
   projectDir?: string | null
   /** 共享恢复核心产出的附加状态 */
   resumeState?: PreparedSessionResume
+  /** Desktop-provided MCP servers. These come from ~/.moss/settings.json. */
+  mcpServers?: Record<string, McpServerConfig>
 }
 
 type ResolvedClaudeSessionOptions = {
@@ -222,6 +229,18 @@ type ResolvedClaudeSessionOptions = {
   initialMessages?: Message[]
   projectDir?: string | null
   resumeState?: PreparedSessionResume
+  mcpServers?: Record<string, McpServerConfig>
+}
+
+function addDynamicMcpScope(
+  servers: Record<string, McpServerConfig> | undefined,
+): Record<string, ScopedMcpServerConfig> {
+  if (!servers) return {}
+  const scoped: Record<string, ScopedMcpServerConfig> = {}
+  for (const [name, config] of Object.entries(servers)) {
+    scoped[name] = { ...config, scope: 'dynamic' } as ScopedMcpServerConfig
+  }
+  return scoped
 }
 
 function normalizeAnthropicBaseUrl(value: string | undefined): string | undefined {
@@ -334,6 +353,7 @@ export class ClaudeSession {
       // 回退到全局 originalCwd 而把 transcript 写进其他会话的项目目录。
       projectDir: opts.projectDir ?? getProjectDir(cwd),
       resumeState: opts.resumeState,
+      mcpServers: opts.mcpServers,
     }
   }
 
@@ -418,7 +438,14 @@ export class ClaudeSession {
 
     // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
     const bootstrapStart = Date.now()
-    const bootstrapResult = await bootstrapHeadless(cwd)
+    const dynamicMcpServers = addDynamicMcpScope(this.#opts.mcpServers)
+    logForDiagnosticsNoPII('info', 'local_agent_engine_dynamic_mcp_loaded', {
+      dynamic_mcp_server_count: Object.keys(dynamicMcpServers).length,
+    })
+    const bootstrapResult = await bootstrapHeadless(
+      cwd,
+      dynamicMcpServers,
+    )
     logForDiagnosticsNoPII('info', 'local_agent_engine_bootstrap_completed', {
       duration_ms: Date.now() - bootstrapStart,
       mcp_client_count: bootstrapResult.mcp.clients.length,
@@ -483,10 +510,16 @@ export class ClaudeSession {
 
     // 工具列表
     const toolsStart = Date.now()
-    const tools = getTools(permissionContext)
+    const computeTools = () => {
+      const state = store.getState()
+      const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
+      return mergeAndFilterTools([], assembled, state.toolPermissionContext.mode)
+    }
+    const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {
       duration_ms: Date.now() - toolsStart,
       tool_count: tools.length,
+      mcp_tool_count: tools.filter(tool => tool.isMcp).length,
     })
 
     // 斜线命令（加载失败时降级为空列表）
@@ -524,6 +557,7 @@ export class ClaudeSession {
       maxTurns,
       initialMessages: resumedMessages ?? bootstrapMessages,
       emitAppEvent: onAppEvent,
+      refreshTools: computeTools,
     })
     logForDiagnosticsNoPII('info', 'local_agent_engine_query_engine_created', {
       duration_ms: Date.now() - queryEngineStart,

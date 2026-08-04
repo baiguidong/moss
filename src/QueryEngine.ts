@@ -176,6 +176,8 @@ export type QueryEngineConfig = {
   ) => { messages: Message[]; executed: boolean } | undefined
   /** Callback for MossTool to emit app-related events to main process. */
   emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  /** Optional callback to get the latest tools, including dynamically connected MCP tools. */
+  refreshTools?: () => Tools
 }
 
 /**
@@ -239,6 +241,7 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
+      refreshTools,
     } = this.config
 
     this.discoveredSkillNames.clear()
@@ -384,6 +387,7 @@ export class QueryEngine {
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
+        refreshTools,
       },
       getAppState,
       setAppState,
@@ -549,6 +553,7 @@ export class QueryEngine {
         theme: resolveThemeSetting(getGlobalConfig().theme),
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         maxBudgetUsd,
+        refreshTools,
       },
       getAppState,
       setAppState,

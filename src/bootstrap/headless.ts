@@ -12,7 +12,7 @@ import { setCwd } from '../utils/Shell.js'
 import { getAllMcpConfigs } from '../services/mcp/config.js'
 import { captureHooksConfigSnapshot } from '../utils/hooks/hooksConfigSnapshot.js'
 import { prefetchAllMcpResources } from '../services/mcp/client.js'
-import type { MCPServerConnection } from '../services/mcp/types.js'
+import type { MCPServerConnection, ScopedMcpServerConfig } from '../services/mcp/types.js'
 import type { Tool } from '../Tool.js'
 import type { Command } from '../commands.js'
 import { getAgentDefinitionsWithOverrides, type AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
@@ -82,7 +82,10 @@ export interface BootstrapResult {
  * @param cwd The working directory for the session
  * @returns Initialization results to pass to the QueryEngine and AppState
  */
-export async function bootstrapHeadless(cwd: string): Promise<BootstrapResult> {
+export async function bootstrapHeadless(
+  cwd: string,
+  dynamicMcpConfig: Record<string, ScopedMcpServerConfig> = {},
+): Promise<BootstrapResult> {
   const bootstrapStart = Date.now()
   let globalInitRan = false
   logForDiagnosticsNoPII('info', 'bootstrap_headless_started')
@@ -124,7 +127,7 @@ export async function bootstrapHeadless(cwd: string): Promise<BootstrapResult> {
   // 3. Load MCP configurations and prefetch resources
   const { servers: mcpConfigs } = await withDiagnosticsTiming(
     'bootstrap_headless_mcp_configs',
-    () => getAllMcpConfigs(),
+    () => getAllMcpConfigs(dynamicMcpConfig),
     result => ({ server_count: result.servers.length }),
   )
   const mcpResources = await withDiagnosticsTiming(

@@ -121,6 +121,10 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     minimumTokensBetweenUpdate: 5000,
     toolCallsBetweenUpdates: 3,
   },
+  mcp: {
+    version: 1,
+    servers: {},
+  },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserEmail: '',
@@ -131,13 +135,13 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
 });
+
 const APP_FILES_SUBDIR = 'files';
 const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
 const MAX_SANITIZED_PATH_LENGTH = 200;
 
-// Desktop sessions should always resolve user-scoped settings/data from
-// ~/.moss without relocating the legacy ~/.claude.json global config file.
+// Desktop sessions resolve user-scoped settings/data from ~/.moss/settings.json.
 process.env.MOSS_HOME = MOSS_HOME;
 
 function normalizeAnthropicBaseUrl(value) {
@@ -623,6 +627,14 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.logRotationMaxFiles = DEFAULT_DESKTOP_SETTINGS.logRotationMaxFiles;
   }
 
+  if (source.mcp !== undefined) {
+    result.mcp = normalizeMcpStore(source.mcp);
+  } else if (result.mcp !== undefined) {
+    result.mcp = normalizeMcpStore(result.mcp);
+  } else {
+    result.mcp = normalizeMcpStore(DEFAULT_DESKTOP_SETTINGS.mcp);
+  }
+
   return result;
 }
 
@@ -737,6 +749,159 @@ function saveDesktopSettings(nextSettings) {
   desktopSettings = normalizedSettings;
 }
 
+function readJsonFile(filePath, fallbackValue) {
+  try {
+    if (!fs.existsSync(filePath)) return fallbackValue;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) return fallbackValue;
+    return JSON.parse(raw);
+  } catch {
+    return fallbackValue;
+  }
+}
+
+function normalizeMcpStore(raw) {
+  const servers = {};
+  const sourceServers = raw && typeof raw === 'object' && raw.servers && typeof raw.servers === 'object'
+    ? raw.servers
+    : {};
+
+  for (const [name, entry] of Object.entries(sourceServers)) {
+    if (!isValidMcpServerName(name)) continue;
+    if (!entry || typeof entry !== 'object') continue;
+    try {
+      const config = validateMcpServerConfig(entry.config);
+      servers[name] = {
+        enabled: Boolean(entry.enabled),
+        config,
+        updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : Date.now(),
+      };
+    } catch {
+      // Ignore malformed desktop MCP entries so one bad draft does not break settings.
+    }
+  }
+
+  return { version: 1, servers };
+}
+
+function readDesktopMcpStore() {
+  return normalizeMcpStore(desktopSettings.mcp);
+}
+
+function saveDesktopMcpStore(store) {
+  saveDesktopSettings({
+    ...desktopSettings,
+    mcp: normalizeMcpStore(store),
+  });
+}
+
+function isValidMcpServerName(name) {
+  return typeof name === 'string' && /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
+function assertStringRecord(value, label) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') {
+      throw new Error(`${label}.${key} must be a string.`);
+    }
+    result[key] = item;
+  }
+  return result;
+}
+
+function validateMcpServerConfig(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('MCP server config must be an object.');
+  }
+
+  const type = input.type || 'stdio';
+  if (type === 'stdio') {
+    if (typeof input.command !== 'string' || !input.command.trim()) {
+      throw new Error('stdio MCP server requires command.');
+    }
+    const args = input.args === undefined ? [] : input.args;
+    if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string')) {
+      throw new Error('stdio MCP server args must be an array of strings.');
+    }
+    return {
+      type: 'stdio',
+      command: input.command.trim(),
+      args,
+      ...(input.env ? { env: assertStringRecord(input.env, 'env') } : {}),
+    };
+  }
+
+  if (type === 'http' || type === 'sse') {
+    if (typeof input.url !== 'string' || !input.url.trim()) {
+      throw new Error(`${type} MCP server requires url.`);
+    }
+    try {
+      const parsed = new URL(input.url.trim());
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('URL must use http or https.');
+      }
+    } catch (error) {
+      throw new Error(error?.message || 'Invalid MCP server url.');
+    }
+    return {
+      type,
+      url: input.url.trim(),
+      ...(input.headers ? { headers: assertStringRecord(input.headers, 'headers') } : {}),
+    };
+  }
+
+  throw new Error('MCP server type must be stdio, http, or sse.');
+}
+
+function resetLocalRuntimesForMcpReload() {
+  let resetSessionCount = 0;
+  let skippedBusySessionCount = 0;
+
+  for (const sessionRecord of sessions.values()) {
+    if (sessionRecord.agentMode === 'remote-direct') continue;
+    if (!sessionRecord.runtime) continue;
+    if (sessionRecord.busy) {
+      skippedBusySessionCount += 1;
+      continue;
+    }
+    disposeRuntime(sessionRecord);
+    resetSessionCount += 1;
+  }
+
+  return { resetSessionCount, skippedBusySessionCount };
+}
+
+function getDesktopMcpPayload(extra = {}) {
+  const store = readDesktopMcpStore();
+  return {
+    servers: Object.entries(store.servers).map(([name, entry]) => ({
+      name,
+      enabled: entry.enabled,
+      config: entry.config,
+      updatedAt: entry.updatedAt,
+    })),
+    configPath: DESKTOP_SETTINGS_PATH,
+    agentConfigPath: DESKTOP_SETTINGS_PATH,
+    ...extra,
+  };
+}
+
+function getEnabledDesktopMcpServers(settings = desktopSettings) {
+  const store = normalizeMcpStore(settings.mcp);
+  const enabled = {};
+  for (const [name, entry] of Object.entries(store.servers)) {
+    if (entry.enabled) {
+      enabled[name] = entry.config;
+    }
+  }
+  return enabled;
+}
+
 function buildThinkingConfig() {
   if (desktopSettings.thinkingMode === 'disabled') {
     return { type: 'disabled' };
@@ -760,6 +925,7 @@ function buildClaudeSessionConfig(cwd) {
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
+    mcpServers: getEnabledDesktopMcpServers(),
   };
 }
 
@@ -4258,6 +4424,60 @@ ipcMain.handle('agent:get-status', () => getBootStatus());
 ipcMain.handle('agent:get-auth-debug', async () => getAuthDebugSnapshot());
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:mcp-list', () => getDesktopMcpPayload());
+ipcMain.handle('agent:mcp-upsert', (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!isValidMcpServerName(name)) {
+    throw new Error('MCP server name can only contain letters, numbers, hyphens, and underscores.');
+  }
+
+  const config = validateMcpServerConfig(payload.config);
+  const store = readDesktopMcpStore();
+  const previousName = typeof payload.previousName === 'string' ? payload.previousName.trim() : '';
+  if (previousName && previousName !== name && isValidMcpServerName(previousName)) {
+    delete store.servers[previousName];
+  }
+  store.servers[name] = {
+    enabled: Boolean(payload.enabled),
+    config,
+    updatedAt: Date.now(),
+  };
+  saveDesktopMcpStore(store);
+  const reload = resetLocalRuntimesForMcpReload();
+  mossLog('info', 'mcp', 'Desktop MCP server saved', { name, enabled: Boolean(payload.enabled), ...reload });
+  return getDesktopMcpPayload(reload);
+});
+ipcMain.handle('agent:mcp-remove', (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!isValidMcpServerName(name)) {
+    throw new Error('Invalid MCP server name.');
+  }
+
+  const store = readDesktopMcpStore();
+  delete store.servers[name];
+  saveDesktopMcpStore(store);
+  const reload = resetLocalRuntimesForMcpReload();
+  mossLog('info', 'mcp', 'Desktop MCP server removed', { name, ...reload });
+  return getDesktopMcpPayload(reload);
+});
+ipcMain.handle('agent:mcp-set-enabled', (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!isValidMcpServerName(name)) {
+    throw new Error('Invalid MCP server name.');
+  }
+
+  const store = readDesktopMcpStore();
+  const entry = store.servers[name];
+  if (!entry) {
+    throw new Error(`Unknown MCP server: ${name}`);
+  }
+  entry.enabled = Boolean(payload.enabled);
+  entry.updatedAt = Date.now();
+  saveDesktopMcpStore(store);
+  const reload = resetLocalRuntimesForMcpReload();
+  mossLog('info', 'mcp', 'Desktop MCP server toggled', { name, enabled: entry.enabled, ...reload });
+  return getDesktopMcpPayload(reload);
+});
 
 ipcMain.handle('agent:getRemoteInstalledAssistants', async () => {
   try {
