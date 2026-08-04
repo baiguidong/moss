@@ -86,6 +86,13 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('preview.open', handler);
     },
   },
+  browser: {
+    onOpen: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('browser:open', handler);
+      return () => ipcRenderer.off('browser:open', handler);
+    },
+  },
   workspace: {
     writeFile: (payload) => ipcRenderer.invoke('workspace.write-file', payload),
   },

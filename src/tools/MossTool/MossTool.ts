@@ -22,7 +22,7 @@ const subjectReferenceSchema = z.strictObject({
 })
 
 const mossActionSchema = z.strictObject({
-  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'image_generate', 'image_edit']),
+  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'browser_open', 'image_generate', 'image_edit']),
   name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -37,6 +37,9 @@ const mossActionSchema = z.strictObject({
   version: z.string().optional(),
   reason: z.string().optional(),
   prompt: z.string().optional().describe('Prompt for image generation. Required for image_generate.'),
+  url: z.string().optional().describe('URL to open in the Moss right-side browser. For browser_open, provide either url or query.'),
+  query: z.string().optional().describe('Search query to open in the Moss right-side browser. For browser_open, provide either url or query.'),
+  engine: z.enum(['baidu', 'google', 'bing']).optional().describe('Search engine used when browser_open receives query. Defaults to baidu for Chinese search requests.'),
   aspect_ratio: imageAspectRatioSchema.optional().describe('Aspect ratio for generated images. Optional for image_generate; defaults in the main process if omitted.'),
   subject_reference: z.array(subjectReferenceSchema).optional().describe('Reference images for image generation. Optional for image_generate.'),
   source_path: z.string().optional().describe('Relative source image path inside the current session workspace. Required for image_edit.'),
@@ -76,6 +79,7 @@ export const MossTool = buildTool({
 - app_update: Update an existing app from filePath or metadata/html fields.
 - app_extract_to_workspace: Extract an installed app into the current session workspace as app-meta.json plus index.html.
 - app_get_versions: Get version history of an app
+- browser_open: Open a URL or search query in the Moss right-side browser panel for the current desktop session. Use this when the user asks to open a browser, open a webpage, or search/query something in a browser, for example "打开浏览器，百度查询 今日新闻".
 - image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace
 - image_edit: Edit a workspace image via the main-process image handler and write the result into the current session workspace`
   },
@@ -90,6 +94,7 @@ Parameter requirements:
 - app_update requires \`name\` and accepts optional \`filePath\`, \`html\`, metadata fields, and \`reason\`
 - app_extract_to_workspace requires \`name\`
 - app_get_versions requires \`name\`
+- browser_open requires either \`url\` or \`query\`; use \`query\` plus \`engine: "baidu"\` when the user says 百度查询/百度搜索 or asks in Chinese without naming another engine
 - image_generate requires \`prompt\` and \`out_path\`; \`out_path\` must be a relative path inside the current session workspace, for example \`images/hero.png\`; optionally accepts \`aspect_ratio\` and \`subject_reference\`
 - image_edit requires \`prompt\`, \`source_path\`, and \`out_path\`; both paths must be relative paths inside the current session workspace
 - image_generate and image_edit return image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
@@ -108,7 +113,7 @@ Parameter requirements:
     return false
   },
   isReadOnly(input: MossActionInput) {
-    return input.action === 'app_launch' || input.action === 'app_get_versions' || input.action === 'app_preview'
+    return input.action === 'app_launch' || input.action === 'app_get_versions' || input.action === 'app_preview' || input.action === 'browser_open'
   },
   async call(input: MossActionInput, context: ToolUseContext): Promise<{ data: MossOutput }> {
     const emitAppEvent = context.emitAppEvent ?? getGlobalAppEventBridge()
@@ -236,6 +241,20 @@ Parameter requirements:
         event = {
           type: 'app_get_versions',
           input: { name: input.name },
+        }
+        break
+
+      case 'browser_open':
+        if (!input.url && !input.query) {
+          return { data: { ok: false, error: 'url or query is required for browser_open' } }
+        }
+        event = {
+          type: 'browser_open',
+          input: {
+            url: input.url,
+            query: input.query,
+            engine: input.engine,
+          },
         }
         break
 

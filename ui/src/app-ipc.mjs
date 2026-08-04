@@ -1275,6 +1275,32 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           return { ok: true, versions }
         }
 
+        case 'browser_open': {
+          const directUrl = typeof event.input?.url === 'string'
+            ? event.input.url.trim()
+            : ''
+          const query = typeof event.input?.query === 'string'
+            ? event.input.query.trim()
+            : ''
+          if (!directUrl && !query) {
+            throw new Error('browser_open requires url or query')
+          }
+          const engine = typeof event.input?.engine === 'string'
+            ? event.input.engine
+            : 'baidu'
+          const encoded = encodeURIComponent(query)
+          const url = directUrl || (engine === 'google'
+            ? `https://www.google.com/search?q=${encoded}`
+            : engine === 'bing'
+              ? `https://www.bing.com/search?q=${encoded}`
+              : `https://www.baidu.com/s?wd=${encoded}`)
+          windows.openBrowser?.({
+            url,
+            sessionId: sessionRecord?.id || null,
+          })
+          return { ok: true, previewUrl: url }
+        }
+
         case 'image_generate':
         case 'image_edit': {
           const { prompt, aspect_ratio, subject_reference, source_path, out_path } =

@@ -3470,6 +3470,9 @@ const mossAppEventHandler = createMossAppEventHandler(
         win.close()
       }
     },
+    openBrowser: (payload) => {
+      emitToRenderer('browser:open', payload)
+    },
   },
   {
     emitAppsChanged,

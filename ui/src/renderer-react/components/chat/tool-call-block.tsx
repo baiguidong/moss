@@ -235,11 +235,16 @@ export function ToolCallBlock({
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
   const [expanded, setExpanded] = React.useState(isRunning);
+  const userToggledRef = React.useRef(false);
+  const prevRunningRef = React.useRef(isRunning);
 
   React.useEffect(() => {
     if (isRunning) {
       setExpanded(true);
+    } else if (prevRunningRef.current && !userToggledRef.current) {
+      setExpanded(false);
     }
+    prevRunningRef.current = isRunning;
   }, [isRunning]);
 
   const shellResult = extractShellResult(result?.rawContent);
@@ -252,7 +257,10 @@ export function ToolCallBlock({
     return (
       <button
         type="button"
-        onClick={() => setExpanded(true)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setExpanded(true);
+        }}
         className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none"
       >
         {statusDot(toolCall.status)}
@@ -281,7 +289,10 @@ export function ToolCallBlock({
       {/* Header: click to collapse */}
       <button
         type="button"
-        onClick={() => setExpanded(false)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setExpanded(false);
+        }}
         className="flex w-full items-center gap-2 px-3 py-2 text-left select-none hover:bg-muted/30 transition-colors rounded-t-xl"
       >
         {statusDot(toolCall.status)}

@@ -312,6 +312,7 @@ export type MossAppEvent =
   | { type: 'app_update'; input: MossAppUpdateInput }
   | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
+  | { type: 'browser_open'; input: MossBrowserOpenInput }
   | { type: 'image_generate'; input: MossImageGenerateInput }
   | { type: 'image_edit'; input: MossImageEditInput }
 
@@ -378,6 +379,12 @@ export type MossImageGenerateInput = {
     image_file: string
   }>
   out_path: string
+}
+
+export type MossBrowserOpenInput = {
+  url?: string
+  query?: string
+  engine?: 'baidu' | 'google' | 'bing'
 }
 
 export type MossImageEditInput = {

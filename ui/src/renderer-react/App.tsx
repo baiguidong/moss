@@ -1893,6 +1893,7 @@ export default function App() {
                 activePreviewPath={activePreviewPath}
                 onActivatePreview={setActivePreviewPath}
                 previewTitle={activePreview?.relativePath || '未选择文件'}
+                sessionId={activeSessionId}
               />
             </div>
           </>

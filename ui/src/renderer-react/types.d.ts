@@ -347,6 +347,9 @@ declare global {
         close: () => Promise<{ ok: boolean }>;
         onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) => () => void;
       };
+      browser: {
+        onOpen: (callback: (payload: { url: string; sessionId?: string | null }) => void) => () => void;
+      };
       workspace: {
         writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;
       };
