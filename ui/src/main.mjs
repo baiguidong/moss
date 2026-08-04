@@ -29,6 +29,11 @@ import {
 } from './assistant-context-utils.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
+import {
+  applyManagedRuntimeEnv,
+  ensureManagedRuntimes,
+  getManagedRuntimeStatus,
+} from './runtime/managed-runtimes.mjs';
 import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
 import { autoUpdaterService } from './auto-updater-service.mjs';
 import { registerDocumentIpcHandlers } from './process/bridge/document-bridge.mjs';
@@ -121,6 +126,11 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     minimumTokensBetweenUpdate: 5000,
     toolCallsBetweenUpdates: 3,
   },
+  managedRuntimes: {
+    node: true,
+    python: true,
+    git: true,
+  },
   mcp: {
     version: 1,
     servers: {},
@@ -193,6 +203,7 @@ process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
 let mainWindow = null;
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
+let managedRuntimeInstallPromise = null;
 
 const sessions = new Map();
 const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
@@ -609,6 +620,33 @@ function normalizeDesktopSettings(input, existing = {}) {
     ),
   };
 
+  const sourceManagedRuntimes = source.managedRuntimes && typeof source.managedRuntimes === 'object'
+    ? source.managedRuntimes
+    : {};
+  const existingManagedRuntimes = result.managedRuntimes && typeof result.managedRuntimes === 'object'
+    ? result.managedRuntimes
+    : {};
+  result.managedRuntimes = {
+    node:
+      sourceManagedRuntimes.node !== undefined
+        ? Boolean(sourceManagedRuntimes.node)
+        : existingManagedRuntimes.node !== undefined
+          ? Boolean(existingManagedRuntimes.node)
+          : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.node,
+    python:
+      sourceManagedRuntimes.python !== undefined
+        ? Boolean(sourceManagedRuntimes.python)
+        : existingManagedRuntimes.python !== undefined
+          ? Boolean(existingManagedRuntimes.python)
+          : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.python,
+    git:
+      sourceManagedRuntimes.git !== undefined
+        ? Boolean(sourceManagedRuntimes.git)
+        : existingManagedRuntimes.git !== undefined
+          ? Boolean(existingManagedRuntimes.git)
+          : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.git,
+  };
+
   if (source.logRotationMaxSize !== undefined) {
     let size = Number.parseInt(String(source.logRotationMaxSize), 10);
     if (Number.isFinite(size) && size >= 1024 * 1024) {
@@ -925,7 +963,37 @@ function buildThinkingConfig() {
   return { type: 'adaptive' };
 }
 
+function startManagedRuntimeInstall() {
+  if (!managedRuntimeInstallPromise) {
+    managedRuntimeInstallPromise = ensureManagedRuntimes()
+      .finally(() => {
+        applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+        managedRuntimeInstallPromise = null;
+      });
+  }
+  return managedRuntimeInstallPromise;
+}
+
+function getManagedRuntimeEnvOptions() {
+  const managedRuntimes = desktopSettings.managedRuntimes && typeof desktopSettings.managedRuntimes === 'object'
+    ? desktopSettings.managedRuntimes
+    : DEFAULT_DESKTOP_SETTINGS.managedRuntimes;
+  return {
+    node: managedRuntimes.node !== false,
+    python: managedRuntimes.python !== false,
+    git: managedRuntimes.git !== false,
+  };
+}
+
+async function waitForManagedRuntimesBeforeLocalSession() {
+  if (managedRuntimeInstallPromise) {
+    await managedRuntimeInstallPromise;
+  }
+  applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+}
+
 function buildClaudeSessionConfig(cwd) {
+  applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   return {
     cwd,
     model: desktopSettings.model,
@@ -2667,6 +2735,7 @@ async function ensureAppAgentRuntime(appState) {
     return appState.runtime;
   }
 
+  await waitForManagedRuntimesBeforeLocalSession();
   const ClaudeSession = await getClaudeSessionCtor();
   appState.runtime = new ClaudeSession({
     ...buildClaudeSessionConfig(appState.dataDir),
@@ -3479,6 +3548,7 @@ async function ensureRuntime(sessionRecord) {
     return sessionRecord.runtime;
   }
 
+  await waitForManagedRuntimesBeforeLocalSession();
   const ClaudeSession = await getClaudeSessionCtor();
 
   sessionRecord.runtime = new ClaudeSession({
@@ -3517,6 +3587,7 @@ async function resumeSessionRecord(sessionRecord) {
   }
 
   const targetSessionId = sessionRecord.underlyingSessionId;
+  await waitForManagedRuntimesBeforeLocalSession();
   const resumeClaudeSession = await getResumeClaudeSessionFn();
 
   try {
@@ -4347,6 +4418,8 @@ ipcMain.handle('agent:cron-run-now', async (_event, { taskId }) => {
 });
 
 app.whenReady().then(() => {
+  void startManagedRuntimeInstall();
+
   // Initialize bundled apps from src/apps to generated-apps
   initializeBundledApps();
 
@@ -4431,6 +4504,20 @@ app.on('window-all-closed', () => {
 });
 
 ipcMain.handle('agent:get-status', () => getBootStatus());
+ipcMain.handle('agent:get-managed-runtime-status', () => ({
+  ...getManagedRuntimeStatus(),
+  installing: Boolean(managedRuntimeInstallPromise),
+}));
+ipcMain.handle('agent:ensure-managed-runtimes', async (_event, payload = {}) => {
+  const options = payload && typeof payload === 'object' ? payload : {};
+  const result = await ensureManagedRuntimes({
+    node: options.node !== false,
+    python: options.python !== false,
+    git: options.git !== false,
+  });
+  applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+  return result;
+});
 ipcMain.handle('agent:get-auth-debug', async () => getAuthDebugSnapshot());
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));

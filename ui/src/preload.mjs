@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
 
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
+  getManagedRuntimeStatus: () => ipcRenderer.invoke('agent:get-managed-runtime-status'),
+  ensureManagedRuntimes: (payload) => ipcRenderer.invoke('agent:ensure-managed-runtimes', payload),
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   updateSettings: (payload) => ipcRenderer.invoke('agent:update-settings', payload),

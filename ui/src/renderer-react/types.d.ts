@@ -124,6 +124,11 @@ export type DesktopSettings = {
     minimumTokensBetweenUpdate?: number;
     toolCallsBetweenUpdates?: number;
   };
+  managedRuntimes?: {
+    node?: boolean;
+    python?: boolean;
+    git?: boolean;
+  };
   mcp?: {
     version?: number;
     servers?: Record<string, {
@@ -145,6 +150,22 @@ export type DesktopSettings = {
   settingsParseError: string;
   skippedSessionCount?: number;
   coordinatorMode?: boolean;
+};
+
+export type ManagedRuntimeEntry = {
+  path?: string;
+  installed?: boolean;
+  skipped?: boolean;
+  resourceAvailable?: boolean;
+};
+
+export type ManagedRuntimeStatus = {
+  node: ManagedRuntimeEntry;
+  python: ManagedRuntimeEntry;
+  git: ManagedRuntimeEntry;
+  registryPath: string;
+  resourcesRoot: string;
+  installing?: boolean;
 };
 
 export type StoredApp = {
@@ -260,6 +281,8 @@ declare global {
       ipcOff: (channel: string, handler: any) => void;
 
       getStatus: () => Promise<any>;
+      getManagedRuntimeStatus: () => Promise<ManagedRuntimeStatus>;
+      ensureManagedRuntimes: (payload?: { node?: boolean; python?: boolean; git?: boolean }) => Promise<Record<string, unknown>>;
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;

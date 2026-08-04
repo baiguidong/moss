@@ -12,6 +12,7 @@ import {
   Monitor,
   MoonStar,
   Palette,
+  RefreshCw,
   Search,
   Shield,
   Sparkles,
@@ -29,10 +30,10 @@ import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { PRESET_THEMES } from '@/theme/presets';
 import { knowledgeAPI } from '@/knowledge/ipc/knowledge.ipc';
-import type { DesktopSettings, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
+import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -144,6 +145,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Link2,
     iconGradientClassName: 'from-sky-400 to-blue-600',
     keywords: ['连接', 'connection', 'remote', 'server', 'workspace', '认证', 'credential', 'url'],
+  },
+  {
+    id: 'runtime',
+    title: '运行环境',
+    icon: Monitor,
+    iconGradientClassName: 'from-slate-400 to-zinc-700',
+    keywords: ['运行环境', 'runtime', 'node', 'python', 'git', 'bash', '内置', 'managed', '环境'],
   },
   {
     id: 'permission',
@@ -868,6 +876,201 @@ function McpSettings() {
   );
 }
 
+function RuntimeStatusBadge({ runtime }: { runtime: { installed?: boolean; skipped?: boolean; resourceAvailable?: boolean } }) {
+  if (runtime.skipped) {
+    return (
+      <span className="rounded-full bg-sidebar-accent px-2.5 py-1 text-xs font-medium text-muted-foreground">
+        不适用
+      </span>
+    );
+  }
+  if (runtime.installed) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-300">
+        <Check className="h-3.5 w-3.5" />
+        已安装
+      </span>
+    );
+  }
+  if (runtime.resourceAvailable === false) {
+    return (
+      <span className="rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-700 dark:text-rose-300">
+        资源缺失
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+      未安装
+    </span>
+  );
+}
+
+function RuntimeRow({
+  name,
+  description,
+  runtime,
+  enabled,
+  busy,
+  onEnabledChange,
+}: {
+  name: string;
+  description: string;
+  runtime: { path?: string; installed?: boolean; skipped?: boolean; resourceAvailable?: boolean };
+  enabled: boolean;
+  busy: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+}) {
+  return (
+    <div className="px-4 py-3.5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[13px] font-medium text-foreground">{name}</p>
+            <RuntimeStatusBadge runtime={runtime} />
+          </div>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">{description}</p>
+        </div>
+        <div className="min-w-0 sm:w-[420px]">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1 truncate rounded-xl border border-sidebar-border bg-sidebar/70 px-3 py-2 font-mono text-xs text-sidebar-foreground/75">
+              {runtime.skipped ? '-' : runtime.path || '-'}
+            </div>
+            <Toggle
+              checked={enabled}
+              onCheckedChange={onEnabledChange}
+              label={name}
+            />
+            {busy ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RuntimeSettings({
+  settingsDraft,
+  updateSetting,
+}: {
+  settingsDraft: DesktopSettings;
+  updateSetting: <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => void;
+}) {
+  const [status, setStatus] = React.useState<ManagedRuntimeStatus | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [installingRuntime, setInstallingRuntime] = React.useState<'node' | 'python' | 'git' | null>(null);
+  const [notice, setNotice] = React.useState('');
+  const [error, setError] = React.useState('');
+
+  const refreshStatus = React.useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setStatus(await window.agentDesktop.getManagedRuntimeStatus());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
+
+  React.useEffect(() => {
+    if (!status?.installing) return undefined;
+    const timer = window.setTimeout(() => {
+      void refreshStatus();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [refreshStatus, status?.installing]);
+
+  const runtimeSettings = {
+    node: settingsDraft.managedRuntimes?.node !== false,
+    python: settingsDraft.managedRuntimes?.python !== false,
+    git: settingsDraft.managedRuntimes?.git !== false,
+  };
+
+  const updateRuntimeEnabled = async (name: 'node' | 'python' | 'git', enabled: boolean) => {
+    const nextManagedRuntimes = {
+      ...runtimeSettings,
+      [name]: enabled,
+    };
+    updateSetting('managedRuntimes', nextManagedRuntimes);
+    setNotice('');
+    setError('');
+    if (!enabled) {
+      setNotice(`${name} 已关闭，agent 不会使用该运行环境`);
+      return;
+    }
+    setInstallingRuntime(name);
+    try {
+      await window.agentDesktop.ensureManagedRuntimes({
+        node: name === 'node',
+        python: name === 'python',
+        git: name === 'git',
+      });
+      const nextStatus = await window.agentDesktop.getManagedRuntimeStatus();
+      setStatus(nextStatus);
+      const runtime = nextStatus[name];
+      setNotice(runtime.installed || runtime.skipped ? `${name} 已启用` : `${name} 已打开，等待运行环境安装`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInstallingRuntime(null);
+    }
+  };
+
+  const node = status?.node ?? {};
+  const python = status?.python ?? {};
+  const git = status?.git ?? {};
+
+  return (
+    <div className="space-y-3">
+      <SettingsGroup>
+        <RuntimeRow
+          name="Node.js"
+          description="用于运行 JavaScript/TypeScript 工具、MCP stdio server 和项目脚本。"
+          runtime={node}
+          enabled={runtimeSettings.node}
+          busy={installingRuntime === 'node' || Boolean(status?.installing)}
+          onEnabledChange={(enabled) => void updateRuntimeEnabled('node', enabled)}
+        />
+        <RuntimeRow
+          name="Python"
+          description="用于运行 Python 脚本、数据处理和 Python MCP server。"
+          runtime={python}
+          enabled={runtimeSettings.python}
+          busy={installingRuntime === 'python' || Boolean(status?.installing)}
+          onEnabledChange={(enabled) => void updateRuntimeEnabled('python', enabled)}
+        />
+        {!git.skipped ? (
+          <RuntimeRow
+            name="Git Bash"
+            description="仅 Windows 使用，提供 Claude Code 需要的 bash.exe 和 git.exe。"
+            runtime={git}
+            enabled={runtimeSettings.git}
+            busy={installingRuntime === 'git' || Boolean(status?.installing)}
+            onEnabledChange={(enabled) => void updateRuntimeEnabled('git', enabled)}
+          />
+        ) : null}
+      </SettingsGroup>
+
+      {notice || error ? (
+        <div className={cn(
+          'rounded-[18px] border px-4 py-3 text-xs leading-6',
+          error
+            ? 'border-rose-200/80 bg-rose-50/90 text-rose-950 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100'
+            : 'border-emerald-200/80 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100',
+        )}>
+          {error || notice}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SettingsView({
   settingsDraft,
   setSettingsDraft,
@@ -888,6 +1091,7 @@ export function SettingsView({
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     connection: null,
+    runtime: null,
     permission: null,
     memory: null,
     mcp: null,
@@ -1312,6 +1516,21 @@ export function SettingsView({
                         ) : null}
                       </SettingsGroup>
                     </div>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'runtime') ? (
+                  <SettingsSection
+                    id="runtime"
+                    title="运行环境"
+                    sectionRef={(element) => {
+                      sectionRefs.current.runtime = element;
+                    }}
+                  >
+                    <RuntimeSettings
+                      settingsDraft={settingsDraft}
+                      updateSetting={updateSetting}
+                    />
                   </SettingsSection>
                 ) : null}
 

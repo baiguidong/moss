@@ -9,14 +9,16 @@
   "scripts": {
     "build:direct": "node scripts/build-direct.mjs",
     "build:renderer": "vite build && mkdir -p dist/apps && cp -r src/apps/* dist/apps/ && mkdir -p dist/renderer/build && cp -r build/* dist/renderer/build/",
+    "runtimes:download": "node scripts/download-runtimes.mjs",
+    "runtimes:download:all": "node scripts/download-runtimes.mjs --all",
     "start": "node scripts/build-direct.mjs && vite build && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
-    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && tsc --noEmit",
-    "dist:win": "node scripts/build-direct.mjs && vite build && electron-builder --win --publish never",
-    "dist:mac": "node scripts/build-direct.mjs && vite build && electron-builder --mac --publish never",
-    "release:win": "node scripts/build-direct.mjs && vite build && electron-builder --win --publish always",
-    "release:mac": "node scripts/build-direct.mjs && vite build && electron-builder --mac --publish always",
+    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/app-preload.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && node --check scripts/download-runtimes.mjs && tsc --noEmit",
+    "dist:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && vite build && electron-builder --win --publish never",
+    "dist:mac": "node scripts/download-runtimes.mjs && node scripts/build-direct.mjs && vite build && electron-builder --mac --publish never",
+    "release:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && vite build && electron-builder --win --publish always",
+    "release:mac": "node scripts/download-runtimes.mjs && node scripts/build-direct.mjs && vite build && electron-builder --mac --publish always",
     "install-app": "node -e \"const fs=require('fs');const os=require('os');const path=require('path');const s=process.argv[2];if(!s){console.log('Usage: npm run install-app <app-name>');process.exit(1);}const src='src/apps/'+s+'.html';const dst=path.join(os.homedir(),'.moss','generated-apps',s+'.html');fs.mkdirSync(path.dirname(dst),{recursive:true});fs.copyFileSync(src,dst);console.log('Installed:',dst);\""
   },
   "build": {
@@ -81,10 +83,18 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/runtimes",
+        "to": "runtimes",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "identity": null,
       "target": [
         "dmg",
         "zip"
