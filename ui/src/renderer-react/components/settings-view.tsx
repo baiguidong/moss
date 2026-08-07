@@ -4,7 +4,6 @@ import {
   Brain,
   Check,
   FileText,
-  BookOpen,
   Image as ImageIcon,
   Link2,
   MessageSquare,
@@ -29,11 +28,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { PRESET_THEMES } from '@/theme/presets';
-import { knowledgeAPI } from '@/knowledge/ipc/knowledge.ipc';
 import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'voice-model' | 'knowledge' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'voice-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -194,13 +192,6 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Mic,
     iconGradientClassName: 'from-indigo-400 to-blue-600',
     keywords: ['语音模型', '语音', 'voice', 'asr', 'stt', '转写', 'speech', 'provider', 'api', 'key', 'url'],
-  },
-  {
-    id: 'knowledge',
-    title: '知识库',
-    icon: BookOpen,
-    iconGradientClassName: 'from-amber-400 to-yellow-600',
-    keywords: ['知识库', 'knowledge', 'mineru', '解析', 'parse', 'server', 'url', '文档'],
   },
   {
     id: 'prompt',
@@ -1098,7 +1089,6 @@ export function SettingsView({
     'text-model': null,
     'image-model': null,
     'voice-model': null,
-    knowledge: null,
     prompt: null,
     'im-adapter': null,
     buddy: null,
@@ -1119,8 +1109,6 @@ export function SettingsView({
     ...DEFAULT_SESSION_MEMORY_SETTINGS,
     ...(settingsDraft?.sessionMemory || {}),
   };
-  const mineruUrl = settingsDraft?.mineru?.serverUrl || '';
-  const [mineruTest, setMineruTest] = React.useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
 
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
@@ -1209,27 +1197,12 @@ export function SettingsView({
     });
   };
 
-  const updateMineruSettings = (patch: Partial<NonNullable<DesktopSettings['mineru']>>) => {
-    const nextMineru = { serverUrl: '', ...settingsDraft?.mineru, ...patch };
-    updateSetting('mineru', nextMineru);
-  };
-
   const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
     const nextSessionMemory = {
       ...sessionMemoryDraft,
       ...patch,
     };
     updateSetting('sessionMemory', nextSessionMemory);
-  };
-
-  const handleTestMineru = async () => {
-    setMineruTest({ state: 'testing' });
-    try {
-      const res = await knowledgeAPI.testConnection(mineruUrl || undefined);
-      setMineruTest(res.ok ? { state: 'ok' } : { state: 'fail', msg: res.error || '连接失败' });
-    } catch (err) {
-      setMineruTest({ state: 'fail', msg: err instanceof Error ? err.message : String(err) });
-    }
   };
 
   const updateVoiceSettings = (patch: Partial<DesktopSettings['voice']>) => {
@@ -1930,57 +1903,6 @@ export function SettingsView({
                           onChange={(event) => updateVoiceSettings({ model: event.target.value })}
                           placeholder="whisper-1"
                         />
-                      </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
-
-                {visibleSections.some((section) => section.id === 'knowledge') ? (
-                  <SettingsSection
-                    id="knowledge"
-                    title="知识库"
-                    sectionRef={(element) => {
-                      sectionRefs.current['knowledge'] = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="MinerU 服务地址"
-                        description="文档解析由独立启动的 MinerU 服务提供,留空则使用默认 http://127.0.0.1:8000。"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={mineruUrl}
-                          onChange={(event) => {
-                            setMineruTest({ state: 'idle' });
-                            updateMineruSettings({ serverUrl: event.target.value });
-                          }}
-                          placeholder="http://127.0.0.1:8000"
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="连接测试"
-                        description="检查 MinerU 服务是否可用。"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <div className="flex w-full items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-                            onClick={handleTestMineru}
-                            disabled={mineruTest.state === 'testing'}
-                          >
-                            {mineruTest.state === 'testing' ? '测试中...' : '测试连接'}
-                          </Button>
-                          {mineruTest.state === 'ok' ? (
-                            <span className="text-xs text-emerald-500">已连接</span>
-                          ) : mineruTest.state === 'fail' ? (
-                            <span className="truncate text-xs text-destructive">{mineruTest.msg}</span>
-                          ) : null}
-                        </div>
                       </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>

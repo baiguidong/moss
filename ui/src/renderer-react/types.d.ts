@@ -9,6 +9,7 @@ export type SessionSummary = {
   id: string;
   title: string;
   agentMode?: 'local' | 'remote-direct';
+  composerIntent?: 'chat' | 'coordinator';
   workspace: string;
   createdAt: number;
   updatedAt: number;
@@ -113,9 +114,6 @@ export type DesktopSettings = {
     baseURL: string;
     apiKey: string;
     model: string;
-  };
-  mineru?: {
-    serverUrl: string;
   };
   sessionMemory?: {
     enabled?: boolean;
@@ -305,6 +303,7 @@ declare global {
       send: (payload: {
         sessionId: string;
         prompt: string;
+        skillPrefix?: string;
         mode?: 'chat' | 'plan' | 'coordinator';
         appName?: string;
         files?: string[];

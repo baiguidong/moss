@@ -51,8 +51,6 @@ import {
   allowMediaRoot,
 } from './filemanage/main/index.mjs';
 import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
-import { initComicDramaDatabase, registerComicDramaIpcHandlers } from './comicdrama/main/index.mjs';
-import { initKnowledgeDatabase, registerKnowledgeIpcHandlers } from './knowledge/main/index.mjs';
 
 // 注册自定义流媒体协议 (必须在 app.whenReady 之前)
 registerMediaScheme(protocol);
@@ -87,7 +85,7 @@ const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
 const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'generated-app-data');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
-const MOSS_SYSTEM_SKILLS_DIR = path.join(MOSS_HOME, 'skills', 'system');
+const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
 const ASSISTANT_SYSTEM_DIR = path.join(MOSS_HOME, 'assistants', 'system');
 const ASSISTANT_HUB_DIR = path.join(MOSS_HOME, 'assistants', 'hub');
@@ -199,6 +197,9 @@ process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY = 'true';
 // Desktop local-agent sessions use app-managed workspaces; skip CLI-style git
 // status context so first-turn startup does not block on the current directory.
 process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
+// Desktop builds must not depend on the user's shell PATH for ripgrep. The
+// agent bundle falls back to vendor/ripgrep when this is truthy.
+process.env.USE_BUILTIN_RIPGREP = '1';
 
 let mainWindow = null;
 let claudeSessionCtorPromise = null;
@@ -246,6 +247,11 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_coordinator_mode INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -256,6 +262,7 @@ const persistSessionStmt = (() => {
       message_count INTEGER NOT NULL,
       preview TEXT NOT NULL,
       agent_mode TEXT NOT NULL DEFAULT 'local',
+      is_coordinator_mode INTEGER NOT NULL DEFAULT 0,
       remote_workspace TEXT,
       underlying_session_id TEXT,
       history_json TEXT NOT NULL DEFAULT '[]',
@@ -266,9 +273,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -278,6 +285,7 @@ const persistSessionStmt = (() => {
       message_count = excluded.message_count,
       preview = excluded.preview,
       agent_mode = excluded.agent_mode,
+      is_coordinator_mode = excluded.is_coordinator_mode,
       remote_workspace = excluded.remote_workspace,
       underlying_session_id = excluded.underlying_session_id,
       history_json = excluded.history_json,
@@ -297,6 +305,7 @@ const loadSessionsStmt = sessionDb.prepare(`
     message_count,
     preview,
     agent_mode,
+    is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
     is_sub_agent,
@@ -316,6 +325,7 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     message_count,
     preview,
     agent_mode,
+    is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
     is_sub_agent,
@@ -335,6 +345,7 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     message_count,
     preview,
     agent_mode,
+    is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
     is_sub_agent,
@@ -522,19 +533,6 @@ function normalizeDesktopSettings(input, existing = {}) {
           ? existingVoice.model
           : DEFAULT_DESKTOP_SETTINGS.voice.model,
   };
-
-  const sourceMineru = source.mineru && typeof source.mineru === 'object' ? source.mineru : null;
-  const existingMineru = result.mineru && typeof result.mineru === 'object' ? result.mineru : {};
-  if (sourceMineru || result.mineru !== undefined) {
-    result.mineru = {
-      serverUrl:
-        sourceMineru && typeof sourceMineru.serverUrl === 'string'
-          ? sourceMineru.serverUrl.trim()
-          : typeof existingMineru.serverUrl === 'string'
-            ? existingMineru.serverUrl
-            : '',
-    };
-  }
 
   if (typeof source.remoteDirectServerUrl === 'string') {
     result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
@@ -1576,6 +1574,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.messageCount,
     sessionRecord.preview || '',
     sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    sessionRecord.isCoordinatorMode ? 1 : 0,
     sessionRecord.remoteWorkspace || null,
     sessionRecord.underlyingSessionId,
     '[]',
@@ -1650,6 +1649,7 @@ function hydratePersistedSessions() {
           : getRemoteDirectWorkspace() || null)
         : null,
       agentMode,
+      isCoordinatorMode: Boolean(row.is_coordinator_mode),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
@@ -1685,6 +1685,7 @@ function hydratePersistedSessions() {
           : getRemoteDirectWorkspace() || null)
         : null,
       agentMode,
+      isCoordinatorMode: Boolean(row.is_coordinator_mode),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
@@ -1884,6 +1885,7 @@ function getSessionSummary(sessionRecord) {
     id: sessionRecord.id,
     title: sessionRecord.title,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    composerIntent: sessionRecord.isCoordinatorMode ? 'coordinator' : 'chat',
     workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
@@ -2067,6 +2069,9 @@ async function loadSessionHistoryFromSource(sessionRecord) {
         : sessionRecord.underlyingSessionId,
       customTitle: typeof context?.context?.customTitle === 'string'
         ? context.context.customTitle
+        : undefined,
+      mode: typeof context?.context?.mode === 'string'
+        ? context.context.mode
         : undefined,
       remoteWorkspace: typeof context?.session?.workDir === 'string'
         ? context.session.workDir
@@ -2345,11 +2350,11 @@ function initializeBundledApps() {
 }
 
 /**
- * Initialize bundled skills from repo skills directory to ~/.moss/skills/system.
+ * Initialize bundled skills from repo skills directory to ~/.moss/skills.
  * In packaged mode, reads from process.resourcesPath/skills.
  */
 function initializeBundledSkills() {
-  fs.mkdirSync(MOSS_SYSTEM_SKILLS_DIR, { recursive: true });
+  fs.mkdirSync(MOSS_SKILLS_DIR, { recursive: true });
 
   try {
     const srcDir = app.isPackaged
@@ -2361,7 +2366,7 @@ function initializeBundledSkills() {
       .filter(entry => entry.isDirectory())
       .forEach(entry => {
         const srcPath = path.join(srcDir, entry.name);
-        const dstPath = path.join(MOSS_SYSTEM_SKILLS_DIR, entry.name);
+        const dstPath = path.join(MOSS_SKILLS_DIR, entry.name);
         try {
           fs.cpSync(srcPath, dstPath, { recursive: true });
         } catch (copyErr) {
@@ -3280,6 +3285,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
     workspace: normalizedWorkspace,
     remoteWorkspace: getRemoteDirectWorkspace() || null,
     agentMode: getDesktopAgentMode(),
+    isCoordinatorMode: false,
     createdAt: now,
     updatedAt: now,
     busy: false,
@@ -4426,7 +4432,7 @@ app.whenReady().then(() => {
   // Initialize bundled apps from src/apps to generated-apps
   initializeBundledApps();
 
-  // Initialize bundled skills from repo skills to ~/.moss/skills/system
+  // Initialize bundled skills from repo skills to ~/.moss/skills
   initializeBundledSkills();
 
   // Initialize bundled assistants from repo assistants to ~/.moss/assistants/_system
@@ -4460,10 +4466,6 @@ app.whenReady().then(() => {
     registerTranscribeIpcHandlers(ipcMain, db);
     initAiMemoDatabase(db);
     registerAiMemoIpcHandlers(ipcMain, db);
-    initComicDramaDatabase(db);
-    registerComicDramaIpcHandlers(ipcMain, db);
-    initKnowledgeDatabase(db);
-    registerKnowledgeIpcHandlers(ipcMain, db);
     mossLog('info', 'app', 'File manager module initialized');
   } catch (err) {
     mossLog('error', 'app', 'Failed to initialize file manager', { error: err.message });
@@ -5334,7 +5336,7 @@ async function buildInlineImageBlocks(filePaths) {
   return { blocks, inlinedPaths };
 }
 
-ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode, assistantName }) => {
+ipcMain.handle('agent:send', async (event, { sessionId, prompt, skillPrefix, mode, appName, files, coordinatorMode, assistantName }) => {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
@@ -5343,10 +5345,19 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, f
     await resumeSessionRecord(sessionRecord);
   }
 
-  // Store coordinator mode flag on sessionRecord so runtime can read it
-  sessionRecord.isCoordinatorMode = mode === 'coordinator' || coordinatorMode;
+  // Store durable chat/boss mode on sessionRecord so runtime and renderer stay in sync.
+  // Plan turns are one-shot and should not rewrite the session's durable mode.
+  if (mode === 'coordinator' || coordinatorMode) {
+    sessionRecord.isCoordinatorMode = true;
+  } else if (mode !== 'plan') {
+    sessionRecord.isCoordinatorMode = false;
+  }
+  sessionRecord.updatedAt = Date.now();
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
 
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+  const trimmedSkillPrefix = typeof skillPrefix === 'string' ? skillPrefix.trim() : '';
   const filePaths = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f.trim()) : [];
 
   if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
@@ -5449,7 +5460,7 @@ ${assistantRules}${skillsInfo}${skillDirsInfo}
 
   const promptText = isPlanOnly
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-    : (sessionRecord.agentMode === 'remote-direct' ? '' : assistantContextPrefix) + appContextPrefix + bashContextPrefix + trimmedPrompt + attachmentSuffix;
+    : (sessionRecord.agentMode === 'remote-direct' ? '' : assistantContextPrefix) + appContextPrefix + bashContextPrefix + (trimmedSkillPrefix ? `${trimmedSkillPrefix}\n\n` : '') + trimmedPrompt + attachmentSuffix;
 
   // The embedded runtime's processUserInput natively accepts content-block
   // arrays; the trailing text block becomes the prompt text, preceding image

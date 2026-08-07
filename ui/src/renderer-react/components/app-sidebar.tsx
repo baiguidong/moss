@@ -14,8 +14,6 @@ import {
   X,
   FolderOpen,
   NotebookPen,
-  Clapperboard,
-  BookOpen,
   AlarmClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,7 +43,7 @@ export interface SidebarSession {
 interface AppSidebarProps {
   sessions: SidebarSession[];
   activeSessionId: string | null;
-  activeView: "chat" | "files" | "apps" | "settings" | "snake" | "memos" | "comic" | "knowledge" | "cron";
+  activeView: "chat" | "files" | "apps" | "settings" | "snake" | "memos" | "cron";
   appsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
@@ -53,7 +51,7 @@ interface AppSidebarProps {
   localEnabled?: boolean;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
-  onChangeView: (view: "chat" | "files" | "apps" | "settings" | "memos" | "comic" | "knowledge" | "cron") => void;
+  onChangeView: (view: "chat" | "files" | "apps" | "settings" | "memos" | "cron") => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -420,22 +418,6 @@ export function AppSidebar({
           >
             <NotebookPen className="h-4 w-4" />
             {!collapsed && "备忘录"}
-          </Button>
-          <Button
-            variant={activeView === "comic" ? "secondary" : "ghost"}
-            className={cn("rounded-xl mt-2", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("comic")}
-          >
-            <Clapperboard className="h-4 w-4" />
-            {!collapsed && "漫剧"}
-          </Button>
-          <Button
-            variant={activeView === "knowledge" ? "secondary" : "ghost"}
-            className={cn("rounded-xl mt-2", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("knowledge")}
-          >
-            <BookOpen className="h-4 w-4" />
-            {!collapsed && "知识库"}
           </Button>
         </div>
 

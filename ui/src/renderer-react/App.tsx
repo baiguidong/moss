@@ -11,8 +11,6 @@ import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/bu
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
 import { AiMemo } from '@/aimemo/AiMemo';
-import { ComicDrama } from '@/comicdrama/ComicDrama';
-import { KnowledgeBase } from '@/knowledge/KnowledgeBase';
 import {
   buildMainChatRenderMessagesFromHistory,
   buildWorkerRenderMessagesFromSubagentEvents,
@@ -108,6 +106,7 @@ type ComposerIntent = 'chat' | 'plan' | 'coordinator';
 type QueuedMessage = {
   id: string;
   prompt: string;
+  skillPrefix?: string;
   files?: Array<{ name: string; path: string }>;
   intent: ComposerIntent;
 };
@@ -191,6 +190,10 @@ function upsertSummary(list: SessionSummary[], summary: SessionSummary) {
   return next.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function restoreComposerIntent(session?: Pick<SessionSummary, 'composerIntent'> | null): ComposerIntent {
+  return session?.composerIntent === 'coordinator' ? 'coordinator' : 'chat';
+}
+
 function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>, expandedDirs: Set<string>): FileTreeNode[] {
   const lower = query.trim().toLowerCase();
   return items
@@ -239,7 +242,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings' | 'memos' | 'comic' | 'knowledge' | 'cron'>('chat');
+  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings' | 'memos' | 'cron'>('chat');
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -501,6 +504,7 @@ export default function App() {
     }
     setActiveView('chat');
     setActiveSessionId(sessionId);
+    setComposerIntent(restoreComposerIntent(detail));
     setActiveDetail(detail);
     clearSessionWorkspaceState();
     return true;
@@ -835,6 +839,7 @@ export default function App() {
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
+          setComposerIntent(restoreComposerIntent(payload.summary));
           setActiveDetail((prev) => (prev ? { ...prev, ...payload.summary } : prev));
         }
       }
@@ -862,6 +867,7 @@ export default function App() {
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
+        setComposerIntent(restoreComposerIntent(summary));
         setActiveDetail((prev) => (prev ? { ...prev, ...summary } : prev));
       }
     });
@@ -1330,6 +1336,7 @@ export default function App() {
     prompt: string,
     intent: ComposerIntent,
     files?: Array<{ name: string; path: string }>,
+    skillPrefix?: string,
   ) => {
     // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
     // intentionally NOT cleared here so multi-turn coordinators keep their
@@ -1343,6 +1350,7 @@ export default function App() {
     await window.agentDesktop.send({
       sessionId,
       prompt,
+      skillPrefix,
       mode: intent === 'chat' ? undefined : intent,
       appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
       files: files?.map(f => f.path),
@@ -1360,7 +1368,7 @@ export default function App() {
       if (queue.length === 0) return;
       const [next, ...rest] = queue;
       updateQueue(sessionId, () => rest);
-      void dispatchToSession(sessionId, next.prompt, next.intent, next.files).catch((err) => {
+      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skillPrefix).catch((err) => {
         console.error('[queued message] send failed:', err);
         updateQueue(sessionId, (prev) => [next, ...prev]);
       });
@@ -1381,7 +1389,7 @@ export default function App() {
     const skillPrefix = skills && skills.length > 0
       ? `${skills.map((s) => `请使用技能「${s.displayName || s.name}」${s.source ? `（SKILL.md 位于 ${s.source}）` : ''}`).join('\n')}\n\n`
       : '';
-    const prompt = skillPrefix + input.trim();
+    const prompt = input.trim();
 
     // Session is busy: queue the message; it is dispatched automatically when
     // the current turn ends (same as typing while the CLI REPL is running).
@@ -1389,6 +1397,7 @@ export default function App() {
       const queued: QueuedMessage = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         prompt,
+        skillPrefix,
         files,
         intent,
       };
@@ -1436,7 +1445,7 @@ export default function App() {
       filesToSend = newFiles;
     }
 
-    await dispatchToSession(sessionId, prompt, intent, filesToSend);
+    await dispatchToSession(sessionId, prompt, intent, filesToSend, skillPrefix);
   }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, input, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
@@ -1805,10 +1814,6 @@ export default function App() {
             <FileManager />
           ) : activeView === 'memos' ? (
             <AiMemo onRunTaskWithAgent={handleRunMemoTask} />
-          ) : activeView === 'comic' ? (
-            <ComicDrama />
-          ) : activeView === 'knowledge' ? (
-            <KnowledgeBase />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'apps' ? (
