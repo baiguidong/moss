@@ -1252,6 +1252,7 @@ export function startServer(
             customTitle: context.customTitle,
             tag: context.tag,
             summary: context.summary,
+            mode: context.mode,
             messages: context.messages,
           },
         })

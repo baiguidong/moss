@@ -230,7 +230,7 @@ function SessionTabBar({
             size="icon"
             className={cn("h-8 w-8 rounded-full", !showToolCalls && "text-primary")}
             onClick={onToggleToolCalls}
-            title={showToolCalls ? "隐藏工具调用细节（保留文件改动）" : "显示工具调用细节"}
+            title={showToolCalls ? "切换为紧凑工具视图" : "显示工具调用细节"}
             aria-label="切换工具调用显示"
           >
             <Wrench className="h-4 w-4" />
@@ -472,9 +472,10 @@ function ComposerPanel({
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   React.useLayoutEffect(() => {
     const el = textareaRef.current;
-    if (!el || isHomeComposer) return;
+    if (!el) return;
+    const maxHeight = isHomeComposer ? 240 : 120;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [value, isHomeComposer]);
 
   const visibleSkillItems = React.useMemo(() => {
@@ -759,7 +760,7 @@ function ComposerPanel({
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-6 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
             isHomeComposer
-              ? "min-h-[160px] pb-4"
+              ? "min-h-[160px] max-h-[240px] overflow-y-auto pb-4 [field-sizing:fixed]"
               : "min-h-[44px] max-h-[120px] overflow-y-auto pb-3 [field-sizing:fixed]",
           )}
           rows={isHomeComposer ? 5 : 1}
@@ -1475,7 +1476,10 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
   );
 }
 
-function deriveComposerActivity(messages: TranscriptRenderMessage[], loading: boolean) {
+function deriveComposerActivity(
+  messages: TranscriptRenderMessage[],
+  loading: boolean,
+) {
   if (!loading) return null;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const m = messages[i];
@@ -1740,6 +1744,12 @@ export function ChatArea({
 
   const [showToolCalls, setShowToolCalls] = React.useState(() => {
     try {
+      const visibilityVersion = localStorage.getItem("ui.showToolCalls.v2");
+      if (visibilityVersion !== "1") {
+        localStorage.setItem("ui.showToolCalls", "1");
+        localStorage.setItem("ui.showToolCalls.v2", "1");
+        return true;
+      }
       return localStorage.getItem("ui.showToolCalls") !== "0";
     } catch {
       return true;
@@ -1749,6 +1759,7 @@ export function ChatArea({
     setShowToolCalls((prev) => {
       try {
         localStorage.setItem("ui.showToolCalls", prev ? "0" : "1");
+        localStorage.setItem("ui.showToolCalls.v2", "1");
       } catch {}
       return !prev;
     });

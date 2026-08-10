@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local KB"
+  short_description: "Index and search local documents"
+  default_prompt: "Use $local-kb to create a local knowledge base, ingest my documents, and search them with SQLite FTS5."

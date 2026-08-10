@@ -16,11 +16,7 @@ import {
   getToolKind,
   getToolPatternOrQuery,
   getToolUrl,
-  quoteValue,
-  summarizeToolResult,
   ToolKind,
-  truncate,
-  compactWhitespace,
   extractTextContent,
   inferLanguage,
 } from "@/components/chat/tool-utils";
@@ -41,23 +37,19 @@ function statusDot(status: ToolUseRenderMessage["status"]) {
 }
 
 function buildHeadline(toolCall: ToolUseRenderMessage, kind: ToolKind) {
-  const filePath = getToolFilePath(toolCall);
-  const pattern = getToolPatternOrQuery(toolCall);
-  const url = getToolUrl(toolCall);
-
   switch (kind) {
     case "read":
-      return filePath ? `Read ${formatLocator(filePath)}` : "Read file";
+      return "Read";
     case "search":
-      return pattern ? `Search ${quoteValue(pattern)}` : "Search";
+      return "Search";
     case "write":
-      return filePath ? `Write ${formatLocator(filePath)}` : "Write file";
+      return "Write";
     case "edit":
-      return filePath ? `Edit ${formatLocator(filePath)}` : "Edit file";
+      return "Edit";
     case "bash":
       return "Bash";
     case "web":
-      return url ? `Fetch ${formatLocator(url)}` : "Fetch";
+      return "Fetch";
     case "agent":
       return "Agent";
     case "db":
@@ -72,20 +64,7 @@ function buildCollapsedLabel(
   kind: ToolKind,
   result?: ToolResultRenderMessage,
 ) {
-  const headline = buildHeadline(toolCall, kind);
-  const command = getToolCommand(toolCall);
-
-  let detail = "";
-  if (kind === "bash" && command) {
-    detail = truncate(command, 60);
-  }
-
-  const resultSummary = result ? summarizeToolResult(result) : undefined;
-  if (resultSummary) {
-    detail = detail ? `${detail} — ${resultSummary}` : resultSummary;
-  }
-
-  return detail ? `${headline} (${detail})` : headline;
+  return buildHeadline(toolCall, kind);
 }
 
 function ToolInputPreview({

@@ -4697,6 +4697,23 @@ ipcMain.handle('agent:get-worker-results', async (_event, { sessionId }) => {
   const subagentDir = await findSessionSubagentDir(sessionRecord.underlyingSessionId);
   if (!subagentDir) return { results: {} };
 
+  const extractEventText = (event) => {
+    const content = event?.message?.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((block) => {
+          if (typeof block === 'string') return block;
+          if (typeof block?.text === 'string') return block.text;
+          if (typeof block?.content === 'string') return block.content;
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    return '';
+  };
+
   const results = {};
   try {
     const files = await fsp.readdir(subagentDir);
@@ -4714,6 +4731,15 @@ ipcMain.handle('agent:get-worker-results', async (_event, { sessionId }) => {
           try {
             const event = JSON.parse(line);
             events.push(event);
+            const eventText = extractEventText(event);
+            if (
+              status === 'running' &&
+              typeof eventText === 'string' &&
+              /\[Request interrupted by user\]|Request interrupted|interrupted by user/i.test(eventText)
+            ) {
+              resultText = eventText.trim() || 'Request interrupted by user.';
+              status = 'failed';
+            }
             if (event?.type === 'result') {
               resultText = typeof event.result === 'string' ? event.result.trim() : null;
               status = event.subtype === 'success' ? 'completed' : 'failed';

@@ -10,6 +10,7 @@ import { collectFileChanges, FileChangeChips, ToolCallGroup } from "@/components
 import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
+import { extractShellResult } from "@/components/chat/tool-utils";
 import type {
   ToolResultRenderMessage,
   ToolUseRenderMessage,
@@ -20,6 +21,12 @@ type RenderItem =
   | {
       kind: "tool_group";
       id: string;
+      toolCalls: ToolUseRenderMessage[];
+    }
+  | {
+      kind: "assistant_with_tools";
+      id: string;
+      message: Extract<TranscriptRenderMessage, { type: "assistant_text" }>;
       toolCalls: ToolUseRenderMessage[];
     }
   | {
@@ -48,6 +55,22 @@ function appendChildToolCall(
     return;
   }
   childToolCallsByParent.set(parentToolUseId, [toolCall]);
+}
+
+function buildSyntheticBashToolCall(
+  message: TranscriptRenderMessage,
+  status: ToolUseRenderMessage["status"] = "success",
+): ToolUseRenderMessage {
+  return {
+    id: `${message.id}-bash-tool`,
+    timestamp: message.timestamp,
+    type: "tool_use",
+    role: "assistant",
+    toolUseId: `synthetic-bash-${message.id}`,
+    toolName: "Bash",
+    displayName: "Bash",
+    status,
+  };
 }
 
 function buildRenderModel(messages: TranscriptRenderMessage[]) {
@@ -89,6 +112,38 @@ function buildRenderModel(messages: TranscriptRenderMessage[]) {
       continue;
     }
 
+    if (message.type === "bash") {
+      const failed = message.exitCode != null && message.exitCode !== 0;
+      pendingToolCalls.push(buildSyntheticBashToolCall(message, failed ? "error" : "success"));
+      continue;
+    }
+
+    if (message.type === "tool_result" && extractShellResult(message.rawContent)) {
+      const toolCall = buildSyntheticBashToolCall(message, message.isError ? "error" : "success");
+      pendingToolCalls.push(toolCall);
+      resultMap.set(toolCall.toolUseId, {
+        ...message,
+        toolUseId: toolCall.toolUseId,
+        toolName: "Bash",
+      });
+      continue;
+    }
+
+    if (message.type === "assistant_text" && pendingToolCalls.length > 0) {
+      renderItems.push({
+        kind: "assistant_with_tools",
+        id: `assistant-tools-${message.id}`,
+        message,
+        toolCalls: [...pendingToolCalls],
+      });
+      for (const toolCall of pendingToolCalls) {
+        inlineParentToolUseIds.add(toolCall.toolUseId);
+      }
+      pendingToolCalls = [];
+      inlineParentToolUseIds.clear();
+      continue;
+    }
+
     if (message.type === "tool_use") {
       const parentPending = message.parentToolUseId
         ? pendingToolCalls.some((toolCall) => toolCall.toolUseId === message.parentToolUseId)
@@ -117,8 +172,6 @@ function buildRenderModel(messages: TranscriptRenderMessage[]) {
 }
 
 function BashCommandBlock({
-  command,
-  output,
   exitCode,
 }: {
   command: string;
@@ -127,17 +180,16 @@ function BashCommandBlock({
 }) {
   const failed = exitCode != null && exitCode !== 0;
   return (
-    <div className="mb-4 flex justify-end">
-      <div className="w-full max-w-[760px] overflow-hidden rounded-[18px] rounded-tr-[8px] border border-border/70 bg-card/92 font-mono text-xs shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
-        <div className="flex items-center gap-2 border-b border-border/50 bg-muted/40 px-3 py-1.5 text-muted-foreground">
-          <span className="text-green-500">$</span>
-          <span className="min-w-0 flex-1 truncate text-foreground">{command}</span>
-          {failed && <span className="shrink-0 text-destructive">exit {exitCode}</span>}
-        </div>
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-          {output.trim() ? output : "（无输出）"}
-        </pre>
-      </div>
+    <div className="mb-1 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] text-muted-foreground">
+      <span
+        className={
+          failed
+            ? "inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+            : "inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+        }
+      />
+      <span className="min-w-0 flex-1 truncate">Bash</span>
+      {failed ? <span className="shrink-0 text-[10px] text-destructive">exit {exitCode}</span> : null}
     </div>
   );
 }
@@ -163,15 +215,43 @@ function renderTranscriptItem(
   item: RenderItem,
   resultMap: Map<string, ToolResultRenderMessage>,
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
+  compact = false,
 ) {
   if (item.kind === "tool_group") {
     return (
-      <ToolCallGroup
+      <div key={item.id} className="group mb-5 flex justify-start gap-2">
+        <img
+          src="./build/icon.png"
+          alt="Moss"
+          className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+        />
+        <div className="flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]">
+          <ToolCallGroup
+            toolCalls={item.toolCalls}
+            resultMap={resultMap}
+            childToolCallsByParent={childToolCallsByParent}
+            isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
+            embedded
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (item.kind === "assistant_with_tools") {
+    return (
+      <AssistantMessage
         key={item.id}
-        toolCalls={item.toolCalls}
-        resultMap={resultMap}
-        childToolCallsByParent={childToolCallsByParent}
-        isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
+        message={item.message}
+        beforeContent={
+          <ToolCallGroup
+            toolCalls={item.toolCalls}
+            resultMap={resultMap}
+            childToolCallsByParent={childToolCallsByParent}
+            isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
+            embedded
+          />
+        }
       />
     );
   }
@@ -187,7 +267,7 @@ function renderTranscriptItem(
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
   }
   if (message.type === "tool_result") {
-    return <ToolResultBlock key={message.id} result={message} />;
+    return <ToolResultBlock key={message.id} result={message} compact={compact} />;
   }
   if (message.type === "system") {
     return <SystemMessage key={message.id} content={message.content} meta={message.meta} />;
@@ -224,6 +304,7 @@ function LoadingIndicator() {
 const TIME_SEPARATOR_GAP_MS = 10 * 60 * 1000;
 
 function itemTimestamp(item: RenderItem): Date | null {
+  if (item.kind === "assistant_with_tools") return item.message.timestamp ?? null;
   if (item.kind === "message") return item.message.timestamp ?? null;
   return item.toolCalls[0]?.timestamp ?? null;
 }
@@ -251,6 +332,9 @@ function TimeSeparator({ date }: { date: Date }) {
 }
 
 function extractItemCopyText(item: RenderItem): string {
+  if (item.kind === "assistant_with_tools") {
+    return item.message.content;
+  }
   if (item.kind === "tool_group") {
     return item.toolCalls
       .map((toolCall) => `${toolCall.displayName || toolCall.toolName}${toolCall.inputText ? `: ${toolCall.inputText}` : ""}`)
@@ -370,17 +454,7 @@ export const VirtualMessageList = React.forwardRef<
     [messages],
   );
 
-  // Tool-noise toggle: drop tool results and thinking, keep tool groups only
-  // when they produced file changes (rendered as chips).
-  const renderItems = React.useMemo(() => {
-    if (!hideToolCalls) return allRenderItems;
-    return allRenderItems.filter((item) => {
-      if (item.kind === "tool_group") {
-        return collectFileChanges(item.toolCalls, childToolCallsByParent).length > 0;
-      }
-      return item.message.type !== "tool_result" && item.message.type !== "thinking";
-    });
-  }, [allRenderItems, childToolCallsByParent, hideToolCalls]);
+  const renderItems = allRenderItems;
   const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
   const atBottomRef = React.useRef(true);
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
@@ -474,9 +548,12 @@ export const VirtualMessageList = React.forwardRef<
             >
               {showSeparator && ts && <TimeSeparator date={ts} />}
               {hideToolCalls && item.kind === "tool_group" ? (
-                <FileChangeChips changes={collectFileChanges(item.toolCalls, childToolCallsByParent)} />
+                <div className="space-y-1">
+                  <FileChangeChips changes={collectFileChanges(item.toolCalls, childToolCallsByParent)} />
+                  {renderTranscriptItem(item, resultMap, childToolCallsByParent, true)}
+                </div>
               ) : (
-                renderTranscriptItem(item, resultMap, childToolCallsByParent)
+                renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls)
               )}
             </div>
           );

@@ -63,8 +63,7 @@ import { isRestrictedToPluginOnly } from '../utils/settings/pluginOnlyPolicy.js'
 import { HooksSchema, type HooksSettings } from '../utils/settings/types.js'
 import { createSignal } from '../utils/signal.js'
 import {
-  MOSS_SKILLS_CUSTOM_DIR,
-  MOSS_SKILLS_HUB_DIR,
+  MOSS_SKILLS_DIR,
   SKILL_HUB_META_FILE,
 } from '../utils/skills/localSkillDirectories.js'
 import { registerMCPSkillBuilders } from './mcpSkillBuilders.js'
@@ -663,7 +662,8 @@ async function loadSkillsFromCommandsDir(
 export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
     const userSkillsDir = join(getClaudeConfigHomeDir(), 'skills')
-    const managedLocalSkillDirs = [MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_CUSTOM_DIR]
+    const managedLocalSkillDirs =
+      userSkillsDir === MOSS_SKILLS_DIR ? [] : [MOSS_SKILLS_DIR]
     const managedSkillsDir = join(getManagedFilePath(), '.claude', 'skills')
     const projectSkillsDirs = getProjectDirsUpToHome('skills', cwd)
 

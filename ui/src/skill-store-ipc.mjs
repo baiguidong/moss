@@ -16,15 +16,8 @@ import {
 
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
-export const USER_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
-export const MOSS_SKILLS_HUB_DIR = path.join(MOSS_SKILLS_DIR, 'hub');
-export const MOSS_SKILLS_SYSTEM_DIR = path.join(MOSS_SKILLS_DIR, 'system');
-export const MOSS_SKILLS_CUSTOM_DIR = path.join(MOSS_SKILLS_DIR, 'custom');
 export const SKILL_SEARCH_DIRS = [
-  USER_SKILLS_DIR,
-  MOSS_SKILLS_HUB_DIR,
-  MOSS_SKILLS_SYSTEM_DIR,
-  MOSS_SKILLS_CUSTOM_DIR,
+  MOSS_SKILLS_DIR,
 ];
 
 export const SKILL_HUB_META_FILE = '_moss_meta.json';
@@ -169,13 +162,13 @@ async function readSkillVersion(skillDir) {
 export async function getInstalledSkills() {
   const skills = [];
 
-  // Check user skills directory
+  // Check Moss skills directory (~/.moss/skills)
   try {
-    await fsp.access(USER_SKILLS_DIR);
-    const entries = await fsp.readdir(USER_SKILLS_DIR, { withFileTypes: true });
+    await fsp.access(MOSS_SKILLS_DIR);
+    const entries = await fsp.readdir(MOSS_SKILLS_DIR, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const skillDir = path.join(USER_SKILLS_DIR, entry.name);
+        const skillDir = path.join(MOSS_SKILLS_DIR, entry.name);
         const meta = await readSkillMeta(skillDir);
         const version = await readSkillVersion(skillDir);
 
@@ -240,109 +233,7 @@ export async function getInstalledSkills() {
       }
     }
   } catch {
-    // User skills dir doesn't exist
-  }
-
-  // Check moss managed skills (hub subdirectory)
-  try {
-    await fsp.access(MOSS_SKILLS_HUB_DIR);
-    const entries = await fsp.readdir(MOSS_SKILLS_HUB_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const skillDir = path.join(MOSS_SKILLS_HUB_DIR, entry.name);
-        const meta = await readSkillMeta(skillDir);
-        const version = await readSkillVersion(skillDir);
-
-        if (meta) {
-          skills.push({
-            id: meta.id || '',
-            name: meta.name || entry.name,
-            displayName: meta.display_name || meta.name || entry.name,
-            description: meta.description || '',
-            version: meta.installed_version || version,
-            icon: meta.icon || '',
-            emoji: meta.emoji || '',
-            category: meta.category || '',
-            categories: meta.categories || [],
-            isBuiltin: meta.is_builtin || false,
-            isHubInstalled: meta.source_type === 'hub',
-            isUploaded: meta.source_type === 'upload',
-            enabled: meta.enabled !== false,
-            source: skillDir,
-          });
-        }
-      }
-    }
-  } catch {
-    // Moss hub dir doesn't exist
-  }
-
-  // Check moss managed skills (system subdirectory)
-  try {
-    await fsp.access(MOSS_SKILLS_SYSTEM_DIR);
-    const entries = await fsp.readdir(MOSS_SKILLS_SYSTEM_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const skillDir = path.join(MOSS_SKILLS_SYSTEM_DIR, entry.name);
-        const meta = await readSkillMeta(skillDir);
-        const version = await readSkillVersion(skillDir);
-
-        if (meta) {
-          skills.push({
-            id: meta.id || '',
-            name: meta.name || entry.name,
-            displayName: meta.display_name || meta.name || entry.name,
-            description: meta.description || '',
-            version: meta.installed_version || version,
-            icon: meta.icon || '',
-            emoji: meta.emoji || '',
-            category: meta.category || '',
-            categories: meta.categories || [],
-            isBuiltin: meta.is_builtin || false,
-            isHubInstalled: false,
-            isUploaded: false,
-            enabled: meta.enabled !== false,
-            source: skillDir,
-          });
-        }
-      }
-    }
-  } catch {
-    // Moss system dir doesn't exist
-  }
-
-  // Check moss managed skills (custom subdirectory)
-  try {
-    await fsp.access(MOSS_SKILLS_CUSTOM_DIR);
-    const entries = await fsp.readdir(MOSS_SKILLS_CUSTOM_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const skillDir = path.join(MOSS_SKILLS_CUSTOM_DIR, entry.name);
-        const meta = await readSkillMeta(skillDir);
-        const version = await readSkillVersion(skillDir);
-
-        if (meta) {
-          skills.push({
-            id: meta.id || '',
-            name: meta.name || entry.name,
-            displayName: meta.display_name || meta.name || entry.name,
-            description: meta.description || '',
-            version: meta.installed_version || version,
-            icon: meta.icon || '',
-            emoji: meta.emoji || '',
-            category: meta.category || '',
-            categories: meta.categories || [],
-            isBuiltin: meta.is_builtin || false,
-            isHubInstalled: false,
-            isUploaded: meta.source_type === 'upload',
-            enabled: meta.enabled !== false,
-            source: skillDir,
-          });
-        }
-      }
-    }
-  } catch {
-    // Moss custom dir doesn't exist
+    // Moss skills dir doesn't exist
   }
 
   return skills;
@@ -376,10 +267,10 @@ export async function installSkillFromZip(zipBuffer, skillName, skillMeta, versi
       throw new Error(`skillName is invalid: ${JSON.stringify(skillName)}`);
     }
 
-    console.log('[SkillStore IPC] hubSkillsDir:', MOSS_SKILLS_HUB_DIR);
-    await fsp.mkdir(MOSS_SKILLS_HUB_DIR, { recursive: true });
+    console.log('[SkillStore IPC] skillsDir:', MOSS_SKILLS_DIR);
+    await fsp.mkdir(MOSS_SKILLS_DIR, { recursive: true });
 
-    const skillDir = path.join(MOSS_SKILLS_HUB_DIR, safeName);
+    const skillDir = path.join(MOSS_SKILLS_DIR, safeName);
     console.log('[SkillStore IPC] skillDir:', skillDir);
     await fsp.rm(skillDir, { recursive: true, force: true });
     await fsp.mkdir(skillDir, { recursive: true });
@@ -522,12 +413,12 @@ export function registerSkillStoreIpcHandlers() {
   // Uninstall skill
   ipcMain.handle('skill-store:uninstall', async (_event, { skillName, sourcePath }) => {
     try {
-      // If sourcePath not provided, find it in hub directory
+      // If sourcePath not provided, find it in the Moss skills directory.
       let actualPath = sourcePath;
       if (!actualPath) {
         const safeName = sanitizeSkillDirName(skillName);
         if (!safeName) return { success: false, error: 'Invalid skill name' };
-        actualPath = path.join(MOSS_SKILLS_HUB_DIR, safeName);
+        actualPath = path.join(MOSS_SKILLS_DIR, safeName);
       }
       const result = await uninstallSkill(skillName, actualPath);
       return result;
@@ -555,9 +446,9 @@ export function registerSkillStoreIpcHandlers() {
           return { success: false, error: 'Please select a .zip file or a skill directory' };
         }
 
-        // Install to user skills
-        const userSkillsDir = path.join(USER_SKILLS_DIR);
-        await fsp.mkdir(userSkillsDir, { recursive: true });
+        // Install to Moss skills
+        const mossSkillsDir = path.join(MOSS_SKILLS_DIR);
+        await fsp.mkdir(mossSkillsDir, { recursive: true });
 
         // Find skill name from temp dir
         const entries = await fsp.readdir(tempDir, { withFileTypes: true });
@@ -579,7 +470,7 @@ export function registerSkillStoreIpcHandlers() {
         const content = await fsp.readFile(skillMdPath, 'utf-8');
         const { frontmatter } = parseFrontmatter(content);
 
-        const targetDir = path.join(userSkillsDir, skillName);
+        const targetDir = path.join(mossSkillsDir, skillName);
         await fsp.rm(targetDir, { recursive: true, force: true });
         await fsp.mkdir(targetDir, { recursive: true });
 

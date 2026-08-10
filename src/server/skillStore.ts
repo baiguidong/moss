@@ -4,11 +4,8 @@ import { tmpdir } from 'os'
 import path from 'path'
 import {
   MANAGED_SKILL_SEARCH_DIRS,
-  MOSS_SKILLS_CUSTOM_DIR,
-  MOSS_SKILLS_HUB_DIR,
-  MOSS_SKILLS_SYSTEM_DIR,
+  MOSS_SKILLS_DIR,
   SKILL_HUB_META_FILE,
-  USER_SKILLS_DIR,
 } from '../utils/skills/localSkillDirectories.js'
 
 const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
@@ -317,27 +314,7 @@ function buildSkillMetaFromFrontmatter(
 }
 
 function inferLocalSkillMetaDefaults(skillDir: string): Partial<SkillStoreMeta> {
-  if (isPathInsideDir(MOSS_SKILLS_HUB_DIR, skillDir)) {
-    return {
-      source_type: 'hub',
-      is_builtin: false,
-    }
-  }
-
-  if (isPathInsideDir(MOSS_SKILLS_CUSTOM_DIR, skillDir)) {
-    return {
-      source_type: 'upload',
-      is_builtin: false,
-    }
-  }
-
-  if (isPathInsideDir(MOSS_SKILLS_SYSTEM_DIR, skillDir)) {
-    return {
-      is_builtin: true,
-    }
-  }
-
-  if (isPathInsideDir(USER_SKILLS_DIR, skillDir)) {
+  if (isPathInsideDir(MOSS_SKILLS_DIR, skillDir)) {
     return {
       is_builtin: false,
     }
@@ -607,8 +584,8 @@ async function installImportedSkillFromTemp(
       ? normalizedPreferredName
       : path.basename(skillDir)
 
-  const targetDir = path.join(USER_SKILLS_DIR, skillName)
-  await mkdir(USER_SKILLS_DIR, { recursive: true })
+  const targetDir = path.join(MOSS_SKILLS_DIR, skillName)
+  await mkdir(MOSS_SKILLS_DIR, { recursive: true })
   await rm(targetDir, { recursive: true, force: true })
   await copyDirectoryRecursive(skillDir, targetDir)
 
@@ -720,8 +697,8 @@ export async function installHubSkill(params: {
     }
   }
 
-  await mkdir(MOSS_SKILLS_HUB_DIR, { recursive: true })
-  const skillDir = path.join(MOSS_SKILLS_HUB_DIR, params.skillName)
+  await mkdir(MOSS_SKILLS_DIR, { recursive: true })
+  const skillDir = path.join(MOSS_SKILLS_DIR, params.skillName)
   await rm(skillDir, { recursive: true, force: true })
   await mkdir(skillDir, { recursive: true })
   await extractSkillZip(zipBuffer, skillDir)

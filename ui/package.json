@@ -58,6 +58,7 @@
     "files": [
       "dist/renderer/**/*",
       "src/**/*",
+      "vendor/ripgrep/**/*",
       "index.html",
       "package.json",
       "electron-direct.mjs"

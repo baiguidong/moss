@@ -1,7 +1,22 @@
 "use client";
 
 import * as React from "react";
-import { ChevronRight, Folder, FolderOpen, FileText, Plus, RefreshCw } from "lucide-react";
+import {
+  ChevronRight,
+  FileArchive,
+  FileCode2,
+  FileImage,
+  FileJson,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Film,
+  Folder,
+  FolderOpen,
+  Music,
+  Presentation,
+  RefreshCw,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +35,81 @@ interface FileTreeNodeProps {
   onSelectFile: (path: string) => void;
 }
 
+type FileIconStyle = {
+  Icon: React.ElementType;
+  className: string;
+};
+
+const FILE_ICONS: Record<string, FileIconStyle> = {
+  png: { Icon: FileImage, className: "text-violet-400" },
+  jpg: { Icon: FileImage, className: "text-violet-400" },
+  jpeg: { Icon: FileImage, className: "text-violet-400" },
+  gif: { Icon: FileImage, className: "text-violet-400" },
+  webp: { Icon: FileImage, className: "text-violet-400" },
+  svg: { Icon: FileImage, className: "text-violet-400" },
+  bmp: { Icon: FileImage, className: "text-violet-400" },
+  ico: { Icon: FileImage, className: "text-violet-400" },
+  pdf: { Icon: FileType2, className: "text-red-500" },
+  doc: { Icon: FileText, className: "text-blue-500" },
+  docx: { Icon: FileText, className: "text-blue-500" },
+  rtf: { Icon: FileText, className: "text-blue-500" },
+  odt: { Icon: FileText, className: "text-blue-500" },
+  xls: { Icon: FileSpreadsheet, className: "text-green-600" },
+  xlsx: { Icon: FileSpreadsheet, className: "text-green-600" },
+  csv: { Icon: FileSpreadsheet, className: "text-green-600" },
+  ods: { Icon: FileSpreadsheet, className: "text-green-600" },
+  ppt: { Icon: Presentation, className: "text-orange-500" },
+  pptx: { Icon: Presentation, className: "text-orange-500" },
+  odp: { Icon: Presentation, className: "text-orange-500" },
+  mp4: { Icon: Film, className: "text-rose-400" },
+  mov: { Icon: Film, className: "text-rose-400" },
+  avi: { Icon: Film, className: "text-rose-400" },
+  mkv: { Icon: Film, className: "text-rose-400" },
+  webm: { Icon: Film, className: "text-rose-400" },
+  mp3: { Icon: Music, className: "text-emerald-400" },
+  wav: { Icon: Music, className: "text-emerald-400" },
+  m4a: { Icon: Music, className: "text-emerald-400" },
+  flac: { Icon: Music, className: "text-emerald-400" },
+  aac: { Icon: Music, className: "text-emerald-400" },
+  json: { Icon: FileJson, className: "text-amber-500" },
+  yaml: { Icon: FileCode2, className: "text-lime-500" },
+  yml: { Icon: FileCode2, className: "text-lime-500" },
+  toml: { Icon: FileCode2, className: "text-stone-500" },
+  xml: { Icon: FileCode2, className: "text-amber-500" },
+  sql: { Icon: FileCode2, className: "text-fuchsia-500" },
+  js: { Icon: FileCode2, className: "text-yellow-500" },
+  jsx: { Icon: FileCode2, className: "text-yellow-400" },
+  ts: { Icon: FileCode2, className: "text-blue-500" },
+  tsx: { Icon: FileCode2, className: "text-cyan-400" },
+  py: { Icon: FileCode2, className: "text-green-500" },
+  go: { Icon: FileCode2, className: "text-cyan-500" },
+  rs: { Icon: FileCode2, className: "text-orange-400" },
+  java: { Icon: FileCode2, className: "text-red-400" },
+  html: { Icon: FileCode2, className: "text-orange-500" },
+  css: { Icon: FileCode2, className: "text-blue-500" },
+  scss: { Icon: FileCode2, className: "text-pink-500" },
+  sh: { Icon: FileCode2, className: "text-emerald-500" },
+  bash: { Icon: FileCode2, className: "text-emerald-500" },
+  zsh: { Icon: FileCode2, className: "text-emerald-500" },
+  md: { Icon: FileText, className: "text-sky-500" },
+  markdown: { Icon: FileText, className: "text-sky-500" },
+  txt: { Icon: FileText, className: "text-muted-foreground" },
+  log: { Icon: FileText, className: "text-muted-foreground" },
+  zip: { Icon: FileArchive, className: "text-purple-500" },
+  rar: { Icon: FileArchive, className: "text-purple-500" },
+  "7z": { Icon: FileArchive, className: "text-purple-500" },
+  tar: { Icon: FileArchive, className: "text-purple-500" },
+  gz: { Icon: FileArchive, className: "text-purple-500" },
+};
+
+function getFileIcon(name: string): FileIconStyle {
+  const extension = name.includes(".") ? name.split(".").pop()?.toLowerCase() ?? "" : "";
+  if (extension && FILE_ICONS[extension]) {
+    return FILE_ICONS[extension];
+  }
+  return { Icon: FileText, className: "text-muted-foreground/70" };
+}
+
 function FileTreeNodeView({
   item,
   level = 0,
@@ -31,6 +121,7 @@ function FileTreeNodeView({
   const isOpen = expandedPaths.has(item.path);
 
   if (item.type === "file") {
+    const { Icon, className } = getFileIcon(item.name);
     return (
       <div
         className={cn(
@@ -42,8 +133,7 @@ function FileTreeNodeView({
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={() => onSelectFile(item.path)}
       >
-        <Plus className="h-3.5 w-3.5 text-amber-500 opacity-70 group-hover:opacity-100" />
-        <FileText className="h-4 w-4 text-muted-foreground/70" />
+        <Icon className={cn("h-4 w-4 shrink-0", className)} />
         <span className="truncate">{item.name}</span>
       </div>
     );

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, FilePen, FilePlus } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePen, FilePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToolCallBlock } from "@/components/chat/tool-call-block";
 import { getToolFilePath, getToolKind, ToolKind } from "@/components/chat/tool-utils";
@@ -13,18 +13,19 @@ type Props = {
   resultMap: Map<string, ToolResultRenderMessage>;
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>;
   isStreaming?: boolean;
+  embedded?: boolean;
 };
 
 const kindLabels: Record<ToolKind, string> = {
-  bash: "命令",
-  read: "读取",
-  search: "搜索",
-  write: "写入",
-  edit: "修改",
-  agent: "Agent",
-  web: "网页",
-  db: "数据库",
-  other: "工具",
+  bash: "运行命令(Bash)",
+  read: "读取文件(Read)",
+  search: "搜索内容(Search)",
+  write: "写入文件(Write)",
+  edit: "修改文件(Edit)",
+  agent: "调用助手(Agent)",
+  web: "访问网页(Fetch)",
+  db: "查询数据(Query)",
+  other: "执行工具(Tool)",
 };
 
 export function collectFileChanges(
@@ -94,8 +95,97 @@ function summarizeGroup(toolCalls: ToolUseRenderMessage[]) {
     counts.set(kind, (counts.get(kind) || 0) + 1);
   }
   return [...counts.entries()]
-    .map(([kind, count]) => `${kindLabels[kind]} x${count}`)
+    .map(([kind, count]) => (count > 1 ? `${kindLabels[kind]} x${count}` : kindLabels[kind]))
     .join(" · ");
+}
+
+function toolFailed(toolCall: ToolUseRenderMessage, resultMap: Map<string, ToolResultRenderMessage>) {
+  const result = resultMap.get(toolCall.toolUseId);
+  return toolCall.status === "error" || Boolean(result?.isError);
+}
+
+function toolCompleted(toolCall: ToolUseRenderMessage, resultMap: Map<string, ToolResultRenderMessage>) {
+  const result = resultMap.get(toolCall.toolUseId);
+  return (toolCall.status === "success" || Boolean(result)) && toolCall.status !== "running" && toolCall.status !== "pending";
+}
+
+function summarizeOutcome(toolCalls: ToolUseRenderMessage[], resultMap: Map<string, ToolResultRenderMessage>) {
+  let success = 0;
+  let failed = 0;
+  let running = 0;
+  for (const toolCall of toolCalls) {
+    if (toolFailed(toolCall, resultMap)) {
+      failed += 1;
+    } else if (toolCompleted(toolCall, resultMap)) {
+      success += 1;
+    } else {
+      running += 1;
+    }
+  }
+  return { success, failed, running };
+}
+
+function summarizeOutcomeText({
+  success,
+  failed,
+  running,
+}: {
+  success: number;
+  failed: number;
+  running: number;
+}) {
+  const parts = [];
+  if (success > 0) parts.push(`${success} 个成功`);
+  if (failed > 0) parts.push(`${failed} 个失败`);
+  if (running > 0) parts.push(`${running} 个运行中`);
+  return parts.join("，");
+}
+
+function summarizeKindRows(
+  toolCalls: ToolUseRenderMessage[],
+  resultMap: Map<string, ToolResultRenderMessage>,
+) {
+  const rows = new Map<ToolKind, { total: number; success: number; failed: number; running: number }>();
+  for (const toolCall of toolCalls) {
+    const kind = getToolKind(toolCall.toolName, toolCall.input);
+    const row = rows.get(kind) || { total: 0, success: 0, failed: 0, running: 0 };
+    row.total += 1;
+    if (toolFailed(toolCall, resultMap)) {
+      row.failed += 1;
+    } else if (toolCompleted(toolCall, resultMap)) {
+      row.success += 1;
+    } else {
+      row.running += 1;
+    }
+    rows.set(kind, row);
+  }
+  return [...rows.entries()];
+}
+
+function formatDuration(seconds?: number): string | null {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  if (seconds < 1) return "<1s";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function summarizeStatus({
+  allCompleted,
+  completedCount,
+  totalCount,
+  duration,
+}: {
+  allCompleted: boolean;
+  completedCount: number;
+  totalCount: number;
+  duration: string | null;
+}) {
+  if (allCompleted) return duration ? `已完成 ${duration}` : "已完成";
+  return `运行中 ${completedCount}/${totalCount}`;
 }
 
 function ToolCallTree({
@@ -142,19 +232,30 @@ export function ToolCallGroup({
   resultMap,
   childToolCallsByParent,
   isStreaming = false,
+  embedded = false,
 }: Props) {
   const hasError = toolCalls.some((toolCall) => {
-    const result = resultMap.get(toolCall.toolUseId);
-    return toolCall.status === "error" || result?.isError;
+    return toolFailed(toolCall, resultMap);
   });
   const allCompleted = toolCalls.every((toolCall) => {
-    const result = resultMap.get(toolCall.toolUseId);
-    return (toolCall.status === "success" || Boolean(result)) && toolCall.status !== "running" && toolCall.status !== "pending";
+    return toolCompleted(toolCall, resultMap);
   });
-  const completedCount = toolCalls.filter((toolCall) => {
-    const result = resultMap.get(toolCall.toolUseId);
-    return toolCall.status === "success" || Boolean(result);
-  }).length;
+  const outcome = React.useMemo(() => summarizeOutcome(toolCalls, resultMap), [toolCalls, resultMap]);
+  const totalDuration = React.useMemo(() => {
+    const values = toolCalls
+      .map((toolCall) => toolCall.duration)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+    if (values.length === 0) return null;
+    return formatDuration(values.reduce((sum, value) => sum + value, 0));
+  }, [toolCalls]);
+  const statusText = summarizeStatus({
+    allCompleted,
+    completedCount: outcome.success + outcome.failed,
+    totalCount: toolCalls.length,
+    duration: totalDuration,
+  });
+  const outcomeText = summarizeOutcomeText(outcome);
+  const summaryLabel = outcomeText ? `${outcomeText} · ${summarizeGroup(toolCalls)}` : summarizeGroup(toolCalls);
 
   const [expanded, setExpanded] = React.useState(isStreaming);
   // Force-expand while streaming; auto-collapse when the group finishes,
@@ -176,51 +277,37 @@ export function ToolCallGroup({
     [toolCalls, childToolCallsByParent],
   );
 
-  if (toolCalls.length === 1) {
+  if (!expanded) {
     return (
-      <div>
-        <ToolCallTree
-          toolCall={toolCalls[0]!}
-          resultMap={resultMap}
-          childToolCallsByParent={childToolCallsByParent}
-        />
+      <div className={cn(embedded ? "w-full max-w-full" : "ml-9 max-w-[760px]")}>
+        <button
+          type="button"
+          onClick={() => {
+            userToggledRef.current = true;
+            setExpanded(true);
+          }}
+          className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none"
+        >
+          {allCompleted ? null : hasError ? (
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive" />
+          ) : (
+            <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />
+          )}
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {statusText}
+          </span>
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className={cn("min-w-0 flex-1 truncate", allCompleted && !hasError && "text-muted-foreground")}>
+            {summaryLabel}
+          </span>
+        </button>
         <FileChangeChips changes={fileChanges} />
       </div>
     );
   }
 
-  if (!expanded) {
-    return (
-      <div>
-      <button
-        type="button"
-        onClick={() => {
-          userToggledRef.current = true;
-          setExpanded(true);
-        }}
-        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none"
-      >
-        {hasError ? (
-          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive" />
-        ) : allCompleted ? (
-          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-        ) : (
-          <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />
-        )}
-        <span className={cn("truncate", allCompleted && !hasError && "text-muted-foreground")}>
-          {summarizeGroup(toolCalls)}
-        </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground">
-          {completedCount}/{toolCalls.length}
-        </span>
-      </button>
-      <FileChangeChips changes={fileChanges} />
-      </div>
-    );
-  }
-
   return (
-    <div className="rounded-xl border border-border/60">
+    <div className={cn("rounded-xl border border-border/60", embedded ? "w-full max-w-full" : "ml-9 max-w-[760px]")}>
       <button
         type="button"
         onClick={() => {
@@ -229,20 +316,18 @@ export function ToolCallGroup({
         }}
         className="flex w-full items-center gap-2 px-3 py-2 text-left select-none hover:bg-muted/30 transition-colors rounded-t-xl"
       >
-        {hasError ? (
+        {allCompleted ? null : hasError ? (
           <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive" />
-        ) : allCompleted ? (
-          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
         ) : (
           <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />
         )}
-        <span className="truncate text-sm font-medium text-foreground">
-          {summarizeGroup(toolCalls)}
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {statusText}
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground">
-          {completedCount}/{toolCalls.length}
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground rotate-180" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {summaryLabel}
         </span>
-        <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground rotate-180" />
       </button>
 
       <div className="space-y-0.5 px-3 pb-3">

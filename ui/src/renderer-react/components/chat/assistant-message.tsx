@@ -20,7 +20,13 @@ function shouldUseDocumentLayout(content: string, attachmentCount: number) {
   return paragraphs.length >= 2 || normalized.split("\n").filter((line) => line.trim()).length >= 8;
 }
 
-export function AssistantMessage({ message }: { message: AssistantTextRenderMessage }) {
+export function AssistantMessage({
+  message,
+  beforeContent,
+}: {
+  message: AssistantTextRenderMessage;
+  beforeContent?: React.ReactNode;
+}) {
   const attachments = message.attachments || [];
   const hasText = message.content.trim().length > 0;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length);
@@ -41,6 +47,8 @@ export function AssistantMessage({ message }: { message: AssistantTextRenderMess
             : "flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]"
         }
       >
+        {beforeContent}
+
         {(hasText || attachments.length > 0) && (
           <div className="w-full max-w-full rounded-[20px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)] select-text">
             {hasText && (

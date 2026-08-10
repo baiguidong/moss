@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="5">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: file: https:; img-src 'self' data: blob: file: https:; media-src 'self' data: blob: file: https:; font-src 'self' data: blob: file: https:; connect-src 'self' data: blob: file: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; frame-src 'self' https:">
+  <script type="application/ld+json">
+__APP_METADATA_JSON__
+  </script>
+  <title>Local KB</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #d9dee7;
+      --accent: #0f766e;
+      --accent-soft: #d9f3ef;
+      --warn: #b45309;
+      --error: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px 24px;
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+    .subtitle {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #9bd4cd;
+      background: var(--accent-soft);
+      color: #075e58;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    main {
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px 24px 28px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .metric, .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric {
+      padding: 15px;
+      min-height: 92px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .value {
+      font-size: 26px;
+      font-weight: 760;
+      line-height: 1;
+    }
+    .small {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .section {
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .section h2 {
+      margin: 0;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .section-body {
+      padding: 14px 15px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid #edf0f5;
+      padding: 9px 6px;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 650;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .path {
+      word-break: break-all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+    .pill {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: var(--muted);
+      background: #fafbfc;
+      white-space: nowrap;
+    }
+    .error {
+      color: var(--error);
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 8px 0;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .kb-switcher {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .kb-tab {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .kb-tab.active {
+      border-color: #9bd4cd;
+      background: var(--accent-soft);
+      color: #075e58;
+      font-weight: 700;
+    }
+    @media (max-width: 860px) {
+      .header-inner, .layout { display: block; }
+      .status { margin-top: 14px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="header-inner">
+        <div>
+          <h1 id="kb-name">Local KB</h1>
+          <div class="subtitle" id="kb-description"></div>
+        </div>
+        <div class="status" id="kb-status">已生成</div>
+      </div>
+    </header>
+    <main>
+      <div class="kb-switcher" id="kb-switcher"></div>
+      <div class="grid">
+        <div class="metric">
+          <div class="label">文档</div>
+          <div class="value" id="documents">0</div>
+          <div class="small">已登记文档数</div>
+        </div>
+        <div class="metric">
+          <div class="label">片段</div>
+          <div class="value" id="chunks">0</div>
+          <div class="small">FTS5 检索单元</div>
+        </div>
+        <div class="metric">
+          <div class="label">错误</div>
+          <div class="value" id="errors">0</div>
+          <div class="small">解析失败文档</div>
+        </div>
+        <div class="metric">
+          <div class="label">更新时间</div>
+          <div class="value" id="updated-short">--</div>
+          <div class="small" id="updated-full">--</div>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div>
+          <section class="section">
+            <h2>知识库说明</h2>
+            <div class="section-body" id="agent-content"></div>
+          </section>
+          <section class="section">
+            <h2>语料路径</h2>
+            <div class="section-body" id="paths"></div>
+          </section>
+          <section class="section">
+            <h2>最近文档</h2>
+            <div class="section-body" id="recent-docs"></div>
+          </section>
+          <section class="section">
+            <h2>最近搜索</h2>
+            <div class="section-body" id="recent-search"></div>
+          </section>
+        </div>
+        <div>
+          <section class="section">
+            <h2>文件类型</h2>
+            <div class="section-body" id="by-ext"></div>
+          </section>
+          <section class="section">
+            <h2>本地位置</h2>
+            <div class="section-body">
+              <div class="label">数据库</div>
+              <div class="mono" id="db-path"></div>
+              <div class="label" style="margin-top:14px;">知识库 ID</div>
+              <div class="mono" id="kb-id"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const FALLBACK_DATA = {
+      kb: { id: "template", name: "Local KB", description: "等待写入知识库数据" },
+      stats: { documents: 0, chunks: 0, errors: 0 },
+      byExt: [],
+      paths: [],
+      recentDocs: [],
+      recentSearch: null,
+      knowledgeBases: [],
+      summary: null,
+      dbPath: "--",
+      generatedAt: "--",
+      updatedShort: "--",
+      agentContent: {
+        summary: "这是 Local KB 状态页模板。运行 render-html 后会写入当前知识库数据。",
+        sections: []
+      }
+    };
+    const DATA = typeof __KB_DATA_JSON__ === 'undefined' ? FALLBACK_DATA : __KB_DATA_JSON__;
+
+    function text(id, value) {
+      document.getElementById(id).textContent = value == null || value === "" ? "--" : String(value);
+    }
+
+    function table(headers, rows) {
+      if (!rows.length) return '<div class="empty">暂无数据</div>';
+      return '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
+        rows.join('') + '</tbody></table>';
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderAgentContent(content) {
+      if (!content) return '<div class="empty">暂无补充说明</div>';
+      const parts = [];
+      if (content.summary) {
+        parts.push(`<p style="margin:0 0 12px;line-height:1.65;font-size:13px;color:var(--ink);">${escapeHtml(content.summary)}</p>`);
+      }
+      const sections = Array.isArray(content.sections) ? content.sections : [];
+      for (const section of sections) {
+        const title = escapeHtml(section.title || '说明');
+        const body = Array.isArray(section.items)
+          ? '<ul style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.7;">' + section.items.map(item => `<li>${escapeHtml(item)}</li>`).join('') + '</ul>'
+          : `<p style="margin:8px 0 0;line-height:1.65;font-size:13px;">${escapeHtml(section.body || '')}</p>`;
+        parts.push(`<div style="border-top:1px solid #edf0f5;padding-top:12px;margin-top:12px;"><div style="font-size:13px;font-weight:700;">${title}</div>${body}</div>`);
+      }
+      return parts.join('') || '<div class="empty">暂无补充说明</div>';
+    }
+
+    const KB_ITEMS = Array.isArray(DATA.knowledgeBases) && DATA.knowledgeBases.length
+      ? DATA.knowledgeBases
+      : [DATA];
+    let activeIndex = 0;
+
+    function normalizeKbItem(item) {
+      return {
+        kb: item.kb || { id: "unknown", name: "Local KB", description: "" },
+        stats: item.stats || { documents: 0, chunks: 0, errors: 0 },
+        byExt: item.byExt || item.by_ext || [],
+        paths: item.paths || [],
+        recentDocs: item.recentDocs || [],
+        dbPath: item.dbPath || DATA.dbPath || "--",
+        generatedAt: item.generatedAt || DATA.generatedAt || "--",
+        updatedShort: item.updatedShort || DATA.updatedShort || "--",
+        agentContent: item.agentContent || null,
+        recentSearch: item.recentSearch || DATA.recentSearch || null
+      };
+    }
+
+    function renderSwitcher() {
+      const el = document.getElementById('kb-switcher');
+      if (KB_ITEMS.length <= 1) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = KB_ITEMS.map((item, i) => {
+        const current = normalizeKbItem(item);
+        const docs = current.stats.documents || 0;
+        const errors = current.stats.errors || 0;
+        return `<button class="kb-tab ${i === activeIndex ? 'active' : ''}" data-index="${i}">${escapeHtml(current.kb.name)} · ${docs} 文档${errors ? ` · ${errors} 错误` : ''}</button>`;
+      }).join('');
+      el.querySelectorAll('.kb-tab').forEach(button => {
+        button.addEventListener('click', () => {
+          activeIndex = Number(button.dataset.index || 0);
+          renderPage();
+        });
+      });
+    }
+
+    function renderKb(item) {
+      const current = normalizeKbItem(item);
+      const summary = DATA.summary && KB_ITEMS.length > 1
+        ? `全部 ${DATA.summary.knowledgeBaseCount || KB_ITEMS.length} 个知识库 · ${DATA.summary.documentCount || 0} 文档 · ${DATA.summary.chunkCount || 0} 片段`
+        : '本地 SQLite FTS5 知识库';
+      text('kb-name', current.kb.name);
+      text('kb-description', current.kb.description || summary);
+      text('documents', current.stats.documents || 0);
+      text('chunks', current.stats.chunks || 0);
+      text('errors', current.stats.errors || 0);
+      text('updated-short', current.updatedShort);
+      text('updated-full', current.generatedAt);
+      text('db-path', current.dbPath);
+      text('kb-id', current.kb.id);
+      document.getElementById('kb-status').textContent = current.stats.errors > 0 ? '部分文档解析失败' : '知识库可用';
+      const defaultContent = {
+        summary: `${current.kb.name} 当前包含 ${current.stats.documents || 0} 个文档、${current.stats.chunks || 0} 个检索片段。`,
+        sections: []
+      };
+      document.getElementById('agent-content').innerHTML = renderAgentContent(current.agentContent || defaultContent);
+
+      document.getElementById('paths').innerHTML = table(
+        ['路径', '规则'],
+        current.paths.map(p => {
+        const exts = Array.isArray(p.exts) ? p.exts : JSON.parse(p.exts || '[]');
+        const include = Array.isArray(p.include_globs) ? p.include_globs : JSON.parse(p.include_globs || '[]');
+        const exclude = Array.isArray(p.exclude_globs) ? p.exclude_globs : JSON.parse(p.exclude_globs || '[]');
+        const rules = [
+          p.recursive ? '递归' : '单层',
+          p.max_depth == null ? '' : `层级 ${p.max_depth}`,
+          exts.length ? `类型 ${exts.join(', ')}` : '',
+          include.length ? `包含 ${include.join(', ')}` : '',
+          exclude.length ? `排除 ${exclude.join(', ')}` : ''
+        ].filter(Boolean).map(x => `<span class="pill">${escapeHtml(x)}</span>`).join(' ');
+        return `<tr><td class="path">${escapeHtml(p.path)}</td><td>${rules || '<span class="pill">默认</span>'}</td></tr>`;
+        })
+      );
+
+      document.getElementById('by-ext').innerHTML = table(
+        ['类型', '数量'],
+        current.byExt.map(x => `<tr><td><span class="pill">${escapeHtml(x.ext || 'unknown')}</span></td><td>${x.count}</td></tr>`)
+      );
+
+      document.getElementById('recent-docs').innerHTML = table(
+        ['标题', '状态', '路径'],
+        current.recentDocs.map(d => `<tr><td>${escapeHtml(d.title || '--')}</td><td class="${d.status === 'error' ? 'error' : ''}">${escapeHtml(d.status || '--')}</td><td class="path">${escapeHtml(d.path || '')}</td></tr>`)
+      );
+
+      document.getElementById('recent-search').innerHTML = renderRecentSearch(current.recentSearch);
+    }
+
+    function renderRecentSearch(search) {
+      if (!search || !Array.isArray(search.results)) return '<div class="empty">暂无搜索结果</div>';
+      const header = `<div style="margin-bottom:10px;font-size:13px;line-height:1.6;">查询 <strong>${escapeHtml(search.query || '')}</strong> · 模式 ${escapeHtml(search.mode || 'all')} · 命中 ${search.results.length}</div>`;
+      const rows = search.results.slice(0, 8).map(r => `<tr><td>${escapeHtml(r.title || '--')}</td><td class="path">${escapeHtml(r.path || '')}</td><td>${escapeHtml(r.snippet || '').slice(0, 220)}</td></tr>`);
+      return header + table(['标题', '路径', '片段'], rows);
+    }
+
+    function renderPage() {
+      renderSwitcher();
+      renderKb(KB_ITEMS[activeIndex] || KB_ITEMS[0]);
+    }
+
+    renderPage();
+  </script>
+</body>
+</html>

@@ -21,8 +21,7 @@ import { getFsImplementation } from '../fsOperations.js'
 import { executeConfigChangeHooks, hasBlockingResult } from '../hooks.js'
 import { createSignal } from '../signal.js'
 import {
-  MOSS_SKILLS_CUSTOM_DIR,
-  MOSS_SKILLS_HUB_DIR,
+  MOSS_SKILLS_DIR,
 } from './localSkillDirectories.js'
 
 /**
@@ -175,73 +174,37 @@ export const subscribe = skillsChanged.subscribe
 async function getWatchablePaths(): Promise<string[]> {
   const fs = getFsImplementation()
   const paths: string[] = []
+  const seenPaths = new Set<string>()
 
-  // User skills directory (~/.claude/skills)
-  const userSkillsPath = getSkillsPath('userSettings', 'skills')
-  if (userSkillsPath) {
+  async function addWatchablePath(inputPath: string | undefined): Promise<void> {
+    if (!inputPath) return
+    const absolutePath = platformPath.resolve(inputPath)
+    if (seenPaths.has(absolutePath)) return
     try {
-      await fs.stat(userSkillsPath)
-      paths.push(userSkillsPath)
+      await fs.stat(absolutePath)
+      seenPaths.add(absolutePath)
+      paths.push(absolutePath)
     } catch {
       // Path doesn't exist, skip it
     }
   }
 
-  for (const managedSkillPath of [MOSS_SKILLS_HUB_DIR, MOSS_SKILLS_CUSTOM_DIR]) {
-    try {
-      await fs.stat(managedSkillPath)
-      paths.push(managedSkillPath)
-    } catch {
-      // Path doesn't exist, skip it
-    }
-  }
+  // User skills directory (~/.moss/skills)
+  await addWatchablePath(getSkillsPath('userSettings', 'skills'))
+  await addWatchablePath(MOSS_SKILLS_DIR)
 
   // User commands directory (~/.claude/commands)
-  const userCommandsPath = getSkillsPath('userSettings', 'commands')
-  if (userCommandsPath) {
-    try {
-      await fs.stat(userCommandsPath)
-      paths.push(userCommandsPath)
-    } catch {
-      // Path doesn't exist, skip it
-    }
-  }
+  await addWatchablePath(getSkillsPath('userSettings', 'commands'))
 
   // Project skills directory (.claude/skills)
-  const projectSkillsPath = getSkillsPath('projectSettings', 'skills')
-  if (projectSkillsPath) {
-    try {
-      // For project settings, resolve to absolute path
-      const absolutePath = platformPath.resolve(projectSkillsPath)
-      await fs.stat(absolutePath)
-      paths.push(absolutePath)
-    } catch {
-      // Path doesn't exist, skip it
-    }
-  }
+  await addWatchablePath(getSkillsPath('projectSettings', 'skills'))
 
   // Project commands directory (.claude/commands)
-  const projectCommandsPath = getSkillsPath('projectSettings', 'commands')
-  if (projectCommandsPath) {
-    try {
-      // For project settings, resolve to absolute path
-      const absolutePath = platformPath.resolve(projectCommandsPath)
-      await fs.stat(absolutePath)
-      paths.push(absolutePath)
-    } catch {
-      // Path doesn't exist, skip it
-    }
-  }
+  await addWatchablePath(getSkillsPath('projectSettings', 'commands'))
 
   // Additional directories (--add-dir) skills
   for (const dir of getAdditionalDirectoriesForClaudeMd()) {
-    const additionalSkillsPath = platformPath.join(dir, '.claude', 'skills')
-    try {
-      await fs.stat(additionalSkillsPath)
-      paths.push(additionalSkillsPath)
-    } catch {
-      // Path doesn't exist, skip it
-    }
+    await addWatchablePath(platformPath.join(dir, '.claude', 'skills'))
   }
 
   return paths

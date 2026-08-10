@@ -42,6 +42,7 @@ export async function loadSessionContextFromTranscript(session: SessionRecord): 
   customTitle?: string
   tag?: string
   summary?: string
+  mode?: string
   messages: Message[]
   usage: Awaited<ReturnType<typeof getSessionUsageSummaryFromTranscriptPath>>
 } | null> {
@@ -72,6 +73,7 @@ export async function loadSessionContextFromTranscript(session: SessionRecord): 
     customTitle: loaded.customTitles.get(lastMessage.sessionId as UUID),
     tag: loaded.tags.get(lastMessage.sessionId as UUID),
     summary: loaded.summaries.get(lastMessage.uuid as UUID),
+    mode: prepared.mode,
     messages: prepared.messages,
     usage,
   }

@@ -77,11 +77,9 @@ export function ToolResultBlock({
   const [expanded, setExpanded] = React.useState(false);
   const attachments = result.attachments || [];
   const copyText = extractTextContent(result.rawContent ?? result.content) || result.content;
-  const resultSummary = summarizeToolResult(result);
-
-  if (compact && !expanded) {
-    return null;
-  }
+  const shell = extractShellResult(result.rawContent);
+  const isShellResult = Boolean(shell);
+  const resultSummary = isShellResult ? "Bash" : summarizeToolResult(result);
 
   if (!expanded) {
     return (
@@ -90,7 +88,15 @@ export function ToolResultBlock({
         onClick={() => setExpanded(true)}
         className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/50 select-none"
       >
-        {result.isError ? (
+        {isShellResult ? (
+          <span
+            className={
+              result.isError
+                ? "inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                : "inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+            }
+          />
+        ) : result.isError ? (
           <AlertCircle className="h-3 w-3 shrink-0 text-destructive" />
         ) : (
           <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
@@ -109,15 +115,23 @@ export function ToolResultBlock({
         onClick={() => setExpanded(false)}
         className="flex w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left select-none hover:bg-muted/30 transition-colors"
       >
-        {result.isError ? (
+        {isShellResult ? (
+          <span
+            className={
+              result.isError
+                ? "inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                : "inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+            }
+          />
+        ) : result.isError ? (
           <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
         ) : (
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
         )}
         <span className="truncate text-[11px] font-medium text-foreground">
-          {result.isError ? "Error" : "Result"}
+          {isShellResult ? "Bash" : result.isError ? "Error" : "Result"}
         </span>
-        {resultSummary ? (
+        {resultSummary && !isShellResult ? (
           <span className="truncate text-[10px] text-muted-foreground">{resultSummary}</span>
         ) : null}
         <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />

@@ -446,9 +446,9 @@ export function registerAgentIpcHandlers() {
               await installSkillFromZip(skillZipBuffer, skillName, skillInfo, latestVersion.version);
               installedSkillNames.push(skillName);
               enabledSkillNames.add(skillName);
-              installedSkillLookup.set(skillName, { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', 'hub', skillName) });
+              installedSkillLookup.set(skillName, { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', skillName) });
               if (skillInfo.id !== undefined && skillInfo.id !== null) {
-                installedSkillLookup.set(String(skillInfo.id), { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', 'hub', skillName) });
+                installedSkillLookup.set(String(skillInfo.id), { id: skillInfo.id, name: skillName, source: path.join(MOSS_HOME, 'skills', skillName) });
               }
             } catch (skillErr) {
               console.warn('[AgentStore IPC] Failed to install skill:', skillId, skillErr);

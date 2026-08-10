@@ -933,14 +933,18 @@ export default function App() {
     const live = coordinatorTasks.map((task, index) => {
       const stickyStatus = stickyWorkerTaskStatuses[task.id];
       const taskStatus = mapCoordinatorTaskStatus(task.status);
+      const resultKey = task.agentId || task.id;
+      const subagentResult = workerSubagentResults[resultKey];
+      const subagentStatus = subagentResult?.status === 'completed' || subagentResult?.status === 'failed'
+        ? subagentResult.status
+        : undefined;
       // isIdle is the SDK-native signal: true means the worker has finished.
       const status: WorkerThreadStatus = stickyStatus
+        || subagentStatus
         || (task.isIdle ? (taskStatus === 'failed' ? 'failed' : 'completed') : taskStatus)
         || 'queued';
       // agentId (e.g. "alice@team1") is the key used in .jsonl filenames;
       // task.id is the internal taskId which differs from the file-based agentId.
-      const resultKey = task.agentId || task.id;
-      const subagentResult = workerSubagentResults[resultKey];
       const resultText = subagentResult?.resultText || undefined;
       const summary = resultText || undefined;
       const messages = subagentResult?.events?.length
@@ -1014,6 +1018,28 @@ export default function App() {
     frozenWorkerThreadsRef.current = merged;
     return merged;
   }, [coordinatorTasks, stickyWorkerTaskStatuses, workerSubagentResults]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+    if (coordinatorTasks.length === 0 && activeDetail?.busy) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const workerResultsRes = await window.agentDesktop.getWorkerResults({ sessionId: activeSessionId });
+        if (cancelled || activeSessionIdRef.current !== activeSessionId) return;
+        if (workerResultsRes?.results) {
+          setWorkerSubagentResults((prev) => ({ ...prev, ...workerResultsRes.results }));
+        }
+      } catch {
+        // Worker result files are best-effort UI state; polling will retry.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, activeDetail?.busy, coordinatorTasks.length]);
 
   React.useEffect(() => {
     if (!activeSessionId) return;

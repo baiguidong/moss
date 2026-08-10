@@ -846,7 +846,7 @@ export async function installHubAssistant(params: {
         isHubInstalled: true,
         isUploaded: false,
         enabled: true,
-        source: path.join(MOSS_HOME, 'skills', 'hub', detail.name),
+        source: path.join(MOSS_HOME, 'skills', detail.name),
         meta: null,
       })
       installedSkillLookup.set(detail.name, installedSkillLookup.get(skillId)!)
