@@ -107,7 +107,7 @@ type ComposerIntent = 'chat' | 'plan' | 'coordinator';
 type QueuedMessage = {
   id: string;
   prompt: string;
-  skillPrefix?: string;
+  skills?: Array<{ name: string; displayName?: string; source?: string }>;
   files?: Array<{ name: string; path: string }>;
   intent: ComposerIntent;
 };
@@ -1409,7 +1409,7 @@ export default function App() {
     prompt: string,
     intent: ComposerIntent,
     files?: Array<{ name: string; path: string }>,
-    skillPrefix?: string,
+    skills?: Array<{ name: string; displayName?: string; source?: string }>,
   ) => {
     // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
     // intentionally NOT cleared here so multi-turn coordinators keep their
@@ -1423,12 +1423,11 @@ export default function App() {
     await window.agentDesktop.send({
       sessionId,
       prompt,
-      skillPrefix,
+      skills,
       mode: intent === 'chat' ? undefined : intent,
       appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
       files: files?.map(f => f.path),
       coordinatorMode: intent === 'coordinator' ? true : undefined,
-      assistantName: selectedAssistant?.name,
     });
   }, [selectedAppName, selectedAssistant]);
 
@@ -1441,7 +1440,7 @@ export default function App() {
       if (queue.length === 0) return;
       const [next, ...rest] = queue;
       updateQueue(sessionId, () => rest);
-      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skillPrefix).catch((err) => {
+      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills).catch((err) => {
         console.error('[queued message] send failed:', err);
         updateQueue(sessionId, (prev) => [next, ...prev]);
       });
@@ -1459,9 +1458,6 @@ export default function App() {
     if (!hasText && !hasFiles) return;
     if (planDecisionBusy) return;
 
-    const skillPrefix = skills && skills.length > 0
-      ? `${skills.map((s) => `请使用技能「${s.displayName || s.name}」${s.source ? `（SKILL.md 位于 ${s.source}）` : ''}`).join('\n')}\n\n`
-      : '';
     const prompt = input.trim();
 
     // Session is busy: queue the message; it is dispatched automatically when
@@ -1470,7 +1466,7 @@ export default function App() {
       const queued: QueuedMessage = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         prompt,
-        skillPrefix,
+        skills,
         files,
         intent,
       };
@@ -1518,7 +1514,7 @@ export default function App() {
       filesToSend = newFiles;
     }
 
-    await dispatchToSession(sessionId, prompt, intent, filesToSend, skillPrefix);
+    await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
   }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, input, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (

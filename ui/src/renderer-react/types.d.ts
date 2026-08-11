@@ -316,12 +316,11 @@ declare global {
       send: (payload: {
         sessionId: string;
         prompt: string;
-        skillPrefix?: string;
+        skills?: Array<{ name: string; displayName?: string; source?: string }>;
         mode?: 'chat' | 'plan' | 'coordinator';
         appName?: string;
         files?: string[];
         coordinatorMode?: boolean;
-        assistantName?: string;
       }) => Promise<any>;
       approvePlan: (payload: { sessionId: string }) => Promise<any>;
       rejectPlan: (payload: { sessionId: string }) => Promise<any>;

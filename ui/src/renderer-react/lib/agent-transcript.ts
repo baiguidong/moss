@@ -840,6 +840,13 @@ function isNonHumanUserEvent(event: AgentEvent): boolean {
   return event?.type === 'user' && originKind !== undefined && originKind !== 'human';
 }
 
+function isHiddenUserMetaEvent(event: AgentEvent): boolean {
+  return (
+    event?.type === 'user' &&
+    (event.isMeta === true || event.isVisibleInTranscriptOnly === true)
+  );
+}
+
 function isSidechainEvent(event: AgentEvent): boolean {
   return (
     !!event &&
@@ -906,6 +913,7 @@ function sanitizeMainHistory(history: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   for (const event of history) {
     if (!event || typeof event !== 'object') continue;
+    if (isHiddenUserMetaEvent(event)) continue;
     if (isNonHumanUserEvent(event)) continue;
     // Drop events that belong to a worker sub-agent (isSidechain path)
     if (isSidechainEvent(event)) continue;
@@ -977,6 +985,7 @@ export function buildTranscriptRenderMessages(
 
   for (let index = 0; index < history.length; index += 1) {
     const event = history[index];
+    if (isHiddenUserMetaEvent(event)) continue;
     const timestamp = safeDate(event?.timestamp);
     const userText = event?.type === 'user' ? extractUserText(event) : '';
 
@@ -1447,6 +1456,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
 
   for (let index = 0; index < history.length; index += 1) {
     const event = history[index];
+    if (isHiddenUserMetaEvent(event)) continue;
     const timestamp = safeDate(event?.timestamp);
 
     const userText = event?.type === 'user' ? extractUserText(event) : '';
