@@ -16,16 +16,22 @@ const HUB_AUTHORIZATION =
 // Support MOSS_HOME environment variable for Docker/container environments
 const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants')
-const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub')
-const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system')
-const ASSISTANT_CUSTOM_DIR = path.join(
+const LEGACY_ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub')
+const LEGACY_ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system')
+const LEGACY_ASSISTANT_CUSTOM_DIR = path.join(
   MOSS_ASSISTANTS_DIR,
   '_my-custom-assistant',
 )
+const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant']
 const ASSISTANT_SEARCH_DIRS = [
-  ASSISTANT_CUSTOM_DIR,
-  ASSISTANT_HUB_DIR,
-  ASSISTANT_SYSTEM_DIR,
+  {
+    dir: MOSS_ASSISTANTS_DIR,
+    category: 'custom' as const,
+    reservedNames: RESERVED_ASSISTANT_ROOT_NAMES,
+  },
+  { dir: LEGACY_ASSISTANT_SYSTEM_DIR, category: 'system' as const },
+  { dir: LEGACY_ASSISTANT_HUB_DIR, category: 'hub' as const },
+  { dir: LEGACY_ASSISTANT_CUSTOM_DIR, category: 'custom' as const },
 ]
 
 export const ASSISTANT_META_FILE = '_moss_meta.json'
@@ -91,7 +97,7 @@ export type AssistantStoreMeta = {
   emoji?: string | null
   category?: string
   categories?: string[]
-  source_type?: 'hub' | 'upload'
+  source_type?: 'hub' | 'upload' | 'system'
   tag?: string
   is_builtin?: boolean
   enabled?: boolean
@@ -133,6 +139,47 @@ export type FetchAgentHubAssistantsParams = {
 type AssistantSearchResult = {
   dir: string
   category: 'custom' | 'hub' | 'system'
+}
+
+function getAssistantSearchRootDirs(): string[] {
+  return ASSISTANT_SEARCH_DIRS.map(entry => entry.dir)
+}
+
+// Strictly require targetPath to be inside rootDir, excluding rootDir itself.
+function isPathInsideDir(rootDir: string, targetPath: string): boolean {
+  const rel = path.relative(path.resolve(rootDir), path.resolve(targetPath))
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
+function isReservedAssistantRootDir(targetPath: string): boolean {
+  const resolvedTarget = path.resolve(targetPath)
+  return RESERVED_ASSISTANT_ROOT_NAMES.some(
+    name => path.resolve(MOSS_ASSISTANTS_DIR, name) === resolvedTarget,
+  )
+}
+
+function sanitizeAssistantDirName(name: string): string | null {
+  const trimmed = String(name || '').trim()
+  if (!trimmed || trimmed === '.' || trimmed === '..') return null
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) {
+    return null
+  }
+  if (trimmed !== path.basename(trimmed)) return null
+  if (RESERVED_ASSISTANT_ROOT_NAMES.includes(trimmed)) return null
+  return trimmed
+}
+
+function getAssistantCategory(
+  meta: AssistantStoreMeta | null | undefined,
+  fallback: AssistantSearchResult['category'] = 'custom',
+): AssistantSearchResult['category'] {
+  if (meta?.is_builtin === true || meta?.source_type === 'system') {
+    return 'system'
+  }
+  if (meta?.source_type === 'hub') {
+    return 'hub'
+  }
+  return fallback
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -489,11 +536,20 @@ async function resolveAssistantRuleFile(
   return undefined
 }
 
-async function scanAssistantDirs(baseDir: string): Promise<string[]> {
+async function scanAssistantDirs(
+  baseDir: string,
+  reservedNames: readonly string[] = [],
+): Promise<string[]> {
+  const reserved = new Set(reservedNames)
   try {
     const entries = await readdir(baseDir, { withFileTypes: true })
     return entries
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('_'))
+      .filter(
+        entry =>
+          entry.isDirectory() &&
+          !entry.name.startsWith('_') &&
+          !reserved.has(entry.name),
+      )
       .map(entry => path.join(baseDir, entry.name))
   } catch {
     return []
@@ -508,27 +564,20 @@ async function findAssistantDir(
     return null
   }
 
-  const searchDirs: Array<{
-    dir: string
-    category: AssistantSearchResult['category']
-  }> = [
-    { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
-    { dir: ASSISTANT_HUB_DIR, category: 'hub' },
-    { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
-  ]
-
   const candidateNames = [normalizedAssistantName]
   if (normalizedAssistantName.startsWith('builtin-')) {
     candidateNames.push(normalizedAssistantName.slice('builtin-'.length))
   }
 
-  for (const { dir, category } of searchDirs) {
+  for (const { dir, category, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {
     for (const candidateName of candidateNames) {
+      if (reservedNames.includes(candidateName)) continue
       const assistantDir = path.join(dir, candidateName)
       try {
         const entryStat = await stat(assistantDir)
         if (entryStat.isDirectory()) {
-          return { dir: assistantDir, category }
+          const meta = await readAssistantMeta(assistantDir)
+          return { dir: assistantDir, category: getAssistantCategory(meta, category) }
         }
       } catch {
         // Continue searching.
@@ -536,15 +585,16 @@ async function findAssistantDir(
     }
   }
 
-  for (const { dir, category } of searchDirs) {
+  for (const { dir, category, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {
     try {
       const entries = await readdir(dir, { withFileTypes: true })
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue
+        if (reservedNames.includes(entry.name)) continue
         const candidateDir = path.join(dir, entry.name)
         const meta = await readAssistantMeta(candidateDir)
         if (meta?.name === normalizedAssistantName) {
-          return { dir: candidateDir, category }
+          return { dir: candidateDir, category: getAssistantCategory(meta, category) }
         }
       }
     } catch {
@@ -665,19 +715,16 @@ export async function fetchAgentHubAssistantDetail(
 export async function getInstalledAssistants(): Promise<InstalledAssistantInfo[]> {
   const results: InstalledAssistantInfo[] = []
 
-  for (const baseDir of [ASSISTANT_SYSTEM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_CUSTOM_DIR]) {
-    const assistantDirs = await scanAssistantDirs(baseDir)
+  for (const {
+    dir: baseDir,
+    category: fallbackCategory,
+    reservedNames = [],
+  } of ASSISTANT_SEARCH_DIRS) {
+    const assistantDirs = await scanAssistantDirs(baseDir, reservedNames)
     for (const assistantDir of assistantDirs) {
       const dirName = path.basename(assistantDir)
-      const category: AssistantSearchResult['category'] = assistantDir.startsWith(
-        ASSISTANT_SYSTEM_DIR,
-      )
-        ? 'system'
-        : assistantDir.startsWith(ASSISTANT_HUB_DIR)
-          ? 'hub'
-          : 'custom'
-
       const meta = await readAssistantMeta(assistantDir)
+      const category = getAssistantCategory(meta, fallbackCategory)
       results.push(
         toInstalledAssistantInfo({
           assistantDir,
@@ -745,6 +792,10 @@ export async function installHubAssistant(params: {
   if (!assistantName) {
     throw new Error('assistantName is required')
   }
+  const assistantDirName = sanitizeAssistantDirName(assistantName)
+  if (!assistantDirName) {
+    throw new Error(`assistantName is invalid or reserved: ${assistantName}`)
+  }
   if (!sourceUrl) {
     throw new Error('sourceUrl is required')
   }
@@ -759,8 +810,12 @@ export async function installHubAssistant(params: {
     }
   }
 
-  await mkdir(ASSISTANT_HUB_DIR, { recursive: true })
-  const assistantDir = path.join(ASSISTANT_HUB_DIR, assistantName)
+  await mkdir(MOSS_ASSISTANTS_DIR, { recursive: true })
+  const assistantDir = path.join(MOSS_ASSISTANTS_DIR, assistantDirName)
+  const existingMeta = await readAssistantMeta(assistantDir)
+  if (existingMeta?.is_builtin === true) {
+    throw new Error('Cannot overwrite builtin assistant')
+  }
   await rm(assistantDir, { recursive: true, force: true })
   await mkdir(assistantDir, { recursive: true })
   await extractAssistantZip(zipBuffer, assistantDir)
@@ -896,6 +951,12 @@ export async function uninstallAssistant(params: {
   if (!sourcePath) {
     throw new Error('Assistant not found')
   }
+  if (
+    !getAssistantSearchRootDirs().some(root => isPathInsideDir(root, sourcePath)) ||
+    isReservedAssistantRootDir(sourcePath)
+  ) {
+    throw new Error('Refusing to remove path outside assistant directories')
+  }
 
   const meta = await readAssistantMeta(sourcePath)
   if (meta?.is_builtin === true) {
@@ -986,4 +1047,4 @@ export async function getAssistantSystemPrompt(
   }
 }
 
-export { ASSISTANT_HUB_DIR, ASSISTANT_SEARCH_DIRS }
+export { ASSISTANT_SEARCH_DIRS, MOSS_ASSISTANTS_DIR }

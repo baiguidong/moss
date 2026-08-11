@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App Test Console</title>
+  <style>
+    :root {
+      --bg: #101418;
+      --panel: #181f26;
+      --panel-2: #202933;
+      --border: #31404f;
+      --text: #eef4f8;
+      --muted: #9fb0bf;
+      --primary: #4fb477;
+      --danger: #f06464;
+      --warn: #d9a441;
+      --code: #0b1116;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      background: #121922;
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 650; }
+    .status {
+      margin-left: auto;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status.ok { border-color: rgba(79, 180, 119, .45); color: var(--primary); }
+    .status.fail { border-color: rgba(240, 100, 100, .5); color: var(--danger); }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 16px;
+      padding: 18px;
+      height: calc(100vh - 62px);
+    }
+    section {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 8px;
+      min-width: 0;
+    }
+    .tests {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-content: start;
+      overflow: auto;
+      padding: 14px;
+    }
+    .card {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .card p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    input {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--code);
+      color: var(--text);
+      padding: 8px 9px;
+      font: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #26313d;
+      color: var(--text);
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.primary {
+      border-color: rgba(79, 180, 119, .55);
+      background: rgba(79, 180, 119, .18);
+      color: #8fe0ad;
+    }
+    button.danger {
+      border-color: rgba(240, 100, 100, .55);
+      background: rgba(240, 100, 100, .14);
+      color: #ff9a9a;
+    }
+    button:hover { filter: brightness(1.08); }
+    pre {
+      margin: 10px 0 0;
+      min-height: 42px;
+      max-height: 160px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--code);
+      color: #d5e4ee;
+      padding: 9px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .log-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .log-head {
+      display: flex;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .log {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .entry {
+      border-bottom: 1px solid rgba(49, 64, 79, .55);
+      padding: 7px 2px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    @media (max-width: 820px) {
+      main { grid-template-columns: 1fr; height: auto; }
+      .tests { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>App Test Console</h1>
+    <div id="runtimeStatus" class="status">checking</div>
+  </header>
+  <main>
+    <section class="tests">
+      <div class="card">
+        <h2>运行状态</h2>
+        <p>检查 App runtime 是否可用，并读取扩展宿主状态。</p>
+        <button class="primary" id="statusBtn">刷新状态</button>
+        <pre id="statusOut"></pre>
+      </div>
+
+      <div class="card">
+        <h2>App Info</h2>
+        <p>读取当前 App 的 manifest、版本和能力摘要。</p>
+        <button class="primary" id="infoBtn">读取信息</button>
+        <pre id="infoOut"></pre>
+      </div>
+
+      <div class="card">
+        <h2>错误处理</h2>
+        <p>触发前端异常，验证错误展示和事件日志不会导致空白页。</p>
+        <button class="danger" id="failBtn">Trigger Error</button>
+        <pre id="failOut"></pre>
+      </div>
+
+      <div class="card">
+        <h2>Storage</h2>
+        <p>验证 App 私有 storage 能写入、读取和列 key。</p>
+        <div class="row">
+          <input id="storageInput" value="test value">
+          <button id="storageBtn">Save/Read</button>
+        </div>
+        <pre id="storageOut"></pre>
+      </div>
+    </section>
+
+    <section class="log-panel">
+      <div class="log-head">事件日志</div>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script>
+    const api = window.mossApp;
+    const $ = (id) => document.getElementById(id);
+
+    function pretty(value) {
+      try { return JSON.stringify(value, null, 2); }
+      catch { return String(value); }
+    }
+
+    function log(label, value) {
+      const item = document.createElement('div');
+      item.className = 'entry';
+      item.textContent = '[' + new Date().toLocaleTimeString() + '] ' + label + '\n' + pretty(value);
+      $('log').prepend(item);
+    }
+
+    async function run(outId, label, fn) {
+      const out = $(outId);
+      out.textContent = 'running...';
+      try {
+        const result = await fn();
+        out.textContent = pretty(result);
+        log(label, result);
+        return result;
+      } catch (error) {
+        const payload = { error: error && error.message ? error.message : String(error) };
+        out.textContent = pretty(payload);
+        log(label + ' failed', payload);
+        return null;
+      }
+    }
+
+    async function refreshStatus() {
+      if (!api) {
+        $('runtimeStatus').textContent = 'no runtime';
+        $('runtimeStatus').className = 'status fail';
+        $('statusOut').textContent = 'window.mossApp is unavailable.';
+        return;
+      }
+      const result = await run('statusOut', 'runtime status', async () => ({
+        info: await api.getInfo(),
+        extensions: api.extensions ? await api.extensions.getStatus() : null
+      }));
+      $('runtimeStatus').textContent = result ? 'app ready' : 'runtime error';
+      $('runtimeStatus').className = result ? 'status ok' : 'status fail';
+    }
+
+    $('statusBtn').addEventListener('click', refreshStatus);
+    $('infoBtn').addEventListener('click', () => run('infoOut', 'app info', async () => ({
+      info: await api.getInfo(),
+      versions: await api.getVersions()
+    })));
+    $('failBtn').addEventListener('click', () => run('failOut', 'manual error', () =>
+      Promise.reject(new Error('Manual test error'))
+    ));
+    $('storageBtn').addEventListener('click', () => run('storageOut', 'storage save/read', async () => {
+      const key = 'last-test';
+      await api.storage.setItem(key, { value: $('storageInput').value, savedAt: Date.now() });
+      return {
+        value: await api.storage.getItem(key),
+        keys: await api.storage.list()
+      };
+    }));
+
+    if (api && api.events) {
+      api.events.on('extensions', (event) => {
+        log('extensions event', event);
+        refreshStatus();
+      });
+    }
+    refreshStatus();
+  </script>
+</body>
+</html>

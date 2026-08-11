@@ -59,16 +59,24 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
   }
 
   const directories = searchDirs
-    .map((entry) => (typeof entry === 'string' ? entry : entry?.dir))
-    .filter(Boolean);
+    .map((entry) => ({
+      dir: typeof entry === 'string' ? entry : entry?.dir,
+      reservedNames: new Set(
+        Array.isArray(entry?.reservedNames)
+          ? entry.reservedNames.map((name) => String(name || ''))
+          : [],
+      ),
+    }))
+    .filter((entry) => entry.dir);
 
   const candidateNames = [normalizedAssistantName];
   if (normalizedAssistantName.startsWith('builtin-')) {
     candidateNames.push(normalizedAssistantName.slice('builtin-'.length));
   }
 
-  for (const dir of directories) {
+  for (const { dir, reservedNames } of directories) {
     for (const candidateName of candidateNames) {
+      if (reservedNames.has(candidateName)) continue;
       const assistantDir = path.join(dir, candidateName);
       try {
         const stat = await fsp.stat(assistantDir);
@@ -81,11 +89,12 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
     }
   }
 
-  for (const dir of directories) {
+  for (const { dir, reservedNames } of directories) {
     try {
       const entries = await fsp.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+        if (reservedNames.has(entry.name)) continue;
         const candidateDir = path.join(dir, entry.name);
         const meta = await readAssistantMeta(candidateDir);
         if (meta?.name === normalizedAssistantName) {

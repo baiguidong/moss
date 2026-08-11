@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "app-test-console",
+  "kind": "plugin-app",
+  "displayName": "App Test Console",
+  "description": "Test console for App runtime, storage, status, and error handling.",
+  "entry": "dist/index.html",
+  "window": {
+    "width": 960,
+    "height": 680,
+    "resizable": true
+  },
+  "capabilities": {
+    "storage": true,
+    "commands": [],
+    "tools": []
+  },
+  "extensionDependencies": {}
+}

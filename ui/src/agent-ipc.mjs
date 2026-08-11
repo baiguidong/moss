@@ -26,10 +26,20 @@ import { getInstalledSkills, installSkillFromZip } from './skill-store-ipc.mjs';
 
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
-const ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
-const ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');
-const ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_my-custom-assistant');
-const ASSISTANT_SEARCH_DIRS = [ASSISTANT_CUSTOM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_SYSTEM_DIR];
+const LEGACY_ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
+const LEGACY_ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');
+const LEGACY_ASSISTANT_CUSTOM_DIR = path.join(MOSS_ASSISTANTS_DIR, '_my-custom-assistant');
+const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
+const ASSISTANT_SEARCH_DIRS = [
+  {
+    dir: MOSS_ASSISTANTS_DIR,
+    category: 'custom',
+    reservedNames: RESERVED_ASSISTANT_ROOT_NAMES,
+  },
+  { dir: LEGACY_ASSISTANT_SYSTEM_DIR, category: 'system' },
+  { dir: LEGACY_ASSISTANT_HUB_DIR, category: 'hub' },
+  { dir: LEGACY_ASSISTANT_CUSTOM_DIR, category: 'custom' },
+];
 
 async function verifyChecksum(buffer, expectedChecksum) {
   const actualChecksum = crypto.createHash('sha256').update(buffer).digest('hex');
@@ -40,6 +50,23 @@ async function verifyChecksum(buffer, expectedChecksum) {
 function isPathInsideDir(rootDir, targetPath) {
   const rel = path.relative(path.resolve(rootDir), path.resolve(targetPath));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function isReservedAssistantRootDir(targetPath) {
+  const resolvedTarget = path.resolve(targetPath);
+  return RESERVED_ASSISTANT_ROOT_NAMES.some(
+    (name) => path.resolve(MOSS_ASSISTANTS_DIR, name) === resolvedTarget,
+  );
+}
+
+function getAssistantSearchRootDirs() {
+  return ASSISTANT_SEARCH_DIRS.map((entry) => entry.dir);
+}
+
+function getAssistantCategory(meta, fallback = 'custom') {
+  if (meta?.is_builtin === true || meta?.source_type === 'system') return 'system';
+  if (meta?.source_type === 'hub') return 'hub';
+  return fallback;
 }
 
 // 助手名会被拼进磁盘路径, 必须限制为单个无分隔符的目录段, 防止 ../ 逃逸。
@@ -126,8 +153,9 @@ async function extractAssistantZip(buffer, targetDir) {
   }
 }
 
-async function scanAssistantDirs(baseDir) {
+async function scanAssistantDirs(baseDir, reservedNames = []) {
   const dirs = [];
+  const reserved = new Set(reservedNames);
   try {
     await fsp.access(baseDir);
   } catch {
@@ -137,6 +165,7 @@ async function scanAssistantDirs(baseDir) {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('_')) continue;
+    if (reserved.has(entry.name)) continue;
     dirs.push(path.join(baseDir, entry.name));
   }
   return dirs;
@@ -144,18 +173,19 @@ async function scanAssistantDirs(baseDir) {
 
 function findAssistantDir(name) {
   const safeName = sanitizeAssistantDirName(name);
-  const searchDirs = [
-    { dir: ASSISTANT_CUSTOM_DIR, category: 'custom' },
-    { dir: ASSISTANT_HUB_DIR, category: 'hub' },
-    { dir: ASSISTANT_SYSTEM_DIR, category: 'system' },
-  ];
+  const searchDirs = ASSISTANT_SEARCH_DIRS;
 
   if (safeName) {
-    for (const { dir, category } of searchDirs) {
+    for (const { dir, category, reservedNames = [] } of searchDirs) {
+      if (reservedNames.includes(safeName)) continue;
       const assistantDir = path.join(dir, safeName);
       try {
         fs.accessSync(assistantDir);
-        return { dir: assistantDir, category };
+        let meta = null;
+        try {
+          meta = JSON.parse(fs.readFileSync(path.join(assistantDir, ASSISTANT_META_FILE), 'utf-8'));
+        } catch {}
+        return { dir: assistantDir, category: getAssistantCategory(meta, category) };
       } catch {
         // Not found in this directory
       }
@@ -164,28 +194,36 @@ function findAssistantDir(name) {
     // Try stripping 'builtin-' prefix for system dir lookup
     if (safeName.startsWith('builtin-')) {
       const stripped = safeName.slice('builtin-'.length);
-      const systemPath = path.join(ASSISTANT_SYSTEM_DIR, stripped);
-      try {
-        fs.accessSync(systemPath);
-        return { dir: systemPath, category: 'system' };
-      } catch {
-        // Not found
+      for (const { dir, category, reservedNames = [] } of searchDirs) {
+        if (reservedNames.includes(stripped)) continue;
+        const assistantDir = path.join(dir, stripped);
+        try {
+          fs.accessSync(assistantDir);
+          let meta = null;
+          try {
+            meta = JSON.parse(fs.readFileSync(path.join(assistantDir, ASSISTANT_META_FILE), 'utf-8'));
+          } catch {}
+          return { dir: assistantDir, category: getAssistantCategory(meta, category) };
+        } catch {
+          // Not found
+        }
       }
     }
   }
 
   // Fallback: scan assistant metadata and match by logical meta.name.
-  for (const { dir, category } of searchDirs) {
+  for (const { dir, category, reservedNames = [] } of searchDirs) {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+        if (reservedNames.includes(entry.name)) continue;
         const assistantDir = path.join(dir, entry.name);
         const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
         try {
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
           if (meta?.name === name) {
-            return { dir: assistantDir, category };
+            return { dir: assistantDir, category: getAssistantCategory(meta, category) };
           }
         } catch {
           // Ignore invalid meta and continue scanning.
@@ -202,18 +240,15 @@ function findAssistantDir(name) {
 async function getInstalledAssistants() {
   const assistants = [];
 
-  for (const baseDir of [ASSISTANT_SYSTEM_DIR, ASSISTANT_HUB_DIR, ASSISTANT_CUSTOM_DIR]) {
-    const dirs = await scanAssistantDirs(baseDir);
+  for (const { dir: baseDir, category: fallbackCategory, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {
+    const dirs = await scanAssistantDirs(baseDir, reservedNames);
     for (const assistantDir of dirs) {
       const dirName = path.basename(assistantDir);
-      let category = 'custom';
-      if (assistantDir.startsWith(ASSISTANT_SYSTEM_DIR)) category = 'system';
-      else if (assistantDir.startsWith(ASSISTANT_HUB_DIR)) category = 'hub';
-
       const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
       try {
         const metaContent = await fsp.readFile(metaPath, 'utf-8');
         const meta = JSON.parse(metaContent);
+        const category = getAssistantCategory(meta, fallbackCategory);
         assistants.push({
           name: meta.name || dirName,
           displayName: meta.display_name || meta.name || dirName,
@@ -232,6 +267,7 @@ async function getInstalledAssistants() {
           enabledSkills: meta.enabledSkills || [],
         });
       } catch {
+        const category = fallbackCategory;
         assistants.push({
           name: dirName,
           displayName: dirName,
@@ -373,10 +409,21 @@ export function registerAgentIpcHandlers() {
       if (!safeAssistantName) {
         return { success: false, error: `assistantName is invalid: ${JSON.stringify(assistantName)}` };
       }
+      if (RESERVED_ASSISTANT_ROOT_NAMES.includes(safeAssistantName)) {
+        return { success: false, error: `assistantName is reserved: ${safeAssistantName}` };
+      }
 
-      await fsp.mkdir(ASSISTANT_HUB_DIR, { recursive: true });
+      await fsp.mkdir(MOSS_ASSISTANTS_DIR, { recursive: true });
 
-      const assistantDir = path.join(ASSISTANT_HUB_DIR, safeAssistantName);
+      const assistantDir = path.join(MOSS_ASSISTANTS_DIR, safeAssistantName);
+      try {
+        const existingMeta = JSON.parse(
+          await fsp.readFile(path.join(assistantDir, ASSISTANT_META_FILE), 'utf-8'),
+        );
+        if (existingMeta?.is_builtin === true) {
+          return { success: false, error: 'Builtin assistants cannot be overwritten' };
+        }
+      } catch {}
       await fsp.rm(assistantDir, { recursive: true, force: true });
       await fsp.mkdir(assistantDir, { recursive: true });
 
@@ -507,8 +554,8 @@ export function registerAgentIpcHandlers() {
       }
 
       // 只允许删除严格位于已知助手目录内部的路径, 防止 rm 任意目录。
-      const insideAllowed = ASSISTANT_SEARCH_DIRS.some((root) => isPathInsideDir(root, result.dir));
-      if (!insideAllowed) {
+      const insideAllowed = getAssistantSearchRootDirs().some((root) => isPathInsideDir(root, result.dir));
+      if (!insideAllowed || isReservedAssistantRootDir(result.dir)) {
         return { success: false, error: 'Refusing to remove path outside assistant directories' };
       }
 

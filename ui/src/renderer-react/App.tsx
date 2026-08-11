@@ -130,6 +130,7 @@ type PreviewTabMetadata = Record<string, unknown> & {
 };
 
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
+const APP_SHORTCUTS_STORAGE_KEY = 'ui.appShortcuts.v1';
 const DEFAULT_LAYOUT: LayoutState = {
   leftWidth: 248,
   previewWidth: 420,
@@ -147,6 +148,10 @@ function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): b
 
 function getPreviewTabMetadata(file: WorkspacePreviewData | null | undefined): PreviewTabMetadata {
   return ((file?.metadata as PreviewTabMetadata | undefined) || {}) as PreviewTabMetadata;
+}
+
+function getStoredAppKey(app: Pick<StoredApp, 'id' | 'name'>): string {
+  return app.id || app.name;
 }
 
 function isDirtyPreviewTab(file: WorkspacePreviewData | null | undefined): boolean {
@@ -265,6 +270,14 @@ export default function App() {
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
+  const [appShortcutIds, setAppShortcutIds] = React.useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(APP_SHORTCUTS_STORAGE_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
@@ -377,6 +390,11 @@ export default function App() {
   const persistPinned = React.useCallback((next: Set<string>) => {
     setPinnedIds(next);
     localStorage.setItem('ui.pinnedSessions', JSON.stringify(Array.from(next)));
+  }, []);
+
+  const persistAppShortcuts = React.useCallback((next: Set<string>) => {
+    setAppShortcutIds(next);
+    localStorage.setItem(APP_SHORTCUTS_STORAGE_KEY, JSON.stringify(Array.from(next)));
   }, []);
 
   const refreshSummaries = React.useCallback(async () => {
@@ -606,6 +624,16 @@ export default function App() {
       setSelectedAppName('');
     }
   }, [apps, selectedAppName]);
+
+  React.useEffect(() => {
+    const installedIds = new Set(apps.map(getStoredAppKey));
+    const nextShortcuts = new Set(
+      Array.from(appShortcutIds).filter((id) => installedIds.has(id))
+    );
+    if (nextShortcuts.size !== appShortcutIds.size) {
+      persistAppShortcuts(nextShortcuts);
+    }
+  }, [apps, appShortcutIds, persistAppShortcuts]);
 
   // Poll for coordinator mode in-process teammate tasks
   React.useEffect(() => {
@@ -923,6 +951,14 @@ export default function App() {
   const sidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
     [summaries, pinnedIds, sessionAgentModes]
+  );
+  const sidebarAppShortcuts = React.useMemo(
+    () => apps.filter((app) => appShortcutIds.has(getStoredAppKey(app))),
+    [apps, appShortcutIds]
+  );
+  const sidebarAppShortcutIds = React.useMemo(
+    () => new Set(sidebarAppShortcuts.map(getStoredAppKey)),
+    [sidebarAppShortcuts]
   );
 
   // Worker threads are built directly from coordinatorTasks (authoritative for
@@ -1596,6 +1632,22 @@ export default function App() {
     await window.agentDesktop.launchApp({ name });
   }, []);
 
+  const handleRemoveAppShortcut = React.useCallback((name: string) => {
+    const app = apps.find((entry) => entry.name === name || entry.id === name);
+    if (!app) return;
+    const next = new Set(appShortcutIds);
+    next.delete(getStoredAppKey(app));
+    persistAppShortcuts(next);
+  }, [apps, appShortcutIds, persistAppShortcuts]);
+
+  const handleAddAppShortcut = React.useCallback((name: string) => {
+    const app = apps.find((entry) => entry.name === name || entry.id === name);
+    if (!app) return;
+    const next = new Set(appShortcutIds);
+    next.add(getStoredAppKey(app));
+    persistAppShortcuts(next);
+  }, [apps, appShortcutIds, persistAppShortcuts]);
+
   const handleSelectAssistant = React.useCallback((assistant: InstalledAssistant) => {
     setSelectedAssistant(assistant);
   }, []);
@@ -1716,6 +1768,7 @@ export default function App() {
         >
           <AppSidebar
             sessions={sidebarSessions}
+            apps={sidebarAppShortcuts}
             activeSessionId={activeSessionId}
             activeView={activeView}
             appsCount={apps.length}
@@ -1728,6 +1781,7 @@ export default function App() {
             onChangeView={setActiveView}
             onChangeTheme={setThemeMode}
             onSelectSession={handleSelectSession}
+            onLaunchApp={handleLaunchApp}
             onNewSession={handleNewSession}
             onNewSessionModeChange={handleNewSessionModeChange}
             onDeleteSession={handleDeleteSession}
@@ -1851,6 +1905,9 @@ export default function App() {
               onIterate={handleIterateExistingApp}
               onLoadVersions={loadAppVersions}
               onRollback={handleRollbackApp}
+              sidebarShortcutIds={sidebarAppShortcutIds}
+              onAddShortcut={handleAddAppShortcut}
+              onRemoveShortcut={handleRemoveAppShortcut}
             />
           ) : (
             renderSettingsView()

@@ -1,4 +1,0 @@
-interface:
-  display_name: "ComfyUI Local API"
-  short_description: "Use ComfyUI workflows and local API"
-  default_prompt: "Use $comfyui-local-api to inspect ComfyUI capabilities and submit a workflow through the local API."

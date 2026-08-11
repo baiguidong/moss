@@ -13,15 +13,29 @@ import { getInstalledSkills, registerSkillStoreIpcHandlers, SKILL_SEARCH_DIRS } 
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
-  deleteStoredApp,
-  getStoredApp,
-  listAppVersionSnapshots,
-  listStoredApps,
-  loadStoredAppContent,
-  readGeneratedAppPayloadFromWorkspace,
-  rollbackAppToVersion,
-  saveStoredApp,
+  listAllStoredApps,
 } from './app-ipc.mjs';
+import {
+  APPS_DIR,
+  APP_REGISTRY_PATH,
+  APP_KINDS,
+  EXTENSIONS_DIR,
+  buildPluginAppFromWorkspace,
+  deletePluginApp,
+  getPublishedPluginApp,
+  installBuiltInAppFromBuild,
+  listPluginAppVersions,
+  readPluginAppManifestFromDir,
+  rollbackPluginAppToVersion,
+} from './app-platform.mjs';
+import {
+  allowPluginAppBundleRoot,
+  installPluginAppProtocol,
+  PLUGIN_APP_SCHEME,
+  revokePluginAppBundleRoot,
+  toPluginAppUrl,
+} from './plugin-app-protocol.mjs';
+import { ExtensionHost } from './extension-host.mjs';
 import {
   findAssistantDirByName,
   readAssistantContext,
@@ -46,14 +60,35 @@ import {
   initFileManagerDatabase,
   registerFileManagerIpcHandlers,
   registerTranscribeIpcHandlers,
-  registerMediaScheme,
+  MEDIA_SCHEME,
   installMediaProtocol,
   allowMediaRoot,
 } from './filemanage/main/index.mjs';
 import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
 
-// 注册自定义流媒体协议 (必须在 app.whenReady 之前)
-registerMediaScheme(protocol);
+// 注册自定义协议 (必须在 app.whenReady 之前)
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+  {
+    scheme: PLUGIN_APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,15 +117,15 @@ const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
 const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
 const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
-const MOSS_APPS_DIR = path.join(MOSS_HOME, 'generated-apps');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'generated-app-data');
+const MOSS_BUNDLED_APPS_WORKSPACE_DIR = path.join(MOSS_HOME, 'bundled-apps-workspace');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
-const ASSISTANT_SYSTEM_DIR = path.join(MOSS_HOME, 'assistants', 'system');
-const ASSISTANT_HUB_DIR = path.join(MOSS_HOME, 'assistants', 'hub');
-const ASSISTANT_CUSTOM_DIR = path.join(MOSS_HOME, 'assistants', '_my-custom-assistant');
+const MOSS_REPO_APPS_DIR = path.join(repoRoot, 'apps');
+const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
+const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
@@ -144,8 +179,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   logRotationMaxFiles: 5,
 });
 
-const APP_FILES_SUBDIR = 'files';
-const APP_VERSIONS_SUBDIR = 'versions';
 const APP_STORAGE_FILENAME = 'storage.json';
 const MAX_SANITIZED_PATH_LENGTH = 200;
 
@@ -208,13 +241,12 @@ let managedRuntimeInstallPromise = null;
 
 const sessions = new Map();
 const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
-const appWindows = new Map();
-const appWindowStates = new Map();
+const pluginAppWindows = new Map();
+const pluginAppWindowStates = new Map();
 const debugWindows = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
 fs.mkdirSync(USER_TMP_DIR, { recursive: true });
-fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_WORKSPACES_DIR);
@@ -2275,7 +2307,12 @@ function getBootStatus() {
     sessionsCount: sessions.size,
     defaultBypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
     defaultWorkspaceRoot: USER_TMP_DIR,
-    appsDir: ensureAppsDir(),
+    appsDir: APPS_DIR,
+    appRegistryPath: APP_REGISTRY_PATH,
+    bundledAppsWorkspaceDir: MOSS_BUNDLED_APPS_WORKSPACE_DIR,
+    skillsDir: MOSS_SKILLS_DIR,
+    assistantsDir: MOSS_ASSISTANTS_DIR,
+    extensionsDir: EXTENSIONS_DIR,
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     userSettingsPath: localSettingsAuthConfig.path,
     userSettingsExists: localSettingsAuthConfig.exists,
@@ -2305,6 +2342,59 @@ function emitAppsChanged(payload = {}) {
   });
 }
 
+function shouldCopyBundledAppPath(sourcePath) {
+  const basename = path.basename(sourcePath);
+  return basename !== 'build' && basename !== 'node_modules' && basename !== '.git';
+}
+
+function shouldCopyBundledManagedPath(sourcePath) {
+  const basename = path.basename(sourcePath);
+  return basename !== 'node_modules' && basename !== '.git';
+}
+
+function getBundledResourceDir(resourceName, repoDir) {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, resourceName)
+    : repoDir;
+}
+
+async function copyBundledDirectoryEntries({
+  resourceName,
+  sourceDir,
+  targetDir,
+  logCategory,
+  logPrefix,
+  filter = shouldCopyBundledManagedPath,
+}) {
+  await fsp.mkdir(targetDir, { recursive: true });
+  if (!fs.existsSync(sourceDir)) return;
+
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory());
+
+  for (const entry of entries) {
+    const srcPath = path.join(sourceDir, entry.name);
+    const dstPath = path.join(targetDir, entry.name);
+    try {
+      await fsp.cp(srcPath, dstPath, {
+        recursive: true,
+        force: true,
+        filter,
+      });
+      mossLog('info', logCategory, `Bundled ${resourceName} initialized`, {
+        name: entry.name,
+        target: dstPath,
+      });
+    } catch (copyErr) {
+      mossLog('warn', logCategory, `Failed to initialize bundled ${resourceName}`, {
+        name: entry.name,
+        error: copyErr.message || String(copyErr),
+      });
+      console.warn(`[${logPrefix}] Failed to copy ${resourceName} ${entry.name}:`, copyErr.message || copyErr);
+    }
+  }
+}
+
 function normalizeWorkspace(workspace) {
   const normalized = workspace && String(workspace).trim() ? String(workspace).trim() : createDefaultWorkspacePath();
   return path.resolve(normalized);
@@ -2319,92 +2409,79 @@ function buildSessionTitle(prompt) {
   return line.length > 36 ? `${line.slice(0, 36)}...` : line;
 }
 
-function ensureAppsDir() {
-  fs.mkdirSync(MOSS_APPS_DIR, { recursive: true });
-  return MOSS_APPS_DIR;
+/**
+ * Initialize bundled skills from repo/package resources to ~/.moss/skills.
+ */
+async function initializeBundledSkills() {
+  await copyBundledDirectoryEntries({
+    resourceName: 'skill',
+    sourceDir: getBundledResourceDir('skills', MOSS_REPO_SKILLS_DIR),
+    targetDir: MOSS_SKILLS_DIR,
+    logCategory: 'skill',
+    logPrefix: 'skill-init',
+  });
 }
 
 /**
- * Initialize bundled apps from src/apps to generated-apps directory.
+ * Initialize every bundled app under apps/<app-id>/app.moss.json to ~/.moss/apps.
  * In packaged mode, reads from process.resourcesPath/apps.
  */
-function initializeBundledApps() {
-  const bundledAppsDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'apps')
-    : path.join(uiRoot, 'src', 'apps');
-  ensureAppsDir();
+async function initializeBundledApps() {
+  const srcDir = getBundledResourceDir('apps', MOSS_REPO_APPS_DIR);
+  if (!fs.existsSync(srcDir)) return;
 
-  try {
-    fs.readdirSync(bundledAppsDir, { withFileTypes: true })
-      .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
-      .forEach(entry => {
-        const srcPath = path.join(bundledAppsDir, entry.name);
-        const dstPath = path.join(MOSS_APPS_DIR, entry.name);
-        if (!fs.existsSync(dstPath)) {
-          fs.copyFileSync(srcPath, dstPath);
-        }
+  await fsp.mkdir(MOSS_BUNDLED_APPS_WORKSPACE_DIR, { recursive: true });
+
+  const entries = fs.readdirSync(srcDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .filter(entry => fs.existsSync(path.join(srcDir, entry.name, 'app.moss.json')));
+
+  for (const entry of entries) {
+    const srcPath = path.join(srcDir, entry.name);
+    try {
+      const manifest = readPluginAppManifestFromDir(srcPath);
+      const workspaceAppDir = path.join(MOSS_BUNDLED_APPS_WORKSPACE_DIR, 'apps', manifest.id);
+      await fsp.rm(workspaceAppDir, { recursive: true, force: true });
+      await fsp.mkdir(path.dirname(workspaceAppDir), { recursive: true });
+      await fsp.cp(srcPath, workspaceAppDir, {
+        recursive: true,
+        filter: shouldCopyBundledAppPath,
       });
-  } catch (err) {
-    console.warn('[app-init] Failed to initialize bundled apps:', err.message);
+
+      const build = await buildPluginAppFromWorkspace(
+        MOSS_BUNDLED_APPS_WORKSPACE_DIR,
+        manifest.id,
+        { runPackageBuild: false },
+      );
+      const installed = await installBuiltInAppFromBuild(build.buildDir, {
+        description: manifest.description,
+      });
+
+      mossLog('info', 'app', installed.skipped ? 'Bundled app already current' : 'Bundled app installed', {
+        appId: manifest.id,
+        version: installed.currentVersion || installed.publishedVersion || null,
+      });
+    } catch (error) {
+      mossLog('warn', 'app', 'Failed to initialize bundled app', {
+        app: entry.name,
+        error: error.message || String(error),
+      });
+      console.warn(`[app-init] Failed to initialize bundled app ${entry.name}:`, error.message || error);
+    }
   }
 }
 
 /**
- * Initialize bundled skills from repo skills directory to ~/.moss/skills.
- * In packaged mode, reads from process.resourcesPath/skills.
+ * Initialize bundled assistants from repo/package resources to ~/.moss/assistants.
  */
-function initializeBundledSkills() {
-  fs.mkdirSync(MOSS_SKILLS_DIR, { recursive: true });
-
-  try {
-    const srcDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'skills')
-      : MOSS_REPO_SKILLS_DIR;
-    if (!fs.existsSync(srcDir)) return;
-
-    fs.readdirSync(srcDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .forEach(entry => {
-        const srcPath = path.join(srcDir, entry.name);
-        const dstPath = path.join(MOSS_SKILLS_DIR, entry.name);
-        try {
-          fs.cpSync(srcPath, dstPath, { recursive: true });
-        } catch (copyErr) {
-          console.warn(`[skill-init] Failed to copy skill ${entry.name}:`, copyErr.message);
-        }
-      });
-  } catch (err) {
-    console.warn('[skill-init] Failed to initialize bundled skills:', err.message);
-  }
-}
-
-/**
- * Initialize bundled assistants from repo assistants directory to ~/.moss/assistants/_system.
- * In packaged mode, reads from process.resourcesPath/assistants.
- */
-function initializeBundledAssistants() {
-  fs.mkdirSync(ASSISTANT_SYSTEM_DIR, { recursive: true });
-
-  try {
-    const srcDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'assistants')
-      : MOSS_REPO_ASSISTANTS_DIR;
-    if (!fs.existsSync(srcDir)) return;
-
-    fs.readdirSync(srcDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .forEach(entry => {
-        const srcPath = path.join(srcDir, entry.name);
-        const dstPath = path.join(ASSISTANT_SYSTEM_DIR, entry.name);
-        try {
-          fs.cpSync(srcPath, dstPath, { recursive: true });
-        } catch (copyErr) {
-          console.warn(`[assistant-init] Failed to copy assistant ${entry.name}:`, copyErr.message);
-        }
-      });
-  } catch (err) {
-    console.warn('[assistant-init] Failed to initialize bundled assistants:', err.message);
-  }
+async function initializeBundledAssistants() {
+  await copyBundledDirectoryEntries({
+    resourceName: 'assistant',
+    sourceDir: getBundledResourceDir('assistants', MOSS_REPO_ASSISTANTS_DIR),
+    targetDir: MOSS_ASSISTANTS_DIR,
+    logCategory: 'assistant',
+    logPrefix: 'assistant-init',
+  });
 }
 
 function ensureAppDataRootDir() {
@@ -2418,656 +2495,141 @@ function ensureAppDataDir(name) {
   return dataDir;
 }
 
-function ensureAppFilesDir(name) {
-  const filesDir = path.join(ensureAppDataDir(name), APP_FILES_SUBDIR);
-  fs.mkdirSync(filesDir, { recursive: true });
-  return filesDir;
-}
-
-function ensureAppVersionsDir(name) {
-  const versionsDir = path.join(ensureAppDataDir(name), APP_VERSIONS_SUBDIR);
-  fs.mkdirSync(versionsDir, { recursive: true });
-  return versionsDir;
-}
-
-function getAppStoragePath(name) {
-  return path.join(ensureAppDataDir(name), APP_STORAGE_FILENAME);
-}
-
-function createAppWindowState(appEntry, appWindow) {
+function createPluginAppWindowState(appEntry, appWindow, source) {
+  const dataDir = ensureAppDataDir(appEntry.id || appEntry.name);
   const state = {
-    name: appEntry.name,
+    id: appEntry.id || appEntry.name,
+    name: appEntry.name || appEntry.id,
+    kind: APP_KINDS.pluginApp,
     window: appWindow,
-    dataDir: ensureAppDataDir(appEntry.name),
-    filesDir: ensureAppFilesDir(appEntry.name),
-    versionsDir: ensureAppVersionsDir(appEntry.name),
-    storagePath: getAppStoragePath(appEntry.name),
-    runtime: null,
-    underlyingSessionId: null,
-    busy: false,
-    currentAgentRequestId: null,
-    currentAgentContext: '',
-    agentMode: getDesktopAgentMode(),
+    source,
+    manifest: appEntry.manifest,
+    version: appEntry.version || null,
+    dataDir,
+    storagePath: path.join(dataDir, APP_STORAGE_FILENAME),
+    extensionLock: appEntry.extensionLock || {},
+    extensionHost: null,
+    extensionStatus: null,
+    bundleToken: appEntry.bundleToken || null,
   };
-  appWindowStates.set(appWindow.webContents.id, state);
+  pluginAppWindowStates.set(appWindow.webContents.id, state);
   return state;
 }
 
-function getAppWindowStateBySender(sender) {
-  const state = appWindowStates.get(sender.id);
+function getPluginAppWindowStateBySender(sender) {
+  const state = pluginAppWindowStates.get(sender.id);
   if (!state) {
     throw new Error('App runtime is not available for this window.');
   }
   return state;
 }
 
-function disposeAppRuntime(appState) {
-  if (!appState?.runtime) return;
-  appState.runtime.dispose();
-  appState.runtime = null;
-  appState.underlyingSessionId = null;
-  appState.currentAgentRequestId = null;
-  appState.busy = false;
+async function ensurePluginExtensionHost(state) {
+  if (!state.extensionHost) {
+    state.extensionHost = new ExtensionHost({
+      extensionLock: state.extensionLock,
+      logger: console,
+    });
+  }
+  return state.extensionHost;
 }
 
-function emitToAppWindow(appState, channel, payload) {
-  if (!appState?.window || appState.window.isDestroyed()) return;
-  appState.window.webContents.send(channel, payload);
-}
-
-function emitAppRuntimeEvent(appState, eventType, payload = {}) {
-  emitToAppWindow(appState, 'app-runtime:event', {
-    type: eventType,
-    appName: appState.name,
-    timestamp: Date.now(),
-    ...payload,
-  });
-}
-
-function readAppStorageSnapshot(appState) {
+async function activatePluginExtensionsForWindow(state) {
+  const host = await ensurePluginExtensionHost(state);
   try {
-    if (!fs.existsSync(appState.storagePath)) {
-      return {};
+    await host.activateAll();
+    const status = host.getStatus();
+    state.extensionStatus = status;
+    if (state.window && !state.window.isDestroyed()) {
+      state.window.webContents.send('plugin-app:event:extensions', {
+        ok: true,
+        status,
+      });
     }
-    const raw = fs.readFileSync(appState.storagePath, 'utf8');
-    const parsed = JSON.parse(raw);
+    return status;
+  } catch (error) {
+    const status = host.getStatus();
+    state.extensionStatus = status;
+    if (state.window && !state.window.isDestroyed()) {
+      state.window.webContents.send('plugin-app:event:extensions', {
+        ok: false,
+        error: error.message || String(error),
+        status,
+      });
+    }
+    throw error;
+  }
+}
+
+function readPluginAppStorageSnapshot(state) {
+  try {
+    if (!fs.existsSync(state.storagePath)) return {};
+    const parsed = JSON.parse(fs.readFileSync(state.storagePath, 'utf8'));
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
 
-function writeAppStorageSnapshot(appState, snapshot) {
-  fs.mkdirSync(path.dirname(appState.storagePath), { recursive: true });
-  fs.writeFileSync(appState.storagePath, JSON.stringify(snapshot, null, 2), 'utf8');
+function writePluginAppStorageSnapshot(state, snapshot) {
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
+  fs.writeFileSync(state.storagePath, JSON.stringify(snapshot, null, 2), 'utf8');
 }
 
-function getAppInfoPayload(appState) {
-  const storedApp = loadStoredAppContent(appState.name);
-  return {
-    name: storedApp.name,
-    description: storedApp.description,
-    width: storedApp.width,
-    height: storedApp.height,
-    resizable: storedApp.resizable,
-    prd: storedApp.prd,
-    filePath: storedApp.filePath,
-    dataDir: appState.dataDir,
-    filesDir: appState.filesDir,
-    versionsDir: appState.versionsDir,
-    hostApi: 'window.mossApp',
-  };
-}
-
-function listAppResourceDescriptors(appState) {
-  return [
-    { uri: 'app://meta', mimeType: 'application/json', description: 'Current app metadata and host paths.' },
-    { uri: 'app://prd', mimeType: 'text/plain', description: 'Current app PRD.' },
-    { uri: 'app://html', mimeType: 'text/html', description: 'Current app HTML document.' },
-    { uri: 'app://storage', mimeType: 'application/json', description: 'Current key/value storage snapshot.' },
-    { uri: 'app://files/<path>', mimeType: 'text/plain', description: 'Text file under the app data files directory.' },
-    { uri: 'app://versions', mimeType: 'application/json', description: 'Available app version snapshots.' },
-  ];
-}
-
-function listAppToolDescriptors() {
-  return [
-    { name: 'storage.get', description: 'Read one storage value by key.' },
-    { name: 'storage.set', description: 'Persist one storage value by key.' },
-    { name: 'storage.remove', description: 'Delete one storage value by key.' },
-    { name: 'storage.list', description: 'List storage keys.' },
-    { name: 'files.list', description: 'List files and directories under the app files root.' },
-    { name: 'files.read_text', description: 'Read a UTF-8 text file from the app files root.' },
-    { name: 'files.write_text', description: 'Write a UTF-8 text file to the app files root.' },
-    { name: 'files.delete', description: 'Delete a file or directory from the app files root.' },
-    { name: 'files.mkdir', description: 'Create a directory under the app files root.' },
-    { name: 'resources.read', description: 'Read a runtime resource by URI.' },
-    { name: 'resources.list', description: 'List runtime resource descriptors.' },
-    { name: 'versions.list', description: 'List saved app version snapshots.' },
-    { name: 'versions.rollback', description: 'Roll back the current app to a saved version id.' },
-    { name: 'agent.send', description: 'Send a prompt to the app-scoped agent. Supports streaming and context.' },
-    { name: 'agent.cancel', description: 'Cancel the in-flight app agent request.' },
-    { name: 'agent.reset', description: 'Dispose the current app agent runtime.' },
-    { name: 'tools.list', description: 'List available runtime tools.' },
-  ];
-}
-
-async function listAppFiles(appState, dirPath = '.') {
-  const root = appState.filesDir;
-  const targetPath = ensureInsideRoot(root, path.join(root, dirPath));
-  await fsp.mkdir(targetPath, { recursive: true });
-  const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
-
-  const items = dirents
-    .filter((entry) => !entry.name.startsWith('.'))
-    .map((entry) => {
-      const fullPath = path.join(targetPath, entry.name);
-      return {
-        name: entry.name,
-        path: path.relative(root, fullPath) || '.',
-        absolutePath: fullPath,
-        type: entry.isDirectory() ? 'directory' : 'file',
-      };
-    })
-    .sort((a, b) => {
-      if (a.type !== b.type) {
-        return a.type === 'directory' ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-  return {
-    root,
-    path: path.relative(root, targetPath) || '.',
-    items,
-  };
-}
-
-async function readAppTextFile(appState, filePath) {
-  const targetPath = ensureInsideRoot(appState.filesDir, path.join(appState.filesDir, filePath));
-  const stat = await fsp.stat(targetPath);
-  if (!stat.isFile()) {
-    throw new Error('Target is not a file.');
-  }
-  const buffer = await fsp.readFile(targetPath);
-  if (buffer.includes(0)) {
-    throw new Error('Binary files are not supported by this runtime API.');
-  }
-  return {
-    path: path.relative(appState.filesDir, targetPath),
-    content: buffer.toString('utf8'),
-    size: stat.size,
-  };
-}
-
-async function writeAppTextFile(appState, filePath, content) {
-  const targetPath = ensureInsideRoot(appState.filesDir, path.join(appState.filesDir, filePath));
-  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  await fsp.writeFile(targetPath, String(content ?? ''), 'utf8');
-  const stat = await fsp.stat(targetPath);
-  return {
-    path: path.relative(appState.filesDir, targetPath),
-    size: stat.size,
-  };
-}
-
-async function deleteAppFile(appState, filePath) {
-  const targetPath = ensureInsideRoot(appState.filesDir, path.join(appState.filesDir, filePath));
-  await fsp.rm(targetPath, { recursive: true, force: true });
-  return { ok: true };
-}
-
-async function makeAppDirectory(appState, dirPath) {
-  const targetPath = ensureInsideRoot(appState.filesDir, path.join(appState.filesDir, dirPath));
-  await fsp.mkdir(targetPath, { recursive: true });
-  return {
-    path: path.relative(appState.filesDir, targetPath) || '.',
-  };
-}
-
-async function readAppResource(appState, uri) {
-  const normalizedUri = String(uri || '').trim();
-  if (!normalizedUri) {
-    throw new Error('Resource URI is required.');
-  }
-
-  if (normalizedUri === 'app://meta') {
-    const info = getAppInfoPayload(appState);
-    return {
-      uri: normalizedUri,
-      mimeType: 'application/json',
-      text: JSON.stringify(info, null, 2),
-      data: info,
-    };
-  }
-
-  if (normalizedUri === 'app://prd') {
-    const info = getAppInfoPayload(appState);
-    return {
-      uri: normalizedUri,
-      mimeType: 'text/plain',
-      text: info.prd || '',
-    };
-  }
-
-  if (normalizedUri === 'app://html') {
-    const storedApp = loadStoredAppContent(appState.name);
-    return {
-      uri: normalizedUri,
-      mimeType: 'text/html',
-      text: storedApp.html,
-    };
-  }
-
-  if (normalizedUri === 'app://storage') {
-    const storage = readAppStorageSnapshot(appState);
-    return {
-      uri: normalizedUri,
-      mimeType: 'application/json',
-      text: JSON.stringify(storage, null, 2),
-      data: storage,
-    };
-  }
-
-  if (normalizedUri === 'app://versions') {
-    const versions = listAppVersionSnapshots(appState.name);
-    return {
-      uri: normalizedUri,
-      mimeType: 'application/json',
-      text: JSON.stringify(versions, null, 2),
-      data: versions,
-    };
-  }
-
-  if (normalizedUri.startsWith('app://files/')) {
-    const relativePath = normalizedUri.slice('app://files/'.length);
-    const file = await readAppTextFile(appState, relativePath);
-    return {
-      uri: normalizedUri,
-      mimeType: 'text/plain',
-      text: file.content,
-      data: file,
-    };
-  }
-
-  throw new Error(`Unsupported resource URI: ${normalizedUri}`);
-}
-
-async function ensureAppAgentRuntime(appState) {
-  if (!hasFile(sdkPath)) {
-    throw new Error(`Missing electron-direct.mjs at ${sdkPath}.`);
-  }
-
-  if (appState.runtime) {
-    return appState.runtime;
-  }
-
-  const onPermissionRequest = async (toolName, input) => {
-    const toolLabel = toolName || 'Tool';
-    const detailParts = [];
-    if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
-
-    const dialogTarget = appState.window && !appState.window.isDestroyed()
-      ? appState.window
-      : mainWindow && !mainWindow.isDestroyed()
-        ? mainWindow
-        : undefined;
-
-    const response = await dialog.showMessageBox(dialogTarget, {
-      type: 'question',
-      buttons: ['允许', '拒绝'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-      title: 'App 工具权限确认',
-      message: `${appState.name} 请求执行 ${toolLabel}`,
-      detail: detailParts.join('\n\n') || '应用中的 agent 请求工具执行权限。',
-    });
-
-    return response.response === 0;
-  };
-
-  if (appState.agentMode === 'remote-direct') {
-    appState.runtime = createRemoteDirectRuntime({
-      sessionRecord: appState,
-      onPermissionRequest,
-      onSessionCreated: (created) => {
-        if (created?.workDir) {
-          appState.remoteWorkspace = created.workDir;
-        }
-      },
-    });
-    return appState.runtime;
-  }
-
-  await waitForManagedRuntimesBeforeLocalSession();
-  const ClaudeSession = await getClaudeSessionCtor();
-  appState.runtime = new ClaudeSession({
-    ...buildClaudeSessionConfig(appState.dataDir),
-    onPermissionRequest,
-    onAppEvent: (appEvent) => mossAppEventHandler(appEvent, appState),
-  });
-  return appState.runtime;
-}
-
-function buildAppAgentPrompt(appState, prompt, systemPrompt = '') {
-  const info = getAppInfoPayload(appState);
-  const parts = [];
-  if (systemPrompt && String(systemPrompt).trim()) {
-    parts.push(`SYSTEM INSTRUCTIONS:\n${String(systemPrompt).trim()}`);
-  }
-  if (appState.currentAgentContext) {
-    parts.push(`APP CONTEXT:\n${appState.currentAgentContext}`);
-  }
-  parts.push(
-    'You are assisting an Electron mini app through its host runtime.',
-    `App name: ${info.name}`,
-    `App description: ${info.description || 'n/a'}`,
-    `App data directory: ${info.dataDir}`,
-    '',
-    'App PRD:',
-    info.prd || '(empty)',
-    '',
-    'User request:',
-    String(prompt || '').trim()
-  );
-  return parts.join('\n');
-}
-
-function buildAgentContextBlock(context) {
-  if (context == null) return '';
-  if (typeof context === 'string') {
-    return context.trim();
-  }
+function isPluginAppUrlForToken(url, bundleToken) {
   try {
-    return JSON.stringify(context, null, 2);
+    const parsed = new URL(url);
+    if (parsed.protocol !== `${PLUGIN_APP_SCHEME}:`) return false;
+    if (parsed.hostname === bundleToken) return true;
+    const tokenFromLegacyPath = parsed.hostname === 'app'
+      ? parsed.pathname.split('/').filter(Boolean)[0]
+      : '';
+    return tokenFromLegacyPath === bundleToken;
   } catch {
-    return String(context);
+    return false;
   }
 }
 
-function normalizeAppAgentResult(appState, requestId, result) {
-  return {
-    ok: true,
-    requestId,
-    sessionId: appState.underlyingSessionId,
-    text: result.text || '',
-    content: [{ type: 'text', text: result.text || '' }],
-    completedAt: Date.now(),
-  };
-}
-
-async function sendPromptToAppAgent(appState, payload = {}) {
-  if (appState.busy) {
-    return {
-      ok: false,
-      error: {
-        code: 'busy',
-        message: 'This app agent is already processing a request.',
-      },
-    };
-  }
-
-  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
-  if (!prompt) {
-    return {
-      ok: false,
-      error: {
-        code: 'invalid_prompt',
-        message: 'Prompt is required.',
-      },
-    };
-  }
-
-  const runtime = await ensureAppAgentRuntime(appState);
-  const requestId = typeof payload.requestId === 'string' && payload.requestId.trim()
-    ? payload.requestId.trim()
-    : randomUUID();
-  const stream = payload.stream === true;
-  const contextBlock = buildAgentContextBlock(payload.context);
-  appState.currentAgentContext = contextBlock;
-  const runtimePrompt = buildAppAgentPrompt(appState, prompt, payload.systemPrompt);
-
-  const runRequest = async () => {
-    appState.busy = true;
-    appState.currentAgentRequestId = requestId;
-    emitAppRuntimeEvent(appState, 'agent:start', {
-      requestId,
-      prompt,
-      stream,
-    });
-
-    try {
-      let latestAssistantText = '';
-      let streamedAssistantText = '';
-
-      for await (const message of runtime.send(runtimePrompt)) {
-        maybeUpdateUnderlyingSessionId(appState, message.session_id);
-        if (message.type === 'assistant') {
-          const assistantText = extractTextFromAssistantMessage(message);
-          if (assistantText) {
-            latestAssistantText = assistantText;
-          }
-        } else if (
-          message.type === 'stream_event' &&
-          message.event?.type === 'content_block_delta' &&
-          message.event?.delta?.type === 'text_delta' &&
-          typeof message.event.delta.text === 'string'
-        ) {
-          streamedAssistantText += message.event.delta.text;
-          emitAppRuntimeEvent(appState, 'agent:delta', {
-            requestId,
-            delta: message.event.delta.text,
-            text: streamedAssistantText,
-          });
-        }
-      }
-
-      const finalResult = normalizeAppAgentResult(appState, requestId, {
-        text: latestAssistantText || streamedAssistantText,
-      });
-      emitAppRuntimeEvent(appState, 'agent:complete', finalResult);
-      return finalResult;
-    } catch (error) {
-      const normalizedError = {
-        ok: false,
-        requestId,
-        error: {
-          code: 'agent_failed',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-      emitAppRuntimeEvent(appState, 'agent:error', normalizedError);
-      return normalizedError;
-    } finally {
-      appState.busy = false;
-      appState.currentAgentRequestId = null;
-    }
-  };
-
-  if (stream) {
-    void runRequest();
-    return {
-      ok: true,
-      requestId,
-      streaming: true,
-      sessionId: appState.underlyingSessionId,
-    };
-  }
-
-  return runRequest();
-}
-
-function cancelAppAgentRequest(appState, requestId = '') {
-  if (!appState.busy || !appState.runtime) {
-    return {
-      ok: false,
-      error: {
-        code: 'not_running',
-        message: 'No in-flight app agent request.',
-      },
-    };
-  }
-  if (requestId && appState.currentAgentRequestId && requestId !== appState.currentAgentRequestId) {
-    return {
-      ok: false,
-      error: {
-        code: 'request_mismatch',
-        message: 'Request id does not match the active app agent request.',
-      },
-    };
-  }
-
-  appState.runtime.abort();
-  emitAppRuntimeEvent(appState, 'agent:cancelled', {
-    requestId: appState.currentAgentRequestId,
-  });
-  return {
-    ok: true,
-    requestId: appState.currentAgentRequestId,
-  };
-}
-
-async function callAppTool(appState, name, args = {}) {
-  switch (name) {
-    case 'storage.get': {
-      const key = String(args.key || '').trim();
-      if (!key) throw new Error('storage.get requires key.');
-      const storage = readAppStorageSnapshot(appState);
-      return storage[key];
-    }
-    case 'storage.set': {
-      const key = String(args.key || '').trim();
-      if (!key) throw new Error('storage.set requires key.');
-      const storage = readAppStorageSnapshot(appState);
-      storage[key] = args.value;
-      writeAppStorageSnapshot(appState, storage);
-      emitAppRuntimeEvent(appState, 'storage:changed', {
-        key,
-        value: args.value,
-        action: 'set',
-      });
-      return { ok: true, key, value: args.value };
-    }
-    case 'storage.remove': {
-      const key = String(args.key || '').trim();
-      if (!key) throw new Error('storage.remove requires key.');
-      const storage = readAppStorageSnapshot(appState);
-      delete storage[key];
-      writeAppStorageSnapshot(appState, storage);
-      emitAppRuntimeEvent(appState, 'storage:changed', {
-        key,
-        action: 'remove',
-      });
-      return { ok: true, key };
-    }
-    case 'storage.list':
-      return Object.keys(readAppStorageSnapshot(appState));
-    case 'files.list':
-      return listAppFiles(appState, args.path || '.');
-    case 'files.read_text':
-      return readAppTextFile(appState, args.path);
-    case 'files.write_text':
-      return writeAppTextFile(appState, args.path, args.content).then((result) => {
-        emitAppRuntimeEvent(appState, 'files:changed', {
-          action: 'write',
-          path: result.path,
-        });
-        return result;
-      });
-    case 'files.delete':
-      return deleteAppFile(appState, args.path).then((result) => {
-        emitAppRuntimeEvent(appState, 'files:changed', {
-          action: 'delete',
-          path: args.path,
-        });
-        return result;
-      });
-    case 'files.mkdir':
-      return makeAppDirectory(appState, args.path || '.').then((result) => {
-        emitAppRuntimeEvent(appState, 'files:changed', {
-          action: 'mkdir',
-          path: result.path,
-        });
-        return result;
-      });
-    case 'resources.read':
-      return readAppResource(appState, args.uri);
-    case 'resources.list':
-      return listAppResourceDescriptors(appState);
-    case 'versions.list':
-      return listAppVersionSnapshots(appState.name);
-    case 'versions.rollback': {
-      const versionId = String(args.versionId || '').trim();
-      if (!versionId) throw new Error('versions.rollback requires versionId.');
-      const rolledBack = rollbackAppToVersion(appState.name, versionId);
-      emitAppsChanged({ action: 'rolled-back', name: appState.name });
-      emitAppRuntimeEvent(appState, 'app:rolled-back', {
-        versionId,
-        app: rolledBack,
-      });
-      refreshOpenAppWindow(appState.name);
-      launchAppWindowByEntry(rolledBack);
-      return {
-        ok: true,
-        versionId,
-        app: rolledBack,
-      };
-    }
-    case 'agent.send':
-      return sendPromptToAppAgent(appState, args);
-    case 'agent.cancel':
-      return cancelAppAgentRequest(appState, String(args.requestId || ''));
-    case 'agent.reset':
-      disposeAppRuntime(appState);
-      emitAppRuntimeEvent(appState, 'agent:reset', {});
-      return { ok: true };
-    case 'tools.list':
-      return listAppToolDescriptors();
-    default:
-      throw new Error(`Unknown app tool: ${name}`);
-  }
-}
-
-function refreshOpenAppWindow(name) {
-  const existingWindow = appWindows.get(name);
-  if (!existingWindow || existingWindow.isDestroyed()) return;
-  const appState = appWindowStates.get(existingWindow.webContents.id);
-  if (appState) {
-    disposeAppRuntime(appState);
-  }
-  const appEntry = getStoredApp(name);
-  void existingWindow.loadFile(appEntry.filePath);
-}
-
-function launchAppWindowByEntry(appEntry) {
-  const existingWindow = appWindows.get(appEntry.name);
+function launchPluginAppWindow(appEntry, source = {}) {
+  const appId = appEntry.id || appEntry.name;
+  const windowKey = `${appId}:${source.mode || appEntry.version || 'current'}`;
+  const existingWindow = pluginAppWindows.get(windowKey);
   if (existingWindow && !existingWindow.isDestroyed()) {
-    if (existingWindow.isMinimized()) {
-      existingWindow.restore();
+    if (source.mode === 'preview') {
+      pluginAppWindows.delete(windowKey);
+      existingWindow.close();
+    } else {
+      if (existingWindow.isMinimized()) existingWindow.restore();
+      existingWindow.show();
+      existingWindow.focus();
+      return existingWindow;
     }
-    existingWindow.show();
-    existingWindow.focus();
-    return existingWindow;
   }
 
   const appWindow = new BrowserWindow({
-    title: appEntry.name,
-    width: appEntry.width || 900,
-    height: appEntry.height || 700,
-    resizable: appEntry.resizable !== false,
+    title: appEntry.displayName || appEntry.title || appId,
+    width: appEntry.width || appEntry.manifest?.window?.width || 1100,
+    height: appEntry.height || appEntry.manifest?.window?.height || 760,
+    resizable: appEntry.resizable !== false && appEntry.manifest?.window?.resizable !== false,
     backgroundColor: '#0b1120',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'app-preload.mjs'),
-      sandbox: false, // 核心修复：必须关闭 sandbox 模式，Host API 才能在 ContextBridge 中正确挂载
+      preload: path.join(__dirname, 'plugin-app-preload.mjs'),
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
 
-  appWindows.set(appEntry.name, appWindow);
-  const appState = createAppWindowState(appEntry, appWindow);
+  const entryPath = path.resolve(appEntry.filePath || appEntry.entryPath);
+  const bundleRoot = appEntry.bundleRoot || path.dirname(entryPath);
+  const entryRelativePath = appEntry.entryRelativePath ||
+    path.relative(bundleRoot, entryPath).split(path.sep).join('/');
+  const bundleToken = allowPluginAppBundleRoot(bundleRoot, entryRelativePath);
+  const entryUrl = toPluginAppUrl(bundleToken, entryRelativePath);
+
+  pluginAppWindows.set(windowKey, appWindow);
+  createPluginAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
   appWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
       void shell.openExternal(url);
@@ -3075,7 +2637,7 @@ function launchAppWindowByEntry(appEntry) {
     return { action: 'deny' };
   });
   appWindow.webContents.on('will-navigate', (event, url) => {
-    if (url !== appWindow.webContents.getURL()) {
+    if (url !== appWindow.webContents.getURL() && !isPluginAppUrlForToken(url, bundleToken)) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
         void shell.openExternal(url);
@@ -3089,18 +2651,53 @@ function launchAppWindowByEntry(appEntry) {
     callback(false);
   });
   appWindow.on('closed', () => {
-    const state = appWindowStates.get(appWindow.webContents.id);
-    if (state) {
-      disposeAppRuntime(state);
-      appWindowStates.delete(appWindow.webContents.id);
+    const state = pluginAppWindowStates.get(appWindow.webContents.id);
+    if (state?.extensionHost) {
+      void state.extensionHost.dispose();
     }
-    appWindows.delete(appEntry.name);
+    revokePluginAppBundleRoot(state?.bundleToken || bundleToken);
+    pluginAppWindowStates.delete(appWindow.webContents.id);
+    pluginAppWindows.delete(windowKey);
   });
-  emitAppRuntimeEvent(appState, 'app:window-opened', {
-    name: appEntry.name,
+  appWindow.webContents.once('did-finish-load', () => {
+    const state = pluginAppWindowStates.get(appWindow.webContents.id);
+    if (!state) return;
+    activatePluginExtensionsForWindow(state).catch((error) => {
+      console.warn('[plugin-app] extension activation failed:', error?.message || error);
+    });
   });
-  void appWindow.loadFile(appEntry.filePath);
+  void appWindow.loadURL(entryUrl);
   return appWindow;
+}
+
+function previewPluginAppBuild(buildDir) {
+  const resolvedBuildDir = path.resolve(buildDir);
+  const manifest = readPluginAppManifestFromDir(resolvedBuildDir);
+  const extensionLockPath = path.join(resolvedBuildDir, 'extension-lock.json');
+  const extensionLock = fs.existsSync(extensionLockPath)
+    ? JSON.parse(fs.readFileSync(extensionLockPath, 'utf8'))
+    : {};
+  const entryPath = ensureInsideRoot(resolvedBuildDir, path.join(resolvedBuildDir, manifest.entry));
+  if (!fs.existsSync(entryPath)) {
+    throw new Error(`App preview entry missing: ${manifest.entry}`);
+  }
+  launchPluginAppWindow({
+    id: manifest.id,
+    name: manifest.id,
+    kind: APP_KINDS.pluginApp,
+    displayName: manifest.displayName,
+    title: manifest.displayName,
+    description: manifest.description,
+    icon: manifest.icon,
+    width: manifest.window?.width,
+    height: manifest.window?.height,
+    resizable: manifest.window?.resizable,
+    filePath: entryPath,
+    entryPath,
+    manifest,
+    extensionLock,
+    version: 'preview',
+  }, { mode: 'preview', buildDir: resolvedBuildDir });
 }
 
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
@@ -3446,35 +3043,9 @@ async function syncWorkspaceWatcher(sessionRecord) {
  */
 const mossAppEventHandler = createMossAppEventHandler(
   {
-    launchAppWindow: launchAppWindowByEntry,
-    previewAppFile: (filePath) => {
-      const previewWindow = new BrowserWindow({
-        title: `Preview - ${path.basename(filePath)}`,
-        width: 900,
-        height: 700,
-        resizable: true,
-        backgroundColor: '#0b1120',
-        autoHideMenuBar: true,
-        webPreferences: {
-          sandbox: false,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      })
-      void previewWindow.loadFile(filePath)
-    },
-    refreshOpenAppWindow: (name) => {
-      const win = appWindows.get(name)
-      if (win && !win.isDestroyed()) {
-        win.reload()
-      }
-    },
-    getOpenAppWindow: (name) => appWindows.get(name),
-    closeAppWindow: (name) => {
-      const win = appWindows.get(name)
-      if (win && !win.isDestroyed()) {
-        win.close()
-      }
+    previewPluginAppBuild,
+    launchPluginApp: (name) => {
+      launchPluginAppWindow(getPublishedPluginApp(name), { mode: 'published' })
     },
     openBrowser: (payload) => {
       emitToRenderer('browser:open', payload)
@@ -4426,17 +3997,17 @@ ipcMain.handle('agent:cron-run-now', async (_event, { taskId }) => {
   return { ok: true, sessionId: sessionRecord.id };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   void startManagedRuntimeInstall();
 
-  // Initialize bundled apps from src/apps to generated-apps
-  initializeBundledApps();
-
   // Initialize bundled skills from repo skills to ~/.moss/skills
-  initializeBundledSkills();
+  await initializeBundledSkills();
 
-  // Initialize bundled assistants from repo assistants to ~/.moss/assistants/_system
-  initializeBundledAssistants();
+  // Initialize bundled assistants from repo assistants to ~/.moss/assistants
+  await initializeBundledAssistants();
+
+  // Initialize bundled apps from repo apps to ~/.moss/apps
+  await initializeBundledApps();
 
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
@@ -4460,6 +4031,7 @@ app.whenReady().then(() => {
   // Initialize file manager database and IPC handlers
   try {
     installMediaProtocol(protocol);
+    installPluginAppProtocol(protocol);
     const db = new DatabaseSync(SESSION_DB_PATH);
     initFileManagerDatabase(db);
     registerFileManagerIpcHandlers(ipcMain, db);
@@ -4499,9 +4071,6 @@ app.on('window-all-closed', () => {
   for (const sessionRecord of subAgentSessions.values()) {
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
-  }
-  for (const appState of appWindowStates.values()) {
-    disposeAppRuntime(appState);
   }
   if (process.platform !== 'darwin') {
     app.quit();
@@ -4873,12 +4442,14 @@ ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) =>
 });
 
 ipcMain.handle('app:list', async () => {
-  return listStoredApps().map(({ filePath, ...appEntry }) => appEntry);
+  return listAllStoredApps().map(({ filePath, entryPath, versionDir, manifest, extensionLock, ...appEntry }) => appEntry);
 });
 
 ipcMain.handle('app:list-versions', async (_event, { name }) => {
   try {
-    return listAppVersionSnapshots(name);
+    const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
+    if (!registryEntry) return [];
+    return listPluginAppVersions(registryEntry.id || name);
   } catch {
     return [];
   }
@@ -4886,7 +4457,9 @@ ipcMain.handle('app:list-versions', async (_event, { name }) => {
 
 ipcMain.handle('app:launch', async (_event, { name }) => {
   try {
-    launchAppWindowByEntry(getStoredApp(name));
+    const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
+    if (!registryEntry) throw new Error(`Unknown App: ${name}`);
+    launchPluginAppWindow(getPublishedPluginApp(registryEntry.id || name), { mode: 'published' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -4895,9 +4468,10 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
 
 ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
   try {
-    const rolledBack = rollbackAppToVersion(name, versionId);
-    refreshOpenAppWindow(name);
-    launchAppWindowByEntry(rolledBack);
+    const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
+    if (!registryEntry) throw new Error(`Unknown App: ${name}`);
+    const rolledBack = rollbackPluginAppToVersion(registryEntry.id || name, versionId);
+    launchPluginAppWindow(getPublishedPluginApp(registryEntry.id || name), { mode: 'published' });
     emitAppsChanged({
       action: 'rolled-back',
       app: rolledBack,
@@ -4914,11 +4488,14 @@ ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
 
 ipcMain.handle('app:delete', async (_event, { name }) => {
   try {
-    const existingWindow = appWindows.get(name);
-    if (existingWindow && !existingWindow.isDestroyed()) {
-      existingWindow.close();
+    const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
+    if (!registryEntry) throw new Error(`Unknown App: ${name}`);
+    for (const [key, win] of pluginAppWindows.entries()) {
+      if (key.startsWith(`${registryEntry.id || name}:`) && !win.isDestroyed()) {
+        win.close();
+      }
     }
-    await deleteStoredApp(name);
+    await deletePluginApp(registryEntry.id || name);
     emitAppsChanged({ action: 'deleted', name });
     return { ok: true };
   } catch (err) {
@@ -4927,29 +4504,10 @@ ipcMain.handle('app:delete', async (_event, { name }) => {
 });
 
 ipcMain.handle('app:save', async (_event, { sessionId, launch = true }) => {
-  try {
-    const sessionRecord = getSessionRecord(sessionId);
-    const payload = readGeneratedAppPayloadFromWorkspace(sessionRecord);
-    const createdApp = saveStoredApp(payload);
-    if (launch) {
-      launchAppWindowByEntry(createdApp);
-    }
-    emitAppsChanged({
-      action: 'created',
-      app: {
-        name: createdApp.name,
-        description: createdApp.description,
-        width: createdApp.width,
-        height: createdApp.height,
-        resizable: createdApp.resizable,
-        createdAt: createdApp.createdAt,
-        updatedAt: createdApp.updatedAt,
-      },
-    });
-    return { ok: true, app: createdApp };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
+  return {
+    ok: false,
+    error: 'Direct app:save is no longer supported. Use moss(app_build/app_publish) with apps/{name}/app.moss.json.',
+  };
 });
 
 ipcMain.handle('app:open-debug', async (event, { name }) => {
@@ -5003,119 +4561,121 @@ ipcMain.on('debug:close', (event) => {
   }
 });
 
-ipcMain.on('debug:send-to-agent', (event, { prompt, appName }) => {
-  const debugWindow = BrowserWindow.fromWebContents(event.sender);
-  const parentWindow = debugWindow?.getParentWindow();
-  if (!parentWindow) return;
-
-  const appState = appWindowStates.get(parentWindow.webContents.id);
-  if (!appState || !appState.runtime) return;
-
-  // Forward runtime events to the current debug window. Install the emit wrapper
-  // only once — reassigning it on every send stacks wrappers unboundedly, causing
-  // duplicate forwarding and a memory leak.
-  appState.debugWindow = debugWindow;
-  const originalEmit = appState.runtime.emit;
-  if (originalEmit && !appState.runtime.__debugForwardingInstalled) {
-    appState.runtime.__debugForwardingInstalled = true;
-    appState.runtime.emit = function(...args) {
-      const dbg = appState.debugWindow;
-      if (dbg && !dbg.isDestroyed()) {
-        dbg.webContents.send('debug:agent-event', args[0]);
-      }
-      return originalEmit.apply(this, args);
-    };
+function pluginCapabilityAllows(state, kind, name) {
+  const caps = state.manifest?.capabilities || {};
+  const allowed = caps[kind];
+  if (allowed === true) return true;
+  if (Array.isArray(allowed)) {
+    return allowed.includes(name) || allowed.includes('*');
   }
+  return false;
+}
 
-  appState.runtime.agent.send(prompt, (err, response) => {
-    if (debugWindow && !debugWindow.isDestroyed()) {
-      debugWindow.webContents.send('debug:response', response);
-    }
+function auditPluginAppCall(state, type, name, ok, detail = {}) {
+  mossLog(ok ? 'info' : 'warn', 'plugin-app', `${state.id} ${type} ${name}`, {
+    appId: state.id,
+    type,
+    name,
+    ok,
+    ...detail,
   });
+}
+
+ipcMain.handle('plugin-app:get-info', async (event) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  return {
+    id: state.id,
+    name: state.name,
+    kind: state.kind,
+    displayName: state.manifest?.displayName || state.name,
+    description: state.manifest?.description || '',
+    version: state.version,
+    capabilities: state.manifest?.capabilities || {},
+    extensionDependencies: state.manifest?.extensionDependencies || {},
+    dataDir: state.dataDir,
+  };
 });
 
-ipcMain.handle('app-runtime:get-info', async (event) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return getAppInfoPayload(appState);
+ipcMain.handle('plugin-app:list-versions', async (event) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  return listPluginAppVersions(state.id);
 });
 
-ipcMain.handle('app-runtime:list-tools', async () => {
-  return listAppToolDescriptors();
+ipcMain.handle('plugin-app:extensions:get-status', async (event) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  if (state.extensionStatus) return state.extensionStatus;
+  const host = await ensurePluginExtensionHost(state);
+  return host.getStatus();
 });
 
-ipcMain.handle('app-runtime:list-resources', async (event) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return listAppResourceDescriptors(appState);
+ipcMain.handle('plugin-app:storage:get', async (event, { key }) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
+  const storage = readPluginAppStorageSnapshot(state);
+  return storage[String(key || '')];
 });
 
-ipcMain.handle('app-runtime:read-resource', async (event, { uri }) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return readAppResource(appState, uri);
+ipcMain.handle('plugin-app:storage:set', async (event, { key, value }) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) throw new Error('storage key is required');
+  const storage = readPluginAppStorageSnapshot(state);
+  storage[normalizedKey] = value;
+  writePluginAppStorageSnapshot(state, storage);
+  return { ok: true, key: normalizedKey };
 });
 
-ipcMain.handle('app-runtime:call-tool', async (event, { name, args }) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, name, args);
+ipcMain.handle('plugin-app:storage:remove', async (event, { key }) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
+  const normalizedKey = String(key || '').trim();
+  const storage = readPluginAppStorageSnapshot(state);
+  delete storage[normalizedKey];
+  writePluginAppStorageSnapshot(state, storage);
+  return { ok: true, key: normalizedKey };
 });
 
-ipcMain.handle('app-runtime:storage:get', async (event, { key }) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'storage.get', { key });
+ipcMain.handle('plugin-app:storage:list', async (event) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
+  return Object.keys(readPluginAppStorageSnapshot(state));
 });
 
-ipcMain.handle('app-runtime:storage:set', async (event, { key, value }) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'storage.set', { key, value });
+ipcMain.handle('plugin-app:commands:execute', async (event, { command, args }) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  const name = String(command || '').trim();
+  if (!pluginCapabilityAllows(state, 'commands', name)) {
+    auditPluginAppCall(state, 'command', name, false, { reason: 'capability_denied' });
+    throw new Error(`Command is not allowed by app capabilities: ${name}`);
+  }
+  const host = await ensurePluginExtensionHost(state);
+  try {
+    const result = await host.executeCommand(name, args || {});
+    auditPluginAppCall(state, 'command', name, true);
+    return result;
+  } catch (error) {
+    auditPluginAppCall(state, 'command', name, false, { error: error.message });
+    throw error;
+  }
 });
 
-ipcMain.handle('app-runtime:storage:remove', async (event, { key }) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'storage.remove', { key });
-});
-
-ipcMain.handle('app-runtime:storage:list', async (event) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'storage.list');
-});
-
-ipcMain.handle('app-runtime:files:list', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'files.list', payload);
-});
-
-ipcMain.handle('app-runtime:files:read-text', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'files.read_text', payload);
-});
-
-ipcMain.handle('app-runtime:files:write-text', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'files.write_text', payload);
-});
-
-ipcMain.handle('app-runtime:files:delete', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'files.delete', payload);
-});
-
-ipcMain.handle('app-runtime:files:mkdir', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'files.mkdir', payload);
-});
-
-ipcMain.handle('app-runtime:agent:send', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'agent.send', payload);
-});
-
-ipcMain.handle('app-runtime:agent:cancel', async (event, payload = {}) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'agent.cancel', payload);
-});
-
-ipcMain.handle('app-runtime:agent:reset', async (event) => {
-  const appState = getAppWindowStateBySender(event.sender);
-  return callAppTool(appState, 'agent.reset');
+ipcMain.handle('plugin-app:tools:call', async (event, { name, args }) => {
+  const state = getPluginAppWindowStateBySender(event.sender);
+  const toolName = String(name || '').trim();
+  if (!pluginCapabilityAllows(state, 'tools', toolName)) {
+    auditPluginAppCall(state, 'tool', toolName, false, { reason: 'capability_denied' });
+    throw new Error(`Tool is not allowed by app capabilities: ${toolName}`);
+  }
+  const host = await ensurePluginExtensionHost(state);
+  try {
+    const result = await host.callTool(toolName, args || {});
+    auditPluginAppCall(state, 'tool', toolName, true);
+    return result;
+  } catch (error) {
+    auditPluginAppCall(state, 'tool', toolName, false, { error: error.message });
+    throw error;
+  }
 });
 
 ipcMain.handle('fs:getImageBase64', async (event, { path: filePath }) => {
@@ -5415,9 +4975,7 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skillPrefix, mod
   if (assistantName) {
     try {
       const assistantDir = await findAssistantDirByName(assistantName, [
-        ASSISTANT_CUSTOM_DIR,
-        ASSISTANT_HUB_DIR,
-        ASSISTANT_SYSTEM_DIR,
+        { dir: MOSS_ASSISTANTS_DIR, reservedNames: RESERVED_ASSISTANT_ROOT_NAMES },
       ]);
       const assistantContext = assistantDir
         ? await readAssistantContext(assistantDir, assistantName)

@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { StoredApp } from "../types";
 
 export interface SidebarSession {
   id: string;
@@ -42,6 +43,7 @@ export interface SidebarSession {
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
+  apps: StoredApp[];
   activeSessionId: string | null;
   activeView: "chat" | "files" | "apps" | "settings" | "snake" | "memos" | "cron";
   appsCount: number;
@@ -54,6 +56,7 @@ interface AppSidebarProps {
   onChangeView: (view: "chat" | "files" | "apps" | "settings" | "memos" | "cron") => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
+  onLaunchApp: (name: string) => void;
   onNewSession: () => void;
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onDeleteSession: (sessionId: string) => void;
@@ -61,6 +64,10 @@ interface AppSidebarProps {
   onTogglePin: (sessionId: string) => void;
   onToggleCollapse: () => void;
   onSearchChange: (query: string) => void;
+}
+
+function getAppShortcutLabel(app: StoredApp) {
+  return app.displayName || app.title || app.name;
 }
 
 function SessionItem({
@@ -190,6 +197,35 @@ function SessionItem({
   );
 }
 
+function AppShortcutItem({
+  app,
+  onLaunch,
+}: {
+  app: StoredApp;
+  onLaunch: () => void;
+}) {
+  const label = getAppShortcutLabel(app);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onLaunch}
+      onKeyDown={(e) => e.key === 'Enter' && onLaunch()}
+      className="group relative w-full max-w-full overflow-hidden rounded-xl border border-transparent px-2 py-1 text-left transition-colors hover:border-sidebar-border/70 hover:bg-sidebar-accent/80"
+    >
+      <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+          <Monitor className="h-3.5 w-3.5" />
+        </span>
+        <span className="block w-0 min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-sidebar-foreground">
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ThemeButton({
   active,
   icon,
@@ -220,6 +256,7 @@ function ThemeButton({
 
 export function AppSidebar({
   sessions,
+  apps,
   activeSessionId,
   activeView,
   appsCount,
@@ -232,6 +269,7 @@ export function AppSidebar({
   onChangeView,
   onChangeTheme,
   onSelectSession,
+  onLaunchApp,
   onNewSession,
   onNewSessionModeChange,
   onDeleteSession,
@@ -245,7 +283,6 @@ export function AppSidebar({
   const filteredSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
   // 根据当前选择的模式过滤会话
   const localSessions = filteredSessions.filter((s) => !s.agentMode || s.agentMode === 'local');
   const remoteSessions = filteredSessions.filter((s) => s.agentMode === 'remote-direct');
@@ -403,6 +440,25 @@ export function AppSidebar({
             <FolderOpen className="h-4 w-4" />
             {!collapsed && "文件管理"}
           </Button>
+          {apps.map((app) => (
+            collapsed ? (
+              <button
+                key={app.id || app.name}
+                type="button"
+                onClick={() => onLaunchApp(app.name)}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+                title={getAppShortcutLabel(app)}
+              >
+                <Monitor className="h-4 w-4" />
+              </button>
+            ) : (
+              <AppShortcutItem
+                key={app.id || app.name}
+                app={app}
+                onLaunch={() => onLaunchApp(app.name)}
+              />
+            )
+          ))}
           <Button
             variant={activeView === "cron" ? "secondary" : "ghost"}
             className={cn("rounded-xl mt-2", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}

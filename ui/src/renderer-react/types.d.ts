@@ -167,7 +167,10 @@ export type ManagedRuntimeStatus = {
 };
 
 export type StoredApp = {
+  id?: string;
+  kind?: 'plugin-app';
   name: string;
+  displayName?: string;
   title: string;
   description: string;
   icon: string;
@@ -182,6 +185,13 @@ export type StoredApp = {
   currentVersionId?: string | null;
   currentVersion?: string | null;
   publishedVersion?: string | null;
+  extensionDependencies?: Record<string, string>;
+  capabilitySummary?: string[];
+  runtimeStatus?: {
+    state: 'ready' | 'missing-extension' | 'permission-required' | 'error';
+    missingExtensions?: string[];
+    error?: string;
+  };
 };
 
 export type AppVersion = {
@@ -196,6 +206,9 @@ export type AppVersion = {
   resizable: boolean;
   isCurrent?: boolean;
   isLatest?: boolean;
+  kind?: 'plugin-app';
+  extensionLock?: Record<string, unknown>;
+  checksumStatus?: string;
 };
 
 export type FileTreeNode = {

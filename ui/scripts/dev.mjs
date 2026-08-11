@@ -14,7 +14,8 @@ const electronBin = path.join(uiRoot, 'node_modules', 'electron', 'cli.js');
 const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
-  path.join(uiRoot, 'src', 'app-preload.mjs'),
+  path.join(uiRoot, 'src', 'plugin-app-preload.mjs'),
+  path.join(uiRoot, 'src', 'plugin-app-protocol.mjs'),
 ];
 const command = process.argv[2] || 'start';
 
@@ -162,7 +163,7 @@ async function main() {
     }
   });
 
-  for (const filePath of watchedFiles) {
+  for (const filePath of watchedFiles.filter((filePath) => fs.existsSync(filePath))) {
     fs.watch(filePath, () => {
       scheduleElectronRestart();
     });

@@ -23,6 +23,7 @@ const subjectReferenceSchema = z.strictObject({
 
 const mossActionSchema = z.strictObject({
   action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'browser_open', 'image_generate', 'image_edit']),
+  kind: z.literal('plugin-app').optional().describe('App kind. Only plugin-app is supported.'),
   name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -30,10 +31,9 @@ const mossActionSchema = z.strictObject({
   width: z.number().optional(),
   height: z.number().optional(),
   resizable: z.boolean().optional(),
-  html: z.string().optional().describe('Full HTML content of the app. Required for app_build, optional for app_update.'),
   prd: z.string().optional(),
   versionId: z.string().optional(),
-  filePath: z.string().optional().describe('Path to a built app HTML file. Required for app_preview and app_publish, optional for app_update.'),
+  buildDir: z.string().optional().describe('Path to an App build directory, usually apps/{name}/build. Used by app_preview, app_publish, and app_update.'),
   version: z.string().optional(),
   reason: z.string().optional(),
   prompt: z.string().optional().describe('Prompt for image generation. Required for image_generate.'),
@@ -55,6 +55,7 @@ const mossOutputSchema = z.object({
   versions: z.array(z.unknown()).optional(),
   fileKind: z.literal('image').optional(),
   filePath: z.string().optional(),
+  buildDir: z.string().optional(),
   filePaths: z.array(z.string()).optional(),
   previewUrl: z.string().optional(),
   previewMarkdown: z.string().optional(),
@@ -72,12 +73,12 @@ export const MossTool = buildTool({
   maxResultSizeChars: 100_000,
   async description() {
     return `Moss tool for managing desktop apps. Supports:
-- app_build: Build app metadata and HTML into a merged file inside the current session workspace (returned as filePath). Requires both name and html. Do not copy the built file elsewhere; it is already in the workspace.
-- app_preview: Preview an HTML file
-- app_publish: Publish a built app file to the app store with version. Requires name, filePath, and description.
+- app_build: Build an App from apps/{name}/app.moss.json in the current session workspace. Returns buildDir.
+- app_preview: Preview an App build directory
+- app_publish: Publish an App build directory to the app list with version. Requires name, buildDir, and description.
 - app_launch: Open an installed app
-- app_update: Update an existing app from filePath or metadata/html fields.
-- app_extract_to_workspace: Extract an installed app into the current session workspace as app-meta.json plus index.html.
+- app_update: Publish a new App version from buildDir.
+- app_extract_to_workspace: Extract an installed App into the current session workspace.
 - app_get_versions: Get version history of an app
 - browser_open: Open a URL or search query in the Moss right-side browser panel for the current desktop session. Use this when the user asks to open a browser, open a webpage, or search/query something in a browser, for example "打开浏览器，百度查询 今日新闻".
 - image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace
@@ -87,11 +88,11 @@ export const MossTool = buildTool({
     return `Use moss tool to manage desktop apps.
 
 Parameter requirements:
-- app_build requires \`name\` and \`html\`
-- app_preview requires \`filePath\`
-- app_publish requires \`name\`, \`filePath\`, and \`description\`
+- app_build requires \`name\`; it builds from apps/{name}/app.moss.json in the current workspace and does not accept html
+- app_preview requires \`buildDir\`
+- app_publish requires \`name\`, \`buildDir\`, and \`description\`
 - app_launch requires \`name\`
-- app_update requires \`name\` and accepts optional \`filePath\`, \`html\`, metadata fields, and \`reason\`
+- app_update requires \`name\` and \`buildDir\`; \`reason\` is recommended
 - app_extract_to_workspace requires \`name\`
 - app_get_versions requires \`name\`
 - browser_open requires either \`url\` or \`query\`; use \`query\` plus \`engine: "baidu"\` when the user says 百度查询/百度搜索 or asks in Chinese without naming another engine
@@ -138,32 +139,22 @@ Parameter requirements:
         if (!input.name) {
           return { data: { ok: false, error: 'name is required for app_build' } }
         }
-        if (!input.html) {
-          return { data: { ok: false, error: 'html is required for app_build. Pass the full HTML document string in the html field.' } }
-        }
         event = {
           type: 'app_build',
           input: {
+            kind: 'plugin-app',
             name: input.name,
-            title: input.title,
-            description: input.description,
-            icon: input.icon,
-            width: input.width,
-            height: input.height,
-            resizable: input.resizable,
-            html: input.html,
-            prd: input.prd,
           },
         }
         break
 
       case 'app_preview':
-        if (!input.filePath) {
-          return { data: { ok: false, error: 'filePath is required for app_preview' } }
+        if (!input.buildDir) {
+          return { data: { ok: false, error: 'buildDir is required for app_preview' } }
         }
         event = {
           type: 'app_preview',
-          input: { filePath: input.filePath },
+          input: { kind: 'plugin-app', buildDir: input.buildDir },
         }
         break
 
@@ -171,8 +162,8 @@ Parameter requirements:
         if (!input.name) {
           return { data: { ok: false, error: 'name is required for app_publish. Pass the target app slug/name in the name field.' } }
         }
-        if (!input.filePath) {
-          return { data: { ok: false, error: 'filePath is required for app_publish' } }
+        if (!input.buildDir) {
+          return { data: { ok: false, error: 'buildDir is required for app_publish' } }
         }
         if (!input.description) {
           return { data: { ok: false, error: 'description is required for app_publish. Pass the published app description in the description field.' } }
@@ -180,10 +171,10 @@ Parameter requirements:
         event = {
           type: 'app_publish',
           input: {
+            kind: 'plugin-app',
             name: input.name,
-            filePath: input.filePath,
+            buildDir: input.buildDir,
             description: input.description,
-            version: input.version,
             reason: input.reason,
           },
         }
@@ -203,19 +194,16 @@ Parameter requirements:
         if (!input.name) {
           return { data: { ok: false, error: 'name is required for app_update' } }
         }
+        if (!input.buildDir) {
+          return { data: { ok: false, error: 'buildDir is required for app_update' } }
+        }
         event = {
           type: 'app_update',
           input: {
+            kind: 'plugin-app',
             name: input.name,
-            title: input.title,
             description: input.description,
-            icon: input.icon,
-            width: input.width,
-            height: input.height,
-            resizable: input.resizable,
-            filePath: input.filePath,
-            html: input.html,
-            prd: input.prd,
+            buildDir: input.buildDir,
             reason: input.reason,
           },
         }
@@ -228,6 +216,7 @@ Parameter requirements:
         event = {
           type: 'app_extract_to_workspace',
           input: {
+            kind: input.kind,
             name: input.name,
             versionId: input.versionId,
           },
@@ -312,6 +301,7 @@ Parameter requirements:
           apps: result.apps,
           versions: result.versions,
           filePath: result.filePath,
+          buildDir: (result as { buildDir?: string }).buildDir,
           filePaths: result.filePaths,
           fileKind: result.fileKind,
           previewUrl: result.previewUrl,

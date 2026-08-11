@@ -5,10 +5,11 @@
 ## 总原则
 
 1. 创建和迭代都只通过普通对话 + 当前提示词 + `moss` 工具完成，不依赖任何专门的“创建模式”或“迭代模式”。
-2. 所有实现都围绕当前 session workspace 的 `.moss-app-build/` 目录进行。
-3. 创建和迭代必须复用同一条工作流：准备 `app-meta.json` + `index.html`，构建，预览，确认后发布。
-4. 不要自行推断或操作版本号。只有在最终发布更新时，才通过 `moss(app_update)` 让系统追加新版本。
-5. 除非用户明确要求，否则不要在对话里输出完整 HTML；最多展示必要的小片段。
+2. 所有实现都围绕当前 session workspace 的 `apps/{app_name}/` 目录进行。
+3. 当前只支持 App 项目模式；manifest 中的 `kind` 固定为内部运行时值 `plugin-app`。
+4. 创建和迭代必须复用同一条工作流：准备源文件，构建，预览，确认后发布。
+5. 不要自行推断或操作版本号。只有在最终发布更新时，才通过 `moss(app_update)` 让系统追加新版本。
+6. 除非用户明确要求，否则不要在对话里输出完整 HTML；最多展示必要的小片段。
 
 ## 当前会话如何判断
 
@@ -25,10 +26,12 @@ moss({
 })
 ```
 
-这一步会把当前 App 的可编辑内容抽取到：
+这一步会把当前 App 的可编辑内容抽取到 workspace：
 
-- `.moss-app-build/app-meta.json`
-- `.moss-app-build/index.html`
+- `apps/{app_name}/app.moss.json`
+- `apps/{app_name}/package.json`（仅在使用构建工具时存在）
+- `apps/{app_name}/src/`
+- `apps/{app_name}/public/`（可选）
 
 重要规则：
 
@@ -62,22 +65,34 @@ moss({
 
 ### 1. 准备工作区文件
 
-无论创建还是迭代，最终都要维护：
+App 创建或迭代时，维护：
 
-- `.moss-app-build/app-meta.json`
-- `.moss-app-build/index.html`
+- `apps/{app_name}/app.moss.json`
+- `apps/{app_name}/package.json`（使用 Vite/React/构建工具时）
+- `apps/{app_name}/src/`
+- `apps/{app_name}/public/`（可选）
 
-`app-meta.json` 结构固定为：
+`app.moss.json` 结构：
 
 ```json
 {
-  "name": "app-name",
-  "title": "中文标题",
-  "icon": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧩</text></svg>",
+  "schemaVersion": 1,
+  "id": "app-name",
+  "kind": "plugin-app",
+  "displayName": "中文标题",
   "description": "简短描述",
-  "width": 900,
-  "height": 700,
-  "resizable": true
+  "entry": "dist/index.html",
+  "window": {
+    "width": 1100,
+    "height": 760,
+    "resizable": true
+  },
+  "capabilities": {
+    "storage": true,
+    "commands": [],
+    "tools": []
+  },
+  "extensionDependencies": {}
 }
 ```
 
@@ -95,22 +110,65 @@ moss({
 
 ### 3. 修改或生成代码
 
-在 `.moss-app-build/index.html` 中实现完整单文件 App：
+App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
-- 标准 HTML5 文档
-- 内联 CSS
-- 内联 JavaScript
-- 无外部依赖
-- UI 精致可用
+- 简单游戏、小工具、单页交互：优先 `src/index.html` 静态 HTML/CSS/JS，不创建 `package.json`，避免 npm 依赖和构建链路导致空白页。
+- 多页面、复杂状态、组件复用明显：使用 Vite + React。
+- 需要复杂宿主能力时，通过 `extensionDependencies` 声明扩展，并通过 `window.mossApp.commands.execute()` 或 `window.mossApp.tools.call()` 调用。
+
+App 新建时必须满足：
+
+- 首屏必须有真实可见 UI，不能只留下空的 `#root`。
+- Vite/React 的 `index.html` 里的 `#root` 内必须放可见加载内容，例如“正在加载应用...”。如果 JS 没加载，用户也不能看到纯空白页。
+- React/Vite 入口必须包含明确的 mount/render 失败兜底：找不到 root、渲染异常、宿主 API 不存在时，都要显示可读错误或降级状态。
+- 扩展能力必须显示运行状态：加载中、已连接、扩展缺失、调用失败都要有 UI 状态，不允许失败后整页空白。
+- 使用 `window.mossApp` 前必须做存在性判断；在普通浏览器环境或宿主 API 未注入时，仍要显示可操作的本地演示数据。
+- 首屏至少包含标题、主要操作区、结果/状态区。若依赖扩展，状态区要能看到 `extensions.getStatus()` 的返回或错误。
+- 游戏类 App 必须同时支持键盘和屏幕按钮；棋盘/画布必须有固定宽高或 `aspect-ratio`，不能被动态文字撑变形。
+
+Vite/React 的 `index.html` 必须类似：
+
+```html
+<div id="root">
+  <main style="padding:24px;font-family:system-ui,sans-serif">正在加载应用...</main>
+</div>
+<script type="module" src="/src/main.jsx"></script>
+```
+
+推荐 React 入口结构：
+
+```js
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App.jsx'
+import './styles.css'
+
+const rootEl = document.getElementById('root')
+if (!rootEl) {
+  document.body.innerHTML = '<main style="padding:24px;font-family:sans-serif">App mount failed: #root not found</main>'
+} else {
+  try {
+    createRoot(rootEl).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    )
+  } catch (error) {
+    rootEl.innerHTML = `<main style="padding:24px;font-family:sans-serif">App render failed: ${String(error?.message || error)}</main>`
+  }
+}
+```
 
 ### 4. 自检
 
 至少检查：
 
-- `app-meta.json` 是合法 JSON
-- `index.html` 是完整 HTML 文档
-- 元信息和实现一致
-- 主要交互可用
+- App 的 `app.moss.json` 是合法 JSON
+- 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
+- App 的 `dist/index.html` 不为空，并且能找到脚本入口或可见静态内容
+- App 首屏在 `window.mossApp` 不存在时仍不会空白
+- 依赖扩展的 App 必须在 UI 中展示扩展状态和调用错误
+- 游戏类 App 要检查开始、暂停、重开、键盘方向、屏幕方向按钮、移动端尺寸、最高分/进度保存
 
 ### 5. 构建
 
@@ -119,25 +177,20 @@ moss({
 ```js
 moss({
   action: "app_build",
-  name: "app-name",
-  title: "中文标题",
-  description: "简短描述",
-  icon: "data:image/svg+xml,...",
-  width: 900,
-  height: 700,
-  resizable: true,
-  html: "<完整 HTML>"
+  kind: "plugin-app",
+  name: "app-name"
 })
 ```
 
 ### 6. 预览
 
-拿到 `filePath` 后调用：
+拿到 `buildDir` 后调用：
 
 ```js
 moss({
   action: "app_preview",
-  filePath: "/path/to/built/file.html"
+  kind: "plugin-app",
+  buildDir: "/path/to/apps/app-name/build"
 })
 ```
 
@@ -155,8 +208,9 @@ moss({
 ```js
 moss({
   action: "app_publish",
+  kind: "plugin-app",
   name: "app-name",
-  filePath: "/path/to/built/file.html",
+  buildDir: "/path/to/apps/app-name/build",
   description: "App 的正式描述"
 })
 ```
@@ -166,8 +220,9 @@ moss({
 ```js
 moss({
   action: "app_update",
+  kind: "plugin-app",
   name: appName,
-  filePath: "/path/to/built/file.html",
+  buildDir: "/path/to/apps/app-name/build",
   reason: "本次修改摘要"
 })
 ```
@@ -210,66 +265,38 @@ moss({
 
 ## Host API
 
-App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异步的（返回 Promise），需 `await`。App 本身仍是零外部依赖的单文件 HTML；`mossApp` 只在宿主运行时存在，写代码时要做存在性判断（`if (window.mossApp) { ... }`），以便在纯浏览器预览下降级。
+App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异步的（返回 Promise），需 `await`。`mossApp` 只在宿主运行时存在，写代码时要做存在性判断，以便在普通浏览器或测试环境下降级。
+
+当前只允许使用受控 API：
+
+- `mossApp.app.getInfo()` / `getVersions()`
+- `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
+- `mossApp.commands.execute(command, args)`
+- `mossApp.tools.call(name, args)`
+- `mossApp.events.on(eventName, cb)`
+
+不得使用旧全局 API，例如 `mossApp.fs`、`mossApp.agent`、`mossApp.shell`、`mossApp.document`、`mossApp.cron`、`mossApp.callTool`、`mossApp.readResource`。复杂能力必须由平台扩展提供，再通过 `commands` 或 `tools` 调用。
 
 ### 应用信息与版本
 
-- `mossApp.getAppInfo()` → `{ name, description, width, height, prd, dataDir, filesDir, ... }`
-- `mossApp.getMeta()` → 同 `getAppInfo`（别名）
-- `mossApp.getVersions()` → 历史版本快照列表
-- `mossApp.rollback(versionId)` → 回滚到指定版本
+- `mossApp.app.getInfo()` → `{ id, name, kind, displayName, description, version, capabilities, extensionDependencies, dataDir }`
+- `mossApp.app.getVersions()` → 历史版本列表
 
 ### 本地存储（键值，持久化在 App 私有目录）
 
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - 优先用它替代 `localStorage` 做持久化；`localStorage` 仅适合临时/预览态。
 
-### 文件
+### 扩展命令与工具
 
-沙箱文件（限定在 App 的 `filesDir` 内，推荐用于 App 自身数据；注意方法挂在 `mossApp.fs` 下，没有 `mossApp.files`）：
+- `mossApp.commands.execute(command, args)` → 调用扩展注册的命令
+- `mossApp.tools.call(name, args)` → 调用扩展注册的工具
+- 调用前必须在 `app.moss.json` 的 `capabilities.commands` 或 `capabilities.tools` 中声明允许项。
 
-- `mossApp.fs.list(dir)` / `readText(path)` / `writeText(path, content)` / `mkdir(dir)` / `delete(path)`
+### 事件
 
-全局文件（绝对路径，能力更强，谨慎使用）：
-
-- `mossApp.fs.readGlobalText(path)` / `writeGlobalBinary(path, data)` / `deleteGlobal(path)` / `listGlobal(dir)`
-- `mossApp.fs.getHomeDir()` / `getImageBase64(path)` / `getFileMetadata(path)` / `getAppIcon()` / `createTempFile(fileName)`
-
-### AI Agent（App 专属，支持流式）
-
-- `mossApp.agent.send({ prompt, systemPrompt?, context?, requestId?, stream? })`
-- `mossApp.agent.cancel(requestId)` / `mossApp.agent.reset()`
-- 需要逐字流式输出时必须传 `stream: true`，否则只在完成时一次性返回。
-- 流式与运行时事件通过 `mossApp.onRuntimeEvent(cb)` 订阅（返回取消函数）：事件形如 `{ type, ... }`，`type` 包括 `agent:start` / `agent:delta`（`text` 为累计全文，`delta` 为增量）/ `agent:complete`（`finalResult.text` 为最终结果）/ `agent:error` / `agent:cancelled` / `files:changed` / `app:rolled-back` / `agent:reset`。
-- 其他事件订阅：`onAgentEvent(cb)`、`onAgentState(cb)`、`onPermission(cb)`，均返回取消函数。
-
-### 系统 shell
-
-- `mossApp.shell.openExternal(url)` → 在默认浏览器打开外链（仅允许 http/https/mailto）
-- `mossApp.shell.openFile(path)` → 用系统默认程序打开文件
-- `mossApp.shell.showItemInFolder(path)` → 在文件管理器中定位
-
-### 文档转换
-
-- `mossApp.document.isLibreOfficeAvailable()` → 转换前探测
-- `mossApp.document.convert(filePath, to)` → `to` 取值 `markdown` / `word-html` / `excel-json` / `ppt-json` / `pptx-arraybuffer`
-
-### 定时任务
-
-- `mossApp.cron.list()` / `get(id)` / `add(item)` / `update(id, updates)` / `delete(id)`
-
-### 预览与日志
-
-- `mossApp.preview.open(data)` / `mossApp.preview.close()`
-- `mossApp.log.write(level, category, message, data)` → 写入宿主日志，便于调试
-
-### 通用工具网关（进阶）
-
-- `mossApp.listTools()` / `mossApp.listResources()` → 发现可用工具/资源
-- `mossApp.callTool(name, args)` → 直接调用任意运行时工具（如 `versions.list`、`storage.get`），是新增能力的统一入口
-- `mossApp.readResource(uri)` → 读取运行时资源
-
-> 说明：另有 `mossApp.skillStore.*` 与 `mossApp.agentStore.*`，仅用于「技能商店 / 助手商店」这类特定 App，普通 App 不需要。
+- `mossApp.events.on('extensions', callback)` → 监听扩展加载状态。
+- 依赖扩展的 App 首屏必须展示扩展状态和错误信息。
 
 ## 规范
 
