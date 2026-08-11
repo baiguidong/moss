@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { AppSidebar } from '@/components/app-sidebar';
+import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { ChatArea } from '@/components/chat-area';
+import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -247,7 +248,7 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
-  const [activeView, setActiveView] = React.useState<'chat' | 'files' | 'apps' | 'settings' | 'memos' | 'cron'>('chat');
+  const [activeView, setActiveView] = React.useState<MainView>('chat');
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -270,6 +271,7 @@ export default function App() {
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
+  const [appsLoaded, setAppsLoaded] = React.useState(false);
   const [appShortcutIds, setAppShortcutIds] = React.useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(APP_SHORTCUTS_STORAGE_KEY);
@@ -280,6 +282,7 @@ export default function App() {
   });
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
+  const [embeddedAppName, setEmbeddedAppName] = React.useState('');
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
@@ -406,6 +409,7 @@ export default function App() {
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
+    setAppsLoaded(true);
     return nextApps;
   }, []);
 
@@ -623,9 +627,16 @@ export default function App() {
     if (selectedAppName && !apps.some((entry) => entry.name === selectedAppName)) {
       setSelectedAppName('');
     }
-  }, [apps, selectedAppName]);
+    if (embeddedAppName && !apps.some((entry) => entry.name === embeddedAppName || entry.id === embeddedAppName)) {
+      setEmbeddedAppName('');
+      if (activeView === 'embedded-app') {
+        setActiveView('apps');
+      }
+    }
+  }, [activeView, apps, embeddedAppName, selectedAppName]);
 
   React.useEffect(() => {
+    if (!appsLoaded) return;
     const installedIds = new Set(apps.map(getStoredAppKey));
     const nextShortcuts = new Set(
       Array.from(appShortcutIds).filter((id) => installedIds.has(id))
@@ -633,7 +644,7 @@ export default function App() {
     if (nextShortcuts.size !== appShortcutIds.size) {
       persistAppShortcuts(nextShortcuts);
     }
-  }, [apps, appShortcutIds, persistAppShortcuts]);
+  }, [apps, appShortcutIds, appsLoaded, persistAppShortcuts]);
 
   // Poll for coordinator mode in-process teammate tasks
   React.useEffect(() => {
@@ -1632,6 +1643,11 @@ export default function App() {
     await window.agentDesktop.launchApp({ name });
   }, []);
 
+  const handleOpenEmbeddedApp = React.useCallback((name: string) => {
+    setEmbeddedAppName(name);
+    setActiveView('embedded-app');
+  }, []);
+
   const handleRemoveAppShortcut = React.useCallback((name: string) => {
     const app = apps.find((entry) => entry.name === name || entry.id === name);
     if (!app) return;
@@ -1781,7 +1797,7 @@ export default function App() {
             onChangeView={setActiveView}
             onChangeTheme={setThemeMode}
             onSelectSession={handleSelectSession}
-            onLaunchApp={handleLaunchApp}
+            onLaunchApp={handleOpenEmbeddedApp}
             onNewSession={handleNewSession}
             onNewSessionModeChange={handleNewSessionModeChange}
             onDeleteSession={handleDeleteSession}
@@ -1896,6 +1912,10 @@ export default function App() {
             <AiMemo onRunTaskWithAgent={handleRunMemoTask} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
+          ) : activeView === 'embedded-app' && embeddedAppName ? (
+            <EmbeddedAppView
+              appName={embeddedAppName}
+            />
           ) : activeView === 'apps' ? (
             <AppsPanel
               apps={apps}

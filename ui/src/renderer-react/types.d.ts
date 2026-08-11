@@ -328,9 +328,24 @@ declare global {
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       listApps: () => Promise<StoredApp[]>;
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
-      launchApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
-      rollbackApp: (payload: { name: string; versionId: string }) => Promise<{ ok: boolean; app: StoredApp }>;
-      deleteApp: (payload: { name: string }) => Promise<{ ok: boolean }>;
+      launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
+      openEmbeddedApp: (payload: { name: string }) => Promise<{
+        ok: boolean;
+        error?: string;
+        embedId?: string;
+        url?: string;
+        preload?: string;
+        app?: {
+          id: string;
+          name: string;
+          displayName: string;
+          description: string;
+        };
+      }>;
+      attachEmbeddedApp: (payload: { embedId: string; webContentsId: number }) => Promise<{ ok: boolean; error?: string }>;
+      closeEmbeddedApp: (payload: { embedId: string }) => Promise<{ ok: boolean; error?: string }>;
+      rollbackApp: (payload: { name: string; versionId: string }) => Promise<{ ok: boolean; app: StoredApp; error?: string }>;
+      deleteApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
       saveApp: (payload: { sessionId: string; launch?: boolean }) => Promise<{ ok: boolean; app?: StoredApp; error?: string }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
       readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<WorkspacePreviewData>;

@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu, protocol } = electron;
+const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -243,6 +243,9 @@ const sessions = new Map();
 const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
 const pluginAppWindows = new Map();
 const pluginAppWindowStates = new Map();
+const pendingEmbeddedPluginApps = new Map();
+const pendingEmbeddedPluginAppsByToken = new Map();
+const pendingEmbeddedWebviewAttachTokens = [];
 const debugWindows = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
@@ -2495,13 +2498,14 @@ function ensureAppDataDir(name) {
   return dataDir;
 }
 
-function createPluginAppWindowState(appEntry, appWindow, source) {
+function createPluginAppWebContentsState(appEntry, targetWebContents, source, ownerWindow = null) {
   const dataDir = ensureAppDataDir(appEntry.id || appEntry.name);
   const state = {
     id: appEntry.id || appEntry.name,
     name: appEntry.name || appEntry.id,
     kind: APP_KINDS.pluginApp,
-    window: appWindow,
+    window: ownerWindow,
+    webContents: targetWebContents,
     source,
     manifest: appEntry.manifest,
     version: appEntry.version || null,
@@ -2512,8 +2516,12 @@ function createPluginAppWindowState(appEntry, appWindow, source) {
     extensionStatus: null,
     bundleToken: appEntry.bundleToken || null,
   };
-  pluginAppWindowStates.set(appWindow.webContents.id, state);
+  pluginAppWindowStates.set(targetWebContents.id, state);
   return state;
+}
+
+function createPluginAppWindowState(appEntry, appWindow, source) {
+  return createPluginAppWebContentsState(appEntry, appWindow.webContents, source, appWindow);
 }
 
 function getPluginAppWindowStateBySender(sender) {
@@ -2540,8 +2548,9 @@ async function activatePluginExtensionsForWindow(state) {
     await host.activateAll();
     const status = host.getStatus();
     state.extensionStatus = status;
-    if (state.window && !state.window.isDestroyed()) {
-      state.window.webContents.send('plugin-app:event:extensions', {
+    const targetWebContents = state.webContents || state.window?.webContents;
+    if (targetWebContents && !targetWebContents.isDestroyed()) {
+      targetWebContents.send('plugin-app:event:extensions', {
         ok: true,
         status,
       });
@@ -2550,8 +2559,9 @@ async function activatePluginExtensionsForWindow(state) {
   } catch (error) {
     const status = host.getStatus();
     state.extensionStatus = status;
-    if (state.window && !state.window.isDestroyed()) {
-      state.window.webContents.send('plugin-app:event:extensions', {
+    const targetWebContents = state.webContents || state.window?.webContents;
+    if (targetWebContents && !targetWebContents.isDestroyed()) {
+      targetWebContents.send('plugin-app:event:extensions', {
         ok: false,
         error: error.message || String(error),
         status,
@@ -2559,6 +2569,44 @@ async function activatePluginExtensionsForWindow(state) {
     }
     throw error;
   }
+}
+
+function disposePluginAppWebContentsState(webContentsId) {
+  const state = pluginAppWindowStates.get(webContentsId);
+  if (!state) return;
+  if (state.extensionHost) {
+    void state.extensionHost.dispose();
+  }
+  revokePluginAppBundleRoot(state.bundleToken);
+  pluginAppWindowStates.delete(webContentsId);
+}
+
+function attachEmbeddedPluginAppWebContents(pending, targetWebContents, embedId) {
+  if (!pending || !targetWebContents || targetWebContents.isDestroyed()) {
+    throw new Error('Embedded App webContents is not available.');
+  }
+  if (pluginAppWindowStates.has(targetWebContents.id)) {
+    return;
+  }
+
+  pending.webContentsId = targetWebContents.id;
+  createPluginAppWebContentsState(pending.appEntry, targetWebContents, {
+    mode: 'embedded',
+    embedId,
+  });
+  configurePluginAppWebContents(targetWebContents, pending.bundleToken);
+  targetWebContents.once('destroyed', () => {
+    disposePluginAppWebContentsState(targetWebContents.id);
+    pendingEmbeddedPluginApps.delete(embedId);
+    pendingEmbeddedPluginAppsByToken.delete(pending.bundleToken);
+  });
+  targetWebContents.once('did-finish-load', () => {
+    const state = pluginAppWindowStates.get(targetWebContents.id);
+    if (!state) return;
+    activatePluginExtensionsForWindow(state).catch((error) => {
+      console.warn('[plugin-app] embedded extension activation failed:', error?.message || error);
+    });
+  });
 }
 
 function readPluginAppStorageSnapshot(state) {
@@ -2588,6 +2636,53 @@ function isPluginAppUrlForToken(url, bundleToken) {
   } catch {
     return false;
   }
+}
+
+function getPluginAppTokenFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== `${PLUGIN_APP_SCHEME}:`) return '';
+    if (parsed.hostname && parsed.hostname !== 'app') return parsed.hostname;
+    return parsed.pathname.split('/').filter(Boolean)[0] || '';
+  } catch {
+    return '';
+  }
+}
+
+function preparePluginAppEntry(appEntry) {
+  const entryPath = path.resolve(appEntry.filePath || appEntry.entryPath);
+  const bundleRoot = appEntry.bundleRoot || path.dirname(entryPath);
+  const entryRelativePath = appEntry.entryRelativePath ||
+    path.relative(bundleRoot, entryPath).split(path.sep).join('/');
+  const bundleToken = allowPluginAppBundleRoot(bundleRoot, entryRelativePath);
+  const entryUrl = toPluginAppUrl(bundleToken, entryRelativePath);
+  return {
+    entryPath,
+    bundleRoot,
+    entryRelativePath,
+    bundleToken,
+    entryUrl,
+  };
+}
+
+function configurePluginAppWebContents(targetWebContents, bundleToken) {
+  targetWebContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+  targetWebContents.on('will-navigate', (event, url) => {
+    if (url !== targetWebContents.getURL() && !isPluginAppUrlForToken(url, bundleToken)) {
+      event.preventDefault();
+      if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
+        void shell.openExternal(url);
+      }
+    }
+  });
+  targetWebContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
 }
 
 function launchPluginAppWindow(appEntry, source = {}) {
@@ -2621,42 +2716,16 @@ function launchPluginAppWindow(appEntry, source = {}) {
     },
   });
 
-  const entryPath = path.resolve(appEntry.filePath || appEntry.entryPath);
-  const bundleRoot = appEntry.bundleRoot || path.dirname(entryPath);
-  const entryRelativePath = appEntry.entryRelativePath ||
-    path.relative(bundleRoot, entryPath).split(path.sep).join('/');
-  const bundleToken = allowPluginAppBundleRoot(bundleRoot, entryRelativePath);
-  const entryUrl = toPluginAppUrl(bundleToken, entryRelativePath);
+  const { bundleToken, entryUrl } = preparePluginAppEntry(appEntry);
 
   pluginAppWindows.set(windowKey, appWindow);
   createPluginAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
-  appWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
-      void shell.openExternal(url);
-    }
-    return { action: 'deny' };
-  });
-  appWindow.webContents.on('will-navigate', (event, url) => {
-    if (url !== appWindow.webContents.getURL() && !isPluginAppUrlForToken(url, bundleToken)) {
-      event.preventDefault();
-      if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
-        void shell.openExternal(url);
-      }
-    }
-  });
-  appWindow.webContents.on('will-attach-webview', (event) => {
-    event.preventDefault();
-  });
+  configurePluginAppWebContents(appWindow.webContents, bundleToken);
   appWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
   appWindow.on('closed', () => {
-    const state = pluginAppWindowStates.get(appWindow.webContents.id);
-    if (state?.extensionHost) {
-      void state.extensionHost.dispose();
-    }
-    revokePluginAppBundleRoot(state?.bundleToken || bundleToken);
-    pluginAppWindowStates.delete(appWindow.webContents.id);
+    disposePluginAppWebContentsState(appWindow.webContents.id);
     pluginAppWindows.delete(windowKey);
   });
   appWindow.webContents.once('did-finish-load', () => {
@@ -3271,6 +3340,44 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const token = getPluginAppTokenFromUrl(params?.src || '');
+    if (!token) return;
+
+    const pending = pendingEmbeddedPluginAppsByToken.get(token);
+    if (!pending) {
+      event.preventDefault();
+      return;
+    }
+
+    pendingEmbeddedWebviewAttachTokens.push(token);
+    webPreferences.preload = path.join(__dirname, 'plugin-app-preload.mjs');
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = false;
+    webPreferences.webviewTag = false;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+
+  mainWindow.webContents.on('did-attach-webview', (_event, targetWebContents) => {
+    let token = getPluginAppTokenFromUrl(targetWebContents.getURL());
+    if (token) {
+      const index = pendingEmbeddedWebviewAttachTokens.indexOf(token);
+      if (index >= 0) pendingEmbeddedWebviewAttachTokens.splice(index, 1);
+    } else {
+      token = pendingEmbeddedWebviewAttachTokens.shift() || '';
+    }
+    if (!token) return;
+
+    const pending = pendingEmbeddedPluginAppsByToken.get(token);
+    if (!pending) return;
+    try {
+      attachEmbeddedPluginAppWebContents(pending, targetWebContents, pending.embedId);
+    } catch (error) {
+      console.warn('[plugin-app] failed to attach embedded webview:', error?.message || error);
+    }
   });
 
   if (rendererDevServerUrl) {
@@ -4464,6 +4571,65 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
   } catch (err) {
     return { ok: false, error: String(err) };
   }
+});
+
+ipcMain.handle('app:embedded-open', async (_event, { name }) => {
+  try {
+    const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
+    if (!registryEntry) throw new Error(`Unknown App: ${name}`);
+    const appEntry = getPublishedPluginApp(registryEntry.id || name);
+    const { bundleToken, entryUrl } = preparePluginAppEntry(appEntry);
+    const embedId = randomUUID();
+    const pending = {
+      embedId,
+      appEntry: { ...appEntry, bundleToken },
+      bundleToken,
+      entryUrl,
+      webContentsId: null,
+      createdAt: Date.now(),
+    };
+    pendingEmbeddedPluginApps.set(embedId, pending);
+    pendingEmbeddedPluginAppsByToken.set(bundleToken, pending);
+    return {
+      ok: true,
+      embedId,
+      url: entryUrl,
+      preload: path.join(__dirname, 'plugin-app-preload.mjs'),
+      app: {
+        id: appEntry.id || appEntry.name,
+        name: appEntry.name || appEntry.id,
+        displayName: appEntry.displayName || appEntry.title || appEntry.name || appEntry.id,
+        description: appEntry.description || '',
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('app:embedded-attach', async (_event, { embedId, webContentsId }) => {
+  try {
+    const pending = pendingEmbeddedPluginApps.get(embedId);
+    if (!pending) throw new Error('Embedded App session was not found.');
+    const targetWebContents = webContents.fromId(Number(webContentsId));
+    attachEmbeddedPluginAppWebContents(pending, targetWebContents, embedId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('app:embedded-close', async (_event, { embedId }) => {
+  const pending = pendingEmbeddedPluginApps.get(embedId);
+  if (!pending) return { ok: true };
+  if (pending.webContentsId) {
+    disposePluginAppWebContentsState(pending.webContentsId);
+  } else {
+    revokePluginAppBundleRoot(pending.bundleToken);
+  }
+  pendingEmbeddedPluginApps.delete(embedId);
+  pendingEmbeddedPluginAppsByToken.delete(pending.bundleToken);
+  return { ok: true };
 });
 
 ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {

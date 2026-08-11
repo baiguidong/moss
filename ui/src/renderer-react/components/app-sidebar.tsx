@@ -41,11 +41,13 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
 }
 
+export type MainView = "chat" | "files" | "apps" | "settings" | "memos" | "cron" | "embedded-app";
+
 interface AppSidebarProps {
   sessions: SidebarSession[];
   apps: StoredApp[];
   activeSessionId: string | null;
-  activeView: "chat" | "files" | "apps" | "settings" | "snake" | "memos" | "cron";
+  activeView: MainView;
   appsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
@@ -53,7 +55,7 @@ interface AppSidebarProps {
   localEnabled?: boolean;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
-  onChangeView: (view: "chat" | "files" | "apps" | "settings" | "memos" | "cron") => void;
+  onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onLaunchApp: (name: string) => void;
