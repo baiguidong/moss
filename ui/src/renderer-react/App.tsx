@@ -12,6 +12,7 @@ import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/bu
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
 import { AiMemo } from '@/aimemo/AiMemo';
+import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
   buildWorkerRenderMessagesFromSubagentEvents,
@@ -958,7 +959,7 @@ export default function App() {
     };
   }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant]);
 
-  const sidebarSessions = React.useMemo(
+  const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
     [summaries, pinnedIds, sessionAgentModes]
   );
@@ -1173,6 +1174,20 @@ export default function App() {
     }
     return messages;
   }, [activeDetail?.history, activeDetail?.busy]);
+
+  const visibleChatMessageCount = React.useMemo(
+    () => countSessionMessages(activeDetail?.history || []),
+    [activeDetail?.history],
+  );
+
+  const sidebarSessions = React.useMemo(
+    () => baseSidebarSessions.map((session) => (
+      session.id === activeSessionId
+        ? { ...session, messageCount: visibleChatMessageCount }
+        : session
+    )),
+    [activeSessionId, baseSidebarSessions, visibleChatMessageCount],
+  );
 
   React.useEffect(() => {
     if (resolvedWorkerThreads.length === 0) {
@@ -1831,7 +1846,7 @@ export default function App() {
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
-                sessionMessageCount={activeDetail?.messageCount || 0}
+                sessionMessageCount={visibleChatMessageCount}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}

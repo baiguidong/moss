@@ -65,6 +65,7 @@ import {
   allowMediaRoot,
 } from './filemanage/main/index.mjs';
 import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
+import { countSessionMessages } from './shared/session-message-count.mjs';
 
 // 注册自定义协议 (必须在 app.whenReady 之前)
 protocol.registerSchemesAsPrivileged([
@@ -249,6 +250,9 @@ function extractDisplayTextFromTranscriptEntry(entry) {
   }
   if (typeof entry?.content === 'string') {
     return entry.content;
+  }
+  if (typeof entry?.prompt === 'string') {
+    return entry.prompt;
   }
   return '';
 }
@@ -2098,7 +2102,7 @@ function isCompactBoundaryMessage(message) {
 
 function appendRuntimeMessageToSession(sessionRecord, message) {
   sessionRecord.history.push(message);
-  sessionRecord.messageCount = sessionRecord.history.length;
+  sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
   schedulePersistSession(sessionRecord);
@@ -2120,7 +2124,7 @@ function buildVisibleUserEvent(prompt, attachments = []) {
 
 function appendVisibleUserEvent(sessionRecord, sender, userEvent) {
   sessionRecord.history.push(userEvent);
-  sessionRecord.messageCount = sessionRecord.history.length;
+  sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = userEvent.prompt || `[${userEvent.files?.length || 0} attachment(s)]`;
   schedulePersistSession(sessionRecord, true);
@@ -2214,7 +2218,7 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   const nextHistory = Array.isArray(history) ? history : [];
   sessionRecord.history = nextHistory;
   sessionRecord.historyLoadedFromSource = true;
-  sessionRecord.messageCount = nextHistory.length;
+  sessionRecord.messageCount = countSessionMessages(nextHistory);
   sessionRecord.pendingPlanApproval = derivePendingPlanApproval(nextHistory);
 
   const derivedPreview = deriveSessionPreview(nextHistory);
@@ -2310,8 +2314,54 @@ async function loadSessionHistoryFromSource(sessionRecord) {
   return sessionRecord.history;
 }
 
+async function refreshSessionDisplayMetricsFromTranscript(sessionRecord) {
+  if (!sessionRecord?.underlyingSessionId) return;
+  if (sessionRecord.runtime || sessionRecord.busy) return;
+  if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return;
+
+  const transcriptPath = getTranscriptPathForWorkspace(
+    sessionRecord.workspace,
+    sessionRecord.underlyingSessionId,
+  );
+  if (!transcriptPath) return;
+
+  let stat;
+  try {
+    stat = await fsp.stat(transcriptPath);
+  } catch {
+    return;
+  }
+
+  const metricsKey = `${sessionRecord.underlyingSessionId}:${stat.size}:${stat.mtimeMs}`;
+  if (sessionRecord.displayMetricsTranscriptKey === metricsKey) return;
+
+  const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
+  if (!Array.isArray(displayHistory)) return;
+
+  const nextMessageCount = countSessionMessages(displayHistory);
+  const nextPreview = deriveSessionPreview(displayHistory);
+  const changed =
+    sessionRecord.messageCount !== nextMessageCount ||
+    (nextPreview && sessionRecord.preview !== nextPreview);
+
+  sessionRecord.messageCount = nextMessageCount;
+  if (nextPreview) {
+    sessionRecord.preview = nextPreview;
+  }
+  if (sessionRecord.historyLoadedFromSource) {
+    sessionRecord.history = displayHistory;
+    sessionRecord.pendingPlanApproval = derivePendingPlanApproval(displayHistory);
+  }
+  sessionRecord.displayMetricsTranscriptKey = metricsKey;
+
+  if (changed) {
+    schedulePersistSession(sessionRecord);
+  }
+}
+
 function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
   sessionRecord.history.push(event);
+  sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
   schedulePersistSession(sessionRecord);
@@ -3707,7 +3757,7 @@ async function resumeSessionRecord(sessionRecord) {
         : (Array.isArray(resumed.messages) ? resumed.messages : []);
     }
     sessionRecord.historyLoadedFromSource = true;
-    sessionRecord.messageCount = sessionRecord.history.length;
+    sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
     sessionRecord.pendingPlanApproval = derivePendingPlanApproval(sessionRecord.history);
     sessionRecord.updatedAt = Date.now();
     sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
@@ -4743,14 +4793,16 @@ ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => {
   }
 });
 
-ipcMain.handle('agent:list-sessions', () => {
+ipcMain.handle('agent:list-sessions', async () => {
   const currentMode = getDesktopAgentMode();
   const localEnabled = desktopSettings.localEnabled ?? true;
   const remoteEnabled = desktopSettings.remoteEnabled ?? false;
   // 当两种模式都开启时，返回所有会话；否则只返回当前模式的会话
   const showAll = localEnabled && remoteEnabled;
-  return Array.from(sessions.values())
-    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
+  const visibleSessions = Array.from(sessions.values())
+    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode);
+  await Promise.all(visibleSessions.map((sessionRecord) => refreshSessionDisplayMetricsFromTranscript(sessionRecord)));
+  return visibleSessions
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 });
@@ -5443,7 +5495,7 @@ async function runDirectBashCommand(sessionRecord, sender, command) {
     timestamp: Date.now(),
   };
   sessionRecord.history.push(bashEvent);
-  sessionRecord.messageCount += 1;
+  sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = `$ ${command}`;
   if (!Array.isArray(sessionRecord.pendingBashContexts)) {
