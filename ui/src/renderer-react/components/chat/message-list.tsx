@@ -197,10 +197,23 @@ function BashCommandBlock({
 function SystemMessage({
   content,
   meta,
+  variant,
 }: {
   content: string;
   meta?: string[];
+  variant?: Extract<TranscriptRenderMessage, { type: "system" }>["variant"];
 }) {
+  if (variant === "local_command") {
+    return (
+      <div className="mb-5 flex justify-start gap-2">
+        <div className="max-w-[760px] rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">本地命令</div>
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{content}</pre>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mb-4 flex justify-center">
       <div className="max-w-[760px] rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs text-muted-foreground">
@@ -270,7 +283,7 @@ function renderTranscriptItem(
     return <ToolResultBlock key={message.id} result={message} compact={compact} />;
   }
   if (message.type === "system") {
-    return <SystemMessage key={message.id} content={message.content} meta={message.meta} />;
+    return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} />;
   }
   if (message.type === "bash") {
     return (

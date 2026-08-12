@@ -1,3 +1,7 @@
+import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
+
+const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
+
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error';
 
 export type ToolStep = {
@@ -100,6 +104,7 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   type: 'system';
   role: 'system';
   content: string;
+  variant?: 'local_command' | 'plan';
 };
 
 export type BashRenderMessage = TranscriptRenderMessageBase & {
@@ -161,6 +166,7 @@ type AssistantTurnState = {
   startedAt: Date;
   items: TranscriptRenderMessage[];
   meta: string[];
+  hasHiddenAskUserQuestionResult?: boolean;
 };
 
 type RenderBuilderState = {
@@ -201,6 +207,16 @@ function normalizeText(value: unknown): string {
     if (typeof (value as any).content === 'string') return (value as any).content.trim();
   }
   return '';
+}
+
+function extractLocalCommandOutput(value: unknown): string {
+  const text = normalizeText(value);
+  const match = text.match(/^<local-command-(stdout|stderr)>\s*([\s\S]*?)\s*<\/local-command-\1>$/);
+  return (match ? match[2] : text).trim();
+}
+
+function isLocalCommandText(value: string): boolean {
+  return /^<local-command-(stdout|stderr)>[\s\S]*<\/local-command-\1>$/.test(value.trim());
 }
 
 function appendText(message: MutableChatMessage, text: string) {
@@ -291,13 +307,45 @@ function summarizeThinkingBlock(block: any): string {
   return '';
 }
 
-function summarizeToolResultBlock(block: any): string {
+function summarizeToolResultBlock(block: any, toolName?: string): string {
+  if (toolName === 'AskUserQuestion') {
+    const askUserQuestionSummary = summarizeAskUserQuestionResult(block);
+    if (askUserQuestionSummary) return askUserQuestionSummary;
+  }
+
   const parts: string[] = [];
   const text = normalizeText(block?.content);
   if (text) parts.push(text);
   else if (block?.content !== undefined) parts.push(formatJson(block.content));
   if (block?.is_error) parts.unshift('执行失败');
   return parts.join('\n\n').trim();
+}
+
+function summarizeAskUserQuestionResult(block: any): string {
+  const content = block?.content;
+  let parsed: any = null;
+  if (content && typeof content === 'object' && !Array.isArray(content)) {
+    parsed = content;
+  } else if (typeof content === 'string' && content.trim().startsWith('{')) {
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  const answers = parsed?.answers;
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+    return '';
+  }
+
+  const lines = Object.entries(answers)
+    .filter(([question, answer]) => question && answer !== undefined && answer !== null)
+    .map(([question, answer]) => `- ${question}: ${String(answer)}`);
+
+  return lines.length > 0
+    ? `用户已回答 Agent 的问题：\n${lines.join('\n')}`
+    : '';
 }
 
 function extractInputSummary(input: unknown): string | undefined {
@@ -329,6 +377,10 @@ function humanizeToolName(name: string): string {
     .replace(/_/g, ' ')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .trim();
+}
+
+function isAskUserQuestionToolName(toolName: unknown): boolean {
+  return String(toolName || '').trim() === ASK_USER_QUESTION_TOOL_NAME;
 }
 
 function buildToolDetail(input: unknown, output?: unknown): string {
@@ -443,6 +495,7 @@ function createAssistantTurn(timestamp: Date): AssistantTurnState {
     startedAt: timestamp,
     items: [],
     meta: [],
+    hasHiddenAskUserQuestionResult: false,
   };
 }
 
@@ -478,6 +531,7 @@ function resetAssistantTurn(
   turn.startedAt = timestamp;
   turn.items = [];
   turn.meta = [];
+  turn.hasHiddenAskUserQuestionResult = false;
   return turn;
 }
 
@@ -597,7 +651,7 @@ function ensureToolUseMessage(
   const toolUseId = String(block?.id || block?.tool_use_id || block?.toolCallId || '').trim()
     || nextRenderId(state, 'tool-use-generated');
   const existing = state.toolUsesById.get(toolUseId);
-  if (existing && turn.items.includes(existing)) {
+  if (existing && (turn.items.includes(existing) || isAskUserQuestionToolName(existing.toolName))) {
     existing.timestamp = timestamp;
     if (typeof block?.tool_name === 'string' && block.tool_name.trim()) {
       existing.toolName = block.tool_name.trim();
@@ -635,8 +689,10 @@ function ensureToolUseMessage(
     status: 'running',
     statusText: '进行中',
   };
-  pushTurnItem(turn, item);
   state.toolUsesById.set(toolUseId, item);
+  if (!isAskUserQuestionToolName(toolName)) {
+    pushTurnItem(turn, item);
+  }
   return item;
 }
 
@@ -729,6 +785,7 @@ function addSystemRenderMessage(
   timestamp: Date,
   content: string,
   meta?: string[],
+  variant?: SystemRenderMessage['variant'],
 ) {
   const normalized = String(content || '').trim();
   if (!normalized) return;
@@ -739,6 +796,7 @@ function addSystemRenderMessage(
     content: normalized,
     timestamp,
     meta,
+    variant,
   });
 }
 
@@ -757,7 +815,7 @@ function addToolResultMessage(
     collectAttachmentsFromToolResult(rawContent ?? block?.content),
   );
   const content =
-    summarizeToolResultBlock(block)
+    summarizeToolResultBlock(block, toolName)
     || normalizeText(rawContent)
     || formatJson(rawContent ?? block?.content ?? '');
 
@@ -767,6 +825,11 @@ function addToolResultMessage(
       statusText: block?.is_error ? '执行失败' : '执行完成',
       timestamp,
     });
+  }
+
+  if (isAskUserQuestionToolName(toolName)) {
+    turn.hasHiddenAskUserQuestionResult = true;
+    return;
   }
 
   pushTurnItem(turn, {
@@ -841,10 +904,10 @@ function isNonHumanUserEvent(event: AgentEvent): boolean {
 }
 
 function isHiddenUserMetaEvent(event: AgentEvent): boolean {
-  return (
-    event?.type === 'user' &&
-    (event.isMeta === true || event.isVisibleInTranscriptOnly === true)
-  );
+  if (event?.type !== 'user') return false;
+  if (event.isMeta === true || event.isVisibleInTranscriptOnly === true) return true;
+  const text = extractRawUserText(event).trim();
+  return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>');
 }
 
 function isSidechainEvent(event: AgentEvent): boolean {
@@ -998,6 +1061,17 @@ export function buildTranscriptRenderMessages(
       event?.type === 'user' &&
       (userText.trim().length > 0 || (userAttachments?.length ?? 0) > 0)
     ) {
+      if (isLocalCommandText(userText)) {
+        finalizeAssistantTurn(state, { complete: true });
+        addSystemRenderMessage(
+          state,
+          timestamp,
+          extractLocalCommandOutput(userText),
+          undefined,
+          'local_command',
+        );
+        continue;
+      }
       finalizeAssistantTurn(state, { complete: true });
       addUserRenderMessage(state, timestamp, userText, userAttachments);
       continue;
@@ -1042,7 +1116,7 @@ export function buildTranscriptRenderMessages(
         content = '已退回执行计划，当前不会继续执行。';
       }
 
-      addSystemRenderMessage(state, timestamp, content, ['计划']);
+      addSystemRenderMessage(state, timestamp, content, ['计划'], 'plan');
       continue;
     }
 
@@ -1151,8 +1225,16 @@ export function buildTranscriptRenderMessages(
     }
 
     if (event?.type === 'system') {
-      const content = normalizeText(event?.content);
+      const isLocalCommand = event.subtype === 'local_command';
+      const content = isLocalCommand
+        ? extractLocalCommandOutput(event?.content)
+        : normalizeText(event?.content);
       if (!content) continue;
+      if (isLocalCommand) {
+        finalizeAssistantTurn(state, { complete: true });
+        addSystemRenderMessage(state, timestamp, content, undefined, 'local_command');
+        continue;
+      }
       if (state.currentAssistantTurn) {
         appendTurnMeta(state.currentAssistantTurn, content);
       } else {
@@ -1174,11 +1256,12 @@ export function buildTranscriptRenderMessages(
       // finalize it before starting a new turn. Without this, resetAssistantTurn
       // discards all thinking and tool-call items from the previous response,
       // causing them to disappear from the chat after task completion.
-      const hasToolResults = currentTurn
-        ? currentTurn.items.some((item) => item.type === 'tool_result')
+      const hasCompletedToolBoundary = currentTurn
+        ? currentTurn.items.some((item) => item.type === 'tool_result') ||
+          currentTurn.hasHiddenAskUserQuestionResult === true
         : false;
 
-      if (hasToolResults && currentTurn) {
+      if (hasCompletedToolBoundary && currentTurn) {
         finalizeAssistantTurn(state, { complete: true });
       }
 
@@ -1189,7 +1272,7 @@ export function buildTranscriptRenderMessages(
       // redacted_thinking (a placeholder) instead of the full content.
       // Only re-add if the turn was not finalized (streaming scenario);
       // finalized turns already have thinking in state.items.
-      if (!hasToolResults) {
+      if (!hasCompletedToolBoundary) {
         for (const item of streamingThinking) {
           pushTurnItem(turn, item);
         }
@@ -1199,6 +1282,7 @@ export function buildTranscriptRenderMessages(
         for (const block of event.message.content) {
           if (!block || typeof block !== 'object') continue;
           if (block.type === 'text' && typeof block.text === 'string') {
+            if (isIgnoredTextOutput(block.text)) continue;
             appendAssistantTextItem(state, turn, timestamp, block.text);
           } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
             if (streamingThinking.length === 0) {
@@ -1227,7 +1311,7 @@ export function buildTranscriptRenderMessages(
         }
       } else {
         const normalizedText = normalizeTextFromContentBlocks(event?.message?.content);
-        if (normalizedText) {
+        if (normalizedText && !isIgnoredTextOutput(normalizedText)) {
           appendAssistantTextItem(state, turn, timestamp, normalizedText);
         }
       }
@@ -1276,7 +1360,7 @@ export function buildTranscriptRenderMessages(
       const hasAssistantText = turn.items.some(
         (item) => item.type === 'assistant_text' && item.content.trim().length > 0,
       );
-      if (resultText && !hasAssistantText) {
+      if (resultText && !hasAssistantText && !isIgnoredTextOutput(resultText)) {
         appendAssistantTextItem(state, turn, timestamp, resultText);
       }
 
@@ -1423,6 +1507,7 @@ function extractUserText(event: AgentEvent): string {
 export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
   const messages: MutableChatMessage[] = [];
   const toolOwners = new Map<string, MutableChatMessage>();
+  const hiddenAskUserQuestionToolIds = new Set<string>();
   let currentAssistant: MutableChatMessage | null = null;
   let turnIndex = -1;
   let assistantIndex = -1;
@@ -1483,16 +1568,23 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
         for (const block of resultBlocks) {
           const toolId = String(block.tool_use_id || '');
           const owner = (toolId && toolOwners.get(toolId)) || assistant;
+          const existingStep = toolId
+            ? owner.toolSteps?.find((entry) => entry.id === toolId)
+            : undefined;
+          const toolName = String(block.tool_name || existingStep?.toolName || 'Tool').trim() || 'Tool';
+          if (hiddenAskUserQuestionToolIds.has(toolId) || isAskUserQuestionToolName(toolName)) {
+            continue;
+          }
           const step = ensureToolStep(owner, {
             id: toolId,
-            tool_name: block.tool_name || 'Tool',
+            tool_name: toolName,
           });
           step.status = block.is_error ? 'error' : 'success';
           step.statusText = block.is_error ? '执行失败' : '执行完成';
           step.output = resultBlocks.length === 1 && event?.tool_use_result !== undefined
             ? event.tool_use_result
             : block.content;
-          step.outputText = summarizeToolResultBlock(block);
+          step.outputText = summarizeToolResultBlock(block, step.toolName);
           step.result = buildToolDetail(
             step.input,
             step.output !== undefined ? step.output : step.outputText,
@@ -1544,6 +1636,16 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       assistant.streaming = true;
       const streamEvent = event?.event;
       if (streamEvent?.type === 'content_block_start' && streamEvent.content_block?.type === 'tool_use') {
+        const toolId = String(
+          streamEvent.content_block?.id ||
+          streamEvent.content_block?.tool_use_id ||
+          streamEvent.content_block?.toolCallId ||
+          '',
+        );
+        if (isAskUserQuestionToolName(streamEvent.content_block?.name || streamEvent.content_block?.tool_name)) {
+          if (toolId) hiddenAskUserQuestionToolIds.add(toolId);
+          continue;
+        }
         const step = ensureToolStep(assistant, streamEvent.content_block);
         step.status = 'running';
         step.statusText = '进行中';
@@ -1645,10 +1747,16 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
         for (const block of event.message.content) {
           if (!block || typeof block !== 'object') continue;
           if (block.type === 'text' && typeof block.text === 'string') {
+            if (isIgnoredTextOutput(block.text)) continue;
             appendText(assistant, block.text);
           } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
             appendThinking(assistant, summarizeThinkingBlock(block));
           } else if (block.type === 'tool_use') {
+            if (isAskUserQuestionToolName(block.name || block.tool_name)) {
+              const toolId = String(block.id || block.tool_use_id || block.toolCallId || '');
+              if (toolId) hiddenAskUserQuestionToolIds.add(toolId);
+              continue;
+            }
             const step = ensureToolStep(assistant, block);
             step.status = 'running';
             step.statusText = '进行中';
@@ -1685,7 +1793,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
       // If no assistant content was built from event stream (common in coordinator
       // mode where the final text lives only in the result event), use it directly.
       const resultText = typeof event.result === 'string' ? event.result.trim() : '';
-      if (resultText && !assistant.content.trim()) {
+      if (resultText && !assistant.content.trim() && !isIgnoredTextOutput(resultText)) {
         assistant.content = resultText;
       }
       finalizeAssistant(assistant);

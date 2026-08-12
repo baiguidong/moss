@@ -141,6 +141,7 @@ const SKILL_COPY_SKIP_NAMES = new Set([
 ]);
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
+const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
@@ -275,6 +276,36 @@ function isDisplayTranscriptEntry(entry) {
   return false;
 }
 
+function isVisibleUserTextEntry(entry) {
+  if (!entry || entry.type !== 'user') return false;
+  if (entry.isMeta || entry.isVisibleInTranscriptOnly) return false;
+  const text = extractDisplayTextFromTranscriptEntry(entry).trim();
+  if (!text) return false;
+  if (text.startsWith('<local-command-caveat>')) return false;
+  if (text.startsWith('<command-name>')) return false;
+  return true;
+}
+
+function hasAssistantTextEntry(entry) {
+  if (!entry || entry.type !== 'assistant') return false;
+  return extractTextFromAssistantMessage(entry).trim().length > 0;
+}
+
+function historyCompletenessScore(history) {
+  if (!Array.isArray(history)) return 0;
+  return history.reduce((score, entry) => {
+    if (isVisibleUserTextEntry(entry)) return score + 1;
+    if (hasAssistantTextEntry(entry)) return score + 1;
+    return score;
+  }, 0);
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function loadDisplayHistoryFromLocalTranscript(sessionRecord) {
   const transcriptPath = getTranscriptPathForWorkspace(
     sessionRecord?.workspace,
@@ -321,6 +352,7 @@ let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 
 const sessions = new Map();
+const pendingQuestionRequests = new Map();
 const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
 const pluginAppWindows = new Map();
 const pluginAppWindowStates = new Map();
@@ -336,6 +368,9 @@ allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_WORKSPACES_DIR);
 allowMediaRoot(USER_TMP_DIR);
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
+try { sessionDb.exec('PRAGMA journal_mode=WAL'); } catch {}
+try { sessionDb.exec('PRAGMA synchronous=NORMAL'); } catch {}
+try { sessionDb.exec('PRAGMA busy_timeout=5000'); } catch {}
 const persistSessionStmt = (() => {
   // Migration: add columns if table exists but columns are missing
   try {
@@ -365,6 +400,11 @@ const persistSessionStmt = (() => {
   }
   try {
     sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_coordinator_mode INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]'`);
   } catch {
     // Column may already exist or table doesn't exist yet
   }
@@ -424,6 +464,7 @@ const loadSessionsStmt = sessionDb.prepare(`
     is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
+    history_json,
     is_sub_agent,
     worker_summaries_json,
     assistant_name
@@ -444,6 +485,7 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
+    history_json,
     is_sub_agent,
     worker_summaries_json
   FROM sessions
@@ -464,6 +506,7 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
+    history_json,
     is_sub_agent,
     worker_summaries_json
   FROM sessions
@@ -1573,10 +1616,10 @@ function createRemoteDirectRuntime({
             },
             onPermissionRequest: async (request, requestId) => {
               try {
-                const allowed = await onPermissionRequest?.(request.tool_name, request.input);
-                manager.respondToPermissionRequest(requestId, allowed
-                  ? { behavior: 'allow' }
-                  : { behavior: 'deny', message: 'Denied by user' });
+                const decision = normalizePermissionDecision(
+                  await onPermissionRequest?.(request.tool_name, request.input),
+                );
+                manager.respondToPermissionRequest(requestId, decision);
               } catch (error) {
                 manager.respondToPermissionRequest(requestId, {
                   behavior: 'deny',
@@ -1701,11 +1744,29 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.isCoordinatorMode ? 1 : 0,
     sessionRecord.remoteWorkspace || null,
     sessionRecord.underlyingSessionId,
-    '[]',
+    serializeSessionHistory(sessionRecord.history),
     isSubAgent ? 1 : 0,
     sessionRecord.workerSummariesJson || null,
     sessionRecord.assistantName || null,
   ];
+}
+
+function serializeSessionHistory(history) {
+  try {
+    return JSON.stringify(Array.isArray(history) ? history : []);
+  } catch {
+    return '[]';
+  }
+}
+
+function parsePersistedSessionHistory(value) {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function persistSessionRecord(sessionRecord, isSubAgent = false) {
@@ -1763,6 +1824,9 @@ function hydratePersistedSessions() {
   const rows = loadSessionsStmt.all();
   for (const row of rows) {
     const agentMode = inferPersistedSessionAgentMode(row);
+    const history = parsePersistedSessionHistory(row.history_json);
+    const preview = row.preview || deriveSessionPreview(history) || '';
+    const messageCount = countSessionMessages(history) || row.message_count;
     const sessionRecord = {
       id: row.id,
       title: row.title,
@@ -1777,11 +1841,11 @@ function hydratePersistedSessions() {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
-      messageCount: row.message_count,
-      preview: row.preview || '',
+      messageCount,
+      preview,
       underlyingSessionId: row.underlying_session_id || null,
-      pendingPlanApproval: null,
-      history: [],
+      pendingPlanApproval: derivePendingPlanApproval(history),
+      history,
       historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
@@ -1800,6 +1864,9 @@ function hydratePersistedSessions() {
   const subAgentRows = loadSubAgentSessionsStmt.all();
   for (const row of subAgentRows) {
     const agentMode = inferPersistedSessionAgentMode(row);
+    const history = parsePersistedSessionHistory(row.history_json);
+    const preview = row.preview || deriveSessionPreview(history) || '';
+    const messageCount = countSessionMessages(history) || row.message_count;
     const sessionRecord = {
       id: row.id,
       title: row.title,
@@ -1814,11 +1881,11 @@ function hydratePersistedSessions() {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
-      messageCount: row.message_count,
-      preview: row.preview || '',
+      messageCount,
+      preview,
       underlyingSessionId: row.underlying_session_id || null,
-      pendingPlanApproval: null,
-      history: [],
+      pendingPlanApproval: derivePendingPlanApproval(history),
+      history,
       historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
@@ -2105,7 +2172,6 @@ function appendRuntimeMessageToSession(sessionRecord, message) {
   sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
-  schedulePersistSession(sessionRecord);
 }
 
 function buildVisibleUserEvent(prompt, attachments = []) {
@@ -2129,9 +2195,7 @@ function appendVisibleUserEvent(sessionRecord, sender, userEvent) {
   sessionRecord.preview = userEvent.prompt || `[${userEvent.files?.length || 0} attachment(s)]`;
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
-  if (sender && !sender.isDestroyed()) {
-    sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
-  }
+  emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
 }
 
 function extractPreviewFromAssistantMessage(message) {
@@ -2359,15 +2423,48 @@ async function refreshSessionDisplayMetricsFromTranscript(sessionRecord) {
   }
 }
 
+async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
+  if (!sessionRecord?.underlyingSessionId) return false;
+  if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return false;
+
+  const currentScore = historyCompletenessScore(sessionRecord.history);
+  let bestHistory = null;
+  let bestScore = -1;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
+    if (Array.isArray(displayHistory)) {
+      const score = historyCompletenessScore(displayHistory);
+      if (score > bestScore) {
+        bestHistory = displayHistory;
+        bestScore = score;
+      }
+      if (score >= currentScore) {
+        break;
+      }
+    }
+    if (attempt < 3) {
+      await sleepMs(75);
+    }
+  }
+
+  if (!Array.isArray(bestHistory)) return false;
+  if (bestScore < currentScore) {
+    return false;
+  }
+
+  syncSessionRecordHistory(sessionRecord, bestHistory);
+  schedulePersistSession(sessionRecord, true);
+  return true;
+}
+
 function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
   sessionRecord.history.push(event);
   sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
   schedulePersistSession(sessionRecord);
-  if (sender && !sender.isDestroyed()) {
-    sender.send('agent:event', { sessionId: sessionRecord.id, payload: event });
-  }
+  emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: event });
 }
 
 function maybeUpdateUnderlyingSessionId(target, nextSessionId) {
@@ -2418,7 +2515,11 @@ async function runSessionPrompt({
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
-  emitToRenderer('agent:state', { sessionId: sessionRecord.id, busy: true });
+  emitToRenderer('agent:state', {
+    sessionId: sessionRecord.id,
+    busy: true,
+    summary: getSessionSummary(sessionRecord),
+  });
 
   try {
     const runRuntimePromptOnce = async (
@@ -2483,9 +2584,7 @@ async function runSessionPrompt({
         }
 
         appendRuntimeMessageToSession(sessionRecord, message);
-        if (!sender.isDestroyed()) {
-          sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
-        }
+        emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: message });
       }
 
       return {
@@ -2568,20 +2667,21 @@ async function runSessionPrompt({
     };
     sessionRecord.history.push(errorEvent);
     schedulePersistSession(sessionRecord, true);
-    if (!sender.isDestroyed()) {
-      sender.send('agent:event', { sessionId: sessionRecord.id, payload: errorEvent });
-    }
+    emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: errorEvent });
     throw error;
   } finally {
     sessionRecord.busy = false;
     sessionRecord.updatedAt = Date.now();
+    await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
     schedulePersistSession(sessionRecord, true);
     emitSessionMeta(sessionRecord);
     emitToRenderer('agent:state', {
       sessionId: sessionRecord.id,
       busy: false,
       summary: getSessionSummary(sessionRecord),
+      history: sessionRecord.history,
     });
+    emitSessionHistory(sessionRecord);
     void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
   }
 }
@@ -2624,6 +2724,133 @@ function emitToRenderer(channel, payload) {
 
 function emitSessionMeta(sessionRecord) {
   emitToRenderer('agent:session-meta', getSessionSummary(sessionRecord));
+}
+
+function emitSessionHistory(sessionRecord) {
+  emitToRenderer('agent:session-history', {
+    sessionId: sessionRecord.id,
+    summary: getSessionSummary(sessionRecord),
+    history: sessionRecord.history,
+  });
+}
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizePermissionDecision(decision) {
+  if (typeof decision === 'boolean') {
+    return decision
+      ? { behavior: 'allow' }
+      : { behavior: 'deny', message: 'Denied by user' };
+  }
+
+  if (isPlainObject(decision) && decision.behavior === 'allow') {
+    return {
+      behavior: 'allow',
+      ...(isPlainObject(decision.updatedInput) ? { updatedInput: decision.updatedInput } : {}),
+    };
+  }
+
+  return {
+    behavior: 'deny',
+    message: typeof decision?.message === 'string' && decision.message.trim()
+      ? decision.message.trim()
+      : 'Denied by user',
+  };
+}
+
+function buildAskUserQuestionUpdatedInput(input, answers, annotations) {
+  const baseInput = isPlainObject(input) ? input : {};
+  const normalizedAnswers = isPlainObject(answers) ? answers : {};
+  const normalizedAnnotations = isPlainObject(annotations) ? annotations : null;
+  return {
+    ...baseInput,
+    answers: normalizedAnswers,
+    ...(normalizedAnnotations && Object.keys(normalizedAnnotations).length > 0
+      ? { annotations: normalizedAnnotations }
+      : {}),
+  };
+}
+
+function rejectPendingQuestionRequestsForSession(sessionId, message) {
+  for (const [requestId, pending] of pendingQuestionRequests.entries()) {
+    if (pending.sessionId === sessionId) {
+      pendingQuestionRequests.delete(requestId);
+      pending.resolve({
+        behavior: 'deny',
+        message,
+      });
+    }
+  }
+}
+
+function requestAskUserQuestion(sessionRecord, input) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return Promise.resolve({
+      behavior: 'deny',
+      message: 'No desktop window is available to answer the question.',
+    });
+  }
+
+  const requestId = randomUUID();
+  const payload = {
+    requestId,
+    sessionId: sessionRecord.id,
+    input: isPlainObject(input) ? input : {},
+    requestedAt: Date.now(),
+  };
+
+  return new Promise((resolve) => {
+    pendingQuestionRequests.set(requestId, {
+      sessionId: sessionRecord.id,
+      input,
+      resolve: (decision) => resolve(normalizePermissionDecision(decision)),
+    });
+    emitToRenderer('agent:question-request', payload);
+  });
+}
+
+async function requestToolPermission(sessionRecord, toolName, input) {
+  if (toolName === ASK_USER_QUESTION_TOOL_NAME) {
+    emitSessionHistory(sessionRecord);
+    emitToRenderer('agent:permission', {
+      sessionId: sessionRecord.id,
+      request: {
+        tool_name: toolName,
+        input,
+      },
+    });
+    return requestAskUserQuestion(sessionRecord, input);
+  }
+
+  const toolLabel = toolName || 'Tool';
+  const detailParts = [];
+  if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
+
+  emitToRenderer('agent:permission', {
+    sessionId: sessionRecord.id,
+    request: {
+      tool_name: toolName,
+      input,
+    },
+  });
+
+  const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const response = await dialog.showMessageBox(dialogTarget, {
+    type: 'question',
+    buttons: ['允许', '拒绝'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    title: '工具权限确认',
+    message: `${toolLabel} 请求执行`,
+    detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
+  });
+
+  return response.response === 0
+    ? { behavior: 'allow' }
+    : { behavior: 'deny', message: 'Denied by user' };
 }
 
 function emitAppsChanged(payload = {}) {
@@ -3622,31 +3849,7 @@ async function ensureRuntime(sessionRecord) {
   }
 
   const onPermissionRequest = async (toolName, input) => {
-    const toolLabel = toolName || 'Tool';
-    const detailParts = [];
-    if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
-
-    emitToRenderer('agent:permission', {
-      sessionId: sessionRecord.id,
-      request: {
-        tool_name: toolName,
-        input,
-      },
-    });
-
-    const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const response = await dialog.showMessageBox(dialogTarget, {
-      type: 'question',
-      buttons: ['允许', '拒绝'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-      title: '工具权限确认',
-      message: `${toolLabel} 请求执行`,
-      detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
-    });
-
-    return response.response === 0;
+    return requestToolPermission(sessionRecord, toolName, input);
   };
 
   if (sessionRecord.agentMode === 'remote-direct') {
@@ -3711,31 +3914,7 @@ async function resumeSessionRecord(sessionRecord) {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord),
       onPermissionRequest: async (toolName, input) => {
-        const toolLabel = toolName || 'Tool';
-        const detailParts = [];
-        if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
-
-        emitToRenderer('agent:permission', {
-          sessionId: sessionRecord.id,
-          request: {
-            tool_name: toolName,
-            input,
-          },
-        });
-
-        const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-        const response = await dialog.showMessageBox(dialogTarget, {
-          type: 'question',
-          buttons: ['允许', '拒绝'],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true,
-          title: '工具权限确认',
-          message: `${toolLabel} 请求执行`,
-          detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
-        });
-
-        return response.response === 0;
+        return requestToolPermission(sessionRecord, toolName, input);
       },
       onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
     });
@@ -3865,6 +4044,13 @@ function createWindow() {
     void mainWindow.loadFile(rendererHtml);
   }
   mainWindow.on('closed', () => {
+    for (const [requestId, pending] of pendingQuestionRequests.entries()) {
+      pendingQuestionRequests.delete(requestId);
+      pending.resolve({
+        behavior: 'deny',
+        message: 'Question canceled because the desktop window was closed.',
+      });
+    }
     mainWindow = null;
   });
   mossLog('info', 'app', 'Main window created');
@@ -4937,6 +5123,10 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
     console.warn('[moss-cron] cascade cleanup failed:', err?.message || err);
   }
   closeWorkspaceWatcher(sessionRecord);
+  rejectPendingQuestionRequestsForSession(
+    sessionRecord.id,
+    'Question canceled because the session was deleted.',
+  );
   disposeRuntime(sessionRecord);
   sessions.delete(sessionId);
   deletePersistedSession(sessionId);
@@ -5010,7 +5200,49 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   sessionRecord.runtime?.abort();
+  rejectPendingQuestionRequestsForSession(
+    sessionRecord.id,
+    'Question canceled because the session was aborted.',
+  );
   schedulePersistSession(sessionRecord, true);
+  return { ok: true };
+});
+
+ipcMain.handle('agent:answer-question', async (_event, { requestId, sessionId, answers, annotations }) => {
+  const pending = pendingQuestionRequests.get(requestId);
+  if (!pending) {
+    throw new Error('Question request is no longer pending.');
+  }
+  if (pending.sessionId !== sessionId) {
+    throw new Error('Question request does not belong to this session.');
+  }
+
+  pendingQuestionRequests.delete(requestId);
+  pending.resolve({
+    behavior: 'allow',
+    updatedInput: buildAskUserQuestionUpdatedInput(pending.input, answers, annotations),
+  });
+
+  return { ok: true };
+});
+
+ipcMain.handle('agent:reject-question', async (_event, { requestId, sessionId, message }) => {
+  const pending = pendingQuestionRequests.get(requestId);
+  if (!pending) {
+    return { ok: true };
+  }
+  if (pending.sessionId !== sessionId) {
+    throw new Error('Question request does not belong to this session.');
+  }
+
+  pendingQuestionRequests.delete(requestId);
+  pending.resolve({
+    behavior: 'deny',
+    message: typeof message === 'string' && message.trim()
+      ? message.trim()
+      : 'User declined to answer questions',
+  });
+
   return { ok: true };
 });
 
@@ -5508,9 +5740,7 @@ async function runDirectBashCommand(sessionRecord, sender, command) {
   });
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
-  if (!sender.isDestroyed()) {
-    sender.send('agent:event', { sessionId: sessionRecord.id, payload: bashEvent });
-  }
+  emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: bashEvent });
   return { ok: true, bash: true, exitCode };
 }
 

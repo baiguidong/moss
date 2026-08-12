@@ -29,6 +29,34 @@ export type SessionDetail = SessionSummary & {
 
 export type AgentEvent = Record<string, any>;
 
+export type AskUserQuestionOption = {
+  label: string;
+  description?: string;
+  preview?: string;
+};
+
+export type AskUserQuestion = {
+  question: string;
+  header: string;
+  options: AskUserQuestionOption[];
+  multiSelect?: boolean;
+};
+
+export type AskUserQuestionRequest = {
+  requestId: string;
+  sessionId: string;
+  input: {
+    questions?: AskUserQuestion[];
+    metadata?: Record<string, unknown>;
+  };
+  requestedAt: number;
+};
+
+export type AskUserQuestionAnnotations = Record<string, {
+  preview?: string;
+  notes?: string;
+}>;
+
 export type PairedUser = {
   userId: string | number
   displayName: string
@@ -324,6 +352,17 @@ declare global {
       }) => Promise<any>;
       approvePlan: (payload: { sessionId: string }) => Promise<any>;
       rejectPlan: (payload: { sessionId: string }) => Promise<any>;
+      answerQuestion: (payload: {
+        requestId: string;
+        sessionId: string;
+        answers: Record<string, string>;
+        annotations?: AskUserQuestionAnnotations;
+      }) => Promise<{ ok: boolean }>;
+      rejectQuestion: (payload: {
+        requestId: string;
+        sessionId: string;
+        message?: string;
+      }) => Promise<{ ok: boolean }>;
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       listApps: () => Promise<StoredApp[]>;
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
@@ -400,7 +439,13 @@ declare global {
       onEvent: (callback: (payload: any) => void) => () => void;
       onState: (callback: (payload: any) => void) => () => void;
       onPermission: (callback: (payload: any) => void) => () => void;
+      onQuestionRequest: (callback: (payload: AskUserQuestionRequest) => void) => () => void;
       onSessionMeta: (callback: (payload: SessionSummary) => void) => () => void;
+      onSessionHistory: (callback: (payload: {
+        sessionId: string;
+        summary?: SessionSummary;
+        history?: AgentEvent[];
+      }) => void) => () => void;
       onSessionRemoved: (callback: (payload: { sessionId: string }) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;

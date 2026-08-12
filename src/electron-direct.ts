@@ -22,6 +22,7 @@ import { getAccountInformation, getAnthropicApiKeyWithSource, getAuthTokenSource
 import { getSettings_DEPRECATED } from './utils/settings/settings.js'
 import type { SDKMessage } from './entrypoints/agentSdkTypes.js'
 import type { CanUseToolFn } from './utils/permissions/permissions.js'
+import type { PermissionDecision } from './utils/permissions/PermissionResult.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
@@ -42,6 +43,7 @@ import type {
 } from './services/mcp/types.js'
 import {
   discardSessionCostState,
+  setQuestionPreviewFormat,
   discardSessionRegisteredHooks,
   switchSession,
 } from './bootstrap/state.js'
@@ -138,6 +140,7 @@ let localAgentRuntimeInitialized = false
 
 function initLocalAgentRuntimeOnce(): void {
   enableConfigs()
+  setQuestionPreviewFormat('markdown')
   if (localAgentRuntimeInitialized) return
   initSessionMemory()
   localAgentRuntimeInitialized = true
@@ -178,6 +181,20 @@ export function getAuthDebugSnapshot() {
 
 export type PermissionMode = 'allow-all' | 'default'
 
+export type DesktopPermissionDecision =
+  | boolean
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+  | { behavior: 'deny'; message?: string }
+
+async function defaultDesktopPermissionRequest(
+  tool: string,
+): Promise<DesktopPermissionDecision> {
+  return {
+    behavior: 'deny',
+    message: `${tool || 'Tool'} requires desktop user interaction, but no permission handler was provided.`,
+  }
+}
+
 export interface ClaudeSessionOptions {
   /** 工作目录 */
   cwd?: string
@@ -192,7 +209,10 @@ export interface ClaudeSessionOptions {
   /** 权限模式：'allow-all' 跳过所有确认，'default' 遵循 settings */
   permissionMode?: PermissionMode
   /** 自定义权限回调，permissionMode='default' 时生效 */
-  onPermissionRequest?: (tool: string, input: unknown) => Promise<boolean>
+  onPermissionRequest?: (
+    tool: string,
+    input: unknown,
+  ) => Promise<DesktopPermissionDecision>
   /** 最大轮次 */
   maxTurns?: number
   /** 思考配置 */
@@ -220,7 +240,10 @@ type ResolvedClaudeSessionOptions = {
   apiKey?: string
   appendSystemPrompt: string
   permissionMode: PermissionMode
-  onPermissionRequest: (tool: string, input: unknown) => Promise<boolean>
+  onPermissionRequest: (
+    tool: string,
+    input: unknown,
+  ) => Promise<DesktopPermissionDecision>
   maxTurns: number
   thinkingConfig: ThinkingConfig
   coordinatorMode: boolean
@@ -254,6 +277,42 @@ function normalizeAnthropicBaseUrl(value: string | undefined): string | undefine
     return `${url.origin}${normalizedPath}${url.search}${url.hash}`
   } catch {
     return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
+  }
+}
+
+function normalizeDesktopPermissionDecision(
+  decision: DesktopPermissionDecision,
+): PermissionDecision {
+  if (typeof decision === 'boolean') {
+    return decision
+      ? { behavior: 'allow' as const }
+      : {
+          behavior: 'deny' as const,
+          message: 'Denied by user',
+          decisionReason: {
+            type: 'other' as const,
+            reason: 'desktop_permission_response',
+          },
+        }
+  }
+
+  if (decision && decision.behavior === 'allow') {
+    return {
+      behavior: 'allow' as const,
+      updatedInput: decision.updatedInput,
+    }
+  }
+
+  return {
+    behavior: 'deny' as const,
+    message:
+      decision && typeof decision.message === 'string'
+        ? decision.message
+        : 'Denied by user',
+    decisionReason: {
+      type: 'other' as const,
+      reason: 'desktop_permission_response',
+    },
   }
 }
 
@@ -342,7 +401,7 @@ export class ClaudeSession {
       apiKey: opts.apiKey,
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
-      onPermissionRequest: opts.onPermissionRequest ?? (() => Promise.resolve(true)),
+      onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
@@ -469,9 +528,14 @@ export class ClaudeSession {
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, _ctx, _msg, _id, forceDecision) => {
       if (forceDecision) return forceDecision
-      if (permissionMode === 'allow-all') return { behavior: 'allow' as const }
-      const allowed = await onPermissionRequest(tool.name, input)
-      return allowed ? { behavior: 'allow' as const } : { behavior: 'deny' as const, message: 'Denied by user' }
+      if (
+        permissionMode === 'allow-all' &&
+        !tool.requiresUserInteraction?.()
+      ) {
+        return { behavior: 'allow' as const }
+      }
+      const decision = await onPermissionRequest(tool.name, input)
+      return normalizeDesktopPermissionDecision(decision)
     }
 
     // AppState store（每个 session 独立）

@@ -8,6 +8,7 @@ import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
+import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
@@ -23,6 +24,8 @@ import {
 import { PRESET_THEMES } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
 import type {
+  AskUserQuestionAnnotations,
+  AskUserQuestionRequest,
   AgentEvent,
   AppVersion,
   BackgroundTaskInfo,
@@ -196,6 +199,57 @@ function upsertSummary(list: SessionSummary[], summary: SessionSummary) {
   return next.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function extractHistoryText(event: AgentEvent): string {
+  if (typeof event?.prompt === 'string') return event.prompt;
+  const content = event?.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block: any) => {
+        if (block?.type === 'text' && typeof block.text === 'string') return block.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (typeof event?.content === 'string') return event.content;
+  if (typeof event?.result === 'string') return event.result;
+  return '';
+}
+
+function hasAssistantTextEvent(event: AgentEvent): boolean {
+  if (event?.type !== 'assistant') return false;
+  return extractHistoryText(event).trim().length > 0;
+}
+
+function isVisibleUserTextEvent(event: AgentEvent): boolean {
+  if (event?.type !== 'user') return false;
+  if (event.isMeta === true || event.isVisibleInTranscriptOnly === true) return false;
+  const text = extractHistoryText(event).trim();
+  if (!text) return false;
+  if (text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>')) return false;
+  return true;
+}
+
+function historyCompletenessScore(history: AgentEvent[] | undefined | null): number {
+  if (!Array.isArray(history)) return 0;
+  return history.reduce((score, event) => {
+    if (isVisibleUserTextEvent(event) || hasAssistantTextEvent(event)) return score + 1;
+    return score;
+  }, 0);
+}
+
+function mergeSessionHistorySnapshot(
+  current: AgentEvent[] | undefined,
+  incoming: AgentEvent[] | undefined,
+): AgentEvent[] | undefined {
+  if (!Array.isArray(incoming)) return current;
+  if (!Array.isArray(current) || current.length === 0) return incoming;
+  return historyCompletenessScore(incoming) >= historyCompletenessScore(current)
+    ? incoming
+    : current;
+}
+
 function restoreComposerIntent(session?: Pick<SessionSummary, 'composerIntent'> | null): ComposerIntent {
   return session?.composerIntent === 'coordinator' ? 'coordinator' : 'chat';
 }
@@ -291,14 +345,21 @@ export default function App() {
   const [input, setInput] = React.useState('');
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
+  const [questionRequests, setQuestionRequests] = React.useState<AskUserQuestionRequest[]>([]);
   const [composerAttachments, setComposerAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   // Ref mirrors state so event handlers (registered once) and abort can read
   // and mutate the queue synchronously, ahead of React's re-render.
   const queuedMessagesRef = React.useRef<Record<string, QueuedMessage[]>>({});
+  const questionRequestsRef = React.useRef<AskUserQuestionRequest[]>([]);
   const updateQueue = React.useCallback((sessionId: string, updater: (prev: QueuedMessage[]) => QueuedMessage[]) => {
     const next = updater(queuedMessagesRef.current[sessionId] ?? []);
     queuedMessagesRef.current = { ...queuedMessagesRef.current, [sessionId]: next };
     setQueuedMessages(queuedMessagesRef.current);
+  }, []);
+  const updateQuestionRequests = React.useCallback((updater: (prev: AskUserQuestionRequest[]) => AskUserQuestionRequest[]) => {
+    const next = updater(questionRequestsRef.current);
+    questionRequestsRef.current = next;
+    setQuestionRequests(next);
   }, []);
   const [pinnedIds, setPinnedIds] = React.useState<Set<string>>(() => {
     try {
@@ -525,6 +586,8 @@ export default function App() {
       return false;
     }
     setActiveView('chat');
+    activeSessionIdRef.current = sessionId;
+    activeDetailRef.current = detail;
     setActiveSessionId(sessionId);
     setComposerIntent(restoreComposerIntent(detail));
     setActiveDetail(detail);
@@ -539,12 +602,19 @@ export default function App() {
     if (assistantName) payload.assistant_name = assistantName;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
+    activeSessionIdRef.current = created.summary.id;
+    activeDetailRef.current = created.detail;
+    setActiveView('chat');
+    setActiveSessionId(created.summary.id);
+    setComposerIntent(restoreComposerIntent(created.detail));
+    setActiveDetail(created.detail);
+    clearSessionWorkspaceState();
     // Record session agentMode based on current settings
     const mode = desktopSettings?.agentMode ?? 'local';
     persistSessionAgentModes(new Map(sessionAgentModes).set(created.summary.id, mode));
     await openSession(created.summary.id);
     return created.summary.id;
-  }, [openSession, desktopSettings?.agentMode, sessionAgentModes, persistSessionAgentModes]);
+  }, [clearSessionWorkspaceState, openSession, desktopSettings?.agentMode, sessionAgentModes, persistSessionAgentModes]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
@@ -870,7 +940,9 @@ export default function App() {
       if (payload.sessionId !== activeSessionIdRef.current) return;
       setActiveDetail((prev) => {
         if (!prev) return prev;
-        return { ...prev, history: [...prev.history, payload.payload] };
+        const next = { ...prev, history: [...prev.history, payload.payload] };
+        activeDetailRef.current = next;
+        return next;
       });
     });
 
@@ -879,7 +951,20 @@ export default function App() {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
           setComposerIntent(restoreComposerIntent(payload.summary));
-          setActiveDetail((prev) => (prev ? { ...prev, ...payload.summary } : prev));
+          setActiveDetail((prev) => {
+            if (!prev) return prev;
+            const nextHistory = mergeSessionHistorySnapshot(
+              prev.history,
+              Array.isArray(payload.history) ? payload.history : undefined,
+            );
+            const next = {
+              ...prev,
+              ...payload.summary,
+              ...(Array.isArray(nextHistory) ? { history: nextHistory } : {}),
+            };
+            activeDetailRef.current = next;
+            return next;
+          });
         }
       }
       if (payload?.busy === false && payload?.sessionId) {
@@ -895,24 +980,64 @@ export default function App() {
     const offPermission = window.agentDesktop.onPermission((payload) => {
       if (payload?.sessionId !== activeSessionIdRef.current) return;
       const toolName = payload?.request?.tool_name || 'Tool';
-      setPermissionNotice(`${toolName} 正在请求权限确认`);
+      const notice = toolName === 'AskUserQuestion'
+        ? 'Agent 正在等待你回答问题'
+        : `${toolName} 正在请求权限确认`;
+      setPermissionNotice(notice);
       window.setTimeout(() => {
         setPermissionNotice((current) =>
-          current === `${toolName} 正在请求权限确认` ? '' : current
+          current === notice ? '' : current
         );
       }, 4000);
+    });
+
+    const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
+      if (!payload?.requestId || !payload?.sessionId) return;
+      updateQuestionRequests((prev) => [
+        ...prev.filter((entry) => entry.requestId !== payload.requestId),
+        payload,
+      ]);
+      if (payload.sessionId !== activeSessionIdRef.current) {
+        setPermissionNotice('另一个会话正在等待你回答问题');
+      }
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
         setComposerIntent(restoreComposerIntent(summary));
-        setActiveDetail((prev) => (prev ? { ...prev, ...summary } : prev));
+        setActiveDetail((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev, ...summary };
+          activeDetailRef.current = next;
+          return next;
+        });
+      }
+    });
+
+    const offSessionHistory = window.agentDesktop.onSessionHistory((payload) => {
+      if (!payload?.sessionId || !Array.isArray(payload.history)) return;
+      if (payload.summary) {
+        setSummaries((prev) => upsertSummary(prev, payload.summary!));
+      }
+      if (payload.sessionId === activeSessionIdRef.current) {
+        setActiveDetail((prev) => {
+          if (!prev) return prev;
+          const nextHistory = mergeSessionHistorySnapshot(prev.history, payload.history);
+          const next = {
+            ...prev,
+            ...(payload.summary || {}),
+            history: nextHistory || prev.history || [],
+          };
+          activeDetailRef.current = next;
+          return next;
+        });
       }
     });
 
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
+      updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
       if (sessionId === activeSessionIdRef.current) {
         navigateToHome();
       }
@@ -951,13 +1076,15 @@ export default function App() {
       offState();
       offBackgroundTasks();
       offPermission();
+      offQuestionRequest();
       offMeta();
+      offSessionHistory();
       offRemoved();
       offAppsChanged();
       offWorkspaceChanged();
       offSettingsChanged();
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1182,12 +1309,24 @@ export default function App() {
 
   const sidebarSessions = React.useMemo(
     () => baseSidebarSessions.map((session) => (
-      session.id === activeSessionId
-        ? { ...session, messageCount: visibleChatMessageCount }
-        : session
+      questionRequests.some((request) => request.sessionId === session.id)
+        ? {
+            ...session,
+            ...(session.id === activeSessionId ? { messageCount: visibleChatMessageCount } : {}),
+            preview: '等待你回答问题',
+          }
+        : session.id === activeSessionId
+          ? { ...session, messageCount: visibleChatMessageCount }
+          : session
     )),
-    [activeSessionId, baseSidebarSessions, visibleChatMessageCount],
+    [activeSessionId, baseSidebarSessions, questionRequests, visibleChatMessageCount],
   );
+
+  const activeQuestionRequest = React.useMemo(() => {
+    return questionRequests.find((request) => request.sessionId === activeSessionId)
+      || questionRequests[0]
+      || null;
+  }, [activeSessionId, questionRequests]);
 
   React.useEffect(() => {
     if (resolvedWorkerThreads.length === 0) {
@@ -1565,6 +1704,31 @@ export default function App() {
     }
   }, [activeSessionId]);
 
+  const handleSubmitQuestion = React.useCallback(async (
+    request: AskUserQuestionRequest,
+    answers: Record<string, string>,
+    annotations?: AskUserQuestionAnnotations,
+  ) => {
+    await window.agentDesktop.answerQuestion({
+      requestId: request.requestId,
+      sessionId: request.sessionId,
+      answers,
+      annotations,
+    });
+    updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
+    setPermissionNotice('');
+  }, [updateQuestionRequests]);
+
+  const handleRejectQuestion = React.useCallback(async (request: AskUserQuestionRequest) => {
+    await window.agentDesktop.rejectQuestion({
+      requestId: request.requestId,
+      sessionId: request.sessionId,
+      message: 'User declined to answer questions',
+    });
+    updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
+    setPermissionNotice('');
+  }, [updateQuestionRequests]);
+
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
     // Interrupt drops queued messages back into the input (REPL Esc behavior).
@@ -1577,8 +1741,9 @@ export default function App() {
         setInput((prev) => (prev.trim() ? `${prev}\n${restored}` : restored));
       }
     }
+    updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== activeSessionId));
     await window.agentDesktop.abort({ sessionId: activeSessionId });
-  }, [activeSessionId, updateQueue]);
+  }, [activeSessionId, updateQueue, updateQuestionRequests]);
 
   const handleRemoveQueuedMessage = React.useCallback((id: string) => {
     if (!activeSessionId) return;
@@ -2020,6 +2185,15 @@ export default function App() {
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}
+        <AskUserQuestionModal
+          request={activeQuestionRequest}
+          activeSessionId={activeSessionId}
+          onSwitchToSession={(sessionId) => {
+            void handleSelectSession(sessionId);
+          }}
+          onSubmit={handleSubmitQuestion}
+          onReject={handleRejectQuestion}
+        />
         <UpdateModal />
       </div>
     </div>

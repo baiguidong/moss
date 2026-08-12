@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   send: (payload) => ipcRenderer.invoke('agent:send', payload),
   approvePlan: (payload) => ipcRenderer.invoke('agent:approve-plan', payload),
   rejectPlan: (payload) => ipcRenderer.invoke('agent:reject-plan', payload),
+  answerQuestion: (payload) => ipcRenderer.invoke('agent:answer-question', payload),
+  rejectQuestion: (payload) => ipcRenderer.invoke('agent:reject-question', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
   listApps: () => ipcRenderer.invoke('app:list'),
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),
@@ -136,10 +138,20 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.on('agent:permission', handler);
     return () => ipcRenderer.off('agent:permission', handler);
   },
+  onQuestionRequest: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:question-request', handler);
+    return () => ipcRenderer.off('agent:question-request', handler);
+  },
   onSessionMeta: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:session-meta', handler);
     return () => ipcRenderer.off('agent:session-meta', handler);
+  },
+  onSessionHistory: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:session-history', handler);
+    return () => ipcRenderer.off('agent:session-history', handler);
   },
   onSessionRemoved: (callback) => {
     const handler = (_event, payload) => callback(payload);
