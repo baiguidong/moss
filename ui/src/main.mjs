@@ -1972,6 +1972,17 @@ function extractTextFromAssistantMessage(message) {
     .trim();
 }
 
+const AUTOMATIC_COMPACT_PROMPT = '/compact';
+
+function isPromptTooLongText(value) {
+  return /^Prompt is too long\.?$/i.test(String(value || '').trim());
+}
+
+function isPromptTooLongError(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /\bPrompt is too long\b/i.test(message);
+}
+
 function extractTextFromUserReplayMessage(message) {
   const content = message?.message?.content;
   if (typeof content === 'string') {
@@ -2014,6 +2025,50 @@ function isTopLevelUserPromptEcho(message) {
   const content = message?.message?.content;
   if (!Array.isArray(content)) return true;
   return !content.some((block) => block?.type === 'tool_result');
+}
+
+function isCompactBoundaryMessage(message) {
+  return message?.type === 'system' && message?.subtype === 'compact_boundary';
+}
+
+function appendRuntimeMessageToSession(sessionRecord, message) {
+  sessionRecord.history.push(message);
+  if (isCompactBoundaryMessage(message)) {
+    const boundaryIndex = sessionRecord.history.length - 1;
+    if (boundaryIndex > 0) {
+      sessionRecord.history = sessionRecord.history.slice(boundaryIndex);
+    }
+  }
+  sessionRecord.messageCount = sessionRecord.history.length;
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+  schedulePersistSession(sessionRecord);
+}
+
+function buildVisibleUserEvent(prompt, attachments = []) {
+  const trimmedUserPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+  const userEvent = {
+    type: 'user',
+    prompt: trimmedUserPrompt,
+    timestamp: Date.now(),
+  };
+  if (attachments.length > 0) {
+    userEvent.files = attachments;
+    userEvent.images = attachments.filter((p) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p));
+  }
+  return userEvent;
+}
+
+function appendVisibleUserEvent(sessionRecord, sender, userEvent) {
+  sessionRecord.history.push(userEvent);
+  sessionRecord.messageCount = sessionRecord.history.length;
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.preview = userEvent.prompt || `[${userEvent.files?.length || 0} attachment(s)]`;
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  if (sender && !sender.isDestroyed()) {
+    sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
+  }
 }
 
 function extractPreviewFromAssistantMessage(message) {
@@ -2233,27 +2288,12 @@ async function runSessionPrompt({
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
   if (trimmedUserPrompt || attachments.length > 0) {
-    const userEvent = {
-      type: 'user',
-      prompt: trimmedUserPrompt,
-      timestamp: Date.now(),
-    };
-    if (attachments.length > 0) {
-      userEvent.files = attachments;
-      userEvent.images = attachments.filter((p) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p));
-    }
-
-    sessionRecord.history.push(userEvent);
-    sessionRecord.messageCount += 1;
-    sessionRecord.updatedAt = Date.now();
-    sessionRecord.preview = trimmedUserPrompt || `[${attachments.length} attachment(s)]`;
+    const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments);
+    appendVisibleUserEvent(sessionRecord, sender, userEvent);
     if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
-    }
-    schedulePersistSession(sessionRecord, true);
-    emitSessionMeta(sessionRecord);
-    if (!sender.isDestroyed()) {
-      sender.send('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
+      schedulePersistSession(sessionRecord, true);
+      emitSessionMeta(sessionRecord);
     }
   }
 
@@ -2264,54 +2304,134 @@ async function runSessionPrompt({
   emitToRenderer('agent:state', { sessionId: sessionRecord.id, busy: true });
 
   try {
-    let latestAssistantText = '';
-    let streamedAssistantText = '';
-    let skippedInitialReplayUser = false;
-    const expectedVisibleUserPrompt =
-      normalizeReplayUserText(visibleUserPrompt);
-    const expectedRuntimeUserPrompt = extractTextFromRuntimePrompt(runtimePrompt);
+    const runRuntimePromptOnce = async (
+      prompt,
+      {
+        expectedVisiblePrompt = '',
+        suppressPromptTooLong = false,
+      } = {},
+    ) => {
+      let latestAssistantText = '';
+      let streamedAssistantText = '';
+      let sawPromptTooLong = false;
+      let sawCompactBoundary = false;
+      let suppressRemainingPromptTooLongTurn = false;
+      let skippedInitialReplayUser = false;
+      const expectedVisibleUserPrompt = normalizeReplayUserText(expectedVisiblePrompt);
+      const expectedRuntimeUserPrompt = extractTextFromRuntimePrompt(prompt);
 
-    for await (const message of runtime.send(runtimePrompt)) {
-      const replayUserText = extractTextFromUserReplayMessage(message);
-      if (
-        !skippedInitialReplayUser &&
-        isTopLevelUserPromptEcho(message) &&
-        replayUserText &&
-        (
-          replayUserText === expectedRuntimeUserPrompt ||
-          replayUserText === expectedVisibleUserPrompt
-        )
-      ) {
-        skippedInitialReplayUser = true;
-        continue;
-      }
-
-      maybeUpdateUnderlyingSessionId(sessionRecord, message.session_id);
-      sessionRecord.history.push(message);
-      sessionRecord.updatedAt = Date.now();
-      sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
-      if (message.type === 'assistant') {
-        const assistantText = extractTextFromAssistantMessage(message);
-        if (assistantText) {
-          latestAssistantText = assistantText;
+      for await (const message of runtime.send(prompt)) {
+        const replayUserText = extractTextFromUserReplayMessage(message);
+        if (
+          !skippedInitialReplayUser &&
+          isTopLevelUserPromptEcho(message) &&
+          replayUserText &&
+          (
+            replayUserText === expectedRuntimeUserPrompt ||
+            replayUserText === expectedVisibleUserPrompt
+          )
+        ) {
+          skippedInitialReplayUser = true;
+          continue;
         }
-      } else if (
-        message.type === 'stream_event' &&
-        message.event?.type === 'content_block_delta' &&
-        message.event?.delta?.type === 'text_delta' &&
-        typeof message.event.delta.text === 'string'
-      ) {
-        streamedAssistantText += message.event.delta.text;
+
+        maybeUpdateUnderlyingSessionId(sessionRecord, message.session_id);
+        if (isCompactBoundaryMessage(message)) {
+          sawCompactBoundary = true;
+        }
+
+        if (message.type === 'assistant') {
+          const assistantText = extractTextFromAssistantMessage(message);
+          if (assistantText) {
+            latestAssistantText = assistantText;
+            if (isPromptTooLongText(assistantText)) {
+              sawPromptTooLong = true;
+              if (suppressPromptTooLong) {
+                suppressRemainingPromptTooLongTurn = true;
+                continue;
+              }
+            }
+          }
+        } else if (
+          message.type === 'stream_event' &&
+          message.event?.type === 'content_block_delta' &&
+          message.event?.delta?.type === 'text_delta' &&
+          typeof message.event.delta.text === 'string'
+        ) {
+          streamedAssistantText += message.event.delta.text;
+        }
+
+        if (suppressRemainingPromptTooLongTurn && message.type === 'result') {
+          continue;
+        }
+
+        appendRuntimeMessageToSession(sessionRecord, message);
+        if (!sender.isDestroyed()) {
+          sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
+        }
       }
-      schedulePersistSession(sessionRecord);
-      if (!sender.isDestroyed()) {
-        sender.send('agent:event', { sessionId: sessionRecord.id, payload: message });
+
+      return {
+        latestAssistantText,
+        streamedAssistantText,
+        sawPromptTooLong,
+        sawCompactBoundary,
+      };
+    };
+
+    const runtimePromptText = extractTextFromRuntimePrompt(runtimePrompt);
+    const allowAutoCompactRetry =
+      sessionRecord.agentMode !== 'remote-direct' &&
+      !runtimePromptText.trim().startsWith(AUTOMATIC_COMPACT_PROMPT);
+
+    const runAutomaticCompactRetry = async (reason) => {
+      mossLog('warn', 'agent', 'Prompt too long; running automatic compact retry', {
+        sessionId: sessionRecord.id,
+        underlyingSessionId: sessionRecord.underlyingSessionId,
+        reason,
+      });
+      const compactRun = await runRuntimePromptOnce(AUTOMATIC_COMPACT_PROMPT, {
+        expectedVisiblePrompt: AUTOMATIC_COMPACT_PROMPT,
+      });
+      if (compactRun.sawPromptTooLong) {
+        throw new Error('Prompt is too long. Automatic /compact did not reduce this session enough to continue.');
       }
+      if (compactRun.sawCompactBoundary) {
+        appendVisibleUserEvent(sessionRecord, sender, buildVisibleUserEvent(trimmedUserPrompt, attachments));
+      }
+      return runRuntimePromptOnce(runtimePrompt, {
+        expectedVisiblePrompt: visibleUserPrompt,
+      });
+    };
+
+    let firstRun;
+    try {
+      firstRun = await runRuntimePromptOnce(runtimePrompt, {
+        expectedVisiblePrompt: visibleUserPrompt,
+        suppressPromptTooLong: allowAutoCompactRetry,
+      });
+    } catch (error) {
+      if (!allowAutoCompactRetry || !isPromptTooLongError(error)) {
+        throw error;
+      }
+      const retryRun = await runAutomaticCompactRetry('error');
+      return {
+        latestAssistantText: retryRun.latestAssistantText,
+        streamedAssistantText: retryRun.streamedAssistantText,
+      };
+    }
+
+    if (firstRun.sawPromptTooLong && allowAutoCompactRetry) {
+      const retryRun = await runAutomaticCompactRetry('assistant-message');
+      return {
+        latestAssistantText: retryRun.latestAssistantText,
+        streamedAssistantText: retryRun.streamedAssistantText,
+      };
     }
 
     return {
-      latestAssistantText,
-      streamedAssistantText,
+      latestAssistantText: firstRun.latestAssistantText,
+      streamedAssistantText: firstRun.streamedAssistantText,
     };
   } catch (error) {
     let message = error instanceof Error ? error.message : String(error);
