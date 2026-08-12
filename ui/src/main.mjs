@@ -1149,11 +1149,25 @@ async function waitForManagedRuntimesBeforeLocalSession() {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
 }
 
-function buildClaudeSessionConfig(cwd, sessionRecord = null) {
+function buildBoundAppSystemPrompt(appName) {
+  const normalizedAppName = typeof appName === 'string' ? appName.trim() : '';
+  if (!normalizedAppName) return '';
+
+  const serializedAppName = JSON.stringify(normalizedAppName);
+  return [
+    'Current bound app context:',
+    `- appName: ${serializedAppName}`,
+    '- This session is attached to an existing app.',
+    `- If you need editable source, first use moss(action: "app_extract_to_workspace", name: ${serializedAppName}).`,
+  ].join('\n');
+}
+
+function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const appendSystemPrompt = [
     desktopSettings.appendSystemPrompt,
     sessionRecord?.assistantSystemPrompt,
+    runtimeSystemPrompt,
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean)
@@ -2496,8 +2510,9 @@ async function runSessionPrompt({
   runtimePrompt,
   visibleUserPrompt,
   attachments = [],
+  runtimeSystemPrompt = '',
 }) {
-  const runtime = await ensureRuntime(sessionRecord);
+  const runtime = await ensureRuntime(sessionRecord, runtimeSystemPrompt);
   const cronIdsBeforeTurn = await readMossCronTaskIds();
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
@@ -3831,7 +3846,7 @@ async function startWorkspaceWatcher(sessionRecord) {
   await syncWorkspaceWatcher(sessionRecord);
 }
 
-async function ensureRuntime(sessionRecord) {
+async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
   if (!hasFile(sdkPath)) {
     throw new Error(`Missing electron-direct.mjs at ${sdkPath}.`);
   }
@@ -3871,7 +3886,7 @@ async function ensureRuntime(sessionRecord) {
   const ClaudeSession = await getClaudeSessionCtor();
 
   sessionRecord.runtime = new ClaudeSession({
-    ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord),
+    ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
     coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
     onPermissionRequest,
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
@@ -3884,7 +3899,7 @@ async function ensureRuntime(sessionRecord) {
   return sessionRecord.runtime;
 }
 
-async function resumeSessionRecord(sessionRecord) {
+async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   if (sessionRecord.agentMode === 'remote-direct' || sessionRecord.isSubAgent) {
     return null;
   }
@@ -3912,7 +3927,7 @@ async function resumeSessionRecord(sessionRecord) {
 
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
-      ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord),
+      ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
       onPermissionRequest: async (toolName, input) => {
         return requestToolPermission(sessionRecord, toolName, input);
       },
@@ -5927,16 +5942,13 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
   const visibleAttachments = promptSpill
     ? [...filePaths, promptSpill.filePath]
     : filePaths;
+  const runtimeSystemPrompt = buildBoundAppSystemPrompt(appName);
 
   await syncSelectedSkillsToWorkspace(sessionRecord, skills);
 
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
-    await resumeSessionRecord(sessionRecord);
+    await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
   }
-
-  const appContextPrefix = appName && typeof appName === 'string'
-    ? `Current bound app context:\n- appName: ${appName}\n- This session is attached to an existing app. If you need editable source, first use moss(action: "app_extract_to_workspace", name: appName).\n\n`
-    : ''
 
   // Images are inlined as base64 content blocks so the model sees them
   // directly (same as pasting an image in the CLI REPL). Other files are
@@ -5965,7 +5977,7 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
 
   const promptText = isPlanOnly
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-    : appContextPrefix + bashContextPrefix + effectivePrompt + attachmentSuffix;
+    : bashContextPrefix + effectivePrompt + attachmentSuffix;
 
   // The embedded runtime's processUserInput natively accepts content-block
   // arrays; the trailing text block becomes the prompt text, preceding image
@@ -5991,6 +6003,7 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
     runtimePrompt,
     visibleUserPrompt,
     attachments: visibleAttachments,
+    runtimeSystemPrompt,
   }).finally(() => {
     // Restore previous coordinator mode setting
     if (previousCoordinatorMode !== undefined) {
