@@ -236,6 +236,71 @@ function getTranscriptPathForWorkspace(workspace, sessionId) {
   );
 }
 
+function extractDisplayTextFromTranscriptEntry(entry) {
+  const content = entry?.message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n');
+  }
+  if (typeof entry?.content === 'string') {
+    return entry.content;
+  }
+  return '';
+}
+
+function isDisplayTranscriptEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.isSidechain) return false;
+  if (entry.type === 'user') {
+    if (entry.isMeta) return false;
+    const text = extractDisplayTextFromTranscriptEntry(entry).trim();
+    if (text.startsWith('<local-command-caveat>')) return false;
+    if (text.startsWith('<command-name>')) return false;
+    return true;
+  }
+  if (entry.type === 'assistant') return true;
+  if (entry.type === 'system') {
+    return entry.subtype === 'compact_boundary' || entry.subtype === 'local_command';
+  }
+  if (entry.type === 'tool_progress' || entry.type === 'tool_use_summary') return true;
+  return false;
+}
+
+async function loadDisplayHistoryFromLocalTranscript(sessionRecord) {
+  const transcriptPath = getTranscriptPathForWorkspace(
+    sessionRecord?.workspace,
+    sessionRecord?.underlyingSessionId,
+  );
+  if (!transcriptPath) return null;
+
+  let raw;
+  try {
+    raw = await fsp.readFile(transcriptPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  const history = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const entry = JSON.parse(trimmed);
+      if (isDisplayTranscriptEntry(entry)) {
+        history.push(entry);
+      }
+    } catch {
+      // Ignore malformed partial lines; the writer may be appending.
+    }
+  }
+  return history;
+}
+
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
 process.env.CLAUDE_CODE_ENTRYPOINT = 'local-agent';
 process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY = 'true';
@@ -2033,12 +2098,6 @@ function isCompactBoundaryMessage(message) {
 
 function appendRuntimeMessageToSession(sessionRecord, message) {
   sessionRecord.history.push(message);
-  if (isCompactBoundaryMessage(message)) {
-    const boundaryIndex = sessionRecord.history.length - 1;
-    if (boundaryIndex > 0) {
-      sessionRecord.history = sessionRecord.history.slice(boundaryIndex);
-    }
-  }
   sessionRecord.messageCount = sessionRecord.history.length;
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
@@ -2219,6 +2278,14 @@ async function loadSessionHistoryFromSource(sessionRecord) {
         ? context.session.workDir
         : undefined,
     });
+    schedulePersistSession(sessionRecord);
+    emitSessionMeta(sessionRecord);
+    return sessionRecord.history;
+  }
+
+  const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
+  if (Array.isArray(displayHistory)) {
+    syncSessionRecordHistory(sessionRecord, displayHistory);
     schedulePersistSession(sessionRecord);
     emitSessionMeta(sessionRecord);
     return sessionRecord.history;
@@ -3632,9 +3699,14 @@ async function resumeSessionRecord(sessionRecord) {
     sessionRecord.runtime = resumed.session;
     attachBackgroundTaskWatcher(sessionRecord);
     sessionRecord.resumeReadOnlyReason = null;
-    sessionRecord.historyLoadedFromSource = true;
     sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
-    sessionRecord.history = Array.isArray(resumed.messages) ? resumed.messages : [];
+    if (!Array.isArray(sessionRecord.history) || sessionRecord.history.length === 0) {
+      const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
+      sessionRecord.history = Array.isArray(displayHistory)
+        ? displayHistory
+        : (Array.isArray(resumed.messages) ? resumed.messages : []);
+    }
+    sessionRecord.historyLoadedFromSource = true;
     sessionRecord.messageCount = sessionRecord.history.length;
     sessionRecord.pendingPlanApproval = derivePendingPlanApproval(sessionRecord.history);
     sessionRecord.updatedAt = Date.now();

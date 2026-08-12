@@ -86,11 +86,6 @@ function loadPanelLayout(): LayoutState {
   }
 }
 
-function isCompactBoundaryEvent(event: AgentEvent): boolean {
-  return (event as any)?.type === 'system' && (event as any)?.subtype === 'compact_boundary';
-}
-
-
 function toSidebarSessions(
   summaries: SessionSummary[],
   pinnedIds: Set<string>
@@ -874,9 +869,6 @@ export default function App() {
       if (payload.sessionId !== activeSessionIdRef.current) return;
       setActiveDetail((prev) => {
         if (!prev) return prev;
-        if (isCompactBoundaryEvent(payload.payload)) {
-          return { ...prev, history: [payload.payload] };
-        }
         return { ...prev, history: [...prev.history, payload.payload] };
       });
     });
