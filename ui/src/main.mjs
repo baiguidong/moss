@@ -1987,6 +1987,35 @@ function extractTextFromUserReplayMessage(message) {
   return '';
 }
 
+function normalizeReplayUserText(value) {
+  return String(value || '').trim();
+}
+
+function extractTextFromRuntimePrompt(prompt) {
+  if (typeof prompt === 'string') {
+    return normalizeReplayUserText(prompt);
+  }
+  if (Array.isArray(prompt)) {
+    return normalizeReplayUserText(
+      prompt
+        .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block) => block.text)
+        .join('\n'),
+    );
+  }
+  return '';
+}
+
+function isTopLevelUserPromptEcho(message) {
+  if (message?.type !== 'user') return false;
+  if (message?.parent_tool_use_id != null) return false;
+  if (message?.tool_use_result || message?.toolUseResult) return false;
+
+  const content = message?.message?.content;
+  if (!Array.isArray(content)) return true;
+  return !content.some((block) => block?.type === 'tool_result');
+}
+
 function extractPreviewFromAssistantMessage(message) {
   const text = extractTextFromAssistantMessage(message);
   if (text) return normalizePreviewText(text);
@@ -2239,19 +2268,18 @@ async function runSessionPrompt({
     let streamedAssistantText = '';
     let skippedInitialReplayUser = false;
     const expectedVisibleUserPrompt =
-      typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
+      normalizeReplayUserText(visibleUserPrompt);
+    const expectedRuntimeUserPrompt = extractTextFromRuntimePrompt(runtimePrompt);
 
     for await (const message of runtime.send(runtimePrompt)) {
+      const replayUserText = extractTextFromUserReplayMessage(message);
       if (
         !skippedInitialReplayUser &&
-        expectedVisibleUserPrompt &&
-        message?.type === 'user' &&
-        message?.parent_tool_use_id == null &&
-        !message?.tool_use_result &&
-        extractTextFromUserReplayMessage(message) === expectedVisibleUserPrompt
-        && (
-          message?.isReplay === true ||
-          sessionRecord.agentMode === 'remote-direct'
+        isTopLevelUserPromptEcho(message) &&
+        replayUserText &&
+        (
+          replayUserText === expectedRuntimeUserPrompt ||
+          replayUserText === expectedVisibleUserPrompt
         )
       ) {
         skippedInitialReplayUser = true;
@@ -5265,6 +5293,16 @@ const INLINE_IMAGE_MEDIA_TYPES = {
 // blocks, but reading huge files into memory is wasteful — fall back to the
 // Read tool (which streams with a token budget) beyond this size.
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+const DEFAULT_LARGE_PROMPT_SPILL_CHARS = 120_000;
+const MIN_LARGE_PROMPT_SPILL_CHARS = 10_000;
+
+function getLargePromptSpillThreshold() {
+  const parsed = Number.parseInt(String(process.env.MOSS_LARGE_PROMPT_SPILL_CHARS || ''), 10);
+  if (Number.isFinite(parsed) && parsed >= MIN_LARGE_PROMPT_SPILL_CHARS) {
+    return parsed;
+  }
+  return DEFAULT_LARGE_PROMPT_SPILL_CHARS;
+}
 
 async function buildInlineImageBlocks(filePaths) {
   const blocks = [];
@@ -5290,6 +5328,74 @@ async function buildInlineImageBlocks(filePaths) {
     }
   }
   return { blocks, inlinedPaths };
+}
+
+function formatLargePromptCharCount(value) {
+  return new Intl.NumberFormat('en-US').format(value);
+}
+
+function buildLargePromptFileContent(prompt, createdAt) {
+  return [
+    '# Large User Prompt',
+    '',
+    `Created: ${createdAt}`,
+    `Characters: ${formatLargePromptCharCount(prompt.length)}`,
+    '',
+    'The desktop client saved this prompt to a file because it was too large to inline safely in the model request.',
+    '',
+    '---',
+    '',
+    prompt,
+    '',
+  ].join('\n');
+}
+
+async function maybeSpillLargePromptToWorkspace(sessionRecord, prompt) {
+  const threshold = getLargePromptSpillThreshold();
+  if (typeof prompt !== 'string' || prompt.length <= threshold) {
+    return null;
+  }
+
+  if (sessionRecord.agentMode === 'remote-direct') {
+    throw new Error(
+      `Prompt is too large (${formatLargePromptCharCount(prompt.length)} characters). Remote Direct sessions cannot auto-save large local prompt files yet; please attach a file in the remote workspace or send a shorter prompt.`,
+    );
+  }
+
+  const createdAt = new Date().toISOString();
+  const safeTimestamp = createdAt.replace(/[:.]/g, '-');
+  const promptDir = path.join(sessionRecord.workspace, '.moss', 'large-prompts');
+  const filePath = path.join(promptDir, `user-prompt-${safeTimestamp}-${randomUUID().slice(0, 8)}.md`);
+
+  await fsp.mkdir(promptDir, { recursive: true });
+  await fsp.writeFile(filePath, buildLargePromptFileContent(prompt, createdAt), 'utf8');
+
+  return {
+    filePath,
+    charCount: prompt.length,
+    threshold,
+  };
+}
+
+function buildLargePromptRuntimePrompt(spill) {
+  return [
+    '[Large user prompt saved to workspace]',
+    '',
+    `The user sent a prompt with ${formatLargePromptCharCount(spill.charCount)} characters, which is too large to inline safely in the model request.`,
+    `The full prompt is saved at: ${spill.filePath}`,
+    '',
+    'Read that file first, then continue based on the user request in that file.',
+    'Do not treat this message as a request to summarize the file unless the saved prompt asks for that.',
+  ].join('\n');
+}
+
+function buildLargePromptVisiblePrompt(spill) {
+  return [
+    `用户发送了一段较长内容（${formatLargePromptCharCount(spill.charCount)} 字符），已自动保存到：`,
+    spill.filePath,
+    '',
+    '请读取该文件后继续处理。',
+  ].join('\n');
 }
 
 ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, appName, files, coordinatorMode }) => {
@@ -5335,6 +5441,19 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
     throw new Error('There is already a pending plan awaiting approval.');
   }
 
+  const promptSpill = trimmedPrompt
+    ? await maybeSpillLargePromptToWorkspace(sessionRecord, trimmedPrompt)
+    : null;
+  const effectivePrompt = promptSpill
+    ? buildLargePromptRuntimePrompt(promptSpill)
+    : trimmedPrompt;
+  const visibleUserPrompt = promptSpill
+    ? buildLargePromptVisiblePrompt(promptSpill)
+    : trimmedPrompt;
+  const visibleAttachments = promptSpill
+    ? [...filePaths, promptSpill.filePath]
+    : filePaths;
+
   await syncSelectedSkillsToWorkspace(sessionRecord, skills);
 
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
@@ -5371,8 +5490,8 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
   const bashContextPrefix = isPlanOnly ? '' : consumePendingBashContexts(sessionRecord);
 
   const promptText = isPlanOnly
-    ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${trimmedPrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
-    : appContextPrefix + bashContextPrefix + trimmedPrompt + attachmentSuffix;
+    ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
+    : appContextPrefix + bashContextPrefix + effectivePrompt + attachmentSuffix;
 
   // The embedded runtime's processUserInput natively accepts content-block
   // arrays; the trailing text block becomes the prompt text, preceding image
@@ -5380,8 +5499,6 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
   const runtimePrompt = imageBlocks.length > 0
     ? [...imageBlocks, { type: 'text', text: promptText || 'Please review the attached image(s).' }]
     : promptText;
-
-  const visibleUserPrompt = trimmedPrompt;
 
   // Set coordinator mode env var before creating runtime
   const previousCoordinatorMode = process.env.CLAUDE_CODE_COORDINATOR_MODE;
@@ -5399,7 +5516,7 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
     sender: event.sender,
     runtimePrompt,
     visibleUserPrompt,
-    attachments: filePaths,
+    attachments: visibleAttachments,
   }).finally(() => {
     // Restore previous coordinator mode setting
     if (previousCoordinatorMode !== undefined) {
