@@ -147,13 +147,3 @@ build('bin/direct-connect-session-runner.mjs', [
   ...aliases,
   ...defines,
 ])
-
-// direct-connect-open.mjs（独立 headless 客户端入口）
-// build('direct-connect-open.mjs', [
-//   'build', 'src/server/openCli.ts',
-//   '--outfile=direct-connect-open.mjs',
-//   '--target=node',
-//   '--format=esm',
-//   ...aliases,
-//   ...defines,
-// ])
