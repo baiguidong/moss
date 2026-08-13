@@ -8,6 +8,7 @@
   "source_type": "system",
   "is_builtin": true,
   "enabled": true,
+  "enabledSkills": ["convert-skill-to-app"],
   "installed_version": "1.0.0",
   "installed_at": "2026-04-20T00:00:00.000Z"
 }

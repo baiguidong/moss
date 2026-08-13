@@ -1,0 +1,4 @@
+interface:
+  display_name: "Convert Skill to App"
+  short_description: "Generate dedicated Moss apps from skills"
+  default_prompt: "Use $convert-skill-to-app to convert this Skill into a dedicated Moss plugin-app and Extension."
