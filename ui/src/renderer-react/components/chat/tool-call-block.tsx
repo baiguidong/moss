@@ -19,6 +19,7 @@ import {
   ToolKind,
   extractTextContent,
   inferLanguage,
+  summarizeToolLabel,
 } from "@/components/chat/tool-utils";
 import { CopyButton } from "@/components/shared/copy-button";
 import type {
@@ -64,7 +65,10 @@ function buildCollapsedLabel(
   kind: ToolKind,
   result?: ToolResultRenderMessage,
 ) {
-  return buildHeadline(toolCall, kind);
+  const headline = buildHeadline(toolCall, kind);
+  const summary = summarizeToolLabel(toolCall);
+  if (!summary || summary === headline || summary === toolCall.displayName) return headline;
+  return `${headline} · ${summary}`;
 }
 
 function ToolInputPreview({

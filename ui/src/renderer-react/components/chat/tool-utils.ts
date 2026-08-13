@@ -83,6 +83,7 @@ export function getToolKind(toolName: string, input?: unknown): ToolKind {
   const hasOldString = typeof record.old_string === "string";
   const hasNewString = typeof record.new_string === "string";
 
+  if (rawName === "todowrite") return "other";
   if (rawName.includes("agent")) return "agent";
   if (rawName.includes("web") || rawName.includes("fetch") || rawName.includes("browser")) return "web";
   if (rawName.includes("sql") || rawName.includes("db")) return "db";

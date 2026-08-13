@@ -588,6 +588,35 @@ function appendAssistantTextItem(
   if (options?.streaming) item.streaming = true;
 }
 
+function appendCompletedAssistantTextItem(
+  state: RenderBuilderState,
+  turn: AssistantTurnState,
+  timestamp: Date,
+  text: string,
+) {
+  const normalized = String(text || '').trim();
+  if (!normalized) return;
+
+  const streamed = [...turn.items]
+    .reverse()
+    .find((item): item is AssistantTextRenderMessage => (
+      item.type === 'assistant_text' && Boolean(item.streaming)
+    ));
+  if (streamed) {
+    streamed.content = normalized;
+    streamed.streaming = false;
+    if (timestamp.getTime() > streamed.timestamp.getTime()) streamed.timestamp = timestamp;
+    return;
+  }
+  const duplicate = turn.items.some(
+    (item) => item.type === 'assistant_text' && item.content.trim() === normalized,
+  );
+  if (duplicate) {
+    return;
+  }
+  appendAssistantTextItem(state, turn, timestamp, normalized);
+}
+
 function ensureThinkingItem(
   state: RenderBuilderState,
   turn: AssistantTurnState,
@@ -1265,25 +1294,20 @@ export function buildTranscriptRenderMessages(
         finalizeAssistantTurn(state, { complete: true });
       }
 
-      const turn = resetAssistantTurn(state, timestamp);
-
-      // Re-add streaming thinking that was preserved above. This prevents
-      // thinking blocks from being lost when the completed message contains
-      // redacted_thinking (a placeholder) instead of the full content.
-      // Only re-add if the turn was not finalized (streaming scenario);
-      // finalized turns already have thinking in state.items.
-      if (!hasCompletedToolBoundary) {
-        for (const item of streamingThinking) {
-          pushTurnItem(turn, item);
-        }
-      }
+      // Assistant events can be incremental siblings rather than complete
+      // snapshots. In particular, parallel tool calls may arrive as multiple
+      // assistant records before any of their results. Keep the active turn in
+      // that case so earlier calls remain available for tool_use_id matching.
+      const turn = hasCompletedToolBoundary
+        ? resetAssistantTurn(state, timestamp)
+        : ensureAssistantTurn(state, timestamp);
 
       if (Array.isArray(event?.message?.content)) {
         for (const block of event.message.content) {
           if (!block || typeof block !== 'object') continue;
           if (block.type === 'text' && typeof block.text === 'string') {
             if (isIgnoredTextOutput(block.text)) continue;
-            appendAssistantTextItem(state, turn, timestamp, block.text);
+            appendCompletedAssistantTextItem(state, turn, timestamp, block.text);
           } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
             if (streamingThinking.length === 0) {
               appendThinkingItem(

@@ -6,7 +6,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
 import { AssistantMessage } from "@/components/chat/assistant-message";
 import { ThinkingBlock } from "@/components/chat/thinking-block";
-import { collectFileChanges, FileChangeChips, ToolCallGroup } from "@/components/chat/tool-call-group";
+import { ToolCallGroup } from "@/components/chat/tool-call-group";
 import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
@@ -73,30 +73,23 @@ function buildSyntheticBashToolCall(
   };
 }
 
-function buildRenderModel(messages: TranscriptRenderMessage[]) {
+export function buildRenderModel(messages: TranscriptRenderMessage[]) {
   const renderItems: RenderItem[] = [];
   const resultMap = new Map<string, ToolResultRenderMessage>();
   const childToolCallsByParent = new Map<string, ToolUseRenderMessage[]>();
   const toolUseIds = new Set<string>();
-  let pendingToolCalls: ToolUseRenderMessage[] = [];
-  const inlineParentToolUseIds = new Set<string>();
+  let activeToolGroup: Extract<RenderItem, { kind: "tool_group" }> | null = null;
 
-  const flushGroup = (resetInlineParents = false) => {
-    if (pendingToolCalls.length > 0) {
-      renderItems.push({
+  const appendTopLevelToolCall = (toolCall: ToolUseRenderMessage) => {
+    if (!activeToolGroup) {
+      activeToolGroup = {
         kind: "tool_group",
-        id: `group-${pendingToolCalls[0]!.id}`,
-        toolCalls: [...pendingToolCalls],
-      });
-      for (const toolCall of pendingToolCalls) {
-        inlineParentToolUseIds.add(toolCall.toolUseId);
-      }
-      pendingToolCalls = [];
+        id: `group-${toolCall.id}`,
+        toolCalls: [],
+      };
+      renderItems.push(activeToolGroup);
     }
-
-    if (resetInlineParents) {
-      inlineParentToolUseIds.clear();
-    }
+    activeToolGroup.toolCalls.push(toolCall);
   };
 
   for (const message of messages) {
@@ -108,19 +101,25 @@ function buildRenderModel(messages: TranscriptRenderMessage[]) {
   }
 
   for (const message of messages) {
+    if (message.type === "user_text") {
+      activeToolGroup = null;
+      renderItems.push({ kind: "message", message });
+      continue;
+    }
+
     if (message.type === "tool_result" && message.toolUseId && toolUseIds.has(message.toolUseId)) {
       continue;
     }
 
     if (message.type === "bash") {
       const failed = message.exitCode != null && message.exitCode !== 0;
-      pendingToolCalls.push(buildSyntheticBashToolCall(message, failed ? "error" : "success"));
+      appendTopLevelToolCall(buildSyntheticBashToolCall(message, failed ? "error" : "success"));
       continue;
     }
 
     if (message.type === "tool_result" && extractShellResult(message.rawContent)) {
       const toolCall = buildSyntheticBashToolCall(message, message.isError ? "error" : "success");
-      pendingToolCalls.push(toolCall);
+      appendTopLevelToolCall(toolCall);
       resultMap.set(toolCall.toolUseId, {
         ...message,
         toolUseId: toolCall.toolUseId,
@@ -129,45 +128,26 @@ function buildRenderModel(messages: TranscriptRenderMessage[]) {
       continue;
     }
 
-    if (message.type === "assistant_text" && pendingToolCalls.length > 0) {
-      renderItems.push({
-        kind: "assistant_with_tools",
-        id: `assistant-tools-${message.id}`,
-        message,
-        toolCalls: [...pendingToolCalls],
-      });
-      for (const toolCall of pendingToolCalls) {
-        inlineParentToolUseIds.add(toolCall.toolUseId);
-      }
-      pendingToolCalls = [];
-      inlineParentToolUseIds.clear();
-      continue;
-    }
-
     if (message.type === "tool_use") {
-      const parentPending = message.parentToolUseId
-        ? pendingToolCalls.some((toolCall) => toolCall.toolUseId === message.parentToolUseId)
-        : false;
-
-      if (message.parentToolUseId && (inlineParentToolUseIds.has(message.parentToolUseId) || parentPending)) {
-        flushGroup();
+      if (message.parentToolUseId && toolUseIds.has(message.parentToolUseId)) {
         appendChildToolCall(childToolCallsByParent, message.parentToolUseId, message);
-        inlineParentToolUseIds.add(message.toolUseId);
         continue;
       }
 
-      pendingToolCalls.push(message);
+      appendTopLevelToolCall(message);
       continue;
     }
 
-    flushGroup(true);
+    // Unmatched tool results are internal output from a partially loaded
+    // transcript. Do not promote their first line into a chat message.
+    if (message.type === "tool_result") continue;
+
     renderItems.push({
       kind: "message",
       message,
     });
   }
 
-  flushGroup();
   return { renderItems, resultMap, childToolCallsByParent };
 }
 
@@ -560,14 +540,7 @@ export const VirtualMessageList = React.forwardRef<
               }}
             >
               {showSeparator && ts && <TimeSeparator date={ts} />}
-              {hideToolCalls && item.kind === "tool_group" ? (
-                <div className="space-y-1">
-                  <FileChangeChips changes={collectFileChanges(item.toolCalls, childToolCallsByParent)} />
-                  {renderTranscriptItem(item, resultMap, childToolCallsByParent, true)}
-                </div>
-              ) : (
-                renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls)
-              )}
+              {renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls)}
             </div>
           );
         }}
