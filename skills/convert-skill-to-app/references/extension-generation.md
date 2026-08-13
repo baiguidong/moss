@@ -140,7 +140,7 @@ Do not write this fragment or the UI calls from this toolkit. Tell the App Build
 
 Include these runtime requirements in the handoff: the App Builder must call `window.mossApp.extensions.getStatus()` at startup and inspect `status.extensions[extensionId].state`; only an exact `active` state is connected. A missing entry, `error` state, rejected request, or absent Host API is unavailable and must retain its diagnostic. A resolved status request alone is not proof that the Extension loaded. Recommend `mossApp.events.on('extensions', callback)` when live status changes matter.
 
-The handoff may reference only current Host methods: `app.getInfo/getVersions`, `extensions.getStatus`, `storage.getItem/setItem/removeItem/list`, `commands.execute`, `tools.call`, and `events.on`. Do not propose aliases such as `storage.get` or `storage.set`.
+The handoff may reference only current Host methods: `app.getInfo/getVersions`, `extensions.getStatus`, `fs.readText`, `storage.getItem/setItem/removeItem/list`, `commands.execute`, `tools.call`, and `events.on`. Do not propose aliases such as `storage.get`, `storage.set`, or `fs.readFile`.
 
 ## Installation
 

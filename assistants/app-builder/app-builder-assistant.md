@@ -10,6 +10,7 @@
 4. 创建和迭代必须复用同一条工作流：准备源文件，构建，预览，确认后发布。
 5. 不要自行推断或操作版本号。只有在最终发布更新时，才通过 `moss(app_update)` 让系统追加新版本。
 6. 除非用户明确要求，否则不要在对话里输出完整 HTML；最多展示必要的小片段。
+7. 本文规定的桌面外观、运行时主题、Host API 降级、空白页防护、状态覆盖、响应式和可访问性都属于 App Builder 自动承担的隐式平台基线。不要要求用户在需求里重复这些技术要求，也不要把它们包装成 App 功能、计划项、卖点、设置项或界面可见说明；用户只需描述业务目标和用户可感知的功能。
 
 ## 职责边界
 
@@ -142,7 +143,7 @@ App 创建或迭代时，维护：
 
 App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
-- 简单游戏、小工具、单页交互：优先 `src/index.html` 静态 HTML/CSS/JS，不创建 `package.json`，避免 npm 依赖和构建链路导致空白页。
+- 简单游戏、小工具、单页交互：优先单文件 `src/index.html`，CSS 和 JS 必须内联，不创建 `package.json`。当前静态 fallback 构建只复制该 HTML；引用旁路的 `styles.css`、`appearance.js` 或其他本地资源会在 build 中丢失。
 - 多页面、复杂状态、组件复用明显：使用 Vite + React。
 - 需要复杂宿主能力时，通过 `extensionDependencies` 声明扩展，并通过 `window.mossApp.commands.execute()` 或 `window.mossApp.tools.call()` 调用。
 
@@ -155,6 +156,198 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 - 实现首次使用、空数据、加载、长任务、成功、部分成功、校验错误、Extension 缺失、环境缺失、权限拒绝和操作失败状态。
 - AI 能力只能在已有可用的 provider、model 和 credential 契约时实现；不得臆造 Moss Agent API 或 `mossApp.skills.run()`。
 
+### 桌面外观与运行时主题（强制）
+
+所有新建 App 和发生界面重构的 App 都必须使用 Moss 桌面端的外观语言，并在运行时跟随桌面设置。领域信息架构和交互可以不同，但颜色、surface、边框、输入控件、状态色、焦点态和背景样式必须来自以下契约，不要另起一套主题。
+
+这是内部实现基线，不是用户功能需求。即使用户完全没有提到主题、CSS、配置读取或动态切换，也必须自动实现；除非用户明确要求讨论技术方案，否则不要在需求确认和计划中逐条复述本节，也不要在 App 内显示“读取配置”“跟随主题”“Host API”“CSS token”等实现文案。
+
+默认行为是自动跟随 Moss 桌面端当前选择的浅色、暗色或跟随系统模式，以及当前背景样式。不要把“自动跟随 Moss 外观”列为 App 功能，不要为它增加状态卡片、诊断区、刷新按钮、主题切换器或设置入口。只有用户明确要求 App 拥有独立于 Moss 的主题控制、外观测试工具或主题诊断功能时，才提供相应可见界面；否则主题同步必须完全透明。
+
+#### 运行时设置来源
+
+桌面外观保存在 `~/.moss/settings.json`：
+
+```json
+{
+  "appearance": {
+    "themeMode": "light",
+    "cssThemeId": "grid-theme"
+  }
+}
+```
+
+- `themeMode` 只接受 `light`、`dark`、`system`。
+- `cssThemeId` 只接受 `default`、`grid-theme`、`dot-theme`、`gradient-theme`。
+- App 启动后必须调用 `window.mossApp.fs.readText('~/.moss/settings.json')`，解析 JSON 后只保留 `appearance`，立即丢弃其余字段。禁止展示、记录、存储或传递完整配置内容。
+- `window.mossApp` 不存在、文件不存在、读取失败、JSON 无效或字段不合法时，使用 `prefers-color-scheme` 和 `grid-theme` 降级；主题读取失败不得阻塞 App 主功能。
+- `system` 必须实时解析为 `matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'`。
+
+#### 动态同步
+
+当前没有 appearance 专用事件。App 必须封装单一的 `refreshAppearance()`，重新读取配置并仅在值变化时更新主题：
+
+- App mount 后立即读取一次。
+- 监听 `window.focus`，窗口重新获得焦点时读取。
+- 监听 `document.visibilitychange`，页面重新可见时读取。
+- 监听 `prefers-color-scheme` 的 `change`；当 `themeMode === 'system'` 时立即重算。
+- 需要在 App 保持前台时自动感知设置修改的预览、主题测试或长驻工具，可以在页面可见时每 5 秒低频读取一次；普通 App 默认依靠 focus、visibilitychange 和系统主题事件，不要求常驻轮询。存在 timer 时，页面隐藏后停止并在卸载时清理。
+- 防止并发读取和卸载后的状态更新。不得高频轮询，不得因主题读取失败清空当前界面。
+
+应用主题时只修改根节点契约：
+
+```js
+document.documentElement.dataset.theme = resolvedTheme
+document.documentElement.dataset.backgroundStyle = cssThemeId
+document.documentElement.style.colorScheme = resolvedTheme
+```
+
+React App 应把上述逻辑放入独立的 `appearance.js/ts` 或 hook；无构建工具的静态 App 必须把函数内联到 `src/index.html`。首次脚本执行前先用 `prefers-color-scheme` 设置 `data-theme`，避免浅色页面闪黑或暗色页面闪白。
+
+推荐的核心逻辑：
+
+```js
+const THEME_MODES = new Set(['light', 'dark', 'system'])
+const BACKGROUNDS = new Set(['default', 'grid-theme', 'dot-theme', 'gradient-theme'])
+const systemTheme = () => matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+
+function normalizeAppearance(value) {
+  const input = value && typeof value === 'object' ? value : {}
+  return {
+    themeMode: THEME_MODES.has(input.themeMode) ? input.themeMode : 'system',
+    cssThemeId: BACKGROUNDS.has(input.cssThemeId) ? input.cssThemeId : 'grid-theme',
+  }
+}
+
+function applyAppearance(appearance) {
+  const resolved = appearance.themeMode === 'system' ? systemTheme() : appearance.themeMode
+  const root = document.documentElement
+  root.dataset.theme = resolved
+  root.dataset.backgroundStyle = appearance.cssThemeId
+  root.style.colorScheme = resolved
+}
+
+async function readAppearance() {
+  const readText = window.mossApp?.fs?.readText
+  if (!readText) return normalizeAppearance(null)
+  const result = await readText('~/.moss/settings.json')
+  if (!result?.ok) return normalizeAppearance(null)
+  const settings = JSON.parse(result.content)
+  return normalizeAppearance(settings?.appearance)
+}
+```
+
+实际实现必须为 `JSON.parse` 添加 `try/catch`，并按上面的动态同步要求处理并发和清理。
+
+#### 桌面 CSS 契约
+
+App 样式必须内置下面的桌面核心 token。业务组件只引用变量，不复制颜色字面量。需要额外状态色时优先从这些变量通过 `color-mix()` 派生。
+
+```css
+:root {
+  --background: oklch(0.978 0.012 126);
+  --foreground: oklch(0.23 0.02 145);
+  --card: oklch(0.995 0.008 126);
+  --card-foreground: oklch(0.23 0.02 145);
+  --popover: oklch(0.995 0.008 126);
+  --popover-foreground: oklch(0.23 0.02 145);
+  --primary: oklch(0.62 0.16 151);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.945 0.018 145);
+  --secondary-foreground: oklch(0.24 0.02 145);
+  --muted: oklch(0.95 0.01 130);
+  --muted-foreground: oklch(0.48 0.01 150);
+  --accent: oklch(0.72 0.13 80);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.88 0.01 145);
+  --input: oklch(0.93 0.012 130);
+  --ring: oklch(0.62 0.16 151);
+  --radius: 0.625rem;
+  --color-surface: var(--card);
+  --color-surface-container: color-mix(in oklab, var(--card) 88%, var(--muted));
+  --color-surface-hover: color-mix(in oklab, var(--primary) 8%, var(--card));
+  --color-text-primary: var(--foreground);
+  --color-text-secondary: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground));
+  --color-text-tertiary: var(--muted-foreground);
+  --color-success: oklch(0.66 0.18 152);
+  --color-warning: oklch(0.76 0.16 86);
+  --color-error: var(--destructive);
+}
+
+:root[data-theme='dark'] {
+  --background: oklch(0.18 0.012 155);
+  --foreground: oklch(0.95 0.006 126);
+  --card: oklch(0.22 0.012 155);
+  --card-foreground: oklch(0.95 0.006 126);
+  --popover: oklch(0.22 0.012 155);
+  --popover-foreground: oklch(0.95 0.006 126);
+  --primary: oklch(0.68 0.15 151);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.28 0.012 155);
+  --secondary-foreground: oklch(0.95 0.006 126);
+  --muted: oklch(0.25 0.01 155);
+  --muted-foreground: oklch(0.72 0.01 145);
+  --accent: oklch(0.78 0.13 85);
+  --accent-foreground: oklch(0.15 0 0);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.31 0.012 155);
+  --input: oklch(0.24 0.01 155);
+  --ring: oklch(0.68 0.15 151);
+  --color-surface: var(--card);
+  --color-surface-container: color-mix(in oklab, var(--card) 74%, var(--muted));
+  --color-surface-hover: color-mix(in oklab, var(--primary) 12%, var(--card));
+  --color-text-primary: var(--foreground);
+  --color-text-secondary: color-mix(in oklab, var(--foreground) 82%, var(--muted-foreground));
+  --color-text-tertiary: var(--muted-foreground);
+  --color-success: oklch(0.72 0.17 152);
+  --color-warning: oklch(0.8 0.16 86);
+  --color-error: var(--destructive);
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Geist', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; border-color: var(--border); }
+::selection { background: color-mix(in oklab, var(--primary) 30%, transparent); }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+```
+
+根工作区使用 `.app-shell`，背景样式只作用于该层：
+
+```css
+.app-shell { min-height: 100vh; background-color: var(--background); }
+:root[data-background-style='grid-theme'] .app-shell {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--foreground) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--foreground) 5%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-attachment: fixed;
+}
+:root[data-background-style='dot-theme'] .app-shell {
+  background-image: radial-gradient(color-mix(in oklab, var(--foreground) 8%, transparent) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-attachment: fixed;
+}
+:root[data-background-style='gradient-theme'] .app-shell {
+  background-image: linear-gradient(135deg, var(--background), var(--secondary));
+}
+```
+
+组件风格要求：
+
+- 主背景使用 `--background`，内容 surface 使用 `--card` 或 `--color-surface-container`；不要用纯白、纯黑或大面积硬编码颜色。
+- 普通边框使用 `--border`，输入背景使用 `--input`，主操作使用 `--primary`；成功、警告、错误分别使用对应语义色。
+- 按钮、输入、菜单、表格和工具栏保持紧凑、安静、可扫描；圆角遵循 `--radius`，不要生成大量悬浮大卡片或卡片套卡片。
+- 所有交互控件必须实现 hover、active、disabled 和 `focus-visible`；文字和图标在浅色、暗色下都必须达到清晰对比度。
+- 可以为具体领域增加布局和少量辅助色，但不得覆盖核心 token，也不得把外观做成与 Moss 桌面端无关的单色主题。
+
 App 新建时必须满足：
 
 - 首屏必须有真实可见 UI，不能只留下空的 `#root`。
@@ -163,6 +356,8 @@ App 新建时必须满足：
 - 扩展能力必须显示运行状态：加载中、已连接、扩展缺失、调用失败都要有 UI 状态，不允许失败后整页空白。
 - Extension 连接状态必须检查 `extensions.getStatus().extensions[extensionId].state === 'active'`；缺失条目、`error`、请求被拒绝或 Host API 不存在都是不可用，不能因 `getStatus()` resolve 就显示已连接。
 - 使用 `window.mossApp` 前必须做存在性判断；在普通浏览器环境或宿主 API 未注入时，仍要显示可操作的本地演示数据。
+- 首屏必须先应用内置 Moss token，再异步读取 `appearance`；读取配置期间不得显示空白页或阻塞主界面。
+- 必须实现浅色、暗色、跟随系统和四种背景样式，并在运行时按上面的动态同步规则更新 CSS。
 - 首屏至少包含标题、主要操作区、结果/状态区。若依赖扩展，状态区要能看到 `extensions.getStatus()` 的返回或错误。
 - 游戏类 App 必须同时支持键盘和屏幕按钮；棋盘/画布必须有固定宽高或 `aspect-ratio`，不能被动态文字撑变形。
 
@@ -207,6 +402,10 @@ if (!rootEl) {
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
 - App 的 `dist/index.html` 不为空，并且能找到脚本入口或可见静态内容
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
+- 检查 App 使用 Moss 桌面 token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
+- 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级
+- App 保持打开时修改 `~/.moss/settings.json`，检查 focus 或重新可见后主题和背景动态更新；实现了前台轮询的 App 还要检查最多 5 秒内更新
+- 检查 appearance 刷新没有泄露完整配置、没有并发堆积，并在卸载时清理 timer/listener
 - 依赖扩展的 App 必须在 UI 中展示扩展状态和调用错误
 - 游戏类 App 要检查开始、暂停、重开、键盘方向、屏幕方向按钮、移动端尺寸、最高分/进度保存
 
@@ -311,12 +510,13 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 
 - `mossApp.app.getInfo()` / `getVersions()`
 - `mossApp.extensions.getStatus()`
+- `mossApp.fs.readText(path)`
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - `mossApp.commands.execute(command, args)`
 - `mossApp.tools.call(name, args)`
 - `mossApp.events.on(eventName, cb)`
 
-不得使用旧全局 API，例如 `mossApp.fs`、`mossApp.agent`、`mossApp.shell`、`mossApp.document`、`mossApp.cron`、`mossApp.callTool`、`mossApp.readResource`。复杂能力必须由平台扩展提供，再通过 `commands` 或 `tools` 调用。
+除明确支持的 `mossApp.fs.readText(path)` 外，不得臆造其他文件方法。也不得使用旧全局 API，例如 `mossApp.agent`、`mossApp.shell`、`mossApp.document`、`mossApp.cron`、`mossApp.callTool`、`mossApp.readResource`。复杂能力必须由平台扩展提供，再通过 `commands` 或 `tools` 调用。
 
 ### 应用信息与版本
 
@@ -327,6 +527,13 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - 优先用它替代 `localStorage` 做持久化；`localStorage` 仅适合临时/预览态。
+
+### 文本文件读取
+
+- `mossApp.fs.readText(path)` → `{ ok: true, content }` 或 `{ ok: false, error }`
+- `path` 使用绝对路径或 `~/...`。读取用户选择或明确指定的文本文件时使用该方法；必须展示读取失败状态，不能把失败结果当作空内容。
+- 读取 `~/.moss/settings.json` 时，只解析当前功能需要的公开字段（例如 `appearance`）；不得展示、记录或转存 API Key、密码、OAuth、环境变量等其他配置。appearance 读取失败按桌面外观契约静默降级；业务文件读取失败必须展示错误状态。
+- 不得使用它读取二进制文件；不得臆造 `mossApp.fs.readFile()`、`writeFile()`、`list()` 等未开放方法。
 
 ### 扩展命令与工具
 
@@ -344,9 +551,9 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 - `name` 必须是 lowercase-kebab-case
 - `title` 简洁明确
 - `icon` 使用 SVG emoji data URI
-- 优先使用 `--bg` / `--foreground` / `--muted-foreground` / `--primary` / `--border`
+- 必须使用桌面 CSS 契约中的 `--background` / `--foreground` / `--card` / `--muted-foreground` / `--primary` / `--border` 等变量；不存在 `--bg`
 - 要有 hover / active / empty state / error state
-- 尽量兼容深浅色外观
+- 必须兼容浅色、暗色、跟随系统和运行时动态切换
 
 ## 沟通方式
 

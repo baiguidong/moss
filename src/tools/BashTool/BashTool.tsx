@@ -227,7 +227,7 @@ isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS);
 const fullInputSchema = lazySchema(() => z.strictObject({
   command: z.string().describe('The command to execute'),
   timeout: semanticNumber(z.number().optional()).describe(`Optional timeout in milliseconds (max ${getMaxTimeoutMs()})`),
-  description: z.string().optional().describe(`Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description - just describe what it does.
+  description: z.string().optional().describe(`Clear, concise description of what this command does in active voice. Write it in the user's current language. Never use words like "complex" or "risk" in the description - just describe what it does.
 
 For simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):
 - ls → "List files in current directory"

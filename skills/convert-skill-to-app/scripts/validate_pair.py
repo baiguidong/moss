@@ -45,6 +45,7 @@ HOST_API_METHOD_PATTERN = re.compile(
 HOST_API_METHODS = {
     "app": {"getInfo", "getVersions"},
     "extensions": {"getStatus"},
+    "fs": {"readText"},
     "storage": {"getItem", "setItem", "removeItem", "list"},
     "commands": {"execute"},
     "tools": {"call"},

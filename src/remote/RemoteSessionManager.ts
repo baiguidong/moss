@@ -1,4 +1,5 @@
 import type { SDKMessage } from '../entrypoints/agentSdkTypes.js'
+import type { PermissionUpdate } from '../utils/permissions/PermissionUpdateSchema.js'
 import type {
   SDKControlCancelRequest,
   SDKControlPermissionRequest,
@@ -40,7 +41,8 @@ function isSDKMessage(
 export type RemotePermissionResponse =
   | {
       behavior: 'allow'
-      updatedInput: Record<string, unknown>
+      updatedInput?: Record<string, unknown>
+      updatedPermissions?: PermissionUpdate[]
     }
   | {
       behavior: 'deny'
@@ -268,7 +270,10 @@ export class RemoteSessionManager {
         response: {
           behavior: result.behavior,
           ...(result.behavior === 'allow'
-            ? { updatedInput: result.updatedInput }
+            ? {
+                updatedInput: result.updatedInput,
+                updatedPermissions: result.updatedPermissions,
+              }
             : { message: result.message }),
         },
       },

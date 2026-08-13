@@ -155,6 +155,10 @@ export type DesktopSettings = {
     python?: boolean;
     git?: boolean;
   };
+  appearance: {
+    themeMode: 'dark' | 'light' | 'system';
+    cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme';
+  };
   mcp?: {
     version?: number;
     servers?: Record<string, {
@@ -174,6 +178,7 @@ export type DesktopSettings = {
   settingsExists: boolean;
   settingsLoaded: boolean;
   settingsParseError: string;
+  appearancePersisted?: boolean;
   skippedSessionCount?: number;
   coordinatorMode?: boolean;
 };

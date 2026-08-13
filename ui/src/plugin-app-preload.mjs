@@ -8,6 +8,9 @@ const mossApp = {
   extensions: {
     getStatus: () => ipcRenderer.invoke('plugin-app:extensions:get-status'),
   },
+  fs: {
+    readText: (path) => ipcRenderer.invoke('fs:readText', { path }),
+  },
   storage: {
     getItem: (key) => ipcRenderer.invoke('plugin-app:storage:get', { key }),
     setItem: (key, value) => ipcRenderer.invoke('plugin-app:storage:set', { key, value }),

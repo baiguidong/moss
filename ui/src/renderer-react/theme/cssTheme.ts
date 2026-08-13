@@ -33,7 +33,8 @@ export const applyCssTheme = (css: string | null): void => {
 };
 
 /**
- * Get stored CSS theme ID from localStorage
+ * Read the legacy/startup cache. The persisted source of truth is
+ * appearance.cssThemeId in ~/.moss/settings.json.
  */
 export const getStoredThemeId = (): string | null => {
   try {
@@ -44,7 +45,7 @@ export const getStoredThemeId = (): string | null => {
 };
 
 /**
- * Store CSS theme ID to localStorage
+ * Keep a synchronous startup cache for the next renderer launch.
  */
 export const setStoredThemeId = (themeId: string): void => {
   try {

@@ -1517,15 +1517,15 @@ export function SettingsView({
                   >
                     <SettingsGroup>
                       <SettingsRow
-                        title="跳过所有权限确认"
-                        description="打开后，工具调用不再弹确认框，直接使用 allow-all / bypass 模式。"
+                        title="跳过常规权限确认"
+                        description="使用 CLI bypass 模式。普通操作直接执行，显式确认规则和敏感路径安全检查仍会询问。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
                             checked={Boolean(settingsDraft.bypassPermissions)}
                             onCheckedChange={(checked) => updateSetting('bypassPermissions', checked)}
-                            label="跳过所有权限确认"
+                            label="跳过常规权限确认"
                           />
                         </div>
                       </SettingsRow>

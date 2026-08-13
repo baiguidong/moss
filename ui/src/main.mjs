@@ -66,6 +66,18 @@ import {
 } from './filemanage/main/index.mjs';
 import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
+import {
+  DEFAULT_APPEARANCE,
+  hasPersistedAppearance,
+  normalizeAppearance,
+} from './appearance-settings.mjs';
+import { resolveUserPath } from './file-path-utils.mjs';
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  buildToolPermissionDialog,
+  resolveToolPermissionDialogResponse,
+  shouldAutoApproveToolPermission,
+} from './tool-permission-policy.mjs';
 
 // 注册自定义协议 (必须在 app.whenReady 之前)
 protocol.registerSchemesAsPrivileged([
@@ -141,7 +153,6 @@ const SKILL_COPY_SKIP_NAMES = new Set([
 ]);
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
-const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
@@ -177,6 +188,9 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     node: true,
     python: true,
     git: true,
+  },
+  appearance: {
+    ...DEFAULT_APPEARANCE,
   },
   mcp: {
     version: 1,
@@ -804,6 +818,8 @@ function normalizeDesktopSettings(input, existing = {}) {
           : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.git,
   };
 
+  result.appearance = normalizeAppearance(source.appearance, result.appearance);
+
   if (source.logRotationMaxSize !== undefined) {
     let size = Number.parseInt(String(source.logRotationMaxSize), 10);
     if (Number.isFinite(size) && size >= 1024 * 1024) {
@@ -839,6 +855,7 @@ function loadDesktopSettings() {
     exists: false,
     loaded: false,
     parseError: '',
+    appearancePersisted: false,
     value: { ...DEFAULT_DESKTOP_SETTINGS },
   };
 
@@ -850,6 +867,7 @@ function loadDesktopSettings() {
     result.exists = true;
     const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
     const parsed = JSON.parse(raw);
+    result.appearancePersisted = hasPersistedAppearance(parsed);
     // 从 env 中提取 url 和 apiKey
     const env = parsed && parsed.env && typeof parsed.env === 'object' ? parsed.env : {};
     const urlFromEnv = normalizeAnthropicBaseUrl(
@@ -895,6 +913,7 @@ function getDesktopSettingsPayload(extra = {}) {
     settingsExists: desktopSettingsState.exists,
     settingsLoaded: desktopSettingsState.loaded,
     settingsParseError: desktopSettingsState.parseError,
+    appearancePersisted: desktopSettingsState.appearancePersisted,
     ...extra,
   };
 }
@@ -948,6 +967,7 @@ function saveDesktopSettings(nextSettings) {
     exists: true,
     loaded: true,
     parseError: '',
+    appearancePersisted: true,
     value: normalizedSettings,
   };
   desktopSettings = normalizedSettings;
@@ -1631,7 +1651,10 @@ function createRemoteDirectRuntime({
             onPermissionRequest: async (request, requestId) => {
               try {
                 const decision = normalizePermissionDecision(
-                  await onPermissionRequest?.(request.tool_name, request.input),
+                  await onPermissionRequest?.(request.tool_name, request.input, {
+                    suggestions: request.permission_suggestions,
+                    blockedPath: request.blocked_path,
+                  }),
                 );
                 manager.respondToPermissionRequest(requestId, decision);
               } catch (error) {
@@ -1723,17 +1746,20 @@ function refreshDesktopSettings(payload = {}) {
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
 
   let skippedSessionCount = 0;
-  for (const sessionRecord of sessions.values()) {
-    if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
-      sessionRecord.agentMode = getDesktopAgentMode(nextSettings);
-      sessionRecord.remoteWorkspace = getRemoteDirectWorkspace(nextSettings) || null;
+  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance');
+  if (affectsAgentRuntime) {
+    for (const sessionRecord of sessions.values()) {
+      if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
+        sessionRecord.agentMode = getDesktopAgentMode(nextSettings);
+        sessionRecord.remoteWorkspace = getRemoteDirectWorkspace(nextSettings) || null;
+      }
+      if (!sessionRecord.runtime) continue;
+      if (sessionRecord.busy) {
+        skippedSessionCount += 1;
+        continue;
+      }
+      disposeRuntime(sessionRecord);
     }
-    if (!sessionRecord.runtime) continue;
-    if (sessionRecord.busy) {
-      skippedSessionCount += 1;
-      continue;
-    }
-    disposeRuntime(sessionRecord);
   }
 
   emitToRenderer('agent:settings-changed', getDesktopSettingsPayload({
@@ -2764,6 +2790,9 @@ function normalizePermissionDecision(decision) {
     return {
       behavior: 'allow',
       ...(isPlainObject(decision.updatedInput) ? { updatedInput: decision.updatedInput } : {}),
+      ...(Array.isArray(decision.updatedPermissions)
+        ? { updatedPermissions: decision.updatedPermissions }
+        : {}),
     };
   }
 
@@ -2826,7 +2855,7 @@ function requestAskUserQuestion(sessionRecord, input) {
   });
 }
 
-async function requestToolPermission(sessionRecord, toolName, input) {
+async function requestToolPermission(sessionRecord, toolName, input, request = {}) {
   if (toolName === ASK_USER_QUESTION_TOOL_NAME) {
     emitSessionHistory(sessionRecord);
     emitToRenderer('agent:permission', {
@@ -2839,9 +2868,15 @@ async function requestToolPermission(sessionRecord, toolName, input) {
     return requestAskUserQuestion(sessionRecord, input);
   }
 
-  const toolLabel = toolName || 'Tool';
-  const detailParts = [];
-  if (input) detailParts.push(`输入:\n${JSON.stringify(input, null, 2)}`);
+  if (shouldAutoApproveToolPermission({
+    bypassPermissions: desktopSettings.bypassPermissions,
+    toolName,
+  })) {
+    return { behavior: 'allow' };
+  }
+
+  const suggestions = Array.isArray(request?.suggestions) ? request.suggestions : [];
+  const dialogCopy = buildToolPermissionDialog(toolName, input, suggestions);
 
   emitToRenderer('agent:permission', {
     sessionId: sessionRecord.id,
@@ -2854,18 +2889,16 @@ async function requestToolPermission(sessionRecord, toolName, input) {
   const dialogTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   const response = await dialog.showMessageBox(dialogTarget, {
     type: 'question',
-    buttons: ['允许', '拒绝'],
+    buttons: dialogCopy.buttons,
     defaultId: 0,
-    cancelId: 1,
+    cancelId: dialogCopy.buttons.length - 1,
     noLink: true,
-    title: '工具权限确认',
-    message: `${toolLabel} 请求执行`,
-    detail: detailParts.join('\n\n') || 'Agent 请求工具执行权限。',
+    title: dialogCopy.title,
+    message: dialogCopy.message,
+    detail: dialogCopy.detail,
   });
 
-  return response.response === 0
-    ? { behavior: 'allow' }
-    : { behavior: 'deny', message: 'Denied by user' };
+  return resolveToolPermissionDialogResponse(response.response, dialogCopy, suggestions);
 }
 
 function emitAppsChanged(payload = {}) {
@@ -3863,8 +3896,8 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     }
   }
 
-  const onPermissionRequest = async (toolName, input) => {
-    return requestToolPermission(sessionRecord, toolName, input);
+  const onPermissionRequest = async (toolName, input, request) => {
+    return requestToolPermission(sessionRecord, toolName, input, request);
   };
 
   if (sessionRecord.agentMode === 'remote-direct') {
@@ -3928,8 +3961,8 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
-      onPermissionRequest: async (toolName, input) => {
-        return requestToolPermission(sessionRecord, toolName, input);
+      onPermissionRequest: async (toolName, input, request) => {
+        return requestToolPermission(sessionRecord, toolName, input, request);
       },
       onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
     });
@@ -5618,14 +5651,15 @@ ipcMain.handle('fs:getAppIcon', async () => {
 
 ipcMain.handle('fs:readText', async (event, { path: filePath }) => {
   try {
-    const stat = await fsp.stat(filePath);
+    const resolvedPath = resolveUserPath(filePath, os.homedir());
+    const stat = await fsp.stat(resolvedPath);
     if (!stat.isFile()) {
       return { ok: false, error: 'Not a file' };
     }
     if (stat.size > MAX_READ_TEXT_BYTES) {
       return { ok: false, error: 'File is too large' };
     }
-    const content = await fsp.readFile(filePath, 'utf-8');
+    const content = await fsp.readFile(resolvedPath, 'utf-8');
     return { ok: true, content };
   } catch (err) {
     return { ok: false, error: err.message };

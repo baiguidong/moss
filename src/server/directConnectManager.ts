@@ -480,7 +480,10 @@ export class DirectConnectSessionManager {
         response: {
           behavior: result.behavior,
           ...(result.behavior === 'allow'
-            ? { updatedInput: result.updatedInput }
+            ? {
+                updatedInput: result.updatedInput,
+                updatedPermissions: result.updatedPermissions,
+              }
             : { message: result.message }),
         },
       },

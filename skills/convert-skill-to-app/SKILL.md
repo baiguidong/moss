@@ -19,6 +19,8 @@ This toolkit owns only:
 
 The App Builder owns `app.moss.json`, `package.json`, `src/`, `public/`, `dist/`, `build/`, product UI decisions, Host API wiring, build, preview, publish, update, and App version reporting. Never create or edit those App-owned paths while following this toolkit. Report required App changes to the App Builder through the analysis and validation results.
 
+The current read-only file Host method is `mossApp.fs.readText(path)`. Do not propose other `mossApp.fs` methods.
+
 ## Inputs
 
 Receive or resolve:

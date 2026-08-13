@@ -9,7 +9,7 @@ process.env.CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE = 'true'
 
 import { randomUUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
-import { getEmptyToolPermissionContext, setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult } from './Tool.js'
+import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
@@ -21,8 +21,18 @@ import { getGlobalConfig } from './utils/config.js'
 import { getAccountInformation, getAnthropicApiKeyWithSource, getAuthTokenSource } from './utils/auth.js'
 import { getSettings_DEPRECATED } from './utils/settings/settings.js'
 import type { SDKMessage } from './entrypoints/agentSdkTypes.js'
-import type { CanUseToolFn } from './utils/permissions/permissions.js'
+import {
+  hasPermissionsToUseTool,
+  type CanUseToolFn,
+} from './utils/permissions/permissions.js'
 import type { PermissionDecision } from './utils/permissions/PermissionResult.js'
+import {
+  applyPermissionUpdates,
+  persistPermissionUpdates,
+} from './utils/permissions/PermissionUpdate.js'
+import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchema.js'
+import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
+import { executePermissionRequestHooks } from './utils/hooks.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
@@ -183,8 +193,17 @@ export type PermissionMode = 'allow-all' | 'default'
 
 export type DesktopPermissionDecision =
   | boolean
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+  | {
+      behavior: 'allow'
+      updatedInput?: Record<string, unknown>
+      updatedPermissions?: PermissionUpdate[]
+    }
   | { behavior: 'deny'; message?: string }
+
+export type DesktopPermissionRequest = {
+  suggestions?: PermissionUpdate[]
+  blockedPath?: string
+}
 
 async function defaultDesktopPermissionRequest(
   tool: string,
@@ -206,12 +225,13 @@ export interface ClaudeSessionOptions {
   apiKey?: string
   /** 系统提示词（追加到默认之后） */
   appendSystemPrompt?: string
-  /** 权限模式：'allow-all' 跳过所有确认，'default' 遵循 settings */
+  /** 权限模式：'allow-all' 映射 CLI bypassPermissions，'default' 遵循 CLI settings */
   permissionMode?: PermissionMode
-  /** 自定义权限回调，permissionMode='default' 时生效 */
+  /** CLI 权限引擎最终返回 ask 时调用的桌面确认回调 */
   onPermissionRequest?: (
     tool: string,
     input: unknown,
+    request: DesktopPermissionRequest,
   ) => Promise<DesktopPermissionDecision>
   /** 最大轮次 */
   maxTurns?: number
@@ -243,6 +263,7 @@ type ResolvedClaudeSessionOptions = {
   onPermissionRequest: (
     tool: string,
     input: unknown,
+    request: DesktopPermissionRequest,
   ) => Promise<DesktopPermissionDecision>
   maxTurns: number
   thinkingConfig: ThinkingConfig
@@ -282,10 +303,11 @@ function normalizeAnthropicBaseUrl(value: string | undefined): string | undefine
 
 function normalizeDesktopPermissionDecision(
   decision: DesktopPermissionDecision,
+  fallbackInput: Record<string, unknown>,
 ): PermissionDecision {
   if (typeof decision === 'boolean') {
     return decision
-      ? { behavior: 'allow' as const }
+      ? { behavior: 'allow' as const, updatedInput: fallbackInput }
       : {
           behavior: 'deny' as const,
           message: 'Denied by user',
@@ -299,7 +321,7 @@ function normalizeDesktopPermissionDecision(
   if (decision && decision.behavior === 'allow') {
     return {
       behavior: 'allow' as const,
-      updatedInput: decision.updatedInput,
+      updatedInput: decision.updatedInput ?? fallbackInput,
     }
   }
 
@@ -314,6 +336,64 @@ function normalizeDesktopPermissionDecision(
       reason: 'desktop_permission_response',
     },
   }
+}
+
+async function runDesktopPermissionRequestHooks(
+  toolName: string,
+  toolUseID: string,
+  input: Record<string, unknown>,
+  context: ToolUseContext,
+  suggestions: PermissionUpdate[] | undefined,
+): Promise<PermissionDecision | null> {
+  const permissionMode = context.getAppState().toolPermissionContext.mode
+  for await (const hookResult of executePermissionRequestHooks(
+    toolName,
+    toolUseID,
+    input,
+    context,
+    permissionMode,
+    suggestions,
+    context.abortController.signal,
+  )) {
+    const hookDecision = hookResult.permissionRequestResult
+    if (!hookDecision) continue
+
+    if (hookDecision.behavior === 'allow') {
+      const permissionUpdates = hookDecision.updatedPermissions ?? []
+      if (permissionUpdates.length > 0) {
+        persistPermissionUpdates(permissionUpdates)
+        context.setAppState(prev => ({
+          ...prev,
+          toolPermissionContext: applyPermissionUpdates(
+            prev.toolPermissionContext,
+            permissionUpdates,
+          ),
+        }))
+      }
+      return {
+        behavior: 'allow',
+        updatedInput: hookDecision.updatedInput ?? input,
+        userModified: false,
+        decisionReason: {
+          type: 'hook',
+          hookName: 'PermissionRequest',
+        },
+      }
+    }
+
+    if (hookDecision.interrupt) context.abortController.abort()
+    return {
+      behavior: 'deny',
+      message:
+        hookDecision.message || 'Permission denied by PermissionRequest hook',
+      decisionReason: {
+        type: 'hook',
+        hookName: 'PermissionRequest',
+      },
+    }
+  }
+
+  return null
 }
 
 function buildSessionApiOverrides(
@@ -519,23 +599,68 @@ export class ClaudeSession {
     // keep it stable (project identity must not move to a worktree root).
     this.#projectRoot = this.#projectRoot ?? bootstrapResult.projectRoot
 
-    // 权限上下文
-    const permissionContext = {
-      ...getEmptyToolPermissionContext(),
-      mode: permissionMode === 'allow-all' ? ('bypassPermissions' as const) : ('default' as const),
+    // Use the same settings/rule loader as the CLI so user, project, and local
+    // permission rules behave identically in embedded desktop sessions.
+    const permissionInit = await initializeToolPermissionContext({
+      allowedToolsCli: [],
+      disallowedToolsCli: [],
+      permissionMode:
+        permissionMode === 'allow-all' ? 'bypassPermissions' : 'default',
+      allowDangerouslySkipPermissions: permissionMode === 'allow-all',
+      addDirs: [],
+    })
+    const permissionContext = permissionInit.toolPermissionContext
+    for (const warning of permissionInit.warnings) {
+      logForDiagnosticsNoPII('warn', 'local_agent_permission_init_warning', {
+        warning,
+      })
     }
 
     // 权限回调
-    const canUseTool: CanUseToolFn = async (tool, input, _ctx, _msg, _id, forceDecision) => {
-      if (forceDecision) return forceDecision
+    const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
+      const permissionDecision =
+        forceDecision ??
+        (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
+
       if (
-        permissionMode === 'allow-all' &&
-        !tool.requiresUserInteraction?.()
+        permissionDecision.behavior === 'allow' ||
+        permissionDecision.behavior === 'deny'
       ) {
-        return { behavior: 'allow' as const }
+        return permissionDecision
       }
-      const decision = await onPermissionRequest(tool.name, input)
-      return normalizeDesktopPermissionDecision(decision)
+
+      const requestInput = permissionDecision.updatedInput ?? input
+      const hookDecision = await runDesktopPermissionRequestHooks(
+        tool.name,
+        id,
+        requestInput,
+        ctx,
+        permissionDecision.suggestions,
+      )
+      if (hookDecision) return hookDecision
+
+      const decision = await onPermissionRequest(tool.name, requestInput, {
+        suggestions: permissionDecision.suggestions,
+        blockedPath: permissionDecision.blockedPath,
+      })
+
+      if (
+        decision &&
+        typeof decision !== 'boolean' &&
+        decision.behavior === 'allow' &&
+        decision.updatedPermissions?.length
+      ) {
+        persistPermissionUpdates(decision.updatedPermissions)
+        ctx.setAppState(prev => ({
+          ...prev,
+          toolPermissionContext: applyPermissionUpdates(
+            prev.toolPermissionContext,
+            decision.updatedPermissions!,
+          ),
+        }))
+      }
+
+      return normalizeDesktopPermissionDecision(decision, requestInput)
     }
 
     // AppState store（每个 session 独立）

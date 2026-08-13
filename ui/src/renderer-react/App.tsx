@@ -23,6 +23,7 @@ import {
 } from '@/lib/agent-transcript';
 import { PRESET_THEMES } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
+import { getToolPermissionNotice } from '../tool-permission-policy.mjs';
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -318,9 +319,13 @@ export default function App() {
     } catch {}
     return 'light';
   });
-  const [cssThemeId, setCssThemeId] = React.useState<string>(() => {
-    return getStoredThemeId() || 'grid-theme';
+  const [cssThemeId, setCssThemeId] = React.useState<DesktopSettings['appearance']['cssThemeId']>(() => {
+    const stored = getStoredThemeId();
+    return stored === 'default' || stored === 'grid-theme' || stored === 'dot-theme' || stored === 'gradient-theme'
+      ? stored
+      : 'grid-theme';
   });
+  const appearanceRef = React.useRef<DesktopSettings['appearance']>({ themeMode, cssThemeId });
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
@@ -490,10 +495,17 @@ export default function App() {
     return versions;
   }, []);
 
+  const applyAppearance = React.useCallback((appearance: DesktopSettings['appearance']) => {
+    appearanceRef.current = appearance;
+    setThemeMode(appearance.themeMode);
+    setCssThemeId(appearance.cssThemeId);
+  }, []);
+
   const applyDesktopSettings = React.useCallback((next: DesktopSettings) => {
     setDesktopSettings((prev) => (prev ? { ...prev, ...next } : next));
     setSettingsDraft((prev) => (prev ? { ...prev, ...next } : next));
-  }, []);
+    if (next.appearance) applyAppearance(next.appearance);
+  }, [applyAppearance]);
 
   // Per-session composer drafts: text + attachments survive session switches
   // (borrowed from sudowork's useSendBoxDraft). Snapshotted on switch, so live
@@ -663,6 +675,7 @@ export default function App() {
     const resolved = resolveTheme(themeMode);
     root.setAttribute('data-theme', resolved);
     root.style.colorScheme = resolved;
+    // Synchronous startup cache; ~/.moss/settings.json is the persisted source of truth.
     localStorage.setItem('ui.themeMode', themeMode);
   }, [themeMode]);
 
@@ -911,7 +924,12 @@ export default function App() {
     void (async () => {
       try {
         const status = await window.agentDesktop.getStatus();
-        const nextSettings = await window.agentDesktop.getSettings();
+        let nextSettings = await window.agentDesktop.getSettings();
+        if (!nextSettings.appearancePersisted) {
+          nextSettings = await window.agentDesktop.updateSettings({
+            appearance: appearanceRef.current,
+          });
+        }
         if (!status.cliReady) {
           setBootError('缺少 cli-node.js。先在仓库根目录执行 bun run build:node。');
         }
@@ -980,9 +998,7 @@ export default function App() {
     const offPermission = window.agentDesktop.onPermission((payload) => {
       if (payload?.sessionId !== activeSessionIdRef.current) return;
       const toolName = payload?.request?.tool_name || 'Tool';
-      const notice = toolName === 'AskUserQuestion'
-        ? 'Agent 正在等待你回答问题'
-        : `${toolName} 正在请求权限确认`;
+      const notice = getToolPermissionNotice(toolName);
       setPermissionNotice(notice);
       window.setTimeout(() => {
         setPermissionNotice((current) =>
@@ -1917,6 +1933,24 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
+  const saveAppearance = React.useCallback((patch: Partial<DesktopSettings['appearance']>) => {
+    const next = { ...appearanceRef.current, ...patch };
+    applyAppearance(next);
+    void window.agentDesktop.updateSettings({ appearance: next }).then((saved) => {
+      applyDesktopSettings(saved);
+    }).catch((error: any) => {
+      setSettingsNotice(error?.message || String(error));
+    });
+  }, [applyAppearance, applyDesktopSettings]);
+
+  const handleThemeModeChange = React.useCallback((mode: ThemeMode) => {
+    saveAppearance({ themeMode: mode });
+  }, [saveAppearance]);
+
+  const handleCssThemeChange = React.useCallback((id: string) => {
+    saveAppearance({ cssThemeId: id as DesktopSettings['appearance']['cssThemeId'] });
+  }, [saveAppearance]);
+
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
     await autoSaveSettings('agentMode', mode);
     // Refresh assistants list based on new mode
@@ -1932,9 +1966,9 @@ export default function App() {
       autoSaveImageSettings={autoSaveImageSettings}
       autoSaveVoiceSettings={autoSaveVoiceSettings}
       themeMode={themeMode}
-      setThemeMode={setThemeMode}
+      setThemeMode={handleThemeModeChange}
       cssThemeId={cssThemeId}
-      setCssThemeId={setCssThemeId}
+      setCssThemeId={handleCssThemeChange}
       buddyEnabled={isBuddyEnabled()}
       onBuddyEnabledChange={(enabled) => {
         setBuddyEnabled(enabled);
@@ -1970,7 +2004,7 @@ export default function App() {
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
             newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
             onChangeView={setActiveView}
-            onChangeTheme={setThemeMode}
+            onChangeTheme={handleThemeModeChange}
             onSelectSession={handleSelectSession}
             onLaunchApp={handleOpenEmbeddedApp}
             onNewSession={handleNewSession}
