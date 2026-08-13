@@ -11,7 +11,6 @@ import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
-import { FileManager } from '@/filemanage/FileManager';
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
@@ -2096,8 +2095,6 @@ export default function App() {
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
-          ) : activeView === 'files' ? (
-            <FileManager />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'embedded-app' && embeddedAppName ? (

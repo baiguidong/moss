@@ -1,34 +1,24 @@
 /**
- * 自定义流媒体协议 moss-media://
+ * Workspace media protocol moss-media://
  *
  * 取代「整文件 base64 IPC」方案: <img>/<video>/<audio> 直接用
  *   moss-media://local/<encodeURIComponent(绝对路径)>
  * 支持 HTTP Range 请求 -> 视频边下边播 / seek 不卡。
  *
- * 安全: 仅允许读取已登记白名单根目录(已扫描目录 + 缩略图/封面目录)下的文件,
+ * 安全: 仅允许读取已登记白名单根目录下的文件,
  * 拒绝目录穿越。
  */
 
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 
 export const MEDIA_SCHEME = 'moss-media';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
-// 始终允许的内部目录(缩略图/封面/导出)
-const ALWAYS_ALLOWED = [
-  path.join(MOSS_HOME, 'thumbnails'),
-  path.join(MOSS_HOME, 'covers'),
-  path.join(MOSS_HOME, 'exports'),
-  path.join(MOSS_HOME, 'temp'),
-];
+// 运行期登记的根目录白名单
+const allowedRoots = new Set();
 
-// 运行期登记的扫描根目录白名单
-const allowedRoots = new Set(ALWAYS_ALLOWED.map((p) => path.resolve(p)));
-
-/** 登记一个允许通过协议访问的根目录(扫描目录) */
+/** 登记一个允许通过协议访问的根目录 */
 export function allowMediaRoot(dir) {
   if (!dir) return;
   allowedRoots.add(path.resolve(dir));
@@ -56,36 +46,12 @@ function mimeFor(filePath) {
   return MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
 
-/** 把绝对路径编码为可在 <img/video/audio> 中使用的 URL */
-export function toMediaUrl(absPath) {
-  return `${MEDIA_SCHEME}://local/${encodeURIComponent(absPath)}`;
-}
-
 function decodeRequestPath(requestUrl) {
   // moss-media://local/<encoded> -> 解出绝对路径
   const u = new URL(requestUrl);
   // pathname 形如 /<encoded>; host 为 local
   let encoded = u.pathname.replace(/^\/+/, '');
   return decodeURIComponent(encoded);
-}
-
-/**
- * 在 app.whenReady 之前调用: 声明协议为特权(支持 stream / bypassCSP / 安全上下文)
- * @param {import('electron').Protocol} protocol electron.protocol
- */
-export function registerMediaScheme(protocol) {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: MEDIA_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        stream: true,
-        bypassCSP: true,
-      },
-    },
-  ]);
 }
 
 /**
@@ -193,5 +159,3 @@ function streamToWeb(nodeStream) {
     },
   });
 }
-
-export default { MEDIA_SCHEME, registerMediaScheme, installMediaProtocol, allowMediaRoot, toMediaUrl };

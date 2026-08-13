@@ -12,7 +12,6 @@ import {
   SunMedium,
   Trash2,
   X,
-  FolderOpen,
   AlarmClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,7 +39,7 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
 }
 
-export type MainView = "chat" | "files" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "apps" | "settings" | "cron" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -431,16 +430,7 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        {/* 文件管理入口 - 在 Apps 和 设置 之前 */}
         <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
-          <Button
-            variant={activeView === "files" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("files")}
-          >
-            <FolderOpen className="h-4 w-4" />
-            {!collapsed && "文件管理"}
-          </Button>
           {apps.map((app) => (
             collapsed ? (
               <button

@@ -57,13 +57,10 @@ import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs'
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
 import {
-  initFileManagerDatabase,
-  registerFileManagerIpcHandlers,
-  registerTranscribeIpcHandlers,
   MEDIA_SCHEME,
   installMediaProtocol,
   allowMediaRoot,
-} from './filemanage/main/index.mjs';
+} from './media-protocol.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import {
   DEFAULT_APPEARANCE,
@@ -4806,17 +4803,12 @@ app.whenReady().then(async () => {
     fsp,
   });
 
-  // Initialize file manager database and IPC handlers
+  // Initialize custom protocols used by workspace media and plugin apps.
   try {
     installMediaProtocol(protocol);
     installPluginAppProtocol(protocol);
-    const db = new DatabaseSync(SESSION_DB_PATH);
-    initFileManagerDatabase(db);
-    registerFileManagerIpcHandlers(ipcMain, db);
-    registerTranscribeIpcHandlers(ipcMain, db);
-    mossLog('info', 'app', 'File manager module initialized');
   } catch (err) {
-    mossLog('error', 'app', 'Failed to initialize file manager', { error: err.message });
+    mossLog('error', 'app', 'Failed to initialize custom protocols', { error: err.message });
   }
 
   mossLog('info', 'app', 'Application starting', { version: app.getVersion() });

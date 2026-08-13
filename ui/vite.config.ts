@@ -29,7 +29,4 @@ export default defineConfig({
       external: [],
     },
   },
-  optimizeDeps: {
-    include: ['wavesurfer.js'],
-  },
 });

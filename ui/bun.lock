@@ -48,7 +48,6 @@
         "tailwind-merge": "^3.3.1",
         "turndown": "^7.2.4",
         "tw-animate-css": "1.3.3",
-        "wavesurfer.js": "^7.12.7",
         "xlsx-republish": "^0.20.3",
         "xml-formatter": "^3.7.0",
         "yauzl": "^3.2.1",
@@ -1553,7 +1552,6 @@
 
     "w3c-keyname": ["w3c-keyname@2.2.8", "https://registry.npmmirror.com/w3c-keyname/-/w3c-keyname-2.2.8.tgz", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
 
-    "wavesurfer.js": ["wavesurfer.js@7.12.7", "https://registry.npmmirror.com/wavesurfer.js/-/wavesurfer.js-7.12.7.tgz", {}, "sha512-TIe7hB6OCZysNOZ2cn2NR8Qpko22POWel6rauNcqOammFoH65NYQUM35unNLLMIlUMVYvjJ6w/TTl/G/m+w0nA=="],
 
     "wcwidth": ["wcwidth@1.0.1", "https://registry.npmmirror.com/wcwidth/-/wcwidth-1.0.1.tgz", { "dependencies": { "defaults": "^1.0.3" } }, "sha512-XHPEwS0q6TaxcvG85+8EYkbiCux2XtWG2mkc47Ng2A77BQu9+DqIOJldST4HgPkuea7dvKSj5VgX3P1d4rW8Tg=="],
 

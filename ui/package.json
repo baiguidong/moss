@@ -29,8 +29,6 @@
     },
     "icon": "build/icon",
     "asarUnpack": [
-      "**/node_modules/ffmpeg-static/**",
-      "**/node_modules/ffprobe-static/**",
       "**/node_modules/sharp/**",
       "**/node_modules/@img/**"
     ],
@@ -170,7 +168,6 @@
     "tailwind-merge": "^3.3.1",
     "turndown": "^7.2.4",
     "tw-animate-css": "1.3.3",
-    "wavesurfer.js": "^7.12.7",
     "xlsx-republish": "^0.20.3",
     "xml-formatter": "^3.7.0",
     "yauzl": "^3.2.1"
