@@ -7,7 +7,6 @@ import {
   Image as ImageIcon,
   Link2,
   MessageSquare,
-  Mic,
   Monitor,
   MoonStar,
   Palette,
@@ -31,7 +30,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'voice-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -39,7 +38,6 @@ type SettingsViewProps = {
   settingsNotice: string;
   autoSaveSettings: (key: keyof DesktopSettings, value: DesktopSettings[keyof DesktopSettings]) => Promise<void>;
   autoSaveImageSettings: (image: DesktopSettings['image']) => Promise<void>;
-  autoSaveVoiceSettings: (voice: DesktopSettings['voice']) => Promise<void>;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
   cssThemeId: string;
@@ -121,13 +119,6 @@ const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: 'gpt-image-1',
 };
 
-const DEFAULT_VOICE_SETTINGS: DesktopSettings['voice'] = {
-  provider: 'minimax',
-  baseURL: '',
-  apiKey: '',
-  model: '',
-};
-
 const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
   enabled: true,
   compactEnabled: true,
@@ -185,13 +176,6 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: ImageIcon,
     iconGradientClassName: 'from-pink-400 to-rose-600',
     keywords: ['图片模型', 'image', 'provider', 'api', 'key', 'url'],
-  },
-  {
-    id: 'voice-model',
-    title: '语音模型',
-    icon: Mic,
-    iconGradientClassName: 'from-indigo-400 to-blue-600',
-    keywords: ['语音模型', '语音', 'voice', 'asr', 'stt', '转写', 'speech', 'provider', 'api', 'key', 'url'],
   },
   {
     id: 'prompt',
@@ -1068,7 +1052,6 @@ export function SettingsView({
   settingsNotice,
   autoSaveSettings,
   autoSaveImageSettings,
-  autoSaveVoiceSettings,
   themeMode,
   setThemeMode,
   cssThemeId,
@@ -1088,7 +1071,6 @@ export function SettingsView({
     mcp: null,
     'text-model': null,
     'image-model': null,
-    'voice-model': null,
     prompt: null,
     'im-adapter': null,
     buddy: null,
@@ -1104,7 +1086,6 @@ export function SettingsView({
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
-  const voiceDraft = settingsDraft?.voice || DEFAULT_VOICE_SETTINGS;
   const sessionMemoryDraft = {
     ...DEFAULT_SESSION_MEMORY_SETTINGS,
     ...(settingsDraft?.sessionMemory || {}),
@@ -1203,15 +1184,6 @@ export function SettingsView({
       ...patch,
     };
     updateSetting('sessionMemory', nextSessionMemory);
-  };
-
-  const updateVoiceSettings = (patch: Partial<DesktopSettings['voice']>) => {
-    const nextVoice = {
-      ...voiceDraft,
-      ...patch,
-    };
-    setSettingsDraft((current) => (current ? { ...current, voice: nextVoice } : current));
-    void autoSaveVoiceSettings(nextVoice);
   };
 
   const copyText = (value: string) => {
@@ -1826,82 +1798,6 @@ export function SettingsView({
                           value={imageDraft.model || ''}
                           onChange={(event) => updateImageSettings({ model: event.target.value })}
                           placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[imageDraft.provider ?? 'minimax'] ?? 'gpt-image-1'}
-                        />
-                      </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
-
-                {visibleSections.some((section) => section.id === 'voice-model') ? (
-                  <SettingsSection
-                    id="voice-model"
-                    title="语音模型"
-                    sectionRef={(element) => {
-                      sectionRefs.current['voice-model'] = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="语音厂商"
-                        description="配置后备忘录支持语音输入,留空则仅支持文字输入。"
-                        controlClassName="sm:w-[180px]"
-                      >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={voiceDraft.provider ?? 'minimax'}
-                          onChange={(event) => updateVoiceSettings({ provider: event.target.value })}
-                        >
-                          <option value="minimax">MiniMax</option>
-                          <option value="openai">OpenAI 兼容</option>
-                        </select>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="API URL"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={voiceDraft.baseURL || ''}
-                          onChange={(event) => updateVoiceSettings({ baseURL: event.target.value })}
-                          placeholder="https://api.minimaxi.com/v1/audio/transcriptions"
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="API Key"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <div className="flex w-full gap-2">
-                          <Input
-                            type="password"
-                            className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
-                            value={voiceDraft.apiKey || ''}
-                            onChange={(event) => updateVoiceSettings({ apiKey: event.target.value })}
-                            placeholder="sk-..."
-                          />
-                          {voiceDraft.apiKey ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-                              onClick={() => copyText(voiceDraft.apiKey || '')}
-                            >
-                              复制
-                            </Button>
-                          ) : null}
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="语音模型"
-                        controlClassName="sm:w-[280px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={voiceDraft.model || ''}
-                          onChange={(event) => updateVoiceSettings({ model: event.target.value })}
-                          placeholder="whisper-1"
                         />
                       </SettingsRow>
                     </SettingsGroup>

@@ -64,7 +64,6 @@ import {
   installMediaProtocol,
   allowMediaRoot,
 } from './filemanage/main/index.mjs';
-import { initAiMemoDatabase, registerAiMemoIpcHandlers } from './aimemo/main/index.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import {
   DEFAULT_APPEARANCE,
@@ -168,12 +167,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   image: {
     provider: 'minimax',
     url: 'https://api.minimaxi.com/v1/image_generation',
-    apiKey: '',
-    model: '',
-  },
-  voice: {
-    provider: 'minimax',
-    baseURL: '',
     apiKey: '',
     model: '',
   },
@@ -676,35 +669,6 @@ function normalizeDesktopSettings(input, existing = {}) {
         : typeof existingImage.model === 'string'
           ? existingImage.model
           : DEFAULT_DESKTOP_SETTINGS.image.model,
-  };
-
-  const sourceVoice = source.voice && typeof source.voice === 'object' ? source.voice : {};
-  const existingVoice = result.voice && typeof result.voice === 'object' ? result.voice : {};
-  result.voice = {
-    provider:
-      typeof sourceVoice.provider === 'string'
-        ? sourceVoice.provider.trim()
-        : typeof existingVoice.provider === 'string'
-          ? existingVoice.provider
-          : DEFAULT_DESKTOP_SETTINGS.voice.provider,
-    baseURL:
-      typeof sourceVoice.baseURL === 'string'
-        ? sourceVoice.baseURL.trim()
-        : typeof existingVoice.baseURL === 'string'
-          ? existingVoice.baseURL
-          : DEFAULT_DESKTOP_SETTINGS.voice.baseURL,
-    apiKey:
-      typeof sourceVoice.apiKey === 'string'
-        ? sourceVoice.apiKey.trim()
-        : typeof existingVoice.apiKey === 'string'
-          ? existingVoice.apiKey
-          : DEFAULT_DESKTOP_SETTINGS.voice.apiKey,
-    model:
-      typeof sourceVoice.model === 'string'
-        ? sourceVoice.model.trim()
-        : typeof existingVoice.model === 'string'
-          ? existingVoice.model
-          : DEFAULT_DESKTOP_SETTINGS.voice.model,
   };
 
   if (typeof source.remoteDirectServerUrl === 'string') {
@@ -4850,8 +4814,6 @@ app.whenReady().then(async () => {
     initFileManagerDatabase(db);
     registerFileManagerIpcHandlers(ipcMain, db);
     registerTranscribeIpcHandlers(ipcMain, db);
-    initAiMemoDatabase(db);
-    registerAiMemoIpcHandlers(ipcMain, db);
     mossLog('info', 'app', 'File manager module initialized');
   } catch (err) {
     mossLog('error', 'app', 'Failed to initialize file manager', { error: err.message });

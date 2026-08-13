@@ -12,7 +12,6 @@ import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { FileManager } from '@/filemanage/FileManager';
-import { AiMemo } from '@/aimemo/AiMemo';
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
@@ -1878,14 +1877,6 @@ export default function App() {
     setActiveView('chat');
   }, [navigateToHome, createAndOpenSession, installedAssistants]);
 
-  const handleRunMemoTask = React.useCallback(async (prompt: string, title: string): Promise<string | null> => {
-    const sessionId = await createAndOpenSession(`备忘任务: ${title}`);
-    if (!sessionId) return null;
-    setActiveView('chat');
-    await window.agentDesktop.send({ sessionId, prompt });
-    return sessionId;
-  }, [createAndOpenSession]);
-
   const handleDeleteApp = React.useCallback(async (name: string) => {
     await window.agentDesktop.deleteApp({ name });
     setVersionsByApp((prev) => {
@@ -1924,15 +1915,6 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
-  const autoSaveVoiceSettings = React.useCallback(async (voice: DesktopSettings['voice']) => {
-    try {
-      const saved = await window.agentDesktop.updateSettings({ voice });
-      applyDesktopSettings(saved);
-    } catch (error: any) {
-      setSettingsNotice(error?.message || String(error));
-    }
-  }, [applyDesktopSettings]);
-
   const saveAppearance = React.useCallback((patch: Partial<DesktopSettings['appearance']>) => {
     const next = { ...appearanceRef.current, ...patch };
     applyAppearance(next);
@@ -1964,7 +1946,6 @@ export default function App() {
       settingsNotice={settingsNotice}
       autoSaveSettings={autoSaveSettings}
       autoSaveImageSettings={autoSaveImageSettings}
-      autoSaveVoiceSettings={autoSaveVoiceSettings}
       themeMode={themeMode}
       setThemeMode={handleThemeModeChange}
       cssThemeId={cssThemeId}
@@ -2117,8 +2098,6 @@ export default function App() {
             )
           ) : activeView === 'files' ? (
             <FileManager />
-          ) : activeView === 'memos' ? (
-            <AiMemo onRunTaskWithAgent={handleRunMemoTask} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'embedded-app' && embeddedAppName ? (

@@ -137,12 +137,6 @@ export type DesktopSettings = {
     apiKey: string;
     model: string;
   };
-  voice: {
-    provider: string;
-    baseURL: string;
-    apiKey: string;
-    model: string;
-  };
   sessionMemory?: {
     enabled?: boolean;
     compactEnabled?: boolean;

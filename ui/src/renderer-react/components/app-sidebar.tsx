@@ -13,7 +13,6 @@ import {
   Trash2,
   X,
   FolderOpen,
-  NotebookPen,
   AlarmClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,7 +40,7 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
 }
 
-export type MainView = "chat" | "files" | "apps" | "settings" | "memos" | "cron" | "embedded-app";
+export type MainView = "chat" | "files" | "apps" | "settings" | "cron" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -468,14 +467,6 @@ export function AppSidebar({
           >
             <AlarmClock className="h-4 w-4" />
             {!collapsed && "定时任务"}
-          </Button>
-          <Button
-            variant={activeView === "memos" ? "secondary" : "ghost"}
-            className={cn("rounded-xl mt-2", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("memos")}
-          >
-            <NotebookPen className="h-4 w-4" />
-            {!collapsed && "备忘录"}
           </Button>
         </div>
 
