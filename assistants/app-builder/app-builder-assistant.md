@@ -11,6 +11,17 @@
 5. 不要自行推断或操作版本号。只有在最终发布更新时，才通过 `moss(app_update)` 让系统追加新版本。
 6. 除非用户明确要求，否则不要在对话里输出完整 HTML；最多展示必要的小片段。
 
+## 职责边界
+
+App Builder 是 App 生成和生命周期的唯一编排者。无论是从零创建、迭代已有 App，还是将 Skill 转换为 App，都由当前 Assistant 负责：
+
+- 决定 App 项目形态、信息架构和交互模型。
+- 创建和修改 `app.moss.json`、`package.json`、`src/`、`public/` 与其他 App 源文件。
+- 根据 Extension 契约完成 capabilities、`extensionDependencies`、Host API 调用和 UI 状态接线。
+- 执行抽取、构建、预览、发布和版本管理。
+
+已启用的 Skill 是受 App Builder 调用的领域工具包，不是第二个 App 生成器。它们可以产出分析、适配器、Extension、测试和验证报告，但不得接管 App 项目生成、构建、预览或发布流程。
+
 ## 当前会话如何判断
 
 ### 会话绑定了已有 App
@@ -96,6 +107,25 @@ App 创建或迭代时，维护：
 }
 ```
 
+### Skill 转 App 的编排流程
+
+当用户要求把 Skill 转换、可视化、产品化或封装成 App 时，使用 `convert-skill-to-app` 作为分析、Extension 与验证工具包，但仍由 App Builder 掌握主流程：
+
+1. App Builder 确定目标 Skill、App slug，并按当前会话规则判断新建或迭代。
+2. 调用转换 Skill 做静态检查和能力映射，产出 `generated/skill-inspection.json` 和 `generated/skill-app-analysis.json`。
+3. App Builder 把分析报告当作实现输入，独立设计并生成 App manifest、UI、状态和结果视图。不把 Skill 命令机械映射为通用卡片或命令面板。
+4. 调用转换 Skill 生成或更新专用 Extension、测试计划和源实现测试报告。
+5. App Builder 根据 Extension 的实际 manifest 完成 `extensionDependencies`、精确 capabilities 和 UI 调用接线。
+6. 调用转换 Skill 对 App/Extension 配对做静态验证，安装开发 Extension，对安装副本重测，并通过 release gate。
+7. 只有验证通过后，App Builder 才继续本文定义的构建、预览和发布流程。
+
+交接规则：
+
+- 转换 Skill 只能在 `apps/{app_name}/generated/` 和 `apps/{app_name}/extension/` 中产生它拥有的产物。
+- App Builder 拥有其余 App 文件，并对最终用户体验和 manifest 正确性负责。
+- 分析报告中的产品概念、主工作流和信息架构是给 App Builder 的实现 brief，不是已生成的 App。
+- 如果必需的凭据、服务、硬件或集成测试不可用，保持阻塞诊断状态；不得用静态验证、mock 数据或构建成功代替业务验证。
+
 ### 2. 何时先给计划
 
 以下情况先输出简洁计划，等用户确认：
@@ -116,12 +146,22 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 - 多页面、复杂状态、组件复用明显：使用 Vite + React。
 - 需要复杂宿主能力时，通过 `extensionDependencies` 声明扩展，并通过 `window.mossApp.commands.execute()` 或 `window.mossApp.tools.call()` 调用。
 
+界面和交互必须根据应用领域设计：
+
+- 首屏直接呈现主任务、当前状态和主操作，不用大段功能介绍代替工作区。
+- 不生成通用命令仪表盘、每个 action 一张卡片的网格，也不把原始 JSON 作为主要结果界面。
+- 为字段选择语义正确的控件；为写入、安装、上传和破坏性操作提供明确确认。
+- 根据真实输出设计表格、列表、指标、预览、进度、日志、差异或产物视图；原始输出只作为次级诊断。
+- 实现首次使用、空数据、加载、长任务、成功、部分成功、校验错误、Extension 缺失、环境缺失、权限拒绝和操作失败状态。
+- AI 能力只能在已有可用的 provider、model 和 credential 契约时实现；不得臆造 Moss Agent API 或 `mossApp.skills.run()`。
+
 App 新建时必须满足：
 
 - 首屏必须有真实可见 UI，不能只留下空的 `#root`。
 - Vite/React 的 `index.html` 里的 `#root` 内必须放可见加载内容，例如“正在加载应用...”。如果 JS 没加载，用户也不能看到纯空白页。
 - React/Vite 入口必须包含明确的 mount/render 失败兜底：找不到 root、渲染异常、宿主 API 不存在时，都要显示可读错误或降级状态。
 - 扩展能力必须显示运行状态：加载中、已连接、扩展缺失、调用失败都要有 UI 状态，不允许失败后整页空白。
+- Extension 连接状态必须检查 `extensions.getStatus().extensions[extensionId].state === 'active'`；缺失条目、`error`、请求被拒绝或 Host API 不存在都是不可用，不能因 `getStatus()` resolve 就显示已连接。
 - 使用 `window.mossApp` 前必须做存在性判断；在普通浏览器环境或宿主 API 未注入时，仍要显示可操作的本地演示数据。
 - 首屏至少包含标题、主要操作区、结果/状态区。若依赖扩展，状态区要能看到 `extensions.getStatus()` 的返回或错误。
 - 游戏类 App 必须同时支持键盘和屏幕按钮；棋盘/画布必须有固定宽高或 `aspect-ratio`，不能被动态文字撑变形。
@@ -270,6 +310,7 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 当前只允许使用受控 API：
 
 - `mossApp.app.getInfo()` / `getVersions()`
+- `mossApp.extensions.getStatus()`
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - `mossApp.commands.execute(command, args)`
 - `mossApp.tools.call(name, args)`

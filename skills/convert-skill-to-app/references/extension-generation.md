@@ -6,7 +6,7 @@
 2. Manifest contract
 3. Action registration
 4. Process and path safety
-5. App wiring
+5. App Builder wiring contract
 6. Installation
 
 ## Generated Layout
@@ -119,9 +119,9 @@ For external services:
 
 Use preview or dry-run behavior before destructive operations when the target implementation supports it. Otherwise require an explicit boolean confirmation field and render a host-visible confirmation in the App.
 
-## App Wiring
+## App Builder Wiring Contract
 
-Declare the exact installed Extension dependency:
+Return the exact installed Extension contract to the App Builder. The required App manifest fragment should have this shape:
 
 ```json
 {
@@ -136,16 +136,16 @@ Declare the exact installed Extension dependency:
 }
 ```
 
-Call the same full names from the UI. Do not use wildcard capabilities.
+Do not write this fragment or the UI calls from this toolkit. Tell the App Builder to declare the same full names in its capabilities and UI calls and never use wildcard capabilities.
 
-At startup, call `window.mossApp.extensions.getStatus()` and inspect `status.extensions[extensionId].state`. Render connected only when that exact entry is `active`; a missing entry, `error` state, rejected request, or absent Host API is unavailable and must retain its diagnostic. A resolved status request alone is not proof that the generated Extension loaded. Subscribe to `mossApp.events.on('extensions', callback)` when live status changes matter.
+Include these runtime requirements in the handoff: the App Builder must call `window.mossApp.extensions.getStatus()` at startup and inspect `status.extensions[extensionId].state`; only an exact `active` state is connected. A missing entry, `error` state, rejected request, or absent Host API is unavailable and must retain its diagnostic. A resolved status request alone is not proof that the Extension loaded. Recommend `mossApp.events.on('extensions', callback)` when live status changes matter.
 
-Use only current Host methods: `app.getInfo/getVersions`, `extensions.getStatus`, `storage.getItem/setItem/removeItem/list`, `commands.execute`, `tools.call`, and `events.on`. Do not invent aliases such as `storage.get` or `storage.set`.
+The handoff may reference only current Host methods: `app.getInfo/getVersions`, `extensions.getStatus`, `storage.getItem/setItem/removeItem/list`, `commands.execute`, `tools.call`, and `events.on`. Do not propose aliases such as `storage.get` or `storage.set`.
 
 ## Installation
 
 The current Moss build resolves dependencies from installed Extension directories under `~/.moss/extensions/<id>/<version>/`. Use `scripts/install_extension.py` from this converter Skill to preview and install the generated development Extension.
 
-Install the Extension before `moss(app_build)`, because an unsatisfied `extensionDependencies` entry causes the App build to fail. Treat App and Extension as a paired deliverable when documenting distribution.
+Complete installation before returning a release-ready handoff, because the App Builder's later `moss(app_build)` call will fail when `extensionDependencies` is unsatisfied. Treat App and Extension as a paired deliverable when reporting readiness.
 
-After installation, execute the generated test plan against the installed path. A source-only test does not prove the App will load the installed copy. When code changes, increment the Extension patch version and update the App dependency rather than silently replacing different code under the same version.
+After installation, execute the generated test plan against the installed path. A source-only test does not prove the App will load the installed copy. When code changes, increment the Extension patch version and tell the App Builder to update the App dependency rather than silently replacing different code under the same version.

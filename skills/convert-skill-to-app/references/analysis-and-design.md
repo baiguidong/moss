@@ -1,10 +1,10 @@
-# Analysis and Product Design
+# Analysis and App Implementation Brief
 
 ## Contents
 
 1. Analysis boundary
 2. Capability extraction
-3. Product modeling
+3. Product brief
 4. Input and output modeling
 5. AI-assisted behavior
 6. Coverage report
@@ -43,9 +43,9 @@ Classify implementation:
 - `manual`: safe automation is unavailable in current App/Extension constraints.
 - `excluded`: outside requested scope or unsuitable, with an explicit reason.
 
-## Product Modeling
+## Product Brief
 
-Design one product for the target domain. Avoid these generator artifacts:
+Recommend one coherent product model for the target domain so the App Builder can implement it. Record the recommendation in the report; do not create UI or App source files from this toolkit. Flag these generator artifacts for the App Builder to avoid:
 
 - A grid of unrelated cards for every command.
 - A permanent raw JSON panel as the primary result.
@@ -53,11 +53,11 @@ Design one product for the target domain. Avoid these generator artifacts:
 - Large explanatory hero text instead of the actual work surface.
 - Nested cards or decorative sections that do not support a task.
 
-Prefer the smallest navigation model that supports the workflows. A single focused workspace is better than several shallow pages. Use tabs for peer views, a stepper for ordered setup, a split view for list/detail work, and an inspector only when the domain needs persistent context.
+Recommend the smallest navigation model that supports the workflows. A single focused workspace is better than several shallow pages. Recommend tabs for peer views, a stepper for ordered setup, a split view for list/detail work, and an inspector only when the domain needs persistent context.
 
-The first viewport must expose the main task, current state, and primary action. Use domain language from the Skill, but rewrite internal implementation terms into user-facing labels.
+Specify the main task, current state, and primary action that the first viewport must expose. Supply domain language from the Skill and suggested user-facing labels instead of internal implementation terms.
 
-Create dedicated states for first use, no data, loading, long-running work, partial completion, validation errors, Extension missing, dependency missing, permission denied, operation failure, and success.
+List the required states for the App Builder: first use, no data, loading, long-running work, partial completion, validation errors, Extension missing, dependency missing, permission denied, operation failure, and success.
 
 ## Input and Output Modeling
 
@@ -71,7 +71,7 @@ Use appropriate controls:
 - Files and directories: use only paths obtained through a supported flow; do not fake a native picker when Moss does not expose one.
 - Destructive confirmation: explicit confirmation UI naming the affected object.
 
-Generate result renderers from actual outputs: tables for repeated records, metrics for counts, progress for stages, logs for execution detail, file links for artifacts, diffs for changes, and focused summaries for completion. Retain raw output only as a secondary diagnostic view.
+Specify result-rendering requirements from actual outputs: tables for repeated records, metrics for counts, progress for stages, logs for execution detail, file links for artifacts, diffs for changes, and focused summaries for completion. Tell the App Builder to retain raw output only as a secondary diagnostic view.
 
 Normalize Extension responses per action. A practical base shape is:
 
@@ -90,22 +90,22 @@ Actions may extend this shape, but their UI must not depend on parsing human pro
 
 ## AI-Assisted Behavior
 
-Generate AI only when the target capability inherently requires interpretation, generation, summarization, classification, or conversational recovery.
+Classify a capability as AI-assisted only when it inherently requires interpretation, generation, summarization, classification, or conversational recovery.
 
-Create a purpose-specific assistant surface. Supply only relevant current form values, selected records, previous result, and errors. Require a schema for model responses and validate it in the Extension before returning it to the UI.
+Describe a purpose-specific assistant surface for the App Builder. Define the minimal context contract: relevant current form values, selected records, previous result, and errors. Require a schema for model responses and validate it in the Extension before returning it to the UI.
 
 Never allow model output to become a command string. Convert accepted model suggestions into the same typed App actions available to ordinary controls. Require the user to confirm write, install, network-submit, and destructive actions.
 
-When no provider or credentials contract is available, retain the UI design as a documented conversion gap. Do not silently call a guessed endpoint or access a hidden Moss API.
+When no provider or credentials contract is available, record the workflow as a conversion gap. Do not silently call a guessed endpoint or access a hidden Moss API.
 
 ## Coverage Report
 
-Write `generated/skill-app-analysis.json` before implementation. Keep it after generation as an auditable map between the Skill and App.
+Write `generated/skill-app-analysis.json` before App implementation. Treat initial generated targets as a planned mapping, then reconcile the report after the App Builder and this toolkit have produced their respective files. Keep it as an auditable map between the Skill, App, and Extension.
 
 The report must include:
 
 - Target Skill identity and source fingerprint.
-- Product concept and chosen information architecture.
+- Product concept and recommended information architecture for App Builder.
 - Every discovered capability and its disposition.
 - Generated Extension action names.
 - Required environment and dependencies.
@@ -116,4 +116,4 @@ The report must include:
 - Equivalence-test IDs for every reimplemented behavior.
 - Coverage totals and unresolved gaps.
 
-Reconcile the report after implementation. A capability counts as implemented only when its UI, action, result rendering, error handling, and executable representative tests all exist. Test names in the report are references to test-plan case IDs, not evidence that tests ran.
+Reconcile the report during pair validation. A capability counts as implemented only when the App Builder's UI, this toolkit's action, result rendering, error handling, and executable representative tests all exist. Test names in the report are references to test-plan case IDs, not evidence that tests ran.

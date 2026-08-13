@@ -82,12 +82,11 @@ The bundled validator performs conservative static checks. A passing result is n
 
 ## App Builder Handoff
 
-- Preserve all active App Builder assistant rules.
-- For an existing App, extract it before editing.
-- Build only after installing the required Extension version.
-- Use the `buildDir` returned by `moss(app_build)` for preview and publish.
-- Preview before publishing.
-- Run the release validation phase before building or opening a normal handoff preview.
-- Publish only after user confirmation.
-- Report only the version returned by the publish action.
-- If a required integration cannot run, report a blocked conversion with diagnostics; do not call it complete or usable.
+- Classify every finding as toolkit-owned (`generated/` or `extension/`) or App Builder-owned (all App project and lifecycle concerns).
+- Fix toolkit-owned findings directly. Return App Builder-owned findings with exact paths, expected action contracts, and acceptance criteria.
+- For an existing App, confirm that the App Builder extracted it before either side changed its owned files.
+- Return the exact installed Extension ID, version, dependency range, full action names, and input/output contracts.
+- Return release readiness only after installed-copy tests and the release validation phase pass.
+- Never invoke App build, preview, publish, update, rollback, or version actions from this toolkit.
+- Tell the App Builder that build may start only after the required Extension version is installed and release validation passes.
+- If a required integration cannot run, return a blocked conversion with diagnostics; do not call it complete or usable.
