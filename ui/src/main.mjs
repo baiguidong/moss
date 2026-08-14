@@ -9,7 +9,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { getInstalledSkills, registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
+import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
@@ -39,7 +39,6 @@ import { ExtensionHost } from './extension-host.mjs';
 import {
   findAssistantDirByName,
   readAssistantContext,
-  resolveInstalledSkillInfos,
 } from './assistant-context-utils.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
@@ -135,18 +134,6 @@ const MOSS_REPO_APPS_DIR = path.join(repoRoot, 'apps');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
-const WORKSPACE_SKILLS_SUBDIR = path.join('.claude', 'skills');
-const WORKSPACE_SYNCED_SKILL_META_FILE = '.moss-synced-skill.json';
-const SKILL_COPY_SKIP_NAMES = new Set([
-  '.git',
-  '.hg',
-  '.svn',
-  'node_modules',
-  '__pycache__',
-  '.pytest_cache',
-  '.mypy_cache',
-  '.ruff_cache',
-]);
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
@@ -2927,131 +2914,11 @@ function normalizeWorkspace(workspace) {
   return path.resolve(normalized);
 }
 
-function isPathInsideDir(rootDir, targetPath) {
-  const relativePath = path.relative(path.resolve(rootDir), path.resolve(targetPath));
-  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
-}
-
-function sanitizeSkillDirName(name) {
-  if (!name || typeof name !== 'string') return null;
-  const trimmed = name.trim();
-  if (!trimmed || trimmed === '.' || trimmed === '..') return null;
-  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) return null;
-  if (trimmed !== path.basename(trimmed)) return null;
-  return trimmed;
-}
-
-function normalizeSkillSelections(skills) {
-  if (!Array.isArray(skills)) return [];
-  const normalized = [];
-  const seen = new Set();
-
-  for (const skill of skills) {
-    const name = typeof skill?.name === 'string' ? skill.name.trim() : '';
-    const source = typeof skill?.source === 'string'
-      ? skill.source.trim()
-      : typeof skill?.path === 'string'
-        ? skill.path.trim()
-        : '';
-    if (!name || !source) continue;
-    const key = `${name}\0${path.resolve(source)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push({ name, source });
-  }
-
-  return normalized;
-}
-
-async function pathExists(targetPath) {
-  try {
-    await fsp.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readWorkspaceSyncedSkillMeta(skillDir) {
-  try {
-    const raw = await fsp.readFile(path.join(skillDir, WORKSPACE_SYNCED_SKILL_META_FILE), 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-async function copyDirectoryRecursiveForWorkspaceSkill(sourceDir, targetDir) {
-  await fsp.mkdir(targetDir, { recursive: true });
-  const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (SKILL_COPY_SKIP_NAMES.has(entry.name)) continue;
-    const srcPath = path.join(sourceDir, entry.name);
-    const dstPath = path.join(targetDir, entry.name);
-
-    if (entry.isDirectory()) {
-      await copyDirectoryRecursiveForWorkspaceSkill(srcPath, dstPath);
-    } else if (entry.isFile()) {
-      await fsp.copyFile(srcPath, dstPath);
-    }
-  }
-}
-
-async function syncSkillToWorkspace(workspace, skill) {
-  const safeName = sanitizeSkillDirName(skill?.name);
-  if (!safeName) return null;
-
-  const rawSource = String(skill.source || skill.path || '').trim();
-  if (!rawSource) return null;
-  const sourceDir = path.resolve(rawSource);
-
-  const sourceStat = await fsp.stat(sourceDir).catch(() => null);
-  if (!sourceStat?.isDirectory()) return null;
-
-  const sourceSkillMd = path.join(sourceDir, 'SKILL.md');
-  if (!(await pathExists(sourceSkillMd))) return null;
-
-  const workspaceSkillsDir = path.join(workspace, WORKSPACE_SKILLS_SUBDIR);
-  const targetDir = path.join(workspaceSkillsDir, safeName);
-  if (!isPathInsideDir(workspaceSkillsDir, targetDir)) return null;
-
-  if (path.resolve(sourceDir) === path.resolve(targetDir)) {
-    return { name: safeName, source: sourceDir, target: targetDir };
-  }
-
-  const targetExists = await pathExists(targetDir);
-  if (targetExists) {
-    const meta = await readWorkspaceSyncedSkillMeta(targetDir);
-    if (!meta || path.resolve(meta.source || '') !== sourceDir) {
-      mossLog('warn', 'skill', 'Skip workspace skill sync to avoid overwriting existing path', {
-        name: safeName,
-        target: targetDir,
-      });
-      return { name: safeName, source: sourceDir, target: targetDir, skipped: true };
-    }
-    await fsp.rm(targetDir, { recursive: true, force: true });
-  }
-
-  await copyDirectoryRecursiveForWorkspaceSkill(sourceDir, targetDir);
-  await fsp.writeFile(
-    path.join(targetDir, WORKSPACE_SYNCED_SKILL_META_FILE),
-    JSON.stringify({
-      source: sourceDir,
-      syncedAt: new Date().toISOString(),
-    }, null, 2),
-    'utf-8',
-  );
-
-  return { name: safeName, source: sourceDir, target: targetDir };
-}
-
 async function prepareAssistantContextForSessionStart(sessionRecord) {
   const normalizedAssistantName = typeof sessionRecord.assistantName === 'string'
     ? sessionRecord.assistantName.trim()
     : '';
   let assistantRules = '';
-  let assistantSkillSelections = [];
 
   if (normalizedAssistantName) {
     try {
@@ -3062,13 +2929,6 @@ async function prepareAssistantContextForSessionStart(sessionRecord) {
         ? await readAssistantContext(assistantDir, normalizedAssistantName)
         : null;
       assistantRules = String(assistantContext?.rules || '').trim();
-
-      const assistantEnabledSkills = assistantContext?.enabledSkillIdentifiers || [];
-      if (assistantEnabledSkills.length > 0) {
-        const installedSkills = await getInstalledSkills();
-        assistantSkillSelections = resolveInstalledSkillInfos(assistantEnabledSkills, installedSkills)
-          .map((skill) => ({ name: skill.name, source: skill.path }));
-      }
     } catch (err) {
       console.error('[assistant] Failed to load assistant context:', err);
     }
@@ -3077,31 +2937,8 @@ async function prepareAssistantContextForSessionStart(sessionRecord) {
   sessionRecord.assistantName = normalizedAssistantName || null;
   sessionRecord.assistantSystemPrompt = assistantRules || '';
 
-  if (sessionRecord.agentMode !== 'remote-direct' && assistantSkillSelections.length > 0) {
-    for (const skill of normalizeSkillSelections(assistantSkillSelections)) {
-      try {
-        await syncSkillToWorkspace(sessionRecord.workspace, skill);
-      } catch (err) {
-        console.warn('[assistant] Failed to sync assistant skill to workspace:', skill.name, err?.message || err);
-      }
-    }
-  }
-
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
-}
-
-async function syncSelectedSkillsToWorkspace(sessionRecord, skills) {
-  if (sessionRecord.agentMode === 'remote-direct') return;
-
-  const selectedSkills = normalizeSkillSelections(skills);
-  for (const skill of selectedSkills) {
-    try {
-      await syncSkillToWorkspace(sessionRecord.workspace, skill);
-    } catch (err) {
-      console.warn('[agent:send] Failed to sync workspace skill:', skill.name, err?.message || err);
-    }
-  }
 }
 
 function buildSessionTitle(prompt) {
@@ -5875,7 +5712,7 @@ function buildLargePromptVisiblePrompt(spill) {
   ].join('\n');
 }
 
-ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, appName, files, coordinatorMode }) => {
+ipcMain.handle('agent:send', async (event, { sessionId, prompt, mode, appName, files, coordinatorMode }) => {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.busy) {
     throw new Error('This session is already processing a request.');
@@ -5931,8 +5768,6 @@ ipcMain.handle('agent:send', async (event, { sessionId, prompt, skills, mode, ap
     ? [...filePaths, promptSpill.filePath]
     : filePaths;
   const runtimeSystemPrompt = buildBoundAppSystemPrompt(appName);
-
-  await syncSelectedSkillsToWorkspace(sessionRecord, skills);
 
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
     await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
