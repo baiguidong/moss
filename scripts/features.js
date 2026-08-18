@@ -149,14 +149,12 @@ export const INTERNAL_ONLY = {
   // --- 内部工具 ---
   DUMP_SYSTEM_PROMPT: false,      // 输出 system prompt（内部 eval 用）
   HARD_FAIL: false,               // 强制失败模式（测试用）
-  SHOT_STATS: false,              // 内部统计
   PERFETTO_TRACING: false,        // Perfetto 性能追踪
 
   // --- 内部 IDE/平台集成 ---
   TERMINAL_PANEL: false,     // IDE 终端面板
 
   // --- 其他内部功能 ---
-  COWORKER_TYPE_TELEMETRY: false, // 协作者类型遥测
   VERIFICATION_AGENT: false,      // 验证 agent（需要内部服务）
   ENHANCED_TELEMETRY_BETA: false, // 增强遥测 beta
   IS_LIBC_GLIBC: false,           // 构建环境标记

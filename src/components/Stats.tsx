@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import { plot as asciichart } from 'asciichart';
 import chalk from 'chalk';
 import figures from 'figures';
@@ -379,51 +378,6 @@ function OverviewTab({
   // Calculate range days based on selected date range
   const rangeDays = dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : stats.totalDays;
 
-  // Compute shot stats data (ant-only, gated by feature flag)
-  let shotStatsData: {
-    avgShots: string;
-    buckets: {
-      label: string;
-      count: number;
-      pct: number;
-    }[];
-  } | null = null;
-  if (feature('SHOT_STATS') && stats.shotDistribution) {
-    const dist = stats.shotDistribution;
-    const total = Object.values(dist).reduce((s, n) => s + n, 0);
-    if (total > 0) {
-      const totalShots = Object.entries(dist).reduce((s_0, [count, sessions]) => s_0 + parseInt(count, 10) * sessions, 0);
-      const bucket = (min: number, max?: number) => Object.entries(dist).filter(([k]) => {
-        const n_0 = parseInt(k, 10);
-        return n_0 >= min && (max === undefined || n_0 <= max);
-      }).reduce((s_1, [, v]) => s_1 + v, 0);
-      const pct = (n_1: number) => Math.round(n_1 / total * 100);
-      const b1 = bucket(1, 1);
-      const b2_5 = bucket(2, 5);
-      const b6_10 = bucket(6, 10);
-      const b11 = bucket(11);
-      shotStatsData = {
-        avgShots: (totalShots / total).toFixed(1),
-        buckets: [{
-          label: '1-shot',
-          count: b1,
-          pct: pct(b1)
-        }, {
-          label: '2\u20135 shot',
-          count: b2_5,
-          pct: pct(b2_5)
-        }, {
-          label: '6\u201310 shot',
-          count: b6_10,
-          pct: pct(b6_10)
-        }, {
-          label: '11+ shot',
-          count: b11,
-          pct: pct(b11)
-        }]
-      };
-    }
-  }
   return <Box flexDirection="column" marginTop={1}>
       {/* Activity Heatmap - always shows all-time data */}
       {allTimeStats.dailyActivity.length > 0 && <Box flexDirection="column" marginBottom={1}>
@@ -522,53 +476,6 @@ function OverviewTab({
               </Text>
             </Box>
           </Box>}
-
-      {/* Shot stats (ant-only) */}
-      {shotStatsData && <>
-          <Box marginTop={1}>
-            <Text>Shot distribution</Text>
-          </Box>
-          <Box flexDirection="row" gap={4}>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                {shotStatsData.buckets[0]!.label}:{' '}
-                <Text color="claude">{shotStatsData.buckets[0]!.count}</Text>
-                <Text color="subtle"> ({shotStatsData.buckets[0]!.pct}%)</Text>
-              </Text>
-            </Box>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                {shotStatsData.buckets[1]!.label}:{' '}
-                <Text color="claude">{shotStatsData.buckets[1]!.count}</Text>
-                <Text color="subtle"> ({shotStatsData.buckets[1]!.pct}%)</Text>
-              </Text>
-            </Box>
-          </Box>
-          <Box flexDirection="row" gap={4}>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                {shotStatsData.buckets[2]!.label}:{' '}
-                <Text color="claude">{shotStatsData.buckets[2]!.count}</Text>
-                <Text color="subtle"> ({shotStatsData.buckets[2]!.pct}%)</Text>
-              </Text>
-            </Box>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                {shotStatsData.buckets[3]!.label}:{' '}
-                <Text color="claude">{shotStatsData.buckets[3]!.count}</Text>
-                <Text color="subtle"> ({shotStatsData.buckets[3]!.pct}%)</Text>
-              </Text>
-            </Box>
-          </Box>
-          <Box flexDirection="row" gap={4}>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                Avg/session:{' '}
-                <Text color="claude">{shotStatsData.avgShots}</Text>
-              </Text>
-            </Box>
-          </Box>
-        </>}
 
       {/* Fun factoid */}
       {factoid && <Box marginTop={1}>
@@ -1156,30 +1063,6 @@ function renderOverviewToAnsi(stats: ClaudeCodeStats): string[] {
     lines.push(label + h(formatDuration(stats.totalSpeculationTimeSavedMs)));
   }
 
-  // Shot stats (ant-only)
-  if (feature('SHOT_STATS') && stats.shotDistribution) {
-    const dist = stats.shotDistribution;
-    const totalWithShots = Object.values(dist).reduce((s, n) => s + n, 0);
-    if (totalWithShots > 0) {
-      const totalShots = Object.entries(dist).reduce((s, [count, sessions]) => s + parseInt(count, 10) * sessions, 0);
-      const avgShots = (totalShots / totalWithShots).toFixed(1);
-      const bucket = (min: number, max?: number) => Object.entries(dist).filter(([k]) => {
-        const n = parseInt(k, 10);
-        return n >= min && (max === undefined || n <= max);
-      }).reduce((s, [, v]) => s + v, 0);
-      const pct = (n: number) => Math.round(n / totalWithShots * 100);
-      const fmtBucket = (count: number, p: number) => `${count} (${p}%)`;
-      const b1 = bucket(1, 1);
-      const b2_5 = bucket(2, 5);
-      const b6_10 = bucket(6, 10);
-      const b11 = bucket(11);
-      lines.push('');
-      lines.push('Shot distribution');
-      lines.push(row('1-shot', fmtBucket(b1, pct(b1)), '2\u20135 shot', fmtBucket(b2_5, pct(b2_5))));
-      lines.push(row('6\u201310 shot', fmtBucket(b6_10, pct(b6_10)), '11+ shot', fmtBucket(b11, pct(b11))));
-      lines.push(`${'Avg/session:'.padEnd(COL1_LABEL_WIDTH)}${h(avgShots)}`);
-    }
-  }
   lines.push('');
 
   // Fun factoid
