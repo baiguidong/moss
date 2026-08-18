@@ -181,8 +181,6 @@ export const INTERNAL_ONLY = {
   MEMORY_SHAPE_TELEMETRY: false,  // 内存结构遥测
 
   // --- 内部云服务 ---
-  DOWNLOAD_USER_SETTINGS: false,  // 从 Anthropic 云同步用户设置
-  UPLOAD_USER_SETTINGS: false,    // 上传用户设置到 Anthropic 云
   BYOC_ENVIRONMENT_RUNNER: false, // BYOC 环境运行器
   SELF_HOSTED_RUNNER: false,      // 自托管运行器
   FILE_PERSISTENCE: false,        // 云端文件持久化（BYOC 模式）
