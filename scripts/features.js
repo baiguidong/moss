@@ -161,8 +161,6 @@ export const INTERNAL_ONLY = {
   MEMORY_SHAPE_TELEMETRY: false,  // 内存结构遥测
 
   // --- 内部云服务 ---
-  BYOC_ENVIRONMENT_RUNNER: false, // BYOC 环境运行器
-  SELF_HOSTED_RUNNER: false,      // 自托管运行器
   FILE_PERSISTENCE: false,        // 云端文件持久化（BYOC 模式）
 
   // --- 内部 IDE/平台集成 ---
