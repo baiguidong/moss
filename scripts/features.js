@@ -146,16 +146,9 @@ export const NATIVE_REQUIRED = {
 export const INTERNAL_ONLY = {
   DAEMON: false,             // 后台守护进程模式
   DIRECT_CONNECT: true,      // 直连服务
-  LODESTONE: false,          // 内部服务定位系统
-  TORCH: false,              // 内部 ML 推理加速
-  CHICAGO_MCP: false,        // 内部 MCP 服务器
-
   // --- 内部安全 & 合规 ---
-  ANTI_DISTILLATION_CC: false,    // 反蒸馏保护
-  NATIVE_CLIENT_ATTESTATION: false, // 客户端证明
   TRANSCRIPT_CLASSIFIER: false,   // 对话内容分类器（内部 ML 模型）
   BASH_CLASSIFIER: false,         // Bash 命令安全分类器（内部 ML 模型）
-  ABLATION_BASELINE: false,       // A/B 测试消融基准
 
   // --- 内部工具 ---
   DUMP_SYSTEM_PROMPT: false,      // 输出 system prompt（内部 eval 用）
