@@ -7,7 +7,7 @@
 //     a configurable limit (DEFAULT_CRON_JITTER_CONFIG.recurringMaxAgeMs).
 //
 // File format:
-//   { "tasks": [{ id, cron, prompt, createdAt, recurring?, permanent? }] }
+//   { "tasks": [{ id, cron, prompt, createdAt, recurring? }] }
 //
 // Global cron file (~/.moss/cron_tasks.json) mirrors all tasks for app access.
 
@@ -51,17 +51,9 @@ export type CronTask = {
   /** When true, the task reschedules after firing instead of being deleted. */
   recurring?: boolean
   /**
-   * When true, the task is exempt from recurringMaxAgeMs auto-expiry.
-   * System escape hatch for assistant mode's built-in tasks (catch-up/
-   * morning-checkin/dream) — the installer's writeIfMissing() skips existing
-   * files so re-install can't recreate them. Not settable via CronCreateTool;
-   * only written directly to scheduled_tasks.json by src/assistant/install.ts.
-   */
-  permanent?: boolean
-  /**
    * Runtime-only flag. false → session-scoped (never written to disk).
    * File-backed tasks leave this undefined; writeCronTasks strips it so
-   * the on-disk shape stays { id, cron, prompt, createdAt, lastFiredAt?, recurring?, permanent? }.
+   * the on-disk shape stays { id, cron, prompt, createdAt, lastFiredAt?, recurring? }.
    */
   durable?: boolean
   /**
@@ -136,7 +128,6 @@ export async function readCronTasks(dir?: string): Promise<CronTask[]> {
         ? { lastFiredAt: t.lastFiredAt }
         : {}),
       ...(t.recurring ? { recurring: true } : {}),
-      ...(t.permanent ? { permanent: true } : {}),
     })
   }
   return out
@@ -318,10 +309,7 @@ export function nextCronRunMs(cron: string, fromMs: number): number | null {
 }
 
 /**
- * Cron scheduler tuning knobs. Sourced at runtime from the
- * `tengu_kairos_cron_config` GrowthBook JSON config (see cronJitterConfig.ts)
- * so ops can adjust behavior fleet-wide without shipping a client build.
- * Defaults here preserve the pre-config behavior exactly.
+ * Cron scheduler tuning knobs. Defaults preserve the original behavior.
  */
 export type CronJitterConfig = {
   /** Recurring-task forward delay as a fraction of the interval between fires. */
@@ -342,15 +330,11 @@ export type CronJitterConfig = {
    */
   oneShotMinuteMod: number
   /**
-   * Recurring tasks auto-expire this many ms after creation (unless marked
-   * `permanent`). Cron is the primary driver of multi-day sessions (p99
+   * Recurring tasks auto-expire this many ms after creation. Cron is the
+   * primary driver of multi-day sessions (p99
    * uptime 61min → 53h post-#19931), and unbounded recurrence lets Tier-1
    * heap leaks compound indefinitely. The default (7 days) covers "check
    * my PRs every hour this week" workflows while capping worst-case
-   * session lifetime. Permanent tasks (assistant mode's catch-up/
-   * morning-checkin/dream) never age out — they can't be recreated if
-   * deleted because install.ts's writeIfMissing() skips existing files.
-   *
    * `0` = unlimited (tasks never auto-expire).
    */
   recurringMaxAgeMs: number
@@ -418,11 +402,6 @@ export function jitteredNextCronRunMs(
  * the inference spike from everyone picking the same round wall-clock time.
  * At defaults (mod 30, max 90 s, floor 0) only :00 and :30 get jitter,
  * because humans round to the half-hour.
- *
- * During an incident, ops can push `tengu_kairos_cron_config` with e.g.
- * `{oneShotMinuteMod: 15, oneShotMaxMs: 300000, oneShotFloorMs: 30000}` to
- * spread :00/:15/:30/:45 fires across a [t-5min, t-30s] window — every task
- * gets at least 30 s of lead, so nobody lands on the exact mark.
  *
  * Checks the computed fire time rather than the cron string so
  * `0 15 * * *`, step expressions, and `0,30 9 * * *` all get jitter

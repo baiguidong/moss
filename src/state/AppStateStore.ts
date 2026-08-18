@@ -2,7 +2,6 @@ import type { Notification } from 'src/context/notifications.js'
 import type { TodoList } from 'src/utils/todo/types.js'
 import type { BridgePermissionCallbacks } from '../bridge/bridgePermissionCallbacks.js'
 import type { Command } from '../commands.js'
-import type { ChannelPermissionCallbacks } from '../services/mcp/channelPermissions.js'
 import type { ElicitationRequestEvent } from '../services/mcp/elicitationHandler.js'
 import type {
   MCPServerConnection,
@@ -93,7 +92,6 @@ export type AppState = DeepImmutable<{
   mainLoopModelForSession: ModelSetting
   statusLineText: string | undefined
   expandedView: 'none' | 'tasks' | 'teammates'
-  isBriefOnly: boolean
   // Optional - only present when ENABLE_AGENT_SWARMS is true (for dead code elimination)
   showTeammateMessagePreview?: boolean
   selectedIPAgentIndex: number
@@ -110,26 +108,8 @@ export type AppState = DeepImmutable<{
   spinnerTip?: string
   // Agent name from --agent CLI flag or settings (for logo display)
   agent: string | undefined
-  // Assistant mode fully enabled (settings + GrowthBook gate + trust).
-  // Single source of truth - computed once in main.tsx before option
-  // mutation, consumers read this instead of re-calling isAssistantMode().
-  kairosEnabled: boolean
   // Remote session URL for --remote mode (shown in footer indicator)
   remoteSessionUrl: string | undefined
-  // Remote session WS state (`claude assistant` viewer). 'connected' means the
-  // live event stream is open; 'reconnecting' = transient WS drop, backoff
-  // in progress; 'disconnected' = permanent close or reconnects exhausted.
-  remoteConnectionStatus:
-    | 'connecting'
-    | 'connected'
-    | 'reconnecting'
-    | 'disconnected'
-  // `claude assistant`: count of background tasks (Agent calls, teammates,
-  // workflows) running inside the REMOTE daemon child. Event-sourced from
-  // system/task_started and system/task_notification on the WS. The local
-  // AppState.tasks is always empty in viewer mode — the tasks live in a
-  // different process.
-  remoteBackgroundTaskCount: number
   // Always-on bridge: desired state (controlled by /config or footer toggle)
   replBridgeEnabled: boolean
   // Always-on bridge: true when activated via /remote-control command, false when config-driven
@@ -445,10 +425,6 @@ export type AppState = DeepImmutable<{
   isUltraplanMode?: boolean
   // Always-on bridge: permission callbacks for bidirectional permission checks
   replBridgePermissionCallbacks?: BridgePermissionCallbacks
-  // Channel permission callbacks — permission prompts over Telegram/iMessage/etc.
-  // Races against local UI + bridge + hooks + classifier via claim() in
-  // interactiveHandler.ts. Constructed once in useManageMCPConnections.
-  channelPermissionCallbacks?: ChannelPermissionCallbacks
 }
 
 export type AppStateStore = Store<AppState>
@@ -474,16 +450,12 @@ export function getDefaultAppState(): AppState {
     mainLoopModelForSession: null,
     statusLineText: undefined,
     expandedView: 'none',
-    isBriefOnly: false,
     showTeammateMessagePreview: false,
     selectedIPAgentIndex: -1,
     coordinatorTaskIndex: -1,
     viewSelectionMode: 'none',
     footerSelection: null,
-    kairosEnabled: false,
     remoteSessionUrl: undefined,
-    remoteConnectionStatus: 'connecting',
-    remoteBackgroundTaskCount: 0,
     replBridgeEnabled: false,
     replBridgeExplicit: false,
     replBridgeOutboundOnly: false,

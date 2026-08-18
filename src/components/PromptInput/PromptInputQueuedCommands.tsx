@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { useMemo } from 'react';
 import { Box } from 'src/ink.js';
@@ -71,22 +70,12 @@ function processQueuedCommands(queuedCommands: QueuedCommand[]): QueuedCommand[]
 function PromptInputQueuedCommandsImpl(): React.ReactNode {
   const queuedCommands = useCommandQueue();
   const viewingAgent = useAppState(s => !!s.viewingAgentTaskId);
-  // Brief layout: dim queue items + skip the paddingX (brief messages
-  // already indent themselves). Gate mirrors the brief-spinner/message
-  // check elsewhere — no teammate-view override needed since this
-  // component early-returns when viewing a teammate.
-  const useBriefLayout = feature('KAIROS') || feature('KAIROS_BRIEF') ?
-  // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
-  useAppState(s_0 => s_0.isBriefOnly) : false;
-
   // createUserMessage mints a fresh UUID per call; without memoization, streaming
   // re-renders defeat Message's areMessagePropsEqual (compares uuid) → flicker.
   const messages = useMemo(() => {
     if (queuedCommands.length === 0) return null;
     // task-notification is shown via useInboxNotification; most isMeta commands
     // (scheduled tasks, proactive ticks) are system-generated and hidden.
-    // Channel messages are the exception — isMeta but shown so the keyboard
-    // user sees what arrived.
     const visibleCommands = queuedCommands.filter(isQueuedCommandVisible);
     if (visibleCommands.length === 0) return null;
     const processedCommands = processQueuedCommands(visibleCommands);
@@ -108,7 +97,7 @@ function PromptInputQueuedCommandsImpl(): React.ReactNode {
     return null;
   }
   return <Box marginTop={1} flexDirection="column">
-      {messages.map((message, i) => <QueuedMessageProvider key={i} isFirst={i === 0} useBriefLayout={useBriefLayout}>
+      {messages.map((message, i) => <QueuedMessageProvider key={i} isFirst={i === 0}>
           <Message message={message} lookups={EMPTY_LOOKUPS} addMargin={false} tools={[]} commands={[]} verbose={false} inProgressToolUseIDs={EMPTY_SET} progressMessagesForMessage={[]} shouldAnimate={false} shouldShowDot={false} isTranscriptMode={false} isStatic={true} />
         </QueuedMessageProvider>)}
     </Box>;

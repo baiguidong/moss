@@ -60,16 +60,9 @@ import { feature } from 'bun:bundle'
 // Dead code elimination: conditional imports
 /* eslint-disable @typescript-eslint/no-require-imports */
 const proactive =
-  feature('PROACTIVE') || feature('KAIROS')
+  feature('PROACTIVE')
     ? require('./commands/proactive.js').default
     : null
-const briefCommand =
-  feature('KAIROS') || feature('KAIROS_BRIEF')
-    ? require('./commands/brief.js').default
-    : null
-const assistantCommand = feature('KAIROS')
-  ? require('./commands/assistant/index.js').default
-  : null
 const bridge = feature('BRIDGE_MODE')
   ? require('./commands/bridge/index.js').default
   : null
@@ -97,9 +90,6 @@ const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
   ? (
       require('./services/skillSearch/localSearch.js') as typeof import('./services/skillSearch/localSearch.js')
     ).clearSkillIndexCache
-  : null
-const subscribePr = feature('KAIROS_GITHUB_WEBHOOKS')
-  ? require('./commands/subscribe-pr.js').default
   : null
 const ultraplan = feature('ULTRAPLAN')
   ? require('./commands/ultraplan.js').default
@@ -237,7 +227,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   bridgeKick,
   version,
   ...(ultraplan ? [ultraplan] : []),
-  ...(subscribePr ? [subscribePr] : []),
   resetLimits,
   resetLimitsNonInteractive,
   onboarding,
@@ -321,8 +310,6 @@ const COMMANDS = memoize((): Command[] => [
   ...(forkCmd ? [forkCmd] : []),
   ...(buddy ? [buddy] : []),
   ...(proactive ? [proactive] : []),
-  ...(briefCommand ? [briefCommand] : []),
-  ...(assistantCommand ? [assistantCommand] : []),
   ...(bridge ? [bridge] : []),
   ...(remoteControlServerCommand ? [remoteControlServerCommand] : []),
   ...(voiceCommand ? [voiceCommand] : []),

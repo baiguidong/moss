@@ -76,7 +76,7 @@ export type SpawnMode = 'single-session' | 'worktree' | 'same-dir'
  * sends `"cowork"`, which isn't in this union. REPL code uses this narrow
  * type for its own exhaustiveness; wire-level fields accept any string.
  */
-export type BridgeWorkerType = 'claude_code' | 'claude_code_assistant'
+export type BridgeWorkerType = 'claude_code'
 
 export type BridgeConfig = {
   dir: string

@@ -55,12 +55,6 @@ export type RemoteSessionConfig = {
   orgUuid: string
   /** True if session was created with an initial prompt that's being processed */
   hasInitialPrompt?: boolean
-  /**
-   * When true, this client is a pure viewer. Ctrl+C/Escape do NOT send
-   * interrupt to the remote agent; 60s reconnect timeout is disabled;
-   * session title is never updated. Used by `claude assistant`.
-   */
-  viewerOnly?: boolean
 }
 
 export type RemoteSessionCallbacks = {
@@ -336,13 +330,11 @@ export function createRemoteSessionConfig(
   getAccessToken: () => string,
   orgUuid: string,
   hasInitialPrompt = false,
-  viewerOnly = false,
 ): RemoteSessionConfig {
   return {
     sessionId,
     getAccessToken,
     orgUuid,
     hasInitialPrompt,
-    viewerOnly,
   }
 }

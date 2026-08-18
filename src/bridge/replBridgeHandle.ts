@@ -7,7 +7,7 @@ import { toCompatSessionId } from './sessionIdCompat.js'
  * useReplBridge's React tree (tools, slash commands) can invoke handle methods
  * like subscribePR. Same one-bridge-per-process justification as bridgeDebug.ts
  * — the handle's closure captures the sessionId and getAccessToken that created
- * the session, and re-deriving those independently (BriefTool/upload.ts pattern)
+ * the session, and re-deriving those independently
  * risks staging/prod token divergence.
  *
  * Set from useReplBridge.tsx when init completes; cleared on teardown.

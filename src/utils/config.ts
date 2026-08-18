@@ -388,11 +388,6 @@ export type GlobalConfig = {
   // from the title (the dot makes it redundant).
   showStatusInTerminalTab?: boolean
 
-  // Push-notification toggles (set via /config). Default off — explicit opt-in required.
-  taskCompleteNotifEnabled?: boolean
-  inputNeededNotifEnabled?: boolean
-  agentPushNotifEnabled?: boolean
-
   // Claude Code usage tracking
   claudeCodeFirstTokenDate?: string // ISO timestamp of the user's first Claude Code OAuth token
 
@@ -648,9 +643,6 @@ export const GLOBAL_CONFIG_KEYS = [
   'fileCheckpointingEnabled',
   'terminalProgressBarEnabled',
   'showStatusInTerminalTab',
-  'taskCompleteNotifEnabled',
-  'inputNeededNotifEnabled',
-  'agentPushNotifEnabled',
   'respectGitignore',
   'claudeInChromeDefaultEnabled',
   'hasCompletedClaudeInChromeOnboarding',
@@ -740,24 +732,6 @@ function computeTrustDialogAccepted(): boolean {
   }
 
   return false
-}
-
-/**
- * Check trust for an arbitrary directory (not the session cwd).
- * Walks up from `dir`, returning true if any ancestor has trust persisted.
- * Unlike checkHasTrustDialogAccepted, this does NOT consult session trust or
- * the memoized project path — use when the target dir differs from cwd (e.g.
- * /assistant installing into a user-typed path).
- */
-export function isPathTrusted(dir: string): boolean {
-  const config = getGlobalConfig()
-  let currentPath = normalizePathForConfigKey(resolve(dir))
-  while (true) {
-    if (config.projects?.[currentPath]?.hasTrustDialogAccepted) return true
-    const parentPath = normalizePathForConfigKey(resolve(currentPath, '..'))
-    if (parentPath === currentPath) return false
-    currentPath = parentPath
-  }
 }
 
 // We have to put this test code here because Jest doesn't support mocking ES modules :O

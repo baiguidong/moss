@@ -13,11 +13,8 @@ import { jsonParse } from '../slowOperations.js'
 import {
   isMcpbSource,
   loadMcpbFile,
-  loadMcpServerUserConfig,
   type McpbLoadResult,
-  type UserConfigSchema,
   type UserConfigValues,
-  validateUserConfig,
 } from './mcpbHandler.js'
 import { getPluginDataDir } from './pluginDirectories.js'
 import {
@@ -266,75 +263,6 @@ async function loadMcpServersFromFile(
 }
 
 /**
- * A channel entry from a plugin's manifest whose userConfig has not yet been
- * filled in (required fields are missing from saved settings).
- */
-export type UnconfiguredChannel = {
-  server: string
-  displayName: string
-  configSchema: UserConfigSchema
-}
-
-/**
- * Find channel entries in a plugin's manifest whose required userConfig
- * fields are not yet saved. Pure function — no React, no prompting.
- * ManagePlugins.tsx calls this after a plugin is enabled to decide whether
- * to show the config dialog.
- *
- * Entries without a `userConfig` schema are skipped (nothing to prompt for).
- * Entries whose saved config already satisfies `validateUserConfig` are
- * skipped. The `configSchema` in the return value is structurally a
- * `UserConfigSchema` because the Zod schema in schemas.ts matches
- * `McpbUserConfigurationOption` field-for-field.
- */
-export function getUnconfiguredChannels(
-  plugin: LoadedPlugin,
-): UnconfiguredChannel[] {
-  const channels = plugin.manifest.channels
-  if (!channels || channels.length === 0) {
-    return []
-  }
-
-  // plugin.repository is already in "plugin@marketplace" format — same key
-  // loadMcpServerUserConfig / saveMcpServerUserConfig use.
-  const pluginId = plugin.repository
-
-  const unconfigured: UnconfiguredChannel[] = []
-  for (const channel of channels) {
-    if (!channel.userConfig || Object.keys(channel.userConfig).length === 0) {
-      continue
-    }
-    const saved = loadMcpServerUserConfig(pluginId, channel.server) ?? {}
-    const validation = validateUserConfig(saved, channel.userConfig)
-    if (!validation.valid) {
-      unconfigured.push({
-        server: channel.server,
-        displayName: channel.displayName ?? channel.server,
-        configSchema: channel.userConfig,
-      })
-    }
-  }
-  return unconfigured
-}
-
-/**
- * Look up saved user config for a server, if this server is declared as a
- * channel in the plugin's manifest. Returns undefined for non-channel servers
- * or channels without a userConfig schema — resolvePluginMcpEnvironment will
- * then skip ${user_config.X} substitution for that server.
- */
-function loadChannelUserConfig(
-  plugin: LoadedPlugin,
-  serverName: string,
-): UserConfigValues | undefined {
-  const channel = plugin.manifest.channels?.find(c => c.server === serverName)
-  if (!channel?.userConfig) {
-    return undefined
-  }
-  return loadMcpServerUserConfig(plugin.repository, serverName) ?? undefined
-}
-
-/**
  * Add plugin scope to MCP server configs
  * This adds a prefix to server names to avoid conflicts between plugins
  */
@@ -376,14 +304,13 @@ export async function extractMcpServersFromPlugins(
       const servers = await loadPluginMcpServers(plugin, errors)
       if (!servers) return null
 
-      // Resolve environment variables before scoping. When a saved channel
-      // config is missing a key (plugin update added a required field, or a
-      // hand-edited settings.json), substituteUserConfigVariables throws
+      // Resolve environment variables before scoping. When saved plugin
+      // config is missing a key, substituteUserConfigVariables throws
       // inside resolvePluginMcpEnvironment — catch per-server so one bad
       // config doesn't crash the whole plugin load via Promise.all.
       const resolvedServers: Record<string, McpServerConfig> = {}
       for (const [name, config] of Object.entries(servers)) {
-        const userConfig = buildMcpUserConfig(plugin, name)
+        const userConfig = buildMcpUserConfig(plugin)
         try {
           resolvedServers[name] = resolvePluginMcpEnvironment(
             config,
@@ -429,17 +356,12 @@ export async function extractMcpServersFromPlugins(
 }
 
 /**
- * Build the userConfig map for a single MCP server by merging the plugin's
- * top-level manifest.userConfig values with the channel-specific per-server
- * config (assistant-mode channels). Channel-specific wins on collision so
- * plugins that declare the same key at both levels get the more specific value.
- *
- * Returns undefined when neither source has anything — resolvePluginMcpEnvironment
+ * Build the userConfig map for a plugin's MCP servers.
+ * Returns undefined when the plugin has no user config — resolvePluginMcpEnvironment
  * skips substituteUserConfigVariables in that case.
  */
 function buildMcpUserConfig(
   plugin: LoadedPlugin,
-  serverName: string,
 ): UserConfigValues | undefined {
   // Gate on manifest.userConfig. loadPluginOptions always returns at least {}
   // (it spreads two `?? {}` fallbacks), so without this guard topLevel is never
@@ -448,13 +370,9 @@ function buildMcpUserConfig(
   // substituteUserConfigVariables against an empty map → throws on any
   // ${user_config.X} ref. The manifest check also skips the unconditional
   // keychain read (~50-100ms on macOS) for plugins that don't use options.
-  const topLevel = plugin.manifest.userConfig
+  return plugin.manifest.userConfig
     ? loadPluginOptions(getPluginStorageId(plugin))
     : undefined
-  const channelSpecific = loadChannelUserConfig(plugin, serverName)
-
-  if (!topLevel && !channelSpecific) return undefined
-  return { ...topLevel, ...channelSpecific }
 }
 
 /**
@@ -602,14 +520,13 @@ export async function getPluginMcpServers(
   }
 
   // Resolve environment variables. Same per-server try/catch as
-  // extractMcpServersFromPlugins above: a partial saved channel config
-  // (plugin update added a required field) would make
+  // extractMcpServersFromPlugins above: partial saved plugin config would make
   // substituteUserConfigVariables throw inside resolvePluginMcpEnvironment,
   // and this function runs inside Promise.all at config.ts:911 — one
   // uncaught throw crashes all plugin MCP loading.
   const resolvedServers: Record<string, McpServerConfig> = {}
   for (const [name, config] of Object.entries(servers)) {
-    const userConfig = buildMcpUserConfig(plugin, name)
+    const userConfig = buildMcpUserConfig(plugin)
     try {
       resolvedServers[name] = resolvePluginMcpEnvironment(
         config,

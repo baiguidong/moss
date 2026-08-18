@@ -1,4 +1,4 @@
-// Extracted from dream.ts so auto-dream ships independently of KAIROS
+// Extracted from dream.ts so auto-dream can be loaded independently.
 // feature flags (dream.ts is behind a feature()-gated require).
 
 import {
@@ -28,7 +28,7 @@ Session transcripts: \`${transcriptDir}\` (large JSONL files — grep narrowly, 
 - \`ls\` the memory directory to see what already exists
 - Read \`${ENTRYPOINT_NAME}\` to understand the current index
 - Skim existing topic files so you improve them rather than creating duplicates
-- If \`logs/\` or \`sessions/\` subdirectories exist (assistant-mode layout), review recent entries there
+- If \`logs/\` or \`sessions/\` subdirectories exist, review recent entries there
 
 ## Phase 2 — Gather recent signal
 

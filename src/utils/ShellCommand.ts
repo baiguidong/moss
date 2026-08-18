@@ -17,8 +17,6 @@ export type ExecResult = {
   interrupted: boolean
   backgroundTaskId?: string
   backgroundedByUser?: boolean
-  /** Set when assistant-mode auto-backgrounded a long-running blocking command. */
-  assistantAutoBackgrounded?: boolean
   /** Set when stdout was too large to fit inline — points to the output file on disk. */
   outputFilePath?: string
   /** Total size of the output file in bytes (set when outputFilePath is set). */

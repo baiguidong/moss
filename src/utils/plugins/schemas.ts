@@ -581,8 +581,7 @@ const PluginManifestMcpServerSchema = lazySchema(() =>
  * `title` and `description` are required (not optional) because the upstream
  * type requires them and the config dialog renders them.
  *
- * Used by both the top-level manifest.userConfig and the per-channel
- * channels[].userConfig (assistant-mode channels).
+ * Used by the top-level manifest.userConfig.
  */
 const PluginUserConfigOptionSchema = lazySchema(() =>
   z
@@ -649,55 +648,6 @@ const PluginManifestUserConfigSchema = lazySchema(() =>
           'MCP/LSP server config, hook commands, and (non-sensitive only) skill/agent content. ' +
           'Note: sensitive values share a single keychain entry with OAuth tokens — keep ' +
           'secret counts small to stay under the ~2KB stdin-safe limit (see INC-3028).',
-      ),
-  }),
-)
-
-/**
- * Schema for channel declarations in plugin manifest.
- *
- * A channel is an MCP server that emits `notifications/claude/channel` to
- * inject messages into the conversation (Telegram, Slack, Discord, etc.).
- * Declaring it here lets the plugin prompt for user config (bot tokens,
- * owner IDs) at install time via the PluginOptionsFlow prompt,
- * rather than requiring users to hand-edit settings.json.
- *
- * The `server` field must match a key in the plugin's `mcpServers` — this is
- * not cross-validated at schema parse time (the mcpServers field can be a
- * path to a JSON file we haven't read yet), so the check happens at load
- * time in mcpPluginIntegration.ts instead.
- */
-const PluginManifestChannelsSchema = lazySchema(() =>
-  z.object({
-    channels: z
-      .array(
-        z
-          .object({
-            server: z
-              .string()
-              .min(1)
-              .describe(
-                "Name of the MCP server this channel binds to. Must match a key in this plugin's mcpServers.",
-              ),
-            displayName: z
-              .string()
-              .optional()
-              .describe(
-                'Human-readable name shown in the config dialog title (e.g., "Telegram"). Defaults to the server name.',
-              ),
-            userConfig: z
-              .record(z.string(), PluginUserConfigOptionSchema())
-              .optional()
-              .describe(
-                'Fields to prompt the user for when enabling this plugin in assistant mode. ' +
-                  'Saved values are substituted into ${user_config.KEY} references in the mcpServers env.',
-              ),
-          })
-          .strict(),
-      )
-      .describe(
-        'Channels this plugin provides. Each entry declares an MCP server as a message channel ' +
-          'and optionally specifies user configuration to prompt for at enable time.',
       ),
   }),
 )
@@ -875,7 +825,7 @@ const PluginManifestSettingsSchema = lazySchema(() =>
  * Unknown top-level fields are silently stripped (zod default) rather than
  * rejected. This keeps plugin loading resilient to custom/future top-level
  * fields that plugin authors may add. Nested config objects (userConfig
- * options, channels, lspServers) remain strict — unknown keys inside those
+ * options, lspServers) remain strict — unknown keys inside those
  * still fail, since a typo there is more likely to be an author mistake
  * than a vendor extension. Type mismatches and other validation errors
  * still fail at all levels. For developer feedback on unknown top-level
@@ -889,7 +839,6 @@ export const PluginManifestSchema = lazySchema(() =>
     ...PluginManifestAgentsSchema().partial().shape,
     ...PluginManifestSkillsSchema().partial().shape,
     ...PluginManifestOutputStylesSchema().partial().shape,
-    ...PluginManifestChannelsSchema().partial().shape,
     ...PluginManifestMcpServerSchema().partial().shape,
     ...PluginManifestLspServerSchema().partial().shape,
     ...PluginManifestSettingsSchema().partial().shape,
@@ -1651,10 +1600,6 @@ export type MarketplaceSource = z.infer<
 export type PluginAuthor = z.infer<ReturnType<typeof PluginAuthorSchema>>
 export type PluginSource = z.infer<ReturnType<typeof PluginSourceSchema>>
 export type PluginManifest = z.infer<ReturnType<typeof PluginManifestSchema>>
-export type PluginManifestChannel = NonNullable<
-  PluginManifest['channels']
->[number]
-
 export type PluginMarketplace = z.infer<
   ReturnType<typeof PluginMarketplaceSchema>
 >

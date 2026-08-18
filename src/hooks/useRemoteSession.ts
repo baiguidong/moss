@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { BoundedUUIDSet } from '../bridge/bridgeMessaging.js'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
 import type { SpinnerMode } from '../components/Spinner/types.js'
 import {
@@ -15,8 +14,6 @@ import {
   convertSDKMessage,
   isSessionEndMessage,
 } from '../remote/sdkMessageAdapter.js'
-import { useSetAppState } from '../state/AppState.js'
-import type { AppState } from '../state/AppStateStore.js'
 import type { Tool } from '../Tool.js'
 import { findToolByName } from '../Tool.js'
 import type { Message as MessageType } from '../types/message.js'
@@ -86,30 +83,6 @@ export function useRemoteSession({
 }: UseRemoteSessionProps): UseRemoteSessionResult {
   const isRemoteMode = !!config
 
-  const setAppState = useSetAppState()
-  const setConnStatus = useCallback(
-    (s: AppState['remoteConnectionStatus']) =>
-      setAppState(prev =>
-        prev.remoteConnectionStatus === s
-          ? prev
-          : { ...prev, remoteConnectionStatus: s },
-      ),
-    [setAppState],
-  )
-
-  // Event-sourced count of subagents running inside the remote daemon child.
-  // The viewer's own AppState.tasks is empty — tasks live in a different
-  // process. task_started/task_notification reach us via the bridge WS.
-  const runningTaskIdsRef = useRef(new Set<string>())
-  const writeTaskCount = useCallback(() => {
-    const n = runningTaskIdsRef.current.size
-    setAppState(prev =>
-      prev.remoteBackgroundTaskCount === n
-        ? prev
-        : { ...prev, remoteBackgroundTaskCount: n },
-    )
-  }, [setAppState])
-
   // Timer for detecting stuck sessions
   const responseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -122,19 +95,6 @@ export function useRemoteSession({
 
   // Track whether we've already updated the session title (for no-initial-prompt sessions)
   const hasUpdatedTitleRef = useRef(false)
-
-  // UUIDs of user messages we POSTed locally — the WS echoes them back and
-  // we must filter them out when convertUserTextMessages is on, or the viewer
-  // sees every typed message twice (once from local createUserMessage, once
-  // from the echo). A single POST can echo MULTIPLE times with the same uuid:
-  // the server may broadcast the POST directly to /subscribe, AND the worker
-  // (cowork desktop / CLI daemon) echoes it again on its write path. A
-  // delete-on-first-match Set would let the second echo through — use a
-  // bounded ring instead. Cap is generous: users don't type 50 messages
-  // faster than echoes arrive.
-  // NOTE: this does NOT dedup history-vs-live overlap at attach time (nothing
-  // seeds the set from history UUIDs; only sendMessage populates it).
-  const sentUUIDsRef = useRef(new BoundedUUIDSet(50))
 
   // Keep a ref to tools so the WebSocket callback doesn't go stale
   const toolsRef = useRef(tools)
@@ -174,21 +134,6 @@ export function useRemoteSession({
           responseTimeoutRef.current = null
         }
 
-        // Echo filter: drop user messages we already added locally before POST.
-        // The server and/or worker round-trip our own send back on the WS with
-        // the same uuid we passed to sendEventToRemoteSession. DO NOT delete on
-        // match — the same uuid can echo more than once (server broadcast +
-        // worker echo), and BoundedUUIDSet already caps growth via its ring.
-        if (
-          sdkMessage.type === 'user' &&
-          sdkMessage.uuid &&
-          sentUUIDsRef.current.has(sdkMessage.uuid)
-        ) {
-          logForDebugging(
-            `[useRemoteSession] Dropping echoed user message ${sdkMessage.uuid}`,
-          )
-          return
-        }
         // Handle init message - extract available slash commands
         if (
           sdkMessage.type === 'system' &&
@@ -201,19 +146,12 @@ export function useRemoteSession({
           onInit(sdkMessage.slash_commands)
         }
 
-        // Track remote subagent lifecycle for the "N in background" counter.
-        // All task types (Agent/teammate/workflow/bash) flow through
-        // registerTask() → task_started, and complete via task_notification.
-        // Return early — these are status signals, not renderable messages.
+        // Task lifecycle events are status signals, not renderable messages.
         if (sdkMessage.type === 'system') {
           if (sdkMessage.subtype === 'task_started') {
-            runningTaskIdsRef.current.add(sdkMessage.task_id)
-            writeTaskCount()
             return
           }
           if (sdkMessage.subtype === 'task_notification') {
-            runningTaskIdsRef.current.delete(sdkMessage.task_id)
-            writeTaskCount()
             return
           }
           if (sdkMessage.subtype === 'task_progress') {
@@ -242,11 +180,8 @@ export function useRemoteSession({
         }
 
         // Clear in-progress tool_use IDs when their tool_result arrives.
-        // Must read the RAW sdkMessage: in non-viewerOnly mode,
-        // convertSDKMessage returns {type:'ignored'} for user messages, so the
-        // delete would never fire post-conversion. Mirrors the add site below
-        // and inProcessRunner.ts; without this the set grows unbounded for the
-        // session lifetime (BQ: CCR cohort shows 5.2x higher RSS slope).
+        // Must read the raw SDK message because convertSDKMessage ignores user
+        // messages, so the delete would never fire post-conversion.
         if (setInProgressToolUseIDs && sdkMessage.type === 'user') {
           const content = sdkMessage.message?.content
           if (Array.isArray(content)) {
@@ -266,16 +201,7 @@ export function useRemoteSession({
           }
         }
 
-        // Convert SDK message to REPL message. In viewerOnly mode, the
-        // remote agent runs BriefTool (SendUserMessage) — its tool_use block
-        // renders empty (userFacingName() === ''), actual content is in the
-        // tool_result. So we must convert tool_results to render them.
-        const converted = convertSDKMessage(
-          sdkMessage,
-          config.viewerOnly
-            ? { convertToolResults: true, convertUserTextMessages: true }
-            : undefined,
-        )
+        const converted = convertSDKMessage(sdkMessage)
 
         if (converted.type === 'message') {
           // When we receive a complete message, clear streaming tool uses
@@ -416,25 +342,16 @@ export function useRemoteSession({
       },
       onConnected: () => {
         logForDebugging('[useRemoteSession] Connected')
-        setConnStatus('connected')
       },
       onReconnecting: () => {
         logForDebugging('[useRemoteSession] Reconnecting')
-        setConnStatus('reconnecting')
-        // WS gap = we may miss task_notification events. Clear rather than
-        // drift high forever. Undercounts tasks that span the gap; accepted.
-        runningTaskIdsRef.current.clear()
-        writeTaskCount()
-        // Same for tool_use IDs: missed tool_result during the gap would
+        // A missed tool_result during the gap would
         // leave stale spinner state forever.
         setInProgressToolUseIDs?.(prev => (prev.size > 0 ? new Set() : prev))
       },
       onDisconnected: () => {
         logForDebugging('[useRemoteSession] Disconnected')
-        setConnStatus('disconnected')
         setIsLoading(false)
-        runningTaskIdsRef.current.clear()
-        writeTaskCount()
         setInProgressToolUseIDs?.(prev => (prev.size > 0 ? new Set() : prev))
       },
       onError: error => {
@@ -464,8 +381,6 @@ export function useRemoteSession({
     setStreamingToolUses,
     setStreamMode,
     setInProgressToolUseIDs,
-    setConnStatus,
-    writeTaskCount,
   ])
 
   // Send a user message to the remote session
@@ -487,27 +402,19 @@ export function useRemoteSession({
 
       setIsLoading(true)
 
-      // Track locally-added message UUIDs so the WS echo can be filtered.
-      // Must record BEFORE the POST to close the race where the echo arrives
-      // before the POST promise resolves.
-      if (opts?.uuid) sentUUIDsRef.current.add(opts.uuid)
-
       const success = await manager.sendMessage(content, opts)
 
       if (!success) {
-        // No need to undo the pre-POST add — BoundedUUIDSet's ring evicts it.
         setIsLoading(false)
         return false
       }
 
       // Update the session title after the first message when no initial prompt was provided.
       // This gives the session a meaningful title on claude.ai instead of "Background task".
-      // Skip in viewerOnly mode — the remote agent owns the session title.
       if (
         !hasUpdatedTitleRef.current &&
         config &&
-        !config.hasInitialPrompt &&
-        !config.viewerOnly
+        !config.hasInitialPrompt
       ) {
         hasUpdatedTitleRef.current = true
         const sessionId = config.sessionId
@@ -531,34 +438,27 @@ export function useRemoteSession({
         }
       }
 
-      // Start timeout to detect stuck sessions. Skip in viewerOnly mode —
-      // the remote agent may be idle-shut and take >60s to respawn.
       // Use a longer timeout when the remote session is compacting, since
       // the CLI worker is busy with an API call and won't emit messages.
-      if (!config?.viewerOnly) {
-        const timeoutMs = isCompactingRef.current
-          ? COMPACTION_TIMEOUT_MS
-          : RESPONSE_TIMEOUT_MS
-        responseTimeoutRef.current = setTimeout(
-          (setMessages, manager) => {
-            logForDebugging(
-              '[useRemoteSession] Response timeout - attempting reconnect',
-            )
-            // Add a warning message to the conversation
-            const warningMessage = createSystemMessage(
-              'Remote session may be unresponsive. Attempting to reconnect…',
-              'warning',
-            )
-            setMessages(prev => [...prev, warningMessage])
-
-            // Attempt to reconnect the WebSocket - the subscription may have become stale
-            manager.reconnect()
-          },
-          timeoutMs,
-          setMessages,
-          manager,
-        )
-      }
+      const timeoutMs = isCompactingRef.current
+        ? COMPACTION_TIMEOUT_MS
+        : RESPONSE_TIMEOUT_MS
+      responseTimeoutRef.current = setTimeout(
+        (setMessages, manager) => {
+          logForDebugging(
+            '[useRemoteSession] Response timeout - attempting reconnect',
+          )
+          const warningMessage = createSystemMessage(
+            'Remote session may be unresponsive. Attempting to reconnect…',
+            'warning',
+          )
+          setMessages(prev => [...prev, warningMessage])
+          manager.reconnect()
+        },
+        timeoutMs,
+        setMessages,
+        manager,
+      )
 
       return success
     },
@@ -573,14 +473,10 @@ export function useRemoteSession({
       responseTimeoutRef.current = null
     }
 
-    // Send interrupt signal to CCR. Skip in viewerOnly mode — Ctrl+C
-    // should never interrupt the remote agent.
-    if (!config?.viewerOnly) {
-      managerRef.current?.cancelSession()
-    }
+    managerRef.current?.cancelSession()
 
     setIsLoading(false)
-  }, [config, setIsLoading])
+  }, [setIsLoading])
 
   // Disconnect from the session
   const disconnect = useCallback(() => {

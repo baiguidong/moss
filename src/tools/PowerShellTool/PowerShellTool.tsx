@@ -5,7 +5,6 @@ import * as React from 'react';
 import type { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
 import type { AppState } from 'src/state/AppState.js';
 import { z } from 'zod/v4';
-import { getKairosActive } from '../../bootstrap/state.js';
 import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import type { SetToolJSXFn, Tool, ToolCallProgress, ValidationResult } from '../../Tool.js';
@@ -158,9 +157,6 @@ function isSearchOrReadPowerShellCommand(command: string): {
 // Progress display constants
 const PROGRESS_THRESHOLD_MS = 2000;
 const PROGRESS_INTERVAL_MS = 1000;
-// In assistant mode, blocking commands auto-background after this many ms in the main agent
-const ASSISTANT_BLOCKING_BUDGET_MS = 15_000;
-
 // Commands that should not be auto-backgrounded (canonical lowercase).
 // 'sleep' is a PS built-in alias for Start-Sleep but not in COMMON_ALIASES,
 // so list both forms.
@@ -251,8 +247,7 @@ const outputSchema = lazySchema(() => z.object({
   persistedOutputPath: z.string().optional().describe('Path to persisted full output when too large for inline'),
   persistedOutputSize: z.number().optional().describe('Total output size in bytes when persisted'),
   backgroundTaskId: z.string().optional().describe('ID of the background task if command is running in background'),
-  backgroundedByUser: z.boolean().optional().describe('True if the user manually backgrounded the command with Ctrl+B'),
-  assistantAutoBackgrounded: z.boolean().optional().describe('True if the command was auto-backgrounded by the assistant-mode blocking budget')
+  backgroundedByUser: z.boolean().optional().describe('True if the user manually backgrounded the command with Ctrl+B')
 }));
 type OutputSchema = ReturnType<typeof outputSchema>;
 export type Out = z.infer<OutputSchema>;
@@ -388,8 +383,7 @@ export const PowerShellTool = buildTool({
     persistedOutputPath,
     persistedOutputSize,
     backgroundTaskId,
-    backgroundedByUser,
-    assistantAutoBackgrounded
+    backgroundedByUser
   }: Out, toolUseID: string): ToolResultBlockParam {
     // For image data, format as image content block for Claude
     if (isImage) {
@@ -419,9 +413,7 @@ export const PowerShellTool = buildTool({
     let backgroundInfo = '';
     if (backgroundTaskId) {
       const outputPath = getTaskOutputPath(backgroundTaskId);
-      if (assistantAutoBackgrounded) {
-        backgroundInfo = `Command exceeded the assistant-mode blocking budget (${ASSISTANT_BLOCKING_BUDGET_MS / 1000}s) and was moved to the background with ID: ${backgroundTaskId}. It is still running — you will be notified when it completes. Output is being written to: ${outputPath}. In assistant mode, delegate long-running work to a subagent or use run_in_background to keep this conversation responsive.`;
-      } else if (backgroundedByUser) {
+      if (backgroundedByUser) {
         backgroundInfo = `Command was manually backgrounded by user with ID: ${backgroundTaskId}. Output is being written to: ${outputPath}`;
       } else {
         backgroundInfo = `Command running in background with ID: ${backgroundTaskId}. Output is being written to: ${outputPath}`;
@@ -539,8 +531,7 @@ export const PowerShellTool = buildTool({
             stderr: [result.stderr || '', stderrForShellReset].filter(Boolean).join('\n'),
             interrupted: false,
             backgroundTaskId: result.backgroundTaskId,
-            backgroundedByUser: result.backgroundedByUser,
-            assistantAutoBackgrounded: result.assistantAutoBackgrounded
+            backgroundedByUser: result.backgroundedByUser
           }
         };
       }
@@ -702,7 +693,6 @@ async function* runPowerShellCommand({
   let lastTotalBytes = 0;
   let backgroundShellId: string | undefined = undefined;
   let interruptBackgroundingStarted = false;
-  let assistantAutoBackgrounded = false;
 
   // Progress signal: resolved when backgroundShellId is set in the async
   // .then() path, waking the generator's Promise.race immediately instead of
@@ -827,18 +817,6 @@ async function* runPowerShellCommand({
     });
   }
 
-  // In assistant mode, the main agent should stay responsive. Auto-background
-  // blocking commands after ASSISTANT_BLOCKING_BUDGET_MS so the agent can keep
-  // coordinating instead of waiting. The command keeps running — no state loss.
-  if (feature('KAIROS') && getKairosActive() && isMainThread && !isBackgroundTasksDisabled && run_in_background !== true) {
-    setTimeout(() => {
-      if (shellCommand.status === 'running' && backgroundShellId === undefined) {
-        assistantAutoBackgrounded = true;
-        startBackgrounding('tengu_powershell_command_assistant_auto_backgrounded');
-      }
-    }, ASSISTANT_BLOCKING_BUDGET_MS).unref();
-  }
-
   // Handle Claude asking to run it in the background explicitly
   // When explicitly requested via run_in_background, always honor the request
   // regardless of the command type (isAutobackgroundingAllowed only applies to automatic backgrounding)
@@ -917,8 +895,7 @@ async function* runPowerShellCommand({
           stderr: '',
           code: 0,
           interrupted: false,
-          backgroundTaskId: backgroundShellId,
-          assistantAutoBackgrounded
+          backgroundTaskId: backgroundShellId
         };
       }
 

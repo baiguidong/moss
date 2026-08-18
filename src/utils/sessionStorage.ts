@@ -233,7 +233,7 @@ const EPHEMERAL_PROGRESS_TYPES = new Set([
   'bash_progress',
   'powershell_progress',
   'mcp_progress',
-  ...(feature('PROACTIVE') || feature('KAIROS')
+  ...(feature('PROACTIVE')
     ? (['sleep_progress'] as const)
     : []),
 ])
@@ -5130,7 +5130,7 @@ function extractFirstPromptFromChunk(chunk: string): string {
 
         if (SKIP_FIRST_PROMPT_PATTERN.test(result)) {
           if (
-            (feature('PROACTIVE') || feature('KAIROS')) &&
+            feature('PROACTIVE') &&
             result.startsWith(`<${TICK_TAG}>`)
           )
             hasTickMessages = true
@@ -5150,7 +5150,7 @@ function extractFirstPromptFromChunk(chunk: string): string {
   if (firstCommandFallback) return firstCommandFallback
   // Proactive sessions have only tick messages — give them a synthetic prompt
   // so they're not filtered out by enrichLogs
-  if ((feature('PROACTIVE') || feature('KAIROS')) && hasTickMessages)
+  if (feature('PROACTIVE') && hasTickMessages)
     return 'Proactive session'
   return ''
 }

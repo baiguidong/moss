@@ -206,32 +206,8 @@ export type BridgeCoreParams = {
    * told to stop. Not fired for the writeSdkMessages daemon path (daemon
    * sets its own title at init). Distinct from SessionSpawnOpts's
    * onFirstUserMessage (spawn-bridge, PR #21250), which stays fire-once.
-   */
+  */
   onUserMessage?: (text: string, sessionId: string) => boolean
-  /** See InitBridgeOptions.perpetual. */
-  perpetual?: boolean
-  /**
-   * Seeds lastTransportSequenceNum — the SSE event-stream high-water mark
-   * that's carried across transport swaps within one process. Daemon callers
-   * pass the value they persisted at shutdown so the FIRST SSE connect of a
-   * fresh process sends from_sequence_num and the server doesn't replay full
-   * history. REPL callers omit (fresh session each run → 0 is correct).
-   */
-  initialSSESequenceNum?: number
-}
-
-/**
- * Superset of ReplBridgeHandle. Adds getSSESequenceNum for daemon callers
- * that persist the SSE seq-num across process restarts and pass it back as
- * initialSSESequenceNum on the next start.
- */
-export type BridgeCoreHandle = ReplBridgeHandle & {
-  /**
-   * Current SSE sequence-number high-water mark. Updates as transports
-   * swap. Daemon callers persist this on shutdown and pass it back as
-   * initialSSESequenceNum on next start.
-   */
-  getSSESequenceNum(): number
 }
 
 /**
@@ -259,7 +235,7 @@ let initSequence = 0
  */
 export async function initBridgeCore(
   params: BridgeCoreParams,
-): Promise<BridgeCoreHandle | null> {
+): Promise<ReplBridgeHandle | null> {
   const {
     dir,
     machineName,
@@ -291,28 +267,15 @@ export async function initBridgeCore(
     onSetPermissionMode,
     onStateChange,
     onUserMessage,
-    perpetual,
-    initialSSESequenceNum = 0,
   } = params
 
   const seq = ++initSequence
 
-  // bridgePointer import hoisted: perpetual mode reads it before register;
-  // non-perpetual writes it after session create; both use clear at teardown.
-  const { writeBridgePointer, clearBridgePointer, readBridgePointer } =
+  const { writeBridgePointer, clearBridgePointer } =
     await import('./bridgePointer.js')
 
-  // Perpetual mode: read the crash-recovery pointer and treat it as prior
-  // state. The pointer is written unconditionally after session create
-  // (crash-recovery for all sessions); perpetual mode just skips the
-  // teardown clear so it survives clean exits too. Only reuse 'repl'
-  // pointers — a crashed standalone bridge (`claude remote-control`)
-  // writes source:'standalone' with a different workerType.
-  const rawPrior = perpetual ? await readBridgePointer(dir) : null
-  const prior = rawPrior?.source === 'repl' ? rawPrior : null
-
   logForDebugging(
-    `[bridge:repl] initBridgeCore #${seq} starting (initialMessages=${initialMessages?.length ?? 0}${prior ? ` perpetual prior=env:${prior.environmentId}` : ''})`,
+    `[bridge:repl] initBridgeCore #${seq} starting (initialMessages=${initialMessages?.length ?? 0})`,
   )
 
   // 5. Register bridge environment
@@ -341,7 +304,6 @@ export async function initBridgeCore(
     bridgeId: randomUUID(),
     workerType,
     environmentId: randomUUID(),
-    reuseEnvironmentId: prior?.environmentId,
     apiBaseUrl: baseUrl,
     sessionIngressUrl,
   }
@@ -357,11 +319,6 @@ export async function initBridgeCore(
       'registration_failed',
       `[bridge:repl] Environment registration failed: ${errorMessage(err)}`,
     )
-    // Stale pointer may be the cause (expired/deleted env) — clear it so
-    // the next start doesn't retry the same dead ID.
-    if (prior) {
-      await clearBridgePointer(dir)
-    }
     onStateChange?.('failed', errorMessage(err))
     return null
   }
@@ -373,10 +330,9 @@ export async function initBridgeCore(
   /**
    * Reconnect-in-place: if the just-registered environmentId matches what
    * was requested, call reconnectSession to force-stop stale workers and
-   * re-queue the session. Used at init (perpetual mode — env is alive but
-   * idle after clean teardown) and in doReconnect() Strategy 1 (env lost
-   * then resurrected). Returns true on success; caller falls back to
-   * fresh session creation on false.
+   * re-queue the session. Used by doReconnect() when an environment is lost
+   * then resurrected. Returns true on success; caller falls back to fresh
+   * session creation on false.
    */
   async function tryReconnectInPlace(
     requestedEnvId: string,
@@ -418,17 +374,6 @@ export async function initBridgeCore(
     return false
   }
 
-  // Perpetual init: env is alive but has no queued work after clean
-  // teardown. reconnectSession re-queues it. doReconnect() has the same
-  // call but only fires on poll 404 (env dead);
-  // here the env is alive but idle.
-  const reusedPriorSession = prior
-    ? await tryReconnectInPlace(prior.environmentId, prior.sessionId)
-    : false
-  if (prior && !reusedPriorSession) {
-    await clearBridgePointer(dir)
-  }
-
   // 6. Create session on the bridge. Initial messages are NOT included as
   // session creation events because those use STREAM_ONLY persistence and
   // are published before the CCR UI subscribes, so they get lost. Instead,
@@ -436,51 +381,29 @@ export async function initBridgeCore(
 
   // Mutable session ID — updated when the environment+session pair is
   // re-created after a connection loss.
-  let currentSessionId: string
+  const currentSessionIdAtCreation = await createSession({
+    environmentId,
+    title,
+    gitRepoUrl,
+    branch,
+    signal: AbortSignal.timeout(15_000),
+  })
 
-
-  if (reusedPriorSession && prior) {
-    currentSessionId = prior.sessionId
+  if (!currentSessionIdAtCreation) {
     logForDebugging(
-      `[bridge:repl] Perpetual session reused: ${currentSessionId}`,
+      '[bridge:repl] Session creation failed, deregistering environment',
     )
-    // Server already has all initialMessages from the prior CLI run. Mark
-    // them as previously-flushed so the initial flush filter excludes them
-    // (previouslyFlushedUUIDs is a fresh Set on every CLI start). Duplicate
-    // UUIDs cause the server to kill the WebSocket.
-    if (initialMessages && previouslyFlushedUUIDs) {
-      for (const msg of initialMessages) {
-        previouslyFlushedUUIDs.add(msg.uuid)
-      }
-    }
-  } else {
-    const createdSessionId = await createSession({
-      environmentId,
-      title,
-      gitRepoUrl,
-      branch,
-      signal: AbortSignal.timeout(15_000),
-    })
-
-    if (!createdSessionId) {
-      logForDebugging(
-        '[bridge:repl] Session creation failed, deregistering environment',
-      )
-      logEvent('tengu_bridge_repl_session_failed', {})
-      await api.deregisterEnvironment(environmentId).catch(() => {})
-      onStateChange?.('failed', 'Session creation failed')
-      return null
-    }
-
-    currentSessionId = createdSessionId
-    logForDebugging(`[bridge:repl] Session created: ${currentSessionId}`)
+    logEvent('tengu_bridge_repl_session_failed', {})
+    await api.deregisterEnvironment(environmentId).catch(() => {})
+    onStateChange?.('failed', 'Session creation failed')
+    return null
   }
 
-  // Crash-recovery pointer: written now so a kill -9 at any point after
-  // this leaves a recoverable trail. Cleared in teardown (non-perpetual)
-  // or left alone (perpetual mode — pointer survives clean exit too).
-  // `claude remote-control --continue` from the same directory will detect
-  // it and offer to resume.
+  let currentSessionId = currentSessionIdAtCreation
+  logForDebugging(`[bridge:repl] Session created: ${currentSessionId}`)
+
+  // Crash-recovery pointer: written now so a kill -9 after session creation
+  // leaves a recoverable trail. Clean teardown clears it.
   await writeBridgePointer(dir, {
     sessionId: currentSessionId,
     environmentId,
@@ -554,12 +477,7 @@ export async function initBridgeCore(
   // replays the entire session event history — every prompt ever sent
   // re-delivered as fresh inbound messages on every onWorkReceived.
   //
-  // Seed only when we actually reconnected the prior session. If
-  // `reusedPriorSession` is false we fell through to `createSession()` —
-  // the caller's persisted seq-num belongs to a dead session and applying
-  // it to the fresh stream (starting at 1) silently drops events. Same
-  // hazard as doReconnect Strategy 2; same fix as the reset there.
-  let lastTransportSequenceNum = reusedPriorSession ? initialSSESequenceNum : 0
+  let lastTransportSequenceNum = 0
   // Track the current work ID so teardown can call stopWork
   let currentWorkId: string | null = null
   // Session ingress JWT for the current work item — used for heartbeat auth.
@@ -726,8 +644,8 @@ export async function initBridgeCore(
       return true
     }
 
-    // Strategy 1: same helper as perpetual init. currentSessionId stays
-    // the same on success; URL on mobile/web stays valid;
+    // Strategy 1 keeps currentSessionId the same on success, so the URL on
+    // mobile/web stays valid and
     // previouslyFlushedUUIDs preserved (no re-flush).
     if (await tryReconnectInPlace(requestedEnvId, currentSessionId)) {
       logEvent('tengu_bridge_repl_reconnected_in_place', {})
@@ -791,11 +709,6 @@ export async function initBridgeCore(
     void updateSessionBridgeId(toCompatSessionId(newSessionId)).catch(() => {})
     // Reset per-session transport state IMMEDIATELY after the session swap,
     // before any await. If this runs after `await writeBridgePointer` below,
-    // there's a window where handle.bridgeSessionId already returns session B
-    // but getSSESequenceNum() still returns session A's seq — a daemon
-    // persistState() in that window writes {bridgeSessionId: B, seq: OLD_A},
-    // which PASSES the session-ID validation check and defeats it entirely.
-    //
     // The SSE seq-num is scoped to the session's event stream — carrying it
     // over leaves the transport's lastSequenceNum stuck high (seq only
     // advances when received > last), and its next internal reconnect would
@@ -1502,29 +1415,6 @@ export async function initBridgeCore(
   }
   void startWorkPollLoop(pollOpts)
 
-  // Perpetual mode: hourly mtime refresh of the crash-recovery pointer.
-  // The onWorkReceived refresh only fires per user prompt — a
-  // daemon idle for >4h would have a stale pointer, and the next restart
-  // would clear it (readBridgePointer TTL check) → fresh session. The
-  // standalone bridge (bridgeMain.ts) has an identical hourly timer.
-  const pointerRefreshTimer = perpetual
-    ? setInterval(() => {
-        // doReconnect() reassigns currentSessionId/environmentId non-
-        // atomically (env at ~:634, session at ~:719, awaits in between).
-        // If this timer fires in that window, its fire-and-forget write can
-        // race with (and overwrite) doReconnect's own pointer write at ~:740,
-        // leaving the pointer at the now-archived old session. doReconnect
-        // writes the pointer itself, so skipping here is free.
-        if (reconnectPromise) return
-        void writeBridgePointer(dir, {
-          sessionId: currentSessionId,
-          environmentId,
-          source: 'repl',
-        })
-      }, 60 * 60_000)
-    : null
-  pointerRefreshTimer?.unref?.()
-
   // Push a silent keep_alive frame on a fixed interval so upstream proxies
   // and the session-ingress layer don't GC an otherwise-idle remote control
   // session. The keep_alive type is filtered before reaching any client UI
@@ -1563,9 +1453,6 @@ export async function initBridgeCore(
       `[bridge:repl] Teardown starting: env=${environmentId} session=${currentSessionId} workId=${currentWorkId ?? 'none'} transportState=${transport?.getStateLabel() ?? 'null'}`,
     )
 
-    if (pointerRefreshTimer !== null) {
-      clearInterval(pointerRefreshTimer)
-    }
     if (keepAliveTimer !== null) {
       clearInterval(keepAliveTimer)
     }
@@ -1578,42 +1465,6 @@ export async function initBridgeCore(
     }
     pollController.abort()
     logForDebugging('[bridge:repl] Teardown: poll loop aborted')
-
-    // Capture the live transport's seq BEFORE close() — close() is sync
-    // (just aborts the SSE fetch) and does NOT invoke onClose, so the
-    // setOnClose capture path never runs for explicit teardown.
-    // Without this, getSSESequenceNum() after teardown returns the stale
-    // lastTransportSequenceNum (captured at the last transport swap), and
-    // daemon callers persisting that value lose all events since then.
-    if (transport) {
-      const finalSeq = transport.getLastSequenceNum()
-      if (finalSeq > lastTransportSequenceNum) {
-        lastTransportSequenceNum = finalSeq
-      }
-    }
-
-    if (perpetual) {
-      // Perpetual teardown is LOCAL-ONLY — do not send result, do not call
-      // stopWork, do not close the transport. All of those signal the
-      // server (and any mobile/attach subscribers) that the session is
-      // ending. Instead: stop polling, let the socket die with the
-      // process; the backend times the work-item lease back to pending on
-      // its own (TTL 300s). Next daemon start reads the pointer and
-      // reconnectSession re-queues work.
-      transport = null
-      flushGate.drop()
-      // Refresh the pointer mtime so that sessions lasting longer than
-      // BRIDGE_POINTER_TTL_MS (4h) don't appear stale on next start.
-      await writeBridgePointer(dir, {
-        sessionId: currentSessionId,
-        environmentId,
-        source: 'repl',
-      })
-      logForDebugging(
-        `[bridge:repl] Teardown (perpetual): leaving env=${environmentId} session=${currentSessionId} alive on server, duration=${Date.now() - teardownStart}ms`,
-      )
-      return
-    }
 
     // Fire the result message, then archive, THEN close. transport.write()
     // only enqueues (SerialBatchEventUploader resolves on buffer-add); the
@@ -1681,14 +1532,6 @@ export async function initBridgeCore(
     },
     get environmentId() {
       return environmentId
-    },
-    getSSESequenceNum() {
-      // lastTransportSequenceNum only updates when a transport is CLOSED
-      // (captured at swap/onClose). During normal operation the CURRENT
-      // transport's live seq isn't reflected there. Merge both so callers
-      // (e.g. daemon persistState()) get the actual high-water mark.
-      const live = transport?.getLastSequenceNum() ?? 0
-      return Math.max(lastTransportSequenceNum, live)
     },
     sessionIngressUrl,
     writeMessages(messages) {

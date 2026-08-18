@@ -38,14 +38,6 @@ import type { SessionId } from 'src/types/ids.js'
 
 // DO NOT ADD MORE STATE HERE - BE JUDICIOUS WITH GLOBAL STATE
 
-// dev: true on entries that came via --dangerously-load-development-channels.
-// The allowlist gate checks this per-entry (not the session-wide
-// hasDevChannels bit) so passing both flags doesn't let the dev dialog's
-// acceptance leak allowlist-bypass to the --channels entries.
-export type ChannelEntry =
-  | { kind: 'plugin'; name: string; marketplace: string; dev?: boolean }
-  | { kind: 'server'; name: string; dev?: boolean }
-
 export type AttributedCounter = {
   add(value: number, additionalAttributes?: Attributes): void
 }
@@ -77,14 +69,12 @@ type State = {
   initialMainLoopModel: ModelSetting
   modelStrings: ModelStrings | null
   isInteractive: boolean
-  kairosActive: boolean
   // When true, ensureToolResultPairing throws on mismatch instead of
   // repairing with synthetic placeholders. HFI opts in at startup so
   // trajectories fail fast rather than conditioning the model on fake
   // tool_results.
   strictToolResultPairing: boolean
   sdkAgentProgressSummariesEnabled: boolean
-  userMsgOptIn: boolean
   clientType: string
   sessionSource: string | undefined
   questionPreviewFormat: 'markdown' | 'html' | undefined
@@ -213,16 +203,6 @@ type State = {
   lastEmittedDate: string | null
   // Additional directories from --add-dir flag (for CLAUDE.md loading)
   additionalDirectoriesForClaudeMd: string[]
-  // Channel server allowlist from --channels flag (servers whose channel
-  // notifications should register this session). Parsed once in main.tsx —
-  // the tag decides trust model: 'plugin' → marketplace verification +
-  // allowlist, 'server' → allowlist always fails (schema is plugin-only).
-  // Either kind needs entry.dev to bypass allowlist.
-  allowedChannels: ChannelEntry[]
-  // True if any entry in allowedChannels came from
-  // --dangerously-load-development-channels (so ChannelsNotice can name the
-  // right flag in policy-blocked messages)
-  hasDevChannels: boolean
   // Dir containing the session's `.jsonl`; null = derive from originalCwd.
   sessionProjectDir: string | null
   // Cached prompt cache 1h TTL allowlist from GrowthBook (session-stable)
@@ -306,10 +286,8 @@ function getInitialState(): State {
     initialMainLoopModel: null,
     modelStrings: null,
     isInteractive: false,
-    kairosActive: false,
     strictToolResultPairing: false,
     sdkAgentProgressSummariesEnabled: false,
-    userMsgOptIn: false,
     clientType: 'cli',
     sessionSource: undefined,
     questionPreviewFormat: undefined,
@@ -409,9 +387,6 @@ function getInitialState(): State {
     lastEmittedDate: null,
     // Additional directories from --add-dir flag (for CLAUDE.md loading)
     additionalDirectoriesForClaudeMd: [],
-    // Channel server allowlist from --channels flag
-    allowedChannels: [],
-    hasDevChannels: false,
     // Session project dir (null = derive from originalCwd)
     sessionProjectDir: null,
     // Prompt cache 1h allowlist (null = not yet fetched from GrowthBook)
@@ -1237,31 +1212,12 @@ export function setSdkAgentProgressSummariesEnabled(value: boolean): void {
   STATE.sdkAgentProgressSummariesEnabled = value
 }
 
-export function getKairosActive(): boolean {
-  return STATE.kairosActive
-}
-
-export function setKairosActive(value: boolean): void {
-  STATE.kairosActive = value
-}
-
 export function getStrictToolResultPairing(): boolean {
   return STATE.strictToolResultPairing
 }
 
 export function setStrictToolResultPairing(value: boolean): void {
   STATE.strictToolResultPairing = value
-}
-
-// Field name 'userMsgOptIn' avoids excluded-string substrings ('BriefTool',
-// 'SendUserMessage' — case-insensitive). All callers are inside feature()
-// guards so these accessors don't need their own (matches getKairosActive).
-export function getUserMsgOptIn(): boolean {
-  return STATE.userMsgOptIn
-}
-
-export function setUserMsgOptIn(value: boolean): void {
-  STATE.userMsgOptIn = value
 }
 
 export function getSessionSource(): string | undefined {
@@ -1832,22 +1788,6 @@ export function setAdditionalDirectoriesForClaudeMd(
   directories: string[],
 ): void {
   STATE.additionalDirectoriesForClaudeMd = directories
-}
-
-export function getAllowedChannels(): ChannelEntry[] {
-  return STATE.allowedChannels
-}
-
-export function setAllowedChannels(entries: ChannelEntry[]): void {
-  STATE.allowedChannels = entries
-}
-
-export function getHasDevChannels(): boolean {
-  return STATE.hasDevChannels
-}
-
-export function setHasDevChannels(value: boolean): void {
-  STATE.hasDevChannels = value
 }
 
 export function getPromptCache1hAllowlist(): string[] | null {

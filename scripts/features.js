@@ -144,14 +144,6 @@ export const NATIVE_REQUIRED = {
 // =============================================================================
 
 export const INTERNAL_ONLY = {
-  // --- Anthropic 内部基础设施 ---
-  KAIROS: false,             // 内部推送通知系统
-  KAIROS_BRIEF: false,       // Kairos 简报
-  KAIROS_CHANNELS: false,    // Kairos 频道
-  KAIROS_DREAM: false,       // Kairos Dream 服务
-  KAIROS_GITHUB_WEBHOOKS: false, // Kairos GitHub Webhook
-  KAIROS_PUSH_NOTIFICATION: false, // Kairos 推送
-
   CCR_AUTO_CONNECT: false,   // Claude Code Remote 自动连接
   CCR_MIRROR: false,         // CCR 镜像模式
   CCR_REMOTE_SETUP: false,   // CCR 远程初始化

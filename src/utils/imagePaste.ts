@@ -262,7 +262,7 @@ export async function getImagePathFromClipboard(): Promise<string | null> {
 
 /**
  * Regex pattern to match supported image file extensions. Kept in sync with
- * MIME_BY_EXT in BriefTool/upload.ts — attachments.ts uses this to set isImage
+ * attachments.ts uses this to set isImage
  * on the wire, and remote viewers fetch /preview iff isImage is true. An ext
  * here but not in MIME_BY_EXT (e.g. bmp) uploads as octet-stream and has no
  * /preview variant → broken thumbnail.

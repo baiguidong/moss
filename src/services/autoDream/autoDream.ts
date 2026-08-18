@@ -29,7 +29,6 @@ import { isAutoDreamEnabled } from './config.js'
 import { getProjectDir } from '../../utils/sessionStorage.js'
 import {
   getOriginalCwd,
-  getKairosActive,
   getIsRemoteMode,
   getSessionId,
 } from '../../bootstrap/state.js'
@@ -93,7 +92,6 @@ function getConfig(): AutoDreamConfig {
 }
 
 function isGateOpen(): boolean {
-  if (getKairosActive()) return false // KAIROS mode uses disk-skill dream
   if (getIsRemoteMode()) return false
   if (!isAutoMemoryEnabled()) return false
   return isAutoDreamEnabled()

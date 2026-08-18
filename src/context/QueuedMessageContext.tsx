@@ -14,17 +14,15 @@ export function useQueuedMessage() {
 const PADDING_X = 2;
 type Props = {
   isFirst: boolean;
-  useBriefLayout?: boolean;
   children: React.ReactNode;
 };
 export function QueuedMessageProvider(t0) {
   const $ = _c(9);
   const {
     isFirst,
-    useBriefLayout,
     children
   } = t0;
-  const padding = useBriefLayout ? 0 : PADDING_X;
+  const padding = PADDING_X;
   const t1 = padding * 2;
   let t2;
   if ($[0] !== isFirst || $[1] !== t1) {
