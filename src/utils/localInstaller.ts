@@ -3,21 +3,21 @@
  */
 
 import { access, chmod, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { isAbsolute, join, relative, resolve, sep } from 'path'
 import { type ReleaseChannel, saveGlobalConfig } from './config.js'
-import { getClaudeConfigHomeDir } from './envUtils.js'
+import { getMossConfigHomeDir } from './envUtils.js'
 import { getErrnoCode } from './errors.js'
 import { execFileNoThrowWithCwd } from './execFileNoThrow.js'
 import { getFsImplementation } from './fsOperations.js'
 import { logError } from './log.js'
 import { jsonStringify } from './slowOperations.js'
 
-// Lazy getters: getClaudeConfigHomeDir() is memoized and reads process.env.
+// Lazy getters: getMossConfigHomeDir() is memoized and reads process.env.
 // Evaluating at module scope would capture the value before entrypoints like
-// hfi.tsx get a chance to set CLAUDE_CONFIG_DIR in main(), and would also
+// hfi.tsx get a chance to set MOSS_CONFIG_DIR in main(), and would also
 // populate the memoize cache with that stale value for all 150+ other callers.
-function getLocalInstallDir(): string {
-  return join(getClaudeConfigHomeDir(), 'local')
+export function getLocalInstallDir(): string {
+  return join(getMossConfigHomeDir(), 'local')
 }
 export function getLocalClaudePath(): string {
   return join(getLocalInstallDir(), 'claude')
@@ -28,7 +28,18 @@ export function getLocalClaudePath(): string {
  */
 export function isRunningFromLocalInstallation(): boolean {
   const execPath = process.argv[1] || ''
-  return execPath.includes('/.claude/local/node_modules/')
+  if (!execPath) return false
+
+  const relativePath = relative(
+    join(getLocalInstallDir(), 'node_modules'),
+    resolve(execPath),
+  )
+  return (
+    relativePath !== '' &&
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
 }
 
 /**

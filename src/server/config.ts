@@ -2,11 +2,11 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { serverFileConfigSchema, type ServerConfig, type ServerFileConfig } from './types.js'
-import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import { getMossConfigHomeDir } from '../utils/envUtils.js'
 import { expandPath } from '../utils/path.js'
 
 export function getDefaultServerConfigPath(): string {
-  return join(getClaudeConfigHomeDir(), 'server', 'server.json')
+  return join(getMossConfigHomeDir(), 'server', 'server.json')
 }
 
 function getDefaultStoragePaths(): {
@@ -15,7 +15,7 @@ function getDefaultStoragePaths(): {
   transcriptDir: string
   runtimeDir: string
 } {
-  const baseDir = join(getClaudeConfigHomeDir(), 'server')
+  const baseDir = join(getMossConfigHomeDir(), 'server')
   return {
     rootDir: baseDir,
     dbPath: join(baseDir, 'moss.db'),

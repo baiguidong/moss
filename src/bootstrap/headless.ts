@@ -140,7 +140,7 @@ export async function bootstrapHeadless(
     }),
   )
 
-  // 4. Load agent definitions (supports .claude/agents/*.md)
+  // 4. Load agent definitions (supports .moss/agents/*.md)
   const agentDefinitions = await withDiagnosticsTiming(
     'bootstrap_headless_agent_definitions',
     () => getAgentDefinitionsWithOverrides(cwd),

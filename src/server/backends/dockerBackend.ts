@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { mkdir } from 'fs/promises'
 import { dirname, join } from 'path'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 import { MOSS_HOME } from '../../utils/skills/localSkillDirectories.js'
 import type {
   BackendHandle,
@@ -42,14 +42,14 @@ function buildConfigDir(
 ): string {
   if (mode === 'user' && options.userId) {
     return join(
-      getClaudeConfigHomeDir(),
+      getMossConfigHomeDir(),
       'direct-connect-runtime',
       'users',
       options.userId,
     )
   }
   return join(
-    getClaudeConfigHomeDir(),
+    getMossConfigHomeDir(),
     'direct-connect-runtime',
     'sessions',
     options.sessionId,
@@ -57,7 +57,7 @@ function buildConfigDir(
 }
 
 function getHostSettingsPath(): string {
-  return join(getClaudeConfigHomeDir(), 'settings.json')
+  return join(getMossConfigHomeDir(), 'settings.json')
 }
 
 export class DockerBackend implements SessionBackend {
@@ -94,7 +94,7 @@ export class DockerBackend implements SessionBackend {
     const containerName =
       runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
     const env = buildSessionEnv(options, {
-      CLAUDE_CONFIG_DIR: configDir,
+      MOSS_CONFIG_DIR: configDir,
       CLAUDE_CODE_CLI_PATH: nodeCliPath,
     })
 
@@ -118,7 +118,7 @@ export class DockerBackend implements SessionBackend {
 
     args.push('-w', options.cwd)
     const passthroughEnvKeys = [
-      'CLAUDE_CONFIG_DIR',
+      'MOSS_CONFIG_DIR',
       'CLAUDE_CODE_CLI_PATH',
       'MOSS_SESSION_USER_ID',
       'MOSS_SESSION_ORG_ID',

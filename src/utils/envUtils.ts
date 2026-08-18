@@ -2,24 +2,20 @@ import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { join } from 'path'
 
-// Memoized: 150+ callers, many on hot paths. Keyed off config-home env vars
-// so tests that change them get a fresh value without explicit cache.clear.
-export const getClaudeConfigHomeDir = memoize(
+// Memoized: 150+ callers, many on hot paths. Keyed off the config-home env var
+// so tests that change it get a fresh value without explicit cache.clear.
+export const getMossConfigHomeDir = memoize(
   (): string => {
-    if (process.env.CLAUDE_CONFIG_DIR) {
-      return process.env.CLAUDE_CONFIG_DIR.normalize('NFC')
-    }
-    if (process.env.MOSS_HOME) {
-      return process.env.MOSS_HOME.normalize('NFC')
+    if (process.env.MOSS_CONFIG_DIR) {
+      return process.env.MOSS_CONFIG_DIR.normalize('NFC')
     }
     return join(homedir(), '.moss').normalize('NFC')
   },
-  () =>
-    `${process.env.CLAUDE_CONFIG_DIR ?? ''}\u0000${process.env.MOSS_HOME ?? ''}`,
+  () => process.env.MOSS_CONFIG_DIR ?? '',
 )
 
 export function getTeamsDir(): string {
-  return join(getClaudeConfigHomeDir(), 'teams')
+  return join(getMossConfigHomeDir(), 'teams')
 }
 
 /**

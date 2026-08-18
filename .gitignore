@@ -4,6 +4,7 @@ package-lock.json
 .DS_Store
 *.log
 .claude/
+.moss/settings.local.json
 /memory/
 tmp/
 .nexus/

@@ -16,9 +16,10 @@ import {
   unlink,
 } from 'fs/promises'
 import { createServer, type Server, type Socket } from 'net'
-import { homedir, platform } from 'os'
-import { join } from 'path'
+import { platform } from 'os'
+import { dirname, join } from 'path'
 import { z } from 'zod'
+import { getMossConfigHomeDir } from '../envUtils.js'
 import { lazySchema } from '../lazySchema.js'
 import { jsonParse, jsonStringify } from '../slowOperations.js'
 import { getSecureSocketPath, getSocketDir } from './common.js'
@@ -28,7 +29,7 @@ const MAX_MESSAGE_SIZE = 1024 * 1024 // 1MB - Max message size that can be sent 
 
 const LOG_FILE =
   process.env.USER_TYPE === 'ant'
-    ? join(homedir(), '.claude', 'debug', 'chrome-native-host.txt')
+    ? join(getMossConfigHomeDir(), 'debug', 'chrome-native-host.txt')
     : undefined
 
 function log(message: string, ...args: unknown[]): void {
@@ -38,9 +39,11 @@ function log(message: string, ...args: unknown[]): void {
     const logLine = `[${timestamp}] [Claude Chrome Native Host] ${message}${formattedArgs}\n`
     // Fire-and-forget: logging is best-effort and callers (including event
     // handlers) don't await
-    void appendFile(LOG_FILE, logLine).catch(() => {
-      // Ignore file write errors
-    })
+    void mkdir(dirname(LOG_FILE), { recursive: true })
+      .then(() => appendFile(LOG_FILE, logLine))
+      .catch(() => {
+        // Ignore file write errors
+      })
   }
   console.error(`[Claude Chrome Native Host] ${message}`, ...args)
 }

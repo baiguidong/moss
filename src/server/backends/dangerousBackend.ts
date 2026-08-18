@@ -21,7 +21,7 @@ export class DangerousBackend implements SessionBackend {
       },
       buildSessionEnv(options, {
         MOSS_SESSION_RUNTIME_TYPE: 'host',
-        CLAUDE_CONFIG_DIR: options.runtime?.configDir,
+        MOSS_CONFIG_DIR: options.runtime?.configDir,
       }),
     )
 

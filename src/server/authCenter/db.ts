@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 
 export type AuthCenterOrganization = {
   id: string
@@ -156,11 +156,11 @@ function mapApiKey(row: SqlRow): AuthCenterApiKey {
 }
 
 export function getDefaultAuthCenterDbPath(): string {
-  return join(getClaudeConfigHomeDir(), 'authcenter.db')
+  return join(getMossConfigHomeDir(), 'authcenter.db')
 }
 
 export function getDefaultAuthCenterJsonPath(): string {
-  return join(getClaudeConfigHomeDir(), 'auth-center', 'store.json')
+  return join(getMossConfigHomeDir(), 'auth-center', 'store.json')
 }
 
 export class AuthCenterDb {

@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import { getMossConfigHomeDir } from '../utils/envUtils.js'
 import type { SessionSummary } from './sessionManager.js'
 import type { SessionIndex, SessionIndexEntry } from './types.js'
 
 export function getSessionIndexPath(): string {
-  return join(getClaudeConfigHomeDir(), 'direct-connect', 'sessions.json')
+  return join(getMossConfigHomeDir(), 'direct-connect', 'sessions.json')
 }
 
 export async function readSessionIndex(

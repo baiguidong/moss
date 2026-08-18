@@ -193,18 +193,18 @@ async function getWatchablePaths(): Promise<string[]> {
   await addWatchablePath(getSkillsPath('userSettings', 'skills'))
   await addWatchablePath(MOSS_SKILLS_DIR)
 
-  // User commands directory (~/.claude/commands)
+  // User commands directory (~/.moss/commands)
   await addWatchablePath(getSkillsPath('userSettings', 'commands'))
 
-  // Project skills directory (.claude/skills)
+  // Project skills directory (.moss/skills)
   await addWatchablePath(getSkillsPath('projectSettings', 'skills'))
 
-  // Project commands directory (.claude/commands)
+  // Project commands directory (.moss/commands)
   await addWatchablePath(getSkillsPath('projectSettings', 'commands'))
 
   // Additional directories (--add-dir) skills
   for (const dir of getAdditionalDirectoriesForClaudeMd()) {
-    await addWatchablePath(platformPath.join(dir, '.claude', 'skills'))
+    await addWatchablePath(platformPath.join(dir, '.moss', 'skills'))
   }
 
   return paths

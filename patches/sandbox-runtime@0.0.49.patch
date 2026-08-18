@@ -1,0 +1,23 @@
+diff --git a/dist/sandbox/sandbox-utils.js b/dist/sandbox/sandbox-utils.js
+index 3381073..016fd74 100644
+--- a/dist/sandbox/sandbox-utils.js
++++ b/dist/sandbox/sandbox-utils.js
+@@ -32,7 +32,7 @@ export function getDangerousDirectories() {
+     return [
+         ...DANGEROUS_DIRECTORIES.filter(d => d !== '.git'),
+-        '.claude/commands',
+-        '.claude/agents',
++        '.moss/commands',
++        '.moss/agents',
+     ];
+ }
+ /**
+@@ -247,7 +247,7 @@ export function getDefaultWritePaths() {
+         '/tmp/claude',
+         '/private/tmp/claude',
+         path.join(homeDir, '.npm/_logs'),
+-        path.join(homeDir, '.claude/debug'),
++        path.join(process.env.MOSS_CONFIG_DIR || path.join(homeDir, '.moss'), 'debug'),
+     ];
+     return recommendedPaths;
+ }

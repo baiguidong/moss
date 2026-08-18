@@ -1,9 +1,10 @@
 import fs from 'fs/promises'
-import os from 'os'
 import path from 'path'
+import { getMossConfigHomeDir } from '../utils/envUtils.js'
 
-const lockDir = path.join(os.homedir(), '.claude')
-const lockPath = path.join(lockDir, 'direct-connect-server.json')
+function getLockPath(): string {
+  return path.join(getMossConfigHomeDir(), 'direct-connect-server.json')
+}
 
 export type ServerLock = {
   pid: number
@@ -14,21 +15,21 @@ export type ServerLock = {
 }
 
 async function ensureDir(): Promise<void> {
-  await fs.mkdir(lockDir, { recursive: true })
+  await fs.mkdir(getMossConfigHomeDir(), { recursive: true })
 }
 
 export async function writeServerLock(lock: ServerLock): Promise<void> {
   await ensureDir()
-  await fs.writeFile(lockPath, JSON.stringify(lock, null, 2), 'utf8')
+  await fs.writeFile(getLockPath(), JSON.stringify(lock, null, 2), 'utf8')
 }
 
 export async function removeServerLock(): Promise<void> {
-  await fs.rm(lockPath, { force: true })
+  await fs.rm(getLockPath(), { force: true })
 }
 
 export async function probeRunningServer(): Promise<ServerLock | null> {
   try {
-    const raw = await fs.readFile(lockPath, 'utf8')
+    const raw = await fs.readFile(getLockPath(), 'utf8')
     const parsed = JSON.parse(raw) as ServerLock
     process.kill(parsed.pid, 0)
     return parsed

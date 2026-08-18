@@ -3,7 +3,7 @@
  *
  * Web composer uploads via cookie-authed /api/{org}/upload, sends file_uuid
  * alongside the message. Here we fetch each via GET /api/oauth/files/{uuid}/content
- * (oauth-authed, same store), write to ~/.claude/uploads/{sessionId}/, and
+ * (oauth-authed, same store), write to ~/.moss/uploads/{sessionId}/, and
  * return @path refs to prepend. Claude's Read tool takes it from there.
  *
  * Best-effort: any failure (no token, network, non-2xx, disk) logs debug and
@@ -18,7 +18,7 @@ import { basename, join } from 'path'
 import { z } from 'zod/v4'
 import { getSessionId } from '../bootstrap/state.js'
 import { logForDebugging } from '../utils/debug.js'
-import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import { getMossConfigHomeDir } from '../utils/envUtils.js'
 import { lazySchema } from '../utils/lazySchema.js'
 import { getOauthConfig } from '../constants/oauth.js'
 import { getClaudeAIOAuthTokens } from '../utils/auth.js'
@@ -59,7 +59,7 @@ function sanitizeFileName(name: string): string {
 }
 
 function uploadsDir(): string {
-  return join(getClaudeConfigHomeDir(), 'uploads', getSessionId())
+  return join(getMossConfigHomeDir(), 'uploads', getSessionId())
 }
 
 /**
