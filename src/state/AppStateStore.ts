@@ -114,8 +114,6 @@ export type AppState = DeepImmutable<{
   replBridgeEnabled: boolean
   // Always-on bridge: true when activated via /remote-control command, false when config-driven
   replBridgeExplicit: boolean
-  // Outbound-only mode: forward events to CCR but reject inbound prompts/control
-  replBridgeOutboundOnly: boolean
   // Always-on bridge: env registered + session created (= "Ready")
   replBridgeConnected: boolean
   // Always-on bridge: ingress WebSocket is open (= "Connected" - user on claude.ai)
@@ -458,7 +456,6 @@ export function getDefaultAppState(): AppState {
     remoteSessionUrl: undefined,
     replBridgeEnabled: false,
     replBridgeExplicit: false,
-    replBridgeOutboundOnly: false,
     replBridgeConnected: false,
     replBridgeSessionActive: false,
     replBridgeReconnecting: false,

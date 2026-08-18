@@ -2748,15 +2748,6 @@ async function run(): Promise<CommanderCommand> {
       mode: isAgentSwarmsEnabled() && getTeammateUtils().isPlanModeRequired() ? 'plan' as const : toolPermissionContext.mode
     };
     const fullRemoteControl = remoteControl || getRemoteControlAtStartup();
-    let ccrMirrorEnabled = false;
-    if (feature('CCR_MIRROR') && !fullRemoteControl) {
-      /* eslint-disable @typescript-eslint/no-require-imports */
-      const {
-        isCcrMirrorEnabled
-      } = require('./bridge/bridgeEnabled.js') as typeof import('./bridge/bridgeEnabled.js');
-      /* eslint-enable @typescript-eslint/no-require-imports */
-      ccrMirrorEnabled = isCcrMirrorEnabled();
-    }
     const initialState: AppState = {
       settings: getInitialSettings(),
       tasks: {},
@@ -2793,9 +2784,8 @@ async function run(): Promise<CommanderCommand> {
       },
       statusLineText: undefined,
       remoteSessionUrl: undefined,
-      replBridgeEnabled: fullRemoteControl || ccrMirrorEnabled,
+      replBridgeEnabled: fullRemoteControl,
       replBridgeExplicit: remoteControl,
-      replBridgeOutboundOnly: ccrMirrorEnabled,
       replBridgeConnected: false,
       replBridgeSessionActive: false,
       replBridgeReconnecting: false,

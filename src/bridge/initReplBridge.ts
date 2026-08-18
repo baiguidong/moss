@@ -95,13 +95,6 @@ export type InitBridgeOptions = {
   // server (duplicate UUIDs across sessions cause the WS to be killed).
   // Mutated in place — newly flushed UUIDs are added after each flush.
   previouslyFlushedUUIDs?: Set<string>
-  /**
-   * When true, the bridge only forwards events outbound (no SSE inbound
-   * stream). Used by CCR mirror mode — local sessions visible on claude.ai
-   * without enabling inbound control.
-   */
-  outboundOnly?: boolean
-  tags?: string[]
 }
 
 export async function initReplBridge(
@@ -119,8 +112,6 @@ export async function initReplBridge(
     getMessages,
     previouslyFlushedUUIDs,
     initialName,
-    outboundOnly,
-    tags,
   } = options ?? {}
 
   // Wire the cse_ shim kill switch so toCompatSessionId respects the
@@ -439,8 +430,6 @@ export async function initReplBridge(
       onSetMaxThinkingTokens,
       onSetPermissionMode,
       onStateChange,
-      outboundOnly,
-      tags,
     })
   }
 

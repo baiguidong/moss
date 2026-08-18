@@ -144,10 +144,6 @@ export const NATIVE_REQUIRED = {
 // =============================================================================
 
 export const INTERNAL_ONLY = {
-  CCR_AUTO_CONNECT: false,   // Claude Code Remote 自动连接
-  CCR_MIRROR: false,         // CCR 镜像模式
-  CCR_REMOTE_SETUP: false,   // CCR 远程初始化
-
   BRIDGE_MODE: false,        // 连接 claude.ai 网页版的桥接模式
   DAEMON: false,             // 后台守护进程模式
   DIRECT_CONNECT: true,      // 直连服务

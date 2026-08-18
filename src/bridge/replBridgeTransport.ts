@@ -140,12 +140,6 @@ export async function createV2ReplTransport(opts: {
   /** ±fraction per-beat jitter. Defaults to 0 (no jitter) when omitted. */
   heartbeatJitterFraction?: number
   /**
-   * When true, skip opening the SSE read stream — only the CCRClient write
-   * path is activated. Use for mirror-mode attachments that forward events
-   * but never receive inbound prompts or control requests.
-   */
-  outboundOnly?: boolean
-  /**
    * Per-instance auth header source. When provided, CCRClient + SSETransport
    * read auth from this closure instead of the process-wide
    * CLAUDE_CODE_SESSION_ACCESS_TOKEN env var. Required for callers managing
@@ -334,15 +328,10 @@ export async function createV2ReplTransport(opts: {
       return ccr.flush()
     },
     connect() {
-      // Outbound-only: skip the SSE read stream entirely — no inbound
-      // events to receive, no delivery ACKs to send. Only the CCRClient
-      // write path (POST /worker/events) and heartbeat are needed.
-      if (!opts.outboundOnly) {
-        // Fire-and-forget — SSETransport.connect() awaits readStream()
-        // (the read loop) and only resolves on stream close/error. The
-        // spawn-mode path in remoteIO.ts does the same void discard.
-        void sse.connect()
-      }
+      // Fire-and-forget — SSETransport.connect() awaits readStream()
+      // (the read loop) and only resolves on stream close/error. The
+      // spawn-mode path in remoteIO.ts does the same void discard.
+      void sse.connect()
       void ccr.initialize(epoch).then(
         () => {
           ccrInitialized = true

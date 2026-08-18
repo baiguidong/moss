@@ -151,7 +151,6 @@ export function Config({
       fastMode: s_4.fastMode,
       promptSuggestionEnabled: s_4.promptSuggestionEnabled,
       replBridgeEnabled: s_4.replBridgeEnabled,
-      replBridgeOutboundOnly: s_4.replBridgeOutboundOnly,
       settings: s_4.settings
     };
   });
@@ -876,11 +875,10 @@ export function Config({
       // Sync to AppState so useReplBridge reacts immediately
       const resolved = getRemoteControlAtStartup();
       setAppState(prev_20 => {
-        if (prev_20.replBridgeEnabled === resolved && !prev_20.replBridgeOutboundOnly) return prev_20;
+        if (prev_20.replBridgeEnabled === resolved) return prev_20;
         return {
           ...prev_20,
-          replBridgeEnabled: resolved,
-          replBridgeOutboundOnly: false
+          replBridgeEnabled: resolved
         };
       });
     }
@@ -1144,7 +1142,6 @@ export function Config({
       fastMode: ia.fastMode,
       promptSuggestionEnabled: ia.promptSuggestionEnabled,
       replBridgeEnabled: ia.replBridgeEnabled,
-      replBridgeOutboundOnly: ia.replBridgeOutboundOnly,
       settings: ia.settings,
       // Reconcile auto-mode state after useAutoModeDuringPlan revert above —
       // the onChange handler may have activated/deactivated auto mid-plan.

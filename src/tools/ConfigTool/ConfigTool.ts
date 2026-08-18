@@ -145,8 +145,7 @@ export const ConfigTool = buildTool({
 
     // 3. SET operation
 
-    // Handle "default" — unset the config key so it falls back to the
-    // platform-aware default (determined by the bridge feature gate).
+    // Handle "default" — unset the config key so it falls back to false.
     if (
       setting === 'remoteControlAtStartup' &&
       typeof value === 'string' &&
@@ -161,12 +160,10 @@ export const ConfigTool = buildTool({
       const resolved = getRemoteControlAtStartup()
       // Sync to AppState so useReplBridge reacts immediately
       context.setAppState(prev => {
-        if (prev.replBridgeEnabled === resolved && !prev.replBridgeOutboundOnly)
-          return prev
+        if (prev.replBridgeEnabled === resolved) return prev
         return {
           ...prev,
           replBridgeEnabled: resolved,
-          replBridgeOutboundOnly: false,
         }
       })
       return {
@@ -367,15 +364,10 @@ export const ConfigTool = buildTool({
       if (setting === 'remoteControlAtStartup') {
         const resolved = getRemoteControlAtStartup()
         context.setAppState(prev => {
-          if (
-            prev.replBridgeEnabled === resolved &&
-            !prev.replBridgeOutboundOnly
-          )
-            return prev
+          if (prev.replBridgeEnabled === resolved) return prev
           return {
             ...prev,
             replBridgeEnabled: resolved,
-            replBridgeOutboundOnly: false,
           }
         })
       }

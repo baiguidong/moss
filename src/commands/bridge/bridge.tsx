@@ -36,7 +36,7 @@ type Props = {
  * URL and options to disconnect or continue.
  */
 function BridgeToggle(t0) {
-  const $ = _c(10);
+  const $ = _c(9);
   const {
     onDone,
     name
@@ -44,12 +44,11 @@ function BridgeToggle(t0) {
   const setAppState = useSetAppState();
   const replBridgeConnected = useAppState(_temp);
   const replBridgeEnabled = useAppState(_temp2);
-  const replBridgeOutboundOnly = useAppState(_temp3);
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   let t1;
-  if ($[0] !== name || $[1] !== onDone || $[2] !== replBridgeConnected || $[3] !== replBridgeEnabled || $[4] !== replBridgeOutboundOnly || $[5] !== setAppState) {
+  if ($[0] !== name || $[1] !== onDone || $[2] !== replBridgeConnected || $[3] !== replBridgeEnabled || $[4] !== setAppState) {
     t1 = () => {
-      if ((replBridgeConnected || replBridgeEnabled) && !replBridgeOutboundOnly) {
+      if (replBridgeConnected || replBridgeEnabled) {
         setShowDisconnectDialog(true);
         return;
       }
@@ -88,14 +87,13 @@ function BridgeToggle(t0) {
           action: "connect" as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
         });
         setAppState(prev_0 => {
-          if (prev_0.replBridgeEnabled && !prev_0.replBridgeOutboundOnly) {
+          if (prev_0.replBridgeEnabled) {
             return prev_0;
           }
           return {
             ...prev_0,
             replBridgeEnabled: true,
             replBridgeExplicit: true,
-            replBridgeOutboundOnly: false,
             replBridgeInitialName: name
           };
         });
@@ -111,28 +109,27 @@ function BridgeToggle(t0) {
     $[1] = onDone;
     $[2] = replBridgeConnected;
     $[3] = replBridgeEnabled;
-    $[4] = replBridgeOutboundOnly;
-    $[5] = setAppState;
-    $[6] = t1;
+    $[4] = setAppState;
+    $[5] = t1;
   } else {
-    t1 = $[6];
+    t1 = $[5];
   }
   let t2;
-  if ($[7] === Symbol.for("react.memo_cache_sentinel")) {
+  if ($[6] === Symbol.for("react.memo_cache_sentinel")) {
     t2 = [];
-    $[7] = t2;
+    $[6] = t2;
   } else {
-    t2 = $[7];
+    t2 = $[6];
   }
   useEffect(t1, t2);
   if (showDisconnectDialog) {
     let t3;
-    if ($[8] !== onDone) {
+    if ($[7] !== onDone) {
       t3 = <BridgeDisconnectDialog onDone={onDone} />;
-      $[8] = onDone;
-      $[9] = t3;
+      $[7] = onDone;
+      $[8] = t3;
     } else {
-      t3 = $[9];
+      t3 = $[8];
     }
     return t3;
   }
@@ -143,9 +140,6 @@ function BridgeToggle(t0) {
  * Dialog shown when /remote-control is used while the bridge is already connected.
  * Shows the session URL and lets the user disconnect or continue.
  */
-function _temp3(s_1) {
-  return s_1.replBridgeOutboundOnly;
-}
 function _temp2(s_0) {
   return s_0.replBridgeEnabled;
 }
@@ -451,8 +445,7 @@ function _temp7(prev) {
   return {
     ...prev,
     replBridgeEnabled: false,
-    replBridgeExplicit: false,
-    replBridgeOutboundOnly: false
+    replBridgeExplicit: false
   };
 }
 function _temp6(s_1) {

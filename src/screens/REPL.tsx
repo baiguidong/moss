@@ -4793,8 +4793,7 @@ export function REPL({
                 showRemoteCallout: false,
                 ...(selection === 'enable' && {
                   replBridgeEnabled: true,
-                  replBridgeExplicit: true,
-                  replBridgeOutboundOnly: false
+                  replBridgeExplicit: true
                 })
               };
             });

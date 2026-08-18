@@ -212,14 +212,6 @@ export function handleIngressMessage(
 export type ServerControlRequestHandlers = {
   transport: ReplBridgeTransport | null
   sessionId: string
-  /**
-   * When true, all mutable requests (interrupt, set_model, set_permission_mode,
-   * set_max_thinking_tokens) reply with an error instead of false-success.
-   * initialize still replies success — the server kills the connection otherwise.
-   * Used by the outbound-only bridge mode and the SDK's /bridge subpath so claude.ai sees a
-   * proper error instead of "action succeeded but nothing happened locally".
-   */
-  outboundOnly?: boolean
   onInterrupt?: () => void
   onSetModel?: (model: string | undefined) => void
   onSetMaxThinkingTokens?: (maxTokens: number | null) => void
@@ -227,9 +219,6 @@ export type ServerControlRequestHandlers = {
     mode: PermissionMode,
   ) => { ok: true } | { ok: false; error: string }
 }
-
-const OUTBOUND_ONLY_ERROR =
-  'This session is outbound-only. Enable Remote Control locally to allow inbound control.'
 
 /**
  * Respond to inbound control_request messages from the server. The server
@@ -247,7 +236,6 @@ export function handleServerControlRequest(
   const {
     transport,
     sessionId,
-    outboundOnly,
     onInterrupt,
     onSetModel,
     onSetMaxThinkingTokens,
@@ -261,26 +249,6 @@ export function handleServerControlRequest(
   }
 
   let response: SDKControlResponse
-
-  // Outbound-only: reply error for mutable requests so claude.ai doesn't show
-  // false success. initialize must still succeed (server kills the connection
-  // if it doesn't — see comment above).
-  if (outboundOnly && request.request.subtype !== 'initialize') {
-    response = {
-      type: 'control_response',
-      response: {
-        subtype: 'error',
-        request_id: request.request_id,
-        error: OUTBOUND_ONLY_ERROR,
-      },
-    }
-    const event = { ...response, session_id: sessionId }
-    void transport.write(event)
-    logForDebugging(
-      `[bridge:repl] Rejected ${request.request.subtype} (outbound-only) request_id=${request.request_id}`,
-    )
-    return
-  }
 
   switch (request.request.subtype) {
     case 'initialize':

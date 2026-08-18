@@ -82,12 +82,9 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
   const replBridgeConnected = feature('BRIDGE_MODE') ?
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
   useAppState(s_0 => s_0.replBridgeConnected) : false;
-  const replBridgeOutboundOnly = feature('BRIDGE_MODE') ?
-  // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
-  useAppState(s_1 => s_1.replBridgeOutboundOnly) : false;
   const replBridgeInitialName = feature('BRIDGE_MODE') ?
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
-  useAppState(s_2 => s_2.replBridgeInitialName) : undefined;
+  useAppState(s_1 => s_1.replBridgeInitialName) : undefined;
 
   // Initialize/teardown bridge when enabled state changes.
   // Passes current messages as initialMessages so the remote session
@@ -98,9 +95,7 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
     // dynamic imports below.
     if (feature('BRIDGE_MODE')) {
       if (!replBridgeEnabled) return;
-      const outboundOnly = replBridgeOutboundOnly;
       function notifyBridgeFailed(detail?: string): void {
-        if (outboundOnly) return;
         addNotification({
           key: 'bridge-failed',
           jsx: <>
@@ -197,29 +192,6 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
           // State change callback — maps bridge lifecycle events to AppState.
           function handleStateChange(state: BridgeState, detail_0?: string): void {
             if (cancelled) return;
-            if (outboundOnly) {
-              logForDebugging(`[bridge:repl] Mirror state=${state}${detail_0 ? ` detail=${detail_0}` : ''}`);
-              // Sync replBridgeConnected so the forwarding effect starts/stops
-              // writing as the transport comes up or dies.
-              if (state === 'failed') {
-                setAppState(prev_3 => {
-                  if (!prev_3.replBridgeConnected) return prev_3;
-                  return {
-                    ...prev_3,
-                    replBridgeConnected: false
-                  };
-                });
-              } else if (state === 'ready' || state === 'connected') {
-                setAppState(prev_4 => {
-                  if (prev_4.replBridgeConnected) return prev_4;
-                  return {
-                    ...prev_4,
-                    replBridgeConnected: true
-                  };
-                });
-              }
-              return;
-            }
             const handle = handleRef.current;
             switch (state) {
               case 'ready':
@@ -359,8 +331,6 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
             }
           }
           const handle_0 = await initReplBridge({
-            outboundOnly,
-            tags: outboundOnly ? ['ccr-mirror'] : undefined,
             onInboundMessage: handleInboundMessage,
             onPermissionResponse: handlePermissionResponse,
             onInterrupt() {
@@ -494,96 +464,81 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
           // Skip initial messages in the forwarding effect — they were
           // already loaded as session events during creation.
           lastWrittenIndexRef.current = initialMessageCount;
-          if (outboundOnly) {
-            setAppState(prev_15 => {
-              if (prev_15.replBridgeConnected && prev_15.replBridgeSessionId === handle_0.bridgeSessionId) return prev_15;
-              return {
-                ...prev_15,
-                replBridgeConnected: true,
-                replBridgeSessionId: handle_0.bridgeSessionId,
-                replBridgeSessionUrl: undefined,
-                replBridgeConnectUrl: undefined,
-                replBridgeError: undefined
+          // Build bridge permission callbacks so the interactive permission
+          // handler can race bridge responses against local user interaction.
+          const permissionCallbacks: BridgePermissionCallbacks = {
+            sendRequest(requestId_0, toolName, input, toolUseId, description, permissionSuggestions, blockedPath) {
+              handle_0.sendControlRequest({
+                type: 'control_request',
+                request_id: requestId_0,
+                request: {
+                  subtype: 'can_use_tool',
+                  tool_name: toolName,
+                  input,
+                  tool_use_id: toolUseId,
+                  description,
+                  ...(permissionSuggestions ? {
+                    permission_suggestions: permissionSuggestions
+                  } : {}),
+                  ...(blockedPath ? {
+                    blocked_path: blockedPath
+                  } : {})
+                }
+              });
+            },
+            sendResponse(requestId_1, response) {
+              const payload: Record<string, unknown> = {
+                ...response
               };
-            });
-            logForDebugging(`[bridge:repl] Mirror initialized, session=${handle_0.bridgeSessionId}`);
-          } else {
-            // Build bridge permission callbacks so the interactive permission
-            // handler can race bridge responses against local user interaction.
-            const permissionCallbacks: BridgePermissionCallbacks = {
-              sendRequest(requestId_0, toolName, input, toolUseId, description, permissionSuggestions, blockedPath) {
-                handle_0.sendControlRequest({
-                  type: 'control_request',
-                  request_id: requestId_0,
-                  request: {
-                    subtype: 'can_use_tool',
-                    tool_name: toolName,
-                    input,
-                    tool_use_id: toolUseId,
-                    description,
-                    ...(permissionSuggestions ? {
-                      permission_suggestions: permissionSuggestions
-                    } : {}),
-                    ...(blockedPath ? {
-                      blocked_path: blockedPath
-                    } : {})
-                  }
-                });
-              },
-              sendResponse(requestId_1, response) {
-                const payload: Record<string, unknown> = {
-                  ...response
-                };
-                handle_0.sendControlResponse({
-                  type: 'control_response',
-                  response: {
-                    subtype: 'success',
-                    request_id: requestId_1,
-                    response: payload
-                  }
-                });
-              },
-              cancelRequest(requestId_2) {
-                handle_0.sendControlCancelRequest(requestId_2);
-              },
-              onResponse(requestId_3, handler_0) {
-                pendingPermissionHandlers.set(requestId_3, handler_0);
-                return () => {
-                  pendingPermissionHandlers.delete(requestId_3);
-                };
-              }
+              handle_0.sendControlResponse({
+                type: 'control_response',
+                response: {
+                  subtype: 'success',
+                  request_id: requestId_1,
+                  response: payload
+                }
+              });
+            },
+            cancelRequest(requestId_2) {
+              handle_0.sendControlCancelRequest(requestId_2);
+            },
+            onResponse(requestId_3, handler_0) {
+              pendingPermissionHandlers.set(requestId_3, handler_0);
+              return () => {
+                pendingPermissionHandlers.delete(requestId_3);
+              };
+            }
+          };
+          setAppState(prev_16 => ({
+            ...prev_16,
+            replBridgePermissionCallbacks: permissionCallbacks
+          }));
+          const url = getRemoteSessionUrl(handle_0.bridgeSessionId, handle_0.sessionIngressUrl);
+          // environmentId === '' signals the v2 env-less path. buildBridgeConnectUrl
+          // builds an env-specific connect URL, which doesn't exist without an env.
+          const hasEnv = handle_0.environmentId !== '';
+          const connectUrl_0 = hasEnv ? buildBridgeConnectUrl(handle_0.environmentId, handle_0.sessionIngressUrl) : undefined;
+          setAppState(prev_17 => {
+            if (prev_17.replBridgeConnected && prev_17.replBridgeSessionUrl === url) {
+              return prev_17;
+            }
+            return {
+              ...prev_17,
+              replBridgeConnected: true,
+              replBridgeSessionUrl: url,
+              replBridgeConnectUrl: connectUrl_0 ?? prev_17.replBridgeConnectUrl,
+              replBridgeEnvironmentId: handle_0.environmentId,
+              replBridgeSessionId: handle_0.bridgeSessionId,
+              replBridgeError: undefined
             };
-            setAppState(prev_16 => ({
-              ...prev_16,
-              replBridgePermissionCallbacks: permissionCallbacks
-            }));
-            const url = getRemoteSessionUrl(handle_0.bridgeSessionId, handle_0.sessionIngressUrl);
-            // environmentId === '' signals the v2 env-less path. buildBridgeConnectUrl
-            // builds an env-specific connect URL, which doesn't exist without an env.
-            const hasEnv = handle_0.environmentId !== '';
-            const connectUrl_0 = hasEnv ? buildBridgeConnectUrl(handle_0.environmentId, handle_0.sessionIngressUrl) : undefined;
-            setAppState(prev_17 => {
-              if (prev_17.replBridgeConnected && prev_17.replBridgeSessionUrl === url) {
-                return prev_17;
-              }
-              return {
-                ...prev_17,
-                replBridgeConnected: true,
-                replBridgeSessionUrl: url,
-                replBridgeConnectUrl: connectUrl_0 ?? prev_17.replBridgeConnectUrl,
-                replBridgeEnvironmentId: handle_0.environmentId,
-                replBridgeSessionId: handle_0.bridgeSessionId,
-                replBridgeError: undefined
-              };
-            });
+          });
 
-            // Own try/catch so a cosmetic GrowthBook hiccup doesn't hit the
-            // outer init-failure handler.
-            const upgradeNudge = await shouldShowAppUpgradeMessage().catch(() => false);
-            if (cancelled) return;
-            setMessages(prev_18 => [...prev_18, createBridgeStatusMessage(url, upgradeNudge ? 'Please upgrade to the latest version of the Claude mobile app to see your Remote Control sessions.' : undefined)]);
-            logForDebugging(`[bridge:repl] Hook initialized, session=${handle_0.bridgeSessionId}`);
-          }
+          // Own try/catch so a cosmetic GrowthBook hiccup doesn't hit the
+          // outer init-failure handler.
+          const upgradeNudge = await shouldShowAppUpgradeMessage().catch(() => false);
+          if (cancelled) return;
+          setMessages(prev_18 => [...prev_18, createBridgeStatusMessage(url, upgradeNudge ? 'Please upgrade to the latest version of the Claude mobile app to see your Remote Control sessions.' : undefined)]);
+          logForDebugging(`[bridge:repl] Hook initialized, session=${handle_0.bridgeSessionId}`);
         } catch (err) {
           // Never crash the REPL — surface the error in the UI.
           // Check cancelled first (symmetry with the !handle path at line ~386):
@@ -613,9 +568,7 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
               };
             });
           }, BRIDGE_FAILURE_DISMISS_MS);
-          if (!outboundOnly) {
-            setMessages(prev_2 => [...prev_2, createSystemMessage(`Remote Control failed to connect: ${errMsg}`, 'warning')]);
-          }
+          setMessages(prev_2 => [...prev_2, createSystemMessage(`Remote Control failed to connect: ${errMsg}`, 'warning')]);
         }
       })();
       return () => {
@@ -648,7 +601,7 @@ export function useReplBridge(messages: Message[], setMessages: (action: React.S
         lastWrittenIndexRef.current = 0;
       };
     }
-  }, [replBridgeEnabled, replBridgeOutboundOnly, setAppState, setMessages, addNotification]);
+  }, [replBridgeEnabled, setAppState, setMessages, addNotification]);
 
   // Write new messages as they appear.
   // Also re-runs when replBridgeConnected changes (bridge finishes init),

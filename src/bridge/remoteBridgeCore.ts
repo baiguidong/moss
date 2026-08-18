@@ -28,7 +28,6 @@
  * REPL-only — daemon/print stay on env-based.
  */
 
-import { feature } from 'bun:bundle'
 import axios from 'axios'
 import {
   createV2ReplTransport,
@@ -120,14 +119,6 @@ export type EnvLessBridgeParams = {
     mode: PermissionMode,
   ) => { ok: true } | { ok: false; error: string }
   onStateChange?: (state: BridgeState, detail?: string) => void
-  /**
-   * When true, skip opening the SSE read stream — only the CCRClient write
-   * path is activated. Threaded to createV2ReplTransport and
-   * handleServerControlRequest.
-   */
-  outboundOnly?: boolean
-  /** Free-form tags for session categorization (e.g. ['ccr-mirror']). */
-  tags?: string[]
 }
 
 /**
@@ -157,8 +148,6 @@ export async function initEnvLessBridgeCore(
     onSetMaxThinkingTokens,
     onSetPermissionMode,
     onStateChange,
-    outboundOnly,
-    tags,
   } = params
 
   const cfg = await getEnvLessBridgeConfig()
@@ -172,7 +161,7 @@ export async function initEnvLessBridgeCore(
 
   const createdSessionId = await withRetry(
     () =>
-      createCodeSession(baseUrl, accessToken, title, cfg.http_timeout_ms, tags),
+      createCodeSession(baseUrl, accessToken, title, cfg.http_timeout_ms),
     'createCodeSession',
     cfg,
   )
@@ -232,7 +221,6 @@ export async function initEnvLessBridgeCore(
       // MCP servers. Frozen-at-construction is correct: transport is fully
       // rebuilt on refresh (rebuildTransport below).
       getAuthToken: () => credentials.worker_jwt,
-      outboundOnly,
     })
   } catch (err) {
     logForDebugging(
@@ -442,7 +430,6 @@ export async function initEnvLessBridgeCore(
             onSetModel,
             onSetMaxThinkingTokens,
             onSetPermissionMode,
-            outboundOnly,
           }),
       )
     })
@@ -496,7 +483,6 @@ export async function initEnvLessBridgeCore(
         heartbeatJitterFraction: cfg.heartbeat_jitter_fraction,
         initialSequenceNum: seq,
         getAuthToken: () => fresh.worker_jwt,
-        outboundOnly,
       })
       if (tornDown) {
         // Teardown fired during the async createV2ReplTransport window.
@@ -728,36 +714,24 @@ export async function initEnvLessBridgeCore(
 
     logForDebugging(`[remote-bridge] Torn down (archive=${status})`)
     logForDiagnosticsNoPII('info', 'bridge_repl_v2_teardown')
-    logEvent(
-      feature('CCR_MIRROR') && outboundOnly
-        ? 'tengu_ccr_mirror_teardown'
-        : 'tengu_bridge_repl_teardown',
-      {
-        v2: true,
-        archive_status:
-          archiveStatus as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-        archive_ok: typeof status === 'number' && status < 400,
-        archive_http_status: typeof status === 'number' ? status : undefined,
-        archive_timeout: status === 'timeout',
-        archive_no_token: status === 'no_token',
-      },
-    )
+    logEvent('tengu_bridge_repl_teardown', {
+      v2: true,
+      archive_status:
+        archiveStatus as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      archive_ok: typeof status === 'number' && status < 400,
+      archive_http_status: typeof status === 'number' ? status : undefined,
+      archive_timeout: status === 'timeout',
+      archive_no_token: status === 'no_token',
+    })
   }
   const unregister = registerCleanup(teardown)
 
-  if (feature('CCR_MIRROR') && outboundOnly) {
-    logEvent('tengu_ccr_mirror_started', {
-      v2: true,
-      expires_in_s: credentials.expires_in,
-    })
-  } else {
-    logEvent('tengu_bridge_repl_started', {
-      has_initial_messages: !!(initialMessages && initialMessages.length > 0),
-      v2: true,
-      expires_in_s: credentials.expires_in,
-      inProtectedNamespace: isInProtectedNamespace(),
-    })
-  }
+  logEvent('tengu_bridge_repl_started', {
+    has_initial_messages: !!(initialMessages && initialMessages.length > 0),
+    v2: true,
+    expires_in_s: credentials.expires_in,
+    inProtectedNamespace: isInProtectedNamespace(),
+  })
 
   // ── 10. Handle ──────────────────────────────────────────────────────────
   return {
