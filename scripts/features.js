@@ -105,6 +105,11 @@ export const EXPERIMENTAL = {
   // Prompt 缓存中断检测：检测并提示 prompt cache 失效，帮助优化 token 成本
   PROMPT_CACHE_BREAK_DETECTION: false,
 
+  // OpenTelemetry 会话追踪：记录交互、模型请求和工具调用 span
+  // 运行时需显式设置 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1，
+  // 并配置 CLAUDE_CODE_ENABLE_TELEMETRY 与 OTEL_TRACES_EXPORTER
+  ENHANCED_TELEMETRY_BETA: true,
+
   // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
   COORDINATOR_MODE: true,
 
@@ -156,7 +161,6 @@ export const INTERNAL_ONLY = {
 
   // --- 其他内部功能 ---
   VERIFICATION_AGENT: false,      // 验证 agent（需要内部服务）
-  ENHANCED_TELEMETRY_BETA: false, // 增强遥测 beta
   IS_LIBC_GLIBC: false,           // 构建环境标记
   IS_LIBC_MUSL: false,            // 构建环境标记
   FORK_SUBAGENT: false,           // Fork 子 agent（实验性，不稳定）

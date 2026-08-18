@@ -85,8 +85,7 @@ export function isBetaTracingEnabled(): boolean {
   }
 
   // For external users, enable in SDK/headless mode OR when org is allowlisted.
-  // Gate reads from disk cache, so first run after allowlisting returns false;
-  // works from second run onward (same behavior as enhanced_telemetry_beta).
+  // Gate reads from disk cache, so first run after allowlisting returns false.
   if (process.env.USER_TYPE !== 'ant') {
     return (
       getIsNonInteractiveSession() ||
