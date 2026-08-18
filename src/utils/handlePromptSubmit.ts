@@ -111,7 +111,7 @@ export type HandlePromptSubmitParams = BaseExecutionParams & {
   uuid?: UUID
   /**
    * When true, input starting with `/` is treated as plain text.
-   * Used for remotely-received messages (bridge/CCR) that should not
+   * Used for remotely-received CCR messages that should not
    * trigger local slash commands or skills.
    */
   skipSlashCommands?: boolean
@@ -190,7 +190,7 @@ export async function handlePromptSubmit(
   }
 
   // Handle exit commands by triggering the exit command instead of direct process.exit
-  // Skip for remote bridge messages — "exit" typed on iOS shouldn't kill the local session
+  // Skip for remote messages so client text cannot terminate the local session.
   if (
     !skipSlashCommands &&
     ['exit', 'quit', ':q', ':q!', ':wq', ':wq!'].includes(input.trim())
@@ -225,7 +225,7 @@ export async function handlePromptSubmit(
   logEvent('tengu_paste_text', { pastedTextCount, pastedTextBytes })
 
   // Handle local-jsx immediate commands (e.g., /config, /doctor)
-  // Skip for remote bridge messages — slash commands from CCR clients are plain text
+  // Slash commands from remote clients are plain text.
   if (!skipSlashCommands && finalInput.trim().startsWith('/')) {
     const trimmedInput = finalInput.trim()
     const spaceIndex = trimmedInput.indexOf(' ')
@@ -490,7 +490,6 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
           uuid: cmd.uuid,
           ideSelection: isFirst ? ideSelection : undefined,
           skipSlashCommands: cmd.skipSlashCommands,
-          bridgeOrigin: cmd.bridgeOrigin,
           isMeta: cmd.isMeta,
           skipAttachments: !isFirst,
         })

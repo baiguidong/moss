@@ -315,7 +315,7 @@ export type PermissionDecisionReason =
       // When true, auto mode lets the classifier evaluate this instead of
       // forcing a prompt. True for sensitive-file paths (.claude/, .git/,
       // shell configs) — the classifier can see context and decide. False
-      // for Windows path bypass attempts and cross-machine bridge messages.
+      // for Windows path bypass attempts and cross-machine remote messages.
       classifierApprovable: boolean
     }
   | {

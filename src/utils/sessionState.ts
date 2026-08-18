@@ -74,7 +74,7 @@ export function setSessionMetadataChangedListener(
  * Wired by print.ts to emit an SDK system:status message so CCR/IDE clients
  * see mode transitions in real time — regardless of which code path mutated
  * toolPermissionContext.mode (Shift+Tab, ExitPlanMode dialog, slash command,
- * bridge set_permission_mode, etc.).
+ * remote set_permission_mode, etc.).
  */
 export function setPermissionModeChangedListener(
   cb: PermissionModeChangedListener | null,
@@ -116,7 +116,7 @@ export function notifySessionStateChanged(
   }
 
   // Mirror to the SDK event stream so non-CCR consumers (scmuxd, VS Code)
-  // see the same authoritative idle/running signal the CCR bridge does.
+  // see the same authoritative idle/running signal the CCR worker does.
   // 'idle' fires after heldBackResult flushes — lets scmuxd flip IDLE and
   // show the bg-task dot instead of a stuck generating spinner.
   //

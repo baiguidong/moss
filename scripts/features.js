@@ -144,7 +144,6 @@ export const NATIVE_REQUIRED = {
 // =============================================================================
 
 export const INTERNAL_ONLY = {
-  BRIDGE_MODE: false,        // 连接 claude.ai 网页版的桥接模式
   DAEMON: false,             // 后台守护进程模式
   DIRECT_CONNECT: true,      // 直连服务
   LODESTONE: false,          // 内部服务定位系统

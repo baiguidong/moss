@@ -91,7 +91,7 @@ function getTokenFromFileDescriptor(): string | null {
  * Priority order:
  *  1. Environment variable (CLAUDE_CODE_SESSION_ACCESS_TOKEN) — set at spawn time,
  *     updated in-process via updateSessionIngressAuthToken or
- *     update_environment_variables stdin message from the parent bridge process.
+ *     update_environment_variables stdin message from the parent controller.
  *  2. File descriptor (legacy path) — CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR,
  *     read once and cached.
  *  3. Well-known file — CLAUDE_SESSION_INGRESS_TOKEN_FILE env var path, or
@@ -132,7 +132,7 @@ export function getSessionIngressAuthHeaders(): Record<string, string> {
 
 /**
  * Update the session ingress auth token in-process by setting the env var.
- * Used by the REPL bridge to inject a fresh token after reconnection
+ * Used by the remote worker controller to inject a fresh token after reconnection
  * without restarting the process.
  */
 export function updateSessionIngressAuthToken(token: string): void {

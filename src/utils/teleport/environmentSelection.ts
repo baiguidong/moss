@@ -15,7 +15,7 @@ export type EnvironmentSelectionInfo = {
  * Gets information about available environments and the currently selected one.
  *
  * @returns Promise<EnvironmentSelectionInfo> containing:
- *   - availableEnvironments: all environments from the API
+ *   - availableEnvironments: supported environments from the API
  *   - selectedEnvironment: the environment that would be used (based on settings or first available),
  *     or null if no environments are available
  *   - selectedEnvironmentSource: the SettingSource where defaultEnvironmentId is configured,
@@ -23,7 +23,9 @@ export type EnvironmentSelectionInfo = {
  */
 export async function getEnvironmentSelectionInfo(): Promise<EnvironmentSelectionInfo> {
   // Fetch available environments
-  const environments = await fetchEnvironments()
+  const environments = (await fetchEnvironments()).filter(
+    environment => environment.kind !== 'bridge',
+  )
 
   if (environments.length === 0) {
     return {
@@ -38,8 +40,7 @@ export async function getEnvironmentSelectionInfo(): Promise<EnvironmentSelectio
   const defaultEnvironmentId = mergedSettings?.remote?.defaultEnvironmentId
 
   // Find which environment would be selected
-  let selectedEnvironment: EnvironmentResource =
-    environments.find(env => env.kind !== 'bridge') ?? environments[0]!
+  let selectedEnvironment: EnvironmentResource = environments[0]!
   let selectedEnvironmentSource: SettingSource | null = null
 
   if (defaultEnvironmentId) {

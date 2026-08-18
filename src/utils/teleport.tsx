@@ -1080,9 +1080,10 @@ export async function teleportToRemote(options: {
       }
       if (retried) environments = retried;
     }
-    const selectedEnvironment = defaultEnvironmentId && environments.find(env => env.environment_id === defaultEnvironmentId) || cloudEnv || environments.find(env => env.kind !== 'bridge') || environments[0];
+    const selectableEnvironments = environments.filter(env => env.kind !== 'bridge');
+    const selectedEnvironment = defaultEnvironmentId && selectableEnvironments.find(env => env.environment_id === defaultEnvironmentId) || cloudEnv || selectableEnvironments[0];
     if (!selectedEnvironment) {
-      logError(new Error('No environments available for session creation'));
+      logError(new Error('No supported environments available for session creation'));
       return null;
     }
     if (defaultEnvironmentId) {

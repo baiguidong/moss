@@ -6,6 +6,7 @@ import { toError } from '../errors.js'
 import { logError } from '../log.js'
 import { getOAuthHeaders } from './api.js'
 
+// `bridge` remains in the wire type so legacy API resources can be rejected.
 export type EnvironmentKind = 'anthropic_cloud' | 'byoc' | 'bridge'
 export type EnvironmentState = 'active'
 

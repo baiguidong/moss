@@ -14,7 +14,7 @@ import type {
   ToolAnnotations,
 } from '@modelcontextprotocol/sdk/types.js'
 
-// Control protocol types for SDK builders (bridge subpath consumers)
+// Control protocol types for SDK transport consumers.
 /** @alpha */
 export type {
   SDKControlRequest,

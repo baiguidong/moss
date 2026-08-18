@@ -16,11 +16,10 @@ const teamMemSaved = feature('TEAMMEM') ? require('./teamMemSaved.js') as typeof
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { TURN_COMPLETION_VERBS } from '../../constants/turnCompletionVerbs.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
-import type { SystemMessage, SystemStopHookSummaryMessage, SystemBridgeStatusMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage } from '../../types/message.js';
+import type { SystemMessage, SystemStopHookSummaryMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage } from '../../types/message.js';
 import { SystemAPIErrorMessage } from './SystemAPIErrorMessage.js';
 import { formatDuration, formatNumber, formatSecondsShort } from '../../utils/format.js';
 import { getGlobalConfig } from '../../utils/config.js';
-import Link from '../../ink/components/Link.js';
 import ThemedText from '../design-system/ThemedText.js';
 import { CtrlOToExpand } from '../CtrlOToExpand.js';
 import { useAppStateStore } from '../../state/AppState.js';
@@ -121,18 +120,6 @@ export function SystemTextMessage(t0) {
   }
   if (message.subtype === "thinking") {
     return null;
-  }
-  if (message.subtype === "bridge_status") {
-    let t1;
-    if ($[18] !== addMargin || $[19] !== message) {
-      t1 = <BridgeStatusMessage message={message} addMargin={addMargin} />;
-      $[18] = addMargin;
-      $[19] = message;
-      $[20] = t1;
-    } else {
-      t1 = $[20];
-    }
-    return t1;
   }
   if (message.subtype === "scheduled_task_fire") {
     const t1 = addMargin ? 1 : 0;
@@ -764,63 +751,4 @@ function ThinkingMessage(t0) {
     t4 = $[6];
   }
   return t4;
-}
-function BridgeStatusMessage(t0) {
-  const $ = _c(13);
-  const {
-    message,
-    addMargin
-  } = t0;
-  const bg = useSelectedMessageBg();
-  const t1 = addMargin ? 1 : 0;
-  let t2;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t2 = <Box minWidth={2} />;
-    $[0] = t2;
-  } else {
-    t2 = $[0];
-  }
-  let t3;
-  if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
-    t3 = <Text><ThemedText color="suggestion">/remote-control</ThemedText> is active. Code in CLI or at</Text>;
-    $[1] = t3;
-  } else {
-    t3 = $[1];
-  }
-  let t4;
-  if ($[2] !== message.url) {
-    t4 = <Link url={message.url}>{message.url}</Link>;
-    $[2] = message.url;
-    $[3] = t4;
-  } else {
-    t4 = $[3];
-  }
-  let t5;
-  if ($[4] !== message.upgradeNudge) {
-    t5 = message.upgradeNudge && <Text dimColor={true}>⎿ {message.upgradeNudge}</Text>;
-    $[4] = message.upgradeNudge;
-    $[5] = t5;
-  } else {
-    t5 = $[5];
-  }
-  let t6;
-  if ($[6] !== t4 || $[7] !== t5) {
-    t6 = <Box flexDirection="column">{t3}{t4}{t5}</Box>;
-    $[6] = t4;
-    $[7] = t5;
-    $[8] = t6;
-  } else {
-    t6 = $[8];
-  }
-  let t7;
-  if ($[9] !== bg || $[10] !== t1 || $[11] !== t6) {
-    t7 = <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width={999}>{t2}{t6}</Box>;
-    $[9] = bg;
-    $[10] = t1;
-    $[11] = t6;
-    $[12] = t7;
-  } else {
-    t7 = $[12];
-  }
-  return t7;
 }

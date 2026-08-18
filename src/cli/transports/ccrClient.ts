@@ -3,7 +3,6 @@ import type {
   SDKPartialAssistantMessage,
   StdoutMessage,
 } from 'src/entrypoints/sdk/controlTypes.js'
-import { decodeJwtExpiry } from '../../bridge/jwtUtils.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
@@ -22,6 +21,7 @@ import type {
 } from '../../utils/sessionState.js'
 import { sleep } from '../../utils/sleep.js'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
+import { jsonParse } from '../../utils/slowOperations.js'
 import {
   RetryableError,
   SerialBatchEventUploader,
@@ -44,6 +44,30 @@ const STREAM_EVENT_FLUSH_INTERVAL_MS = 100
 /** Hoisted axios validateStatus callback to avoid per-request closure allocation. */
 function alwaysValidStatus(): boolean {
   return true
+}
+
+function decodeJwtExpiry(token: string): number | null {
+  const jwt = token.startsWith('sk-ant-si-')
+    ? token.slice('sk-ant-si-'.length)
+    : token
+  const parts = jwt.split('.')
+  if (parts.length !== 3 || !parts[1]) return null
+  try {
+    const payload: unknown = jsonParse(
+      Buffer.from(parts[1], 'base64url').toString('utf8'),
+    )
+    if (
+      payload !== null &&
+      typeof payload === 'object' &&
+      'exp' in payload &&
+      typeof payload.exp === 'number'
+    ) {
+      return payload.exp
+    }
+  } catch {
+    // Malformed tokens are handled by the normal authentication failure path.
+  }
+  return null
 }
 
 export type CCRInitFailReason =
@@ -293,9 +317,8 @@ export class CCRClient {
 
   /**
    * Called when the server returns 409 (a newer worker epoch superseded ours).
-   * Default: process.exit(1) — correct for spawn-mode children where the
-   * parent bridge re-spawns. In-process callers (replBridge) MUST override
-   * this to close gracefully instead; exit would kill the user's REPL.
+   * Default: process.exit(1), allowing the worker supervisor to replace the
+   * process with the newer epoch.
    */
   private readonly onEpochMismatch: () => never
 
@@ -448,13 +471,12 @@ export class CCRClient {
   /**
    * Initialize the session worker:
    * 1. Take worker_epoch from the argument, or fall back to
-   *    CLAUDE_CODE_WORKER_EPOCH (set by env-manager / bridge spawner)
+   *    CLAUDE_CODE_WORKER_EPOCH (set by the environment manager)
    * 2. Report state as 'idle'
    * 3. Start heartbeat timer
    *
-   * In-process callers (replBridge) pass the epoch directly — they
-   * registered the worker themselves and there is no parent process
-   * setting env vars.
+   * In-process callers may pass the epoch directly when no parent process
+   * sets the environment variable.
    */
   async initialize(epoch?: number): Promise<Record<string, unknown> | null> {
     const startMs = Date.now()

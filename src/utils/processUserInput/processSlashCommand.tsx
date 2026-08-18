@@ -57,7 +57,7 @@ const HELP_CATEGORIES: Record<string, string[]> = {
   'Model & Effort': ['model', 'effort', 'fast', 'thinkback-play'],
   'Configuration': ['config', 'mcp', 'permissions', 'context', 'memory', 'add-dir', 'theme', 'color', 'output-style', 'terminal-setup', 'privacy-settings'],
   'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'commit', 'plan', 'ultraplan', 'btw', 'tasks', 'agents', 'plugin'],
-  'System': ['login', 'logout', 'upgrade', 'install', 'install-github-app', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-control', 'remote-env', 'sandbox', 'rate-limit-options', 'extra-usage', 'usage'],
+  'System': ['login', 'logout', 'upgrade', 'install', 'install-github-app', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-env', 'sandbox', 'rate-limit-options', 'extra-usage', 'usage'],
 }
 
 function formatHelpText(commands: Command[]): string {

@@ -174,8 +174,8 @@ export async function setup(
   // Handle worktree creation if requested
   // IMPORTANT: this must be called befiore getCommands(), otherwise /eject won't be available.
   if (worktreeEnabled) {
-    // Mirrors bridgeMain.ts: hook-configured sessions can proceed without git
-    // so createWorktreeForSession() can delegate to the hook (non-git VCS).
+    // Hook-configured sessions can proceed without git so
+    // createWorktreeForSession() can delegate to a non-git VCS hook.
     const hasHook = hasWorktreeCreateHook()
     const inGit = await getIsGit()
     if (!hasHook && !inGit) {

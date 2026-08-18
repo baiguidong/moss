@@ -16,7 +16,7 @@ const XML_TAG_BLOCK_PATTERN = /<([a-z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>\n?/g
 
 /**
  * Strip XML-like tag blocks from text for use in UI titles (/rewind, /resume,
- * bridge session titles). System-injected context — IDE metadata, hook output,
+ * session titles). System-injected context — IDE metadata, hook output,
  * task notifications — arrives wrapped in tags and should never surface as a
  * title.
  *
@@ -32,7 +32,7 @@ export function stripDisplayTags(text: string): string {
  * Like stripDisplayTags but returns empty string when all content is tags.
  * Used by getLogDisplayTitle to detect command-only prompts (e.g. /clear)
  * so they can fall through to the next title fallback, and by extractTitleText
- * to skip pure-XML messages during bridge title derivation.
+ * to skip pure-XML messages during title derivation.
  */
 export function stripDisplayTagsAllowEmpty(text: string): string {
   return text.replace(XML_TAG_BLOCK_PATTERN, '').trim()

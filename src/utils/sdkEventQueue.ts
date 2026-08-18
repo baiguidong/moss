@@ -53,7 +53,7 @@ type TaskNotificationSdkEvent = {
   }
 }
 
-// Mirrors notifySessionStateChanged. The CCR bridge already receives this
+// Mirrors notifySessionStateChanged. The CCR worker already receives this
 // via its own listener; SDK consumers (scmuxd, VS Code) need the same signal
 // to know when the main turn's generator is idle vs actively producing.
 // The 'idle' transition fires AFTER heldBackResult flushes and the bg-agent

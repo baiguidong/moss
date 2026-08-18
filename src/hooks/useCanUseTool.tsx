@@ -161,8 +161,7 @@ function useCanUseTool(setToolUseConfirmQueue, setToolPermissionContext) {
                 ctx,
                 description,
                 result,
-                awaitAutomatedChecksBeforeDialog: appState.toolPermissionContext.awaitAutomatedChecksBeforeDialog,
-                bridgeCallbacks: feature("BRIDGE_MODE") ? appState.replBridgePermissionCallbacks : undefined
+                awaitAutomatedChecksBeforeDialog: appState.toolPermissionContext.awaitAutomatedChecksBeforeDialog
               }, resolve);
               return;
             }

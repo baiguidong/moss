@@ -3,9 +3,8 @@
  * control messages (control_request, control_response).
  *
  * Older iOS app builds send `requestId` due to a missing Swift CodingKeys
- * mapping. Without this shim, `isSDKControlRequest` in replBridge.ts rejects
- * the message (it checks `'request_id' in value`), and structuredIO.ts reads
- * `message.response.request_id` as undefined — both silently drop the message.
+ * mapping. Without this shim, structuredIO.ts reads
+ * `message.response.request_id` as undefined and silently drops the message.
  *
  * If both `request_id` and `requestId` are present, snake_case wins.
  * Mutates the object in place.

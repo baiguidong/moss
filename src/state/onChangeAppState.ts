@@ -53,8 +53,8 @@ export function onChangeAppState({
   // mutation paths: a bespoke setAppState wrapper in print.ts (headless/SDK
   // mode only) and a manual notify in the set_permission_mode handler.
   // Every other path — Shift+Tab cycling, ExitPlanModePermissionRequest
-  // dialog options, the /plan slash command, rewind, the REPL bridge's
-  // onSetPermissionMode — mutated AppState without telling
+  // dialog options, the /plan slash command, and rewind — mutated AppState
+  // without telling
   // CCR, leaving external_metadata.permission_mode stale and the web UI out
   // of sync with the CLI's actual mode.
   //
