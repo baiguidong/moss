@@ -211,12 +211,12 @@ function readSystemSettingsState(): SystemSettingsState {
     const rawSettings = isRecord(parsed) ? parsed : {}
     const env = isRecord(rawSettings.env) ? rawSettings.env : {}
     const urlFromEnv =
-      typeof env.ANTHROPIC_BASE_URL === 'string'
-        ? env.ANTHROPIC_BASE_URL.trim()
+      typeof env.MOSS_BASE_URL === 'string'
+        ? env.MOSS_BASE_URL.trim()
         : ''
     const apiKeyFromEnv =
-      typeof env.ANTHROPIC_AUTH_TOKEN === 'string'
-        ? env.ANTHROPIC_AUTH_TOKEN.trim()
+      typeof env.MOSS_AUTH_TOKEN === 'string'
+        ? env.MOSS_AUTH_TOKEN.trim()
         : ''
     const normalized = normalizeSystemSettings(rawSettings, rawSettings)
 
@@ -291,14 +291,14 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
 
   const env: Record<string, unknown> = { ...existingEnv }
   if (nextSettings.url) {
-    env.ANTHROPIC_BASE_URL = nextSettings.url
+    env.MOSS_BASE_URL = nextSettings.url
   } else {
-    delete env.ANTHROPIC_BASE_URL
+    delete env.MOSS_BASE_URL
   }
   if (nextSettings.apiKey) {
-    env.ANTHROPIC_AUTH_TOKEN = nextSettings.apiKey
+    env.MOSS_AUTH_TOKEN = nextSettings.apiKey
   } else {
-    delete env.ANTHROPIC_AUTH_TOKEN
+    delete env.MOSS_AUTH_TOKEN
   }
 
   const toSave: Record<string, unknown> = {

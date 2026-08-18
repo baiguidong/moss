@@ -81,8 +81,8 @@ bun run dist:all
   "thinkingMode": "disabled",
   "thinkingBudgetTokens": 16000,
   "env": {
-    "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
-    "ANTHROPIC_AUTH_TOKEN": "your-api-key"
+    "MOSS_BASE_URL": "https://api.minimaxi.com/anthropic",
+    "MOSS_AUTH_TOKEN": "your-api-key"
   }
 }
 ```
@@ -94,6 +94,6 @@ bun run dist:all
 - **maxTurns**: 单次会话的最大轮数。
 - **thinkingMode**: 思考模式配置（如 `disabled`, `enabled`）。
 - **thinkingBudgetTokens**: 思考过程的 Token 预算。
-- **env**: 环境变量配置，可用于设置 `ANTHROPIC_BASE_URL` (API 中转地址) 和 `ANTHROPIC_AUTH_TOKEN` (API Key)。
+- **env**: 环境变量配置，可用于设置 `MOSS_BASE_URL` (API 中转地址) 和 `MOSS_AUTH_TOKEN` (API Key)。
 
 UI 的设置页面会以增量方式更新此文件，不会删除你手动添加的自定义 Key。

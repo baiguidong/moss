@@ -29,8 +29,8 @@ import {
   isEnvTruthy,
 } from '../../utils/envUtils.js'
 import {
-  getSessionAnthropicAuthToken,
-  getSessionAnthropicBaseUrl,
+  getSessionMossAuthToken,
+  getSessionMossBaseUrl,
 } from '../../utils/sessionApiOverrides.js'
 
 /**
@@ -136,9 +136,12 @@ export async function getAnthropicClient({
   await checkAndRefreshOAuthTokenIfNeeded()
   logForDebugging('[API:auth] OAuth token check complete')
 
-  if (!isClaudeAISubscriber()) {
-    await configureApiKeyHeaders(defaultHeaders, getIsNonInteractiveSession())
-  }
+  const mossAuthToken = isClaudeAISubscriber()
+    ? null
+    : await configureApiKeyHeaders(
+        defaultHeaders,
+        getIsNonInteractiveSession(),
+      )
 
   const resolvedFetch = buildFetch(fetchOverride, source)
 
@@ -300,19 +303,18 @@ export async function getAnthropicClient({
   }
 
   // Determine authentication method based on available tokens
-  const sessionBaseUrl = getSessionAnthropicBaseUrl()
+  const mossBaseUrl =
+    getSessionMossBaseUrl() ||
+    process.env.MOSS_BASE_URL ||
+    getOauthConfig().BASE_API_URL
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: isClaudeAISubscriber() ? null : apiKey || getAnthropicApiKey(),
     authToken: isClaudeAISubscriber()
-      ? getClaudeAIOAuthTokens()?.accessToken
-      : undefined,
-    ...(sessionBaseUrl ? { baseURL: sessionBaseUrl } : {}),
-    // Set baseURL from OAuth config when using staging OAuth
-    ...(!sessionBaseUrl &&
-    process.env.USER_TYPE === 'ant' &&
-    isEnvTruthy(process.env.USE_STAGING_OAUTH)
-      ? { baseURL: getOauthConfig().BASE_API_URL }
-      : {}),
+      ? (getClaudeAIOAuthTokens()?.accessToken ?? null)
+      : mossAuthToken,
+    // Always pass auth and endpoint options explicitly so the SDK never falls
+    // back to its vendor-specific environment variables.
+    baseURL: mossBaseUrl,
     ...ARGS,
     ...(isDebugToStdErr() && { logger: createStderrLogger() }),
   }
@@ -323,14 +325,15 @@ export async function getAnthropicClient({
 async function configureApiKeyHeaders(
   headers: Record<string, string>,
   isNonInteractiveSession: boolean,
-): Promise<void> {
+): Promise<string | null> {
   const token =
-    getSessionAnthropicAuthToken() ||
-    process.env.ANTHROPIC_AUTH_TOKEN ||
+    getSessionMossAuthToken() ||
+    process.env.MOSS_AUTH_TOKEN ||
     (await getApiKeyFromApiKeyHelper(isNonInteractiveSession))
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
+  return token
 }
 
 function getCustomHeaders(): Record<string, string> {

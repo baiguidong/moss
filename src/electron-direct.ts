@@ -177,7 +177,7 @@ export function getAuthDebugSnapshot() {
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     hasAnthropicApiKeyEnv: Boolean(process.env.ANTHROPIC_API_KEY),
     hasOauthTokenEnv: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN),
-    hasAnthropicAuthTokenEnv: Boolean(process.env.ANTHROPIC_AUTH_TOKEN),
+    hasMossAuthTokenEnv: Boolean(process.env.MOSS_AUTH_TOKEN),
     hasApiKeyHelper: typeof settings.apiKeyHelper === 'string' && settings.apiKeyHelper.length > 0,
     apiKeySource: apiKeyInfo.source,
     hasApiKeyCandidate: Boolean(apiKeyInfo.key),
@@ -287,7 +287,7 @@ function addDynamicMcpScope(
   return scoped
 }
 
-function normalizeAnthropicBaseUrl(value: string | undefined): string | undefined {
+function normalizeMossBaseUrl(value: string | undefined): string | undefined {
   if (!value) return value
   const trimmed = value.trim()
   if (!trimmed) return undefined
@@ -399,19 +399,19 @@ async function runDesktopPermissionRequestHooks(
 function buildSessionApiOverrides(
   opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey'>,
 ): SessionApiOverrides | undefined {
-  const anthropicBaseUrl = normalizeAnthropicBaseUrl(
+  const mossBaseUrl = normalizeMossBaseUrl(
     typeof opts.url === 'string' ? opts.url : undefined,
   )
-  const anthropicAuthToken =
+  const mossAuthToken =
     typeof opts.apiKey === 'string' ? opts.apiKey.trim() || undefined : undefined
 
-  if (!anthropicBaseUrl && !anthropicAuthToken) {
+  if (!mossBaseUrl && !mossAuthToken) {
     return undefined
   }
 
   return {
-    ...(anthropicBaseUrl ? { anthropicBaseUrl } : {}),
-    ...(anthropicAuthToken ? { anthropicAuthToken } : {}),
+    ...(mossBaseUrl ? { mossBaseUrl } : {}),
+    ...(mossAuthToken ? { mossAuthToken } : {}),
   }
 }
 

@@ -190,7 +190,7 @@ const MAX_SANITIZED_PATH_LENGTH = 200;
 // Desktop sessions resolve user-scoped settings/data from ~/.moss/settings.json.
 process.env.MOSS_HOME = MOSS_HOME;
 
-function normalizeAnthropicBaseUrl(value) {
+function normalizeMossBaseUrl(value) {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed) return '';
 
@@ -531,8 +531,8 @@ function loadLocalSettingsAuthConfig() {
     for (const key of Object.keys(env)) {
       const value = env[key];
       if (typeof value === 'string' && value.trim()) {
-        const normalizedValue = key === 'ANTHROPIC_BASE_URL'
-          ? normalizeAnthropicBaseUrl(value)
+        const normalizedValue = key === 'MOSS_BASE_URL'
+          ? normalizeMossBaseUrl(value)
           : value.trim();
         if (!normalizedValue) continue;
         process.env[key] = normalizedValue;
@@ -615,7 +615,7 @@ function normalizeDesktopSettings(input, existing = {}) {
   }
 
   if (typeof source.url === 'string') {
-    result.url = normalizeAnthropicBaseUrl(source.url);
+    result.url = normalizeMossBaseUrl(source.url);
   } else if (result.url === undefined) {
     result.url = DEFAULT_DESKTOP_SETTINGS.url;
   }
@@ -818,10 +818,10 @@ function loadDesktopSettings() {
     result.appearancePersisted = hasPersistedAppearance(parsed);
     // 从 env 中提取 url 和 apiKey
     const env = parsed && parsed.env && typeof parsed.env === 'object' ? parsed.env : {};
-    const urlFromEnv = normalizeAnthropicBaseUrl(
-      typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL : '',
+    const urlFromEnv = normalizeMossBaseUrl(
+      typeof env.MOSS_BASE_URL === 'string' ? env.MOSS_BASE_URL : '',
     );
-    const apiKeyFromEnv = typeof env.ANTHROPIC_AUTH_TOKEN === 'string' ? env.ANTHROPIC_AUTH_TOKEN.trim() : '';
+    const apiKeyFromEnv = typeof env.MOSS_AUTH_TOKEN === 'string' ? env.MOSS_AUTH_TOKEN.trim() : '';
     // 启动加载时，保留原始 JSON 中的所有 key，只对标准 key 进行合并/格式化
     const normalized = normalizeDesktopSettings(parsed, parsed);
     result.value = {
@@ -883,16 +883,16 @@ function saveDesktopSettings(nextSettings) {
 
   // 将 url 和 apiKey 存入 env
   const env = { ...existingEnv };
-  const normalizedUrl = normalizeAnthropicBaseUrl(normalizedSettings.url);
+  const normalizedUrl = normalizeMossBaseUrl(normalizedSettings.url);
   if (normalizedUrl) {
-    env.ANTHROPIC_BASE_URL = normalizedUrl;
+    env.MOSS_BASE_URL = normalizedUrl;
   } else {
-    delete env.ANTHROPIC_BASE_URL;
+    delete env.MOSS_BASE_URL;
   }
   if (normalizedSettings.apiKey) {
-    env.ANTHROPIC_AUTH_TOKEN = normalizedSettings.apiKey;
+    env.MOSS_AUTH_TOKEN = normalizedSettings.apiKey;
   } else {
-    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.MOSS_AUTH_TOKEN;
   }
 
   // 构建完整的保存对象，保留所有现有配置
@@ -2025,7 +2025,7 @@ function formatAuthDebug(authDebug) {
     `authTokenSource=${authDebug.authTokenSource || 'none'}`,
     `hasAuthToken=${authDebug.hasAuthTokenCandidate ? 'yes' : 'no'}`,
     `apiKeyEnv=${authDebug.hasAnthropicApiKeyEnv ? 'yes' : 'no'}`,
-    `authTokenEnv=${authDebug.hasAnthropicAuthTokenEnv ? 'yes' : 'no'}`,
+    `authTokenEnv=${authDebug.hasMossAuthTokenEnv ? 'yes' : 'no'}`,
     `apiKeyHelper=${authDebug.hasApiKeyHelper ? 'yes' : 'no'}`,
     `storedOauth=${authDebug.hasStoredOauthAccount ? 'yes' : 'no'}`,
     `primaryApiKey=${authDebug.hasPrimaryApiKey ? 'yes' : 'no'}`,

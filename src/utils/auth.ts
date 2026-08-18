@@ -73,7 +73,7 @@ import {
   getSettings_DEPRECATED,
   getSettingsForSource,
 } from './settings/settings.js'
-import { getSessionAnthropicAuthToken } from './sessionApiOverrides.js'
+import { getSessionMossAuthToken } from './sessionApiOverrides.js'
 import { sleep } from './sleep.js'
 import { jsonParse } from './slowOperations.js'
 import { clearToolSchemaCache } from './toolSchemaCache.js'
@@ -84,7 +84,7 @@ const DEFAULT_API_KEY_HELPER_TTL = 5 * 60 * 1000
 /**
  * CCR and Claude Desktop spawn the CLI with OAuth and should never fall back
  * to the user's ~/.moss/settings.json API-key config (apiKeyHelper,
- * env.ANTHROPIC_API_KEY, env.ANTHROPIC_AUTH_TOKEN). Those settings exist for
+ * env.ANTHROPIC_API_KEY, env.MOSS_AUTH_TOKEN). Those settings exist for
  * the user's terminal CLI, not managed sessions. Without this guard, a user
  * who runs `claude` in their terminal with an API key sees every CCD session
  * also use that key — and fail if it's stale/wrong-org.
@@ -118,8 +118,8 @@ export function isAnthropicAuthEnabled(): boolean {
   const settings = getSettings_DEPRECATED() || {}
   const apiKeyHelper = settings.apiKeyHelper
   const hasExternalAuthToken =
-    getSessionAnthropicAuthToken() ||
-    process.env.ANTHROPIC_AUTH_TOKEN ||
+    getSessionMossAuthToken() ||
+    process.env.MOSS_AUTH_TOKEN ||
     apiKeyHelper ||
     process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR
 
@@ -152,8 +152,8 @@ export function getAuthTokenSource() {
     if (getConfiguredApiKeyHelper()) {
       return { source: 'apiKeyHelper' as const, hasToken: true }
     }
-    if (getSessionAnthropicAuthToken() || process.env.ANTHROPIC_AUTH_TOKEN) {
-      return { source: 'ANTHROPIC_AUTH_TOKEN' as const, hasToken: true }
+    if (getSessionMossAuthToken() || process.env.MOSS_AUTH_TOKEN) {
+      return { source: 'MOSS_AUTH_TOKEN' as const, hasToken: true }
     }
     return { source: 'none' as const, hasToken: false }
   }
@@ -169,10 +169,10 @@ export function getAuthTokenSource() {
   }
 
   if (
-    (getSessionAnthropicAuthToken() || process.env.ANTHROPIC_AUTH_TOKEN) &&
+    (getSessionMossAuthToken() || process.env.MOSS_AUTH_TOKEN) &&
     !isManagedOAuthContext()
   ) {
-    return { source: 'ANTHROPIC_AUTH_TOKEN' as const, hasToken: true }
+    return { source: 'MOSS_AUTH_TOKEN' as const, hasToken: true }
   }
 
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {

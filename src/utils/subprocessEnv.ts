@@ -5,7 +5,7 @@ import { isEnvTruthy } from './envUtils.js'
  * Actions. This prevents prompt-injection attacks from exfiltrating secrets
  * via shell expansion (e.g., ${ANTHROPIC_API_KEY}) in Bash tool commands.
  *
- * The parent claude process keeps these vars (needed for API calls, lazy
+ * The parent Moss process keeps these vars (needed for API calls, lazy
  * credential reads). Only child processes (bash, shell snapshot, MCP stdio, LSP, hooks) are scrubbed.
  *
  * GITHUB_TOKEN / GH_TOKEN are intentionally NOT scrubbed — wrapper scripts
@@ -13,10 +13,10 @@ import { isEnvTruthy } from './envUtils.js'
  * expires when the workflow ends.
  */
 const GHA_SUBPROCESS_SCRUB = [
-  // Anthropic auth — claude re-reads these per-request, subprocesses don't need them
+  // API auth - Moss re-reads these per request; subprocesses don't need them
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_AUTH_TOKEN',
+  'MOSS_AUTH_TOKEN',
   'ANTHROPIC_FOUNDRY_API_KEY',
   'ANTHROPIC_CUSTOM_HEADERS',
 

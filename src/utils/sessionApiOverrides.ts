@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from 'async_hooks'
 
 export type SessionApiOverrides = {
-  anthropicBaseUrl?: string
-  anthropicAuthToken?: string
+  mossBaseUrl?: string
+  mossAuthToken?: string
 }
 
 const sessionApiOverridesStorage = new AsyncLocalStorage<SessionApiOverrides>()
@@ -11,12 +11,12 @@ export function getSessionApiOverrides(): SessionApiOverrides | undefined {
   return sessionApiOverridesStorage.getStore()
 }
 
-export function getSessionAnthropicBaseUrl(): string | undefined {
-  return sessionApiOverridesStorage.getStore()?.anthropicBaseUrl
+export function getSessionMossBaseUrl(): string | undefined {
+  return sessionApiOverridesStorage.getStore()?.mossBaseUrl
 }
 
-export function getSessionAnthropicAuthToken(): string | undefined {
-  return sessionApiOverridesStorage.getStore()?.anthropicAuthToken
+export function getSessionMossAuthToken(): string | undefined {
+  return sessionApiOverridesStorage.getStore()?.mossAuthToken
 }
 
 export function runWithSessionApiOverrides<T>(
