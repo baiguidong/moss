@@ -367,7 +367,7 @@ export function isInProcessEnabled(): boolean {
     enabled = false
   } else {
     // 'auto' mode - if a prior spawn fell back to in-process because no pane
-    // backend was available, stay in-process (scoped to auto mode only so a
+    // backend was available, stay in-process (scoped to automatic selection so a
     // mid-session Settings change to explicit 'tmux' still takes effect).
     if (inProcessFallbackActive) {
       logForDebugging(

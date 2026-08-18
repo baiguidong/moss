@@ -291,9 +291,6 @@ export function useInboxPoller({
               name: parsed.agent_id,
               color: 'cyan',
             },
-            onUserInteraction() {
-              // No-op for tmux workers (no classifier auto-approval)
-            },
             onAbort() {
               void sendPermissionResponseViaMailbox(
                 parsed.agent_id,

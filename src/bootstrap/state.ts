@@ -54,10 +54,8 @@ type State = {
   totalToolDuration: number
   turnHookDurationMs: number
   turnToolDurationMs: number
-  turnClassifierDurationMs: number
   turnToolCount: number
   turnHookCount: number
-  turnClassifierCount: number
   startTime: number
   lastInteractionTime: number
   totalLinesAdded: number
@@ -114,11 +112,6 @@ type State = {
   // Captures the exact post-compaction, CLAUDE.md-injected message set sent
   // to the API so /share's serialized_conversation.json reflects reality.
   lastAPIRequestMessages: BetaMessageStreamParams['messages'] | null
-  // Last auto-mode classifier request(s) for /share transcript
-  lastClassifierRequests: unknown[] | null
-  // CLAUDE.md content cached by context.ts for the auto-mode classifier.
-  // Breaks the yoloClassifier → claudemd → filesystem → permissions cycle.
-  cachedClaudeMdContent: string | null
   // In-memory error log for recent errors
   inMemoryErrorLog: Array<{ error: string; timestamp: string }>
   // Session-only plugins from --plugin-dir flag
@@ -155,8 +148,6 @@ type State = {
   hasExitedPlanMode: boolean
   // Track if we need to show the plan mode exit attachment (one-time notification)
   needsPlanModeExitAttachment: boolean
-  // Track if we need to show the auto mode exit attachment (one-time notification)
-  needsAutoModeExitAttachment: boolean
   // Track if LSP plugin recommendation has been shown this session (only show once)
   lspRecommendationShownThisSession: boolean
   // SDK init event state - jsonSchema for structured output
@@ -211,10 +202,6 @@ type State = {
   // evaluation so mid-session overage flips don't change the cache_control
   // TTL, which would bust the server-side prompt cache.
   promptCache1hEligible: boolean | null
-  // Sticky-on latch for AFK_MODE_BETA_HEADER. Once auto mode is first
-  // activated, keep sending the header for the rest of the session so
-  // Shift+Tab toggles don't bust the ~50-70K token prompt cache.
-  afkModeHeaderLatched: boolean | null
   // Sticky-on latch for FAST_MODE_BETA_HEADER. Once fast mode is first
   // enabled, keep sending the header so cooldown enter/exit doesn't
   // double-bust the prompt cache. The `speed` body param stays dynamic.
@@ -271,10 +258,8 @@ function getInitialState(): State {
     totalToolDuration: 0,
     turnHookDurationMs: 0,
     turnToolDurationMs: 0,
-    turnClassifierDurationMs: 0,
     turnToolCount: 0,
     turnHookCount: 0,
-    turnClassifierCount: 0,
     startTime: Date.now(),
     lastInteractionTime: Date.now(),
     totalLinesAdded: 0,
@@ -328,9 +313,6 @@ function getInitialState(): State {
     // Last API request for bug reports
     lastAPIRequest: null,
     lastAPIRequestMessages: null,
-    // Last auto-mode classifier request(s) for /share transcript
-    lastClassifierRequests: null,
-    cachedClaudeMdContent: null,
     // In-memory error log for recent errors
     inMemoryErrorLog: [],
     // Session-only plugins from --plugin-dir flag
@@ -353,8 +335,6 @@ function getInitialState(): State {
     hasExitedPlanMode: false,
     // Track if we need to show the plan mode exit attachment
     needsPlanModeExitAttachment: false,
-    // Track if we need to show the auto mode exit attachment
-    needsAutoModeExitAttachment: false,
     // Track if LSP plugin recommendation has been shown this session
     lspRecommendationShownThisSession: false,
     // SDK init event state
@@ -389,7 +369,6 @@ function getInitialState(): State {
     // Prompt cache 1h eligibility (null = not yet evaluated)
     promptCache1hEligible: null,
     // Beta header latches (null = not yet triggered)
-    afkModeHeaderLatched: null,
     fastModeHeaderLatched: null,
     cacheEditingHeaderLatched: null,
     thinkingClearLatched: null,
@@ -563,10 +542,8 @@ type SessionCostState = {
   totalToolDuration: number
   turnHookDurationMs: number
   turnToolDurationMs: number
-  turnClassifierDurationMs: number
   turnToolCount: number
   turnHookCount: number
-  turnClassifierCount: number
   startTime: number
   totalLinesAdded: number
   totalLinesRemoved: number
@@ -587,10 +564,8 @@ function createSessionCostState(): SessionCostState {
     totalToolDuration: 0,
     turnHookDurationMs: 0,
     turnToolDurationMs: 0,
-    turnClassifierDurationMs: 0,
     turnToolCount: 0,
     turnHookCount: 0,
-    turnClassifierCount: 0,
     startTime: Date.now(),
     totalLinesAdded: 0,
     totalLinesRemoved: 0,
@@ -739,26 +714,6 @@ export function resetTurnToolDuration(): void {
 
 export function getTurnToolCount(): number {
   return costState().turnToolCount
-}
-
-export function getTurnClassifierDurationMs(): number {
-  return costState().turnClassifierDurationMs
-}
-
-export function addToTurnClassifierDuration(duration: number): void {
-  const cost = costState()
-  cost.turnClassifierDurationMs += duration
-  cost.turnClassifierCount++
-}
-
-export function resetTurnClassifierDuration(): void {
-  const cost = costState()
-  cost.turnClassifierDurationMs = 0
-  cost.turnClassifierCount = 0
-}
-
-export function getTurnClassifierCount(): number {
-  return costState().turnClassifierCount
 }
 
 export function getStatsStore(): {
@@ -1302,22 +1257,6 @@ export function getLastAPIRequestMessages():
   return STATE.lastAPIRequestMessages
 }
 
-export function setLastClassifierRequests(requests: unknown[] | null): void {
-  STATE.lastClassifierRequests = requests
-}
-
-export function getLastClassifierRequests(): unknown[] | null {
-  return STATE.lastClassifierRequests
-}
-
-export function setCachedClaudeMdContent(content: string | null): void {
-  STATE.cachedClaudeMdContent = content
-}
-
-export function getCachedClaudeMdContent(): string | null {
-  return STATE.cachedClaudeMdContent
-}
-
 export function addToInMemoryErrorLog(errorInfo: {
   error: string
   timestamp: string
@@ -1465,42 +1404,6 @@ export function handlePlanModeTransition(
   // If switching out of plan mode, trigger the plan_mode_exit attachment
   if (fromMode === 'plan' && toMode !== 'plan') {
     STATE.needsPlanModeExitAttachment = true
-  }
-}
-
-export function needsAutoModeExitAttachment(): boolean {
-  return STATE.needsAutoModeExitAttachment
-}
-
-export function setNeedsAutoModeExitAttachment(value: boolean): void {
-  STATE.needsAutoModeExitAttachment = value
-}
-
-export function handleAutoModeTransition(
-  fromMode: string,
-  toMode: string,
-): void {
-  // Auto↔plan transitions are handled by prepareContextForPlanMode (auto may
-  // stay active through plan if opted in) and ExitPlanMode (restores mode).
-  // Skip both directions so this function only handles direct auto transitions.
-  if (
-    (fromMode === 'auto' && toMode === 'plan') ||
-    (fromMode === 'plan' && toMode === 'auto')
-  ) {
-    return
-  }
-  const fromIsAuto = fromMode === 'auto'
-  const toIsAuto = toMode === 'auto'
-
-  // If switching TO auto mode, clear any pending exit attachment
-  // This prevents sending both auto_mode and auto_mode_exit when user toggles quickly
-  if (toIsAuto && !fromIsAuto) {
-    STATE.needsAutoModeExitAttachment = false
-  }
-
-  // If switching out of auto mode, trigger the auto_mode_exit attachment
-  if (fromIsAuto && !toIsAuto) {
-    STATE.needsAutoModeExitAttachment = true
   }
 }
 
@@ -1801,14 +1704,6 @@ export function setPromptCache1hEligible(eligible: boolean | null): void {
   STATE.promptCache1hEligible = eligible
 }
 
-export function getAfkModeHeaderLatched(): boolean | null {
-  return STATE.afkModeHeaderLatched
-}
-
-export function setAfkModeHeaderLatched(v: boolean): void {
-  STATE.afkModeHeaderLatched = v
-}
-
 export function getFastModeHeaderLatched(): boolean | null {
   return STATE.fastModeHeaderLatched
 }
@@ -1838,7 +1733,6 @@ export function setThinkingClearLatched(v: boolean): void {
  * fresh conversation gets fresh header evaluation.
  */
 export function clearBetaHeaderLatches(): void {
-  STATE.afkModeHeaderLatched = null
   STATE.fastModeHeaderLatched = null
   STATE.cacheEditingHeaderLatched = null
   STATE.thinkingClearLatched = null

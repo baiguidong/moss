@@ -1,7 +1,6 @@
 // Centralized analytics/telemetry logging for tool permission decisions.
 // All permission approve/reject events flow through logPermissionDecision(),
 // which fans out to Statsig analytics, OTel telemetry, and code-edit metrics.
-import { feature } from 'bun:bundle'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -68,12 +67,6 @@ async function buildCodeEditToolAttributes(
 function sourceToString(
   source: PermissionApprovalSource | PermissionRejectionSource,
 ): string {
-  if (
-    (feature('BASH_CLASSIFIER') || feature('TRANSCRIPT_CLASSIFIER')) &&
-    source.type === 'classifier'
-  ) {
-    return 'classifier'
-  }
   switch (source.type) {
     case 'hook':
       return 'hook'
@@ -115,16 +108,6 @@ function logApprovalEvent(
     logEvent(
       'tengu_tool_use_granted_in_config',
       baseMetadata(messageId, tool.name, undefined),
-    )
-    return
-  }
-  if (
-    (feature('BASH_CLASSIFIER') || feature('TRANSCRIPT_CLASSIFIER')) &&
-    source.type === 'classifier'
-  ) {
-    logEvent(
-      'tengu_tool_use_granted_by_classifier',
-      baseMetadata(messageId, tool.name, waitMs),
     )
     return
   }

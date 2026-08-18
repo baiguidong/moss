@@ -223,11 +223,6 @@ function buildInheritedCliFlags(options?: {
     flags.push('--dangerously-skip-permissions')
   } else if (permissionMode === 'acceptEdits') {
     flags.push('--permission-mode acceptEdits')
-  } else if (permissionMode === 'auto') {
-    // Teammates inherit auto mode so the classifier auto-approves their tool
-    // calls too. The teammate's own startup (permissionSetup.ts) handles
-    // GrowthBook gate checks and setAutoModeActive(true) independently.
-    flags.push('--permission-mode auto')
   }
 
   // Propagate --model if explicitly set via CLI
@@ -1047,13 +1042,14 @@ async function handleSpawn(
   }
 
   // Pre-flight: ensure a pane backend is available before attempting pane-based spawn.
-  // This handles auto-mode cases like iTerm2 without it2 or tmux installed, where
+  // This handles automatic selection cases like iTerm2 without it2 or tmux installed, where
   // isInProcessEnabled() returns false but detectAndGetBackend() has no viable backend.
   // Narrowly scoped so user cancellation and other spawn errors propagate normally.
   try {
     await detectAndGetBackend()
   } catch (error) {
-    // Only fall back silently in auto mode. If the user explicitly configured
+    // Only fall back silently during automatic backend selection. If the user
+    // explicitly configured
     // teammateMode: 'tmux', let the error propagate so they see the actionable
     // install instructions from getTmuxInstallInstructions().
     if (getTeammateModeFromSnapshot() !== 'auto') {

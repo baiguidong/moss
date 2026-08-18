@@ -1,12 +1,9 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
 import * as React from 'react';
-import { BULLET_OPERATOR } from '../../../constants/figures.js';
-import { Text } from '../../../ink.js';
 import { filterToolProgressMessages, type Tool, type Tools } from '../../../Tool.js';
 import type { ProgressMessage } from '../../../types/message.js';
-import { INTERRUPT_MESSAGE_FOR_TOOL_USE, isClassifierDenial, PLAN_REJECTION_PREFIX, REJECT_MESSAGE_WITH_REASON_PREFIX } from '../../../utils/messages.js';
+import { INTERRUPT_MESSAGE_FOR_TOOL_USE, PLAN_REJECTION_PREFIX, REJECT_MESSAGE_WITH_REASON_PREFIX } from '../../../utils/messages.js';
 import { FallbackToolUseErrorMessage } from '../../FallbackToolUseErrorMessage.js';
 import { InterruptedByUser } from '../../InterruptedByUser.js';
 import { MessageResponse } from '../../MessageResponse.js';
@@ -67,16 +64,6 @@ export function UserToolErrorMessage(t0) {
       $[5] = t1;
     } else {
       t1 = $[5];
-    }
-    return t1;
-  }
-  if (feature("TRANSCRIPT_CLASSIFIER") && typeof param.content === "string" && isClassifierDenial(param.content)) {
-    let t1;
-    if ($[6] === Symbol.for("react.memo_cache_sentinel")) {
-      t1 = <MessageResponse height={1}><Text dimColor={true}>Denied by auto mode classifier {BULLET_OPERATOR} /feedback if incorrect</Text></MessageResponse>;
-      $[6] = t1;
-    } else {
-      t1 = $[6];
     }
     return t1;
   }

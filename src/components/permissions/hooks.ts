@@ -64,12 +64,6 @@ function decisionReasonToString(
   if (!decisionReason) {
     return 'No decision reason'
   }
-  if (
-    (feature('BASH_CLASSIFIER') || feature('TRANSCRIPT_CLASSIFIER')) &&
-    decisionReason.type === 'classifier'
-  ) {
-    return `Classifier: ${decisionReason.classifier}, Reason: ${decisionReason.reason}`
-  }
   switch (decisionReason.type) {
     case 'rule':
       return `Rule: ${permissionRuleValueToString(decisionReason.rule.ruleValue)}`

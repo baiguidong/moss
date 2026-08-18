@@ -15,7 +15,6 @@ import {
 import type { TaskState } from '../tasks/types.js'
 import type { AgentColorName } from '../tools/AgentTool/agentColorManager.js'
 import type { AgentDefinitionsResult } from '../tools/AgentTool/loadAgentsDir.js'
-import type { AllowedPrompt } from '../tools/ExitPlanModeTool/ExitPlanModeV2Tool.js'
 import type { AgentId } from '../types/ids.js'
 import type { Message, UserMessage } from '../types/message.js'
 import type { LoadedPlugin, PluginError } from '../types/plugin.js'
@@ -29,7 +28,6 @@ import type { FileHistoryState } from '../utils/fileHistory.js'
 import type { REPLHookContext } from '../utils/hooks/postSamplingHooks.js'
 import type { SessionHooksState } from '../utils/hooks/sessionHooks.js'
 import type { ModelSetting } from '../utils/model/model.js'
-import type { DenialTrackingState } from '../utils/permissions/denialTracking.js'
 import type { PermissionMode } from '../utils/permissions/PermissionMode.js'
 import { getInitialSettings } from '../utils/settings/settings.js'
 import type { SettingsJson } from '../utils/settings/types.js'
@@ -78,7 +76,6 @@ export const IDLE_SPECULATION_STATE: SpeculationState = { status: 'idle' }
 
 export type FooterItem =
   | 'tasks'
-  | 'tmux'
   | 'bagel'
   | 'teams'
   | 'companion'
@@ -182,22 +179,6 @@ export type AppState = DeepImmutable<{
   thinkingEnabled: boolean | undefined
   promptSuggestionEnabled: boolean
   sessionHooks: SessionHooksState
-  tungstenActiveSession?: {
-    sessionName: string
-    socketName: string
-    target: string // The tmux target (e.g., "session:window.pane")
-  }
-  tungstenLastCapturedTime?: number // Timestamp when frame was captured for model
-  tungstenLastCommand?: {
-    command: string // The command string to display (e.g., "Enter", "echo hello")
-    timestamp: number // When the command was sent
-  }
-  // Sticky tmux panel visibility — mirrors globalConfig.tungstenPanelVisible for reactivity.
-  tungstenPanelVisible?: boolean
-  // Transient auto-hide at turn end — separate from tungstenPanelVisible so the
-  // pill stays in the footer (user can reopen) but the panel content doesn't take
-  // screen space when idle. Cleared on next Tmux tool use or user toggle. NOT persisted.
-  tungstenPanelAutoHidden?: boolean
   // WebBrowser tool (codename bagel): pill visible in footer
   bagelActive?: boolean
   // WebBrowser tool: current page URL shown in pill label
@@ -306,8 +287,6 @@ export type AppState = DeepImmutable<{
     message: UserMessage
     clearContext?: boolean
     mode?: PermissionMode
-    // Session-scoped permission rules from plan mode (e.g., "run tests", "install dependencies")
-    allowedPrompts?: AllowedPrompt[]
   } | null
   // Pending plan verification state (set when exiting plan mode)
   // Used by VerifyPlanExecution tool to trigger background verification
@@ -316,8 +295,6 @@ export type AppState = DeepImmutable<{
     verificationStarted: boolean
     verificationCompleted: boolean
   }
-  // Denial tracking for classifier modes (YOLO, headless, etc.) - falls back to prompting when limits exceeded
-  denialTracking?: DenialTrackingState
   // Active overlays (Select dialogs, etc.) for Escape key coordination
   activeOverlays: ReadonlySet<string>
   // Fast mode

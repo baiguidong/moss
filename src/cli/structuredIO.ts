@@ -68,12 +68,6 @@ function serializeDecisionReason(
     return undefined
   }
 
-  if (
-    (feature('BASH_CLASSIFIER') || feature('TRANSCRIPT_CLASSIFIER')) &&
-    reason.type === 'classifier'
-  ) {
-    return reason.reason
-  }
   switch (reason.type) {
     case 'rule':
     case 'mode':

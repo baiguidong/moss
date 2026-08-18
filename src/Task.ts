@@ -9,7 +9,6 @@ export type TaskType =
   | 'remote_agent'
   | 'in_process_teammate'
   | 'local_workflow'
-  | 'monitor_mcp'
   | 'dream'
 
 export type TaskStatus =
@@ -62,8 +61,6 @@ export type LocalShellSpawnInput = {
   timeout?: number
   toolUseId?: string
   agentId?: AgentId
-  /** UI display variant: description-as-label, dialog title, status bar pill. */
-  kind?: 'bash' | 'monitor'
 }
 
 // What getTaskByType dispatches for: kill. spawn/render were never
@@ -82,7 +79,6 @@ const TASK_ID_PREFIXES: Record<string, string> = {
   remote_agent: 'r',
   in_process_teammate: 't',
   local_workflow: 'w',
-  monitor_mcp: 'm',
   dream: 'd',
 }
 

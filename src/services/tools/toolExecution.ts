@@ -36,7 +36,6 @@ import {
   type ToolUseContext,
 } from '../../Tool.js'
 import type { BashToolInput } from '../../tools/BashTool/BashTool.js'
-import { startSpeculativeClassifierCheck } from '../../tools/BashTool/bashPermissions.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -67,7 +66,6 @@ import {
   ShellError,
   TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from '../../utils/errors.js'
-import { executePermissionDeniedHooks } from '../../utils/hooks.js'
 import { logError } from '../../utils/log.js'
 import {
   CANCEL_MESSAGE,
@@ -234,7 +232,6 @@ function decisionReasonToOTelSource(
     case 'hook':
       return 'hook'
     case 'mode':
-    case 'classifier':
     case 'subcommandResults':
     case 'asyncAgent':
     case 'sandboxOverride':
@@ -731,26 +728,6 @@ async function checkPermissionsAndCallTool(
       },
     ]
   }
-  // Speculatively start the bash allow classifier check early so it runs in
-  // parallel with pre-tool hooks, deny/ask classifiers, and permission dialog
-  // setup. The UI indicator (setClassifierChecking) is NOT set here — it's
-  // set in interactiveHandler.ts only when the permission check returns `ask`
-  // with a pendingClassifierCheck. This avoids flashing "classifier running"
-  // for commands that auto-allow via prefix rules.
-  if (
-    tool.name === BASH_TOOL_NAME &&
-    parsedInput.data &&
-    'command' in parsedInput.data
-  ) {
-    const appState = toolUseContext.getAppState()
-    startSpeculativeClassifierCheck(
-      (parsedInput.data as BashToolInput).command,
-      appState.toolPermissionContext,
-      toolUseContext.abortController.signal,
-      toolUseContext.options.isNonInteractiveSession,
-    )
-  }
-
   const resultingMessages = []
 
   // Defense-in-depth: strip _simulatedSedEdit from model-provided Bash input.
@@ -916,7 +893,6 @@ async function checkPermissionsAndCallTool(
   // Check whether we have permission to use the tool,
   // and ask the user for permission if we don't
   const permissionMode = toolUseContext.getAppState().toolPermissionContext.mode
-  const permissionStart = Date.now()
 
   const resolved = await resolveHookPermissionDecision(
     hookPermissionResult,
@@ -929,21 +905,6 @@ async function checkPermissionsAndCallTool(
   )
   const permissionDecision = resolved.decision
   processedInput = resolved.input
-  const permissionDurationMs = Date.now() - permissionStart
-  // In auto mode, canUseTool awaits the classifier (side_query) — if that's
-  // slow the collapsed view shows "Running…" with no (Ns) tick since
-  // bash_progress hasn't started yet. Auto-only: in default mode this timer
-  // includes interactive-dialog wait (user think time), which is just noise.
-  if (
-    permissionDurationMs >= SLOW_PHASE_LOG_THRESHOLD_MS &&
-    permissionMode === 'auto'
-  ) {
-    logForDebugging(
-      `Slow permission decision: ${permissionDurationMs}ms for ${tool.name} ` +
-        `(mode=${permissionMode}, behavior=${permissionDecision.behavior})`,
-      { level: 'info' },
-    )
-  }
 
   // Emit tool_decision OTel event and code-edit counter if the interactive
   // permission path didn't already log it (headless mode bypasses permission
@@ -1069,36 +1030,6 @@ async function checkPermissionsAndCallTool(
         sourceToolAssistantUUID: assistantMessage.uuid,
       }),
     })
-
-    // Run PermissionDenied hooks for auto mode classifier denials.
-    // If a hook returns {retry: true}, tell the model it may retry.
-    if (
-      feature('TRANSCRIPT_CLASSIFIER') &&
-      permissionDecision.decisionReason?.type === 'classifier' &&
-      permissionDecision.decisionReason.classifier === 'auto-mode'
-    ) {
-      let hookSaysRetry = false
-      for await (const result of executePermissionDeniedHooks(
-        tool.name,
-        toolUseID,
-        processedInput,
-        permissionDecision.decisionReason.reason ?? 'Permission denied',
-        toolUseContext,
-        permissionMode,
-        toolUseContext.abortController.signal,
-      )) {
-        if (result.retry) hookSaysRetry = true
-      }
-      if (hookSaysRetry) {
-        resultingMessages.push({
-          message: createUserMessage({
-            content:
-              'The PermissionDenied hook indicated this command is now approved. You may retry it if you would like.',
-            isMeta: true,
-          }),
-        })
-      }
-    }
 
     return resultingMessages
   }

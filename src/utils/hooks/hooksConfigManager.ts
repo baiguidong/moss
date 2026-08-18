@@ -54,7 +54,7 @@ export const getHookEventMetadata = memoize(
         },
       },
       PermissionDenied: {
-        summary: 'After auto mode classifier denies a tool call',
+        summary: 'After a tool call is denied',
         description:
           'Input to command is JSON with tool_name, tool_input, tool_use_id, and reason.\nReturn {"hookSpecificOutput":{"hookEventName":"PermissionDenied","retry":true}} to tell the model it may retry.\nExit code 0 - stdout shown in transcript mode (ctrl+o)\nOther exit codes - show stderr to user only',
         matcherMetadata: {

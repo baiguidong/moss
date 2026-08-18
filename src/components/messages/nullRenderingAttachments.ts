@@ -37,8 +37,6 @@ const NULL_RENDERING_TYPES = [
   'ultrathink_effort',
   'max_turns_reached',
   'task_reminder',
-  'auto_mode',
-  'auto_mode_exit',
   'output_token_usage',
   'pen_mode_enter',
   'pen_mode_exit',

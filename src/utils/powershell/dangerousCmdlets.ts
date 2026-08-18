@@ -175,9 +175,8 @@ export const NEVER_SUGGEST: ReadonlySet<string> = (() => {
     // upstream. Not in ARG_GATED (no allowlist entry to sync with).
     'foreach-object',
     // Interpreters/runners — `node script.js` stops at the file arg and
-    // suggests bare `node:*`, auto-allowing arbitrary code via -e/-p. The
-    // auto-mode classifier strips these rules (isDangerousPowerShellPermission)
-    // but the suggestion gate didn't. Multi-word entries ('npm run') are
+    // suggests bare `node:*`, auto-allowing arbitrary code via -e/-p.
+    // Multi-word entries ('npm run') are
     // filtered out — NEVER_SUGGEST is a single-name lookup on cmd.name.
     ...CROSS_PLATFORM_CODE_EXEC.filter(p => !p.includes(' ')),
   ])

@@ -615,7 +615,7 @@ function SuggestionsOverlay() {
   return t0;
 }
 
-// Dialog portaled from PromptInput (AutoModeOptInDialog) — same clip-escape
+// Dialogs portaled from PromptInput use the same clip-escape
 // pattern as SuggestionsOverlay. Renders later in tree order so it paints
 // over suggestions if both are ever up (they shouldn't be).
 function DialogOverlay() {

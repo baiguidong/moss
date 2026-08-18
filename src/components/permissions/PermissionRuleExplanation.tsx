@@ -1,9 +1,7 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import chalk from 'chalk';
 import React from 'react';
 import { Ansi, Box, Text } from '../../ink.js';
-import { useAppState } from '../../state/AppState.js';
 import type { PermissionDecision, PermissionDecisionReason } from '../../utils/permissions/PermissionResult.js';
 import { permissionRuleValueToString } from '../../utils/permissions/permissionRuleParser.js';
 import type { Theme } from '../../utils/theme.js';
@@ -21,19 +19,6 @@ type DecisionReasonStrings = {
 function stringsForDecisionReason(reason: PermissionDecisionReason | undefined, toolType: 'tool' | 'command' | 'edit' | 'read'): DecisionReasonStrings | null {
   if (!reason) {
     return null;
-  }
-  if ((feature('BASH_CLASSIFIER') || feature('TRANSCRIPT_CLASSIFIER')) && reason.type === 'classifier') {
-    if (reason.classifier === 'auto-mode') {
-      return {
-        reasonString: `Auto mode classifier requires confirmation for this ${toolType}.\n${reason.reason}`,
-        configString: undefined,
-        themeColor: 'error'
-      };
-    }
-    return {
-      reasonString: `Classifier ${chalk.bold(reason.classifier)} requires confirmation for this ${toolType}.\n${reason.reason}`,
-      configString: undefined
-    };
   }
   switch (reason.type) {
     case 'rule':
@@ -71,7 +56,6 @@ export function PermissionRuleExplanation(t0) {
     permissionResult,
     toolType
   } = t0;
-  const permissionMode = useAppState(_temp);
   const t1 = permissionResult?.decisionReason;
   let t2;
   if ($[0] !== t1 || $[1] !== toolType) {
@@ -86,7 +70,7 @@ export function PermissionRuleExplanation(t0) {
   if (!strings) {
     return null;
   }
-  const themeColor = strings.themeColor ?? (permissionResult?.decisionReason?.type === "hook" && permissionMode === "auto" ? "warning" : undefined);
+  const themeColor = strings.themeColor;
   let t3;
   if ($[3] !== strings.reasonString || $[4] !== themeColor) {
     t3 = themeColor ? <ThemedText color={themeColor}>{strings.reasonString}</ThemedText> : <Text><Ansi>{strings.reasonString}</Ansi></Text>;
@@ -114,7 +98,4 @@ export function PermissionRuleExplanation(t0) {
     t5 = $[10];
   }
   return t5;
-}
-function _temp(s) {
-  return s.toolPermissionContext.mode;
 }

@@ -35,8 +35,6 @@ import { WebFetchPermissionRequest } from './WebFetchPermissionRequest/WebFetchP
 /* eslint-disable @typescript-eslint/no-require-imports */
 const WorkflowTool = feature('WORKFLOW_SCRIPTS') ? (require('../../tools/WorkflowTool/WorkflowTool.js') as typeof import('../../tools/WorkflowTool/WorkflowTool.js')).WorkflowTool : null;
 const WorkflowPermissionRequest = feature('WORKFLOW_SCRIPTS') ? (require('../../tools/WorkflowTool/WorkflowPermissionRequest.js') as typeof import('../../tools/WorkflowTool/WorkflowPermissionRequest.js')).WorkflowPermissionRequest : null;
-const MonitorTool = feature('MONITOR_TOOL') ? (require('../../tools/MonitorTool/MonitorTool.js') as typeof import('../../tools/MonitorTool/MonitorTool.js')).MonitorTool : null;
-const MonitorPermissionRequest = feature('MONITOR_TOOL') ? (require('./MonitorPermissionRequest/MonitorPermissionRequest.js') as typeof import('./MonitorPermissionRequest/MonitorPermissionRequest.js')).MonitorPermissionRequest : null;
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs';
 /* eslint-enable @typescript-eslint/no-require-imports */
 import type { z } from 'zod/v4';
@@ -66,8 +64,6 @@ function permissionComponentForTool(tool: Tool): React.ComponentType<PermissionR
       return AskUserQuestionPermissionRequest;
     case WorkflowTool:
       return WorkflowPermissionRequest ?? FallbackPermissionRequest;
-    case MonitorTool:
-      return MonitorPermissionRequest ?? FallbackPermissionRequest;
     case GlobTool:
     case GrepTool:
     case FileReadTool:
@@ -105,18 +101,8 @@ export type ToolUseConfirm<Input extends AnyObject = AnyObject> = {
   toolUseID: string;
   permissionResult: PermissionDecision;
   permissionPromptStartTimeMs: number;
-  /**
-   * Called when user interacts with the permission dialog (e.g., arrow keys, tab, typing).
-   * This prevents async auto-approval mechanisms (like the bash classifier) from
-   * dismissing the dialog while the user is actively engaging with it.
-   */
-  classifierCheckInProgress?: boolean;
-  classifierAutoApproved?: boolean;
-  classifierMatchedRule?: string;
   workerBadge?: WorkerBadgeProps;
-  onUserInteraction(): void;
   onAbort(): void;
-  onDismissCheckmark?(): void;
   onAllow(updatedInput: z.infer<Input>, permissionUpdates: PermissionUpdate[], feedback?: string, contentBlocks?: ContentBlockParam[]): void;
   onReject(feedback?: string, contentBlocks?: ContentBlockParam[]): void;
   recheckPermission(): Promise<void>;

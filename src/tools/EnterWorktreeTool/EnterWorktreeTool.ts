@@ -73,9 +73,6 @@ export const EnterWorktreeTool: Tool<InputSchema, Output> = buildTool({
     return 'Creating worktree'
   },
   shouldDefer: true,
-  toAutoClassifierInput(input) {
-    return input.name ?? ''
-  },
   renderToolUseMessage,
   renderToolResultMessage,
   async call(input) {

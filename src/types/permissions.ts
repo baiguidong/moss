@@ -6,7 +6,6 @@
  * to avoid circular dependencies.
  */
 
-import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 
 // ============================================================================
@@ -25,14 +24,13 @@ export type ExternalPermissionMode = (typeof EXTERNAL_PERMISSION_MODES)[number]
 
 // Exhaustive mode union for typechecking. The user-addressable runtime set
 // is INTERNAL_PERMISSION_MODES below.
-export type InternalPermissionMode = ExternalPermissionMode | 'auto' | 'bubble'
+export type InternalPermissionMode = ExternalPermissionMode | 'bubble'
 export type PermissionMode = InternalPermissionMode
 
 // Runtime validation set: modes that are user-addressable (settings.json
 // defaultMode, --permission-mode CLI flag, conversation recovery).
 export const INTERNAL_PERMISSION_MODES = [
   ...EXTERNAL_PERMISSION_MODES,
-  ...(feature('TRANSCRIPT_CLASSIFIER') ? (['auto'] as const) : ([] as const)),
 ] as const satisfies readonly PermissionMode[]
 
 export const PERMISSION_MODES = INTERNAL_PERMISSION_MODES
@@ -184,16 +182,6 @@ export type PermissionAllowDecision<
 }
 
 /**
- * Metadata for a pending classifier check that will run asynchronously.
- * Used to enable non-blocking allow classifier evaluation.
- */
-export type PendingClassifierCheck = {
-  command: string
-  cwd: string
-  descriptions: string[]
-}
-
-/**
  * Result when user should be prompted
  */
 export type PermissionAskDecision<
@@ -213,11 +201,6 @@ export type PermissionAskDecision<
    * transforms the command. Not set for simple newline compound commands.
    */
   isBashSecurityCheckForMisparsing?: boolean
-  /**
-   * If set, an allow classifier check should be run asynchronously.
-   * The classifier may auto-approve the permission before the user responds.
-   */
-  pendingClassifierCheck?: PendingClassifierCheck
   /**
    * Optional content blocks (e.g., images) to include alongside the rejection
    * message in the tool result. Used when users paste images as feedback.
@@ -258,11 +241,6 @@ export type PermissionResult<
       decisionReason?: PermissionDecision<Input>['decisionReason']
       suggestions?: PermissionUpdate[]
       blockedPath?: string
-      /**
-       * If set, an allow classifier check should be run asynchronously.
-       * The classifier may auto-approve the permission before the user responds.
-       */
-      pendingClassifierCheck?: PendingClassifierCheck
     }
 
 /**
@@ -301,100 +279,17 @@ export type PermissionDecisionReason =
       reason: 'excludedCommand' | 'dangerouslyDisableSandbox'
     }
   | {
-      type: 'classifier'
-      classifier: string
-      reason: string
-    }
-  | {
       type: 'workingDir'
       reason: string
     }
   | {
       type: 'safetyCheck'
       reason: string
-      // When true, auto mode lets the classifier evaluate this instead of
-      // forcing a prompt. True for sensitive-file paths (.claude/, .git/,
-      // shell configs) — the classifier can see context and decide. False
-      // for Windows path bypass attempts and cross-machine remote messages.
-      classifierApprovable: boolean
     }
   | {
       type: 'other'
       reason: string
     }
-
-// ============================================================================
-// Bash Classifier Types
-// ============================================================================
-
-export type ClassifierResult = {
-  matches: boolean
-  matchedDescription?: string
-  confidence: 'high' | 'medium' | 'low'
-  reason: string
-}
-
-export type ClassifierBehavior = 'deny' | 'ask' | 'allow'
-
-export type ClassifierUsage = {
-  inputTokens: number
-  outputTokens: number
-  cacheReadInputTokens: number
-  cacheCreationInputTokens: number
-}
-
-export type YoloClassifierResult = {
-  thinking?: string
-  shouldBlock: boolean
-  reason: string
-  unavailable?: boolean
-  /**
-   * API returned "prompt is too long" — the classifier transcript exceeded
-   * the context window. Deterministic (same transcript → same error), so
-   * callers should fall back to normal prompting rather than retry/fail-closed.
-   */
-  transcriptTooLong?: boolean
-  /** The model used for this classifier call */
-  model: string
-  /** Token usage from the classifier API call (for overhead telemetry) */
-  usage?: ClassifierUsage
-  /** Duration of the classifier API call in ms */
-  durationMs?: number
-  /** Character lengths of the prompt components sent to the classifier */
-  promptLengths?: {
-    systemPrompt: number
-    toolCalls: number
-    userPrompts: number
-  }
-  /** Path where error prompts were dumped (only set when unavailable due to API error) */
-  errorDumpPath?: string
-  /** Which classifier stage produced the final decision (2-stage XML only) */
-  stage?: 'fast' | 'thinking'
-  /** Token usage from stage 1 (fast) when stage 2 was also run */
-  stage1Usage?: ClassifierUsage
-  /** Duration of stage 1 in ms when stage 2 was also run */
-  stage1DurationMs?: number
-  /**
-   * API request_id (req_xxx) for stage 1. Enables joining to server-side
-   * api_usage logs for cache-miss / routing attribution. Also used for the
-   * legacy 1-stage (tool_use) classifier — the single request goes here.
-   */
-  stage1RequestId?: string
-  /**
-   * API message id (msg_xxx) for stage 1. Enables joining the
-   * tengu_auto_mode_decision analytics event to the classifier's actual
-   * prompt/completion in post-analysis.
-   */
-  stage1MsgId?: string
-  /** Token usage from stage 2 (thinking) when stage 2 was run */
-  stage2Usage?: ClassifierUsage
-  /** Duration of stage 2 in ms when stage 2 was run */
-  stage2DurationMs?: number
-  /** API request_id for stage 2 (set whenever stage 2 ran) */
-  stage2RequestId?: string
-  /** API message id (msg_xxx) for stage 2 (set whenever stage 2 ran) */
-  stage2MsgId?: string
-}
 
 // ============================================================================
 // Permission Explainer Types
@@ -434,7 +329,6 @@ export type ToolPermissionContext = {
   readonly alwaysDenyRules: ToolPermissionRulesBySource
   readonly alwaysAskRules: ToolPermissionRulesBySource
   readonly isBypassPermissionsModeAvailable: boolean
-  readonly strippedDangerousRules?: ToolPermissionRulesBySource
   readonly shouldAvoidPermissionPrompts?: boolean
   readonly awaitAutomatedChecksBeforeDialog?: boolean
   readonly prePlanMode?: PermissionMode

@@ -49,8 +49,6 @@ export function useShellPermissionFeedback({
 
   // Handle Tab key toggling input mode for Yes/No options
   function handleInputModeToggle(option: string) {
-    // Notify that user is interacting with the dialog
-    toolUseConfirm.onUserInteraction()
     const analyticsProps = {
       toolName: sanitizeToolNameForAnalytics(
         toolUseConfirm.tool.name,
@@ -116,11 +114,6 @@ export function useShellPermissionFeedback({
   }
 
   function handleFocus(value: string) {
-    // Notify that user is interacting with the dialog (only if focus changed)
-    // This prevents triggering on the initial mount/render
-    if (value !== focusedOption) {
-      toolUseConfirm.onUserInteraction()
-    }
     // Reset input mode when navigating away, but only if no text typed
     if (value !== 'yes' && yesInputMode && !acceptFeedback.trim()) {
       setYesInputMode(false)

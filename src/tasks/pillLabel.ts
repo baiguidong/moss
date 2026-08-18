@@ -1,5 +1,4 @@
 import { DIAMOND_FILLED, DIAMOND_OPEN } from '../constants/figures.js'
-import { count } from '../utils/array.js'
 import type { BackgroundTaskState } from './types.js'
 
 /**
@@ -13,19 +12,8 @@ export function getPillLabel(tasks: BackgroundTaskState[]): string {
 
   if (allSameType) {
     switch (tasks[0]!.type) {
-      case 'local_bash': {
-        const monitors = count(
-          tasks,
-          t => t.type === 'local_bash' && t.kind === 'monitor',
-        )
-        const shells = n - monitors
-        const parts: string[] = []
-        if (shells > 0)
-          parts.push(shells === 1 ? '1 shell' : `${shells} shells`)
-        if (monitors > 0)
-          parts.push(monitors === 1 ? '1 monitor' : `${monitors} monitors`)
-        return parts.join(', ')
-      }
+      case 'local_bash':
+        return n === 1 ? '1 shell' : `${n} shells`
       case 'in_process_teammate': {
         const teamCount = new Set(
           tasks.map(t =>
@@ -56,8 +44,6 @@ export function getPillLabel(tasks: BackgroundTaskState[]): string {
       }
       case 'local_workflow':
         return n === 1 ? '1 background workflow' : `${n} background workflows`
-      case 'monitor_mcp':
-        return n === 1 ? '1 monitor' : `${n} monitors`
       case 'dream':
         return 'dreaming'
     }

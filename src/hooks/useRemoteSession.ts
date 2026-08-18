@@ -286,9 +286,6 @@ export function useRemoteSession({
           toolUseID: request.tool_use_id,
           permissionResult,
           permissionPromptStartTimeMs: Date.now(),
-          onUserInteraction() {
-            // No-op for remote — classifier runs on the container
-          },
           onAbort() {
             const response: RemotePermissionResponse = {
               behavior: 'deny',

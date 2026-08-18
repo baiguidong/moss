@@ -12,7 +12,7 @@ import { c as _c } from "react/compiler-runtime";
  * - `useSetPromptOverlay` — slash-command suggestion data (structured,
  *   written by PromptInputFooter)
  * - `useSetPromptOverlayDialog` — arbitrary dialog node (e.g.
- *   AutoModeOptInDialog, written by PromptInput)
+ *   modal dialogs written by PromptInput)
  *
  * FullscreenLayout reads both and renders them outside the clipped slot.
  *

@@ -143,47 +143,6 @@ export function SystemTextMessage(t0) {
     }
     return t3;
   }
-  if (message.subtype === "permission_retry") {
-    const t1 = addMargin ? 1 : 0;
-    let t2;
-    let t3;
-    if ($[27] === Symbol.for("react.memo_cache_sentinel")) {
-      t2 = <Text dimColor={true}>{TEARDROP_ASTERISK} </Text>;
-      t3 = <Text>Allowed </Text>;
-      $[27] = t2;
-      $[28] = t3;
-    } else {
-      t2 = $[27];
-      t3 = $[28];
-    }
-    let t4;
-    if ($[29] !== message.commands) {
-      t4 = message.commands.join(", ");
-      $[29] = message.commands;
-      $[30] = t4;
-    } else {
-      t4 = $[30];
-    }
-    let t5;
-    if ($[31] !== t4) {
-      t5 = <Text bold={true}>{t4}</Text>;
-      $[31] = t4;
-      $[32] = t5;
-    } else {
-      t5 = $[32];
-    }
-    let t6;
-    if ($[33] !== bg || $[34] !== t1 || $[35] !== t5) {
-      t6 = <Box marginTop={t1} backgroundColor={bg} width="100%">{t2}{t3}{t5}</Box>;
-      $[33] = bg;
-      $[34] = t1;
-      $[35] = t5;
-      $[36] = t6;
-    } else {
-      t6 = $[36];
-    }
-    return t6;
-  }
   const isStopHookSummary = message.subtype === "stop_hook_summary";
   if (!isStopHookSummary && !verbose && message.level === "info") {
     return null;

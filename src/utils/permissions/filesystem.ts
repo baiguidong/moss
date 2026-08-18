@@ -325,7 +325,7 @@ export function getClaudeTempDirName(): string {
  * in permission checks. On macOS, /tmp is a symlink to /private/tmp, so without
  * resolution, paths like /tmp/claude-{uid}/... wouldn't match /private/tmp/claude-{uid}/...
  */
-// Memoized: called per-tool from permission checks (yoloClassifier, sandbox-adapter)
+// Memoized: called per-tool from permission checks and the sandbox adapter.
 // and per-turn from BashTool prompt. Inputs (CLAUDE_CODE_TMPDIR env + platform) are
 // fixed at startup, and the realpath of the system tmp dir does not change mid-session.
 export const getClaudeTempDir = memoize(function getClaudeTempDir(): string {
@@ -622,7 +622,7 @@ export function checkPathSafetyForAutoEdit(
   precomputedPathsToCheck?: readonly string[],
 ):
   | { safe: true }
-  | { safe: false; message: string; classifierApprovable: boolean } {
+  | { safe: false; message: string } {
   // Get all paths to check (original + symlink resolved paths)
   const pathsToCheck =
     precomputedPathsToCheck ?? getPathsForPermissionCheck(path)
@@ -633,7 +633,6 @@ export function checkPathSafetyForAutoEdit(
       return {
         safe: false,
         message: `Claude requested permissions to write to ${path}, which contains a suspicious Windows path pattern that requires manual approval.`,
-        classifierApprovable: false,
       }
     }
   }
@@ -644,7 +643,6 @@ export function checkPathSafetyForAutoEdit(
       return {
         safe: false,
         message: `Claude requested permissions to write to ${path}, but you haven't granted it yet.`,
-        classifierApprovable: true,
       }
     }
   }
@@ -655,7 +653,6 @@ export function checkPathSafetyForAutoEdit(
       return {
         safe: false,
         message: `Claude requested permissions to edit ${path} which is a sensitive file.`,
-        classifierApprovable: true,
       }
     }
   }
@@ -1332,7 +1329,6 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
       decisionReason: {
         type: 'safetyCheck',
         reason: safetyCheck.message,
-        classifierApprovable: safetyCheck.classifierApprovable,
       },
     }
   }
@@ -1436,11 +1432,8 @@ export function generateSuggestions(
     return suggestions
   }
 
-  // Only suggest setMode:acceptEdits when it would be an upgrade. In auto
-  // mode the classifier already auto-approves edits; in bypassPermissions
-  // everything is allowed; in acceptEdits it's a no-op. Suggesting it
-  // anyway and having the SDK host apply it on "Always allow" silently
-  // downgrades auto → acceptEdits, which then prompts for MCP/Bash.
+  // Only suggest setMode:acceptEdits when it would be an upgrade. In
+  // bypassPermissions everything is allowed; in acceptEdits it is a no-op.
   const shouldSuggestAcceptEdits =
     toolPermissionContext.mode === 'default' ||
     toolPermissionContext.mode === 'plan'
@@ -1584,9 +1577,8 @@ export function checkEditableInternalPath(
   // The desktop's preview_start MCP tool instructs Claude to create/update
   // this file as part of the preview workflow. Without this carve-out the
   // .claude/ DANGEROUS_DIRECTORIES check prompts for it, which in SDK mode
-  // cascades: user clicks "Always allow" → setMode:acceptEdits suggestion
-  // applied → silent downgrade from auto mode. Matches the project-level
-  // .claude/ only (not ~/.claude/) since launch.json is per-project.
+  // cascades through the permission flow. Matches the project-level .claude/
+  // only (not ~/.claude/) since launch.json is per-project.
   if (
     normalizeCaseForComparison(normalizedPath) ===
     normalizeCaseForComparison(join(getOriginalCwd(), '.claude', 'launch.json'))

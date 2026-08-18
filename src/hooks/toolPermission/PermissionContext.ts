@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -11,16 +10,12 @@ import type {
   Tool as ToolType,
   ToolUseContext,
 } from '../../Tool.js'
-import { awaitClassifierAutoApproval } from '../../tools/BashTool/bashPermissions.js'
-import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import type { AssistantMessage } from '../../types/message.js'
 import type {
-  PendingClassifierCheck,
   PermissionAllowDecision,
   PermissionDecisionReason,
   PermissionDenyDecision,
 } from '../../types/permissions.js'
-import { setClassifierApproval } from '../../utils/classifierApprovals.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { executePermissionRequestHooks } from '../../utils/hooks.js'
 import {
@@ -45,7 +40,6 @@ import {
 type PermissionApprovalSource =
   | { type: 'hook'; permanent?: boolean }
   | { type: 'user'; permanent: boolean }
-  | { type: 'classifier' }
 
 type PermissionRejectionSource =
   | { type: 'hook' }
@@ -171,48 +165,6 @@ function createPermissionContext(
       }
       return { behavior: 'ask', message, contentBlocks }
     },
-    ...(feature('BASH_CLASSIFIER')
-      ? {
-          async tryClassifier(
-            pendingClassifierCheck: PendingClassifierCheck | undefined,
-            updatedInput: Record<string, unknown> | undefined,
-          ): Promise<PermissionDecision | null> {
-            if (tool.name !== BASH_TOOL_NAME || !pendingClassifierCheck) {
-              return null
-            }
-            const classifierDecision = await awaitClassifierAutoApproval(
-              pendingClassifierCheck,
-              toolUseContext.abortController.signal,
-              toolUseContext.options.isNonInteractiveSession,
-            )
-            if (!classifierDecision) {
-              return null
-            }
-            if (
-              feature('TRANSCRIPT_CLASSIFIER') &&
-              classifierDecision.type === 'classifier'
-            ) {
-              const matchedRule = classifierDecision.reason.match(
-                /^Allowed by prompt rule: "(.+)"$/,
-              )?.[1]
-              if (matchedRule) {
-                setClassifierApproval(toolUseID, matchedRule)
-              }
-            }
-            logPermissionDecision(
-              { tool, input, toolUseContext, messageId, toolUseID },
-              { decision: 'accept', source: { type: 'classifier' } },
-              undefined,
-            )
-            return {
-              behavior: 'allow' as const,
-              updatedInput: updatedInput ?? input,
-              userModified: false,
-              decisionReason: classifierDecision,
-            }
-          },
-        }
-      : {}),
     async runHooks(
       permissionMode: string | undefined,
       suggestions: PermissionUpdate[] | undefined,

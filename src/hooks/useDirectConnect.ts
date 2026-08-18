@@ -123,9 +123,6 @@ export function useDirectConnect({
           toolUseID: request.tool_use_id,
           permissionResult,
           permissionPromptStartTimeMs: Date.now(),
-          onUserInteraction() {
-            // No-op for remote
-          },
           onAbort() {
             const response: RemotePermissionResponse = {
               behavior: 'deny',

@@ -8,17 +8,6 @@ import {
 import { logEvent } from '../analytics/index.js'
 import type { ConnectedMCPServer, MCPServerConnection } from './types.js'
 
-// Mirror of AutoModeEnabledState in permissionSetup.ts — inlined because that
-// file pulls in too many deps for this thin IPC module.
-type AutoModeEnabledState = 'enabled' | 'disabled' | 'opt-in'
-function readAutoModeEnabledState(): AutoModeEnabledState | undefined {
-  const v = getFeatureValue_CACHED_MAY_BE_STALE<{ enabled?: string }>(
-    'tengu_auto_mode_config',
-    {},
-  )?.enabled
-  return v === 'enabled' || v === 'disabled' || v === 'opt-in' ? v : undefined
-}
-
 export const LogEventNotificationSchema = lazySchema(() =>
   z.object({
     method: z.literal('log_event'),
@@ -97,12 +86,6 @@ export function setupVscodeSdkMcp(sdkClients: MCPServerConnection[]): void {
         'tengu_vscode_cc_auth',
         false,
       ),
-    }
-    // Tri-state: 'enabled' | 'disabled' | 'opt-in'. Omit if unknown so VSCode
-    // fails closed (treats absent as 'disabled').
-    const autoModeState = readAutoModeEnabledState()
-    if (autoModeState !== undefined) {
-      gates.tengu_auto_mode_state = autoModeState
     }
     void client.client.notification({
       method: 'experiment_gates',

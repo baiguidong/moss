@@ -44,9 +44,6 @@ type PreviousState = {
   globalCacheStrategy: string
   /** Sorted beta header list. Diffed to show which headers were added/removed. */
   betas: string[]
-  /** AFK_MODE_BETA_HEADER presence — should NOT break cache anymore
-   *  (sticky-on latched in claude.ts). Tracked to verify the fix. */
-  autoModeActive: boolean
   /** Overage state flip — should NOT break cache anymore (eligibility is
    *  latched session-stable in should1hCacheTTL). Tracked to verify the fix. */
   isUsingOverage: boolean
@@ -76,7 +73,6 @@ type PendingChanges = {
   cacheControlChanged: boolean
   globalCacheStrategyChanged: boolean
   betasChanged: boolean
-  autoModeChanged: boolean
   overageChanged: boolean
   cachedMCChanged: boolean
   effortChanged: boolean
@@ -233,7 +229,6 @@ export type PromptStateSnapshot = {
   fastMode?: boolean
   globalCacheStrategy?: string
   betas?: readonly string[]
-  autoModeActive?: boolean
   isUsingOverage?: boolean
   cachedMCEnabled?: boolean
   effortValue?: string | number
@@ -255,7 +250,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
       fastMode,
       globalCacheStrategy = '',
       betas = [],
-      autoModeActive = false,
       isUsingOverage = false,
       cachedMCEnabled = false,
       effortValue,
@@ -312,7 +306,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
         fastMode: isFastMode,
         globalCacheStrategy,
         betas: sortedBetas,
-        autoModeActive,
         isUsingOverage,
         cachedMCEnabled,
         effortValue: effortStr,
@@ -339,7 +332,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
     const betasChanged =
       sortedBetas.length !== prev.betas.length ||
       sortedBetas.some((b, i) => b !== prev.betas[i])
-    const autoModeChanged = autoModeActive !== prev.autoModeActive
     const overageChanged = isUsingOverage !== prev.isUsingOverage
     const cachedMCChanged = cachedMCEnabled !== prev.cachedMCEnabled
     const effortChanged = effortStr !== prev.effortValue
@@ -353,7 +345,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
       cacheControlChanged ||
       globalCacheStrategyChanged ||
       betasChanged ||
-      autoModeChanged ||
       overageChanged ||
       cachedMCChanged ||
       effortChanged ||
@@ -384,7 +375,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
         cacheControlChanged,
         globalCacheStrategyChanged,
         betasChanged,
-        autoModeChanged,
         overageChanged,
         cachedMCChanged,
         effortChanged,
@@ -418,7 +408,6 @@ export function recordPromptState(snapshot: PromptStateSnapshot): void {
     prev.fastMode = isFastMode
     prev.globalCacheStrategy = globalCacheStrategy
     prev.betas = sortedBetas
-    prev.autoModeActive = autoModeActive
     prev.isUsingOverage = isUsingOverage
     prev.cachedMCEnabled = cachedMCEnabled
     prev.effortValue = effortStr
@@ -543,9 +532,6 @@ export async function checkResponseForCacheBreak(
         const diff = [added, removed].filter(Boolean).join(' ')
         parts.push(`betas changed${diff ? ` (${diff})` : ''}`)
       }
-      if (changes.autoModeChanged) {
-        parts.push('auto mode toggled')
-      }
       if (changes.overageChanged) {
         parts.push('overage state changed (TTL latched, no flip)')
       }
@@ -595,7 +581,6 @@ export async function checkResponseForCacheBreak(
       cacheControlChanged: changes?.cacheControlChanged ?? false,
       globalCacheStrategyChanged: changes?.globalCacheStrategyChanged ?? false,
       betasChanged: changes?.betasChanged ?? false,
-      autoModeChanged: changes?.autoModeChanged ?? false,
       overageChanged: changes?.overageChanged ?? false,
       cachedMCChanged: changes?.cachedMCChanged ?? false,
       effortChanged: changes?.effortChanged ?? false,

@@ -6,7 +6,6 @@ import {
   findOverlyBroadBashPermissions,
   isBypassPermissionsModeDisabled,
   removeDangerousPermissions,
-  transitionPlanAutoMode,
 } from '../permissions/permissionSetup.js'
 import { syncPermissionRulesFromDisk } from '../permissions/permissions.js'
 import { loadAllPermissionRulesFromDisk } from '../permissions/permissionsLoader.js'
@@ -64,8 +63,6 @@ export function applySettingsChange(
     ) {
       newContext = createDisabledBypassPermissionsContext(newContext)
     }
-
-    newContext = transitionPlanAutoMode(newContext)
 
     // Sync effortLevel from settings to top-level AppState when it changes
     // (e.g. via applyFlagSettings from IDE). Only propagate if the setting

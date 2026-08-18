@@ -117,9 +117,6 @@ export const FileWriteTool = buildTool({
   get outputSchema(): OutputSchema {
     return outputSchema()
   },
-  toAutoClassifierInput(input) {
-    return `${input.file_path}: ${input.content}`
-  },
   getPath(input): string {
     return input.file_path
   },

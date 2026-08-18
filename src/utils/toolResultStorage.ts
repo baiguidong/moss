@@ -994,9 +994,7 @@ export function reconstructContentReplacementState(
  * off); otherwise reconstructs from sidechain records with parent's live
  * replacements filling gaps for fork-inherited mustReapply entries.
  *
- * Kept out of AgentTool.tsx — that file is at the feature() DCE complexity
- * cliff and cannot tolerate even +1 net source line without silently
- * breaking feature('TRANSCRIPT_CLASSIFIER') eval in tests.
+ * Kept out of AgentTool.tsx to avoid expanding an already large tool module.
  */
 export function reconstructForSubagentResume(
   parentState: ContentReplacementState | undefined,

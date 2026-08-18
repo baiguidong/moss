@@ -70,7 +70,7 @@ function parseAutoPercentage(value: string): number | null {
 }
 
 /**
- * Check if ENABLE_TOOL_SEARCH is set to auto mode (auto or auto:N).
+ * Check if ENABLE_TOOL_SEARCH uses automatic threshold syntax (`auto` or `auto:N`).
  */
 function isAutoToolSearchMode(value: string | undefined): boolean {
   if (!value) return false

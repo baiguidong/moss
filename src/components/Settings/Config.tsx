@@ -1,6 +1,5 @@
 import { c as _c } from "react/compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
-import { feature } from 'bun:bundle';
 import { Box, Text, useTheme, useThemeSetting, useTerminalFocus } from '../../ink.js';
 import type { KeyboardEvent } from '../../ink/events/keyboard-event.js';
 import * as React from 'react';
@@ -11,8 +10,7 @@ import { type GlobalConfig, saveGlobalConfig, getCurrentProjectConfig, type Outp
 import { normalizeApiKeyForConfig } from '../../utils/authPortable.js';
 import { getGlobalConfig, getAutoUpdaterDisabledReason, formatAutoUpdaterDisabledReason } from '../../utils/config.js';
 import chalk from 'chalk';
-import { permissionModeTitle, permissionModeFromString, toExternalPermissionMode, isExternalPermissionMode, EXTERNAL_PERMISSION_MODES, PERMISSION_MODES, type ExternalPermissionMode, type PermissionMode } from '../../utils/permissions/PermissionMode.js';
-import { getAutoModeEnabledState, hasAutoModeOptInAnySource, transitionPlanAutoMode } from '../../utils/permissions/permissionSetup.js';
+import { permissionModeTitle, permissionModeFromString, toExternalPermissionMode, EXTERNAL_PERMISSION_MODES, type ExternalPermissionMode, type PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { logError } from '../../utils/log.js';
 import { logEvent, type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 'src/services/analytics/index.js';
 import { ThemePicker } from '../ThemePicker.js';
@@ -120,10 +118,6 @@ export function Config({
   const thinkingEnabled = useAppState(s_1 => s_1.thinkingEnabled);
   const isFastMode = useAppState(s_2 => isFastModeEnabled() ? s_2.fastMode : false);
   const promptSuggestionEnabled = useAppState(s_3 => s_3.promptSuggestionEnabled);
-  // Show auto in the default-mode dropdown when the user has opted in OR the
-  // config is fully 'enabled' — even if currently circuit-broken ('disabled'),
-  // an opted-in user should still see it in settings (it's a temporary state).
-  const showAutoInDefaultModePicker = feature('TRANSCRIPT_CLASSIFIER') ? hasAutoModeOptInAnySource() || getAutoModeEnabledState() === 'enabled' : false;
   const setAppState = useSetAppState();
   const [changes, setChanges] = useState<{
     [key: string]: unknown;
@@ -489,18 +483,14 @@ export function Config({
     value: settingsData?.permissions?.defaultMode || 'default',
     options: (() => {
       const priorityOrder: PermissionMode[] = ['default', 'plan'];
-      const allModes: readonly PermissionMode[] = feature('TRANSCRIPT_CLASSIFIER') ? PERMISSION_MODES : EXTERNAL_PERMISSION_MODES;
+      const allModes: readonly PermissionMode[] = EXTERNAL_PERMISSION_MODES;
       const excluded: PermissionMode[] = ['bypassPermissions'];
-      if (feature('TRANSCRIPT_CLASSIFIER') && !showAutoInDefaultModePicker) {
-        excluded.push('auto');
-      }
       return [...priorityOrder, ...allModes.filter(m => !priorityOrder.includes(m) && !excluded.includes(m))];
     })(),
     type: 'enum' as const,
     onChange(mode: string) {
       const parsedMode = permissionModeFromString(mode);
-      // Internal modes (e.g. auto) are stored directly
-      const validatedMode = isExternalPermissionMode(parsedMode) ? toExternalPermissionMode(parsedMode) : parsedMode;
+      const validatedMode = toExternalPermissionMode(parsedMode);
       const result = updateSettingsForSource('userSettings', {
         permissions: {
           ...settingsData?.permissions,
@@ -513,14 +503,11 @@ export function Config({
       }
 
       // Update local state to reflect the change immediately.
-      // validatedMode is typed as the wide PermissionMode union but at
-      // runtime is always a PERMISSION_MODES member (the options dropdown
-      // is built from that array above), so this narrowing is sound.
       setSettingsData(prev_12 => ({
         ...prev_12,
         permissions: {
           ...prev_12?.permissions,
-          defaultMode: validatedMode as (typeof PERMISSION_MODES)[number]
+          defaultMode: validatedMode
         }
       }));
       // Track changes
@@ -533,38 +520,7 @@ export function Config({
         value: mode as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
     }
-  }, ...(feature('TRANSCRIPT_CLASSIFIER') && showAutoInDefaultModePicker ? [{
-    id: 'useAutoModeDuringPlan',
-    label: 'Use auto mode during plan',
-    value: (settingsData as {
-      useAutoModeDuringPlan?: boolean;
-    } | undefined)?.useAutoModeDuringPlan ?? true,
-    type: 'boolean' as const,
-    onChange(useAutoModeDuringPlan: boolean) {
-      updateSettingsForSource('userSettings', {
-        useAutoModeDuringPlan
-      });
-      setSettingsData(prev_14 => ({
-        ...prev_14,
-        useAutoModeDuringPlan
-      }));
-      // Internal writes suppress the file watcher, so
-      // applySettingsChange won't fire. Reconcile directly so
-      // mid-plan toggles take effect immediately.
-      setAppState(prev_15 => {
-        const next = transitionPlanAutoMode(prev_15.toolPermissionContext);
-        if (next === prev_15.toolPermissionContext) return prev_15;
-        return {
-          ...prev_15,
-          toolPermissionContext: next
-        };
-      });
-      setChanges(prev_16 => ({
-        ...prev_16,
-        'Use auto mode during plan': useAutoModeDuringPlan
-      }));
-    }
-  }] : []), {
+  }, {
     id: 'respectGitignore',
     label: 'Respect .gitignore in file picker',
     value: globalConfig.respectGitignore,
@@ -1060,11 +1016,6 @@ export function Config({
       autoUpdatesChannel: iu?.autoUpdatesChannel,
       minimumVersion: iu?.minimumVersion,
       language: iu?.language,
-      ...(feature('TRANSCRIPT_CLASSIFIER') ? {
-        useAutoModeDuringPlan: (iu as {
-          useAutoModeDuringPlan?: boolean;
-        } | undefined)?.useAutoModeDuringPlan
-      } : {}),
       // ThemePicker's Ctrl+T writes this key directly — include it so the
       // disk state reverts along with the in-memory AppState.settings restore.
       syntaxHighlightingDisabled: iu?.syntaxHighlightingDisabled,
@@ -1089,10 +1040,7 @@ export function Config({
       thinkingEnabled: ia.thinkingEnabled,
       fastMode: ia.fastMode,
       promptSuggestionEnabled: ia.promptSuggestionEnabled,
-      settings: ia.settings,
-      // Reconcile auto-mode state after useAutoModeDuringPlan revert above —
-      // the onChange handler may have activated/deactivated auto mid-plan.
-      toolPermissionContext: transitionPlanAutoMode(prev_23.toolPermissionContext)
+      settings: ia.settings
     }));
   }, [themeSetting, setTheme, initialLocalSettings, initialUserSettings, initialAppState, setAppState]);
 

@@ -136,7 +136,7 @@ export function isRunningOnHomespace(): boolean {
  * are homespace, namespaces on the open allowlist, and no k8s/COO signals
  * at all (laptop/local dev).
  *
- * Used for telemetry to measure auto-mode usage in sensitive environments.
+ * Used for telemetry about activity in sensitive environments.
  */
 export function isInProtectedNamespace(): boolean {
   // USER_TYPE is build-time --define'd; in external builds this block is

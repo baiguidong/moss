@@ -1062,10 +1062,6 @@ export const ModelInfoSchema = lazySchema(() =>
         .boolean()
         .optional()
         .describe('Whether this model supports fast mode'),
-      supportsAutoMode: z
-        .boolean()
-        .optional()
-        .describe('Whether this model supports auto mode'),
     })
     .describe('Information about an available model.'),
 )

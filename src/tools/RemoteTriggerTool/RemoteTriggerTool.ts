@@ -66,9 +66,6 @@ export const RemoteTriggerTool = buildTool({
   isReadOnly(input: Input) {
     return input.action === 'list' || input.action === 'get'
   },
-  toAutoClassifierInput(input: Input) {
-    return `RemoteTrigger ${input.action}${input.trigger_id ? ` ${input.trigger_id}` : ''}`
-  },
   async description() {
     return DESCRIPTION
   },

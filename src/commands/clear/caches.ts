@@ -65,8 +65,8 @@ export function clearSessionCaches(
   setLastEmittedDate(null)
 
   // Run post-compaction cleanup (clears system prompt sections, microcompact tracking,
-  // classifier approvals, speculative checks, and — for main-thread compacts — memory
-  // files cache with load_reason 'compact').
+  // transient tool state and — for main-thread compacts — memory files cache
+  // with load_reason 'compact').
   runPostCompactCleanup()
   // Reset sent skill names so the skill listing is re-sent after /clear.
   // runPostCompactCleanup intentionally does NOT reset this (post-compact
@@ -87,15 +87,6 @@ export function clearSessionCaches(
   // Clear swarm permission pending callbacks
   if (!hasPreserved) clearAllPendingCallbacks()
 
-  // Clear tungsten session usage tracking
-  if (process.env.USER_TYPE === 'ant') {
-    void import('../../tools/TungstenTool/TungstenTool.js').then(
-      ({ clearSessionsWithTungstenUsage, resetInitializationState }) => {
-        clearSessionsWithTungstenUsage()
-        resetInitializationState()
-      },
-    )
-  }
   // Clear attribution caches (file content cache, pending bash states)
   // Dynamic import to preserve dead code elimination for COMMIT_ATTRIBUTION feature flag
   if (feature('COMMIT_ATTRIBUTION')) {

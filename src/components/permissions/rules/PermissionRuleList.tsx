@@ -2,7 +2,7 @@ import { c as _c } from "react/compiler-runtime";
 import chalk from 'chalk';
 import figures from 'figures';
 import * as React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState, useSetAppState } from 'src/state/AppState.js';
 import { applyPermissionUpdate, persistPermissionUpdate } from 'src/utils/permissions/PermissionUpdate.js';
 import type { PermissionUpdateDestination } from 'src/utils/permissions/PermissionUpdateSchema.js';
@@ -13,7 +13,6 @@ import { useSearchInput } from '../../../hooks/useSearchInput.js';
 import type { KeyboardEvent } from '../../../ink/events/keyboard-event.js';
 import { Box, Text, useTerminalFocus } from '../../../ink.js';
 import { useKeybinding } from '../../../keybindings/useKeybinding.js';
-import { type AutoModeDenial, getAutoModeDenials } from '../../../utils/autoModeDenials.js';
 import type { PermissionBehavior, PermissionRule, PermissionRuleValue } from '../../../utils/permissions/PermissionRule.js';
 import { permissionRuleValueToString } from '../../../utils/permissions/permissionRuleParser.js';
 import { deletePermissionRule, getAllowRules, getAskRules, getDenyRules, permissionRuleSourceDisplayString } from '../../../utils/permissions/permissions.js';
@@ -27,10 +26,9 @@ import { AddPermissionRules } from './AddPermissionRules.js';
 import { AddWorkspaceDirectory } from './AddWorkspaceDirectory.js';
 import { PermissionRuleDescription } from './PermissionRuleDescription.js';
 import { PermissionRuleInput } from './PermissionRuleInput.js';
-import { RecentDenialsTab } from './RecentDenialsTab.js';
 import { RemoveWorkspaceDirectory } from './RemoveWorkspaceDirectory.js';
 import { WorkspaceTab } from './WorkspaceTab.js';
-type TabType = 'recent' | 'allow' | 'ask' | 'deny' | 'workspace';
+type TabType = 'allow' | 'ask' | 'deny' | 'workspace';
 type RuleSourceTextProps = {
   rule: PermissionRule;
 };
@@ -468,24 +466,14 @@ type Props = {
     metaMessages?: string[];
   }) => void;
   initialTab?: TabType;
-  onRetryDenials?: (commands: string[]) => void;
 };
 export function PermissionRuleList(t0) {
   const $ = _c(113);
   const {
     onExit,
-    initialTab,
-    onRetryDenials
+    initialTab
   } = t0;
-  let t1;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t1 = getAutoModeDenials();
-    $[0] = t1;
-  } else {
-    t1 = $[0];
-  }
-  const hasDenials = t1.length > 0;
-  const defaultTab = initialTab ?? (hasDenials ? "recent" : "allow");
+  const defaultTab = initialTab ?? "allow";
   let t2;
   if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
     t2 = [];
@@ -497,28 +485,6 @@ export function PermissionRuleList(t0) {
   const toolPermissionContext = useAppState(_temp);
   const setAppState = useSetAppState();
   const isTerminalFocused = useTerminalFocus();
-  let t3;
-  if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
-    t3 = {
-      approved: new Set(),
-      retry: new Set(),
-      denials: []
-    };
-    $[2] = t3;
-  } else {
-    t3 = $[2];
-  }
-  const denialStateRef = useRef(t3);
-  let t4;
-  if ($[3] === Symbol.for("react.memo_cache_sentinel")) {
-    t4 = s_0 => {
-      denialStateRef.current = s_0;
-    };
-    $[3] = t4;
-  } else {
-    t4 = $[3];
-  }
-  const handleDenialStateChange = t4;
   const [selectedRule, setSelectedRule] = useState();
   const [lastFocusedRuleKey, setLastFocusedRuleKey] = useState();
   const [addingRuleToTab, setAddingRuleToTab] = useState(null);
@@ -592,14 +558,13 @@ export function PermissionRuleList(t0) {
               return askRulesByKey;
             }
           case "workspace":
-          case "recent":
             {
               return new Map();
             }
         }
       })();
       const options = [];
-      if (tab !== "workspace" && tab !== "recent" && !query) {
+      if (tab !== "workspace" && !query) {
         options.push({
           label: `Add a new rule${figures.ellipsis}`,
           value: "add-new-rule"
@@ -792,24 +757,10 @@ export function PermissionRuleList(t0) {
   }
   const handleRequestRemoveDirectory = t17;
   let t18;
-  if ($[30] !== changes || $[31] !== onExit || $[32] !== onRetryDenials) {
+  if ($[30] !== changes || $[31] !== onExit) {
     t18 = () => {
-      const s_1 = denialStateRef.current;
-      const denialsFor = set => Array.from(set).map(idx => s_1.denials[idx]).filter(_temp2);
-      const retryDenials = denialsFor(s_1.retry);
-      if (retryDenials.length > 0) {
-        const commands = retryDenials.map(_temp3);
-        onRetryDenials?.(commands);
-        onExit(undefined, {
-          shouldQuery: true,
-          metaMessages: [`Permission granted for: ${commands.join(", ")}. You may now retry ${commands.length === 1 ? "this command" : "these commands"} if you would like.`]
-        });
-        return;
-      }
-      const approvedDenials = denialsFor(s_1.approved);
-      if (approvedDenials.length > 0 || changes.length > 0) {
-        const approvedMsg = approvedDenials.length > 0 ? [`Approved ${approvedDenials.map(_temp4).join(", ")}`] : [];
-        onExit([...approvedMsg, ...changes].join("\n"));
+      if (changes.length > 0) {
+        onExit(changes.join("\n"));
       } else {
         onExit("Permissions dialog dismissed", {
           display: "system"
@@ -818,7 +769,6 @@ export function PermissionRuleList(t0) {
     };
     $[30] = changes;
     $[31] = onExit;
-    $[32] = onRetryDenials;
     $[33] = t18;
   } else {
     t18 = $[33];
@@ -901,7 +851,7 @@ export function PermissionRuleList(t0) {
     }
     return t23;
   }
-  if (addingRuleToTab && addingRuleToTab !== "workspace" && addingRuleToTab !== "recent") {
+  if (addingRuleToTab && addingRuleToTab !== "workspace") {
     let t22;
     if ($[45] !== addingRuleToTab) {
       t22 = <PermissionRuleInput onCancel={handleRuleInputCancel} onSubmit={handleRuleInputSubmit} ruleBehavior={addingRuleToTab} />;
@@ -1065,13 +1015,6 @@ export function PermissionRuleList(t0) {
   const sharedRulesProps = t22;
   const isHidden = !!selectedRule || !!addingRuleToTab || !!validatedRule || isAddingWorkspaceDirectory || !!removingDirectory;
   const t23 = !isSearchMode;
-  let t24;
-  if ($[82] === Symbol.for("react.memo_cache_sentinel")) {
-    t24 = <Tab id="recent" title="Recently denied"><RecentDenialsTab onHeaderFocusChange={handleHeaderFocusChange} onStateChange={handleDenialStateChange} /></Tab>;
-    $[82] = t24;
-  } else {
-    t24 = $[82];
-  }
   let t25;
   if ($[83] !== sharedRulesProps) {
     t25 = <Tab id="allow" title="Allow"><PermissionRulesTab tab="allow" {...sharedRulesProps} /></Tab>;
@@ -1114,7 +1057,7 @@ export function PermissionRuleList(t0) {
   }
   let t30;
   if ($[93] !== defaultTab || $[94] !== isHidden || $[95] !== t23 || $[96] !== t25 || $[97] !== t26 || $[98] !== t27 || $[99] !== t29) {
-    t30 = <Tabs title="Permissions:" color="permission" defaultTab={defaultTab} hidden={isHidden} initialHeaderFocused={!hasDenials} navFromContent={t23}>{t24}{t25}{t26}{t27}{t29}</Tabs>;
+    t30 = <Tabs title="Permissions:" color="permission" defaultTab={defaultTab} hidden={isHidden} initialHeaderFocused={true} navFromContent={t23}>{t25}{t26}{t27}{t29}</Tabs>;
     $[93] = defaultTab;
     $[94] = isHidden;
     $[95] = t23;
@@ -1128,7 +1071,7 @@ export function PermissionRuleList(t0) {
   }
   let t31;
   if ($[101] !== defaultTab || $[102] !== exitState.keyName || $[103] !== exitState.pending || $[104] !== headerFocused || $[105] !== isSearchMode) {
-    t31 = <Box marginTop={1} paddingLeft={1}><Text dimColor={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : headerFocused ? <>←/→ tab switch · ↓ return · Esc cancel</> : isSearchMode ? <>Type to filter · Enter/↓ select · ↑ tabs · Esc clear</> : hasDenials && defaultTab === "recent" ? <>Enter approve · r retry · ↑↓ navigate · ←/→ switch · Esc cancel</> : <>↑↓ navigate · Enter select · Type to search · ←/→ switch · Esc cancel</>}</Text></Box>;
+    t31 = <Box marginTop={1} paddingLeft={1}><Text dimColor={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : headerFocused ? <>←/→ tab switch · ↓ return · Esc cancel</> : isSearchMode ? <>Type to filter · Enter/↓ select · ↑ tabs · Esc clear</> : <>↑↓ navigate · Enter select · Type to search · ←/→ switch · Esc cancel</>}</Text></Box>;
     $[101] = defaultTab;
     $[102] = exitState.keyName;
     $[103] = exitState.pending;
@@ -1163,15 +1106,6 @@ function _temp6(opt_0) {
 }
 function _temp5(opt) {
   return opt.value !== "add-new-rule";
-}
-function _temp4(d_1) {
-  return chalk.bold(d_1.display);
-}
-function _temp3(d_0) {
-  return d_0.display;
-}
-function _temp2(d) {
-  return d !== undefined;
 }
 function _temp(s) {
   return s.toolPermissionContext;

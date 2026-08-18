@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle';
 import { stat } from 'fs/promises';
 import { OUTPUT_FILE_TAG, STATUS_TAG, SUMMARY_TAG, TASK_ID_TAG, TASK_NOTIFICATION_TAG, TOOL_USE_ID_TAG } from '../../constants/xml.js';
 import { abortSpeculation } from '../../services/PromptSuggestion/speculation.js';
@@ -16,7 +15,7 @@ import { registerTask, updateTaskState } from '../../utils/task/framework.js';
 import { escapeXml } from '../../utils/xml.js';
 import { backgroundAgentTask, isLocalAgentTask } from '../LocalAgentTask/LocalAgentTask.js';
 import { isMainSessionTask } from '../LocalMainSessionTask.js';
-import { type BashTaskKind, isLocalShellTask, type LocalShellTaskState } from './guards.js';
+import { isLocalShellTask, type LocalShellTaskState } from './guards.js';
 import { killTask } from './killShellTasks.js';
 
 /** Prefix that identifies a LocalShellTask summary to the UI collapse transform. */
@@ -43,8 +42,7 @@ export function looksLikePrompt(tail: string): boolean {
 
 // Output-side analog of peekForStdinData (utils/process.ts): fire a one-shot
 // notification if output stops growing and the tail looks like a prompt.
-function startStallWatchdog(taskId: string, description: string, kind: BashTaskKind | undefined, toolUseId?: string, agentId?: AgentId): () => void {
-  if (kind === 'monitor') return () => {};
+function startStallWatchdog(taskId: string, description: string, toolUseId?: string, agentId?: AgentId): () => void {
   const outputPath = getTaskOutputPath(taskId);
   let lastSize = 0;
   let lastGrowth = Date.now();
@@ -102,7 +100,7 @@ The command is likely blocked on an interactive prompt. Kill this task and re-ru
     clearInterval(timer);
   };
 }
-function enqueueShellNotification(taskId: string, description: string, status: 'completed' | 'failed' | 'killed', exitCode: number | undefined, setAppState: SetAppState, toolUseId?: string, kind: BashTaskKind = 'bash', agentId?: AgentId): void {
+function enqueueShellNotification(taskId: string, description: string, status: 'completed' | 'failed' | 'killed', exitCode: number | undefined, setAppState: SetAppState, toolUseId?: string, agentId?: AgentId): void {
   // Atomically check and set notified flag to prevent duplicate notifications.
   // If the task was already marked as notified (e.g., by TaskStopTool), skip
   // enqueueing to avoid sending redundant messages to the model.
@@ -126,34 +124,16 @@ function enqueueShellNotification(taskId: string, description: string, status: '
   // preserved; only the pre-computed response is discarded.
   abortSpeculation(setAppState);
   let summary: string;
-  if (feature('MONITOR_TOOL') && kind === 'monitor') {
-    // Monitor is streaming-only (post-#22764) — the script exiting means
-    // the stream ended, not "condition met". Distinct from the bash prefix
-    // so Monitor completions don't fold into the "N background commands
-    // completed" collapse.
-    switch (status) {
-      case 'completed':
-        summary = `Monitor "${description}" stream ended`;
-        break;
-      case 'failed':
-        summary = `Monitor "${description}" script failed${exitCode !== undefined ? ` (exit ${exitCode})` : ''}`;
-        break;
-      case 'killed':
-        summary = `Monitor "${description}" stopped`;
-        break;
-    }
-  } else {
-    switch (status) {
-      case 'completed':
-        summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" completed${exitCode !== undefined ? ` (exit code ${exitCode})` : ''}`;
-        break;
-      case 'failed':
-        summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" failed${exitCode !== undefined ? ` with exit code ${exitCode}` : ''}`;
-        break;
-      case 'killed':
-        summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" was stopped`;
-        break;
-    }
+  switch (status) {
+    case 'completed':
+      summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" completed${exitCode !== undefined ? ` (exit code ${exitCode})` : ''}`;
+      break;
+    case 'failed':
+      summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" failed${exitCode !== undefined ? ` with exit code ${exitCode}` : ''}`;
+      break;
+    case 'killed':
+      summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" was stopped`;
+      break;
   }
   const outputPath = getTaskOutputPath(taskId);
   const toolUseIdLine = toolUseId ? `\n<${TOOL_USE_ID_TAG}>${toolUseId}</${TOOL_USE_ID_TAG}>` : '';
@@ -166,7 +146,7 @@ function enqueueShellNotification(taskId: string, description: string, status: '
   enqueuePendingNotification({
     value: message,
     mode: 'task-notification',
-    priority: feature('MONITOR_TOOL') ? 'next' : 'later',
+    priority: 'later',
     agentId
   });
 }
@@ -185,8 +165,7 @@ export async function spawnShellTask(input: LocalShellSpawnInput & {
     description,
     shellCommand,
     toolUseId,
-    agentId,
-    kind
+    agentId
   } = input;
   const {
     setAppState
@@ -210,15 +189,14 @@ export async function spawnShellTask(input: LocalShellSpawnInput & {
     unregisterCleanup,
     lastReportedTotalLines: 0,
     isBackgrounded: true,
-    agentId,
-    kind
+    agentId
   };
   registerTask(taskState, setAppState);
 
   // Data flows through TaskOutput automatically — no stream listeners needed.
   // Just transition to backgrounded state so the process keeps running.
   shellCommand.background(taskId);
-  const cancelStallWatchdog = startStallWatchdog(taskId, description, kind, toolUseId, agentId);
+  const cancelStallWatchdog = startStallWatchdog(taskId, description, toolUseId, agentId);
   void shellCommand.result.then(async result => {
     cancelStallWatchdog();
     await flushAndCleanup(shellCommand);
@@ -240,7 +218,7 @@ export async function spawnShellTask(input: LocalShellSpawnInput & {
         endTime: Date.now()
       };
     });
-    enqueueShellNotification(taskId, description, wasKilled ? 'killed' : result.code === 0 ? 'completed' : 'failed', result.code, setAppState, toolUseId, kind, agentId);
+    enqueueShellNotification(taskId, description, wasKilled ? 'killed' : result.code === 0 ? 'completed' : 'failed', result.code, setAppState, toolUseId, agentId);
     void evictTaskOutput(taskId);
   });
   return {
@@ -301,7 +279,6 @@ function backgroundTask(taskId: string, getAppState: () => AppState, setAppState
   const description = task.description;
   const {
     toolUseId,
-    kind,
     agentId
   } = task;
 
@@ -325,7 +302,7 @@ function backgroundTask(taskId: string, getAppState: () => AppState, setAppState
       }
     };
   });
-  const cancelStallWatchdog = startStallWatchdog(taskId, description, kind, toolUseId, agentId);
+  const cancelStallWatchdog = startStallWatchdog(taskId, description, toolUseId, agentId);
 
   // Set up result handler
   void shellCommand.result.then(async result => {
@@ -357,10 +334,10 @@ function backgroundTask(taskId: string, getAppState: () => AppState, setAppState
     // Call cleanup outside of the state updater (avoid side effects in updater)
     cleanupFn?.();
     if (wasKilled) {
-      enqueueShellNotification(taskId, description, 'killed', result.code, setAppState, toolUseId, kind, agentId);
+      enqueueShellNotification(taskId, description, 'killed', result.code, setAppState, toolUseId, agentId);
     } else {
       const finalStatus = result.code === 0 ? 'completed' : 'failed';
-      enqueueShellNotification(taskId, description, finalStatus, result.code, setAppState, toolUseId, kind, agentId);
+      enqueueShellNotification(taskId, description, finalStatus, result.code, setAppState, toolUseId, agentId);
     }
     void evictTaskOutput(taskId);
   });

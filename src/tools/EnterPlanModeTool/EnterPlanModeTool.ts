@@ -69,9 +69,7 @@ export const EnterPlanModeTool: Tool<InputSchema, Output> = buildTool({
     const appState = context.getAppState()
     handlePlanModeTransition(appState.toolPermissionContext.mode, 'plan')
 
-    // Update the permission mode to 'plan'. prepareContextForPlanMode runs
-    // the classifier activation side effects when the user's defaultMode is
-    // 'auto' — see permissionSetup.ts for the full lifecycle.
+    // Update the permission mode to 'plan' and remember the previous mode.
     context.setAppState(prev => ({
       ...prev,
       toolPermissionContext: applyPermissionUpdate(

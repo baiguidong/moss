@@ -144,21 +144,13 @@ export const NATIVE_REQUIRED = {
 // =============================================================================
 
 export const INTERNAL_ONLY = {
-  DAEMON: false,             // 后台守护进程模式
   DIRECT_CONNECT: true,      // 直连服务
-  // --- 内部安全 & 合规 ---
-  TRANSCRIPT_CLASSIFIER: false,   // 对话内容分类器（内部 ML 模型）
-  BASH_CLASSIFIER: false,         // Bash 命令安全分类器（内部 ML 模型）
 
   // --- 内部工具 ---
   DUMP_SYSTEM_PROMPT: false,      // 输出 system prompt（内部 eval 用）
-  MONITOR_TOOL: false,            // TungstenLiveMonitor（stub，无实现）
-  OVERFLOW_TEST_TOOL: false,      // 溢出测试工具
   HARD_FAIL: false,               // 强制失败模式（测试用）
-  ALLOW_TEST_VERSIONS: false,     // 允许测试版本号
   SHOT_STATS: false,              // 内部统计
   PERFETTO_TRACING: false,        // Perfetto 性能追踪
-  MEMORY_SHAPE_TELEMETRY: false,  // 内存结构遥测
 
   // --- 内部云服务 ---
   FILE_PERSISTENCE: false,        // 云端文件持久化（BYOC 模式）

@@ -1713,21 +1713,6 @@ export function areMcpConfigsEqual(
 // reconnects), bounded to prevent unbounded growth with many MCP servers.
 const MCP_FETCH_CACHE_SIZE = 20
 
-/**
- * Encode MCP tool input for the auto-mode security classifier.
- * Exported so the auto-mode eval scripts can mirror production encoding
- * for `mcp__*` tool stubs without duplicating this logic.
- */
-export function mcpToolInputToAutoClassifierInput(
-  input: Record<string, unknown>,
-  toolName: string,
-): string {
-  const keys = Object.keys(input)
-  return keys.length > 0
-    ? keys.map(k => `${k}=${String(input[k])}`).join(' ')
-    : toolName
-}
-
 export const fetchToolsForClient = memoizeWithLRU(
   async (client: MCPServerConnection): Promise<Tool[]> => {
     if (client.type !== 'connected') return []
@@ -1785,9 +1770,6 @@ export const fetchToolsForClient = memoizeWithLRU(
             },
             isReadOnly() {
               return tool.annotations?.readOnlyHint ?? false
-            },
-            toAutoClassifierInput(input) {
-              return mcpToolInputToAutoClassifierInput(input, tool.name)
             },
             isDestructive() {
               return tool.annotations?.destructiveHint ?? false

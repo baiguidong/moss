@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { resetCostState } from '../../bootstrap/state.js';
 import type { LocalJSXCommandContext } from '../../commands.js';
@@ -13,7 +12,7 @@ import { refreshPolicyLimits } from '../../services/policyLimits/index.js';
 import { refreshRemoteManagedSettings } from '../../services/remoteManagedSettings/index.js';
 import type { LocalJSXCommandOnDone } from '../../types/command.js';
 import { stripSignatureBlocks } from '../../utils/messages.js';
-import { checkAndDisableAutoModeIfNeeded, checkAndDisableBypassPermissionsIfNeeded, resetAutoModeGateCheck, resetBypassPermissionsCheck } from '../../utils/permissions/bypassPermissionsKillswitch.js';
+import { checkAndDisableBypassPermissionsIfNeeded, resetBypassPermissionsCheck } from '../../utils/permissions/bypassPermissionsKillswitch.js';
 import { resetUserCache } from '../../utils/user.js';
 export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext): Promise<React.ReactNode> {
   return <Login onDone={async success => {
@@ -37,10 +36,6 @@ export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXComma
       resetBypassPermissionsCheck();
       const appState = context.getAppState();
       void checkAndDisableBypassPermissionsIfNeeded(appState.toolPermissionContext, context.setAppState);
-      if (feature('TRANSCRIPT_CLASSIFIER')) {
-        resetAutoModeGateCheck();
-        void checkAndDisableAutoModeIfNeeded(appState.toolPermissionContext, context.setAppState, appState.fastMode);
-      }
       // Increment authVersion to trigger re-fetching of auth-dependent data in hooks (e.g., MCP servers)
       context.setAppState(prev => ({
         ...prev,

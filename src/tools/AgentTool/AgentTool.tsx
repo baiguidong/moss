@@ -45,7 +45,7 @@ import { BackgroundHint } from '../BashTool/UI.js';
 import { FILE_READ_TOOL_NAME } from '../FileReadTool/prompt.js';
 import { spawnTeammate } from '../shared/spawnMultiAgent.js';
 import { setAgentColor } from './agentColorManager.js';
-import { agentToolResultSchema, classifyHandoffIfNeeded, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
+import { agentToolResultSchema, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js';
 import { AGENT_TOOL_NAME, LEGACY_AGENT_TOOL_NAME, ONE_SHOT_BUILTIN_AGENT_TYPES } from './constants.js';
 import { buildForkedMessages, buildWorktreeNotice, FORK_AGENT, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
@@ -935,27 +935,13 @@ export const AgentTool = buildTool({
                     const agentResult = finalizeAgentTool(agentMessages, backgroundedTaskId, metadata);
 
                     // Mark task completed FIRST so TaskOutput(block=true)
-                    // unblocks immediately. classifyHandoffIfNeeded and
-                    // cleanupWorktreeIfNeeded can hang — they must not gate
+                    // unblocks immediately. cleanupWorktreeIfNeeded can hang,
+                    // so it must not gate
                     // the status transition (gh-20236).
                     completeAsyncAgent(agentResult, rootSetAppState);
 
                     // Extract text from agent result content for the notification
-                    let finalMessage = extractTextContent(agentResult.content, '\n');
-                    if (feature('TRANSCRIPT_CLASSIFIER')) {
-                      const backgroundedAppState = toolUseContext.getAppState();
-                      const handoffWarning = await classifyHandoffIfNeeded({
-                        agentMessages,
-                        tools: toolUseContext.options.tools,
-                        toolPermissionContext: backgroundedAppState.toolPermissionContext,
-                        abortSignal: task.abortController!.signal,
-                        subagentType: selectedAgent.agentType,
-                        totalToolUseCount: agentResult.totalToolUseCount
-                      });
-                      if (handoffWarning) {
-                        finalMessage = `${handoffWarning}\n\n${finalMessage}`;
-                      }
-                    }
+                    const finalMessage = extractTextContent(agentResult.content, '\n');
 
                     // Clean up worktree before notification so we can include it
                     const worktreeResult = await cleanupWorktreeIfNeeded();
@@ -1217,23 +1203,6 @@ export const AgentTool = buildTool({
           logForDebugging(`Sync agent recovering from error with ${agentMessages.length} messages`);
         }
         const agentResult = finalizeAgentTool(agentMessages, syncAgentId, metadata);
-        if (feature('TRANSCRIPT_CLASSIFIER')) {
-          const currentAppState = toolUseContext.getAppState();
-          const handoffWarning = await classifyHandoffIfNeeded({
-            agentMessages,
-            tools: toolUseContext.options.tools,
-            toolPermissionContext: currentAppState.toolPermissionContext,
-            abortSignal: toolUseContext.abortController.signal,
-            subagentType: selectedAgent.agentType,
-            totalToolUseCount: agentResult.totalToolUseCount
-          });
-          if (handoffWarning) {
-            agentResult.content = [{
-              type: 'text' as const,
-              text: handoffWarning
-            }, ...agentResult.content];
-          }
-        }
         return {
           data: {
             status: 'completed' as const,
@@ -1248,12 +1217,6 @@ export const AgentTool = buildTool({
   isReadOnly() {
     return true; // delegates permission checks to its underlying tools
   },
-  toAutoClassifierInput(input) {
-    const i = input as AgentToolInput;
-    const tags = [i.subagent_type, i.mode ? `mode=${i.mode}` : undefined].filter((t): t is string => t !== undefined);
-    const prefix = tags.length > 0 ? `(${tags.join(', ')}): ` : ': ';
-    return `${prefix}${i.prompt}`;
-  },
   isConcurrencySafe() {
     return true;
   },
@@ -1263,17 +1226,6 @@ export const AgentTool = buildTool({
     return input?.description ?? 'Running task';
   },
   async checkPermissions(input, context): Promise<PermissionResult> {
-    const appState = context.getAppState();
-
-    // Only route through auto mode classifier when in auto mode
-    // In all other modes, auto-approve sub-agent generation
-    // Note: "external" === 'ant' guard enables dead code elimination for external builds
-    if ("external" === 'ant' && appState.toolPermissionContext.mode === 'auto') {
-      return {
-        behavior: 'passthrough',
-        message: 'Agent tool requires permission to spawn sub-agents.'
-      };
-    }
     return {
       behavior: 'allow',
       updatedInput: input

@@ -6,7 +6,6 @@
  * - GCS bucket
  */
 
-import { feature } from 'bun:bundle'
 import axios from 'axios'
 import { createHash } from 'crypto'
 import { chmod, writeFile } from 'fs/promises'
@@ -117,11 +116,7 @@ export async function getLatestVersion(
     const normalized = channelOrVersion.startsWith('v')
       ? channelOrVersion.slice(1)
       : channelOrVersion
-    // 99.99.x is reserved for CI smoke-test fixtures on real GCS.
-    // feature() is false in all shipped builds — DCE collapses this to an
-    // unconditional throw. Only `bun --feature=ALLOW_TEST_VERSIONS` (the
-    // smoke test's source-level invocation) bypasses.
-    if (/^99\.99\./.test(normalized) && !feature('ALLOW_TEST_VERSIONS')) {
+    if (/^99\.99\./.test(normalized)) {
       throw new Error(
         `Version ${normalized} is not available for installation. Use 'stable' or 'latest'.`,
       )
@@ -488,24 +483,6 @@ export async function downloadVersion(
   version: string,
   stagingPath: string,
 ): Promise<'npm' | 'binary'> {
-  // Test-fixture versions route to the private sentinel bucket. DCE'd in all
-  // shipped builds — the string 'claude-code-ci-sentinel' and the gcloud call
-  // never exist in compiled binaries. Same gcloud-token pattern as
-  // remoteSkillLoader.ts:175-195.
-  if (feature('ALLOW_TEST_VERSIONS') && /^99\.99\./.test(version)) {
-    const { stdout } = await execFileNoThrowWithCwd('gcloud', [
-      'auth',
-      'print-access-token',
-    ])
-    await downloadVersionFromBinaryRepo(
-      version,
-      stagingPath,
-      'https://storage.googleapis.com/claude-code-ci-sentinel',
-      { headers: { Authorization: `Bearer ${stdout.trim()}` } },
-    )
-    return 'binary'
-  }
-
   if (process.env.USER_TYPE === 'ant') {
     // Use Artifactory for ant users
     await downloadVersionFromArtifactory(version, stagingPath)

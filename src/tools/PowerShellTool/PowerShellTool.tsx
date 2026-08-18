@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle';
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
 import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
 import * as React from 'react';
@@ -177,30 +176,6 @@ function isAutobackgroundingAllowed(command: string): boolean {
 }
 
 /**
- * PS-flavored port of BashTool's detectBlockedSleepPattern.
- * Catches `Start-Sleep N`, `Start-Sleep -Seconds N`, `sleep N` (built-in alias)
- * as the first statement. Does NOT block `Start-Sleep -Milliseconds` (sub-second
- * pacing is fine) or float seconds (legit rate limiting).
- */
-export function detectBlockedSleepPattern(command: string): string | null {
-  // First statement only — split on PS statement separators: `;`, `|`,
-  // `&`/`&&`/`||` (pwsh 7+), and newline (PS's primary separator). This is
-  // intentionally shallow — sleep inside script blocks, subshells, or later
-  // pipeline stages is fine. Matches BashTool's splitCommandWithOperators
-  // intent (src/utils/bash/commands.ts) without a full PS parser.
-  const first = command.trim().split(/[;|&\r\n]/)[0]?.trim() ?? '';
-  // Match: Start-Sleep N, Start-Sleep -Seconds N, Start-Sleep -s N, sleep N
-  // (case-insensitive; -Seconds can be abbreviated to -s per PS convention)
-  const m = /^(?:start-sleep|sleep)(?:\s+-s(?:econds)?)?\s+(\d+)\s*$/i.exec(first);
-  if (!m) return null;
-  const secs = parseInt(m[1]!, 10);
-  if (secs < 2) return null; // sub-2s sleeps are fine (rate limiting, pacing)
-
-  const rest = command.trim().slice(first.length).replace(/^[\s;|&]+/, '');
-  return rest ? `Start-Sleep ${secs} followed by: ${rest}` : `standalone Start-Sleep ${secs}`;
-}
-
-/**
  * On Windows native, sandbox is unavailable (bwrap/sandbox-exec are
  * POSIX-only). If enterprise policy has sandbox.enabled AND forbids
  * unsandboxed commands, PowerShell cannot comply — refuse execution
@@ -309,9 +284,6 @@ export const PowerShellTool = buildTool({
     // 4.5) where the parsed AST is available.
     return isReadOnlyCommand(input.command);
   },
-  toAutoClassifierInput(input) {
-    return input.command;
-  },
   get inputSchema(): InputSchema {
     return inputSchema();
   },
@@ -352,16 +324,6 @@ export const PowerShellTool = buildTool({
         message: WINDOWS_SANDBOX_POLICY_REFUSAL,
         errorCode: 11
       };
-    }
-    if (feature('MONITOR_TOOL') && !isBackgroundTasksDisabled && !input.run_in_background) {
-      const sleepPattern = detectBlockedSleepPattern(input.command);
-      if (sleepPattern !== null) {
-        return {
-          result: false,
-          message: `Blocked: ${sleepPattern}. Run blocking commands in the background with run_in_background: true — you'll get a completion notification when done. For streaming events (watching logs, polling APIs), use the Monitor tool. If you genuinely need a delay (rate limiting, deliberate pacing), keep it under 2 seconds.`,
-          errorCode: 10
-        };
-      }
     }
     return {
       result: true
