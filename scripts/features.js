@@ -131,7 +131,7 @@ export const NATIVE_REQUIRED = {
   TREE_SITTER_BASH_SHADOW: false,
 
   // 语音模式：通过麦克风语音输入（仅 macOS）
-  // 依赖：vendor/audio-capture-src 需要编译为原生模块
+  // 依赖：audio-capture-napi 原生模块（当前未包含）
   VOICE_MODE: false,
 
   // Web 浏览器工具：让 Claude 控制浏览器访问网页（类似 Playwright）
