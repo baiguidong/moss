@@ -6,7 +6,6 @@ import { diagnosticTracker } from '../../services/diagnosticTracking.js'
 import { clearDeliveredDiagnosticsForFile } from '../../services/lsp/LSPDiagnosticRegistry.js'
 import { getLspServerManager } from '../../services/lsp/manager.js'
 import { notifyVscodeFileUpdated } from '../../services/mcp/vscodeSdkMcp.js'
-import { checkTeamMemSecrets } from '../../services/teamMemorySync/teamMemSecretGuard.js'
 import {
   activateConditionalSkillsForPaths,
   addSkillDirectories,
@@ -138,11 +137,6 @@ export const FileEditTool = buildTool({
     // where "/" vs "\" can cause readFileState lookup mismatches)
     const fullFilePath = expandPath(file_path)
 
-    // Reject edits to team memory files that introduce secrets
-    const secretError = checkTeamMemSecrets(fullFilePath, new_string)
-    if (secretError) {
-      return { result: false, message: secretError, errorCode: 0 }
-    }
     if (old_string === new_string) {
       return {
         result: false,

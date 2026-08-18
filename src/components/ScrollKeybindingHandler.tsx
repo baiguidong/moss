@@ -569,7 +569,7 @@ export function ScrollKeybindingHandler({
   // claude/jump-recent-message-CEPcq). getItemY Yoga-walk + computeOrigin +
   // anchorY already solve scroll-to-index. jumpToPrevTurn is the n/N
   // template. Single-shot via OVERSCAN_ROWS=80; two-phase was tried and
-  // abandoned (❯ oscillation). See team memory scroll-copy-mode-design.md.
+  // abandoned (❯ oscillation). See the scroll-copy-mode design notes.
   useInput((input, key, event) => {
     const s_10 = scrollRef.current;
     if (!s_10) return;

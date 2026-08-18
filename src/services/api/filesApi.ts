@@ -347,7 +347,7 @@ export async function downloadSessionFiles(
 }
 
 // ============================================================================
-// Upload Functions (BYOC mode)
+// Upload Functions
 // ============================================================================
 
 /**
@@ -367,7 +367,7 @@ export type UploadResult =
     }
 
 /**
- * Upload a single file to the Files API (BYOC mode)
+ * Upload a single file to the Files API.
  *
  * Size validation is performed after reading the file to avoid TOCTOU race
  * conditions where the file size could change between initial check and upload.
@@ -559,39 +559,6 @@ class UploadNonRetriableError extends Error {
     super(message)
     this.name = 'UploadNonRetriableError'
   }
-}
-
-/**
- * Upload multiple files in parallel with concurrency limit (BYOC mode)
- *
- * @param files - Array of files to upload (path and relativePath)
- * @param config - Files API configuration
- * @param concurrency - Maximum concurrent uploads (default: 5)
- * @returns Array of upload results in the same order as input
- */
-export async function uploadSessionFiles(
-  files: Array<{ path: string; relativePath: string }>,
-  config: FilesApiConfig,
-  concurrency: number = DEFAULT_CONCURRENCY,
-): Promise<UploadResult[]> {
-  if (files.length === 0) {
-    return []
-  }
-
-  logDebug(`Uploading ${files.length} file(s) for session ${config.sessionId}`)
-  const startTime = Date.now()
-
-  const results = await parallelWithLimit(
-    files,
-    file => uploadFile(file.path, file.relativePath, config),
-    concurrency,
-  )
-
-  const elapsedMs = Date.now() - startTime
-  const successCount = count(results, r => r.success)
-  logDebug(`Uploaded ${successCount}/${files.length} file(s) in ${elapsedMs}ms`)
-
-  return results
 }
 
 // ============================================================================

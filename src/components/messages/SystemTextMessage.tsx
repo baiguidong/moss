@@ -1,7 +1,6 @@
 import { c as _c } from "react/compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { Box, Text, type TextProps } from '../../ink.js';
-import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { useState } from 'react';
 import sample from 'lodash-es/sample.js';
@@ -11,9 +10,6 @@ import { basename } from 'path';
 import { MessageResponse } from '../MessageResponse.js';
 import { FilePathLink } from '../FilePathLink.js';
 import { openPath } from '../../utils/browser.js';
-/* eslint-disable @typescript-eslint/no-require-imports */
-const teamMemSaved = feature('TEAMMEM') ? require('./teamMemSaved.js') as typeof import('./teamMemSaved.js') : null;
-/* eslint-enable @typescript-eslint/no-require-imports */
 import { TURN_COMPLETION_VERBS } from '../../constants/turnCompletionVerbs.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import type { SystemMessage, SystemStopHookSummaryMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage } from '../../types/message.js';
@@ -547,23 +543,12 @@ function MemorySavedMessage(t0) {
   const {
     writtenPaths
   } = message;
-  let t1;
-  if ($[0] !== message) {
-    t1 = feature("TEAMMEM") ? teamMemSaved.teamMemSavedPart(message) : null;
-    $[0] = message;
-    $[1] = t1;
-  } else {
-    t1 = $[1];
-  }
-  const team = t1;
-  const privateCount = writtenPaths.length - (team?.count ?? 0);
+  const privateCount = writtenPaths.length;
   const t2 = privateCount > 0 ? `${privateCount} ${privateCount === 1 ? "memory" : "memories"}` : null;
-  const t3 = team?.segment;
   let t4;
-  if ($[2] !== t2 || $[3] !== t3) {
-    t4 = [t2, t3].filter(Boolean);
+  if ($[2] !== t2) {
+    t4 = [t2].filter(Boolean);
     $[2] = t2;
-    $[3] = t3;
     $[4] = t4;
   } else {
     t4 = $[4];

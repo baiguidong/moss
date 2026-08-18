@@ -152,15 +152,11 @@ export const INTERNAL_ONLY = {
   SHOT_STATS: false,              // 内部统计
   PERFETTO_TRACING: false,        // Perfetto 性能追踪
 
-  // --- 内部云服务 ---
-  FILE_PERSISTENCE: false,        // 云端文件持久化（BYOC 模式）
-
   // --- 内部 IDE/平台集成 ---
   TERMINAL_PANEL: false,     // IDE 终端面板
 
   // --- 其他内部功能 ---
   COWORKER_TYPE_TELEMETRY: false, // 协作者类型遥测
-  TEAMMEM: false,                 // 团队共享记忆（需要内部服务）
   VERIFICATION_AGENT: false,      // 验证 agent（需要内部服务）
   ENHANCED_TELEMETRY_BETA: false, // 增强遥测 beta
   IS_LIBC_GLIBC: false,           // 构建环境标记

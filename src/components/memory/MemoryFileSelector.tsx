@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import chalk from 'chalk';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -24,10 +23,6 @@ import { projectIsInGitRepo } from '../../utils/memory/versions.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
 import { Select } from '../CustomSelect/index.js';
 import { ListItem } from '../design-system/ListItem.js';
-
-/* eslint-disable @typescript-eslint/no-require-imports */
-const teamMemPaths = feature('TEAMMEM') ? require('../../memdir/teamMemPaths.js') as typeof import('../../memdir/teamMemPaths.js') : null;
-/* eslint-enable @typescript-eslint/no-require-imports */
 
 interface ExtendedMemoryFileInfo extends MemoryFileInfo {
   isNested?: boolean;
@@ -124,20 +119,6 @@ export function MemoryFileSelector(t0) {
       t1 = $[0];
     }
     folderOptions.push(t1);
-    if (feature("TEAMMEM") && teamMemPaths.isTeamMemoryEnabled()) {
-      let t2;
-      if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
-        t2 = {
-          label: "Open team memory folder",
-          value: `${OPEN_FOLDER_PREFIX}${teamMemPaths.getTeamMemPath()}`,
-          description: ""
-        };
-        $[1] = t2;
-      } else {
-        t2 = $[1];
-      }
-      folderOptions.push(t2);
-    }
     for (const agent of agentDefinitions.activeAgents) {
       if (agent.memory) {
         const agentDir = getAgentMemoryDir(agent.agentType, agent.memory);
@@ -433,5 +414,5 @@ function _temp2(f_2) {
   };
 }
 function _temp(f_1) {
-  return f_1.type !== "AutoMem" && f_1.type !== "TeamMem";
+  return f_1.type !== "AutoMem";
 }

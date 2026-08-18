@@ -10,7 +10,7 @@ Review the user's memory landscape and produce a clear report of proposed change
 ## Steps
 
 ### 1. Gather all memory layers
-Read CLAUDE.md and CLAUDE.local.md from the project root (if they exist). Your auto-memory content is already in your system prompt — review it there. Note which team memory sections exist, if any.
+Read CLAUDE.md and CLAUDE.local.md from the project root (if they exist). Your auto-memory content is already in your system prompt — review it there.
 
 **Success criteria**: You have the contents of all memory layers and can compare them.
 
@@ -21,12 +21,11 @@ For each substantive entry in auto-memory, determine the best destination:
 |---|---|---|
 | **CLAUDE.md** | Project conventions and instructions for Claude that all contributors should follow | "use bun not npm", "API routes use kebab-case", "test command is bun test", "prefer functional style" |
 | **CLAUDE.local.md** | Personal instructions for Claude specific to this user, not applicable to other contributors | "I prefer concise responses", "always explain trade-offs", "don't auto-commit", "run tests before committing" |
-| **Team memory** | Org-wide knowledge that applies across repositories (only if team memory is configured) | "deploy PRs go through #deploy-queue", "staging is at staging.internal", "platform team owns infra" |
 | **Stay in auto-memory** | Working notes, temporary context, or entries that don't clearly fit elsewhere | Session-specific observations, uncertain patterns |
 
 **Important distinctions:**
 - CLAUDE.md and CLAUDE.local.md contain instructions for Claude, not user preferences for external tools (editor theme, IDE keybindings, etc. don't belong in either)
-- Workflow practices (PR conventions, merge strategies, branch naming) are ambiguous — ask the user whether they're personal or team-wide
+- Workflow practices (PR conventions, merge strategies, branch naming) usually belong in CLAUDE.md when they apply to the project; ask the user when scope is ambiguous
 - When unsure, ask rather than guess
 
 **Success criteria**: Each entry has a proposed destination or is flagged as ambiguous.
