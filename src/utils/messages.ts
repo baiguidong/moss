@@ -38,7 +38,6 @@ import {
 } from '../services/api/errors.js'
 import { logForDiagnosticsNoPII } from './diagLogs.js'
 import type { AnyObject, Progress } from '../Tool.js'
-import { isConnectorTextBlock } from '../types/connectorText.js'
 import type {
   AssistantMessage,
   AttachmentMessage,
@@ -3016,13 +3015,6 @@ export function handleMessageFromStream(
   switch (message.event.type) {
     case 'content_block_start':
       onStreamingText?.(() => null)
-      if (
-        feature('CONNECTOR_TEXT') &&
-        isConnectorTextBlock(message.event.content_block)
-      ) {
-        onSetStreamMode('responding')
-        return
-      }
       switch (message.event.content_block.type) {
         case 'thinking':
         case 'redacted_thinking':
@@ -5051,8 +5043,8 @@ export function filterOrphanedThinkingOnlyMessages(
 }
 
 /**
- * Strip signature-bearing blocks (thinking, redacted_thinking, connector_text)
- * from all assistant messages. Their signatures are bound to the API key that
+ * Strip signature-bearing thinking blocks from all assistant messages.
+ * Their signatures are bound to the API key that
  * generated them; after a credential change (e.g. /login) they're invalid and
  * the API rejects them with a 400.
  */
@@ -5066,9 +5058,6 @@ export function stripSignatureBlocks(messages: Message[]): Message[] {
 
     const filtered = content.filter(block => {
       if (isThinkingBlock(block)) return false
-      if (feature('CONNECTOR_TEXT')) {
-        if (isConnectorTextBlock(block)) return false
-      }
       return true
     })
     if (filtered.length === content.length) return msg

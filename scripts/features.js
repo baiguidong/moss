@@ -164,23 +164,14 @@ export const INTERNAL_ONLY = {
   FILE_PERSISTENCE: false,        // 云端文件持久化（BYOC 模式）
 
   // --- 内部 IDE/平台集成 ---
-  SSH_REMOTE: false,         // SSH 远程连接
   TERMINAL_PANEL: false,     // IDE 终端面板
-  UDS_INBOX: false,          // Unix Domain Socket 收件箱
-  BUILDING_CLAUDE_APPS: false, // 构建 Claude App 的特殊 UI
 
   // --- 其他内部功能 ---
-  CONNECTOR_TEXT: false,          // 连接器文本块（stub，无实现）
   COWORKER_TYPE_TELEMETRY: false, // 协作者类型遥测
   TEAMMEM: false,                 // 团队共享记忆（需要内部服务）
   VERIFICATION_AGENT: false,      // 验证 agent（需要内部服务）
-  REVIEW_ARTIFACT: false,         // Review artifact（内部 CR 系统）
-  SKILL_IMPROVEMENT: false,       // Skill 质量改进上报
-  RUN_SKILL_GENERATOR: false,     // Skill 生成器（内部工具）
   ENHANCED_TELEMETRY_BETA: false, // 增强遥测 beta
-  BREAK_CACHE_COMMAND: false,     // 手动触发缓存中断（内部调试）
   IS_LIBC_GLIBC: false,           // 构建环境标记
   IS_LIBC_MUSL: false,            // 构建环境标记
-  POWERSHELL_AUTO_MODE: false,    // PowerShell 自动模式（Windows 内部）
   FORK_SUBAGENT: false,           // Fork 子 agent（实验性，不稳定）
 };

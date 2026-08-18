@@ -29,27 +29,6 @@ function normalizeAnthropicBaseUrl(value: string | undefined): string | undefine
 }
 
 /**
- * `claude ssh` remote: ANTHROPIC_UNIX_SOCKET routes auth through a -R forwarded
- * socket to a local proxy, and the launcher sets a handful of placeholder auth
- * env vars that the remote's ~/.claude settings.env MUST NOT clobber (see
- * isAnthropicAuthEnabled). Strip them from any settings-sourced env object.
- */
-function withoutSSHTunnelVars(
-  env: Record<string, string> | undefined,
-): Record<string, string> {
-  if (!env || !process.env.ANTHROPIC_UNIX_SOCKET) return env || {}
-  const {
-    ANTHROPIC_UNIX_SOCKET: _1,
-    ANTHROPIC_BASE_URL: _2,
-    ANTHROPIC_API_KEY: _3,
-    ANTHROPIC_AUTH_TOKEN: _4,
-    CLAUDE_CODE_OAUTH_TOKEN: _5,
-    ...rest
-  } = env
-  return rest
-}
-
-/**
  * When the host owns inference routing (sets
  * CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST in spawn env), strip
  * provider-selection / model-default vars from settings-sourced env so a
@@ -116,9 +95,7 @@ function filterSettingsEnv(
   env: Record<string, string> | undefined,
 ): Record<string, string> {
   return normalizeSettingsEnv(
-    withoutCcdSpawnEnvKeys(
-      withoutHostManagedProviderVars(withoutSSHTunnelVars(env)),
-    ),
+    withoutCcdSpawnEnvKeys(withoutHostManagedProviderVars(env)),
   )
 }
 

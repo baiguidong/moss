@@ -29,7 +29,6 @@ import login from './commands/login/index.js'
 import logout from './commands/logout/index.js'
 import installGitHubApp from './commands/install-github-app/index.js'
 import installSlackApp from './commands/install-slack-app/index.js'
-import breakCache from './commands/break-cache/index.js'
 import mcp from './commands/mcp/index.js'
 import mobile from './commands/mobile/index.js'
 import onboarding from './commands/onboarding/index.js'
@@ -81,11 +80,6 @@ const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
   : null
 const ultraplan = feature('ULTRAPLAN')
   ? require('./commands/ultraplan.js').default
-  : null
-const peersCmd = feature('UDS_INBOX')
-  ? (
-      require('./commands/peers/index.js') as typeof import('./commands/peers/index.js')
-    ).default
   : null
 const forkCmd = feature('FORK_SUBAGENT')
   ? (
@@ -200,7 +194,6 @@ export { getCommandName, isCommandEnabled } from './types/command.js'
 // Commands that get eliminated from the external build
 export const INTERNAL_ONLY_COMMANDS = [
   backfillSessions,
-  breakCache,
   bughunter,
   commit,
   commitPushPr,
@@ -305,7 +298,6 @@ const COMMANDS = memoize((): Command[] => [
   sandboxToggle,
   ...(!isUsing3PServices() ? [logout, login()] : []),
   passes,
-  ...(peersCmd ? [peersCmd] : []),
   tasks,
   ...(workflowsCmd ? [workflowsCmd] : []),
   ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO

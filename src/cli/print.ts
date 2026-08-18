@@ -806,9 +806,6 @@ export async function runHeadless(
   await ensureModelStringsInitialized()
   headlessProfilerCheckpoint('after_modelStrings')
 
-  // UDS inbox store registration is deferred until after `run` is defined
-  // so we can pass `run` as the onEnqueue callback (see below).
-
   // Only `json` + `verbose` needs the full array (jsonStringify(messages) below).
   // For stream-json (SDK/CCR) and default text output, only the last message is
   // read for the exit code / final result. Avoid accumulating every message in
@@ -2553,19 +2550,6 @@ function runHeadlessStreaming(
         output.done()
       }
     }
-  }
-
-  // Set up UDS inbox callback so the query loop is kicked off
-  // when a message arrives via the UDS socket in headless mode.
-  if (feature('UDS_INBOX')) {
-    /* eslint-disable @typescript-eslint/no-require-imports */
-    const { setOnEnqueue } = require('../utils/udsMessaging.js')
-    /* eslint-enable @typescript-eslint/no-require-imports */
-    setOnEnqueue(() => {
-      if (!inputClosed) {
-        void run()
-      }
-    })
   }
 
   // Cron scheduler: runs scheduled_tasks.json tasks in SDK/-p mode.

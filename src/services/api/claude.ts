@@ -37,11 +37,6 @@ import {
   toolMatchesName,
 } from '../../Tool.js'
 import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js'
-import {
-  type ConnectorTextBlock,
-  type ConnectorTextDelta,
-  isConnectorTextBlock,
-} from '../../types/connectorText.js'
 import type {
   AssistantMessage,
   Message,
@@ -641,8 +636,7 @@ export function assistantMessageToMessageParam(
           ..._,
           ...(i === message.message.content.length - 1 &&
           _.type !== 'thinking' &&
-          _.type !== 'redacted_thinking' &&
-          (feature('CONNECTOR_TEXT') ? !isConnectorTextBlock(_) : true)
+          _.type !== 'redacted_thinking'
             ? enablePromptCaching
               ? { cache_control: getCacheControl({ querySource }) }
               : {}
@@ -1743,7 +1737,7 @@ async function* queryModel(
   const newMessages: AssistantMessage[] = []
   let ttftMs = 0
   let partialMessage: BetaMessage | undefined = undefined
-  const contentBlocks: (BetaContentBlock | ConnectorTextBlock)[] = []
+  const contentBlocks: BetaContentBlock[] = []
   let usage: NonNullableUsage = EMPTY_USAGE
   let costUSD = 0
   let stopReason: BetaStopReason | null = null
@@ -2063,7 +2057,7 @@ async function* queryModel(
             break
           case 'content_block_delta': {
             const contentBlock = contentBlocks[part.index]
-            const delta = part.delta as typeof part.delta | ConnectorTextDelta
+            const delta = part.delta
             if (!contentBlock) {
               logEvent('tengu_streaming_error', {
                 error_type:
@@ -2074,103 +2068,78 @@ async function* queryModel(
               })
               throw new RangeError('Content block not found')
             }
-            if (
-              feature('CONNECTOR_TEXT') &&
-              delta.type === 'connector_text_delta'
-            ) {
-              if (contentBlock.type !== 'connector_text') {
-                logEvent('tengu_streaming_error', {
-                  error_type:
-                    'content_block_type_mismatch_connector_text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                  expected_type:
-                    'connector_text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                  actual_type:
-                    contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                })
-                throw new Error('Content block is not a connector_text block')
-              }
-              contentBlock.connector_text += delta.connector_text
-            } else {
-              switch (delta.type) {
-                case 'citations_delta':
-                  // TODO: handle citations
-                  break
-                case 'input_json_delta':
-                  if (
-                    contentBlock.type !== 'tool_use' &&
-                    contentBlock.type !== 'server_tool_use'
-                  ) {
-                    logEvent('tengu_streaming_error', {
-                      error_type:
-                        'content_block_type_mismatch_input_json' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      expected_type:
-                        'tool_use' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      actual_type:
-                        contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    })
-                    throw new Error('Content block is not a input_json block')
-                  }
-                  if (typeof contentBlock.input !== 'string') {
-                    logEvent('tengu_streaming_error', {
-                      error_type:
-                        'content_block_input_not_string' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      input_type:
-                        typeof contentBlock.input as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    })
-                    throw new Error('Content block input is not a string')
-                  }
-                  contentBlock.input += delta.partial_json
-                  break
-                case 'text_delta':
-                  if (contentBlock.type !== 'text') {
-                    logEvent('tengu_streaming_error', {
-                      error_type:
-                        'content_block_type_mismatch_text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      expected_type:
-                        'text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      actual_type:
-                        contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    })
-                    throw new Error('Content block is not a text block')
-                  }
-                  contentBlock.text += delta.text
-                  break
-                case 'signature_delta':
-                  if (
-                    feature('CONNECTOR_TEXT') &&
-                    contentBlock.type === 'connector_text'
-                  ) {
-                    contentBlock.signature = delta.signature
-                    break
-                  }
-                  if (contentBlock.type !== 'thinking') {
-                    logEvent('tengu_streaming_error', {
-                      error_type:
-                        'content_block_type_mismatch_thinking_signature' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      expected_type:
-                        'thinking' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      actual_type:
-                        contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    })
-                    throw new Error('Content block is not a thinking block')
-                  }
-                  contentBlock.signature = delta.signature
-                  break
-                case 'thinking_delta':
-                  if (contentBlock.type !== 'thinking') {
-                    logEvent('tengu_streaming_error', {
-                      error_type:
-                        'content_block_type_mismatch_thinking_delta' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      expected_type:
-                        'thinking' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                      actual_type:
-                        contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    })
-                    throw new Error('Content block is not a thinking block')
-                  }
-                  contentBlock.thinking += delta.thinking
-                  break
-              }
+            switch (delta.type) {
+              case 'citations_delta':
+                // TODO: handle citations
+                break
+              case 'input_json_delta':
+                if (
+                  contentBlock.type !== 'tool_use' &&
+                  contentBlock.type !== 'server_tool_use'
+                ) {
+                  logEvent('tengu_streaming_error', {
+                    error_type:
+                      'content_block_type_mismatch_input_json' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    expected_type:
+                      'tool_use' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    actual_type:
+                      contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                  })
+                  throw new Error('Content block is not a input_json block')
+                }
+                if (typeof contentBlock.input !== 'string') {
+                  logEvent('tengu_streaming_error', {
+                    error_type:
+                      'content_block_input_not_string' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    input_type:
+                      typeof contentBlock.input as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                  })
+                  throw new Error('Content block input is not a string')
+                }
+                contentBlock.input += delta.partial_json
+                break
+              case 'text_delta':
+                if (contentBlock.type !== 'text') {
+                  logEvent('tengu_streaming_error', {
+                    error_type:
+                      'content_block_type_mismatch_text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    expected_type:
+                      'text' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    actual_type:
+                      contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                  })
+                  throw new Error('Content block is not a text block')
+                }
+                contentBlock.text += delta.text
+                break
+              case 'signature_delta':
+                if (contentBlock.type !== 'thinking') {
+                  logEvent('tengu_streaming_error', {
+                    error_type:
+                      'content_block_type_mismatch_thinking_signature' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    expected_type:
+                      'thinking' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    actual_type:
+                      contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                  })
+                  throw new Error('Content block is not a thinking block')
+                }
+                contentBlock.signature = delta.signature
+                break
+              case 'thinking_delta':
+                if (contentBlock.type !== 'thinking') {
+                  logEvent('tengu_streaming_error', {
+                    error_type:
+                      'content_block_type_mismatch_thinking_delta' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    expected_type:
+                      'thinking' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                    actual_type:
+                      contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+                  })
+                  throw new Error('Content block is not a thinking block')
+                }
+                contentBlock.thinking += delta.thinking
+                break
             }
             // Capture research from content_block_delta if available (internal only).
             // Always overwrite with the latest value.

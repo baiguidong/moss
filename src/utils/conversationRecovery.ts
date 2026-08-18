@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
 import { relative } from 'path'
 import { getCwd } from 'src/utils/cwd.js'
@@ -415,31 +414,8 @@ export async function loadConversationForResume(
     let sessionId: UUID | undefined
 
     if (source === undefined) {
-      // --continue: most recent session, skipping live --bg/daemon sessions
-      // that are actively writing their own transcript.
-      const logsPromise = loadMessageLogs()
-      let skip = new Set<string>()
-      if (feature('BG_SESSIONS')) {
-        try {
-          const { listAllLiveSessions } = await import('./udsClient.js')
-          const live = await listAllLiveSessions()
-          skip = new Set(
-            live.flatMap(s =>
-              s.kind && s.kind !== 'interactive' && s.sessionId
-                ? [s.sessionId]
-                : [],
-            ),
-          )
-        } catch {
-          // UDS unavailable — treat all sessions as continuable
-        }
-      }
-      const logs = await logsPromise
-      log =
-        logs.find(l => {
-          const id = getSessionIdFromLog(l)
-          return !id || !skip.has(id)
-        }) ?? null
+      // --continue: load the most recent session.
+      log = (await loadMessageLogs())[0] ?? null
     } else if (sourceJsonlFile) {
       // --resume with a .jsonl path (cli/print.ts routes on suffix).
       // Load the standard transcript into a full LogOption so the rest of

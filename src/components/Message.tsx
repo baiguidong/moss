@@ -7,7 +7,6 @@ import type { Command } from '../commands.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { Box } from '../ink.js';
 import type { Tools } from '../Tool.js';
-import { type ConnectorTextBlock, isConnectorTextBlock } from '../types/connectorText.js';
 import type { AssistantMessage, AttachmentMessage as AttachmentMessageType, CollapsedReadSearchGroup as CollapsedReadSearchGroupType, GroupedToolUseMessage as GroupedToolUseMessageType, NormalizedUserMessage, ProgressMessage, SystemMessage } from '../types/message.js';
 import { type AdvisorBlock, isAdvisorBlock } from '../utils/advisor.js';
 import { isFullscreenEnvEnabled } from '../utils/fullscreen.js';
@@ -451,35 +450,6 @@ function AssistantMessageBlock(t0) {
     lastThinkingBlockId,
     advisorModel
   } = t0;
-  if (feature("CONNECTOR_TEXT")) {
-    if (isConnectorTextBlock(param)) {
-      let t1;
-      if ($[0] !== param.connector_text) {
-        t1 = {
-          type: "text",
-          text: param.connector_text
-        };
-        $[0] = param.connector_text;
-        $[1] = t1;
-      } else {
-        t1 = $[1];
-      }
-      let t2;
-      if ($[2] !== addMargin || $[3] !== onOpenRateLimitOptions || $[4] !== shouldShowDot || $[5] !== t1 || $[6] !== verbose || $[7] !== width) {
-        t2 = <AssistantTextMessage param={t1} addMargin={addMargin} shouldShowDot={shouldShowDot} verbose={verbose} width={width} onOpenRateLimitOptions={onOpenRateLimitOptions} />;
-        $[2] = addMargin;
-        $[3] = onOpenRateLimitOptions;
-        $[4] = shouldShowDot;
-        $[5] = t1;
-        $[6] = verbose;
-        $[7] = width;
-        $[8] = t2;
-      } else {
-        t2 = $[8];
-      }
-      return t2;
-    }
-  }
   switch (param.type) {
     case "tool_use":
       {

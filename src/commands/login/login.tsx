@@ -18,7 +18,7 @@ import { resetUserCache } from '../../utils/user.js';
 export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext): Promise<React.ReactNode> {
   return <Login onDone={async success => {
     context.onChangeAPIKey();
-    // Signature-bearing blocks (thinking, connector_text) are bound to the API key —
+    // Signature-bearing thinking blocks are bound to the API key —
     // strip them so the new key doesn't reject stale signatures.
     context.setMessages(stripSignatureBlocks);
     if (success) {

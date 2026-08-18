@@ -46,7 +46,6 @@ export function preconnectAnthropicApi(): void {
     process.env.https_proxy ||
     process.env.HTTP_PROXY ||
     process.env.http_proxy ||
-    process.env.ANTHROPIC_UNIX_SOCKET ||
     process.env.CLAUDE_CODE_CLIENT_CERT ||
     process.env.CLAUDE_CODE_CLIENT_KEY
   ) {
