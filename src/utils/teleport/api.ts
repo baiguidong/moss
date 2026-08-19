@@ -116,8 +116,6 @@ export type SessionContext = {
   custom_system_prompt: string | null
   append_system_prompt: string | null
   model: string | null
-  // Seed filesystem with a git bundle on Files API
-  seed_bundle_file_id?: string
   github_pr?: { owner: string; repo: string; number: number }
   reuse_outcome_branches?: boolean
 }

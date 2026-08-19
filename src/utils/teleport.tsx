@@ -2,8 +2,7 @@ import axios from 'axios';
 import chalk from 'chalk';
 import { randomUUID } from 'crypto';
 import React from 'react';
-import { getOriginalCwd, getSessionId } from 'src/bootstrap/state.js';
-import { checkGate_CACHED_OR_BLOCKING } from 'src/services/analytics/growthbook.js';
+import { getOriginalCwd } from 'src/bootstrap/state.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import { isPolicyAllowed } from 'src/services/policyLimits/index.js';
 import { z } from 'zod/v4';
@@ -19,14 +18,12 @@ import type { Message, SystemMessage } from '../types/message.js';
 import type { PermissionMode } from '../types/permissions.js';
 import { checkGithubAppInstalled } from './background/remote/preconditions.js';
 import { deserializeMessages, type TeleportRemoteResponse } from './conversationRecovery.js';
-import { getCwd } from './cwd.js';
 import { logForDebugging } from './debug.js';
 import { detectCurrentRepositoryWithHost, parseGitHubRepository, parseGitRemote } from './detectRepository.js';
-import { isEnvTruthy } from './envUtils.js';
 import { TeleportOperationError, toError } from './errors.js';
 import { execFileNoThrow } from './execFileNoThrow.js';
 import { truncateToWidth } from './format.js';
-import { findGitRoot, getDefaultBranch, getIsClean, gitExe } from './git.js';
+import { getDefaultBranch, getIsClean, gitExe } from './git.js';
 import { safeParseJSON } from './json.js';
 import { logError } from './log.js';
 import { createSystemMessage, createUserMessage } from './messages.js';
@@ -37,7 +34,6 @@ import { jsonStringify } from './slowOperations.js';
 import { asSystemPrompt } from './systemPromptType.js';
 import { fetchSession, type GitRepositoryOutcome, type GitSource, getBranchFromSession, getBearerHeaders, type SessionResource } from './teleport/api.js';
 import { fetchEnvironments } from './teleport/environments.js';
-import { createAndUploadGitBundle } from './teleport/gitBundle.js';
 export type TeleportResult = {
   messages: Message[];
   branchName: string;
@@ -545,8 +541,7 @@ export async function teleportToRemoteWithErrorHandling(root: Root, description:
   return teleportToRemote({
     initialMessage: description,
     signal,
-    branchName,
-    onBundleFail: msg => process.stderr.write(`\n${msg}\n`)
+    branchName
   });
 }
 
@@ -713,17 +708,11 @@ export async function pollRemoteSessionEvents(sessionId: string, afterId: string
 }
 
 /**
- * Creates a remote Claude.ai session using the Sessions API.
+ * Creates a remote session using the Sessions API.
  *
- * Two source modes:
- * - GitHub (default): backend clones from the repo's origin URL. Requires a
- *   GitHub remote + CCR-side GitHub connection. 43% of CLI sessions have an
- *   origin remote; far fewer pass the full precondition chain.
- * - Bundle (CCR_FORCE_BUNDLE=1): CLI creates `git bundle --all`, uploads via Files
- *   API, passes file_id as seed_bundle_file_id on the session context. CCR
- *   downloads it and clones from the bundle. No GitHub dependency — works for
- *   local-only repos. Reach: 54% of CLI sessions (anything with .git/).
- *   Backend: anthropic#303856.
+ * Source mode:
+ * - GitHub: backend clones from the repo's origin URL. Requires a GitHub
+ *   remote and remote-side GitHub access.
  */
 export async function teleportToRemote(options: {
   initialMessage: string | null;
@@ -751,25 +740,6 @@ export async function teleportToRemote(options: {
    * Write-only at the API layer (stripped from Get/List responses).
    */
   environmentVariables?: Record<string, string>;
-  /**
-   * When set with environmentId, creates and uploads a git bundle of the
-   * local working tree (createAndUploadGitBundle handles the stash-create
-   * for uncommitted changes) and passes it as seed_bundle_file_id. Backend
-   * clones from the bundle instead of GitHub — container gets the caller's
-   * exact local state. Needs .git/ only, not a GitHub remote.
-   */
-  useBundle?: boolean;
-  /**
-   * Called with a user-facing message when the bundle path is attempted but
-   * fails. The wrapper stderr.writes it (pre-REPL). Remote-agent callers
-   * capture it to include in their throw (in-REPL, Ink-rendered).
-   */
-  onBundleFail?: (message: string) => void;
-  /**
-   * When true, disables the git-bundle fallback entirely. Use for flows like
-   * autofix where CCR must push to GitHub — a bundle can't do that.
-   */
-  skipBundle?: boolean;
   /**
    * When set, reuses this branch as the outcome branch instead of generating
    * a new claude/ branch. Sets allow_unrestricted_git_push on the source and
@@ -820,54 +790,26 @@ export async function teleportToRemote(options: {
       };
       const envVars = options.environmentVariables ?? {};
 
-      // Bundle mode: upload local working tree (uncommitted changes via
-      // refs/seed/stash), container clones from the bundle. No GitHub.
-      // Otherwise: github.com source — caller checked eligibility.
       let gitSource: GitSource | null = null;
-      let seedBundleFileId: string | null = null;
-      if (options.useBundle) {
-        const bundle = await createAndUploadGitBundle({
-          bearerToken: accessToken,
-          sessionId: getSessionId(),
-          baseUrl: getApiBaseUrl()
-        }, {
-          signal
-        });
-        if (!bundle.success) {
-          logError(new Error(`Bundle upload failed: ${bundle.error}`));
-          return null;
-        }
-        seedBundleFileId = bundle.fileId;
-        logEvent('tengu_teleport_bundle_mode', {
-          size_bytes: bundle.bundleSizeBytes,
-          scope: bundle.scope as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-          has_wip: bundle.hasWip,
-          reason: 'explicit_env_bundle' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-        });
-      } else {
-        const repoInfo = await detectCurrentRepositoryWithHost();
-        if (repoInfo) {
-          gitSource = {
-            type: 'git_repository',
-            url: `https://${repoInfo.host}/${repoInfo.owner}/${repoInfo.name}`,
-            revision: options.branchName
-          };
-        }
+      const repoInfo = await detectCurrentRepositoryWithHost();
+      if (repoInfo) {
+        gitSource = {
+          type: 'git_repository',
+          url: `https://${repoInfo.host}/${repoInfo.owner}/${repoInfo.name}`,
+          revision: options.branchName
+        };
       }
       const requestBody = {
         title: options.title || options.description || 'Remote task',
         events: [],
         session_context: {
           sources: gitSource ? [gitSource] : [],
-          ...(seedBundleFileId && {
-            seed_bundle_file_id: seedBundleFileId
-          }),
           outcomes: [],
           environment_variables: envVars
         },
         environment_id: options.environmentId
       };
-      logForDebugging(`[teleportToRemote] explicit env ${options.environmentId}, ${Object.keys(envVars).length} env vars, ${seedBundleFileId ? `bundle=${seedBundleFileId}` : `source=${gitSource?.url ?? 'none'}@${options.branchName ?? 'default'}`}`);
+      logForDebugging(`[teleportToRemote] explicit env ${options.environmentId}, ${Object.keys(envVars).length} env vars, source=${gitSource?.url ?? 'none'}@${options.branchName ?? 'default'}`);
       const response = await axios.post(url, requestBody, {
         headers,
         signal
@@ -888,21 +830,16 @@ export async function teleportToRemote(options: {
     }
     let gitSource: GitSource | null = null;
     let gitOutcome: GitRepositoryOutcome | null = null;
-    let seedBundleFileId: string | null = null;
-
-    // Source selection ladder: GitHub clone (if CCR can actually pull it) →
-    // bundle fallback (if .git exists) → empty sandbox.
+    // Source selection ladder: GitHub clone (if remote can actually pull it)
+    // → empty sandbox.
     //
     // The preflight is the same code path the container's git-proxy clone
     // will hit (get_github_client_with_user_auth → no_sync_user_token_found).
     // 50% of users who reach the "install GitHub App" step never finish it;
     // without the preflight, every one of them gets a container that 401s
-    // on clone. With it, they silently fall back to bundle.
+    // on clone. With it, remote creation can fail early or continue with the
+    // backend's real auth error.
     //
-    // CCR_FORCE_BUNDLE=1 skips the preflight entirely — useful for testing
-    // or when you know your GitHub auth is busted. Read here (not in the
-    // caller) so it works for remote-agent too, not just --remote.
-
     const repoInfo = await detectCurrentRepositoryWithHost();
 
     // Generate title and branch name for the session. Skip the Haiku call
@@ -922,17 +859,12 @@ export async function teleportToRemote(options: {
     // Only checked for github.com — GHES needs ghe_configuration_id which
     // we don't have, and GHES users are power users who probably finished
     // setup. For them (and for non-GitHub hosts that parseGitRemote
-    // somehow accepted), fall through optimistically; if the backend
-    // rejects the host, bundle next time.
+    // somehow accepted), fall through optimistically and let the backend
+    // report the real error.
     let ghViable = false;
-    let sourceReason: 'github_preflight_ok' | 'ghes_optimistic' | 'github_preflight_failed' | 'no_github_remote' | 'forced_bundle' | 'no_git_at_all' = 'no_git_at_all';
+    let sourceReason: 'github_preflight_ok' | 'ghes_optimistic' | 'github_preflight_failed' | 'no_github_remote' | 'no_git_at_all' = 'no_git_at_all';
 
-    // gitRoot gates both bundle creation and the gate check itself — no
-    // point awaiting GrowthBook when there's nothing to bundle.
-    const gitRoot = findGitRoot(getCwd());
-    const forceBundle = !options.skipBundle && isEnvTruthy(process.env.CCR_FORCE_BUNDLE);
-    const bundleSeedGateOn = !options.skipBundle && gitRoot !== null && (isEnvTruthy(process.env.CCR_ENABLE_BUNDLE) || (await checkGate_CACHED_OR_BLOCKING('tengu_ccr_bundle_seed_enabled')));
-    if (repoInfo && !forceBundle) {
+    if (repoInfo) {
       if (repoInfo.host === 'github.com') {
         ghViable = await checkGithubAppInstalled(repoInfo.owner, repoInfo.name, signal);
         sourceReason = ghViable ? 'github_preflight_ok' : 'github_preflight_failed';
@@ -940,15 +872,11 @@ export async function teleportToRemote(options: {
         ghViable = true;
         sourceReason = 'ghes_optimistic';
       }
-    } else if (forceBundle) {
-      sourceReason = 'forced_bundle';
-    } else if (gitRoot) {
-      sourceReason = 'no_github_remote';
     }
 
-    // Preflight failed but bundle is off — fall through optimistically like
-    // pre-preflight behavior. Backend reports the real auth error.
-    if (!ghViable && !bundleSeedGateOn && repoInfo) {
+    // Preflight failed — fall through optimistically like pre-preflight
+    // behavior. Backend reports the real auth error.
+    if (!ghViable && repoInfo) {
       ghViable = true;
     }
     if (ghViable && repoInfo) {
@@ -983,61 +911,11 @@ export async function teleportToRemote(options: {
       };
     }
 
-    // Bundle fallback. Only try bundle if GitHub wasn't viable, the gate is
-    // on, and there's a .git/ to bundle from. Reaching here with
-    // ghViable=false and repoInfo non-null means the preflight failed —
-    // .git definitely exists (detectCurrentRepositoryWithHost read the
-    // remote from it).
-    if (!gitSource && bundleSeedGateOn) {
-      logForDebugging(`[teleportToRemote] Bundling (reason: ${sourceReason})`);
-      const bundle = await createAndUploadGitBundle({
-        bearerToken: accessToken,
-        sessionId: getSessionId(),
-        baseUrl: getApiBaseUrl()
-      }, {
-        signal
-      });
-      if (!bundle.success) {
-        logError(new Error(`Bundle upload failed: ${bundle.error}`));
-        // Only steer users to GitHub setup when there's a remote to clone from.
-        const setup = repoInfo ? '. Please setup GitHub on https://claude.ai/code' : '';
-        let msg: string;
-        switch (bundle.failReason) {
-          case 'empty_repo':
-            msg = 'Repository has no commits — run `git add . && git commit -m "initial"` then retry';
-            break;
-          case 'too_large':
-            msg = `Repo is too large to teleport${setup}`;
-            break;
-          case 'git_error':
-            msg = `Failed to create git bundle (${bundle.error})${setup}`;
-            break;
-          case undefined:
-            msg = `Bundle upload failed: ${bundle.error}${setup}`;
-            break;
-          default:
-            {
-              const _exhaustive: never = bundle.failReason;
-              void _exhaustive;
-              msg = `Bundle upload failed: ${bundle.error}`;
-            }
-        }
-        options.onBundleFail?.(msg);
-        return null;
-      }
-      seedBundleFileId = bundle.fileId;
-      logEvent('tengu_teleport_bundle_mode', {
-        size_bytes: bundle.bundleSizeBytes,
-        scope: bundle.scope as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-        has_wip: bundle.hasWip,
-        reason: sourceReason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-      });
-    }
     logEvent('tengu_teleport_source_decision', {
       reason: sourceReason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      path: (gitSource ? 'github' : seedBundleFileId ? 'bundle' : 'empty') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      path: (gitSource ? 'github' : 'empty') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
-    if (!gitSource && !seedBundleFileId) {
+    if (!gitSource) {
       logForDebugging('[teleportToRemote] No repository detected — session will have an empty sandbox');
     }
 
@@ -1092,9 +970,6 @@ export async function teleportToRemote(options: {
     };
     const sessionContext = {
       sources: gitSource ? [gitSource] : [],
-      ...(seedBundleFileId && {
-        seed_bundle_file_id: seedBundleFileId
-      }),
       outcomes: gitOutcome ? [gitOutcome] : [],
       model: options.model ?? getMainLoopModel(),
       ...(options.reuseOutcomeBranch && {

@@ -1,8 +1,6 @@
 import type { SDKMessage } from 'src/entrypoints/agentSdkTypes.js'
-import { checkGate_CACHED_OR_BLOCKING } from '../../../services/analytics/growthbook.js'
 import { isPolicyAllowed } from '../../../services/policyLimits/index.js'
 import { detectCurrentRepositoryWithHost } from '../../detectRepository.js'
-import { isEnvTruthy } from '../../envUtils.js'
 import type { TodoList } from '../../todo/types.js'
 import {
   checkGithubAppInstalled,
@@ -42,11 +40,7 @@ export type BackgroundRemoteSessionPrecondition =
  *
  * @returns Array of failed preconditions
  */
-export async function checkBackgroundRemoteSessionEligibility({
-  skipBundle = false,
-}: {
-  skipBundle?: boolean
-} = {}): Promise<BackgroundRemoteSessionPrecondition[]> {
+export async function checkBackgroundRemoteSessionEligibility(): Promise<BackgroundRemoteSessionPrecondition[]> {
   const errors: BackgroundRemoteSessionPrecondition[] = []
 
   // Check policy first - if blocked, no need to check other preconditions
@@ -69,19 +63,8 @@ export async function checkBackgroundRemoteSessionEligibility({
     errors.push({ type: 'no_remote_environment' })
   }
 
-  // When bundle seeding is on, in-git-repo is enough — CCR can seed from
-  // a local bundle. No GitHub remote or app needed. Same gate as
-  // teleport.tsx bundleSeedGateOn.
-  const bundleSeedGateOn =
-    !skipBundle &&
-    (isEnvTruthy(process.env.CCR_FORCE_BUNDLE) ||
-      isEnvTruthy(process.env.CCR_ENABLE_BUNDLE) ||
-      (await checkGate_CACHED_OR_BLOCKING('tengu_ccr_bundle_seed_enabled')))
-
   if (!checkIsInGitRepo()) {
     errors.push({ type: 'not_in_git_repo' })
-  } else if (bundleSeedGateOn) {
-    // has .git/, bundle will work — skip remote+app checks
   } else if (repository === null) {
     errors.push({ type: 'no_git_remote' })
   } else if (repository.host === 'github.com') {

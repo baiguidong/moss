@@ -121,14 +121,8 @@ export type RemoteAgentPreconditionResult = {
 /**
  * Check eligibility for creating a remote agent session.
  */
-export async function checkRemoteAgentEligibility({
-  skipBundle = false
-}: {
-  skipBundle?: boolean;
-} = {}): Promise<RemoteAgentPreconditionResult> {
-  const errors = await checkBackgroundRemoteSessionEligibility({
-    skipBundle
-  });
+export async function checkRemoteAgentEligibility(): Promise<RemoteAgentPreconditionResult> {
+  const errors = await checkBackgroundRemoteSessionEligibility();
   if (errors.length > 0) {
     return {
       eligible: false,
