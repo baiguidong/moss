@@ -1169,6 +1169,11 @@ function getRemoteDirectWorkspace(settings = desktopSettings) {
   return value || undefined;
 }
 
+function isRemoteDirectSessionNotFoundError(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /\b404\b/.test(message) && /\bSession not found\b/i.test(message);
+}
+
 function parseRemoteDirectServerInput(raw) {
   if (raw.startsWith('cc+unix://')) {
     throw new Error('Unix domain socket direct-connect is not supported by the desktop client yet.');
@@ -1450,31 +1455,45 @@ function createRemoteDirectRuntime({
       let created;
 
       if (sessionRecord.underlyingSessionId) {
-        const remoteSession = await fetchRemoteDirectSessionInfo({
-          serverUrl,
-          authToken,
-          sessionId: sessionRecord.underlyingSessionId,
-        });
-        const desiredState = typeof remoteSession?.session?.desiredState === 'string'
-          ? remoteSession.session.desiredState
-          : 'active';
+        try {
+          const remoteSession = await fetchRemoteDirectSessionInfo({
+            serverUrl,
+            authToken,
+            sessionId: sessionRecord.underlyingSessionId,
+          });
+          const desiredState = typeof remoteSession?.session?.desiredState === 'string'
+            ? remoteSession.session.desiredState
+            : 'active';
 
-        created = desiredState === 'active'
-          ? await mod.attachDirectConnectSession({
-              serverUrl,
-              authToken,
-              sessionId: sessionRecord.underlyingSessionId,
-            })
-          : await resumeRemoteDirectSession({
-              serverUrl,
-              authToken,
-              sessionId: sessionRecord.underlyingSessionId,
-            });
-      } else {
+          created = desiredState === 'active'
+            ? await mod.attachDirectConnectSession({
+                serverUrl,
+                authToken,
+                sessionId: sessionRecord.underlyingSessionId,
+              })
+            : await resumeRemoteDirectSession({
+                serverUrl,
+                authToken,
+                sessionId: sessionRecord.underlyingSessionId,
+              });
+        } catch (error) {
+          if (!isRemoteDirectSessionNotFoundError(error)) {
+            throw error;
+          }
+          mossLog('warn', 'session', 'Remote Direct session missing on send', {
+            sessionId: sessionRecord.id,
+            underlyingSessionId: sessionRecord.underlyingSessionId,
+          });
+          sessionRecord.underlyingSessionId = null;
+          sessionRecord.historyLoadedFromSource = false;
+        }
+      }
+
+      if (!created) {
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
-          cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || undefined,
+          cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || sessionRecord.workspace || undefined,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
         });
@@ -2314,11 +2333,28 @@ async function loadSessionHistoryFromSource(sessionRecord) {
 
   if (sessionRecord.agentMode === 'remote-direct') {
     const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-    const context = await fetchRemoteDirectSessionContext({
-      serverUrl,
-      authToken,
-      sessionId: sessionRecord.underlyingSessionId,
-    });
+    let context;
+    try {
+      context = await fetchRemoteDirectSessionContext({
+        serverUrl,
+        authToken,
+        sessionId: sessionRecord.underlyingSessionId,
+      });
+    } catch (error) {
+      if (!isRemoteDirectSessionNotFoundError(error)) {
+        throw error;
+      }
+      mossLog('warn', 'session', 'Remote Direct session missing on server', {
+        sessionId: sessionRecord.id,
+        underlyingSessionId: sessionRecord.underlyingSessionId,
+      });
+      sessionRecord.underlyingSessionId = null;
+      sessionRecord.historyLoadedFromSource = true;
+      sessionRecord.resumeReadOnlyReason = null;
+      schedulePersistSession(sessionRecord, true);
+      emitSessionMeta(sessionRecord);
+      return sessionRecord.history;
+    }
     const history = Array.isArray(context?.context?.messages) ? context.context.messages : [];
     syncSessionRecordHistory(sessionRecord, history, {
       sessionId: typeof context?.session?.sessionId === 'string'
