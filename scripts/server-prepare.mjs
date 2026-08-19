@@ -47,6 +47,14 @@ async function main() {
     join(binDir, 'moss-server.mjs'),
   )
   await copyFileIntoServerHome(
+    join(repoRoot, 'bin', 'moss-session-runner.mjs'),
+    join(binDir, 'moss-session-runner.mjs'),
+  )
+  await copyFileIntoServerHome(
+    join(repoRoot, 'bin', 'agent-runtime.mjs'),
+    join(binDir, 'agent-runtime.mjs'),
+  )
+  await copyFileIntoServerHome(
     join(repoRoot, 'bin', 'cli-node.js'),
     join(binDir, 'cli-node.js'),
   )
@@ -63,6 +71,8 @@ async function main() {
 
   console.log(`\nPrepared Moss server runtime at ${serverHome}`)
   console.log(`  ${join(binDir, 'moss-server.mjs')}`)
+  console.log(`  ${join(binDir, 'moss-session-runner.mjs')}`)
+  console.log(`  ${join(binDir, 'agent-runtime.mjs')}`)
   console.log(`  ${join(binDir, 'cli-node.js')}`)
   console.log(`  ${adminDistDir}`)
 }

@@ -29,9 +29,9 @@ function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function resolveServerEntryPath(): string {
+function resolveRunnerEntryPath(): string {
   const candidates = [
-    join(MOSS_SERVER_HOME, 'bin', 'moss-server.mjs'),
+    join(MOSS_SERVER_HOME, 'bin', 'moss-session-runner.mjs'),
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
@@ -39,7 +39,7 @@ function resolveServerEntryPath(): string {
     }
   }
   throw new Error(
-    `Missing moss-server.mjs. Build or install it to ${join(MOSS_SERVER_HOME, 'bin')}.`,
+    `Missing moss-session-runner.mjs. Build or install it to ${join(MOSS_SERVER_HOME, 'bin')}.`,
   )
 }
 
@@ -410,8 +410,8 @@ export class RuntimeService {
     const manifestPath = join(attemptDir, 'manifest.json')
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
-    const serverEntryPath = resolveServerEntryPath()
-    const child = spawn(process.execPath, [serverEntryPath, 'session-runner', manifestPath], {
+    const runnerEntryPath = resolveRunnerEntryPath()
+    const child = spawn(process.execPath, [runnerEntryPath, manifestPath], {
       detached: true,
       stdio: 'ignore',
       cwd: session.cwd,

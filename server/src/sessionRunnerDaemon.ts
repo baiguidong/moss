@@ -266,6 +266,7 @@ export class SessionRunnerDaemon {
         resumeSessionId: this.manifest.session.resumeFromTranscript
           ? this.manifest.session.transcriptSessionId
           : undefined,
+        transcriptPath: this.manifest.session.transcriptPath,
         cwd: this.manifest.session.cwd,
         dangerouslySkipPermissions: this.manifest.session.dangerouslySkipPermissions,
         userId: this.manifest.session.userId,

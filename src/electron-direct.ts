@@ -193,6 +193,7 @@ export type DesktopPermissionDecision =
 export type DesktopPermissionRequest = {
   suggestions?: PermissionUpdate[]
   blockedPath?: string
+  toolUseId?: string
 }
 
 async function defaultDesktopPermissionRequest(
@@ -632,6 +633,7 @@ export class ClaudeSession {
       const decision = await onPermissionRequest(tool.name, requestInput, {
         suggestions: permissionDecision.suggestions,
         blockedPath: permissionDecision.blockedPath,
+        toolUseId: id,
       })
 
       if (

@@ -4,7 +4,8 @@
 
 ## Overview
 
-统一后的 server 只有一个进程、一个端口、一个 base URL、一个 SQLite 数据库连接。
+统一后的 server 对外只有一个主进程、一个端口、一个 base URL、一个 SQLite 数据库连接。
+每个 active session 会有独立 runner 进程承接 Agent runtime。
 
 它同时提供：
 
@@ -27,6 +28,8 @@
 prepare 会把随代码变化的运行产物复制到 server root：
 
 - `~/.moss/server/bin/moss-server.mjs`
+- `~/.moss/server/bin/moss-session-runner.mjs`
+- `~/.moss/server/bin/agent-runtime.mjs`
 - `~/.moss/server/bin/cli-node.js`
 - `~/.moss/server/admin/dist/`
 
@@ -47,11 +50,14 @@ prepare 会把随代码变化的运行产物复制到 server root：
 bun run server:prepare
 ```
 
-服务端运行 session 时会调用 `MOSS_SERVER_HOME/bin/cli-node.js`。该文件是
-Agent runtime 的独立进程边界，由 `server:prepare` 构建并复制。
-每个 session 仍会有独立 runner 进程，但 runner 入口是
-`MOSS_SERVER_HOME/bin/moss-server.mjs session-runner <manifest>`，不需要额外的
-runner bin 文件。
+服务端 host session 使用独立 runner 进程承接交互：
+`MOSS_SERVER_HOME/bin/moss-session-runner.mjs <manifest>`。
+runner 进程会加载 `MOSS_SERVER_HOME/bin/agent-runtime.mjs`，这是和桌面端
+`electron-direct.mjs` 同源的 Agent runtime；host 模式不再额外启动
+`cli-node.js` 子进程。
+
+`MOSS_SERVER_HOME/bin/cli-node.js` 仍由 `server:prepare` 构建并复制，当前主要
+保留给 docker runtime fallback 和手工诊断使用。
 
 默认配置文件：
 

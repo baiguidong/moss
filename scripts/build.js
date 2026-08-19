@@ -150,3 +150,14 @@ build('bin/moss-session-runner.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-session-runner.mjs')
+
+// bin/agent-runtime.mjs（server host runner 内嵌的 Agent runtime）
+build('bin/agent-runtime.mjs', [
+  'build', 'src/electron-direct.ts',
+  '--outfile=bin/agent-runtime.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])
+sanitizePaths('bin/agent-runtime.mjs')

@@ -518,9 +518,15 @@ export class DirectConnectStore {
     const ts = now()
     this.db.prepare(`
       UPDATE sessions
-      SET status = ?, desired_state = ?, last_active_at = ?
+      SET status = ?,
+          desired_state = ?,
+          last_active_at = ?,
+          ended_at = CASE
+            WHEN ? IN ('creating', 'active', 'detached', 'lost') THEN NULL
+            ELSE ended_at
+          END
       WHERE session_id = ?
-    `).run(status, desiredState, ts, sessionId)
+    `).run(status, desiredState, ts, status, sessionId)
   }
 
   markSessionEnded(

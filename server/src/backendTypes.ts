@@ -8,6 +8,7 @@ export type { SessionRuntimeInfo, SessionRuntimeOptions }
 export type BackendSpawnOptions = {
   sessionId: string
   resumeSessionId?: string
+  transcriptPath?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
   userId?: string

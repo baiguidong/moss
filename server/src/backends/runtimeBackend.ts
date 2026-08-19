@@ -4,7 +4,7 @@ import type {
   SessionBackend,
   SessionRuntimeOptions,
 } from '../backendTypes.js'
-import { DangerousBackend } from './dangerousBackend.js'
+import { DirectEmbeddedBackend } from './directEmbeddedBackend.js'
 import { DockerBackend } from './dockerBackend.js'
 
 type RuntimeBackendOptions = {
@@ -23,7 +23,7 @@ export class RuntimeBackend implements SessionBackend {
   readonly #defaultRuntime: SessionRuntimeOptions
 
   constructor(options: RuntimeBackendOptions = {}) {
-    this.#hostBackend = new DangerousBackend()
+    this.#hostBackend = new DirectEmbeddedBackend()
     this.#dockerBackend = new DockerBackend(options.docker)
     this.#defaultRuntime = options.defaultRuntime ?? { type: 'host' }
   }
