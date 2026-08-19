@@ -350,6 +350,7 @@ export class AuthService {
       departmentId,
       role,
       status: 'active',
+      tokenLimit: null,
       createdAt,
       passwordHash: hashPassword(input.password),
       passwordUpdatedAt: createdAt,
@@ -598,6 +599,7 @@ export class AuthService {
       orgId: input.orgId,
       parentId,
       name,
+      tokenLimit: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     }

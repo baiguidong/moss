@@ -3,7 +3,7 @@ import type {
   BackendSpawnOptions,
   SessionBackend,
   SessionRuntimeOptions,
-} from '../sessionManager.js'
+} from '../backendTypes.js'
 import { DangerousBackend } from './dangerousBackend.js'
 import { DockerBackend } from './dockerBackend.js'
 

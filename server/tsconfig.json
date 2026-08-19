@@ -1,8 +1,12 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
+    "ignoreDeprecations": "5.0",
     "types": ["node"]
   },
   "include": ["src/**/*", "../packages/direct-connect-protocol/src/**/*"],
-  "exclude": ["src/__tests__/**/*"]
+  "exclude": [
+    "src/__tests__/**/*",
+    "../packages/direct-connect-protocol/src/__tests__/**/*"
+  ]
 }

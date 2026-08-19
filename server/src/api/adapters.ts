@@ -27,7 +27,7 @@ export function createAdaptersApi(db: DatabaseSync) {
       const rows = adapterService.listByUser(orgId, userId)
       const result: Record<string, unknown> = {}
       for (const row of rows) {
-        const config = JSON.parse(row.config_json) as Record<string, unknown>
+        const config = JSON.parse(row.configJson) as Record<string, unknown>
         // Mask secrets
         if (row.platform === 'telegram') {
           if (typeof config.botToken === 'string') {

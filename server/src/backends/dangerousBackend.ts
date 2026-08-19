@@ -2,7 +2,7 @@ import type {
   BackendHandle,
   BackendSpawnOptions,
   SessionBackend,
-} from '../sessionManager.js'
+} from '../backendTypes.js'
 import {
   buildSessionEnv,
   createStreamBackendHandle,

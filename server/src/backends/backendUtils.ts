@@ -8,7 +8,7 @@ import type {
   BackendHandle,
   BackendSpawnOptions,
   SessionRuntimeInfo,
-} from '../sessionManager.js'
+} from '../backendTypes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -71,6 +71,8 @@ export function createStreamBackendHandle(
   if (!child.stdin || !child.stdout) {
     throw new Error('Failed to start direct-connect child process')
   }
+  const stdin = child.stdin
+  const stdout = child.stdout
 
   const stdoutListeners = new Set<(line: string) => void>()
   const stderrListeners = new Set<(line: string) => void>()
@@ -78,7 +80,7 @@ export function createStreamBackendHandle(
     (code: number | null, signal: NodeJS.Signals | null) => void
   >()
 
-  const stdoutRl = createInterface({ input: child.stdout })
+  const stdoutRl = createInterface({ input: stdout })
   stdoutRl.on('line', line => {
     const payload = `${line}\n`
     for (const listener of stdoutListeners) {
@@ -116,8 +118,8 @@ export function createStreamBackendHandle(
     workDir: options.cwd,
     runtime,
     writeStdin(data: string) {
-      if (!child.stdin?.destroyed) {
-        child.stdin.write(data)
+      if (!stdin.destroyed) {
+        stdin.write(data)
       }
     },
     interrupt() {

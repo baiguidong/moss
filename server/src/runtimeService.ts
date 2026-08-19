@@ -280,8 +280,9 @@ export class RuntimeService {
     if (!attempt.attachPath) {
       throw new Error('Attempt has no attach path')
     }
+    const attachPath = attempt.attachPath
     return await new Promise<net.Socket>((resolve, reject) => {
-      const socket = net.createConnection(attempt.attachPath)
+      const socket = net.createConnection(attachPath)
       socket.once('connect', () => resolve(socket))
       socket.once('error', reject)
     })

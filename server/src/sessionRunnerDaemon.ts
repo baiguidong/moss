@@ -7,7 +7,7 @@ import { getTranscriptPath } from './runtimePaths.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import type { RunnerClientMessage, RunnerServerMessage } from './runnerProtocol.js'
 import type { RunnerManifest } from './types.js'
-import type { BackendHandle } from './sessionManager.js'
+import type { BackendHandle } from './backendTypes.js'
 
 type SocketWithBuffer = net.Socket & {
   __buffer?: string

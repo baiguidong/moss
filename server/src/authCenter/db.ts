@@ -328,13 +328,16 @@ export class AuthCenterDb {
   // Department operations
   createDepartment(department: AuthCenterDepartment): void {
     this.db.prepare(`
-      INSERT INTO departments (id, org_id, parent_id, name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO departments (
+        id, org_id, parent_id, name, token_limit, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       department.id,
       department.orgId,
       department.parentId,
       department.name,
+      department.tokenLimit,
       department.createdAt,
       department.updatedAt,
     )
@@ -399,9 +402,11 @@ export class AuthCenterDb {
   // User operations
   createUser(user: AuthCenterUser): void {
     this.db.prepare(`
-      INSERT INTO users (id, org_id, email, name, department_id, role, status, password_hash,
-                         password_updated_at, last_login_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (
+        id, org_id, email, name, department_id, role, status, token_limit,
+        password_hash, password_updated_at, last_login_at, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.id,
       user.orgId,
@@ -410,6 +415,7 @@ export class AuthCenterDb {
       user.departmentId,
       user.role,
       user.status,
+      user.tokenLimit,
       user.passwordHash,
       user.passwordUpdatedAt,
       user.lastLoginAt,
@@ -618,6 +624,7 @@ export class AuthCenterDb {
         departmentId: null,
         role: 'admin',
         status: 'active',
+        tokenLimit: null,
         createdAt: now(),
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),
@@ -684,6 +691,7 @@ export class AuthCenterDb {
         departmentId: null,
         role: 'admin',
         status: 'active',
+        tokenLimit: null,
         createdAt: now(),
         passwordHash: hashPassword(resolvedAdmin.password),
         passwordUpdatedAt: now(),

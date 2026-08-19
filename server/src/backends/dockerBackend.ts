@@ -9,7 +9,7 @@ import type {
   SessionBackend,
   SessionRuntimeInfo,
   SessionRuntimeOptions,
-} from '../sessionManager.js'
+} from '../backendTypes.js'
 import {
   buildSessionEnv,
   createStreamBackendHandle,

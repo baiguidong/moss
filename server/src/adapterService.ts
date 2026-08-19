@@ -7,6 +7,9 @@
 
 import type { DatabaseSync } from 'node:sqlite'
 
+type SqlRow = Record<string, unknown>
+type AdapterPlatform = 'telegram' | 'feishu'
+
 export type PairedUser = {
   userId: string | number
   displayName: string
@@ -17,7 +20,7 @@ export type AdapterConfigRow = {
   id: string
   orgId: string
   userId: string
-  platform: 'telegram' | 'feishu'
+  platform: AdapterPlatform
   configJson: string
   enabled: boolean
   createdAt: number
@@ -43,6 +46,19 @@ export type FeishuPartialConfig = {
 }
 
 type PlatformConfig = TelegramPartialConfig | FeishuPartialConfig
+
+function mapAdapterConfigRow(row: SqlRow): AdapterConfigRow {
+  return {
+    id: String(row.id),
+    orgId: String(row.orgId),
+    userId: String(row.userId),
+    platform: row.platform === 'feishu' ? 'feishu' : 'telegram',
+    configJson: typeof row.configJson === 'string' ? row.configJson : '{}',
+    enabled: Boolean(row.enabled),
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  }
+}
 
 function maskSecret(value: string | undefined): string | undefined {
   if (!value) return value
@@ -92,7 +108,7 @@ export class AdapterService {
   }
 
   /** Get config for a specific user+platform, returns null if not found */
-  get(orgId: string, userId: string, platform: 'telegram' | 'feishu'): PlatformConfig | null {
+  get(orgId: string, userId: string, platform: AdapterPlatform): PlatformConfig | null {
     const row = this.db.prepare(
       'SELECT config_json FROM adapter_configs WHERE org_id = ? AND user_id = ? AND platform = ?'
     ).get(orgId, userId, platform) as { config_json: string } | undefined
@@ -102,7 +118,7 @@ export class AdapterService {
   }
 
   /** Get masked config for API responses (secrets hidden) */
-  getMasked(orgId: string, userId: string, platform: 'telegram' | 'feishu'): PlatformConfig | null {
+  getMasked(orgId: string, userId: string, platform: AdapterPlatform): PlatformConfig | null {
     const config = this.get(orgId, userId, platform)
     if (!config) return null
     return this.maskConfig(config, platform)
@@ -111,21 +127,41 @@ export class AdapterService {
   /** Get all adapter configs for an org */
   listByOrg(orgId: string): AdapterConfigRow[] {
     const rows = this.db.prepare(
-      'SELECT id, org_id, user_id, platform, config_json, enabled, created_at, updated_at FROM adapter_configs WHERE org_id = ? ORDER BY user_id, platform'
-    ).all(orgId) as AdapterConfigRow[]
-    return rows
+      `SELECT id,
+              org_id AS orgId,
+              user_id AS userId,
+              platform,
+              config_json AS configJson,
+              enabled,
+              created_at AS createdAt,
+              updated_at AS updatedAt
+       FROM adapter_configs
+       WHERE org_id = ?
+       ORDER BY user_id, platform`
+    ).all(orgId) as SqlRow[]
+    return rows.map(mapAdapterConfigRow)
   }
 
   /** Get all adapter configs for a user */
   listByUser(orgId: string, userId: string): AdapterConfigRow[] {
     const rows = this.db.prepare(
-      'SELECT id, org_id, user_id, platform, config_json, enabled, created_at, updated_at FROM adapter_configs WHERE org_id = ? AND user_id = ? ORDER BY platform'
-    ).all(orgId, userId) as AdapterConfigRow[]
-    return rows
+      `SELECT id,
+              org_id AS orgId,
+              user_id AS userId,
+              platform,
+              config_json AS configJson,
+              enabled,
+              created_at AS createdAt,
+              updated_at AS updatedAt
+       FROM adapter_configs
+       WHERE org_id = ? AND user_id = ?
+       ORDER BY platform`
+    ).all(orgId, userId) as SqlRow[]
+    return rows.map(mapAdapterConfigRow)
   }
 
   /** Upsert config for a user+platform */
-  upsert(orgId: string, userId: string, platform: 'telegram' | 'feishu', patch: PlatformConfig): PlatformConfig {
+  upsert(orgId: string, userId: string, platform: AdapterPlatform, patch: PlatformConfig): PlatformConfig {
     const now = Date.now()
     const existing = this.get(orgId, userId, platform)
     const current = existing ?? {}
@@ -166,7 +202,7 @@ export class AdapterService {
   }
 
   /** Delete config for a user+platform */
-  delete(orgId: string, userId: string, platform: 'telegram' | 'feishu'): boolean {
+  delete(orgId: string, userId: string, platform: AdapterPlatform): boolean {
     const result = this.db.prepare(
       'DELETE FROM adapter_configs WHERE org_id = ? AND user_id = ? AND platform = ?'
     ).run(orgId, userId, platform)
@@ -174,14 +210,14 @@ export class AdapterService {
   }
 
   /** Set enabled status */
-  setEnabled(orgId: string, userId: string, platform: 'telegram' | 'feishu', enabled: boolean): boolean {
+  setEnabled(orgId: string, userId: string, platform: AdapterPlatform, enabled: boolean): boolean {
     const result = this.db.prepare(
       'UPDATE adapter_configs SET enabled = ?, updated_at = ? WHERE org_id = ? AND user_id = ? AND platform = ?'
     ).run(enabled ? 1 : 0, Date.now(), orgId, userId, platform)
     return result.changes > 0
   }
 
-  private maskConfig(config: PlatformConfig, platform: 'telegram' | 'feishu'): PlatformConfig {
+  private maskConfig(config: PlatformConfig, platform: AdapterPlatform): PlatformConfig {
     if (platform === 'telegram') {
       const tg = { ...config as TelegramPartialConfig }
       if (tg.botToken) tg.botToken = maskSecret(tg.botToken)

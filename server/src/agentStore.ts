@@ -751,7 +751,7 @@ export async function fetchAgentHubSkillDetailsByIds(
   }
 
   const details = await Promise.all(
-    normalizedIds.map(async skillId => {
+    normalizedIds.map(async (skillId): Promise<Record<string, unknown> | null> => {
       try {
         const detail = await fetchSkillHubSkillDetail(skillId)
         if (!detail) return null
