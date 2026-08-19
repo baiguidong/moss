@@ -15,7 +15,7 @@ import type {
   SessionStatus,
   SessionSummary,
 } from './types.js'
-import type { SessionRuntimeInfo } from './sessionManager.js'
+import type { SessionRuntimeInfo } from './backendTypes.js'
 
 type SqlRow = Record<string, unknown>
 export type ReportEventKind =
@@ -23,6 +23,9 @@ export type ReportEventKind =
   | 'telemetry_metrics'
   | 'feedback'
   | 'transcript'
+  | 'bootstrap'
+  | 'remote_settings'
+  | 'policy_limits'
 
 export type ReportEventRecord = {
   reportId: string

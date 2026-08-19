@@ -129,8 +129,13 @@ Authorization: Bearer <access_token>
 - `POST /api/v1/telemetry/metrics`
 - `POST /api/v1/feedback`
 - `POST /api/v1/transcripts/share`
+- `GET /api/v1/bootstrap`
+- `GET /api/v1/settings/remote-managed`
+- `GET /api/v1/policy-limits`
 
 写入后会返回生成的 `report_id`，`feedback` 返回 `feedback_id`，`transcript` 返回 `transcript_id`。
+
+配置类读取接口当前返回空配置/空策略，同时记录一次读取事件，便于后续从 Admin UI 观察客户端实际调用情况。
 
 ### GET `/api/v1/reports/summary`
 
@@ -161,7 +166,7 @@ Response:
 
 Query:
 
-- `kind`: 可选，`telemetry_event` / `telemetry_metrics` / `feedback` / `transcript`
+- `kind`: 可选，`telemetry_event` / `telemetry_metrics` / `feedback` / `transcript` / `bootstrap` / `remote_settings` / `policy_limits`
 - `user_id`: 可选
 - `from`: 可选，毫秒时间戳
 - `to`: 可选，毫秒时间戳
@@ -190,6 +195,42 @@ Response:
 ### GET `/api/v1/reports/events/:report_id`
 
 查看单条原始上报数据。
+
+### GET `/api/v1/bootstrap`
+
+返回客户端启动配置。当前为兼容空实现：
+
+```json
+{
+  "client_data": null,
+  "additional_model_options": [],
+  "report_id": "uuid"
+}
+```
+
+### GET `/api/v1/settings/remote-managed`
+
+返回远程托管 settings。当前为兼容空实现：
+
+```json
+{
+  "uuid": "org-id:default",
+  "checksum": "sha256:...",
+  "settings": {},
+  "report_id": "uuid"
+}
+```
+
+### GET `/api/v1/policy-limits`
+
+返回组织策略限制。当前为兼容空实现：
+
+```json
+{
+  "restrictions": {},
+  "report_id": "uuid"
+}
+```
 
 ### GET `/healthz`
 

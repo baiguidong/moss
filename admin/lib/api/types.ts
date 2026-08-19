@@ -186,6 +186,9 @@ export type ReportEventKind =
   | 'telemetry_metrics'
   | 'feedback'
   | 'transcript'
+  | 'bootstrap'
+  | 'remote_settings'
+  | 'policy_limits'
 
 export interface ReportEventSummary {
   kind: ReportEventKind

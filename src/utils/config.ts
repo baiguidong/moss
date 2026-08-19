@@ -482,14 +482,6 @@ export type GlobalConfig = {
   // Additional model options for the model picker (fetched during bootstrap).
   additionalModelOptionsCache?: ModelOption[]
 
-  // Disk cache for Moss server metrics enablement.
-  // Org-level settings change rarely; persisting across processes avoids
-  // recomputing the local status on every headless invocation.
-  metricsStatusCache?: {
-    enabled: boolean
-    timestamp: number
-  }
-
   // Version of the last-applied migration set. When equal to
   // CURRENT_MIGRATION_VERSION, runMigrations() skips all sync migrations
   // (avoiding 11× saveGlobalConfig lock+re-read on every startup).

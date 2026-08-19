@@ -151,6 +151,9 @@ async function loadRawTranscriptJsonl(): Promise<string | null> {
     return null;
   }
 }
+function isMossFeedbackConfigured(): boolean {
+  return !isEssentialTrafficOnly() && Boolean(getMossServerApiUrl('/api/v1/feedback')) && Object.keys(getMossServerAuthHeaders()).length > 0;
+}
 export function Feedback({
   abortSignal,
   messages,
@@ -172,6 +175,7 @@ export function Feedback({
   });
   const [title, setTitle] = useState<string | null>(null);
   const textInputColumns = useTerminalSize().columns - 4;
+  const isServerFeedbackConfigured = isMossFeedbackConfigured();
   useEffect(() => {
     async function loadEnvInfo() {
       const isGit = await getIsGit();
@@ -197,6 +201,17 @@ export function Feedback({
     // Extract last assistant message ID from messages array
     const lastAssistantMessage = getLastAssistantMessage(messages);
     const lastAssistantMessageId = lastAssistantMessage?.requestId ?? null;
+    const titlePromise = generateTitle(description, abortSignal);
+
+    if (!isServerFeedbackConfigured) {
+      logForDebugging('Feedback upload skipped: Moss server not configured', {
+        level: 'info'
+      });
+      setTitle(await titlePromise);
+      setStep('done');
+      return;
+    }
+
     const [diskTranscripts, rawTranscriptJsonl] = await Promise.all([loadAllSubagentTranscriptsFromDisk(), loadRawTranscriptJsonl()]);
     const teammateTranscripts = extractTeammateTranscriptsFromTasks(backgroundTasks);
     const subagentTranscripts = {
@@ -222,7 +237,7 @@ export function Feedback({
         rawTranscriptJsonl
       })
     };
-    const [result, t] = await Promise.all([submitFeedback(reportData, abortSignal), generateTitle(description, abortSignal)]);
+    const [result, t] = await Promise.all([submitFeedback(reportData, abortSignal), titlePromise]);
     setTitle(t);
     if (result.success) {
       if (result.feedbackId) {
@@ -247,7 +262,7 @@ export function Feedback({
       // Stay on userInput step so user can retry with their content preserved
       setStep('userInput');
     }
-  }, [description, envInfo.isGit, messages]);
+  }, [abortSignal, backgroundTasks, description, envInfo.isGit, isServerFeedbackConfigured, messages]);
 
   // Handle cancel - this will be called by Dialog's automatic Esc handling
   const handleCancel = useCallback(() => {
@@ -356,13 +371,11 @@ export function Feedback({
                   {!envInfo.gitState.isClean && ', has local changes'}
                 </Text>
               </Text>}
-            <Text>- Current session transcript</Text>
+            {isServerFeedbackConfigured ? <Text>- Current session transcript</Text> : <Text>- No transcript upload; Moss feedback endpoint is not configured</Text>}
           </Box>
           <Box marginTop={1}>
             <Text wrap="wrap" dimColor>
-              We will use your feedback to debug related issues or to improve{' '}
-              Claude Code&apos;s functionality (eg. to reduce the risk of bugs
-              occurring in the future).
+              {isServerFeedbackConfigured ? <>We will use your feedback to debug related issues or to improve Moss functionality (eg. to reduce the risk of bugs occurring in the future).</> : <>This will prepare a local GitHub issue draft only. No feedback payload will be uploaded to a server.</>}
             </Text>
           </Box>
           <Box marginTop={1}>

@@ -35,6 +35,15 @@ export async function submitTranscriptShare(
   appearanceId: string,
 ): Promise<TranscriptShareResult> {
   try {
+    const endpoint = getMossServerApiUrl('/api/v1/transcripts/share')
+    const serverAuthHeaders = getMossServerAuthHeaders()
+    if (!endpoint || Object.keys(serverAuthHeaders).length === 0) {
+      logForDebugging('Transcript sharing skipped: Moss server not configured', {
+        level: 'info',
+      })
+      return { success: false }
+    }
+
     logForDebugging('Collecting transcript for sharing', { level: 'info' })
 
     const transcript = normalizeMessagesForAPI(messages)
@@ -73,13 +82,6 @@ export async function submitTranscriptShare(
     }
 
     const content = redactSensitiveInfo(jsonStringify(data))
-
-
-    const endpoint = getMossServerApiUrl('/api/v1/transcripts/share')
-    const serverAuthHeaders = getMossServerAuthHeaders()
-    if (!endpoint || Object.keys(serverAuthHeaders).length === 0) {
-      return { success: false }
-    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

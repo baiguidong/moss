@@ -1,11 +1,13 @@
 import http from 'http'
 import net from 'net'
+import { createHash } from 'crypto'
 import { existsSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
 import { dirname, extname, join, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
+import type { SessionRuntimeOptions } from './backendTypes.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
@@ -143,6 +145,9 @@ function parseReportEventKind(value: string | null):
   | 'telemetry_metrics'
   | 'feedback'
   | 'transcript'
+  | 'bootstrap'
+  | 'remote_settings'
+  | 'policy_limits'
   | null {
   if (value === null || value.trim() === '') {
     return null
@@ -151,11 +156,46 @@ function parseReportEventKind(value: string | null):
     value === 'telemetry_event' ||
     value === 'telemetry_metrics' ||
     value === 'feedback' ||
-    value === 'transcript'
+    value === 'transcript' ||
+    value === 'bootstrap' ||
+    value === 'remote_settings' ||
+    value === 'policy_limits'
   ) {
     return value
   }
   throw new HttpError(400, 'Invalid kind query parameter')
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function checksum(value: unknown): string {
+  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
+}
+
+function queryParamsToObject(url: URL): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {}
+  for (const [key, value] of url.searchParams) {
+    const current = result[key]
+    if (current === undefined) {
+      result[key] = value
+    } else if (Array.isArray(current)) {
+      current.push(value)
+    } else {
+      result[key] = [current, value]
+    }
+  }
+  return result
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -233,7 +273,7 @@ function redirect(
   res.end()
 }
 
-function parseRuntimeOptions(body: JsonBody) {
+function parseRuntimeOptions(body: JsonBody): SessionRuntimeOptions | undefined {
   if (typeof body.runtime_type === 'string') {
     return {
       type: body.runtime_type === 'docker' ? 'docker' : 'host',
@@ -577,6 +617,85 @@ export function startServer(
       const auth = authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/bootstrap') {
+        const response = {
+          client_data: null,
+          additional_model_options: [],
+        }
+        const stored = runtime.store.addReportEvent({
+          kind: 'bootstrap',
+          orgId: auth.orgId,
+          userId: auth.userId,
+          source: 'bootstrap',
+          payload: {
+            request: {
+              query: queryParamsToObject(url),
+            },
+            response,
+          },
+        })
+        writeJson(res, 200, {
+          ...response,
+          report_id: stored.reportId,
+        })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/settings/remote-managed') {
+        const settings = {}
+        const response = {
+          uuid: `${auth.orgId}:default`,
+          checksum: checksum(settings),
+          settings,
+        }
+        const stored = runtime.store.addReportEvent({
+          kind: 'remote_settings',
+          orgId: auth.orgId,
+          userId: auth.userId,
+          source: 'remote-managed-settings',
+          payload: {
+            request: {
+              query: queryParamsToObject(url),
+              ifNoneMatch: req.headers['if-none-match'] ?? null,
+            },
+            response,
+          },
+        })
+        writeJson(res, 200, {
+          ...response,
+          report_id: stored.reportId,
+        })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/policy-limits') {
+        const restrictions = {}
+        const response = {
+          restrictions,
+        }
+        const stored = runtime.store.addReportEvent({
+          kind: 'policy_limits',
+          orgId: auth.orgId,
+          userId: auth.userId,
+          source: 'policy-limits',
+          payload: {
+            request: {
+              query: queryParamsToObject(url),
+              ifNoneMatch: req.headers['if-none-match'] ?? null,
+            },
+            response: {
+              ...response,
+              etag: checksum(restrictions),
+            },
+          },
+        })
+        writeJson(res, 200, {
+          ...response,
+          report_id: stored.reportId,
+        })
+        return
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/telemetry/events/batch') {

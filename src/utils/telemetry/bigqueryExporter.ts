@@ -8,7 +8,6 @@ import {
   type ResourceMetrics,
 } from '@opentelemetry/sdk-metrics'
 import axios from 'axios'
-import { checkMetricsEnabled } from 'src/services/api/metricsOptOut.js'
 import {
   getMossServerApiUrl,
   getMossServerAuthHeaders,
@@ -101,14 +100,6 @@ export class BigQueryMetricsExporter implements PushMetricExporter {
       const serverAuthHeaders = getMossServerAuthHeaders()
       if (Object.keys(serverAuthHeaders).length === 0) {
         logForDebugging('BigQuery metrics export: MOSS_SERVER_AUTH_TOKEN not configured, skipping')
-        resultCallback({ code: ExportResultCode.SUCCESS })
-        return
-      }
-
-      // Check organization-level metrics opt-out
-      const metricsStatus = await checkMetricsEnabled()
-      if (!metricsStatus.enabled) {
-        logForDebugging('Metrics export disabled by organization setting')
         resultCallback({ code: ExportResultCode.SUCCESS })
         return
       }

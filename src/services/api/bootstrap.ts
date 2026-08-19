@@ -57,7 +57,12 @@ async function fetchBootstrapAPI(): Promise<BootstrapResponse | null> {
         ...serverAuthHeaders,
       },
       timeout: 5000,
+      validateStatus: status => status === 200 || status === 204 || status === 404,
     })
+    if (response.status === 204 || response.status === 404) {
+      logForDebugging(`[Bootstrap] Disabled by Moss server (${response.status})`)
+      return null
+    }
     const parsed = bootstrapResponseSchema().safeParse(response.data)
     if (!parsed.success) {
       logForDebugging(
@@ -71,7 +76,7 @@ async function fetchBootstrapAPI(): Promise<BootstrapResponse | null> {
     logForDebugging(
       `[Bootstrap] Fetch failed: ${axios.isAxiosError(error) ? (error.response?.status ?? error.code) : 'unknown'}`,
     )
-    throw error
+    return null
   }
 }
 

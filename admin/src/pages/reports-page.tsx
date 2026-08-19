@@ -53,6 +53,9 @@ const REPORT_KIND_OPTIONS: Array<{
   { value: 'telemetry_metrics', label: 'Metrics' },
   { value: 'feedback', label: 'Feedback' },
   { value: 'transcript', label: 'Transcript' },
+  { value: 'bootstrap', label: 'Bootstrap' },
+  { value: 'remote_settings', label: 'Remote Settings' },
+  { value: 'policy_limits', label: 'Policy Limits' },
 ]
 
 const REPORT_KIND_LABELS: Record<ReportEventKind, string> = {
@@ -60,6 +63,9 @@ const REPORT_KIND_LABELS: Record<ReportEventKind, string> = {
   telemetry_metrics: 'Metrics',
   feedback: 'Feedback',
   transcript: 'Transcript',
+  bootstrap: 'Bootstrap',
+  remote_settings: 'Remote Settings',
+  policy_limits: 'Policy Limits',
 }
 
 const REPORT_KIND_BADGE: Record<
@@ -70,6 +76,9 @@ const REPORT_KIND_BADGE: Record<
   telemetry_metrics: 'outline',
   feedback: 'default',
   transcript: 'destructive',
+  bootstrap: 'secondary',
+  remote_settings: 'outline',
+  policy_limits: 'secondary',
 }
 
 function formatTime(value: number | null | undefined): string {
