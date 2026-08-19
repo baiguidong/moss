@@ -22,6 +22,7 @@
 import { mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
+import { getApiBaseUrl } from '../constants/api.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
 import { logForDebugging } from '../utils/debug.js'
 import { isEnvTruthy } from '../utils/envUtils.js'
@@ -118,7 +119,7 @@ export async function initUpstreamProxy(opts?: {
   const baseUrl =
     opts?.ccrBaseUrl ??
     process.env.MOSS_BASE_URL ??
-    'https://api.anthropic.com'
+    getApiBaseUrl()
   const caBundlePath =
     opts?.caBundlePath ?? join(homedir(), '.ccr', 'ca-bundle.crt')
 

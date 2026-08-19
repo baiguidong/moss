@@ -1,11 +1,10 @@
 /**
  * Telemetry for plugin/marketplace fetches that hit the network.
  *
- * Added for inc-5046 (GitHub complained about claude-plugins-official load).
+ * Tracks marketplace/plugin network load so startup fetch regressions are visible.
  * Before this, fetch operations only had logForDebugging — no way to measure
- * actual network volume. This surfaces what's hitting GitHub vs GCS vs
- * user-hosted so we can see the GCS migration take effect and catch future
- * hot-path regressions before GitHub emails us again.
+ * actual network volume. This surfaces what's hitting GitHub vs mirrors vs
+ * user-hosted sources.
  *
  * Volume: these fire at startup (install-counts 24h-TTL)
  * and on explicit user action (install/update). NOT per-interaction. Similar
@@ -16,7 +15,10 @@ import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS as SafeString,
 } from '../../services/analytics/index.js'
-import { OFFICIAL_MARKETPLACE_NAME } from './officialMarketplace.js'
+import {
+  OFFICIAL_MARKETPLACE_NAME,
+  OFFICIAL_MARKETPLACE_SOURCE,
+} from './officialMarketplace.js'
 
 export type PluginFetchSource =
   | 'install_counts'
@@ -68,12 +70,15 @@ function extractHost(urlOrSpec: string): string {
 }
 
 /**
- * True if the URL/spec points at anthropics/claude-plugins-official — the
- * repo GitHub complained about. Lets the dashboard separate "our problem"
- * traffic from user-configured marketplaces.
+ * True if the URL/spec points at the configured official Moss marketplace.
+ * Lets the dashboard separate product-managed traffic from user-configured
+ * marketplaces.
  */
 function isOfficialRepo(urlOrSpec: string): boolean {
-  return urlOrSpec.includes(`anthropics/${OFFICIAL_MARKETPLACE_NAME}`)
+  return (
+    urlOrSpec.includes(OFFICIAL_MARKETPLACE_SOURCE.repo) ||
+    urlOrSpec.includes(OFFICIAL_MARKETPLACE_NAME)
+  )
 }
 
 export function logPluginFetch(

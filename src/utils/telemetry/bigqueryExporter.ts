@@ -9,11 +9,14 @@ import {
 } from '@opentelemetry/sdk-metrics'
 import axios from 'axios'
 import { checkMetricsEnabled } from 'src/services/api/metricsOptOut.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import { checkHasTrustDialogAccepted } from '../config.js'
 import { logForDebugging } from '../debug.js'
 import { errorMessage, toError } from '../errors.js'
-import { getAuthHeaders } from '../http.js'
 import { logError } from '../log.js'
 import { jsonStringify } from '../slowOperations.js'
 import { getClaudeCodeUserAgent } from '../userAgent.js'
@@ -37,24 +40,13 @@ type InternalMetricsPayload = {
 }
 
 export class BigQueryMetricsExporter implements PushMetricExporter {
-  private readonly endpoint: string
+  private readonly endpoint: string | null
   private readonly timeout: number
   private pendingExports: Promise<void>[] = []
   private isShutdown = false
 
   constructor(options: { timeout?: number } = {}) {
-    const defaultEndpoint = 'https://api.anthropic.com/api/claude_code/metrics'
-
-    if (
-      process.env.USER_TYPE === 'ant' &&
-      process.env.ANT_CLAUDE_CODE_METRICS_ENDPOINT
-    ) {
-      this.endpoint =
-        process.env.ANT_CLAUDE_CODE_METRICS_ENDPOINT +
-        '/api/claude_code/metrics'
-    } else {
-      this.endpoint = defaultEndpoint
-    }
+    this.endpoint = getMossServerApiUrl('/api/v1/telemetry/metrics')
 
     this.timeout = options.timeout || 5000
   }
@@ -100,6 +92,19 @@ export class BigQueryMetricsExporter implements PushMetricExporter {
         return
       }
 
+      if (!this.endpoint) {
+        logForDebugging('BigQuery metrics export: MOSS_SERVER_URL not configured, skipping')
+        resultCallback({ code: ExportResultCode.SUCCESS })
+        return
+      }
+
+      const serverAuthHeaders = getMossServerAuthHeaders()
+      if (Object.keys(serverAuthHeaders).length === 0) {
+        logForDebugging('BigQuery metrics export: MOSS_SERVER_AUTH_TOKEN not configured, skipping')
+        resultCallback({ code: ExportResultCode.SUCCESS })
+        return
+      }
+
       // Check organization-level metrics opt-out
       const metricsStatus = await checkMetricsEnabled()
       if (!metricsStatus.enabled) {
@@ -110,20 +115,10 @@ export class BigQueryMetricsExporter implements PushMetricExporter {
 
       const payload = this.transformMetricsForInternal(metrics)
 
-      const authResult = getAuthHeaders()
-      if (authResult.error) {
-        logForDebugging(`Metrics export failed: ${authResult.error}`)
-        resultCallback({
-          code: ExportResultCode.FAILED,
-          error: new Error(authResult.error),
-        })
-        return
-      }
-
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent': getClaudeCodeUserAgent(),
-        ...authResult.headers,
+        ...serverAuthHeaders,
       }
 
       const response = await axios.post(this.endpoint, payload, {

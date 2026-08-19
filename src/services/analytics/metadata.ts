@@ -737,7 +737,7 @@ export type FirstPartyEventLoggingMetadata = {
 /**
  * Convert metadata to 1P event logging format (snake_case fields).
  *
- * The /api/event_logging/batch endpoint expects snake_case field names
+ * The Moss server telemetry batch endpoint expects snake_case field names
  * for environment and core metadata.
  *
  * @param metadata - Core event metadata

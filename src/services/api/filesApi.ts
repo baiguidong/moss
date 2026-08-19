@@ -1,7 +1,7 @@
 /**
  * Files API client for managing files
  *
- * This module provides functionality to download and upload files to Anthropic Public Files API.
+ * This module provides functionality to download and upload files through the configured model API.
  * Used by the Claude Code agent to download file attachments at session startup.
  *
  * API Reference: https://docs.anthropic.com/en/api/files-content
@@ -11,6 +11,7 @@ import axios from 'axios'
 import { randomUUID } from 'crypto'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import { getApiBaseUrl } from '../../constants/api.js'
 import { count } from '../../utils/array.js'
 import { getCwd } from '../../utils/cwd.js'
 import { logForDebugging } from '../../utils/debug.js'
@@ -28,14 +29,13 @@ import {
 const FILES_API_BETA_HEADER = 'files-api-2025-04-14,oauth-2025-04-20'
 const ANTHROPIC_VERSION = '2023-06-01'
 
-// API base URL - uses MOSS_BASE_URL set by env-manager for the appropriate environment
-// Falls back to public API for standalone usage
+// API base URL - uses MOSS_BASE_URL set by env-manager for the appropriate environment.
 function getDefaultApiBaseUrl(): string {
   return (
     getSessionMossBaseUrl() ||
     process.env.MOSS_BASE_URL ||
     process.env.CLAUDE_CODE_API_BASE_URL ||
-    'https://api.anthropic.com'
+    getApiBaseUrl()
   )
 }
 
@@ -62,7 +62,7 @@ export type File = {
 export type FilesApiConfig = {
   /** Bearer token for authentication (from session JWT) */
   bearerToken: string
-  /** Base URL for the API (default: https://api.anthropic.com) */
+  /** Base URL for the API. Defaults to the configured MOSS_BASE_URL. */
   baseUrl?: string
   /** Session ID for creating session-specific directories */
   sessionId: string

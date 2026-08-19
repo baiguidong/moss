@@ -1,5 +1,8 @@
 import axios from 'axios'
-import { getApiBaseUrl } from 'src/constants/api.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from 'src/constants/api.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
 import {
   getIsNonInteractiveSession,
@@ -9,7 +12,6 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../services/analytics/index.js'
-import { getAnthropicApiKey } from './auth.js'
 import { isInBundledMode } from './bundledMode.js'
 import { getGlobalConfig, saveGlobalConfig } from './config.js'
 import { logForDebugging } from './debug.js'
@@ -258,7 +260,7 @@ function getOverageDisabledMessage(reason: string | null): string {
     case 'org_level_disabled_until':
       return 'Fast mode disabled · extra usage spending cap reached'
     case 'member_level_disabled':
-      return 'Fast mode disabled · extra usage disabled for your account'
+      return 'Fast mode disabled by server policy'
     case 'seat_tier_level_disabled':
     case 'seat_tier_zero_credit_limit':
     case 'member_zero_credit_limit':
@@ -323,7 +325,7 @@ export function getFastModeState(
 }
 
 // Disabled reason returned by the API. The API is the canonical source for why
-// fast mode is disabled (free account, admin preference, extra usage not enabled).
+// fast mode is disabled by local preference or server policy.
 export type FastModeDisabledReason =
   | 'free'
   | 'preference'
@@ -352,12 +354,17 @@ type FastModeResponse = {
   disabled_reason: FastModeDisabledReason | null
 }
 
-async function fetchFastModeStatus(
-  apiKey: string,
-): Promise<FastModeResponse> {
-  const endpoint = `${getApiBaseUrl()}/api/claude_code_penguin_mode`
+async function fetchFastModeStatus(): Promise<FastModeResponse> {
+  const endpoint = getMossServerApiUrl('/api/v1/fast-mode')
+  if (!endpoint) {
+    throw new Error('MOSS_SERVER_URL is not configured')
+  }
+  const headers = getMossServerAuthHeaders()
+  if (Object.keys(headers).length === 0) {
+    throw new Error('MOSS_SERVER_AUTH_TOKEN is not configured')
+  }
   const response = await axios.get<FastModeResponse>(endpoint, {
-    headers: { 'x-api-key': apiKey },
+    headers,
   })
   return response.data
 }
@@ -378,10 +385,9 @@ export function resolveFastModeStatusFromCache(): void {
   if (orgStatus.status !== 'pending') {
     return
   }
-  const isAnt = process.env.USER_TYPE === 'ant'
   const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
   orgStatus =
-    isAnt || cachedEnabled
+    cachedEnabled
       ? { status: 'enabled' }
       : { status: 'disabled', reason: 'unknown' }
 }
@@ -403,12 +409,13 @@ export async function prefetchFastModeStatus(): Promise<void> {
     return inflightPrefetch
   }
 
-  const apiKey = getAnthropicApiKey()
-  if (!apiKey) {
-    const isAnt = process.env.USER_TYPE === 'ant'
+  if (
+    !getMossServerApiUrl('/api/v1/fast-mode') ||
+    Object.keys(getMossServerAuthHeaders()).length === 0
+  ) {
     const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
     orgStatus =
-      isAnt || cachedEnabled
+      cachedEnabled
         ? { status: 'enabled' }
         : { status: 'disabled', reason: 'preference' }
     return
@@ -423,7 +430,7 @@ export async function prefetchFastModeStatus(): Promise<void> {
 
   async function doFetch(): Promise<void> {
     try {
-      const status = await fetchFastModeStatus(apiKey)
+      const status = await fetchFastModeStatus()
 
       const previousEnabled =
         orgStatus.status !== 'pending'
@@ -450,13 +457,11 @@ export async function prefetchFastModeStatus(): Promise<void> {
         `Org fast mode: ${status.enabled ? 'enabled' : `disabled (${status.disabled_reason ?? 'preference'})`}`,
       )
     } catch (err) {
-      // On failure: ants default to enabled (don't block internal users).
-      // External users: fall back to the cached penguinModeOrgEnabled value;
+      // On failure: fall back to the cached penguinModeOrgEnabled value;
       // if no positive cache, disable with network_error reason.
-      const isAnt = process.env.USER_TYPE === 'ant'
       const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
       orgStatus =
-        isAnt || cachedEnabled
+        cachedEnabled
           ? { status: 'enabled' }
           : { status: 'disabled', reason: 'network_error' }
       logForDebugging(

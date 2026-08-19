@@ -13,7 +13,8 @@ import { gt } from './semver.js'
 const MAX_RELEASE_NOTES_SHOWN = 5
 
 /**
- * We fetch the changelog from GitHub instead of bundling it with the build.
+ * We optionally fetch the changelog from a configured Moss URL instead of
+ * bundling it with the build.
  *
  * This is necessary because Ink's static rendering makes it difficult to
  * dynamically update/show components after initial render. By storing the
@@ -23,12 +24,11 @@ const MAX_RELEASE_NOTES_SHOWN = 5
  * The flow is:
  * 1. User updates to a new version
  * 2. We fetch the changelog in the background and store it in config
- * 3. Next time the user starts Claude, the cached changelog is available immediately
+ * 3. Next time the user starts Moss, the cached changelog is available immediately
  */
 export const CHANGELOG_URL =
-  'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md'
-const RAW_CHANGELOG_URL =
-  'https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md'
+  process.env.MOSS_CHANGELOG_PAGE_URL || 'https://github.com/moss/moss/blob/main/CHANGELOG.md'
+const RAW_CHANGELOG_URL = process.env.MOSS_CHANGELOG_URL?.trim()
 
 /**
  * Get the path for the cached changelog file.
@@ -76,7 +76,7 @@ export async function migrateChangelogFromConfig(): Promise<void> {
 }
 
 /**
- * Fetch the changelog from GitHub and store it in cache file
+ * Fetch the changelog from the configured URL and store it in cache file.
  * This runs in the background and doesn't block the UI
  */
 export async function fetchAndStoreChangelog(): Promise<void> {
@@ -87,6 +87,10 @@ export async function fetchAndStoreChangelog(): Promise<void> {
 
   // Skip network requests if nonessential traffic is disabled
   if (isEssentialTrafficOnly()) {
+    return
+  }
+
+  if (!RAW_CHANGELOG_URL) {
     return
   }
 
@@ -288,19 +292,12 @@ export async function checkForReleaseNotes(
   lastSeenVersion: string | null | undefined,
   currentVersion: string = MACRO.VERSION,
 ): Promise<{ hasReleaseNotes: boolean; releaseNotes: string[] }> {
-  // For Ant builds, use VERSION_CHANGELOG bundled at build time
-  if (process.env.USER_TYPE === 'ant') {
+  // Use VERSION_CHANGELOG bundled at build time when available.
+  if (MACRO.VERSION_CHANGELOG) {
     const changelog = MACRO.VERSION_CHANGELOG
-    if (changelog) {
-      const commits = changelog.trim().split('\n').filter(Boolean)
-      return {
-        hasReleaseNotes: commits.length > 0,
-        releaseNotes: commits,
-      }
-    }
     return {
-      hasReleaseNotes: false,
-      releaseNotes: [],
+      hasReleaseNotes: changelog.trim().length > 0,
+      releaseNotes: changelog.trim().split('\n').filter(Boolean),
     }
   }
 
@@ -336,19 +333,12 @@ export function checkForReleaseNotesSync(
   lastSeenVersion: string | null | undefined,
   currentVersion: string = MACRO.VERSION,
 ): { hasReleaseNotes: boolean; releaseNotes: string[] } {
-  // For Ant builds, use VERSION_CHANGELOG bundled at build time
-  if (process.env.USER_TYPE === 'ant') {
+  // Use VERSION_CHANGELOG bundled at build time when available.
+  if (MACRO.VERSION_CHANGELOG) {
     const changelog = MACRO.VERSION_CHANGELOG
-    if (changelog) {
-      const commits = changelog.trim().split('\n').filter(Boolean)
-      return {
-        hasReleaseNotes: commits.length > 0,
-        releaseNotes: commits,
-      }
-    }
     return {
-      hasReleaseNotes: false,
-      releaseNotes: [],
+      hasReleaseNotes: changelog.trim().length > 0,
+      releaseNotes: changelog.trim().split('\n').filter(Boolean),
     }
   }
 

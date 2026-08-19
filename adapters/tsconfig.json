@@ -8,10 +8,7 @@
     "skipLibCheck": true,
     "types": ["bun-types"],
     "outDir": "dist",
-    "rootDir": ".",
-    "paths": {
-      "@server/*": ["../src/server/*"]
-    }
+    "rootDir": "."
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]

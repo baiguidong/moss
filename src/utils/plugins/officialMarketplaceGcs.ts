@@ -1,9 +1,9 @@
 /**
- * inc-5046: fetch the official marketplace from a GCS mirror instead of
- * git-cloning GitHub on every startup.
+ * Fetch the Moss marketplace from a configured mirror instead of git-cloning
+ * GitHub on every startup.
  *
- * Backend (anthropic#317037) publishes a marketplace-only zip alongside the
- * titanium squashfs, keyed by base repo SHA. This module fetches the `latest`
+ * The mirror publishes a marketplace-only zip keyed by base repo SHA.
+ * This module fetches the `latest`
  * pointer, compares against a local sentinel, and downloads+extracts the zip
  * when there's a new SHA. Callers decide fallback behavior on failure.
  */
@@ -20,21 +20,17 @@ import { errorMessage, getErrnoCode } from '../errors.js'
 
 type SafeString = AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
 
-// CDN-fronted domain for the public GCS bucket (same bucket the native
-// binary ships from — nativeInstaller/download.ts:24 uses the raw GCS URL).
-// `{sha}.zip` is content-addressed so CDN can cache it indefinitely;
-// `latest` has Cache-Control: max-age=300 so CDN staleness is bounded.
-// Backend (anthropic#317037) populates this prefix.
-const GCS_BASE =
-  'https://downloads.claude.ai/claude-code-releases/plugins/claude-plugins-official'
+const MARKETPLACE_MIRROR_BASE = process.env.MOSS_OFFICIAL_MARKETPLACE_MIRROR_URL
+  ?.trim()
+  .replace(/\/+$/, '')
 
-// Zip arc paths are seed-dir-relative (marketplaces/claude-plugins-official/…)
+// Zip arc paths are seed-dir-relative (marketplaces/moss-plugins-official/…)
 // so the titanium seed machinery can use the same zip. Strip this prefix when
 // extracting for a laptop install.
-const ARC_PREFIX = 'marketplaces/claude-plugins-official/'
+const ARC_PREFIX = 'marketplaces/moss-plugins-official/'
 
 /**
- * Fetch the official marketplace from GCS and extract to installLocation.
+ * Fetch the Moss marketplace from a mirror and extract to installLocation.
  * Idempotent — checks a `.gcs-sha` sentinel before downloading the ~3.5MB zip.
  *
  * @param installLocation where to extract (must be inside marketplacesCacheDir)
@@ -76,9 +72,16 @@ export async function fetchOfficialMarketplaceFromGcs(
   let errKind: string | undefined
 
   try {
+    if (!MARKETPLACE_MIRROR_BASE) {
+      logForDebugging(
+        'fetchOfficialMarketplaceFromGcs: MOSS_OFFICIAL_MARKETPLACE_MIRROR_URL not configured',
+      )
+      return null
+    }
+
     // 1. Latest pointer — ~40 bytes, backend sets Cache-Control: no-cache,
     //    max-age=300. Cheap enough to hit every startup.
-    const latest = await axios.get(`${GCS_BASE}/latest`, {
+    const latest = await axios.get(`${MARKETPLACE_MIRROR_BASE}/latest`, {
       responseType: 'text',
       timeout: 10_000,
     })
@@ -104,7 +107,7 @@ export async function fetchOfficialMarketplaceFromGcs(
     // 3. Download zip and extract to a staging dir, then atomic-swap into
     //    place. Crash mid-extract leaves a .staging dir (next run rm's it)
     //    rather than a half-written installLocation.
-    const zipResp = await axios.get(`${GCS_BASE}/${sha}.zip`, {
+    const zipResp = await axios.get(`${MARKETPLACE_MIRROR_BASE}/${sha}.zip`, {
       responseType: 'arraybuffer',
       timeout: 60_000,
     })
@@ -158,7 +161,7 @@ export async function fetchOfficialMarketplaceFromGcs(
     // values below are static enums or a git SHA — not code/filepaths/PII.
     logEvent('tengu_plugin_remote_fetch', {
       source: 'marketplace_gcs' as SafeString,
-      host: 'downloads.claude.ai' as SafeString,
+      host: new URL(MARKETPLACE_MIRROR_BASE).host as SafeString,
       is_official: true,
       outcome: outcome as SafeString,
       duration_ms: Math.round(performance.now() - start),

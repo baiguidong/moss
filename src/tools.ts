@@ -164,9 +164,6 @@ export function getToolsForDefaultPreset(): string[] {
  * in the current environment (respecting process.env flags).
  * This is the source of truth for ALL tools.
  */
-/**
- * NOTE: This MUST stay in sync with https://console.statsig.com/4aF3Ewatb6xPVpCwxb5nA3/dynamic_configs/claude_code_global_system_caching, in order to cache the system prompt across users.
- */
 export function getAllBaseTools(): Tools {
   return [
     AgentTool,

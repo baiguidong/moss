@@ -162,12 +162,12 @@ type LocalJSXCommand = {
  * Commands with `availability` are only shown if the user matches at least one
  * of the listed auth types. See meetsAvailabilityRequirement() in commands.ts.
  *
- * Example: `availability: ['console']` shows the command to direct Console
- * API key users (api.anthropic.com), but hides it from Bedrock/Vertex/Foundry
- * users and custom base URL users.
+ * Example: `availability: ['console']` shows the command to users on the
+ * Anthropic-compatible model API path, but hides it from Bedrock/Vertex/Foundry
+ * users.
  */
 export type CommandAvailability =
-  // Console API key user (direct api.anthropic.com)
+  // Anthropic-compatible model API user.
   'console'
 
 export type CommandBase = {

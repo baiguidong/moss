@@ -7,7 +7,7 @@
 
 import WebSocket from 'ws'
 
-/** Attachment reference — mirrors src/server/ws/events.ts AttachmentRef.
+/** Attachment reference shared with the Moss server WebSocket protocol.
  *  The server will either (a) write base64 `data` to
  *  ~/.moss/uploads/{sessionId}/ and convert to ImageBlockParam, or
  *  (b) read `path` from disk and inject `@"path"` into the prompt. */
@@ -19,7 +19,7 @@ export type AttachmentRef = {
   mimeType?: string
 }
 
-/** Server → Client message (mirrors src/server/ws/events.ts ServerMessage) */
+/** Server → Client message for the Moss server WebSocket protocol. */
 export type ServerMessage = {
   type: string
   [key: string]: any

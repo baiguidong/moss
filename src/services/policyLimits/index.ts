@@ -16,17 +16,15 @@ import { createHash } from 'crypto'
 import { readFileSync as fsReadFileSync } from 'fs'
 import { unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { getApiBaseUrl } from '../../constants/api.js'
-import { getAnthropicApiKeyWithSource } from '../../utils/auth.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 import { classifyAxiosError } from '../../utils/errors.js'
 import { safeParseJSON } from '../../utils/json.js'
-import {
-  getAPIProvider,
-  isFirstPartyAnthropicBaseUrl,
-} from '../../utils/model/providers.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { sleep } from '../../utils/sleep.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
@@ -115,7 +113,11 @@ function getCachePath(): string {
  * Get the policy limits API endpoint
  */
 function getPolicyLimitsEndpoint(): string {
-  return `${getApiBaseUrl()}/api/claude_code/policy_limits`
+  const endpoint = getMossServerApiUrl('/api/v1/policy-limits')
+  if (!endpoint) {
+    throw new Error('MOSS_SERVER_URL is not configured')
+  }
+  return endpoint
 }
 
 /**
@@ -156,27 +158,10 @@ function computeChecksum(
  * getSettings() to avoid circular dependencies during settings loading.
  */
 export function isPolicyLimitsEligible(): boolean {
-  // 3p provider users should not hit the policy limits endpoint
-  if (getAPIProvider() !== 'firstParty') {
-    return false
-  }
-
-  // Custom base URL users should not hit the policy limits endpoint
-  if (!isFirstPartyAnthropicBaseUrl()) {
-    return false
-  }
-
-  // Console users (API key) are eligible if we can get the actual key
-  try {
-    const { key: apiKey } = getAnthropicApiKeyWithSource({
-      skipRetrievingKeyFromApiKeyHelper: true,
-    })
-    if (apiKey) {
-      return true
-    }
-  } catch {}
-
-  return false
+  return (
+    Boolean(getMossServerApiUrl('/api/v1/policy-limits')) &&
+    Object.keys(getMossServerAuthHeaders()).length > 0
+  )
 }
 
 /**
@@ -191,30 +176,16 @@ export async function waitForPolicyLimitsToLoad(): Promise<void> {
 
 /**
  * Get auth headers for policy limits without calling getSettings()
- * Uses API key authentication.
+ * Uses Moss server authentication.
  */
 function getAuthHeaders(): {
   headers: Record<string, string>
   error?: string
 } {
-  // Try API key first (for Console users)
-  try {
-    const { key: apiKey } = getAnthropicApiKeyWithSource({
-      skipRetrievingKeyFromApiKeyHelper: true,
-    })
-    if (apiKey) {
-      return {
-        headers: {
-          'x-api-key': apiKey,
-        },
-      }
-    }
-  } catch {}
-
-  return {
-    headers: {},
-    error: 'No authentication available',
-  }
+  const headers = getMossServerAuthHeaders()
+  return Object.keys(headers).length > 0
+    ? { headers }
+    : { headers: {}, error: 'No Moss server authentication available' }
 }
 
 /**

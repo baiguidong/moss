@@ -13,13 +13,16 @@ import {
   getIsNonInteractiveSession,
   getSessionId,
 } from '../../bootstrap/state.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { ClaudeCodeInternalEvent } from '../../types/generated/events_mono/claude_code/v1/claude_code_internal_event.js'
 import { GrowthbookExperimentEvent } from '../../types/generated/events_mono/growthbook/v1/growthbook_experiment_event.js'
 import { checkHasTrustDialogAccepted } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 import { errorMessage, isFsInaccessible, toError } from '../../utils/errors.js'
-import { getAuthHeaders } from '../../utils/http.js'
 import { readJSONLFile } from '../../utils/json.js'
 import { logError } from '../../utils/log.js'
 import { sleep } from '../../utils/sleep.js'
@@ -50,7 +53,7 @@ type FirstPartyEventLoggingPayload = {
 }
 
 /**
- * Exporter for 1st-party event logging to /api/event_logging/batch.
+ * Exporter for 1st-party event logging to Moss server.
  *
  * Export cycles are controlled by OpenTelemetry's BatchLogRecordProcessor, which
  * triggers export() when either:
@@ -65,7 +68,7 @@ type FirstPartyEventLoggingPayload = {
  * - Auth fallback: retries without auth on 401 errors
  */
 export class FirstPartyEventLoggingExporter implements LogRecordExporter {
-  private readonly endpoint: string
+  private readonly endpoint: string | null
   private readonly timeout: number
   private readonly maxBatchSize: number
   private readonly skipAuth: boolean
@@ -74,6 +77,7 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
   private readonly maxBackoffDelayMs: number
   private readonly maxAttempts: number
   private readonly isKilled: () => boolean
+  private readonly requireServerAuth: boolean
   private pendingExports: Promise<void>[] = []
   private isShutdown = false
   private readonly schedule: (
@@ -103,15 +107,11 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
       schedule?: (fn: () => Promise<void>, delayMs: number) => () => void
     } = {},
   ) {
-    // Default: prod, except when MOSS_BASE_URL is explicitly staging.
-    // Overridable via tengu_1p_event_batch_config.baseUrl.
-    const baseUrl =
-      options.baseUrl ||
-      (process.env.MOSS_BASE_URL === 'https://api-staging.anthropic.com'
-        ? 'https://api-staging.anthropic.com'
-        : 'https://api.anthropic.com')
-
-    this.endpoint = `${baseUrl}${options.path || '/api/event_logging/batch'}`
+    const path = options.path || '/api/v1/telemetry/events/batch'
+    this.endpoint = options.baseUrl
+      ? `${options.baseUrl.replace(/\/+$/, '')}${path}`
+      : getMossServerApiUrl(path)
+    this.requireServerAuth = !options.baseUrl && !options.skipAuth
 
     this.timeout = options.timeout || 10000
     this.maxBatchSize = options.maxBatchSize || 200
@@ -129,7 +129,9 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
       })
 
     // Retry any failed events from previous runs of this session (in background)
-    void this.retryPreviousBatches()
+    if (this.endpoint) {
+      void this.retryPreviousBatches()
+    }
   }
 
   // Expose for testing
@@ -282,6 +284,18 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
         code: ExportResultCode.FAILED,
         error: new Error('Exporter has been shutdown'),
       })
+      return
+    }
+    if (!this.endpoint) {
+      resultCallback({ code: ExportResultCode.SUCCESS })
+      return
+    }
+    if (
+      this.requireServerAuth &&
+      Object.keys(getMossServerAuthHeaders()).length === 0
+    ) {
+      logForDebugging('1P event logging: MOSS_SERVER_AUTH_TOKEN not configured, skipping')
+      resultCallback({ code: ExportResultCode.SUCCESS })
       return
     }
 
@@ -529,6 +543,10 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
       throw new Error('firstParty sink killswitch active')
     }
 
+    if (!this.endpoint) {
+      throw new Error('MOSS_SERVER_URL is not configured')
+    }
+
     const baseHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': getClaudeCodeUserAgent(),
@@ -549,7 +567,7 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
     // Try with auth headers first (unless trust not established or token is known to be expired)
     const authResult = shouldSkipAuth
       ? { headers: {}, error: 'trust not established' }
-      : getAuthHeaders()
+      : { headers: getMossServerAuthHeaders() }
     const useAuth = !authResult.error
 
     if (!useAuth && process.env.USER_TYPE === 'ant') {

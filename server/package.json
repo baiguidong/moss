@@ -1,0 +1,18 @@
+{
+  "name": "@moss/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cd .. && bun run scripts/build.js --target=server",
+    "check": "bun build src/serverCli.ts src/sessionRunnerCli.ts --target=node --format=esm --outdir=/tmp/moss-server-check",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "jszip": "^3.10.1",
+    "p-map": "^7.0.4",
+    "ws": "^8.20.0",
+    "zod": "*"
+  }
+}

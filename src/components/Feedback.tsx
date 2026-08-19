@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getLastAPIRequest } from 'src/bootstrap/state.js';
 import { logEventTo1P } from 'src/services/analytics/firstPartyEventLogger.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
+import { getMossServerApiUrl, getMossServerAuthHeaders } from '../constants/api.js';
 import { getLastAssistantMessage, normalizeMessagesForAPI } from 'src/utils/messages.js';
 import type { CommandResultDisplay } from '../commands.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
@@ -17,7 +18,7 @@ import { openBrowser } from '../utils/browser.js';
 import { logForDebugging } from '../utils/debug.js';
 import { env } from '../utils/env.js';
 import { type GitRepoState, getGitState, getIsGit } from '../utils/git.js';
-import { getAuthHeaders, getUserAgent } from '../utils/http.js';
+import { getUserAgent } from '../utils/http.js';
 import { getInMemoryErrors, logError } from '../utils/log.js';
 import { isEssentialTrafficOnly } from '../utils/privacyLevel.js';
 import { extractTeammateTranscriptsFromTasks, getTranscriptPath, loadAllSubagentTranscriptsFromDisk, MAX_TRANSCRIPT_READ_BYTES } from '../utils/sessionStorage.js';
@@ -31,7 +32,7 @@ import TextInput from './TextInput.js';
 
 // This value was determined experimentally by testing the URL length limit
 const GITHUB_URL_LIMIT = 7250;
-const GITHUB_ISSUES_REPO_URL = "external" === 'ant' ? 'https://github.com/anthropics/claude-cli-internal/issues' : 'https://github.com/anthropics/claude-code/issues';
+const GITHUB_ISSUES_REPO_URL = process.env.MOSS_GITHUB_ISSUES_URL || 'https://github.com/moss/moss/issues';
 type Props = {
   abortSignal: AbortSignal;
   messages: Message[];
@@ -446,7 +447,7 @@ export function createGitHubIssueUrl(feedbackId: string, title: string, descript
 async function generateTitle(description: string, abortSignal: AbortSignal): Promise<string> {
   try {
     const response = await queryHaiku({
-      systemPrompt: asSystemPrompt(['Generate a concise, technical issue title (max 80 chars) for a public GitHub issue based on this bug report for Claude Code.', 'Claude Code is an agentic coding CLI based on the Anthropic API.', 'The title should:', '- Include the type of issue [Bug] or [Feature Request] as the first thing in the title', '- Be concise, specific and descriptive of the actual problem', '- Use technical terminology appropriate for a software issue', '- For error messages, extract the key error (e.g., "Missing Tool Result Block" rather than the full message)', '- Be direct and clear for developers to understand the problem', '- If you cannot determine a clear issue, use "Bug Report: [brief description]"', '- Any LLM API errors are from the Anthropic API, not from any other model provider', 'Your response will be directly used as the title of the Github issue, and as such should not contain any other commentary or explaination', 'Examples of good titles include: "[Bug] Auto-Compact triggers to soon", "[Bug] Anthropic API Error: Missing Tool Result Block", "[Bug] Error: Invalid Model Name for Opus"']),
+      systemPrompt: asSystemPrompt(['Generate a concise, technical issue title (max 80 chars) for a public GitHub issue based on this bug report for Moss.', 'Moss is an agentic coding CLI using an Anthropic-compatible model API.', 'The title should:', '- Include the type of issue [Bug] or [Feature Request] as the first thing in the title', '- Be concise, specific and descriptive of the actual problem', '- Use technical terminology appropriate for a software issue', '- For error messages, extract the key error (e.g., "Missing Tool Result Block" rather than the full message)', '- Be direct and clear for developers to understand the problem', '- If you cannot determine a clear issue, use "Bug Report: [brief description]"', '- Any LLM API errors are from the configured model API, not from any other provider', 'Your response will be directly used as the title of the Github issue, and as such should not contain any other commentary or explaination', 'Examples of good titles include: "[Bug] Auto-Compact triggers too soon", "[Bug] Model API Error: Missing Tool Result Block", "[Bug] Error: Invalid Model Name"']),
       userPrompt: description,
       signal: abortSignal,
       options: {
@@ -525,9 +526,9 @@ async function submitFeedback(data: FeedbackData, signal?: AbortSignal): Promise
     };
   }
   try {
-    // Resolve auth headers before submitting feedback.
-    const authResult = getAuthHeaders();
-    if (authResult.error) {
+    const endpoint = getMossServerApiUrl('/api/v1/feedback');
+    const serverAuthHeaders = getMossServerAuthHeaders();
+    if (!endpoint || Object.keys(serverAuthHeaders).length === 0) {
       return {
         success: false
       };
@@ -535,9 +536,9 @@ async function submitFeedback(data: FeedbackData, signal?: AbortSignal): Promise
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': getUserAgent(),
-      ...authResult.headers
+      ...serverAuthHeaders
     };
-    const response = await axios.post('https://api.anthropic.com/api/claude_cli_feedback', {
+    const response = await axios.post(endpoint, {
       content: jsonStringify(data)
     }, {
       headers,

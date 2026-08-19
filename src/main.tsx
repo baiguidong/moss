@@ -3213,8 +3213,23 @@ async function run(): Promise<CommanderCommand> {
         env: process.env
       });
       await new Promise<void>((resolveServer, rejectServer) => {
-        server.once('error', rejectServer);
+        const forwardSignal = (signal: NodeJS.Signals) => {
+          if (!server.killed) server.kill(signal);
+        };
+        const onSigint = () => forwardSignal('SIGINT');
+        const onSigterm = () => forwardSignal('SIGTERM');
+        const cleanup = () => {
+          process.off('SIGINT', onSigint);
+          process.off('SIGTERM', onSigterm);
+        };
+        process.once('SIGINT', onSigint);
+        process.once('SIGTERM', onSigterm);
+        server.once('error', error => {
+          cleanup();
+          rejectServer(error);
+        });
         server.once('exit', code => {
+          cleanup();
           if (code === 0 || code === null) resolveServer();
           else rejectServer(new Error(`Moss server exited with code ${code}`));
         });

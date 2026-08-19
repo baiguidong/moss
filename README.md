@@ -4,7 +4,10 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 ## 文档
 
-- [Moss Server API](src/server/API.md)
+- [Moss Server API](server/API.md)
+
+服务端源码位于独立的 `server/` package，远程客户端位于
+`src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
 
 ## 快速启动
 
@@ -15,6 +18,12 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 ```bash
 # 在仓库根目录执行，生成 electron-direct.mjs 和相关依赖
 bun run build:node
+```
+
+只构建服务端与 Admin UI：
+
+```bash
+bun run --cwd server build
 ```
 
 该命令会将 Agent 的核心逻辑打包成 Electron 可直接加载的模块。

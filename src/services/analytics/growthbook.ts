@@ -4,6 +4,10 @@ import {
   getIsNonInteractiveSession,
   getSessionTrustAccepted,
 } from '../../bootstrap/state.js'
+import {
+  getMossServerBaseUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { getGrowthBookClientKey } from '../../constants/keys.js'
 import {
   checkHasTrustDialogAccepted,
@@ -12,7 +16,6 @@ import {
 } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { toError } from '../../utils/errors.js'
-import { getAuthHeaders } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
 import { createSignal } from '../../utils/signal.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
@@ -419,7 +422,11 @@ function syncRemoteEvalToDisk(): void {
  */
 function isGrowthBookEnabled(): boolean {
   // GrowthBook depends on 1P event logging.
-  return is1PEventLoggingEnabled()
+  return (
+    is1PEventLoggingEnabled() &&
+    Boolean(getMossServerBaseUrl()) &&
+    Object.keys(getMossServerAuthHeaders()).length > 0
+  )
 }
 
 /**
@@ -430,15 +437,14 @@ function isGrowthBookEnabled(): boolean {
  * absent from GrowthBook attributes. Without this, there's no stable
  * attribute to target them on — only per-device IDs.
  *
- * Returns undefined for unset/default (api.anthropic.com) so the attribute
- * is absent for direct-API users. Hostname only — no path/query/creds.
+ * Returns undefined when MOSS_BASE_URL is unset. Hostname only — no
+ * path/query/creds.
  */
 export function getApiBaseUrlHost(): string | undefined {
   const baseUrl = process.env.MOSS_BASE_URL
   if (!baseUrl) return undefined
   try {
     const host = new URL(baseUrl).host
-    if (host === 'api.anthropic.com') return undefined
     return host
   } catch {
     return undefined
@@ -490,10 +496,11 @@ const getGrowthBookClient = memoize(
         `GrowthBook: Creating client with clientKey=${clientKey}, attributes: ${jsonStringify(attributes)}`,
       )
     }
-    const baseUrl =
-      process.env.USER_TYPE === 'ant'
-        ? process.env.CLAUDE_CODE_GB_BASE_URL || 'https://api.anthropic.com/'
-        : 'https://api.anthropic.com/'
+    const mossServerBaseUrl = getMossServerBaseUrl()
+    if (!mossServerBaseUrl) {
+      return null
+    }
+    const baseUrl = `${mossServerBaseUrl}/api/v1/growthbook`
 
     // Skip auth if trust hasn't been established yet
     // This prevents executing apiKeyHelper commands before the trust dialog
@@ -506,9 +513,9 @@ const getGrowthBookClient = memoize(
       getSessionTrustAccepted() ||
       getIsNonInteractiveSession()
     const authHeaders = hasTrust
-      ? getAuthHeaders()
+      ? { headers: getMossServerAuthHeaders() }
       : { headers: {}, error: 'trust not established' }
-    const hasAuth = !authHeaders.error
+    const hasAuth = !authHeaders.error && Object.keys(authHeaders.headers).length > 0
     clientCreatedWithAuth = hasAuth
 
     // Capture in local variable so the init callback operates on THIS client,
@@ -625,8 +632,8 @@ export const initializeGrowthBook = memoize(
         getSessionTrustAccepted() ||
         getIsNonInteractiveSession()
       if (hasTrust) {
-        const currentAuth = getAuthHeaders()
-        if (!currentAuth.error) {
+        const currentAuthHeaders = getMossServerAuthHeaders()
+        if (Object.keys(currentAuthHeaders).length > 0) {
           if (process.env.USER_TYPE === 'ant') {
             logForDebugging(
               'GrowthBook: Auth became available after client creation, reinitializing',
@@ -950,7 +957,7 @@ export function refreshGrowthBookAfterAuthChange(): void {
     // Reinitialize with fresh auth headers and attributes
     // Track this promise so security gate checks can wait for it.
     // .catch before .finally: initializeGrowthBook can reject if its sync
-    // helpers throw (getGrowthBookClient, getAuthHeaders, resetGrowthBook —
+    // helpers throw (getGrowthBookClient, getMossServerAuthHeaders, resetGrowthBook —
     // clientWrapper.initialized itself has its own .catch so never rejects),
     // and .finally re-settles with the original rejection — the sync
     // try/catch below cannot catch async rejections.

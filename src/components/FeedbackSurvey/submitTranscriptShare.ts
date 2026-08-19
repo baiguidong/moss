@@ -1,9 +1,13 @@
 import axios from 'axios'
 import { readFile, stat } from 'fs/promises'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import type { Message } from '../../types/message.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
-import { getAuthHeaders, getUserAgent } from '../../utils/http.js'
+import { getUserAgent } from '../../utils/http.js'
 import { normalizeMessagesForAPI } from '../../utils/messages.js'
 import {
   extractAgentIdsFromMessages,
@@ -71,19 +75,20 @@ export async function submitTranscriptShare(
     const content = redactSensitiveInfo(jsonStringify(data))
 
 
-    const authResult = getAuthHeaders()
-    if (authResult.error) {
+    const endpoint = getMossServerApiUrl('/api/v1/transcripts/share')
+    const serverAuthHeaders = getMossServerAuthHeaders()
+    if (!endpoint || Object.keys(serverAuthHeaders).length === 0) {
       return { success: false }
     }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': getUserAgent(),
-      ...authResult.headers,
+      ...serverAuthHeaders,
     }
 
     const response = await axios.post(
-      'https://api.anthropic.com/api/claude_code_shared_session_transcripts',
+      endpoint,
       { content, appearance_id: appearanceId },
       {
         headers,

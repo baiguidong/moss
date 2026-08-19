@@ -14,7 +14,7 @@ import {
   getSettingsForSource,
 } from './settings/settings.js'
 
-function normalizeMossBaseUrl(value: string | undefined): string | undefined {
+function normalizeUrl(value: string | undefined): string | undefined {
   if (!value) return value
   const trimmed = value.trim()
   if (!trimmed) return undefined
@@ -26,6 +26,14 @@ function normalizeMossBaseUrl(value: string | undefined): string | undefined {
   } catch {
     return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
   }
+}
+
+function normalizeMossBaseUrl(value: string | undefined): string | undefined {
+  return normalizeUrl(value)
+}
+
+function normalizeMossServerUrl(value: string | undefined): string | undefined {
+  return normalizeUrl(value)
 }
 
 /**
@@ -83,6 +91,14 @@ function normalizeSettingsEnv(
       out.MOSS_BASE_URL = normalized
     } else {
       delete out.MOSS_BASE_URL
+    }
+  }
+  if (typeof out.MOSS_SERVER_URL === 'string') {
+    const normalized = normalizeMossServerUrl(out.MOSS_SERVER_URL)
+    if (normalized) {
+      out.MOSS_SERVER_URL = normalized
+    } else {
+      delete out.MOSS_SERVER_URL
     }
   }
   return out

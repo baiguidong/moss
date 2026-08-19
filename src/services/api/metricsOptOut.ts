@@ -1,12 +1,12 @@
-import axios from 'axios'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
-import { errorMessage } from '../../utils/errors.js'
-import { getAuthHeaders, runAuthenticatedRequest } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
 import { memoizeWithTTLAsync } from '../../utils/memoize.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
-import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
 
 type MetricsEnabledResponse = {
   metrics_logging_enabled: boolean
@@ -30,23 +30,9 @@ const DISK_CACHE_TTL_MS = 24 * 60 * 60 * 1000
  * This is wrapped by memoizeWithTTLAsync to add caching behavior
  */
 async function _fetchMetricsEnabled(): Promise<MetricsEnabledResponse> {
-  const authResult = getAuthHeaders()
-  if (authResult.error) {
-    throw new Error(`Auth error: ${authResult.error}`)
-  }
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': getClaudeCodeUserAgent(),
-    ...authResult.headers,
-  }
-
-  const endpoint = `https://api.anthropic.com/api/claude_code/organizations/metrics_enabled`
-  const response = await axios.get<MetricsEnabledResponse>(endpoint, {
-    headers,
-    timeout: 5000,
-  })
-  return response.data
+  const endpoint = getMossServerApiUrl('/api/v1/telemetry/metrics-enabled')
+  const hasServerAuth = Object.keys(getMossServerAuthHeaders()).length > 0
+  return { metrics_logging_enabled: Boolean(endpoint && hasServerAuth) }
 }
 
 async function _checkMetricsEnabledAPI(): Promise<MetricsStatus> {
@@ -58,12 +44,10 @@ async function _checkMetricsEnabledAPI(): Promise<MetricsStatus> {
   }
 
   try {
-    const data = await runAuthenticatedRequest(_fetchMetricsEnabled, {
-      also403Revoked: true,
-    })
+    const data = await _fetchMetricsEnabled()
 
     logForDebugging(
-      `Metrics opt-out API response: enabled=${data.metrics_logging_enabled}`,
+      `Metrics opt-out local status: enabled=${data.metrics_logging_enabled}`,
     )
 
     return {
@@ -71,9 +55,7 @@ async function _checkMetricsEnabledAPI(): Promise<MetricsStatus> {
       hasError: false,
     }
   } catch (error) {
-    logForDebugging(
-      `Failed to check metrics opt-out status: ${errorMessage(error)}`,
-    )
+    logForDebugging('Failed to check metrics opt-out status')
     logError(error)
     return { enabled: false, hasError: true }
   }
@@ -117,29 +99,16 @@ async function refreshMetricsStatus(): Promise<MetricsStatus> {
 /**
  * Check if metrics are enabled for the current organization.
  *
- * Two-tier cache:
- * - Disk (24h TTL): survives process restarts. Fresh disk cache → zero network.
- * - In-memory (1h TTL): dedupes the background refresh within a process.
- *
- * The caller (bigqueryExporter) tolerates stale reads — a missed export or
- * an extra one during the 24h window is acceptable.
+ * Until Moss server exposes organization-level controls, metrics are enabled
+ * only when a Moss server endpoint and auth token are configured.
  */
 export async function checkMetricsEnabled(): Promise<MetricsStatus> {
-  const cached = getGlobalConfig().metricsStatusCache
-  if (cached) {
-    if (Date.now() - cached.timestamp > DISK_CACHE_TTL_MS) {
-      // saveGlobalConfig's fallback path (config.ts:731) can throw if both
-      // locked and fallback writes fail — catch here so fire-and-forget
-      // doesn't become an unhandled rejection.
-      void refreshMetricsStatus().catch(logError)
-    }
-    return {
-      enabled: cached.enabled,
-      hasError: false,
-    }
+  const hasMossServerTelemetry =
+    Boolean(getMossServerApiUrl('/api/v1/telemetry/metrics-enabled')) &&
+    Object.keys(getMossServerAuthHeaders()).length > 0
+  if (!hasMossServerTelemetry) {
+    return { enabled: false, hasError: false }
   }
-
-  // First-ever run on this machine: block on the network to populate disk.
   return refreshMetricsStatus()
 }
 

@@ -157,6 +157,8 @@ export interface SystemSettings {
   thinkingBudgetTokens: number
   url: string
   apiKey: string
+  serverUrl: string
+  serverAuthToken: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
   settingsPath: string
@@ -173,8 +175,45 @@ export interface UpdateSystemSettingsRequest {
   thinkingBudgetTokens?: number
   url?: string
   apiKey?: string
+  serverUrl?: string
+  serverAuthToken?: string
   image?: Partial<SystemSettingsImage>
   skillStore?: Partial<SystemSettingsSkillStore>
+}
+
+export type ReportEventKind =
+  | 'telemetry_event'
+  | 'telemetry_metrics'
+  | 'feedback'
+  | 'transcript'
+
+export interface ReportEventSummary {
+  kind: ReportEventKind
+  count: number
+  lastCreatedAt: number | null
+}
+
+export interface ReportEvent {
+  reportId: string
+  orgId: string | null
+  userId: string | null
+  kind: ReportEventKind
+  source: string | null
+  payload: unknown
+  createdAt: number
+}
+
+export interface ReportsSummaryResponse {
+  summaries: ReportEventSummary[]
+}
+
+export interface ReportsEventsResponse {
+  events: ReportEvent[]
+  nextCursor: number | null
+}
+
+export interface ReportEventResponse {
+  event: ReportEvent
 }
 
 // Direct Connect Server Types

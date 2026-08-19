@@ -14,8 +14,10 @@
 import axios from 'axios'
 import { createHash } from 'crypto'
 import { open, unlink } from 'fs/promises'
-import { getApiBaseUrl } from '../../constants/api.js'
-import { getAnthropicApiKeyWithSource } from '../../utils/auth.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { classifyAxiosError, getErrnoCode } from '../../utils/errors.js'
@@ -98,7 +100,11 @@ export function initializeRemoteManagedSettingsLoadingPromise(): void {
  * Uses the configured base API URL.
  */
 function getRemoteManagedSettingsEndpoint() {
-  return `${getApiBaseUrl()}/api/claude_code/settings`
+  const endpoint = getMossServerApiUrl('/api/v1/settings/remote-managed')
+  if (!endpoint) {
+    throw new Error('MOSS_SERVER_URL is not configured')
+  }
+  return endpoint
 }
 
 /**
@@ -156,32 +162,16 @@ export async function waitForRemoteManagedSettingsToLoad(): Promise<void> {
 /**
  * Get auth headers for remote settings without calling getSettings()
  * This avoids circular dependencies during settings loading
- * Uses API key authentication.
+ * Uses Moss server authentication.
  */
 function getRemoteSettingsAuthHeaders(): {
   headers: Record<string, string>
   error?: string
 } {
-  // Try API key first (for Console users)
-  // Skip apiKeyHelper to avoid circular dependency with getSettings()
-  // Wrap in try-catch because getAnthropicApiKeyWithSource throws in CI/test environments
-  try {
-    const { key: apiKey } = getAnthropicApiKeyWithSource({
-      skipRetrievingKeyFromApiKeyHelper: true,
-    })
-    if (apiKey) {
-      return {
-        headers: {
-          'x-api-key': apiKey,
-        },
-      }
-    }
-  } catch {}
-
-  return {
-    headers: {},
-    error: 'No authentication available',
-  }
+  const headers = getMossServerAuthHeaders()
+  return Object.keys(headers).length > 0
+    ? { headers }
+    : { headers: {}, error: 'No Moss server authentication available' }
 }
 
 /**

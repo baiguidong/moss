@@ -9,6 +9,7 @@
     "build": "bun run scripts/build.js",
     "build:node": "bun run scripts/build.js --target=node",
     "build:electron-direct": "bun run scripts/build.js --target=electron-direct",
+    "build:server": "bun run scripts/build.js --target=server",
     "postinstall": "bun run scripts/copy-vendor.js"
   },
   "dependencies": {

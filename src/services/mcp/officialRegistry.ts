@@ -1,4 +1,8 @@
 import axios from 'axios'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 
@@ -36,9 +40,17 @@ export async function prefetchOfficialMcpUrls(): Promise<void> {
   }
 
   try {
+    const endpoint = getMossServerApiUrl(
+      '/api/v1/mcp-registry/servers?version=latest&visibility=commercial',
+    )
+    const authHeaders = getMossServerAuthHeaders()
+    if (!endpoint || Object.keys(authHeaders).length === 0) {
+      return
+    }
+
     const response = await axios.get<RegistryResponse>(
-      'https://api.anthropic.com/mcp-registry/v0/servers?version=latest&visibility=commercial',
-      { timeout: 5000 },
+      endpoint,
+      { headers: authHeaders, timeout: 5000 },
     )
 
     const urls = new Set<string>()

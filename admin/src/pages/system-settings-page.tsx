@@ -38,6 +38,7 @@ import {
   Loader2,
   Package,
   RefreshCw,
+  Server,
   Shield,
   Sparkles,
   TriangleAlert,
@@ -103,6 +104,8 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     thinkingBudgetTokens: settings.thinkingBudgetTokens,
     url: settings.url,
     apiKey: settings.apiKey,
+    serverUrl: settings.serverUrl,
+    serverAuthToken: settings.serverAuthToken,
     image: {
       provider: settings.image.provider,
       url: settings.image.url,
@@ -141,6 +144,12 @@ function buildSystemSettingsPatch(
   }
   if (draft.apiKey !== settings.apiKey) {
     patch.apiKey = draft.apiKey
+  }
+  if (draft.serverUrl !== settings.serverUrl) {
+    patch.serverUrl = draft.serverUrl
+  }
+  if (draft.serverAuthToken !== settings.serverAuthToken) {
+    patch.serverAuthToken = draft.serverAuthToken
   }
 
   const imagePatch: NonNullable<UpdateSystemSettingsRequest['image']> = {}
@@ -537,7 +546,7 @@ export default function SystemSettingsPage() {
             />
           </SettingField>
 
-          <SettingField label="API URL" description="为空时使用默认地址。">
+          <SettingField label="API URL" description="Anthropic 协议模型接口地址，写入 MOSS_BASE_URL。">
             <Input
               value={draft.url}
               onChange={(event) =>
@@ -550,7 +559,7 @@ export default function SystemSettingsPage() {
                     : current,
                 )
               }
-              placeholder="https://api.anthropic.com"
+              placeholder="https://api.minimaxi.com/anthropic"
             />
           </SettingField>
 
@@ -581,6 +590,67 @@ export default function SystemSettingsPage() {
                   size="sm"
                   className="sm:shrink-0"
                   onClick={() => void handleCopy(draft.apiKey, '文本模型 API Key')}
+                >
+                  <Copy className="mr-2 size-4" />
+                  复制
+                </Button>
+              ) : null}
+            </div>
+          </SettingField>
+        </SettingSection>
+
+        <SettingSection
+          icon={Server}
+          title="Moss Server"
+          description="设置 Moss 后端地址，用于遥测、反馈、Transcript 分享等产品服务上报；不用于大模型请求。"
+        >
+          <SettingField
+            label="Server URL"
+            description="为空时不上报产品服务数据，也不请求远程控制配置。"
+          >
+            <Input
+              value={draft.serverUrl}
+              onChange={(event) =>
+                setDraft(current =>
+                  current
+                    ? {
+                        ...current,
+                        serverUrl: event.target.value,
+                      }
+                    : current,
+                )
+              }
+              placeholder="https://moss.example.com"
+            />
+          </SettingField>
+
+          <SettingField
+            label="Server Token"
+            description="Moss Server 的 API Key 或 Bearer Token，独立于模型 API Key。"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                type="password"
+                value={draft.serverAuthToken}
+                className="font-mono text-xs"
+                onChange={(event) =>
+                  setDraft(current =>
+                    current
+                      ? {
+                          ...current,
+                          serverAuthToken: event.target.value,
+                        }
+                      : current,
+                  )
+                }
+                placeholder="moss-server-token"
+              />
+              {draft.serverAuthToken ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="sm:shrink-0"
+                  onClick={() => void handleCopy(draft.serverAuthToken, 'Moss Server Token')}
                 >
                   <Copy className="mr-2 size-4" />
                   复制

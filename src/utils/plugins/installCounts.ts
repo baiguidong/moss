@@ -1,9 +1,8 @@
 /**
  * Plugin install counts data layer
  *
- * This module fetches and caches plugin install counts from the official
- * Claude plugins statistics repository. The cache is refreshed if older
- * than 24 hours.
+ * This module fetches and caches plugin install counts from a configured
+ * Moss plugin statistics URL. The cache is refreshed if older than 24 hours.
  *
  * Cache location: ~/.moss/plugins/install-counts-cache.json
  */
@@ -22,8 +21,7 @@ import { getPluginsDirectory } from './pluginDirectories.js'
 
 const INSTALL_COUNTS_CACHE_VERSION = 1
 const INSTALL_COUNTS_CACHE_FILENAME = 'install-counts-cache.json'
-const INSTALL_COUNTS_URL =
-  'https://raw.githubusercontent.com/anthropics/claude-plugins-official/refs/heads/stats/stats/plugin-installs.json'
+const INSTALL_COUNTS_URL = process.env.MOSS_PLUGIN_INSTALL_COUNTS_URL?.trim()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours in milliseconds
 
 /**
@@ -179,11 +177,15 @@ async function saveInstallCountsCache(
 }
 
 /**
- * Fetch install counts from GitHub stats repository
+ * Fetch install counts from the configured stats URL.
  */
 async function fetchInstallCountsFromGitHub(): Promise<
   Array<{ plugin: string; unique_installs: number }>
 > {
+  if (!INSTALL_COUNTS_URL) {
+    return []
+  }
+
   logForDebugging(`Fetching install counts from ${INSTALL_COUNTS_URL}`)
 
   const started = performance.now()
@@ -235,7 +237,11 @@ export async function getInstallCounts(): Promise<Map<string, number> | null> {
     return map
   }
 
-  // Cache miss or stale - fetch from GitHub
+  if (!INSTALL_COUNTS_URL) {
+    return null
+  }
+
+  // Cache miss or stale - fetch from configured URL.
   try {
     const counts = await fetchInstallCountsFromGitHub()
 

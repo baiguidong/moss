@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * 构建脚本：读取 features.js，生成 bun build 命令
- * 用法：bun run build.js [--target=node|--target=electron-direct]
+ * 用法：bun run build.js [--target=node|--target=electron-direct|--target=server]
  */
 import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
@@ -28,10 +28,12 @@ function sanitizePaths(outfile) {
 
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
 const target = targetArg ? targetArg.slice('--target='.length) : 'all'
-const onlyNode = target === 'node'
-const onlyElectronDirect = target === 'electron-direct'
+const buildBunCli = target === 'all'
+const buildNodeCli = target !== 'electron-direct' && target !== 'server'
+const buildElectronDirect = target !== 'server'
+const buildServer = target !== 'electron-direct'
 
-if (!['all', 'node', 'electron-direct'].includes(target)) {
+if (!['all', 'node', 'electron-direct', 'server'].includes(target)) {
   console.error(`Unsupported build target: ${target}`)
   process.exit(1)
 }
@@ -81,7 +83,7 @@ function ensureAdminBuildDependencies() {
 
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
-if (!onlyNode && !onlyElectronDirect) {
+if (buildBunCli) {
   // bin/cli.js（bun target，生产用）
   build('bin/cli.js', [
     'build', 'src/entrypoints/cli.tsx',
@@ -92,7 +94,7 @@ if (!onlyNode && !onlyElectronDirect) {
   ])
 }
 
-if (!onlyElectronDirect) {
+if (buildNodeCli) {
   // bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
   build('bin/cli-node.js', [
     'build', 'src/entrypoints/cli.tsx',
@@ -104,18 +106,20 @@ if (!onlyElectronDirect) {
   sanitizePaths('bin/cli-node.js')
 }
 
-// ui/electron-direct.mjs（供 Electron 桌面端打包）
-build('ui/electron-direct.mjs', [
-  'build', 'src/electron-direct.ts',
-  '--outfile=ui/electron-direct.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])
-sanitizePaths('ui/electron-direct.mjs')
+if (buildElectronDirect) {
+  // ui/electron-direct.mjs（供 Electron 桌面端打包）
+  build('ui/electron-direct.mjs', [
+    'build', 'src/electron-direct.ts',
+    '--outfile=ui/electron-direct.mjs',
+    '--target=node',
+    '--format=esm',
+    ...aliases,
+    ...defines,
+  ])
+  sanitizePaths('ui/electron-direct.mjs')
+}
 
-if (onlyElectronDirect) {
+if (!buildServer) {
   process.exit(0)
 }
 
@@ -129,7 +133,7 @@ build('admin/dist', [
 
 // bin/moss-server.mjs（统一服务端入口）
 build('bin/moss-server.mjs', [
-  'build', 'src/server/serverCli.ts',
+  'build', 'server/src/serverCli.ts',
   '--outfile=bin/moss-server.mjs',
   '--target=node',
   '--format=esm',
@@ -140,7 +144,7 @@ sanitizePaths('bin/moss-server.mjs')
 
 // bin/direct-connect-session-runner.mjs（session detached runner）
 build('bin/direct-connect-session-runner.mjs', [
-  'build', 'src/server/sessionRunnerCli.ts',
+  'build', 'server/src/sessionRunnerCli.ts',
   '--outfile=bin/direct-connect-session-runner.mjs',
   '--target=node',
   '--format=esm',

@@ -1,14 +1,14 @@
 import axios from 'axios'
 import isEqual from 'lodash-es/isEqual.js'
-import { getAnthropicApiKey } from 'src/utils/auth.js'
 import { z } from 'zod'
-import { getApiBaseUrl } from '../../constants/api.js'
+import {
+  getMossServerApiUrl,
+  getMossServerAuthHeaders,
+} from '../../constants/api.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
-import { runAuthenticatedRequest } from '../../utils/http.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { logError } from '../../utils/log.js'
-import { getAPIProvider } from '../../utils/model/providers.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
 
@@ -41,40 +41,32 @@ async function fetchBootstrapAPI(): Promise<BootstrapResponse | null> {
     return null
   }
 
-  if (getAPIProvider() !== 'firstParty') {
-    logForDebugging('[Bootstrap] Skipped: 3P provider')
+  const endpoint = getMossServerApiUrl('/api/v1/bootstrap')
+  const serverAuthHeaders = getMossServerAuthHeaders()
+  if (!endpoint || Object.keys(serverAuthHeaders).length === 0) {
+    logForDebugging('[Bootstrap] Skipped: Moss server not configured')
     return null
   }
-
-  const apiKey = getAnthropicApiKey()
-  if (!apiKey) {
-    logForDebugging('[Bootstrap] Skipped: no API key')
-    return null
-  }
-
-  const endpoint = `${getApiBaseUrl()}/api/claude_cli/bootstrap`
 
   try {
-    return await runAuthenticatedRequest(async () => {
-      logForDebugging('[Bootstrap] Fetching')
-      const response = await axios.get<unknown>(endpoint, {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': getClaudeCodeUserAgent(),
-          'x-api-key': apiKey,
-        },
-        timeout: 5000,
-      })
-      const parsed = bootstrapResponseSchema().safeParse(response.data)
-      if (!parsed.success) {
-        logForDebugging(
-          `[Bootstrap] Response failed validation: ${parsed.error.message}`,
-        )
-        return null
-      }
-      logForDebugging('[Bootstrap] Fetch ok')
-      return parsed.data
+    logForDebugging('[Bootstrap] Fetching')
+    const response = await axios.get<unknown>(endpoint, {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': getClaudeCodeUserAgent(),
+        ...serverAuthHeaders,
+      },
+      timeout: 5000,
     })
+    const parsed = bootstrapResponseSchema().safeParse(response.data)
+    if (!parsed.success) {
+      logForDebugging(
+        `[Bootstrap] Response failed validation: ${parsed.error.message}`,
+      )
+      return null
+    }
+    logForDebugging('[Bootstrap] Fetch ok')
+    return parsed.data
   } catch (error) {
     logForDebugging(
       `[Bootstrap] Fetch failed: ${axios.isAxiosError(error) ? (error.response?.status ?? error.code) : 'unknown'}`,

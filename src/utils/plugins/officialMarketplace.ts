@@ -1,20 +1,19 @@
 /**
- * Constants for the official Anthropic plugins marketplace.
+ * Constants for the Moss plugins marketplace.
  *
- * The official marketplace is hosted on GitHub and provides first-party
- * plugins developed by Anthropic. This file defines the constants needed
- * to install and identify this marketplace.
+ * The marketplace source can be overridden with
+ * MOSS_OFFICIAL_MARKETPLACE_REPO.
  */
 
 import type { MarketplaceSource } from './schemas.js'
 
 /**
- * Source configuration for the official Anthropic plugins marketplace.
+ * Source configuration for the Moss plugins marketplace.
  * Used when auto-installing the marketplace on startup.
  */
 export const OFFICIAL_MARKETPLACE_SOURCE = {
   source: 'github',
-  repo: 'anthropics/claude-plugins-official',
+  repo: process.env.MOSS_OFFICIAL_MARKETPLACE_REPO || 'moss/moss-plugins-official',
 } as const satisfies MarketplaceSource
 
 /**
@@ -22,4 +21,4 @@ export const OFFICIAL_MARKETPLACE_SOURCE = {
  * This is the name under which the marketplace will be registered
  * in the known_marketplaces.json file.
  */
-export const OFFICIAL_MARKETPLACE_NAME = 'claude-plugins-official'
+export const OFFICIAL_MARKETPLACE_NAME = 'moss-plugins-official'

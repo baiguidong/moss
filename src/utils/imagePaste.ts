@@ -36,7 +36,7 @@ function getClipboardCommands() {
   const baseTmpDir =
     process.env.CLAUDE_CODE_TMPDIR ||
     (platform === 'win32' ? process.env.TEMP || 'C:\\Temp' : '/tmp')
-  const screenshotFilename = 'claude_cli_latest_screenshot.png'
+  const screenshotFilename = 'moss_cli_latest_screenshot.png'
   const tempPaths: Record<SupportedPlatform, string> = {
     darwin: join(baseTmpDir, screenshotFilename),
     linux: join(baseTmpDir, screenshotFilename),
