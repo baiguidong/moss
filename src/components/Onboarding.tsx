@@ -76,9 +76,7 @@ export function Onboarding({
               Due to prompt injection risks, only use it with code you trust
             </Text>
             <Text dimColor wrap="wrap">
-              For more details see:
-              <Newline />
-              <Link url="https://code.claude.com/docs/en/security" />
+              For more details, check local Moss security documentation.
             </Text>
           </OrderedList.Item>
         </OrderedList>

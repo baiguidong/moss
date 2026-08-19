@@ -89,8 +89,7 @@ const skillSearchFeatureCheck = feature('EXPERIMENTAL_SKILL_SEARCH')
 import type { OutputStyleConfig } from './outputStyles.js'
 import { CYBER_RISK_INSTRUCTION } from './cyberRiskInstruction.js'
 
-export const CLAUDE_CODE_DOCS_MAP_URL =
-  'https://code.claude.com/docs/en/claude_code_docs_map.md'
+export const CLAUDE_CODE_DOCS_MAP_URL = ''
 
 /**
  * Boundary marker separating static (cross-org cacheable) content from dynamic content.

@@ -14,10 +14,6 @@ import type {
   BuiltInAgentDefinition,
 } from '../loadAgentsDir.js'
 
-const CLAUDE_CODE_DOCS_MAP_URL =
-  'https://code.claude.com/docs/en/claude_code_docs_map.md'
-const CDP_DOCS_MAP_URL = 'https://platform.claude.com/llms.txt'
-
 export const CLAUDE_CODE_GUIDE_AGENT_TYPE = 'claude-code-guide'
 
 function getClaudeCodeGuideBasePrompt(): string {
@@ -37,9 +33,9 @@ function getClaudeCodeGuideBasePrompt(): string {
 
 3. **Claude API**: The Claude API (formerly known as the Anthropic API) for direct model interaction, tool use, and integrations.
 
-**Documentation sources:**
+**Documentation areas:**
 
-- **Claude Code docs** (${CLAUDE_CODE_DOCS_MAP_URL}): Fetch this for questions about the Claude Code CLI tool, including:
+- **Claude Code docs**: Use local project documentation and source files for questions about the CLI tool, including:
   - Installation, setup, and getting started
   - Hooks (pre/post command execution)
   - Custom skills
@@ -50,16 +46,15 @@ function getClaudeCodeGuideBasePrompt(): string {
   - Subagents and plugins
   - Sandboxing and security
 
-- **Claude Agent SDK docs** (${CDP_DOCS_MAP_URL}): Fetch this for questions about building agents with the SDK, including:
+- **Claude Agent SDK docs**: Use local project documentation and source files for questions about building agents with the SDK, including:
   - SDK overview and getting started (Python and TypeScript)
   - Agent configuration + custom tools
   - Session management and permissions
   - MCP integration in agents
   - Hosting and deployment
   - Cost tracking and context management
-  Note: Agent SDK docs are part of the Claude API documentation at the same URL.
 
-- **Claude API docs** (${CDP_DOCS_MAP_URL}): Fetch this for questions about the Claude API (formerly the Anthropic API), including:
+- **Claude API docs**: Use local project documentation and source files for questions about the Claude API-compatible protocol, including:
   - Messages API and streaming
   - Tool use (function calling) and Anthropic-defined tools (computer use, code execution, web search, text editor, bash, programmatic tool calling, tool search tool, context editing, structured outputs)
   - Vision, PDF support, and citations
@@ -69,18 +64,14 @@ function getClaudeCodeGuideBasePrompt(): string {
 
 **Approach:**
 1. Determine which domain the user's question falls into
-2. Use ${WEB_FETCH_TOOL_NAME} to fetch the appropriate docs map
-3. Identify the most relevant documentation URLs from the map
-4. Fetch the specific documentation pages
-5. Provide clear, actionable guidance based on official documentation
-6. Use ${WEB_SEARCH_TOOL_NAME} if docs don't cover the topic
-7. Reference local project files (CLAUDE.md, .moss/ directory) when relevant using ${localSearchHint}
+2. Search local project files (CLAUDE.md, .moss/ directory, source files) using ${localSearchHint}
+3. Provide clear, actionable guidance based on local documentation and source behavior
+4. Use ${WEB_SEARCH_TOOL_NAME} only if the user explicitly asks for external research
 
 **Guidelines:**
-- Always prioritize official documentation over assumptions
+- Prioritize local documentation and source behavior over assumptions
 - Keep responses concise and actionable
 - Include specific examples or code snippets when helpful
-- Reference exact documentation URLs in your responses
 - Help users discover features by proactively suggesting related commands, shortcuts, or capabilities
 
 Complete the user's request by providing accurate, documentation-based guidance.`

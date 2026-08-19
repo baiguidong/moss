@@ -9,7 +9,6 @@ import { errorMessage } from '../utils/errors.js';
 import { gracefulShutdown } from '../utils/gracefulShutdown.js';
 import { flushSessionStorage } from '../utils/sessionStorage.js';
 import { LoadingState } from './design-system/LoadingState.js';
-const DESKTOP_DOCS_URL = 'https://clau.de/desktop';
 export function getDownloadUrl(): string {
   switch (process.platform) {
     case 'win32':
@@ -44,12 +43,12 @@ export function DesktopHandoff(t0) {
       if (state === "prompt-download") {
         if (input === "y" || input === "Y") {
           openBrowser(getDownloadUrl()).catch(_temp);
-          onDone(`Starting download. Re-run /desktop once you\u2019ve installed the app.\nLearn more at ${DESKTOP_DOCS_URL}`, {
+          onDone(`Starting download. Re-run /desktop once you\u2019ve installed the app.`, {
             display: "system"
           });
         } else {
           if (input === "n" || input === "N") {
-            onDone(`The desktop app is required for /desktop. Learn more at ${DESKTOP_DOCS_URL}`, {
+            onDone(`The desktop app is required for /desktop.`, {
               display: "system"
             });
           }

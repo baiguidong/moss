@@ -32,7 +32,7 @@ async function _temp() {
   if (!installed && !isRunningOnHomespace()) {
     return {
       key: "chrome-extension-not-detected",
-      jsx: <Text color="warning">Chrome extension not detected · https://claude.ai/chrome to install</Text>,
+      jsx: <Text color="warning">Chrome extension not detected.</Text>,
       priority: "immediate",
       timeoutMs: 3000
     };
