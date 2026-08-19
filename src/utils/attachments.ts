@@ -124,7 +124,6 @@ import {
   shouldInjectAgentListInMessages,
 } from '../tools/AgentTool/prompt.js'
 import { filterDeniedAgents } from './permissions/permissions.js'
-import { getSubscriptionType } from './auth.js'
 import { mcpInfoFromString } from '../services/mcp/mcpStringUtils.js'
 import {
   matchingRuleForInput,
@@ -668,7 +667,7 @@ export type Attachment =
       removedTypes: string[]
       /** True when this is the first announcement in the conversation */
       isInitial: boolean
-      /** Whether to include the "launch multiple agents concurrently" note (non-pro subscriptions) */
+      /** Whether to include the "launch multiple agents concurrently" note */
       showConcurrencyNote: boolean
     }
   | {
@@ -1376,7 +1375,7 @@ export function getAgentListingDeltaAttachment(
       addedLines: added.map(formatAgentLine),
       removedTypes: removed,
       isInitial: announced.size === 0,
-      showConcurrencyNote: getSubscriptionType() !== 'pro',
+      showConcurrencyNote: true,
     },
   ]
 }

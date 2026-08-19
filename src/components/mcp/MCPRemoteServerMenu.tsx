@@ -2,7 +2,7 @@ import figures from 'figures';
 import React, { useEffect, useRef, useState } from 'react';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import type { CommandResultDisplay } from '../../commands.js';
-import { getOauthConfig } from '../../constants/oauth.js';
+import { CLAUDE_AI_ORIGIN } from '../../constants/api.js';
 import { useExitOnCtrlCDWithKeybindings } from '../../hooks/useExitOnCtrlCDWithKeybindings.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { setClipboard } from '../../ink/termio/osc.js';
@@ -14,7 +14,6 @@ import { clearServerCache } from '../../services/mcp/client.js';
 import { useMcpReconnect, useMcpToggleEnabled } from '../../services/mcp/MCPConnectionManager.js';
 import { describeMcpConfigFilePath, excludeCommandsByServer, excludeResourcesByServer, excludeToolsByServer, filterMcpPromptsByServer } from '../../services/mcp/utils.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
-import { getOauthAccountInfo } from '../../utils/auth.js';
 import { openBrowser } from '../../utils/browser.js';
 import { errorMessage } from '../../utils/errors.js';
 import { logMCPDebug } from '../../utils/log.js';
@@ -186,7 +185,7 @@ export function MCPRemoteServerMenu({
         void handleClaudeAIClearAuthComplete();
       } else {
         // First Enter: open the browser
-        const connectorsUrl = `${getOauthConfig().CLAUDE_AI_ORIGIN}/settings/connectors`;
+        const connectorsUrl = `${CLAUDE_AI_ORIGIN}/settings/connectors`;
         setClaudeAIClearAuthUrl(connectorsUrl);
         setClaudeAIClearAuthBrowserOpened(true);
         void openBrowser(connectorsUrl);
@@ -213,20 +212,8 @@ export function MCPRemoteServerMenu({
   const serverCommandsCount = filterMcpPromptsByServer(mcp.commands, server.name).length;
   const toggleMcpServer = useMcpToggleEnabled();
   const handleClaudeAIAuth = React.useCallback(async () => {
-    const claudeAiBaseUrl = getOauthConfig().CLAUDE_AI_ORIGIN;
-    const accountInfo = getOauthAccountInfo();
-    const orgUuid = accountInfo?.organizationUuid;
-    let authUrl: string;
-    if (orgUuid && server.config.type === 'claudeai-proxy' && server.config.id) {
-      // Use the direct auth URL with org and server IDs
-      // Replace 'mcprs' prefix with 'mcpsrv' if present
-      const serverId = server.config.id.startsWith('mcprs') ? 'mcpsrv' + server.config.id.slice(5) : server.config.id;
-      const productSurface = encodeURIComponent(process.env.CLAUDE_CODE_ENTRYPOINT || 'cli');
-      authUrl = `${claudeAiBaseUrl}/api/organizations/${orgUuid}/mcp/start-auth/${serverId}?product_surface=${productSurface}`;
-    } else {
-      // Fall back to settings/connectors if we don't have the required IDs
-      authUrl = `${claudeAiBaseUrl}/settings/connectors`;
-    }
+    const claudeAiBaseUrl = CLAUDE_AI_ORIGIN;
+    const authUrl = `${claudeAiBaseUrl}/settings/connectors`;
     setClaudeAIAuthUrl(authUrl);
     setIsClaudeAIAuthenticating(true);
     logEvent('tengu_claudeai_mcp_auth_started', {});

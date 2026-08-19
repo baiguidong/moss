@@ -1,5 +1,4 @@
 import type { OverageDisabledReason } from 'src/services/claudeAiLimits.js'
-import { isClaudeAISubscriber } from '../auth.js'
 import { getGlobalConfig } from '../config.js'
 import { is1mContextDisabled } from '../context.js'
 
@@ -48,12 +47,6 @@ export function checkOpus1mAccess(): boolean {
     return false
   }
 
-  if (isClaudeAISubscriber()) {
-    // Subscribers have access if extra usage is enabled for their account
-    return isExtraUsageEnabled()
-  }
-
-  // Non-subscribers (API/PAYG) have access
   return true
 }
 
@@ -62,11 +55,5 @@ export function checkSonnet1mAccess(): boolean {
     return false
   }
 
-  if (isClaudeAISubscriber()) {
-    // Subscribers have access if extra usage is enabled for their account
-    return isExtraUsageEnabled()
-  }
-
-  // Non-subscribers (API/PAYG) have access
   return true
 }

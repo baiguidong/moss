@@ -51,7 +51,7 @@ export type SideQueryOptions = {
   maxRetries?: number
   /** Abort signal */
   signal?: AbortSignal
-  /** Skip CLI system prompt prefix (keeps attribution header for OAuth). For internal classifiers that provide their own prompt. */
+  /** Skip CLI system prompt prefix. For internal classifiers that provide their own prompt. */
   skipSystemPromptPrefix?: boolean
   /** Temperature override */
   temperature?: number
@@ -93,10 +93,10 @@ function extractFirstUserMessageText(messages: MessageParam[]): string {
  * Lightweight API wrapper for "side queries" outside the main conversation loop.
  *
  * Use this instead of direct client.beta.messages.create() calls to ensure
- * proper OAuth token validation with fingerprint attribution headers.
+ * consistent fingerprint attribution headers.
  *
  * This handles:
- * - Fingerprint computation for OAuth validation
+ * - Fingerprint computation
  * - Attribution header injection
  * - CLI system prompt prefix
  * - Proper betas for the model
@@ -150,7 +150,7 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
   // Extract first user message text for fingerprint
   const messageText = extractFirstUserMessageText(messages)
 
-  // Compute fingerprint for OAuth attribution
+  // Compute fingerprint for attribution
   const fingerprint = computeFingerprint(messageText, MACRO.VERSION)
   const attributionHeader = getAttributionHeader(fingerprint)
 
@@ -189,7 +189,7 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
 
   const normalizedModel = normalizeModelStringForAPI(model)
   const start = Date.now()
-  // biome-ignore lint/plugin: this IS the wrapper that handles OAuth attribution
+  // biome-ignore lint/plugin: this IS the wrapper that handles attribution
   const response = await client.beta.messages.create(
     {
       model: normalizedModel,

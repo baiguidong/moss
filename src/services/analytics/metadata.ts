@@ -20,7 +20,6 @@ import {
 } from '../../bootstrap/state.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { isOfficialMcpUrl } from '../mcp/officialRegistry.js'
-import { isClaudeAISubscriber, getSubscriptionType } from '../../utils/auth.js'
 import { getRepoRemoteHash } from '../../utils/git.js'
 import {
   getWslVersion,
@@ -407,7 +406,6 @@ export type EnvContext = {
   tags?: string
   isGithubAction: boolean
   isClaudeCodeAction: boolean
-  isClaudeAiAuth: boolean
   version: string
   versionBase?: string
   buildTime: string
@@ -460,7 +458,6 @@ export type EventMetadata = {
   parentSessionId?: string // CLAUDE_CODE_PARENT_SESSION_ID (team lead's session)
   agentType?: 'teammate' | 'subagent' | 'standalone' // Distinguishes swarm teammates, Agent tool subagents, and standalone agents
   teamName?: string // Team name for swarm agents (from env var or AsyncLocalStorage)
-  subscriptionType?: string // OAuth subscription tier (max, pro, enterprise, team)
   rh?: string // Hashed repo remote URL (first 16 chars of SHA256), for joining with server-side data
   skillMode?: 'discovery' | 'coach' | 'discovery_and_coach' // Which skill surfacing mechanism(s) are gated on (ant-only; for BQ session segmentation)
   observerMode?: 'backseat' | 'skillcoach' | 'both' // Which observer classifiers are gated on (ant-only; for BQ cohort splits on tengu_backseat_* events)
@@ -581,7 +578,6 @@ const buildEnvContext = memoize(async (): Promise<EnvContext> => {
     }),
     isGithubAction: isEnvTruthy(process.env.GITHUB_ACTIONS),
     isClaudeCodeAction: isEnvTruthy(process.env.CLAUDE_CODE_ACTION),
-    isClaudeAiAuth: isClaudeAISubscriber(),
     version: MACRO.VERSION,
     versionBase: getVersionBase(),
     buildTime: MACRO.BUILD_TIME,
@@ -690,10 +686,6 @@ export async function getEventMetadata(
     // Swarm/team agent identification
     // Priority: AsyncLocalStorage context (subagents) > env vars (swarm teammates)
     ...getAgentIdentification(),
-    // Subscription tier for DAU-by-tier analytics
-    ...(getSubscriptionType() && {
-      subscriptionType: getSubscriptionType()!,
-    }),
     // Repo remote hash for joining with server-side repo bundle data
     ...(repoRemoteHash && { rh: repoRemoteHash }),
   }
@@ -791,7 +783,6 @@ export function to1PEventFormat(
     is_conductor: envContext.isConductor,
     is_github_action: envContext.isGithubAction,
     is_claude_code_action: envContext.isClaudeCodeAction,
-    is_claude_ai_auth: envContext.isClaudeAiAuth,
     version: envContext.version,
     build_time: envContext.buildTime,
     deployment_environment: envContext.deploymentEnvironment,

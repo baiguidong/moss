@@ -58,7 +58,7 @@ import PromptInput from '../components/PromptInput/PromptInput.js';
 import { PromptInputQueuedCommands } from '../components/PromptInput/PromptInputQueuedCommands.js';
 import { useRemoteSession } from '../hooks/useRemoteSession.js';
 import { useDirectConnect } from '../hooks/useDirectConnect.js';
-import type { DirectConnectConfig } from '../server/directConnectManager.js';
+import type { DirectConnectConfig } from '../remote/directConnectManager.js';
 import { useMoreRight } from '../moreright/useMoreRight.js';
 import { SpinnerWithVerb, type SpinnerMode } from '../components/Spinner.js';
 import { getSystemPrompt } from '../constants/prompts.js';
@@ -251,7 +251,6 @@ import { useDeprecationWarningNotification } from 'src/hooks/notifs/useDeprecati
 import { useNpmDeprecationNotification } from 'src/hooks/notifs/useNpmDeprecationNotification.js';
 import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js';
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
-import { useCanSwitchToExistingSubscription } from 'src/hooks/notifs/useCanSwitchToExistingSubscription.js';
 import { useTeammateLifecycleNotification } from 'src/hooks/notifs/useTeammateShutdownNotification.js';
 import { useFastModeNotification } from 'src/hooks/notifs/useFastModeNotification.js';
 import { AutoRunIssueNotification, shouldAutoRunIssue, getAutoRunIssueReasonText, getAutoRunCommand, type AutoRunIssueReason } from '../utils/autoRunIssue.js';
@@ -714,7 +713,6 @@ export function REPL({
   const [showDesktopUpsellStartup, setShowDesktopUpsellStartup] = useState(() => shouldShowDesktopUpsellStartup());
   // notifications
   useModelMigrationNotifications();
-  useCanSwitchToExistingSubscription();
   useIDEStatusIndicator({
     ideSelection,
     mcpClients,

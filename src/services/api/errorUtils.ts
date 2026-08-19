@@ -84,12 +84,12 @@ export function extractConnectionErrorDetails(
 
 /**
  * Returns an actionable hint for SSL/TLS errors, intended for contexts outside
- * the main API client (OAuth token exchange, preflight connectivity checks)
+ * the main API client (preflight connectivity checks)
  * where `formatAPIError` doesn't apply.
  *
  * Motivation: enterprise users behind TLS-intercepting proxies (Zscaler et al.)
- * see OAuth complete in-browser but the CLI's token exchange silently fails
- * with a raw SSL code. Surfacing the likely fix saves a support round-trip.
+ * see setup fail with a raw SSL code. Surfacing the likely fix saves a
+ * support round-trip.
  */
 export function getSSLErrorHint(error: unknown): string | null {
   const details = extractConnectionErrorDetails(error)

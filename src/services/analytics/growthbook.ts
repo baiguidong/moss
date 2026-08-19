@@ -38,8 +38,6 @@ export type GrowthBookUserAttributes = {
   organizationUUID?: string
   accountUUID?: string
   userType?: string
-  subscriptionType?: string
-  rateLimitTier?: string
   firstTokenTime?: number
   email?: string
   appVersion?: string
@@ -428,10 +426,9 @@ function isGrowthBookEnabled(): boolean {
  * Hostname of MOSS_BASE_URL when it points at a non-Anthropic proxy.
  *
  * Enterprise-proxy deployments (Epic, Marble, etc.) typically use
- * apiKeyHelper auth, which means isAnthropicAuthEnabled() returns false and
- * organizationUUID/accountUUID/email are all absent from GrowthBook
- * attributes. Without this, there's no stable attribute to target them on
- * — only per-device IDs. See src/utils/auth.ts isAnthropicAuthEnabled().
+ * apiKeyHelper auth, which means organizationUUID/accountUUID/email are all
+ * absent from GrowthBook attributes. Without this, there's no stable
+ * attribute to target them on — only per-device IDs.
  *
  * Returns undefined for unset/default (api.anthropic.com) so the attribute
  * is absent for direct-API users. Hostname only — no path/query/creds.
@@ -454,12 +451,7 @@ export function getApiBaseUrlHost(): string | undefined {
 function getUserAttributes(): GrowthBookUserAttributes {
   const user = getUserForGrowthBook()
 
-  // For ants, always try to include email from OAuth config even if ANTHROPIC_API_KEY is set.
-  // This ensures GrowthBook targeting by email works regardless of auth method.
-  let email = user.email
-  if (!email && process.env.USER_TYPE === 'ant') {
-    email = getGlobalConfig().oauthAccount?.emailAddress
-  }
+  const email = user.email
 
   const apiBaseUrlHost = getApiBaseUrlHost()
 
@@ -472,8 +464,6 @@ function getUserAttributes(): GrowthBookUserAttributes {
     ...(user.organizationUuid && { organizationUUID: user.organizationUuid }),
     ...(user.accountUuid && { accountUUID: user.accountUuid }),
     ...(user.userType && { userType: user.userType }),
-    ...(user.subscriptionType && { subscriptionType: user.subscriptionType }),
-    ...(user.rateLimitTier && { rateLimitTier: user.rateLimitTier }),
     ...(user.firstTokenTime && { firstTokenTime: user.firstTokenTime }),
     ...(email && { email }),
     ...(user.appVersion && { appVersion: user.appVersion }),
@@ -897,9 +887,8 @@ export async function checkSecurityRestrictionGate(
  * inside init, so by the time the slow path returns, disk already has the
  * fresh value — no write needed here.
  *
- * Use for user-invoked features that are gated on
- * subscription/org, where a stale `false` would unfairly block access but a
- * stale `true` is acceptable (the server is the real gatekeeper).
+ * Use for user-invoked features where a stale `false` would unfairly block
+ * access but a stale `true` is acceptable (the server is the real gatekeeper).
  */
 export async function checkGate_CACHED_OR_BLOCKING(
   gate: string,

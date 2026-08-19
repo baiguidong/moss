@@ -1,9 +1,7 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { randomUUID } from 'crypto'
-import { getOauthConfig } from 'src/constants/oauth.js'
-import { getOrganizationUUID } from 'src/services/oauth/client.js'
+import { getApiBaseUrl } from 'src/constants/api.js'
 import z from 'zod/v4'
-import { getClaudeAIOAuthTokens } from '../auth.js'
 import { logForDebugging } from '../debug.js'
 import { parseGitHubRepository } from '../detectRepository.js'
 import { errorMessage, toError } from '../errors.js'
@@ -182,19 +180,7 @@ export async function prepareApiRequest(): Promise<{
   accessToken: string
   orgUUID: string
 }> {
-  const accessToken = getClaudeAIOAuthTokens()?.accessToken
-  if (accessToken === undefined) {
-    throw new Error(
-      'Claude Code web sessions require authentication with a Claude.ai account. API key authentication is not sufficient. Please run /login to authenticate, or check your authentication status with /status.',
-    )
-  }
-
-  const orgUUID = await getOrganizationUUID()
-  if (!orgUUID) {
-    throw new Error('Unable to get organization UUID')
-  }
-
-  return { accessToken, orgUUID }
+  throw new Error('Remote web sessions are not supported in this build')
 }
 
 /**
@@ -206,11 +192,11 @@ export async function fetchCodeSessionsFromSessionsAPI(): Promise<
 > {
   const { accessToken, orgUUID } = await prepareApiRequest()
 
-  const url = `${getOauthConfig().BASE_API_URL}/v1/sessions`
+  const url = `${getApiBaseUrl()}/v1/sessions`
 
   try {
     const headers = {
-      ...getOAuthHeaders(accessToken),
+      ...getBearerHeaders(accessToken),
       'anthropic-beta': 'ccr-byoc-2025-07-29',
       'x-organization-uuid': orgUUID,
     }
@@ -269,11 +255,11 @@ export async function fetchCodeSessionsFromSessionsAPI(): Promise<
 }
 
 /**
- * Creates OAuth headers for API requests
- * @param accessToken The OAuth access token
+ * Creates bearer-token headers for API requests
+ * @param accessToken The bearer access token
  * @returns Headers object with Authorization, Content-Type, and anthropic-version
  */
-export function getOAuthHeaders(accessToken: string): Record<string, string> {
+export function getBearerHeaders(accessToken: string): Record<string, string> {
   return {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
@@ -291,9 +277,9 @@ export async function fetchSession(
 ): Promise<SessionResource> {
   const { accessToken, orgUUID } = await prepareApiRequest()
 
-  const url = `${getOauthConfig().BASE_API_URL}/v1/sessions/${sessionId}`
+  const url = `${getApiBaseUrl()}/v1/sessions/${sessionId}`
   const headers = {
-    ...getOAuthHeaders(accessToken),
+    ...getBearerHeaders(accessToken),
     'anthropic-beta': 'ccr-byoc-2025-07-29',
     'x-organization-uuid': orgUUID,
   }
@@ -314,7 +300,7 @@ export async function fetchSession(
     }
 
     if (response.status === 401) {
-      throw new Error('Session expired. Please run /login to sign in again.')
+      throw new Error('Session expired. Configure credentials and try again.')
     }
 
     throw new Error(
@@ -366,9 +352,9 @@ export async function sendEventToRemoteSession(
   try {
     const { accessToken, orgUUID } = await prepareApiRequest()
 
-    const url = `${getOauthConfig().BASE_API_URL}/v1/sessions/${sessionId}/events`
+    const url = `${getApiBaseUrl()}/v1/sessions/${sessionId}/events`
     const headers = {
-      ...getOAuthHeaders(accessToken),
+      ...getBearerHeaders(accessToken),
       'anthropic-beta': 'ccr-byoc-2025-07-29',
       'x-organization-uuid': orgUUID,
     }
@@ -429,9 +415,9 @@ export async function updateSessionTitle(
   try {
     const { accessToken, orgUUID } = await prepareApiRequest()
 
-    const url = `${getOauthConfig().BASE_API_URL}/v1/sessions/${sessionId}`
+    const url = `${getApiBaseUrl()}/v1/sessions/${sessionId}`
     const headers = {
-      ...getOAuthHeaders(accessToken),
+      ...getBearerHeaders(accessToken),
       'anthropic-beta': 'ccr-byoc-2025-07-29',
       'x-organization-uuid': orgUUID,
     }

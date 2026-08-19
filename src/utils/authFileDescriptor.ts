@@ -1,9 +1,7 @@
 import { mkdirSync, writeFileSync } from 'fs'
 import {
   getApiKeyFromFd,
-  getOauthTokenFromFd,
   setApiKeyFromFd,
-  setOauthTokenFromFd,
 } from '../bootstrap/state.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -18,7 +16,6 @@ import { getFsImplementation } from './fsOperations.js'
  * the FD — which they can't: pipe FDs don't cross tmux/shell boundaries.
  */
 const CCR_TOKEN_DIR = '/home/claude/.moss/remote'
-export const CCR_OAUTH_TOKEN_PATH = `${CCR_TOKEN_DIR}/.oauth_token`
 export const CCR_API_KEY_PATH = `${CCR_TOKEN_DIR}/.api_key`
 export const CCR_SESSION_INGRESS_TOKEN_PATH = `${CCR_TOKEN_DIR}/.session_ingress_token`
 
@@ -163,21 +160,6 @@ function getCredentialFromFd({
     setCached(fromFile)
     return fromFile
   }
-}
-
-/**
- * Get the CCR-injected OAuth token. See getCredentialFromFd for FD-vs-disk
- * rationale. Env var: CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR.
- * Well-known file: /home/claude/.moss/remote/.oauth_token.
- */
-export function getOAuthTokenFromFileDescriptor(): string | null {
-  return getCredentialFromFd({
-    envVar: 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
-    wellKnownPath: CCR_OAUTH_TOKEN_PATH,
-    label: 'OAuth token',
-    getCached: getOauthTokenFromFd,
-    setCached: setOauthTokenFromFd,
-  })
 }
 
 /**

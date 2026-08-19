@@ -3,14 +3,14 @@ import figures from 'figures';
 import * as React from 'react';
 import { color, Text } from '../ink.js';
 import type { MCPServerConnection } from '../services/mcp/types.js';
-import { getAccountInformation, isClaudeAISubscriber } from './auth.js';
+import { getAccountInformation } from './auth.js';
 import { getLargeMemoryFiles, getMemoryFiles, MAX_MEMORY_CHARACTER_COUNT } from './claudemd.js';
 import { getDoctorDiagnostic } from './doctorDiagnostic.js';
 import { getAWSRegion, getDefaultVertexRegion, isEnvTruthy } from './envUtils.js';
 import { getDisplayPath } from './file.js';
 import { formatNumber } from './format.js';
 import { getIdeClientName, type IDEExtensionInstallationStatus, isJetBrainsIde, toIDEDisplayName } from './ide.js';
-import { getClaudeAiUserDefaultModelDescription, modelDisplayString } from './model/model.js';
+import { modelDisplayString } from './model/model.js';
 import { getAPIProvider } from './model/providers.js';
 import { getMTLSConfig } from './mtls.js';
 import { checkInstall } from './nativeInstaller/index.js';
@@ -203,12 +203,6 @@ export function buildAccountProperties(): Property[] {
     return [];
   }
   const properties: Property[] = [];
-  if (accountInfo.subscription) {
-    properties.push({
-      label: 'Login method',
-      value: `${accountInfo.subscription} Account`
-    });
-  }
   if (accountInfo.tokenSource) {
     properties.push({
       label: 'Auth token',
@@ -352,10 +346,5 @@ export function buildAPIProviderProperties(): Property[] {
   return properties;
 }
 export function getModelDisplayLabel(mainLoopModel: string | null): string {
-  let modelLabel = modelDisplayString(mainLoopModel);
-  if (mainLoopModel === null && isClaudeAISubscriber()) {
-    const description = getClaudeAiUserDefaultModelDescription();
-    modelLabel = `${chalk.bold('Default')} ${description}`;
-  }
-  return modelLabel;
+  return modelDisplayString(mainLoopModel);
 }

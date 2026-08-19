@@ -1,15 +1,10 @@
 import axios from 'axios'
 import { z } from 'zod/v4'
-import { getOauthConfig } from '../../constants/oauth.js'
+import { getApiBaseUrl } from '../../constants/api.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
-import { getOrganizationUUID } from '../../services/oauth/client.js'
 import { isPolicyAllowed } from '../../services/policyLimits/index.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
-import {
-  checkAndRefreshOAuthTokenIfNeeded,
-  getClaudeAIOAuthTokens,
-} from '../../utils/auth.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { DESCRIPTION, PROMPT, REMOTE_TRIGGER_TOOL_NAME } from './prompt.js'
@@ -55,10 +50,7 @@ export const RemoteTriggerTool = buildTool({
     return outputSchema()
   },
   isEnabled() {
-    return (
-      getFeatureValue_CACHED_MAY_BE_STALE('tengu_surreal_dali', false) &&
-      isPolicyAllowed('allow_remote_sessions')
-    )
+    return false
   },
   isConcurrencySafe() {
     return true
@@ -73,19 +65,11 @@ export const RemoteTriggerTool = buildTool({
     return PROMPT
   },
   async call(input: Input, context: ToolUseContext) {
-    await checkAndRefreshOAuthTokenIfNeeded()
-    const accessToken = getClaudeAIOAuthTokens()?.accessToken
-    if (!accessToken) {
-      throw new Error(
-        'Not authenticated with a claude.ai account. Run /login and try again.',
-      )
-    }
-    const orgUUID = await getOrganizationUUID()
-    if (!orgUUID) {
-      throw new Error('Unable to resolve organization UUID.')
-    }
+    throw new Error('Remote triggers are not supported in this build')
+    const accessToken = ''
+    const orgUUID = ''
 
-    const base = `${getOauthConfig().BASE_API_URL}/v1/code/triggers`
+    const base = `${getApiBaseUrl()}/v1/code/triggers`
     const headers = {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',

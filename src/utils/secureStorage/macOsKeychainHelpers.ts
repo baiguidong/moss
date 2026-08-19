@@ -9,19 +9,18 @@
  * so a heavy transitive import here defeats the prefetch. The execa →
  * human-signals → cross-spawn chain alone is ~58ms of synchronous init.
  *
- * The imports below (envUtils, oauth constants, crypto, os) are already
+ * The imports below (envUtils, crypto, os) are already
  * evaluated by startupProfiler.ts at main.tsx:5, so they add no module-init
  * cost when keychainPrefetch.ts pulls this file in.
  */
 
 import { createHash } from 'crypto'
 import { userInfo } from 'os'
-import { getOauthConfig } from 'src/constants/oauth.js'
 import { getMossConfigHomeDir } from '../envUtils.js'
 import type { SecureStorageData } from './types.js'
 
-// Suffix distinguishing the OAuth credentials keychain entry from the legacy
-// API key entry (which uses no suffix). Both share the service name base.
+// Suffix distinguishing the credentials keychain entry from the legacy API key
+// entry (which uses no suffix). Both share the service name base.
 // DO NOT change this value — it's part of the keychain lookup key and would
 // orphan existing stored credentials.
 export const CREDENTIALS_SERVICE_SUFFIX = '-credentials'
@@ -37,7 +36,7 @@ export function getMacOsKeychainStorageServiceName(
   const dirHash = isDefaultDir
     ? ''
     : `-${createHash('sha256').update(configDir).digest('hex').substring(0, 8)}`
-  return `Claude Code${getOauthConfig().OAUTH_FILE_SUFFIX}${serviceSuffix}${dirHash}`
+  return `Claude Code${serviceSuffix}${dirHash}`
 }
 
 export function getUsername(): string {
@@ -59,8 +58,8 @@ export function getUsername(): string {
 // MCP connectors authenticating at startup, a short TTL expires mid-storm and
 // triggers repeat sync reads — observed as a 5.5s event-loop stall
 // (go/ccshare/adamj-20260326-212235). 30s of cross-process staleness is fine:
-// OAuth tokens expire in hours, and the only cross-process writer is another
-// CC instance's /login or refresh.
+// Stored credentials are expected to change rarely, and the only cross-process
+// writer is another CLI instance.
 //
 // Lives here (not in macOsKeychainStorage.ts) so keychainPrefetch.ts can
 // prime it without pulling in execa. Wrapped in an object because ES module

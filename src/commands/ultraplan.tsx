@@ -16,7 +16,7 @@ import { updateTaskState } from '../utils/task/framework.js';
 import { archiveRemoteSession, teleportToRemote } from '../utils/teleport.js';
 import { pollForApprovedExitPlanMode, UltraplanPollError } from '../utils/ultraplan/ccrSession.js';
 
-// TODO(prod-hardening): OAuth token may go stale over the 30min poll;
+// TODO(prod-hardening): bearer credentials may go stale over the 30min poll;
 // consider refresh.
 
 // Multi-agent exploration is slow; 30min timeout.
@@ -267,7 +267,7 @@ export async function launchUltraplan(opts: {
     return [
     // Rendered via <Markdown>; raw <message> is tokenized as HTML
     // and dropped. Backslash-escape the brackets.
-    'Usage: /ultraplan \\<prompt\\>, or include "ultraplan" anywhere', 'in your prompt', '', 'Advanced multi-agent plan mode with our most powerful model', '(Opus). Runs in Claude Code on the web. When the plan is ready,', 'you can execute it in the web session or send it back here.', 'Terminal stays free while the remote plans.', 'Requires /login.', '', `Terms: ${CCR_TERMS_URL}`].join('\n');
+    'Usage: /ultraplan \\<prompt\\>, or include "ultraplan" anywhere', 'in your prompt', '', 'Advanced multi-agent plan mode with our most powerful model', '(Opus). Runs in Claude Code on the web. When the plan is ready,', 'you can execute it in the web session or send it back here.', 'Terminal stays free while the remote plans.', 'Remote web sessions are not supported in this build.', '', `Terms: ${CCR_TERMS_URL}`].join('\n');
   }
 
   // Set synchronously before the detached flow to prevent duplicate launches

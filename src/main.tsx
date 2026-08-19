@@ -2,10 +2,7 @@
 // 1. profileCheckpoint marks entry before heavy module evaluation begins
 // 2. startMdmRawRead fires MDM subprocesses (plutil/reg query) so they run in
 //    parallel with the remaining ~135ms of imports below
-// 3. startKeychainPrefetch fires both macOS keychain reads (OAuth + legacy API
-//    key) in parallel — isRemoteManagedSettingsEligible() otherwise reads them
-//    sequentially via sync spawn inside applySafeConfigEnvironmentVariables()
-//    (~65ms on every macOS startup)
+// 3. remaining imports initialize the CLI runtime.
 import { profileCheckpoint, profileReport } from './utils/startupProfiler.js';
 
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
@@ -14,19 +11,14 @@ import { startMdmRawRead } from './utils/settings/mdm/rawRead.js';
 
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
 startMdmRawRead();
-import { ensureKeychainPrefetchCompleted, startKeychainPrefetch } from './utils/secureStorage/keychainPrefetch.js';
-
-// eslint-disable-next-line custom-rules/no-top-level-side-effects
-startKeychainPrefetch();
 import { feature } from 'bun:bundle';
 import { Command as CommanderCommand, InvalidArgumentError, Option } from '@commander-js/extra-typings';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import mapValues from 'lodash-es/mapValues.js';
-import pickBy from 'lodash-es/pickBy.js';
 import uniqBy from 'lodash-es/uniqBy.js';
 import React from 'react';
-import { getOauthConfig } from './constants/oauth.js';
+import { getApiBaseUrl } from './constants/api.js';
 import { getRemoteSessionUrl } from './constants/product.js';
 import { getSystemContext, getUserContext } from './context.js';
 import { init, initializeTelemetryAfterTrust } from './entrypoints/init.js';
@@ -36,7 +28,6 @@ import { launchRepl } from './replLauncher.js';
 import { hasGrowthBookEnvOverride, initializeGrowthBook, refreshGrowthBookAfterAuthChange } from './services/analytics/growthbook.js';
 import { fetchBootstrapData } from './services/api/bootstrap.js';
 import { type DownloadResult, downloadSessionFiles, type FilesApiConfig, parseFileSpecs } from './services/api/filesApi.js';
-import { prefetchPassesEligibility } from './services/api/referral.js';
 import { prefetchOfficialMcpUrls } from './services/mcp/officialRegistry.js';
 import type { McpSdkServerConfig, McpServerConfig, ScopedMcpServerConfig } from './services/mcp/types.js';
 import { isPolicyAllowed, loadPolicyLimits, refreshPolicyLimits, waitForPolicyLimitsToLoad } from './services/policyLimits/index.js';
@@ -48,7 +39,7 @@ import { canUserConfigureAdvisor, getInitialAdvisorSetting, isAdvisorEnabled, is
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js';
 import { count, uniq } from './utils/array.js';
 import { installAsciicastRecorder } from './utils/asciicast.js';
-import { getSubscriptionType, isClaudeAISubscriber, prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe, validateForceLoginOrg } from './utils/auth.js';
+import { prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe } from './utils/auth.js';
 import { checkHasTrustDialogAccepted, getGlobalConfig, isAutoUpdaterDisabled, saveGlobalConfig } from './utils/config.js';
 import { stopCapturingEarlyInput } from './utils/earlyInput.js';
 import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
@@ -136,9 +127,8 @@ import { validateUuid } from './utils/uuid.js';
 import { registerMcpAddCommand } from 'src/commands/mcp/addCommand.js';
 import { registerMcpXaaIdpCommand } from 'src/commands/mcp/xaaIdpCommand.js';
 import { logPermissionContextForAnts } from 'src/services/internalLogging.js';
-import { fetchClaudeAIMcpConfigsIfEligible } from 'src/services/mcp/claudeai.js';
 import { clearServerCache } from 'src/services/mcp/client.js';
-import { areMcpConfigsAllowedWithEnterpriseMcpConfig, dedupClaudeAiMcpServers, doesEnterpriseMcpConfigExist, filterMcpServersByPolicy, getClaudeCodeMcpConfigs, getMcpServerSignature, parseMcpConfig, parseMcpConfigFromFilePath } from 'src/services/mcp/config.js';
+import { areMcpConfigsAllowedWithEnterpriseMcpConfig, doesEnterpriseMcpConfigExist, filterMcpServersByPolicy, getClaudeCodeMcpConfigs, getMcpServerSignature, parseMcpConfig, parseMcpConfigFromFilePath } from 'src/services/mcp/config.js';
 import { excludeCommandsByServer, excludeResourcesByServer } from 'src/services/mcp/utils.js';
 import { isXaaEnabled } from 'src/services/mcp/xaaIdpLogin.js';
 import { getRelevantTips } from 'src/services/tips/tipRegistry.js';
@@ -175,8 +165,8 @@ import { resetProToOpusDefault } from './migrations/resetProToOpusDefault.js';
 import { createRemoteSessionConfig } from './remote/RemoteSessionManager.js';
 /* eslint-enable @typescript-eslint/no-require-imports */
 // teleportWithProgress dynamically imported at call site
-import { createDirectConnectSession, DirectConnectError } from './server/createDirectConnectSession.js';
-import { getAssistantSystemPrompt } from './server/agentStore.js';
+import { createDirectConnectSession, DirectConnectError } from './remote/createDirectConnectSession.js';
+import { getAssistantSystemPrompt } from './utils/localMossAssets.js';
 import { initializeLspServerManager } from './services/lsp/manager.js';
 import { shouldEnablePromptSuggestion } from './services/PromptSuggestion/promptSuggestion.js';
 import { type AppState, getDefaultAppState, IDLE_SPECULATION_STATE } from './state/AppStateStore.js';
@@ -584,7 +574,7 @@ export async function main() {
       const ccUrl = rawCliArgs[ccIdx]!;
       const {
         parseConnectUrl
-      } = await import('./server/parseConnectUrl.js');
+      } = await import('../packages/direct-connect-protocol/src/index.js');
       const parsed = parseConnectUrl(ccUrl);
       _pendingConnect.dangerouslySkipPermissions = rawCliArgs.includes('--dangerously-skip-permissions');
       const apiKeyFlagIdx = rawCliArgs.indexOf('--api-key');
@@ -772,7 +762,7 @@ async function run(): Promise<CommanderCommand> {
     // Must resolve before init() which triggers the first settings read
     // (applySafeConfigEnvironmentVariables → getSettingsForSource('policySettings')
     // → isRemoteManagedSettingsEligible → sync keychain reads otherwise ~65ms).
-    await Promise.all([ensureMdmSettingsLoaded(), ensureKeychainPrefetchCompleted()]);
+    await ensureMdmSettingsLoaded();
     profileCheckpoint('preAction_after_mdm');
     await init();
     profileCheckpoint('preAction_after_init');
@@ -827,7 +817,7 @@ async function run(): Promise<CommanderCommand> {
     // If not provided but flag is present, value will be true
     // The actual filtering is handled in debug.ts by parsing process.argv
     return true;
-  }).addOption(new Option('--debug-to-stderr', 'Enable debug mode (to stderr)').argParser(Boolean).hideHelp()).option('--debug-file <path>', 'Write debug logs to a specific file path (implicitly enables debug mode)', () => true).option('--verbose', 'Override verbose mode setting from config', () => true).option('-p, --print', 'Print response and exit (useful for pipes). Note: The workspace trust dialog is skipped when Claude is run with the -p mode. Only use this flag in directories you trust.', () => true).option('--bare', 'Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read). 3P providers (Bedrock/Vertex/Foundry) use their own credentials. Skills still resolve via /skill-name. Explicitly provide context via: --system-prompt[-file], --append-system-prompt[-file], --add-dir (CLAUDE.md dirs), --mcp-config, --settings, --agents, --plugin-dir.', () => true).addOption(new Option('--init', 'Run Setup hooks with init trigger, then continue').hideHelp()).addOption(new Option('--init-only', 'Run Setup and SessionStart:startup hooks, then exit').hideHelp()).addOption(new Option('--maintenance', 'Run Setup hooks with maintenance trigger, then continue').hideHelp()).addOption(new Option('--output-format <format>', 'Output format (only works with --print): "text" (default), "json" (single result), or "stream-json" (realtime streaming)').choices(['text', 'json', 'stream-json'])).addOption(new Option('--json-schema <schema>', 'JSON Schema for structured output validation. ' + 'Example: {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}').argParser(String)).option('--include-hook-events', 'Include all hook lifecycle events in the output stream (only works with --output-format=stream-json)', () => true).option('--include-partial-messages', 'Include partial message chunks as they arrive (only works with --print and --output-format=stream-json)', () => true).addOption(new Option('--input-format <format>', 'Input format (only works with --print): "text" (default), or "stream-json" (realtime streaming input)').choices(['text', 'stream-json'])).option('--mcp-debug', '[DEPRECATED. Use --debug instead] Enable MCP debug mode (shows MCP server errors)', () => true).option('--dangerously-skip-permissions', 'Bypass all permission checks. Recommended only for sandboxes with no internet access.', () => true).option('--allow-dangerously-skip-permissions', 'Enable bypassing all permission checks as an option, without it being enabled by default. Recommended only for sandboxes with no internet access.', () => true).addOption(new Option('--thinking <mode>', 'Thinking mode: enabled (equivalent to adaptive), disabled').choices(['enabled', 'adaptive', 'disabled']).hideHelp()).addOption(new Option('--max-thinking-tokens <tokens>', '[DEPRECATED. Use --thinking instead for newer models] Maximum number of thinking tokens (only works with --print)').argParser(Number).hideHelp()).addOption(new Option('--max-turns <turns>', 'Maximum number of agentic turns in non-interactive mode. This will early exit the conversation after the specified number of turns. (only works with --print)').argParser(Number).hideHelp()).addOption(new Option('--max-budget-usd <amount>', 'Maximum dollar amount to spend on API calls (only works with --print)').argParser(value => {
+  }).addOption(new Option('--debug-to-stderr', 'Enable debug mode (to stderr)').argParser(Boolean).hideHelp()).option('--debug-file <path>', 'Write debug logs to a specific file path (implicitly enables debug mode)', () => true).option('--verbose', 'Override verbose mode setting from config', () => true).option('-p, --print', 'Print response and exit (useful for pipes). Note: The workspace trust dialog is skipped when Claude is run with the -p mode. Only use this flag in directories you trust.', () => true).option('--bare', 'Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (browser login and keychain are never read). 3P providers (Bedrock/Vertex/Foundry) use their own credentials. Skills still resolve via /skill-name. Explicitly provide context via: --system-prompt[-file], --append-system-prompt[-file], --add-dir (CLAUDE.md dirs), --mcp-config, --settings, --agents, --plugin-dir.', () => true).addOption(new Option('--init', 'Run Setup hooks with init trigger, then continue').hideHelp()).addOption(new Option('--init-only', 'Run Setup and SessionStart:startup hooks, then exit').hideHelp()).addOption(new Option('--maintenance', 'Run Setup hooks with maintenance trigger, then continue').hideHelp()).addOption(new Option('--output-format <format>', 'Output format (only works with --print): "text" (default), "json" (single result), or "stream-json" (realtime streaming)').choices(['text', 'json', 'stream-json'])).addOption(new Option('--json-schema <schema>', 'JSON Schema for structured output validation. ' + 'Example: {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}').argParser(String)).option('--include-hook-events', 'Include all hook lifecycle events in the output stream (only works with --output-format=stream-json)', () => true).option('--include-partial-messages', 'Include partial message chunks as they arrive (only works with --print and --output-format=stream-json)', () => true).addOption(new Option('--input-format <format>', 'Input format (only works with --print): "text" (default), or "stream-json" (realtime streaming input)').choices(['text', 'stream-json'])).option('--mcp-debug', '[DEPRECATED. Use --debug instead] Enable MCP debug mode (shows MCP server errors)', () => true).option('--dangerously-skip-permissions', 'Bypass all permission checks. Recommended only for sandboxes with no internet access.', () => true).option('--allow-dangerously-skip-permissions', 'Enable bypassing all permission checks as an option, without it being enabled by default. Recommended only for sandboxes with no internet access.', () => true).addOption(new Option('--thinking <mode>', 'Thinking mode: enabled (equivalent to adaptive), disabled').choices(['enabled', 'adaptive', 'disabled']).hideHelp()).addOption(new Option('--max-thinking-tokens <tokens>', '[DEPRECATED. Use --thinking instead for newer models] Maximum number of thinking tokens (only works with --print)').argParser(Number).hideHelp()).addOption(new Option('--max-turns <turns>', 'Maximum number of agentic turns in non-interactive mode. This will early exit the conversation after the specified number of turns. (only works with --print)').argParser(Number).hideHelp()).addOption(new Option('--max-budget-usd <amount>', 'Maximum dollar amount to spend on API calls (only works with --print)').argParser(value => {
     const amount = Number(value);
     if (isNaN(amount) || amount <= 0) {
       throw new Error('--max-budget-usd must be a positive number greater than 0');
@@ -1096,11 +1086,11 @@ async function run(): Promise<CommanderCommand> {
       const fileSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID || getSessionId();
       const files = parseFileSpecs(fileSpecs);
       if (files.length > 0) {
-        // Use MOSS_BASE_URL if set (by EnvManager), otherwise use OAuth config
+        // Use MOSS_BASE_URL if set (by EnvManager), otherwise use the configured API base.
         // This ensures consistency with session ingress API in all environments
         const config: FilesApiConfig = {
-          baseUrl: process.env.MOSS_BASE_URL || getOauthConfig().BASE_API_URL,
-          oauthToken: sessionToken,
+          baseUrl: process.env.MOSS_BASE_URL || getApiBaseUrl(),
+          bearerToken: sessionToken,
           sessionId: fileSessionId
         };
 
@@ -1295,13 +1285,13 @@ async function run(): Promise<CommanderCommand> {
       }
     }
 
-    // Extract Claude in Chrome option and enforce claude.ai subscriber check (unless user is ant)
+    // Chrome integration is not supported in this build.
     const chromeOpts = options as {
       chrome?: boolean;
     };
     // Store the explicit CLI flag so teammates can inherit it
     setChromeFlagOverride(chromeOpts.chrome);
-    const enableClaudeInChrome = shouldEnableClaudeInChrome(chromeOpts.chrome) && ("external" === 'ant' || isClaudeAISubscriber());
+    const enableClaudeInChrome = false;
     const autoEnableClaudeInChrome = !enableClaudeInChrome && shouldAutoEnableClaudeInChrome();
     if (enableClaudeInChrome) {
       const platform = getPlatform();
@@ -1401,24 +1391,7 @@ async function run(): Promise<CommanderCommand> {
     });
     void assertMinVersion();
 
-    // claude.ai config fetch: -p mode only (interactive uses useManageMCPConnections
-    // two-phase loading). Kicked off here to overlap with setup(); awaited
-    // before runHeadless so single-turn -p sees connectors. Skipped under
-    // enterprise/strict MCP to preserve policy boundaries.
-    const claudeaiConfigPromise: Promise<Record<string, ScopedMcpServerConfig>> = isNonInteractiveSession && !strictMcpConfig && !doesEnterpriseMcpConfigExist() &&
-    // --bare / SIMPLE: skip claude.ai proxy servers (datadog, Gmail,
-    // Slack, BigQuery, PubMed — 6-14s each to connect). Scripted calls
-    // that need MCP pass --mcp-config explicitly.
-    !isBareMode() ? fetchClaudeAIMcpConfigsIfEligible().then(configs => {
-      const {
-        allowed,
-        blocked
-      } = filterMcpServersByPolicy(configs);
-      if (blocked.length > 0) {
-        process.stderr.write(`Warning: claude.ai MCP ${plural(blocked.length, 'server')} blocked by enterprise policy: ${blocked.join(', ')}\n`);
-      }
-      return allowed;
-    }) : Promise.resolve({});
+    const claudeaiConfigPromise: Promise<Record<string, ScopedMcpServerConfig>> = Promise.resolve({});
 
     // Kick off MCP config loading early (safe - just reads files, no execution).
     // Both interactive and -p use getClaudeCodeMcpConfigs (local file reads only).
@@ -1809,7 +1782,7 @@ async function run(): Promise<CommanderCommand> {
 
       // Log startup time now, before any blocking dialog renders. Logging
       // from REPL's first render (the old location) included however long
-      // the user sat on trust/OAuth/onboarding/resume-picker — p99 was ~70s
+      // the user sat on trust/onboarding/resume-picker — p99 was ~70s
       // dominated by dialog-wait time, not code-path startup.
       logEvent('tengu_timer', {
         event: 'startup' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -1838,28 +1811,16 @@ async function run(): Promise<CommanderCommand> {
         agentDef.pendingSnapshotUpdate = undefined;
       }
 
-      // Skip executing /login if we just completed onboarding for it
-      if (onboardingShown && prompt?.trim().toLowerCase() === '/login') {
-        prompt = '';
-      }
       if (onboardingShown) {
-        // Refresh auth-dependent services now that the user has logged in during onboarding.
-        // Keep in sync with the post-login logic in src/commands/login.tsx
+        // Refresh auth-dependent services after onboarding updates credentials.
         void refreshRemoteManagedSettings();
         void refreshPolicyLimits();
         // Clear user data cache BEFORE GrowthBook refresh so it picks up fresh credentials
         resetUserCache();
-        // Refresh GrowthBook after login to get updated feature flags (e.g., for claude.ai MCPs)
+        // Refresh GrowthBook after credential changes to get updated feature flags.
         refreshGrowthBookAfterAuthChange();
       }
 
-      // Validate that the active token's org matches forceLoginOrgUUID (if set
-      // in managed settings). Runs after onboarding so managed settings and
-      // login state are fully loaded.
-      const orgValidation = await validateForceLoginOrg();
-      if (!orgValidation.valid) {
-        await exitWithError(root, orgValidation.message);
-      }
     }
 
     // If gracefulShutdown was initiated (e.g., user rejected trust dialog),
@@ -1910,7 +1871,6 @@ async function run(): Promise<CommanderCommand> {
       void fetchBootstrapData();
 
       // TODO: Consolidate other prefetches into a single bootstrap request.
-      void prefetchPassesEligibility();
       if (!getFeatureValue_CACHED_MAY_BE_STALE('tengu_miraculo_the_bard', false)) {
         void prefetchFastModeStatus();
       } else {
@@ -2215,8 +2175,8 @@ async function run(): Promise<CommanderCommand> {
         setSessionPersistenceDisabled(true);
       }
 
-      // Store SDK betas in global state for context window calculation
-      // Only store allowed betas (filters by allowlist and subscriber status)
+      // Store SDK betas in global state for context window calculation.
+      // Only store betas allowed by the local allowlist.
       setSdkBetas(filterAllowedSdkBetas(betas));
 
       // Print-mode MCP: per-server incremental push into headlessStore.
@@ -2321,17 +2281,7 @@ async function run(): Promise<CommanderCommand> {
             });
           }
         }
-        // Suppress claude.ai connectors that duplicate an enabled
-        // manual server (URL-signature match). Plugin dedup above only
-        // handles `plugin:*` keys; this catches manual `.mcp.json` entries.
-        // plugin:* must be excluded here — step 1 already suppressed
-        // those (claude.ai wins); leaving them in suppresses the
-        // connector too, and neither survives (gh-39974).
-        const nonPluginConfigs = pickBy(regularMcpConfigs, (_, n) => !n.startsWith('plugin:'));
-        const {
-          servers: dedupedClaudeAi
-        } = dedupClaudeAiMcpServers(claudeaiConfigs, nonPluginConfigs);
-        return connectMcpBatch(dedupedClaudeAi, 'claudeai');
+        return connectMcpBatch({}, 'claudeai');
       });
       let claudeaiTimer: ReturnType<typeof setTimeout> | undefined;
       const claudeaiTimedOut = await Promise.race([claudeaiConnect.then(() => false), new Promise<boolean>(resolve => {
@@ -2400,7 +2350,6 @@ async function run(): Promise<CommanderCommand> {
       cli_flag: options.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       env_var: process.env.ANTHROPIC_MODEL as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       settings_file: (getInitialSettings() || {}).model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      subscriptionType: getSubscriptionType() as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       agent: agentSetting as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
 
@@ -2789,7 +2738,7 @@ async function run(): Promise<CommanderCommand> {
         setIsRemoteMode(true);
         switchSession(asSessionId(createdSession.id));
 
-        // Get OAuth credentials for remote session
+        // Get bearer credentials for remote session
         let apiCreds: {
           accessToken: string;
           orgUUID: string;
@@ -2802,10 +2751,7 @@ async function run(): Promise<CommanderCommand> {
         }
 
         // Create remote session config for the REPL
-        const {
-          getClaudeAIOAuthTokens: getTokensForRemote
-        } = await import('./utils/auth.js');
-        const getAccessTokenForRemote = (): string => getTokensForRemote()?.accessToken ?? apiCreds.accessToken;
+        const getAccessTokenForRemote = (): string => apiCreds.accessToken;
         const remoteSessionConfig = createRemoteSessionConfig(createdSession.id, getAccessTokenForRemote, apiCreds.orgUUID, hasInitialPrompt);
 
         // Add remote session info as initial system message
@@ -3246,81 +3192,33 @@ async function run(): Promise<CommanderCommand> {
 
   // claude server
   if (feature('DIRECT_CONNECT')) {
-    program.command('server').description('Start a Claude Code session server').option('--port <number>', 'HTTP port', '0').option('--host <string>', 'Bind address', '0.0.0.0').option('--auth-token <token>', 'Bearer token for auth').option('--unix <path>', 'Listen on a unix domain socket').option('--workspace <dir>', 'Default working directory for sessions that do not specify cwd').option('--idle-timeout <ms>', 'Idle timeout for detached sessions in ms (0 = never expire)', '600000').option('--max-sessions <n>', 'Maximum concurrent sessions (0 = unlimited)', '32').action(async (opts: {
-      port: string;
-      host: string;
-      authToken?: string;
-      unix?: string;
-      workspace?: string;
-      idleTimeout: string;
-      maxSessions: string;
-    }) => {
-      const {
-        randomBytes
-      } = await import('crypto');
-      const {
-        startServer
-      } = await import('./server/server.js');
-      const {
-        SessionManager
-      } = await import('./server/sessionManager.js');
-      const {
-        DangerousBackend
-      } = await import('./server/backends/dangerousBackend.js');
-      const {
-        printBanner
-      } = await import('./server/serverBanner.js');
-      const {
-        createServerLogger
-      } = await import('./server/serverLog.js');
-      const {
-        writeServerLock,
-        removeServerLock,
-        probeRunningServer
-      } = await import('./server/lockfile.js');
-      const existing = await probeRunningServer();
-      if (existing) {
-        process.stderr.write(`A claude server is already running (pid ${existing.pid}) at ${existing.httpUrl}\n`);
-        process.exit(1);
+    program.command('server').description('Start the standalone Moss server').action(async () => {
+      const { existsSync } = await import('fs');
+      const { dirname, join } = await import('path');
+      const { fileURLToPath } = await import('url');
+      const { spawn } = await import('child_process');
+      const currentDir = dirname(fileURLToPath(import.meta.url));
+      const candidates = [
+        process.env.MOSS_SERVER_ENTRY,
+        join(currentDir, 'moss-server.mjs'),
+        join(currentDir, '..', 'bin', 'moss-server.mjs'),
+        join(process.cwd(), 'bin', 'moss-server.mjs')
+      ].filter((value): value is string => Boolean(value));
+      const serverEntry = candidates.find(candidate => existsSync(candidate));
+      if (!serverEntry) {
+        throw new Error('Missing bin/moss-server.mjs. Run `bun run --cwd server build` first.');
       }
-      const authToken = opts.authToken ?? `sk-ant-cc-${randomBytes(16).toString('base64url')}`;
-      const config = {
-        port: parseInt(opts.port, 10),
-        host: opts.host,
-        authToken,
-        unix: opts.unix,
-        workspace: opts.workspace,
-        idleTimeoutMs: parseInt(opts.idleTimeout, 10),
-        maxSessions: parseInt(opts.maxSessions, 10)
-      };
-      const backend = new DangerousBackend();
-      const sessionManager = new SessionManager(backend, {
-        idleTimeoutMs: config.idleTimeoutMs,
-        maxSessions: config.maxSessions
+      const server = spawn(process.execPath, [serverEntry], {
+        stdio: 'inherit',
+        env: process.env
       });
-      const logger = createServerLogger();
-      const server = startServer(config, sessionManager, logger);
-      const actualPort = server.port ?? config.port;
-      printBanner(config, authToken, actualPort);
-      await writeServerLock({
-        pid: process.pid,
-        port: actualPort,
-        host: config.host,
-        httpUrl: config.unix ? `unix:${config.unix}` : `http://${config.host}:${actualPort}`,
-        startedAt: Date.now()
+      await new Promise<void>((resolveServer, rejectServer) => {
+        server.once('error', rejectServer);
+        server.once('exit', code => {
+          if (code === 0 || code === null) resolveServer();
+          else rejectServer(new Error(`Moss server exited with code ${code}`));
+        });
       });
-      let shuttingDown = false;
-      const shutdown = async () => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        // Stop accepting new connections before tearing down sessions.
-        server.stop(true);
-        await sessionManager.destroyAll();
-        await removeServerLock();
-        process.exit(0);
-      };
-      process.once('SIGINT', () => void shutdown());
-      process.once('SIGTERM', () => void shutdown());
     });
   }
 
@@ -3340,7 +3238,7 @@ async function run(): Promise<CommanderCommand> {
     }) => {
       const {
         parseConnectUrl
-      } = await import('./server/parseConnectUrl.js');
+      } = await import('../packages/direct-connect-protocol/src/index.js');
       const {
         serverUrl,
         authToken
@@ -3374,52 +3272,12 @@ async function run(): Promise<CommanderCommand> {
       }
       const {
         runConnectHeadless
-      } = await import('./server/connectHeadless.js');
+      } = await import('./remote/connectHeadless.js');
       const prompt = typeof opts.print === 'string' ? opts.print : '';
       const interactive = opts.print === true;
       await runConnectHeadless(connectConfig, prompt, opts.outputFormat, interactive);
     });
   }
-
-  // claude auth
-
-  const auth = program.command('auth').description('Manage authentication').configureHelp(createSortedHelpConfig());
-  auth.command('login').description('Sign in to your Anthropic account').option('--email <email>', 'Pre-populate email address on the login page').option('--sso', 'Force SSO login flow').option('--console', 'Use Anthropic Console (API usage billing) instead of Claude subscription').option('--claudeai', 'Use Claude subscription (default)').action(async ({
-    email,
-    sso,
-    console: useConsole,
-    claudeai
-  }: {
-    email?: string;
-    sso?: boolean;
-    console?: boolean;
-    claudeai?: boolean;
-  }) => {
-    const {
-      authLogin
-    } = await import('./cli/handlers/auth.js');
-    await authLogin({
-      email,
-      sso,
-      console: useConsole,
-      claudeai
-    });
-  });
-  auth.command('status').description('Show authentication status').option('--json', 'Output as JSON (default)').option('--text', 'Output as human-readable text').action(async (opts: {
-    json?: boolean;
-    text?: boolean;
-  }) => {
-    const {
-      authStatus
-    } = await import('./cli/handlers/auth.js');
-    await authStatus(opts);
-  });
-  auth.command('logout').description('Log out from your Anthropic account').action(async () => {
-    const {
-      authLogout
-    } = await import('./cli/handlers/auth.js');
-    await authLogout();
-  });
 
   /**
    * Helper function to handle marketplace command errors consistently.
@@ -3548,17 +3406,6 @@ async function run(): Promise<CommanderCommand> {
     await pluginUpdateHandler(plugin, options);
   });
   // END ANT-ONLY
-
-  // Setup token command
-  program.command('setup-token').description('Set up a long-lived authentication token (requires Claude subscription)').action(async () => {
-    const [{
-      setupTokenHandler
-    }, {
-      createRoot
-    }] = await Promise.all([import('./cli/handlers/util.js'), import('./ink.js')]);
-    const root = await createRoot(getBaseRenderOptions(false));
-    await setupTokenHandler(root);
-  });
 
   // Agents command - list configured agents
   program.command('agents').description('List configured agents').option('--setting-sources <sources>', 'Comma-separated list of setting sources to load (user, project, local).').action(async () => {

@@ -7,7 +7,6 @@
  *
  * Eligibility:
  * - Console users (API key): All eligible
- * - OAuth users (Claude.ai): Only Enterprise/C4E and Team subscribers are eligible
  * - API fails open (non-blocking) - if fetch fails, continues without remote settings
  * - API returns empty settings for users without managed settings
  */
@@ -15,12 +14,8 @@
 import axios from 'axios'
 import { createHash } from 'crypto'
 import { open, unlink } from 'fs/promises'
-import { getOauthConfig, OAUTH_BETA_HEADER } from '../../constants/oauth.js'
-import {
-  checkAndRefreshOAuthTokenIfNeeded,
-  getAnthropicApiKeyWithSource,
-  getClaudeAIOAuthTokens,
-} from '../../utils/auth.js'
+import { getApiBaseUrl } from '../../constants/api.js'
+import { getAnthropicApiKeyWithSource } from '../../utils/auth.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { classifyAxiosError, getErrnoCode } from '../../utils/errors.js'
@@ -100,10 +95,10 @@ export function initializeRemoteManagedSettingsLoadingPromise(): void {
 
 /**
  * Get the remote settings API endpoint
- * Uses the OAuth config base API URL
+ * Uses the configured base API URL.
  */
 function getRemoteManagedSettingsEndpoint() {
-  return `${getOauthConfig().BASE_API_URL}/api/claude_code/settings`
+  return `${getApiBaseUrl()}/api/claude_code/settings`
 }
 
 /**
@@ -161,7 +156,7 @@ export async function waitForRemoteManagedSettingsToLoad(): Promise<void> {
 /**
  * Get auth headers for remote settings without calling getSettings()
  * This avoids circular dependencies during settings loading
- * Supports both API key and OAuth authentication
+ * Uses API key authentication.
  */
 function getRemoteSettingsAuthHeaders(): {
   headers: Record<string, string>
@@ -181,20 +176,7 @@ function getRemoteSettingsAuthHeaders(): {
         },
       }
     }
-  } catch {
-    // No API key available - continue to check OAuth
-  }
-
-  // Fall back to OAuth tokens (for Claude.ai users)
-  const oauthTokens = getClaudeAIOAuthTokens()
-  if (oauthTokens?.accessToken) {
-    return {
-      headers: {
-        Authorization: `Bearer ${oauthTokens.accessToken}`,
-        'anthropic-beta': OAUTH_BETA_HEADER,
-      },
-    }
-  }
+  } catch {}
 
   return {
     headers: {},
@@ -249,10 +231,6 @@ async function fetchRemoteManagedSettings(
   cachedChecksum?: string,
 ): Promise<RemoteManagedSettingsFetchResult> {
   try {
-    // Ensure OAuth token is fresh before fetching settings
-    // This prevents 401 errors from stale cached tokens
-    await checkAndRefreshOAuthTokenIfNeeded()
-
     // Use local auth header getter to avoid circular dependency with getSettings()
     const authHeaders = getRemoteSettingsAuthHeaders()
     if (authHeaders.error) {

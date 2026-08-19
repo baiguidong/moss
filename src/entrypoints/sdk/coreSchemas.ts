@@ -55,7 +55,7 @@ export const OutputFormatSchema = lazySchema(() =>
 // ============================================================================
 
 export const ApiKeySourceSchema = lazySchema(() =>
-  z.enum(['user', 'project', 'org', 'temporary', 'oauth']),
+  z.enum(['user', 'project', 'org', 'temporary']),
 )
 
 export const ConfigScopeSchema = lazySchema(() =>
@@ -1071,14 +1071,13 @@ export const AccountInfoSchema = lazySchema(() =>
     .object({
       email: z.string().optional(),
       organization: z.string().optional(),
-      subscriptionType: z.string().optional(),
       tokenSource: z.string().optional(),
       apiKeySource: z.string().optional(),
       apiProvider: z
         .enum(['firstParty', 'bedrock', 'vertex', 'foundry'])
         .optional()
         .describe(
-          'Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.).',
+          'Active API backend. For 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.).',
         ),
     })
     .describe("Information about the logged in user's account."),
@@ -1329,7 +1328,7 @@ export const SDKRateLimitInfoSchema = lazySchema(() =>
       isUsingOverage: z.boolean().optional(),
       surpassedThreshold: z.number().optional(),
     })
-    .describe('Rate limit information for claude.ai subscription users.'),
+    .describe('Rate limit information.'),
 )
 
 export const SDKAssistantMessageSchema = lazySchema(() =>

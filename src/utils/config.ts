@@ -7,10 +7,6 @@ import { getOriginalCwd, getSessionTrustAccepted } from '../bootstrap/state.js'
 import { getAutoMemEntrypoint } from '../memdir/paths.js'
 import { logEvent } from '../services/analytics/index.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
-import type {
-  BillingType,
-  ReferralEligibilityResponse,
-} from '../services/oauth/types.js'
 import { getCwd } from '../utils/cwd.js'
 import { registerCleanup } from './cleanupRegistry.js'
 import { logForDebugging } from './debug.js'
@@ -144,21 +140,6 @@ import type { EDITOR_MODES, NOTIFICATION_CHANNELS } from './configConstants.js'
 
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number]
 
-export type AccountInfo = {
-  accountUuid: string
-  emailAddress: string
-  organizationUuid?: string
-  organizationName?: string | null // added 4/23/2025, not populated for existing users
-  organizationRole?: string | null
-  workspaceRole?: string | null
-  // Populated by /api/oauth/profile
-  displayName?: string
-  hasExtraUsageEnabled?: boolean
-  billingType?: BillingType | null
-  accountCreatedAt?: string
-  subscriptionCreatedAt?: string
-}
-
 // TODO: 'emacs' is kept for backward compatibility - remove after a few releases
 export type EditorMode = 'emacs' | (typeof EDITOR_MODES)[number]
 
@@ -207,11 +188,9 @@ export type GlobalConfig = {
     approved?: string[]
     rejected?: string[]
   }
-  primaryApiKey?: string // Primary API key for the user when no environment variable is set, set via oauth (TODO: rename)
   hasAcknowledgedCostThreshold?: boolean
   hasSeenUndercoverAutoNotice?: boolean // ant-only: whether the one-time auto-undercover explainer has been shown
   hasSeenUltraplanTerms?: boolean // ant-only: whether the one-time CCR terms notice has been shown in the ultraplan launch dialog
-  oauthAccount?: AccountInfo
   iterm2KeyBindingInstalled?: boolean // Legacy - keeping for backward compatibility
   editorMode?: EditorMode
   bypassPermissionsModeAccepted?: boolean
@@ -268,7 +247,7 @@ export type GlobalConfig = {
 
   // Sonnet-1M configs
   hasShownS1MWelcomeV2?: Record<string, boolean> // Whether the Sonnet-1M v2 welcome message has been shown per org
-  // Cache of Sonnet-1M subscriber access per org - key is org ID
+  // Cache of Sonnet-1M access per org - key is org ID
   // hasAccess means "hasAccessAsDefault" but the old name is kept for backward
   // compatibility.
   s1mAccessCache?: Record<
@@ -281,12 +260,6 @@ export type GlobalConfig = {
   s1mNonSubscriberAccessCache?: Record<
     string,
     { hasAccess: boolean; hasAccessNotAsDefault?: boolean; timestamp: number }
-  >
-
-  // Guest passes eligibility cache per org - key is org ID
-  passesEligibilityCache?: Record<
-    string,
-    ReferralEligibilityResponse & { timestamp: number }
   >
 
   // Grove config cache per account - key is account UUID
@@ -343,12 +316,6 @@ export type GlobalConfig = {
   // Plan mode usage tracking
   lastPlanModeUse?: number // Timestamp of last plan mode usage
 
-  // Subscription notice tracking
-  subscriptionNoticeCount?: number // Number of times the subscription notice has been shown
-  hasAvailableSubscription?: boolean // Cached result of whether user has a subscription available
-  subscriptionUpsellShownCount?: number // Number of times the subscription upsell has been shown (deprecated)
-  recommendedSubscription?: string // Cached config value from Statsig (deprecated)
-
   // Todo feature configuration
   todoFeatureEnabled: boolean // Whether the todo feature is enabled
   showExpandedTodos?: boolean // Whether to show todos expanded, even when empty
@@ -372,9 +339,6 @@ export type GlobalConfig = {
   // dot + status text to the tab sidebar and drops the spinner prefix
   // from the title (the dot makes it redundant).
   showStatusInTerminalTab?: boolean
-
-  // Claude Code usage tracking
-  claudeCodeFirstTokenDate?: string // ISO timestamp of the user's first Claude Code OAuth token
 
   // Model switch callout tracking (ant-only)
   modelSwitchCalloutDismissed?: boolean // Whether user chose "Don't show again"
@@ -713,17 +677,14 @@ export function isProjectConfigKey(key: string): key is ProjectConfigKey {
  * wipe auth. See GH #3117.
  */
 function wouldLoseAuthState(fresh: {
-  oauthAccount?: unknown
   hasCompletedOnboarding?: boolean
 }): boolean {
   const cached = globalConfigCache.config
   if (!cached) return false
-  const lostOauth =
-    cached.oauthAccount !== undefined && fresh.oauthAccount === undefined
   const lostOnboarding =
     cached.hasCompletedOnboarding === true &&
     fresh.hasCompletedOnboarding !== true
-  return lostOauth || lostOnboarding
+  return lostOnboarding
 }
 
 export function saveGlobalConfig(

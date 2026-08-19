@@ -1,9 +1,7 @@
 import { c as _c } from "react/compiler-runtime";
 import * as React from 'react';
 import { useEffect, useState } from 'react';
-import { extraUsage as extraUsageCommand } from 'src/commands/extra-usage/index.js';
 import { formatCost } from 'src/cost-tracker.js';
-import { getSubscriptionType } from 'src/utils/auth.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { Box, Text } from '../../ink.js';
 import { useKeybinding } from '../../keybindings/useKeybinding.js';
@@ -228,12 +226,7 @@ export function Usage(): React.ReactNode {
       </Box>;
   }
 
-  // Only Max and Team plans have a Sonnet limit that differs from the weekly
-  // limit (see rateLimitMessages.ts). For other plans the bar is redundant.
-  // Show for null (unknown plan) to stay consistent with rateLimitMessages.ts,
-  // which labels it "Sonnet limit" in that case.
-  const subscriptionType = getSubscriptionType();
-  const showSonnetBar = subscriptionType === 'max' || subscriptionType === 'team' || subscriptionType === null;
+  const showSonnetBar = utilization.seven_day_sonnet !== undefined;
   const limits = [{
     title: 'Current session',
     limit: utilization.five_hour
@@ -247,7 +240,7 @@ export function Usage(): React.ReactNode {
   return <Box flexDirection="column" gap={1} width="100%">
       {limits.some(({
       limit
-    }) => limit) || <Text dimColor>/usage is only available for subscription plans.</Text>}
+    }) => limit) || <Text dimColor>/usage is not available in this build.</Text>}
 
       {limits.map(({
       title,
@@ -274,22 +267,8 @@ function ExtraUsageSection(t0) {
     extraUsage,
     maxWidth
   } = t0;
-  const subscriptionType = getSubscriptionType();
-  const isProOrMax = subscriptionType === "pro" || subscriptionType === "max";
-  if (!isProOrMax) {
-    return false;
-  }
+  return null;
   if (!extraUsage.is_enabled) {
-    if (extraUsageCommand.isEnabled()) {
-      let t1;
-      if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-        t1 = <Box flexDirection="column"><Text bold={true}>{EXTRA_USAGE_SECTION_TITLE}</Text><Text dimColor={true}>Extra usage not enabled · /extra-usage to enable</Text></Box>;
-        $[0] = t1;
-      } else {
-        t1 = $[0];
-      }
-      return t1;
-    }
     return null;
   }
   if (extraUsage.monthly_limit === null) {

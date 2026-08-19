@@ -31,7 +31,7 @@ import { createServer, type Server } from 'http'
 import { join } from 'path'
 import { parse } from 'url'
 import xss from 'xss'
-import { MCP_CLIENT_METADATA_URL } from '../../constants/oauth.js'
+import { MCP_CLIENT_METADATA_URL } from '../../constants/mcp.js'
 import { openBrowser } from '../../utils/browser.js'
 import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
@@ -192,7 +192,7 @@ export async function normalizeOAuthErrorBody(
 
 /**
  * Creates a fetch function with a fresh 30-second timeout for each OAuth request.
- * Used by ClaudeAuthProvider for metadata discovery and token refresh.
+ * Used by McpAuthProvider for metadata discovery and token refresh.
  * Prevents stale timeout signals from affecting auth operations.
  */
 function createAuthFetch(): FetchLike {
@@ -791,7 +791,7 @@ async function performMCPXaaAuth(
     }
 
     // Save tokens via the same storage path as normal OAuth. We write directly
-    // (instead of ClaudeAuthProvider.saveTokens) to avoid instantiating the
+    // (instead of McpAuthProvider.saveTokens) to avoid instantiating the
     // whole provider just to write the same keys.
     const storage = getSecureStorage()
     const existingData = storage.read() || {}
@@ -858,7 +858,7 @@ export async function performMCPOAuthFlow(
   // If the IdP id_token isn't cached, this pops the browser once at the IdP
   // (shared across all XAA servers for that issuer). Subsequent servers hit
   // the cache and are silent. Tokens land in the same keychain slot, so the
-  // rest of CC's transport wiring (ClaudeAuthProvider.tokens() in client.ts)
+  // rest of the transport wiring (McpAuthProvider.tokens() in client.ts)
   // works unchanged.
   //
   // No silent fallback: if `oauth.xaa` is set, XAA is the only path. We
@@ -965,7 +965,7 @@ export async function performMCPOAuthFlow(
       `Using redirect port: ${port}${configuredCallbackPort ? ' (from config)' : ''}`,
     )
 
-    const provider = new ClaudeAuthProvider(
+    const provider = new McpAuthProvider(
       serverName,
       serverConfig,
       redirectUri,
@@ -1353,7 +1353,7 @@ export async function performMCPOAuthFlow(
  */
 export function wrapFetchWithStepUpDetection(
   baseFetch: FetchLike,
-  provider: ClaudeAuthProvider,
+  provider: McpAuthProvider,
 ): FetchLike {
   return async (url, init) => {
     const response = await baseFetch(url, init)
@@ -1373,7 +1373,7 @@ export function wrapFetchWithStepUpDetection(
   }
 }
 
-export class ClaudeAuthProvider implements OAuthClientProvider {
+export class McpAuthProvider implements OAuthClientProvider {
   private serverName: string
   private serverConfig: McpSSEServerConfig | McpHTTPServerConfig
   private redirectUri: string

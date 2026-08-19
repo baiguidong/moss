@@ -1,9 +1,8 @@
 import axios from 'axios'
-import { hasProfileScope, isClaudeAISubscriber } from '../../utils/auth.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
-import { getAuthHeaders, withOAuth401Retry } from '../../utils/http.js'
+import { getAuthHeaders, runAuthenticatedRequest } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
 import { memoizeWithTTLAsync } from '../../utils/memoize.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
@@ -53,13 +52,13 @@ async function _fetchMetricsEnabled(): Promise<MetricsEnabledResponse> {
 async function _checkMetricsEnabledAPI(): Promise<MetricsStatus> {
   // Incident kill switch: skip the network call when nonessential traffic is disabled.
   // Returning enabled:false sheds load at the consumer (bigqueryExporter skips
-  // export). Matches the non-subscriber early-return shape below.
+  // export). Matches the normal disabled response shape below.
   if (isEssentialTrafficOnly()) {
     return { enabled: false, hasError: false }
   }
 
   try {
-    const data = await withOAuth401Retry(_fetchMetricsEnabled, {
+    const data = await runAuthenticatedRequest(_fetchMetricsEnabled, {
       also403Revoked: true,
     })
 
@@ -126,15 +125,6 @@ async function refreshMetricsStatus(): Promise<MetricsStatus> {
  * an extra one during the 24h window is acceptable.
  */
 export async function checkMetricsEnabled(): Promise<MetricsStatus> {
-  // Service key OAuth sessions lack user:profile scope → would 403.
-  // API key users (non-subscribers) fall through and use x-api-key auth.
-  // This check runs before the disk read so we never persist auth-state-derived
-  // answers — only real API responses go to disk. Otherwise a service-key
-  // session would poison the cache for a later full-OAuth session.
-  if (isClaudeAISubscriber() && !hasProfileScope()) {
-    return { enabled: false, hasError: false }
-  }
-
   const cached = getGlobalConfig().metricsStatusCache
   if (cached) {
     if (Date.now() - cached.timestamp > DISK_CACHE_TTL_MS) {

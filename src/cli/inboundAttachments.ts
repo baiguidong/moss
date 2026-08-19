@@ -1,29 +1,18 @@
 /**
  * Resolve file_uuid attachments on inbound remote user messages.
  *
- * Web composer uploads via cookie-authed /api/{org}/upload, sends file_uuid
- * alongside the message. Here we fetch each via GET /api/oauth/files/{uuid}/content
- * (oauth-authed, same store), write to ~/.moss/uploads/{sessionId}/, and
- * return @path refs to prepend. Claude's Read tool takes it from there.
+ * Remote composer uploads may send file_uuid alongside the message.
+ * Remote attachment downloads are disabled in this build, so file_uuid
+ * references are skipped.
  *
  * Best-effort: any failure (no token, network, non-2xx, disk) logs debug and
- * skips that attachment. The message still reaches Claude, just without @path.
+ * skips that attachment. The message still reaches the model, just without @path.
  */
 
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
-import axios from 'axios'
-import { randomUUID } from 'crypto'
-import { mkdir, writeFile } from 'fs/promises'
-import { basename, join } from 'path'
 import { z } from 'zod/v4'
-import { getSessionId } from '../bootstrap/state.js'
 import { logForDebugging } from '../utils/debug.js'
-import { getMossConfigHomeDir } from '../utils/envUtils.js'
 import { lazySchema } from '../utils/lazySchema.js'
-import { getOauthConfig } from '../constants/oauth.js'
-import { getClaudeAIOAuthTokens } from '../utils/auth.js'
-
-const DOWNLOAD_TIMEOUT_MS = 30_000
 
 function debug(msg: string): void {
   logForDebugging(`[remote:inbound-attach] ${msg}`)
@@ -49,72 +38,12 @@ export function extractInboundAttachments(msg: unknown): InboundAttachment[] {
 }
 
 /**
- * Strip path components and keep only filename-safe chars. file_name comes
- * from the network (web composer), so treat it as untrusted even though the
- * composer controls it.
- */
-function sanitizeFileName(name: string): string {
-  const base = basename(name).replace(/[^a-zA-Z0-9._-]/g, '_')
-  return base || 'attachment'
-}
-
-function uploadsDir(): string {
-  return join(getMossConfigHomeDir(), 'uploads', getSessionId())
-}
-
-/**
  * Fetch + write one attachment. Returns the absolute path on success,
  * undefined on any failure.
  */
 async function resolveOne(att: InboundAttachment): Promise<string | undefined> {
-  const token = getClaudeAIOAuthTokens()?.accessToken
-  if (!token) {
-    debug('skip: no oauth token')
-    return undefined
-  }
-
-  let data: Buffer
-  try {
-    // getOauthConfig() throws on a non-allowlisted
-    // CLAUDE_CODE_CUSTOM_OAUTH_URL — keep it inside the try so a bad
-    // FedStart URL degrades to "no @path" instead of crashing print.ts's
-    // reader loop (which has no catch around the await).
-    const url = `${getOauthConfig().BASE_API_URL}/api/oauth/files/${encodeURIComponent(att.file_uuid)}/content`
-    const response = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      responseType: 'arraybuffer',
-      timeout: DOWNLOAD_TIMEOUT_MS,
-      validateStatus: () => true,
-    })
-    if (response.status !== 200) {
-      debug(`fetch ${att.file_uuid} failed: status=${response.status}`)
-      return undefined
-    }
-    data = Buffer.from(response.data)
-  } catch (e) {
-    debug(`fetch ${att.file_uuid} threw: ${e}`)
-    return undefined
-  }
-
-  // uuid-prefix makes collisions impossible across messages and within one
-  // (same filename, different files). 8 chars is enough — this isn't security.
-  const safeName = sanitizeFileName(att.file_name)
-  const prefix = (
-    att.file_uuid.slice(0, 8) || randomUUID().slice(0, 8)
-  ).replace(/[^a-zA-Z0-9_-]/g, '_')
-  const dir = uploadsDir()
-  const outPath = join(dir, `${prefix}-${safeName}`)
-
-  try {
-    await mkdir(dir, { recursive: true })
-    await writeFile(outPath, data)
-  } catch (e) {
-    debug(`write ${outPath} failed: ${e}`)
-    return undefined
-  }
-
-  debug(`resolved ${att.file_uuid} → ${outPath} (${data.length} bytes)`)
-  return outPath
+  debug(`skip ${att.file_uuid}: remote attachments are not supported`)
+  return undefined
 }
 
 /**

@@ -27,10 +27,10 @@ export function processRateLimitHeaders(
 }
 
 /**
- * Check if we should process rate limits (either real subscriber or /mock-limits command)
+ * Check if we should process rate limit headers.
  */
-export function shouldProcessRateLimits(isSubscriber: boolean): boolean {
-  return isSubscriber || shouldProcessMockLimits()
+export function shouldProcessRateLimits(processPrimaryLimits: boolean): boolean {
+  return processPrimaryLimits || shouldProcessMockLimits()
 }
 
 /**

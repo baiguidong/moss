@@ -45,7 +45,7 @@ import { createAgentId } from '../uuid.js';
 import { getDoctorDiagnostic } from '../doctorDiagnostic.js';
 import { getGlobalConfig } from '../config.js';
 import { getCwd } from '../cwd.js';
-import { getInstalledSkills } from '../../server/skillStore.js';
+import { getLocalInstalledSkills } from '../localMossAssets.js';
 import type { ProcessUserInputBaseResult, ProcessUserInputContext } from './processUserInput.js';
 type SlashCommandResult = ProcessUserInputBaseResult & {
   command: Command;
@@ -57,7 +57,7 @@ const HELP_CATEGORIES: Record<string, string[]> = {
   'Model & Effort': ['model', 'effort', 'fast', 'thinkback-play'],
   'Configuration': ['config', 'mcp', 'permissions', 'context', 'memory', 'add-dir', 'theme', 'color', 'output-style', 'terminal-setup', 'privacy-settings'],
   'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'commit', 'plan', 'ultraplan', 'btw', 'tasks', 'agents', 'plugin'],
-  'System': ['login', 'logout', 'upgrade', 'install', 'install-github-app', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-env', 'sandbox', 'rate-limit-options', 'extra-usage', 'usage'],
+  'System': ['install', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-env', 'sandbox', 'usage'],
 }
 
 function formatHelpText(commands: Command[]): string {
@@ -137,7 +137,7 @@ async function formatStatusText(context: ProcessUserInputContext): Promise<strin
 
 async function formatSkillsText(): Promise<string> {
   try {
-    const skills = await getInstalledSkills()
+    const skills = await getLocalInstalledSkills()
     if (skills.length === 0) {
       return 'No skills installed.\n\nInstall skills with: /skills install <name>'
     }

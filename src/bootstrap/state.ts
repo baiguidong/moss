@@ -80,7 +80,6 @@ type State = {
   flagSettingsInline: Record<string, unknown> | null
   allowedSettingSources: SettingSource[]
   sessionIngressToken: string | null | undefined
-  oauthTokenFromFd: string | null | undefined
   apiKeyFromFd: string | null | undefined
   // Telemetry state
   meter: Meter | null
@@ -277,7 +276,6 @@ function getInitialState(): State {
     sessionSource: undefined,
     questionPreviewFormat: undefined,
     sessionIngressToken: undefined,
-    oauthTokenFromFd: undefined,
     apiKeyFromFd: undefined,
     flagSettingsPath: undefined,
     flagSettingsInline: null,
@@ -1214,14 +1212,6 @@ export function getSessionIngressToken(): string | null | undefined {
 
 export function setSessionIngressToken(token: string | null): void {
   STATE.sessionIngressToken = token
-}
-
-export function getOauthTokenFromFd(): string | null | undefined {
-  return STATE.oauthTokenFromFd
-}
-
-export function setOauthTokenFromFd(token: string | null): void {
-  STATE.oauthTokenFromFd = token
 }
 
 export function getApiKeyFromFd(): string | null | undefined {

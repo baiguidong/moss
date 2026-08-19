@@ -14,7 +14,6 @@ import {
   logEvent,
 } from '../../services/analytics/index.js'
 import { initializeAnalyticsSink } from '../../services/analytics/sink.js'
-import { getClaudeAIOAuthTokens } from '../auth.js'
 import { enableConfigs, getGlobalConfig, saveGlobalConfig } from '../config.js'
 import { logForDebugging } from '../debug.js'
 import { isEnvTruthy } from '../envUtils.js'
@@ -109,11 +108,11 @@ export function createChromeContext(
     clientTypeId: 'claude-code',
     onAuthenticationError: () => {
       logger.warn(
-        'Authentication error occurred. Please ensure you are logged into the Claude browser extension with the same claude.ai account as Claude Code.',
+        'Claude in Chrome is not supported in this build.',
       )
     },
     onToolCallDisconnected: () => {
-      return `Browser extension is not connected. Please ensure the Claude browser extension is installed and running (${EXTENSION_DOWNLOAD_URL}), and that you are logged into claude.ai with the same account as Claude Code. If this is your first time connecting to Chrome, you may need to restart Chrome for the installation to take effect. If you continue to experience issues, please report a bug: ${BUG_REPORT_URL}`
+      return 'Claude in Chrome is not supported in this build.'
     },
     onExtensionPaired: (deviceId: string, name: string) => {
       saveGlobalConfig(config => {
@@ -140,10 +139,10 @@ export function createChromeContext(
       bridgeConfig: {
         url: chromeBridgeUrl,
         getUserId: async () => {
-          return getGlobalConfig().oauthAccount?.accountUuid
+          return undefined
         },
         getOAuthToken: async () => {
-          return getClaudeAIOAuthTokens()?.accessToken ?? ''
+          return ''
         },
         ...(isLocalBridge() && { devUserId: 'dev_user_local' }),
       },
@@ -180,7 +179,7 @@ export function createChromeContext(
         stop_reason: string | null
         usage?: { input_tokens: number; output_tokens: number }
       }> => {
-        // sideQuery handles OAuth attribution fingerprint, proxy, model betas.
+        // sideQuery handles attribution fingerprint, proxy, model betas.
         // skipSystemPromptPrefix: the lightning prompt is complete on its own;
         // the CLI prefix would dilute the batching instructions.
         // tools: [] is load-bearing — without it Sonnet emits

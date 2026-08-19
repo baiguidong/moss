@@ -1,6 +1,6 @@
 import axios, { type AxiosError } from 'axios'
 import type { UUID } from 'crypto'
-import { getOauthConfig } from '../../constants/oauth.js'
+import { getApiBaseUrl } from '../../constants/api.js'
 import type { Entry, TranscriptMessage } from '../../types/logs.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
@@ -10,7 +10,7 @@ import { sequential } from '../../utils/sequential.js'
 import { getSessionIngressAuthToken } from '../../utils/sessionIngressAuth.js'
 import { sleep } from '../../utils/sleep.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
-import { getOAuthHeaders } from '../../utils/teleport/api.js'
+import { getBearerHeaders } from '../../utils/teleport/api.js'
 
 interface SessionIngressError {
   error?: {
@@ -240,18 +240,18 @@ export async function getSessionLogs(
 }
 
 /**
- * Get all session logs for hydration via OAuth
+ * Get all session logs for hydration via bearer auth.
  * Used for teleporting sessions from the Sessions API
  */
-export async function getSessionLogsViaOAuth(
+export async function getSessionLogsViaBearerAuth(
   sessionId: string,
   accessToken: string,
   orgUUID: string,
 ): Promise<Entry[] | null> {
-  const url = `${getOauthConfig().BASE_API_URL}/v1/session_ingress/session/${sessionId}`
+  const url = `${getApiBaseUrl()}/v1/session_ingress/session/${sessionId}`
   logForDebugging(`[session-ingress] Fetching session logs from: ${url}`)
   const headers = {
-    ...getOAuthHeaders(accessToken),
+    ...getBearerHeaders(accessToken),
     'x-organization-uuid': orgUUID,
   }
   const result = await fetchSessionLogsFromUrl(sessionId, url, headers)
@@ -279,7 +279,7 @@ type TeleportEventsResponse = {
 
 /**
  * Get worker events (transcript) via the CCR v2 Sessions API. Replaces
- * getSessionLogsViaOAuth once session-ingress is retired.
+ * getSessionLogsViaBearerAuth once session-ingress is retired.
  *
  * The server dispatches per-session: Spanner for v2-native sessions,
  * threadstore for pre-backfill session_* IDs. The cursor is opaque to us —
@@ -293,9 +293,9 @@ export async function getTeleportEvents(
   accessToken: string,
   orgUUID: string,
 ): Promise<Entry[] | null> {
-  const baseUrl = `${getOauthConfig().BASE_API_URL}/v1/code/sessions/${sessionId}/teleport-events`
+  const baseUrl = `${getApiBaseUrl()}/v1/code/sessions/${sessionId}/teleport-events`
   const headers = {
-    ...getOAuthHeaders(accessToken),
+    ...getBearerHeaders(accessToken),
     'x-organization-uuid': orgUUID,
   }
 
@@ -355,7 +355,7 @@ export async function getTeleportEvents(
     if (response.status === 401) {
       logForDiagnosticsNoPII('error', 'teleport_events_bad_token')
       throw new Error(
-        'Your session has expired. Please run /login to sign in again.',
+        'Your session has expired. Configure credentials and try again.',
       )
     }
 
@@ -463,7 +463,7 @@ async function fetchSessionLogsFromUrl(
       logForDebugging('Auth token expired or invalid')
       logForDiagnosticsNoPII('error', 'session_get_fail_bad_token')
       throw new Error(
-        'Your session has expired. Please run /login to sign in again.',
+        'Your session has expired. Configure credentials and try again.',
       )
     }
 

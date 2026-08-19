@@ -23,8 +23,8 @@ import {
   logEvent,
 } from '../analytics/index.js'
 
-// Files API is currently in beta. oauth-2025-04-20 enables Bearer OAuth
-// on public-api routes (auth.py: "oauth_auth" not in beta_versions → 404).
+// Files API is currently in beta. The second beta enables bearer-token auth
+// on public-api routes.
 const FILES_API_BETA_HEADER = 'files-api-2025-04-14,oauth-2025-04-20'
 const ANTHROPIC_VERSION = '2023-06-01'
 
@@ -60,8 +60,8 @@ export type File = {
  * Configuration for the files API client
  */
 export type FilesApiConfig = {
-  /** OAuth token for authentication (from session JWT) */
-  oauthToken: string
+  /** Bearer token for authentication (from session JWT) */
+  bearerToken: string
   /** Base URL for the API (default: https://api.anthropic.com) */
   baseUrl?: string
   /** Session ID for creating session-specific directories */
@@ -139,7 +139,7 @@ export async function downloadFile(
   const url = `${baseUrl}/v1/files/${fileId}/content`
 
   const headers = {
-    Authorization: `Bearer ${config.oauthToken}`,
+    Authorization: `Bearer ${config.bearerToken}`,
     'anthropic-version': ANTHROPIC_VERSION,
     'anthropic-beta': FILES_API_BETA_HEADER,
   }
@@ -387,7 +387,7 @@ export async function uploadFile(
   const url = `${baseUrl}/v1/files`
 
   const headers = {
-    Authorization: `Bearer ${config.oauthToken}`,
+    Authorization: `Bearer ${config.bearerToken}`,
     'anthropic-version': ANTHROPIC_VERSION,
     'anthropic-beta': FILES_API_BETA_HEADER,
   }

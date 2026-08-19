@@ -1,9 +1,9 @@
 export const REMOTE_TRIGGER_TOOL_NAME = 'RemoteTrigger'
 
 export const DESCRIPTION =
-  'Manage scheduled remote Claude Code agents (triggers) via the claude.ai CCR API. Auth is handled in-process — the token never reaches the shell.'
+  'Remote trigger management is not supported in this build.'
 
-export const PROMPT = `Call the claude.ai remote-trigger API. Use this instead of curl — the OAuth token is added automatically in-process and never exposed.
+export const PROMPT = `Remote trigger management is not supported in this build.
 
 Actions:
 - list: GET /v1/code/triggers
@@ -12,4 +12,4 @@ Actions:
 - update: POST /v1/code/triggers/{trigger_id} (requires body, partial update)
 - run: POST /v1/code/triggers/{trigger_id}/run
 
-The response is the raw JSON from the API.`
+The tool should return an unsupported error for all actions.`

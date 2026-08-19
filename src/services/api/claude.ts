@@ -50,7 +50,6 @@ import {
   splitSysPromptPrefix,
   toolToAPISchema,
 } from '../../utils/api.js'
-import { getOauthAccountInfo } from '../../utils/auth.js'
 import {
   getBedrockExtraBodyParamsBetas,
   getMergedBetas,
@@ -141,7 +140,6 @@ import {
   modelSupportsAdvisor,
 } from 'src/utils/advisor.js'
 import { getAgentContext } from 'src/utils/agentContext.js'
-import { isClaudeAISubscriber } from 'src/utils/auth.js'
 import {
   getToolSearchBetaHeader,
   modelSupportsStructuredOutputs,
@@ -348,7 +346,7 @@ export function getCacheControl({
  * Determines if 1h TTL should be used for prompt caching.
  *
  * Only applied when:
- * 1. User is eligible (ant or subscriber within rate limits)
+ * 1. User is eligible
  * 2. The query source matches a pattern in the GrowthBook allowlist
  *
  * GrowthBook config shape: { allowlist: string[] }
@@ -376,9 +374,7 @@ function should1hCacheTTL(querySource?: QuerySource): boolean {
   // would bust the server-side prompt cache (~20K tokens per flip).
   let userEligible = getPromptCache1hEligible()
   if (userEligible === null) {
-    userEligible =
-      process.env.USER_TYPE === 'ant' ||
-      (isClaudeAISubscriber() && !currentLimits.isUsingOverage)
+    userEligible = process.env.USER_TYPE === 'ant'
     setPromptCache1hEligible(userEligible)
   }
   if (!userEligible) return false
@@ -491,8 +487,6 @@ export function getAPIMetadata() {
     user_id: jsonStringify({
       ...extra,
       device_id: getOrCreateUserID(),
-      // Only include OAuth account UUID when actively using OAuth authentication
-      account_uuid: getOauthAccountInfo()?.accountUuid ?? '',
       session_id: getSessionId(),
     }),
   }
@@ -1019,9 +1013,8 @@ async function* queryModel(
 > {
   // Check cheap conditions first — the off-switch await blocks on GrowthBook
   // init (~10ms). For non-Opus models (haiku, sonnet) this skips the await
-  // entirely. Subscribers don't hit this path at all.
+  // entirely.
   if (
-    !isClaudeAISubscriber() &&
     isNonCustomOpusModel(options.model) &&
     (
       await getDynamicConfig_BLOCKS_ON_INIT<{ activated: boolean }>(

@@ -465,7 +465,7 @@ export function useVoice({
         // (where each final is injected immediately and accumulatedRef reset).
         //
         // NOTE: this fires only on the finishRecording() path. The onError
-        // fallthrough and !conn (no-OAuth) paths bypass this → don't compute
+        // fallthrough and !conn paths bypass this → don't compute
         // COUNT(completed)/COUNT(started) as a success rate; the silent-drop
         // denominator (completed events only) is internally consistent.
         logEvent('tengu_voice_recording_completed', {
@@ -494,7 +494,7 @@ export function useVoice({
           // taps → silently return to idle).
           if (!wsConnected) {
             // WS never connected → audio never reached backend. Not a silent
-            // drop; a connection failure (slow OAuth refresh, network, etc).
+            // drop; a connection failure (network, backend unavailable, etc).
             onErrorRef.current?.(
               'Voice connection failed. Check your network and try again.',
             )
@@ -686,7 +686,7 @@ export function useVoice({
     const audioBuffer: Buffer[] = []
 
     // Start recording IMMEDIATELY — audio is buffered until the WebSocket
-    // opens, eliminating the 1-2s latency from waiting for OAuth + WS connect.
+    // opens, eliminating the latency from waiting for WebSocket connect.
     logForDebugging(
       '[voice] startRecording: buffering audio while WebSocket connects',
     )
@@ -985,10 +985,10 @@ export function useVoice({
         }
         if (!conn) {
           logForDebugging(
-            '[voice] Failed to connect to voice_stream (no OAuth token?)',
+            '[voice] Failed to connect to voice_stream',
           )
           onErrorRef.current?.(
-            'Voice mode requires a Claude.ai account. Please run /login to sign in.',
+            'Voice mode is not available in this build.',
           )
           // Clear the audio buffer on failure
           audioBuffer.length = 0

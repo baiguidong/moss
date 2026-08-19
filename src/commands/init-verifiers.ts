@@ -149,7 +149,7 @@ Based on the areas detected in Phase 1, you may need to create multiple verifier
    - **Login method**: How does a user log in?
      - Form-based login (username/password on a login page)
      - API token/key (passed as header or query param)
-     - OAuth/SSO (redirect-based flow)
+     - SSO or another redirect-based flow
      - Other (let user describe)
    - **Test credentials**: What credentials should the verifier use?
      - Ask for the login URL (e.g., "/login", "http://localhost:3000/auth")

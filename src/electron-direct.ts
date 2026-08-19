@@ -124,27 +124,20 @@ import { discardSessionMemoryState } from './services/SessionMemory/sessionMemor
 initBundledSkills()
 initBuiltinPlugins()
 
-export { startServer } from './server/server.js'
-export { SessionManager } from './server/sessionManager.js'
-export { DangerousBackend } from './server/backends/dangerousBackend.js'
-export {
-  startStandaloneDirectConnectServer,
-  type StandaloneServerOptions,
-} from './server/startStandaloneServer.js'
 export {
   createDirectConnectSession,
   attachDirectConnectSession,
   DirectConnectError,
-} from './server/createDirectConnectSession.js'
+} from './remote/createDirectConnectSession.js'
 export {
   DirectConnectSessionManager,
   type DirectConnectConfig,
-} from './server/directConnectManager.js'
+} from './remote/directConnectManager.js'
 export {
   buildConnectUrl,
   parseConnectUrl,
-} from './server/parseConnectUrl.js'
-export { runConnectHeadless } from './server/connectHeadless.js'
+} from '../packages/direct-connect-protocol/src/index.js'
+export { runConnectHeadless } from './remote/connectHeadless.js'
 
 let localAgentRuntimeInitialized = false
 
@@ -176,15 +169,12 @@ export function getAuthDebugSnapshot() {
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     hasAnthropicApiKeyEnv: Boolean(process.env.ANTHROPIC_API_KEY),
-    hasOauthTokenEnv: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN),
     hasMossAuthTokenEnv: Boolean(process.env.MOSS_AUTH_TOKEN),
     hasApiKeyHelper: typeof settings.apiKeyHelper === 'string' && settings.apiKeyHelper.length > 0,
     apiKeySource: apiKeyInfo.source,
     hasApiKeyCandidate: Boolean(apiKeyInfo.key),
     authTokenSource: authTokenInfo.source,
     hasAuthTokenCandidate: authTokenInfo.hasToken,
-    hasStoredOauthAccount: Boolean(globalConfig.oauthAccount),
-    hasPrimaryApiKey: Boolean(globalConfig.primaryApiKey),
     accountInfo: getAccountInformation(),
   }
 }

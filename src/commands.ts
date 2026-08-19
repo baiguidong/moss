@@ -25,9 +25,6 @@ import ide from './commands/ide/index.js'
 import init from './commands/init.js'
 import initVerifiers from './commands/init-verifiers.js'
 import keybindings from './commands/keybindings/index.js'
-import login from './commands/login/index.js'
-import logout from './commands/logout/index.js'
-import installGitHubApp from './commands/install-github-app/index.js'
 import installSlackApp from './commands/install-slack-app/index.js'
 import mcp from './commands/mcp/index.js'
 import mobile from './commands/mobile/index.js'
@@ -97,7 +94,6 @@ import thinkbackPlay from './commands/thinkback-play/index.js'
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
 import fast from './commands/fast/index.js'
-import passes from './commands/passes/index.js'
 import privacySettings from './commands/privacy-settings/index.js'
 import hooks from './commands/hooks/index.js'
 import files from './commands/files/index.js'
@@ -137,7 +133,7 @@ import {
   clearPluginSkillsCache,
 } from './utils/plugins/loadPluginCommands.js'
 import memoize from 'lodash-es/memoize.js'
-import { isUsing3PServices, isClaudeAISubscriber } from './utils/auth.js'
+import { isUsing3PServices } from './utils/auth.js'
 import { isFirstPartyAnthropicBaseUrl } from './utils/model/providers.js'
 import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
@@ -146,12 +142,6 @@ import model from './commands/model/index.js'
 import tag from './commands/tag/index.js'
 import outputStyle from './commands/output-style/index.js'
 import remoteEnv from './commands/remote-env/index.js'
-import upgrade from './commands/upgrade/index.js'
-import {
-  extraUsage,
-  extraUsageNonInteractive,
-} from './commands/extra-usage/index.js'
-import rateLimitOptions from './commands/rate-limit-options/index.js'
 import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
@@ -170,7 +160,6 @@ const usageReport: Command = {
     return real.getPromptForCommand(args, context)
   },
 }
-import oauthRefresh from './commands/oauth-refresh/index.js'
 import debugToolCall from './commands/debug-tool-call/index.js'
 import { getSettingSourceName } from './utils/settings/constants.js'
 import {
@@ -214,7 +203,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   antTrace,
   perfIssue,
   env,
-  oauthRefresh,
   debugToolCall,
   agentsPlatform,
   autofixPr,
@@ -249,7 +237,6 @@ const COMMANDS = memoize((): Command[] => [
   ide,
   init,
   keybindings,
-  installGitHubApp,
   installSlackApp,
   mcp,
   memory,
@@ -277,10 +264,6 @@ const COMMANDS = memoize((): Command[] => [
   rewind,
   securityReview,
   terminalSetup,
-  upgrade,
-  extraUsage,
-  extraUsageNonInteractive,
-  rateLimitOptions,
   usage,
   usageReport,
   vim,
@@ -296,8 +279,6 @@ const COMMANDS = memoize((): Command[] => [
   hooks,
   exportCommand,
   sandboxToggle,
-  ...(!isUsing3PServices() ? [logout, login()] : []),
-  passes,
   tasks,
   ...(workflowsCmd ? [workflowsCmd] : []),
   ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO
@@ -371,25 +352,18 @@ const getWorkflowCommands = feature('WORKFLOW_SCRIPTS')
  * This runs before `isEnabled()` so that provider-gated commands are hidden
  * regardless of feature-flag state.
  *
- * Not memoized — auth state can change mid-session (e.g. after /login),
- * so this must be re-evaluated on every getCommands() call.
+ * Not memoized — auth state can change mid-session, so this must be
+ * re-evaluated on every getCommands() call.
  */
 export function meetsAvailabilityRequirement(cmd: Command): boolean {
   if (!cmd.availability) return true
   for (const a of cmd.availability) {
     switch (a) {
-      case 'claude-ai':
-        if (isClaudeAISubscriber()) return true
-        break
       case 'console':
-        // Console API key user = direct 1P API customer (not 3P, not claude.ai).
+        // Console API key user = direct 1P API customer (not 3P).
         // Excludes 3P (Bedrock/Vertex/Foundry) who don't set MOSS_BASE_URL
         // and gateway users who proxy through a custom base URL.
-        if (
-          !isClaudeAISubscriber() &&
-          !isUsing3PServices() &&
-          isFirstPartyAnthropicBaseUrl()
-        )
+        if (!isUsing3PServices() && isFirstPartyAnthropicBaseUrl())
           return true
         break
       default: {
@@ -431,7 +405,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
 /**
  * Returns commands available to the current user. The expensive loading is
  * memoized, but availability and isEnabled checks run fresh every call so
- * auth changes (e.g. /login) take effect immediately.
+ * auth changes take effect immediately.
  */
 export async function getCommands(cwd: string): Promise<Command[]> {
   const allCommands = await loadAllCommands(cwd)

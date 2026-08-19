@@ -8,17 +8,15 @@ import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEve
 import { isPolicyAllowed } from 'src/services/policyLimits/index.js';
 import { z } from 'zod/v4';
 import { getTeleportErrors, TeleportError, type TeleportLocalErrorType } from '../components/TeleportError.js';
-import { getOauthConfig } from '../constants/oauth.js';
+import { getApiBaseUrl } from '../constants/api.js';
 import type { SDKMessage } from '../entrypoints/agentSdkTypes.js';
 import type { Root } from '../ink.js';
 import { KeybindingSetup } from '../keybindings/KeybindingProviderSetup.js';
 import { queryHaiku } from '../services/api/claude.js';
-import { getSessionLogsViaOAuth, getTeleportEvents } from '../services/api/sessionIngress.js';
-import { getOrganizationUUID } from '../services/oauth/client.js';
+import { getSessionLogsViaBearerAuth, getTeleportEvents } from '../services/api/sessionIngress.js';
 import { AppStateProvider } from '../state/AppState.js';
 import type { Message, SystemMessage } from '../types/message.js';
 import type { PermissionMode } from '../types/permissions.js';
-import { checkAndRefreshOAuthTokenIfNeeded, getClaudeAIOAuthTokens } from './auth.js';
 import { checkGithubAppInstalled } from './background/remote/preconditions.js';
 import { deserializeMessages, type TeleportRemoteResponse } from './conversationRecovery.js';
 import { getCwd } from './cwd.js';
@@ -37,7 +35,7 @@ import { isTranscriptMessage } from './sessionStorage.js';
 import { getSettings_DEPRECATED } from './settings/settings.js';
 import { jsonStringify } from './slowOperations.js';
 import { asSystemPrompt } from './systemPromptType.js';
-import { fetchSession, type GitRepositoryOutcome, type GitSource, getBranchFromSession, getOAuthHeaders, type SessionResource } from './teleport/api.js';
+import { fetchSession, type GitRepositoryOutcome, type GitSource, getBranchFromSession, getBearerHeaders, type SessionResource } from './teleport/api.js';
 import { fetchEnvironments } from './teleport/environments.js';
 import { createAndUploadGitBundle } from './teleport/gitBundle.js';
 export type TeleportResult = {
@@ -433,16 +431,16 @@ export async function teleportResumeCodeSession(sessionId: string, onProgress?: 
   }
   logForDebugging(`Resuming code session ID: ${sessionId}`);
   try {
-    const accessToken = getClaudeAIOAuthTokens()?.accessToken;
+    const accessToken: string | undefined = undefined;
     if (!accessToken) {
       logEvent('tengu_teleport_resume_error', {
         error_type: 'no_access_token' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
-      throw new Error('Claude Code web sessions require authentication with a Claude.ai account. API key authentication is not sufficient. Please run /login to authenticate, or check your authentication status with /status.');
+      throw new Error('Remote web sessions are not supported in this build.');
     }
 
     // Get organization UUID
-    const orgUUID = await getOrganizationUUID();
+    const orgUUID: string | null = null;
     if (!orgUUID) {
       logEvent('tengu_teleport_resume_error', {
         error_type: 'no_org_uuid' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
@@ -557,7 +555,7 @@ export async function teleportToRemoteWithErrorHandling(root: Root, description:
  * Uses session logs instead of SDK events to get the correct message structure
  * @param sessionId The session ID to fetch
  * @param orgUUID The organization UUID
- * @param accessToken The OAuth access token
+ * @param accessToken The bearer access token
  * @param onProgress Optional callback for progress updates
  * @param sessionData Optional session data (used to extract branch info)
  * @returns TeleportRemoteResponse with session logs as Message[]
@@ -572,12 +570,12 @@ export async function teleportFromSessionsAPI(sessionId: string, orgUUID: string
     // Try CCR v2 first (GetTeleportEvents — server dispatches Spanner/
     // threadstore). Fall back to session-ingress if it returns null
     // (endpoint not yet deployed, or transient error). Once session-ingress
-    // is gone, the fallback becomes a no-op — getSessionLogsViaOAuth will
+    // is gone, the fallback becomes a no-op — getSessionLogsViaBearerAuth will
     // return null too and we fail with "Failed to fetch session logs".
     let logs = await getTeleportEvents(sessionId, accessToken, orgUUID);
     if (logs === null) {
       logForDebugging('[teleport] v2 endpoint returned null, trying session-ingress');
-      logs = await getSessionLogsViaOAuth(sessionId, accessToken, orgUUID);
+      logs = await getSessionLogsViaBearerAuth(sessionId, accessToken, orgUUID);
     }
     logForDebugging(`[teleport] Session logs fetched in ${Date.now() - logsStartTime}ms`);
     if (logs === null) {
@@ -633,20 +631,20 @@ export type PollRemoteSessionResponse = {
 export async function pollRemoteSessionEvents(sessionId: string, afterId: string | null = null, opts?: {
   skipMetadata?: boolean;
 }): Promise<PollRemoteSessionResponse> {
-  const accessToken = getClaudeAIOAuthTokens()?.accessToken;
+  const accessToken: string | undefined = undefined;
   if (!accessToken) {
     throw new Error('No access token for polling');
   }
-  const orgUUID = await getOrganizationUUID();
+  const orgUUID: string | null = null;
   if (!orgUUID) {
     throw new Error('No org UUID for polling');
   }
   const headers = {
-    ...getOAuthHeaders(accessToken),
+    ...getBearerHeaders(accessToken),
     'anthropic-beta': 'ccr-byoc-2025-07-29',
     'x-organization-uuid': orgUUID
   };
-  const eventsUrl = `${getOauthConfig().BASE_API_URL}/v1/sessions/${sessionId}/events`;
+  const eventsUrl = `${getApiBaseUrl()}/v1/sessions/${sessionId}/events`;
   type EventsResponse = {
     data: unknown[];
     has_more: boolean;
@@ -750,11 +748,7 @@ export async function teleportToRemote(options: {
   environmentId?: string;
   /**
    * Per-session env vars merged into session_context.environment_variables.
-   * Write-only at the API layer (stripped from Get/List responses). When
-   * environmentId is set, CLAUDE_CODE_OAUTH_TOKEN is auto-injected from the
-   * caller's accessToken so the container's hook can hit inference (the
-   * server only passes through what the caller sends; bughunter.go mints
-   * its own, user sessions don't get one automatically).
+   * Write-only at the API layer (stripped from Get/List responses).
    */
   environmentVariables?: Record<string, string>;
   /**
@@ -799,15 +793,14 @@ export async function teleportToRemote(options: {
   } = options;
   try {
     // Check authentication
-    await checkAndRefreshOAuthTokenIfNeeded();
-    const accessToken = getClaudeAIOAuthTokens()?.accessToken;
+    const accessToken: string | undefined = undefined;
     if (!accessToken) {
       logError(new Error('No access token found for remote session creation'));
       return null;
     }
 
     // Get organization UUID
-    const orgUUID = await getOrganizationUUID();
+    const orgUUID: string | null = null;
     if (!orgUUID) {
       logError(new Error('Unable to get organization UUID for remote session creation'));
       return null;
@@ -819,16 +812,13 @@ export async function teleportToRemote(options: {
     // (bughunter.go:520 sets a git source too; env-manager does the checkout
     // before the SessionStart hook fires).
     if (options.environmentId) {
-      const url = `${getOauthConfig().BASE_API_URL}/v1/sessions`;
+      const url = `${getApiBaseUrl()}/v1/sessions`;
       const headers = {
-        ...getOAuthHeaders(accessToken),
+        ...getBearerHeaders(accessToken),
         'anthropic-beta': 'ccr-byoc-2025-07-29',
         'x-organization-uuid': orgUUID
       };
-      const envVars = {
-        CLAUDE_CODE_OAUTH_TOKEN: accessToken,
-        ...(options.environmentVariables ?? {})
-      };
+      const envVars = options.environmentVariables ?? {};
 
       // Bundle mode: upload local working tree (uncommitted changes via
       // refs/seed/stash), container clones from the bundle. No GitHub.
@@ -837,9 +827,9 @@ export async function teleportToRemote(options: {
       let seedBundleFileId: string | null = null;
       if (options.useBundle) {
         const bundle = await createAndUploadGitBundle({
-          oauthToken: accessToken,
+          bearerToken: accessToken,
           sessionId: getSessionId(),
-          baseUrl: getOauthConfig().BASE_API_URL
+          baseUrl: getApiBaseUrl()
         }, {
           signal
         });
@@ -1001,9 +991,9 @@ export async function teleportToRemote(options: {
     if (!gitSource && bundleSeedGateOn) {
       logForDebugging(`[teleportToRemote] Bundling (reason: ${sourceReason})`);
       const bundle = await createAndUploadGitBundle({
-        oauthToken: accessToken,
+        bearerToken: accessToken,
         sessionId: getSessionId(),
-        baseUrl: getOauthConfig().BASE_API_URL
+        baseUrl: getApiBaseUrl()
       }, {
         signal
       });
@@ -1094,9 +1084,9 @@ export async function teleportToRemote(options: {
     logForDebugging(`Selected environment: ${environmentId} (${selectedEnvironment.name}, ${selectedEnvironment.kind})`);
 
     // Prepare API request for Sessions API
-    const url = `${getOauthConfig().BASE_API_URL}/v1/sessions`;
+    const url = `${getApiBaseUrl()}/v1/sessions`;
     const headers = {
-      ...getOAuthHeaders(accessToken),
+      ...getBearerHeaders(accessToken),
       'anthropic-beta': 'ccr-byoc-2025-07-29',
       'x-organization-uuid': orgUUID
     };
@@ -1199,16 +1189,16 @@ export async function teleportToRemote(options: {
  * reaper collects it.
  */
 export async function archiveRemoteSession(sessionId: string): Promise<void> {
-  const accessToken = getClaudeAIOAuthTokens()?.accessToken;
+  const accessToken: string | undefined = undefined;
   if (!accessToken) return;
-  const orgUUID = await getOrganizationUUID();
+  const orgUUID: string | null = null;
   if (!orgUUID) return;
   const headers = {
-    ...getOAuthHeaders(accessToken),
+    ...getBearerHeaders(accessToken),
     'anthropic-beta': 'ccr-byoc-2025-07-29',
     'x-organization-uuid': orgUUID
   };
-  const url = `${getOauthConfig().BASE_API_URL}/v1/sessions/${sessionId}/archive`;
+  const url = `${getApiBaseUrl()}/v1/sessions/${sessionId}/archive`;
   try {
     const resp = await axios.post(url, {}, {
       headers,

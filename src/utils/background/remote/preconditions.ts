@@ -1,17 +1,8 @@
-import axios from 'axios'
-import { getOauthConfig } from 'src/constants/oauth.js'
-import { getOrganizationUUID } from 'src/services/oauth/client.js'
-import {
-  checkAndRefreshOAuthTokenIfNeeded,
-  getClaudeAIOAuthTokens,
-  isClaudeAISubscriber,
-} from '../../auth.js'
 import { getCwd } from '../../cwd.js'
 import { logForDebugging } from '../../debug.js'
 import { detectCurrentRepository } from '../../detectRepository.js'
 import { errorMessage } from '../../errors.js'
 import { findGitRoot, getIsClean } from '../../git.js'
-import { getOAuthHeaders } from '../../teleport/api.js'
 import { fetchEnvironments } from '../../teleport/environments.js'
 
 /**
@@ -20,10 +11,7 @@ import { fetchEnvironments } from '../../teleport/environments.js'
  * @returns true if login is required, false otherwise
  */
 export async function checkNeedsClaudeAiLogin(): Promise<boolean> {
-  if (!isClaudeAISubscriber()) {
-    return false
-  }
-  return checkAndRefreshOAuthTokenIfNeeded()
+  return false
 }
 
 /**
@@ -79,79 +67,5 @@ export async function checkGithubAppInstalled(
   repo: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  try {
-    const accessToken = getClaudeAIOAuthTokens()?.accessToken
-    if (!accessToken) {
-      logForDebugging(
-        'checkGithubAppInstalled: No access token found, assuming app not installed',
-      )
-      return false
-    }
-
-    const orgUUID = await getOrganizationUUID()
-    if (!orgUUID) {
-      logForDebugging(
-        'checkGithubAppInstalled: No org UUID found, assuming app not installed',
-      )
-      return false
-    }
-
-    const url = `${getOauthConfig().BASE_API_URL}/api/oauth/organizations/${orgUUID}/code/repos/${owner}/${repo}`
-    const headers = {
-      ...getOAuthHeaders(accessToken),
-      'x-organization-uuid': orgUUID,
-    }
-
-    logForDebugging(`Checking GitHub app installation for ${owner}/${repo}`)
-
-    const response = await axios.get<{
-      repo: {
-        name: string
-        owner: { login: string }
-        default_branch: string
-      }
-      status: {
-        app_installed: boolean
-        relay_enabled: boolean
-      } | null
-    }>(url, {
-      headers,
-      timeout: 15000,
-      signal,
-    })
-
-    if (response.status === 200) {
-      if (response.data.status) {
-        const installed = response.data.status.app_installed
-        logForDebugging(
-          `GitHub app ${installed ? 'is' : 'is not'} installed on ${owner}/${repo}`,
-        )
-        return installed
-      }
-      // status is null - app is not installed on this repo
-      logForDebugging(
-        `GitHub app is not installed on ${owner}/${repo} (status is null)`,
-      )
-      return false
-    }
-
-    logForDebugging(
-      `checkGithubAppInstalled: Unexpected response status ${response.status}`,
-    )
-    return false
-  } catch (error) {
-    // 4XX errors typically mean app is not installed or repo not accessible
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
-      if (status && status >= 400 && status < 500) {
-        logForDebugging(
-          `checkGithubAppInstalled: Got ${status} error, app likely not installed on ${owner}/${repo}`,
-        )
-        return false
-      }
-    }
-
-    logForDebugging(`checkGithubAppInstalled error: ${errorMessage(error)}`)
-    return false
-  }
+  return false
 }

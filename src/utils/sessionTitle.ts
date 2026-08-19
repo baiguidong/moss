@@ -59,7 +59,7 @@ Return JSON with a single "title" field.
 
 Good examples:
 {"title": "Fix login button on mobile"}
-{"title": "Add OAuth authentication"}
+{"title": "Add token authentication"}
 {"title": "Debug failing CI tests"}
 {"title": "Refactor API client error handling"}
 

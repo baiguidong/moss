@@ -22,7 +22,6 @@ const GLOBAL_KEYTERMS: readonly string[] = [
   'codebase',
   'TypeScript',
   'JSON',
-  'OAuth',
   'webhook',
   'gRPC',
   'dotfiles',

@@ -8,7 +8,6 @@ import {
 } from '../../tools/FileEditTool/constants.js'
 import {
   CCR_API_KEY_PATH,
-  CCR_OAUTH_TOKEN_PATH,
   CCR_SESSION_INGRESS_TOKEN_PATH,
 } from '../authFileDescriptor.js'
 import { getMossConfigHomeDir } from '../envUtils.js'
@@ -80,7 +79,6 @@ describe('Moss project paths', () => {
   })
 
   test('uses the Moss CCR credential directory', () => {
-    expect(CCR_OAUTH_TOKEN_PATH).toBe('/home/claude/.moss/remote/.oauth_token')
     expect(CCR_API_KEY_PATH).toBe('/home/claude/.moss/remote/.api_key')
     expect(CCR_SESSION_INGRESS_TOKEN_PATH).toBe(
       '/home/claude/.moss/remote/.session_ingress_token',

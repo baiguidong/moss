@@ -103,9 +103,7 @@ const TEAMMATE_ENV_VARS = [
   'MOSS_BASE_URL',
   // Config directory override
   'MOSS_CONFIG_DIR',
-  // CCR marker — teammates need this for CCR-aware code paths. Auth finds
-  // its own way via /home/claude/.moss/remote/.oauth_token regardless;
-  // the FD env var wouldn't help (pipe FDs don't cross tmux).
+  // CCR marker — teammates need this for CCR-aware code paths.
   'CLAUDE_CODE_REMOTE',
   // Auto-memory gate (memdir/paths.ts) checks REMOTE && !MEMORY_DIR to
   // disable memory on ephemeral CCR filesystems. Forwarding REMOTE alone

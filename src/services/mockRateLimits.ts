@@ -5,9 +5,10 @@
 // The mock headers may not exactly match the API specification or real-world behavior.
 // Always validate against actual API responses before relying on this for production features.
 
-import type { SubscriptionType } from '../services/oauth/types.js'
 import { setMockBillingAccessOverride } from '../utils/billing.js'
 import type { OverageDisabledReason } from './claudeAiLimits.js'
+
+type MockPlanTier = 'max' | 'pro' | 'team' | 'enterprise'
 
 type MockHeaders = {
   'anthropic-ratelimit-unified-status'?:
@@ -82,11 +83,10 @@ export type MockScenario =
 let mockHeaders: MockHeaders = {}
 let mockEnabled = false
 let mockHeaderless429Message: string | null = null
-let mockSubscriptionType: SubscriptionType | null = null
+let mockPlanTier: MockPlanTier | null = null
 let mockFastModeRateLimitDurationMs: number | null = null
 let mockFastModeRateLimitExpiresAt: number | null = null
-// Default subscription type for mock testing
-const DEFAULT_MOCK_SUBSCRIPTION: SubscriptionType = 'max'
+const DEFAULT_MOCK_PLAN_TIER: MockPlanTier = 'max'
 
 // Track individual exceeded limits with their reset times
 type ExceededLimit = {
@@ -424,8 +424,8 @@ export function setMockRateLimitScenario(scenario: MockScenario): void {
       updateRepresentativeClaim()
       mockHeaders['anthropic-ratelimit-unified-status'] = 'rejected'
       mockHeaders['anthropic-ratelimit-unified-overage-status'] = 'rejected'
-      // Both subscription and overage are exhausted
-      // Subscription resets based on the exceeded limit, overage resets monthly
+      // Both primary and extra usage limits are exhausted.
+      // Primary usage resets based on the exceeded limit; extra usage resets monthly.
       const endOfMonthExhausted = new Date()
       endOfMonthExhausted.setMonth(endOfMonthExhausted.getMonth() + 1, 1)
       endOfMonthExhausted.setHours(0, 0, 0, 0)
@@ -436,7 +436,7 @@ export function setMockRateLimitScenario(scenario: MockScenario): void {
     }
 
     case 'out-of-credits': {
-      // Out of credits - subscription limit hit, overage rejected due to insufficient credits
+      // Out of credits - primary limit hit, overage rejected due to insufficient credits
       // (wallet is empty)
       if (exceededLimits.length === 0) {
         exceededLimits = [{ type: 'five_hour', resetsAt: fiveHoursFromNow }]
@@ -627,7 +627,7 @@ export function getMockHeaders(): MockHeaders | null {
 export function getMockStatus(): string {
   if (
     !mockEnabled ||
-    (Object.keys(mockHeaders).length === 0 && !mockSubscriptionType)
+    (Object.keys(mockHeaders).length === 0 && !mockPlanTier)
   ) {
     return 'No mock headers active (using real limits)'
   }
@@ -635,13 +635,11 @@ export function getMockStatus(): string {
   const lines: string[] = []
   lines.push('Active mock headers:')
 
-  // Show subscription type - either explicitly set or default
-  const effectiveSubscription =
-    mockSubscriptionType || DEFAULT_MOCK_SUBSCRIPTION
-  if (mockSubscriptionType) {
-    lines.push(`  Subscription Type: ${mockSubscriptionType} (explicitly set)`)
+  const effectivePlanTier = mockPlanTier || DEFAULT_MOCK_PLAN_TIER
+  if (mockPlanTier) {
+    lines.push(`  Plan Tier: ${mockPlanTier} (explicitly set)`)
   } else {
-    lines.push(`  Subscription Type: ${effectiveSubscription} (default)`)
+    lines.push(`  Plan Tier: ${effectivePlanTier} (default)`)
   }
 
   Object.entries(mockHeaders).forEach(([key, value]) => {
@@ -678,7 +676,7 @@ export function getMockStatus(): string {
 export function clearMockHeaders(): void {
   mockHeaders = {}
   exceededLimits = []
-  mockSubscriptionType = null
+  mockPlanTier = null
   mockFastModeRateLimitDurationMs = null
   mockFastModeRateLimitExpiresAt = null
   mockHeaderless429Message = null
@@ -708,8 +706,7 @@ export function applyMockHeaders(
   return newHeaders
 }
 
-// Check if we should process rate limits even without subscription
-// This is for Ant employees testing with mocks
+// Check if Ant employees should process mocked rate limit headers.
 export function shouldProcessMockLimits(): boolean {
   if (process.env.USER_TYPE !== 'ant') {
     return false
@@ -770,7 +767,7 @@ export function getScenarioDescription(scenario: MockScenario): string {
     case 'overage-warning':
       return 'Approaching extra usage limit'
     case 'overage-exhausted':
-      return 'Both subscription and extra usage limits exhausted'
+      return 'Both primary and extra usage limits exhausted'
     case 'out-of-credits':
       return 'Out of extra usage credits (wallet empty)'
     case 'org-zero-credit-limit':
@@ -802,30 +799,27 @@ export function getScenarioDescription(scenario: MockScenario): string {
   }
 }
 
-// Mock subscription type management
-export function setMockSubscriptionType(
-  subscriptionType: SubscriptionType | null,
+export function setMockPlanTier(
+  planTier: MockPlanTier | null,
 ): void {
   if (process.env.USER_TYPE !== 'ant') {
     return
   }
   mockEnabled = true
-  mockSubscriptionType = subscriptionType
+  mockPlanTier = planTier
 }
 
-export function getMockSubscriptionType(): SubscriptionType | null {
+export function getMockPlanTier(): MockPlanTier | null {
   if (!mockEnabled || process.env.USER_TYPE !== 'ant') {
     return null
   }
-  // Return the explicitly set subscription type, or default to 'max'
-  return mockSubscriptionType || DEFAULT_MOCK_SUBSCRIPTION
+  return mockPlanTier || DEFAULT_MOCK_PLAN_TIER
 }
 
-// Export a function that checks if we should use mock subscription
-export function shouldUseMockSubscription(): boolean {
+export function shouldUseMockPlanTier(): boolean {
   return (
     mockEnabled &&
-    mockSubscriptionType !== null &&
+    mockPlanTier !== null &&
     process.env.USER_TYPE === 'ant'
   )
 }

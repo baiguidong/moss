@@ -323,7 +323,7 @@ export class RemoteSessionManager {
 }
 
 /**
- * Create a remote session config from OAuth tokens
+ * Create a remote session config from bearer credentials.
  */
 export function createRemoteSessionConfig(
   sessionId: string,

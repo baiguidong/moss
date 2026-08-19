@@ -2,11 +2,8 @@ import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
 import { randomUUID } from 'crypto'
 import type { GoogleAuth } from 'google-auth-library'
 import {
-  checkAndRefreshOAuthTokenIfNeeded,
   getAnthropicApiKey,
   getApiKeyFromApiKeyHelper,
-  getClaudeAIOAuthTokens,
-  isClaudeAISubscriber,
   refreshAndGetAwsCredentials,
   refreshGcpCredentialsIfNeeded,
 } from 'src/utils/auth.js'
@@ -21,7 +18,7 @@ import {
   getIsNonInteractiveSession,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { getOauthConfig } from '../../constants/oauth.js'
+import { getApiBaseUrl } from '../../constants/api.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import {
   getAWSRegion,
@@ -132,16 +129,10 @@ export async function getAnthropicClient({
     defaultHeaders['x-anthropic-additional-protection'] = 'true'
   }
 
-  logForDebugging('[API:auth] OAuth token check starting')
-  await checkAndRefreshOAuthTokenIfNeeded()
-  logForDebugging('[API:auth] OAuth token check complete')
-
-  const mossAuthToken = isClaudeAISubscriber()
-    ? null
-    : await configureApiKeyHeaders(
-        defaultHeaders,
-        getIsNonInteractiveSession(),
-      )
+  const mossAuthToken = await configureApiKeyHeaders(
+    defaultHeaders,
+    getIsNonInteractiveSession(),
+  )
 
   const resolvedFetch = buildFetch(fetchOverride, source)
 
@@ -302,16 +293,13 @@ export async function getAnthropicClient({
     return new AnthropicVertex(vertexArgs) as unknown as Anthropic
   }
 
-  // Determine authentication method based on available tokens
   const mossBaseUrl =
     getSessionMossBaseUrl() ||
     process.env.MOSS_BASE_URL ||
-    getOauthConfig().BASE_API_URL
+    getApiBaseUrl()
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
-    apiKey: isClaudeAISubscriber() ? null : apiKey || getAnthropicApiKey(),
-    authToken: isClaudeAISubscriber()
-      ? (getClaudeAIOAuthTokens()?.accessToken ?? null)
-      : mossAuthToken,
+    apiKey: apiKey || getAnthropicApiKey(),
+    authToken: mossAuthToken,
     // Always pass auth and endpoint options explicitly so the SDK never falls
     // back to its vendor-specific environment variables.
     baseURL: mossBaseUrl,
