@@ -1,6 +1,5 @@
 import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
-import os from 'os'
 import path from 'path'
 import {
   fetchSkillHubSkillDetail,
@@ -8,13 +7,12 @@ import {
   installHubSkill,
   type InstalledSkillInfo,
 } from './skillStore.js'
+import { MOSS_HOME } from './lib/env.js'
 
 const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
 const HUB_AUTHORIZATION =
   String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
 
-// Support MOSS_HOME environment variable for Docker/container environments
-const MOSS_HOME = process.env.MOSS_HOME || path.join(os.homedir(), '.moss')
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants')
 const LEGACY_ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub')
 const LEGACY_ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system')

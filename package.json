@@ -10,6 +10,8 @@
     "build:node": "bun run scripts/build.js --target=node",
     "build:electron-direct": "bun run scripts/build.js --target=electron-direct",
     "build:server": "bun run scripts/build.js --target=server",
+    "server:prepare": "bun scripts/server-prepare.mjs",
+    "server:start": "bun scripts/server-start.mjs",
     "postinstall": "bun run scripts/copy-vendor.js"
   },
   "dependencies": {

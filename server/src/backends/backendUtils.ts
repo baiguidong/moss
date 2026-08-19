@@ -2,27 +2,17 @@ import { spawn, type ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import fs from 'fs'
 import path from 'path'
-import { fileURLToPath } from 'url'
-import { MOSS_HOME } from '../lib/env.js'
+import { MOSS_HOME, MOSS_SERVER_HOME } from '../lib/env.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
   SessionRuntimeInfo,
 } from '../backendTypes.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
 export function resolveNodeCliPath(): string {
-  const configured = process.env.CLAUDE_CODE_CLI_PATH
   const candidates = [
-    configured,
-    path.join(process.cwd(), 'cli-node.js'),
-    path.join(__dirname, 'cli-node.js'),
-    path.join(__dirname, '../cli-node.js'),
-    path.join(__dirname, '../../cli-node.js'),
-    path.join(__dirname, '../../../cli-node.js'),
-  ].filter((value): value is string => Boolean(value))
+    path.join(MOSS_SERVER_HOME, 'bin', 'cli-node.js'),
+  ]
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -30,13 +20,13 @@ export function resolveNodeCliPath(): string {
     }
   }
 
-  return candidates[0] || path.join(process.cwd(), 'cli-node.js')
+  return path.join(MOSS_SERVER_HOME, 'bin', 'cli-node.js')
 }
 
 export function ensureCliExists(nodeCliPath: string): void {
   if (!fs.existsSync(nodeCliPath)) {
     throw new Error(
-      `Missing ${nodeCliPath}. Run "bun run build:node" before starting the session server.`,
+      `Missing ${nodeCliPath}. Build or install cli-node.js to ${path.join(MOSS_SERVER_HOME, 'bin')}.`,
     )
   }
 }
@@ -47,6 +37,7 @@ export function buildSessionEnv(
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    MOSS_SERVER_HOME,
     MOSS_HOME,
     ...(options.userId ? { MOSS_SESSION_USER_ID: options.userId } : {}),
     ...(options.orgId ? { MOSS_SESSION_ORG_ID: options.orgId } : {}),

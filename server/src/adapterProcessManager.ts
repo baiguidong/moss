@@ -8,9 +8,9 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { open } from 'fs/promises'
-import os from 'os'
 import path from 'path'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
+import { MOSS_HOME, MOSS_SERVER_HOME } from './lib/env.js'
 
 type AdapterName = 'telegram' | 'feishu'
 type ProcessKey = `${string}:${string}:${AdapterName}` // orgId:userId:platform
@@ -22,8 +22,7 @@ type AdapterProcessState = {
   startedAt: number | null
 }
 
-const MOSS_HOME = path.join(os.homedir(), '.moss')
-const ADAPTER_RUNTIMES_DIR = path.join(MOSS_HOME, 'adapter-runtimes')
+const ADAPTER_RUNTIMES_DIR = path.join(MOSS_SERVER_HOME, 'adapter-runtimes')
 
 function makeKey(orgId: string, userId: string, platform: AdapterName): ProcessKey {
   return `${orgId}:${userId}:${platform}`
@@ -100,7 +99,9 @@ export class AdapterProcessManager {
       ADAPTER_SERVER_URL: `ws://${serverHost}:${serverPort}`,
       ADAPTER_ORG_ID: orgId,
       ADAPTER_USER_ID: userId,
-      MOSS_CONFIG_DIR: process.env.MOSS_CONFIG_DIR || MOSS_HOME,
+      MOSS_SERVER_HOME,
+      MOSS_CONFIG_DIR: MOSS_HOME,
+      MOSS_HOME,
     }
 
     const runtimePath = process.execPath

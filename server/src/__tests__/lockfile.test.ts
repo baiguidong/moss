@@ -9,11 +9,11 @@ import {
   writeServerLock,
 } from '../lockfile.js'
 
-const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
+const originalMossServerHome = process.env.MOSS_SERVER_HOME
 let tempRoot: string | undefined
 
 afterEach(async () => {
-  restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
+  restoreEnv('MOSS_SERVER_HOME', originalMossServerHome)
   if (tempRoot) {
     await rm(tempRoot, { recursive: true, force: true })
     tempRoot = undefined
@@ -21,10 +21,10 @@ afterEach(async () => {
 })
 
 describe('Direct Connect server lock', () => {
-  test('stores the lock in MOSS_CONFIG_DIR', async () => {
+  test('stores the lock in MOSS_SERVER_HOME', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-lock-'))
-    const configDir = join(tempRoot, 'config')
-    process.env.MOSS_CONFIG_DIR = configDir
+    const serverHome = join(tempRoot, 'server-home')
+    process.env.MOSS_SERVER_HOME = serverHome
     const lock: ServerLock = {
       pid: process.pid,
       port: 4242,
@@ -35,7 +35,7 @@ describe('Direct Connect server lock', () => {
 
     await writeServerLock(lock)
 
-    const lockPath = join(configDir, 'direct-connect-server.json')
+    const lockPath = join(serverHome, 'direct-connect-server.json')
     expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(lock)
     expect(await probeRunningServer()).toEqual(lock)
 

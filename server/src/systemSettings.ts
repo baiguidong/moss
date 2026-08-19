@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import os from 'os'
 import path from 'path'
+import { MOSS_HOME } from './lib/env.js'
 
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
 
@@ -40,7 +40,6 @@ type PersistedSystemSettings = Record<string, unknown> & Omit<
 
 const DEFAULT_BYPASS_PERMISSIONS =
   process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true'
-const MOSS_HOME = path.join(os.homedir(), '.moss')
 export const SYSTEM_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json')
 
 const DEFAULT_SYSTEM_SETTINGS: Omit<

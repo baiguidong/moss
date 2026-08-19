@@ -15,17 +15,43 @@
 
 默认启动入口：
 
-- `node bin/moss-server.mjs`（仓库根目录执行）
+- `bun run server:start`（仓库根目录执行）
 
-只构建服务端：
+`server:start` 会先执行 prepare，再从 `MOSS_SERVER_HOME` 启动 server。
+
+默认 server root：
+
+- `~/.moss/server`
+- 可通过 `MOSS_SERVER_HOME=/path/to/server-root` 覆盖
+
+prepare 会把随代码变化的运行产物复制到 server root：
+
+- `~/.moss/server/bin/moss-server.mjs`
+- `~/.moss/server/bin/cli-node.js`
+- `~/.moss/server/admin/dist/`
+
+运行期状态也只落在 server root 的子目录：
+
+- `~/.moss/server/server.json`
+- `~/.moss/server/moss-server.db`
+- `~/.moss/server/runtime/`
+- `~/.moss/server/transcripts/`
+- `~/.moss/server/logs/`
+- `~/.moss/server/settings.json`
+- `~/.moss/server/skills/`
+- `~/.moss/server/assistants/`
+
+只准备但不启动：
 
 ```bash
-bun run --cwd server build
+bun run server:prepare
 ```
 
-服务端运行 session 时会调用同目录下的 `bin/cli-node.js`。该文件是
-Agent runtime 的独立进程边界，可由完整的 `bun run build:node` 生成，
-或通过 `CLAUDE_CODE_CLI_PATH` 指向已有产物。
+服务端运行 session 时会调用 `MOSS_SERVER_HOME/bin/cli-node.js`。该文件是
+Agent runtime 的独立进程边界，由 `server:prepare` 构建并复制。
+每个 session 仍会有独立 runner 进程，但 runner 入口是
+`MOSS_SERVER_HOME/bin/moss-server.mjs session-runner <manifest>`，不需要额外的
+runner bin 文件。
 
 默认配置文件：
 
@@ -37,7 +63,7 @@ Agent runtime 的独立进程边界，可由完整的 `bun run build:node` 生�
 - 监听 `0.0.0.0:43127`
 - 本地认证模式 (`auth.mode: local`)
 - 默认管理员用户名 `admin`（密码需手动设置）
-- 数据存储在 `~/.moss/server/` 目录下
+- 数据存储在 `~/.moss/server/moss-server.db`
 
 启动后会提示编辑配置文件设置 `bootstrapAdmin.password`。
 

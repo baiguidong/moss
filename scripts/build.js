@@ -29,7 +29,7 @@ function sanitizePaths(outfile) {
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
 const target = targetArg ? targetArg.slice('--target='.length) : 'all'
 const buildBunCli = target === 'all'
-const buildNodeCli = target !== 'electron-direct' && target !== 'server'
+const buildNodeCli = target !== 'electron-direct'
 const buildElectronDirect = target !== 'server'
 const buildServer = target !== 'electron-direct'
 
@@ -141,13 +141,3 @@ build('bin/moss-server.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-server.mjs')
-
-// bin/direct-connect-session-runner.mjs（session detached runner）
-build('bin/direct-connect-session-runner.mjs', [
-  'build', 'server/src/sessionRunnerCli.ts',
-  '--outfile=bin/direct-connect-session-runner.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])

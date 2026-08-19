@@ -3,11 +3,11 @@ import net from 'net'
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
-import { dirname, extname, join, resolve, sep } from 'path'
-import { fileURLToPath } from 'url'
+import { extname, join, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
 import type { SessionRuntimeOptions } from './backendTypes.js'
+import { MOSS_SERVER_HOME } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
@@ -409,11 +409,8 @@ function listAdapterProcessStatusesForUser(
 }
 
 function resolveAdminDistDir(): string | null {
-  const currentDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [
-    resolve(process.cwd(), 'admin', 'dist'),
-    resolve(currentDir, '..', '..', 'admin', 'dist'),
-    resolve(currentDir, 'admin', 'dist'),
+    resolve(MOSS_SERVER_HOME, 'admin', 'dist'),
   ]
 
   for (const candidate of candidates) {

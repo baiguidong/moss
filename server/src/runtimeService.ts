@@ -2,9 +2,9 @@ import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 import { spawn } from 'child_process'
+import { MOSS_SERVER_HOME } from './lib/env.js'
 import { DirectConnectStore, mergeRuntime, openDirectConnectStore, toSessionSummary } from './db.js'
 import type {
   AttemptRecord,
@@ -29,22 +29,18 @@ function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function resolveRunnerPath(): string {
-  const fromEnv = process.env.MOSS_SESSION_RUNNER_PATH
-  if (fromEnv && existsSync(fromEnv)) {
-    return fromEnv
-  }
-  const currentDir = dirname(fileURLToPath(import.meta.url))
+function resolveServerEntryPath(): string {
   const candidates = [
-    join(currentDir, 'direct-connect-session-runner.mjs'),
-    join(process.cwd(), 'direct-connect-session-runner.mjs'),
+    join(MOSS_SERVER_HOME, 'bin', 'moss-server.mjs'),
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
       return candidate
     }
   }
-  throw new Error('Missing direct-connect-session-runner.mjs. Run bun run build:node first.')
+  throw new Error(
+    `Missing moss-server.mjs. Build or install it to ${join(MOSS_SERVER_HOME, 'bin')}.`,
+  )
 }
 
 async function readRunnerFailure(
@@ -414,8 +410,8 @@ export class RuntimeService {
     const manifestPath = join(attemptDir, 'manifest.json')
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
-    const runnerPath = resolveRunnerPath()
-    const child = spawn(process.execPath, [runnerPath, manifestPath], {
+    const serverEntryPath = resolveServerEntryPath()
+    const child = spawn(process.execPath, [serverEntryPath, 'session-runner', manifestPath], {
       detached: true,
       stdio: 'ignore',
       cwd: session.cwd,

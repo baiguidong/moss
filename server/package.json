@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "cd .. && bun run scripts/build.js --target=server",
-    "check": "bun run typecheck && bun build src/serverCli.ts src/sessionRunnerCli.ts --target=node --format=esm --outdir=/tmp/moss-server-check",
+    "check": "bun run typecheck && bun build src/serverCli.ts --target=node --format=esm --outdir=/tmp/moss-server-check",
     "test": "bun test src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
