@@ -129,8 +129,6 @@ const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
   hasClaudeMdExternalIncludesWarningShown: false,
 }
 
-export type InstallMethod = 'local' | 'native' | 'global' | 'unknown'
-
 export {
   EDITOR_MODES,
   NOTIFICATION_CHANNELS,
@@ -154,10 +152,6 @@ export type GlobalConfig = {
   apiKeyHelper?: string
   projects?: Record<string, ProjectConfig>
   numStartups: number
-  installMethod?: InstallMethod
-  autoUpdates?: boolean
-  // Flag to distinguish protection-based disabling from user preference
-  autoUpdatesProtectedForNative?: boolean
   // Session count when Doctor was last shown
   doctorShownAtSession?: number
   userID?: string
@@ -165,12 +159,6 @@ export type GlobalConfig = {
   hasCompletedOnboarding?: boolean
   // Tracks the last version that reset onboarding, used with MIN_VERSION_REQUIRING_ONBOARDING_RESET
   lastOnboardingVersion?: string
-  // Tracks the last version for which release notes were seen, used for managing release notes
-  lastReleaseNotesSeen?: string
-  // Timestamp when changelog was last fetched (content stored in ~/.moss/cache/changelog.md)
-  changelogLastFetched?: number
-  // @deprecated - Migrated to ~/.moss/cache/changelog.md. Keep for migration support.
-  cachedChangelog?: string
   mcpServers?: Record<string, McpServerConfig>
   // claude.ai MCP connectors that have successfully connected at least once.
   // Used to gate "connector unavailable" / "needs auth" startup notifications:
@@ -496,8 +484,6 @@ export type GlobalConfig = {
 function createDefaultGlobalConfig(): GlobalConfig {
   return {
     numStartups: 0,
-    installMethod: undefined,
-    autoUpdates: undefined,
     theme: 'dark',
     preferredNotifChannel: 'auto',
     verbose: false,
@@ -537,9 +523,6 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = createDefaultGlobalConfig()
 
 export const GLOBAL_CONFIG_KEYS = [
   'apiKeyHelper',
-  'installMethod',
-  'autoUpdates',
-  'autoUpdatesProtectedForNative',
   'theme',
   'verbose',
   'preferredNotifChannel',
@@ -651,7 +634,6 @@ function computeTrustDialogAccepted(): boolean {
 // We have to put this test code here because Jest doesn't support mocking ES modules :O
 const TEST_GLOBAL_CONFIG_FOR_TESTING: GlobalConfig = {
   ...DEFAULT_GLOBAL_CONFIG,
-  autoUpdates: false,
 }
 const TEST_PROJECT_CONFIG_FOR_TESTING: ProjectConfig = {
   ...DEFAULT_PROJECT_CONFIG,
@@ -791,60 +773,6 @@ registerCleanup(async () => {
 })
 
 /**
- * Migrates old autoUpdaterStatus to new installMethod and autoUpdates fields
- * @internal
- */
-function migrateConfigFields(config: GlobalConfig): GlobalConfig {
-  // Already migrated
-  if (config.installMethod !== undefined) {
-    return config
-  }
-
-  // autoUpdaterStatus is removed from the type but may exist in old configs
-  const legacy = config as GlobalConfig & {
-    autoUpdaterStatus?:
-      | 'migrated'
-      | 'installed'
-      | 'disabled'
-      | 'enabled'
-      | 'no_permissions'
-      | 'not_configured'
-  }
-
-  // Determine install method and auto-update preference from old field
-  let installMethod: InstallMethod = 'unknown'
-  let autoUpdates = config.autoUpdates ?? true // Default to enabled unless explicitly disabled
-
-  switch (legacy.autoUpdaterStatus) {
-    case 'migrated':
-      installMethod = 'local'
-      break
-    case 'installed':
-      installMethod = 'native'
-      break
-    case 'disabled':
-      // When disabled, we don't know the install method
-      autoUpdates = false
-      break
-    case 'enabled':
-    case 'no_permissions':
-    case 'not_configured':
-      // These imply global installation
-      installMethod = 'global'
-      break
-    case undefined:
-      // No old status, keep defaults
-      break
-  }
-
-  return {
-    ...config,
-    installMethod,
-    autoUpdates,
-  }
-}
-
-/**
  * Removes history field from projects (migrated to history.jsonl)
  * @internal
  */
@@ -901,10 +829,10 @@ function startGlobalConfigFreshnessWatcher(): void {
           const parsed = safeParseJSON(stripBOM(content))
           if (parsed === null || typeof parsed !== 'object') return
           globalConfigCache = {
-            config: migrateConfigFields({
+            config: {
               ...createDefaultGlobalConfig(),
               ...(parsed as Partial<GlobalConfig>),
-            }),
+            },
             mtime: curr.mtimeMs,
           }
           lastReadFileStats = { mtime: curr.mtimeMs, size: curr.size }
@@ -950,9 +878,7 @@ export function getGlobalConfig(): GlobalConfig {
     } catch {
       // File doesn't exist
     }
-    const config = migrateConfigFields(
-      getConfig(getGlobalMossFile(), createDefaultGlobalConfig),
-    )
+    const config = getConfig(getGlobalMossFile(), createDefaultGlobalConfig)
     globalConfigCache = {
       config,
       mtime: stats?.mtimeMs ?? Date.now(),
@@ -964,9 +890,7 @@ export function getGlobalConfig(): GlobalConfig {
     return config
   } catch {
     // If anything goes wrong, fall back to uncached behavior
-    return migrateConfigFields(
-      getConfig(getGlobalMossFile(), createDefaultGlobalConfig),
-    )
+    return getConfig(getGlobalMossFile(), createDefaultGlobalConfig)
   }
 }
 
@@ -1565,63 +1489,6 @@ export function saveCurrentProjectConfig(
     saveConfig(getGlobalMossFile(), written, DEFAULT_GLOBAL_CONFIG)
     writeThroughGlobalConfigCache(written)
   }
-}
-
-export function isAutoUpdaterDisabled(): boolean {
-  return getAutoUpdaterDisabledReason() !== null
-}
-
-/**
- * Returns true if plugin autoupdate should be skipped.
- * This checks if the auto-updater is disabled AND the FORCE_AUTOUPDATE_PLUGINS
- * env var is not set to 'true'. The env var allows forcing plugin autoupdate
- * even when the auto-updater is otherwise disabled.
- */
-export function shouldSkipPluginAutoupdate(): boolean {
-  return (
-    isAutoUpdaterDisabled() &&
-    !isEnvTruthy(process.env.FORCE_AUTOUPDATE_PLUGINS)
-  )
-}
-
-export type AutoUpdaterDisabledReason =
-  | { type: 'development' }
-  | { type: 'env'; envVar: string }
-  | { type: 'config' }
-
-export function formatAutoUpdaterDisabledReason(
-  reason: AutoUpdaterDisabledReason,
-): string {
-  switch (reason.type) {
-    case 'development':
-      return 'development build'
-    case 'env':
-      return `${reason.envVar} set`
-    case 'config':
-      return 'config'
-  }
-}
-
-export function getAutoUpdaterDisabledReason(): AutoUpdaterDisabledReason | null {
-  if (process.env.NODE_ENV === 'development') {
-    return { type: 'development' }
-  }
-  if (isEnvTruthy(process.env.DISABLE_AUTOUPDATER)) {
-    return { type: 'env', envVar: 'DISABLE_AUTOUPDATER' }
-  }
-  const essentialTrafficEnvVar = getEssentialTrafficOnlyReason()
-  if (essentialTrafficEnvVar) {
-    return { type: 'env', envVar: essentialTrafficEnvVar }
-  }
-  const config = getGlobalConfig()
-  if (
-    config.autoUpdates === false &&
-    (config.installMethod !== 'native' ||
-      config.autoUpdatesProtectedForNative !== true)
-  ) {
-    return { type: 'config' }
-  }
-  return null
 }
 
 export function getOrCreateUserID(): string {

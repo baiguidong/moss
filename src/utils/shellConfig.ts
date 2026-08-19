@@ -7,7 +7,6 @@ import { open, readFile, stat } from 'fs/promises'
 import { homedir as osHomedir } from 'os'
 import { join } from 'path'
 import { isFsInaccessible } from './errors.js'
-import { getLocalClaudePath } from './localInstaller.js'
 
 export const CLAUDE_ALIAS_REGEX = /^\s*alias\s+claude\s*=/
 
@@ -48,7 +47,7 @@ export function filterClaudeAliases(lines: string[]): {
 } {
   let hadAlias = false
   const installerAliasTargets = new Set([
-    getLocalClaudePath(),
+    join(osHomedir(), '.moss', 'local', 'claude'),
     join(osHomedir(), '.claude', 'local', 'claude'),
   ])
   const filtered = lines.filter(line => {

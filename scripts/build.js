@@ -44,8 +44,6 @@ const enabledFeatures = Object.entries({ ...RECOMMENDED, ...EXPERIMENTAL, ...NAT
 
 const defines = [
   `--define=MACRO.VERSION="2.1.88"`,
-  `--define=MACRO.PACKAGE_URL="@anthropic-ai/claude-code"`,
-  `--define=MACRO.NATIVE_PACKAGE_URL="@anthropic-ai/claude-code"`,
   `--define=MACRO.BUILD_TIME="${new Date().toISOString()}"`,
   `--define=MACRO.FEEDBACK_CHANNEL=""`,
   `--define=MACRO.ISSUES_EXPLAINER=""`,
@@ -141,3 +139,14 @@ build('bin/moss-server.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-server.mjs')
+
+// bin/moss-session-runner.mjs（每个 server session 的独立 runner 进程）
+build('bin/moss-session-runner.mjs', [
+  'build', 'server/src/sessionRunnerCli.ts',
+  '--outfile=bin/moss-session-runner.mjs',
+  '--target=node',
+  '--format=esm',
+  ...aliases,
+  ...defines,
+])
+sanitizePaths('bin/moss-session-runner.mjs')

@@ -1,8 +1,8 @@
 /**
- * XDG Base Directory utilities for Claude CLI Native Installer
+ * XDG Base Directory utilities for Moss runtime data
  *
  * Implements the XDG Base Directory specification for organizing
- * native installer components across appropriate system directories.
+ * runtime state across appropriate system directories.
  *
  * @see https://specifications.freedesktop.org/basedir-spec/latest/
  */

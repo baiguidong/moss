@@ -1046,7 +1046,7 @@ export async function refreshGrowthBookFeatures(): Promise<void> {
     }
 
     // Rebuild remoteEvalFeatureValues from the refreshed payload so that
-    // _BLOCKS_ON_INIT callers (e.g. getMaxVersion for the auto-update kill
+    // _BLOCKS_ON_INIT callers
     // switch) see fresh values, not the stale init-time snapshot.
     const hadFeatures = await processRemoteEvalPayload(growthBookClient)
     // Same re-check as init path: covers the setPayload yield inside

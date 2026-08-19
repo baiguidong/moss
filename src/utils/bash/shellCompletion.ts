@@ -5,7 +5,6 @@ import {
   tryParseShellCommand,
 } from '../bash/shellQuote.js'
 import { logForDebugging } from '../debug.js'
-import { getShellType } from '../localInstaller.js'
 import * as Shell from '../Shell.js'
 
 // Constants
@@ -14,6 +13,12 @@ const SHELL_COMPLETION_TIMEOUT_MS = 1000
 const COMMAND_OPERATORS = ['|', '||', '&&', ';'] as const
 
 export type ShellCompletionType = 'command' | 'variable' | 'file'
+
+function getShellType(): string {
+  const shell = process.env.SHELL || ''
+  const shellName = shell.split('/').pop() || shell
+  return shellName.toLowerCase()
+}
 
 type InputContext = {
   prefix: string

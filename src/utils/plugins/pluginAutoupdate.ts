@@ -11,7 +11,6 @@
  */
 
 import { updatePluginOp } from '../../services/plugins/pluginOperations.js'
-import { shouldSkipPluginAutoupdate } from '../config.js'
 import { logForDebugging } from '../debug.js'
 import { errorMessage } from '../errors.js'
 import { logError } from '../log.js'
@@ -226,11 +225,6 @@ async function updatePlugins(
  */
 export function autoUpdateMarketplacesAndPluginsInBackground(): void {
   void (async () => {
-    if (shouldSkipPluginAutoupdate()) {
-      logForDebugging('Plugin autoupdate: skipped (auto-updater disabled)')
-      return
-    }
-
     try {
       // Get marketplaces with autoUpdate enabled
       const autoUpdateEnabledMarketplaces =

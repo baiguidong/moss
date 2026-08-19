@@ -97,8 +97,6 @@ async function formatDoctorText(): Promise<string> {
     lines.push('')
     lines.push(`  Version:           ${diag.version}`)
     lines.push(`  Installation:      ${diag.installationType}`)
-    if (diag.packageManager) lines.push(`  Package manager:  ${diag.packageManager}`)
-    lines.push(`  Auto-updates:     ${diag.autoUpdates}`)
     lines.push(`  ripgrep:          ${diag.ripgrepStatus.working ? 'OK' : 'Not working'} (${diag.ripgrepStatus.mode})`)
     if (diag.warnings.length > 0) {
       lines.push('')
@@ -172,14 +170,10 @@ function formatConfigText(): string {
     const config = getGlobalConfig()
     const lines: string[] = ['Current configuration:', '']
     lines.push(`  Theme:            ${config.theme ?? 'default'}`)
-    lines.push(`  Auto-updates:     ${config.autoUpdates === false ? 'disabled' : 'enabled'}`)
     lines.push(`  Verbose:          ${config.verbose ? 'on' : 'off'}`)
     lines.push(`  Editor mode:      ${config.editorMode ?? 'default'}`)
     if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
       lines.push(`  MCP servers:      ${Object.keys(config.mcpServers).join(', ')}`)
-    }
-    if (config.installMethod) {
-      lines.push(`  Install method:   ${config.installMethod}`)
     }
     lines.push('')
     lines.push('Use /config in terminal for interactive settings.')

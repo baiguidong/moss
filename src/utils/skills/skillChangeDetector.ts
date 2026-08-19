@@ -37,7 +37,7 @@ const FILE_STABILITY_POLL_INTERVAL_MS = 500
 /**
  * Time in milliseconds to debounce rapid skill change events into a single
  * reload. Prevents cascading reloads when many skill files change at once
- * (e.g. during auto-update or when another session modifies skill directories).
+ * (e.g. during bulk sync or when another session modifies skill directories).
  * Without this, each file change triggers a full clearSkillCaches() +
  * clearCommandsCache() + listener notification cycle, which can deadlock the
  * event loop when dozens of events fire in rapid succession.
@@ -222,7 +222,7 @@ function handleChange(path: string): void {
 
 /**
  * Debounce rapid skill changes into a single reload. When many skill files
- * change at once (e.g. auto-update installs a new binary and a new session
+ * change at once (e.g. bulk sync touches files and a new session
  * touches skill directories), each file fires its own chokidar event. Without
  * debouncing, each event triggers clearSkillCaches() + clearCommandsCache() +
  * listener notification — 30 events means 30 full reload cycles, which can

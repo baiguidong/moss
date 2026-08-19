@@ -52,7 +52,7 @@ const MDM_POLL_INTERVAL_MS = 30 * 60 * 1000 // 30 minutes
 
 /**
  * Grace period in milliseconds before processing a settings file deletion.
- * Handles the common delete-and-recreate pattern during auto-updates or when
+ * Handles the common delete-and-recreate pattern during external writes or when
  * another session starts up. If an `add` or `change` event fires within this
  * window (file was recreated), the deletion is cancelled and treated as a change.
  *
@@ -323,7 +323,7 @@ function handleAdd(path: string): void {
 
 /**
  * Handle a file being deleted. Uses a grace period to absorb delete-and-recreate
- * patterns (e.g. auto-updater, another session starting up). If the file is
+ * patterns (e.g. atomic file replacement, another session starting up). If the file is
  * recreated within the grace period (detected via 'add' or 'change' event),
  * the deletion is cancelled and treated as a normal change instead.
  */
