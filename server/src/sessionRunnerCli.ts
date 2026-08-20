@@ -2,8 +2,8 @@ import { readFile } from 'fs/promises'
 import { SessionRunnerDaemon } from './sessionRunnerDaemon.js'
 import type { RunnerManifest } from './types.js'
 
-async function main(): Promise<void> {
-  const manifestPath = process.argv[2]
+export async function main(argv: string[] = process.argv): Promise<void> {
+  const manifestPath = argv[2]
   if (!manifestPath) {
     throw new Error('Missing runner manifest path')
   }
@@ -17,10 +17,3 @@ async function main(): Promise<void> {
   const daemon = new SessionRunnerDaemon(manifest)
   await daemon.start()
 }
-
-main().catch((error: unknown) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.stack || error.message : String(error)}\n`,
-  )
-  process.exit(1)
-})

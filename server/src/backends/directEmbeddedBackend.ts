@@ -1,9 +1,7 @@
 import { randomUUID } from 'crypto'
-import { mkdir } from 'fs/promises'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { pathToFileURL } from 'url'
 import { getSystemSettings } from '../systemSettings.js'
-import { MOSS_SERVER_HOME } from '../lib/env.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
@@ -65,11 +63,21 @@ type DirectRuntimeModule = {
 }
 
 let directRuntimePromise: Promise<DirectRuntimeModule> | null = null
+let directRuntimeModule: DirectRuntimeModule | null = null
+
+export function registerDirectRuntimeModule(module: DirectRuntimeModule): void {
+  directRuntimeModule = module
+  directRuntimePromise = Promise.resolve(module)
+}
 
 function loadDirectRuntime(): Promise<DirectRuntimeModule> {
-  directRuntimePromise ??= import(
-    pathToFileURL(join(MOSS_SERVER_HOME, 'bin', 'agent-runtime.mjs')).href
-  ) as Promise<DirectRuntimeModule>
+  directRuntimePromise ??= directRuntimeModule
+    ? Promise.resolve(directRuntimeModule)
+    : Promise.reject(
+        new Error(
+          'Missing embedded direct runtime module. Build moss-session-runner.mjs with scripts/session-runner-entry.ts.',
+        ),
+      )
   return directRuntimePromise
 }
 
@@ -100,6 +108,71 @@ function buildThinkingConfig(settings: ReturnType<typeof getSystemSettings>) {
     }
   }
   return { type: 'adaptive' as const }
+}
+
+function buildManagedRuntimeEnv(
+  settings: ReturnType<typeof getSystemSettings>,
+): Record<string, string | undefined> {
+  return {
+    MOSS_BASE_URL: settings.url || undefined,
+    MOSS_AUTH_TOKEN: settings.apiKey || undefined,
+    MOSS_SERVER_URL: settings.serverUrl || undefined,
+    MOSS_SERVER_AUTH_TOKEN: settings.serverAuthToken || undefined,
+  }
+}
+
+function applyManagedRuntimeEnv(
+  settings: ReturnType<typeof getSystemSettings>,
+): void {
+  for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
+    if (value) {
+      process.env[key] = value
+    }
+  }
+}
+
+async function writeManagedSessionSettings(
+  configDir: string | undefined,
+  settings: ReturnType<typeof getSystemSettings>,
+): Promise<void> {
+  if (!configDir) {
+    return
+  }
+
+  const settingsPath = join(configDir, 'settings.json')
+  let existing: JsonObject = {}
+  try {
+    const parsed = JSON.parse(await readFile(settingsPath, 'utf8')) as unknown
+    if (isJsonObject(parsed)) {
+      existing = parsed
+    }
+  } catch {}
+
+  const existingEnv = isJsonObject(existing.env) ? existing.env : {}
+  const env: JsonObject = { ...existingEnv }
+  for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
+    if (value) {
+      env[key] = value
+    } else {
+      delete env[key]
+    }
+  }
+
+  const next: JsonObject = {
+    ...existing,
+    model: settings.model,
+    maxTurns: settings.maxTurns,
+    thinkingMode: settings.thinkingMode,
+    thinkingBudgetTokens: settings.thinkingBudgetTokens,
+    bypassPermissions: settings.bypassPermissions,
+  }
+  if (Object.keys(env).length > 0) {
+    next.env = env
+  } else {
+    delete next.env
+  }
+
+  await writeFile(settingsPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
 }
 
 function isContentBlock(
@@ -416,6 +489,8 @@ export class DirectEmbeddedBackend implements SessionBackend {
     if (configDir) {
       await mkdir(configDir, { recursive: true })
     }
+    const settings = getSystemSettings()
+    await writeManagedSessionSettings(configDir, settings)
 
     Object.assign(
       process.env,
@@ -424,8 +499,8 @@ export class DirectEmbeddedBackend implements SessionBackend {
         MOSS_CONFIG_DIR: configDir,
       }),
     )
+    applyManagedRuntimeEnv(settings)
 
-    const settings = getSystemSettings()
     const { ClaudeSession, resumeClaudeSession } = await loadDirectRuntime()
     let handle: DirectEmbeddedHandle | null = null
     const runtime: SessionRuntimeInfo = {

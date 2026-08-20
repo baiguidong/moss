@@ -142,7 +142,7 @@ sanitizePaths('bin/moss-server.mjs')
 
 // bin/moss-session-runner.mjs（每个 server session 的独立 runner 进程）
 build('bin/moss-session-runner.mjs', [
-  'build', 'server/src/sessionRunnerCli.ts',
+  'build', 'scripts/session-runner-entry.ts',
   '--outfile=bin/moss-session-runner.mjs',
   '--target=node',
   '--format=esm',
@@ -150,14 +150,3 @@ build('bin/moss-session-runner.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-session-runner.mjs')
-
-// bin/agent-runtime.mjs（server host runner 内嵌的 Agent runtime）
-build('bin/agent-runtime.mjs', [
-  'build', 'src/electron-direct.ts',
-  '--outfile=bin/agent-runtime.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...defines,
-])
-sanitizePaths('bin/agent-runtime.mjs')

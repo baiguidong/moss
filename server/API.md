@@ -29,7 +29,6 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 - `~/.moss/server/bin/moss-server.mjs`
 - `~/.moss/server/bin/moss-session-runner.mjs`
-- `~/.moss/server/bin/agent-runtime.mjs`
 - `~/.moss/server/bin/cli-node.js`
 - `~/.moss/server/admin/dist/`
 
@@ -52,9 +51,8 @@ bun run server:prepare
 
 服务端 host session 使用独立 runner 进程承接交互：
 `MOSS_SERVER_HOME/bin/moss-session-runner.mjs <manifest>`。
-runner 进程会加载 `MOSS_SERVER_HOME/bin/agent-runtime.mjs`，这是和桌面端
-`electron-direct.mjs` 同源的 Agent runtime；host 模式不再额外启动
-`cli-node.js` 子进程。
+runner 进程内嵌和桌面端 `electron-direct.mjs` 同源的 Agent runtime；
+host 模式不再额外启动 `cli-node.js` 子进程，也不需要额外的 runtime bin 文件。
 
 `MOSS_SERVER_HOME/bin/cli-node.js` 仍由 `server:prepare` 构建并复制，当前主要
 保留给 docker runtime fallback 和手工诊断使用。
