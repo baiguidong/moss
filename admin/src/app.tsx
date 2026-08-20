@@ -5,7 +5,6 @@ import { DashboardShell } from './layouts/dashboard-shell'
 
 const LoginPage = lazy(() => import('./pages/login-page'))
 const DashboardPage = lazy(() => import('./pages/dashboard-page'))
-const BudgetPage = lazy(() => import('./pages/budget-page'))
 const SessionsPage = lazy(() => import('./pages/sessions-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
 const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))
@@ -58,14 +57,6 @@ export default function App() {
           element={
             <SuspendedRoute>
               <DashboardPage />
-            </SuspendedRoute>
-          }
-        />
-        <Route
-          path="/budget"
-          element={
-            <SuspendedRoute>
-              <BudgetPage />
             </SuspendedRoute>
           }
         />

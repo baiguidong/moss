@@ -74,17 +74,6 @@ export function sanitizeToolNameForAnalytics(
 }
 
 /**
- * Check if detailed tool name logging is enabled for OTLP events.
- * When enabled, MCP server/tool names and Skill names are logged.
- * Disabled by default to protect PII (user-specific server configurations).
- *
- * Enable with OTEL_LOG_TOOL_DETAILS=1
- */
-export function isToolDetailsLoggingEnabled(): boolean {
-  return isEnvTruthy(process.env.OTEL_LOG_TOOL_DETAILS)
-}
-
-/**
  * Check if detailed tool name logging (MCP server/tool names) is enabled
  * for analytics events.
  *
@@ -171,103 +160,6 @@ export function extractMcpToolDetails(toolName: string):
     mcpToolName:
       mcpToolName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   }
-}
-
-/**
- * Extract skill name from Skill tool input.
- *
- * @param toolName - The tool name (should be 'Skill')
- * @param input - The tool input containing the skill name
- * @returns The skill name if this is a Skill tool call, undefined otherwise
- */
-export function extractSkillName(
-  toolName: string,
-  input: unknown,
-): AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS | undefined {
-  if (toolName !== 'Skill') {
-    return undefined
-  }
-
-  if (
-    typeof input === 'object' &&
-    input !== null &&
-    'skill' in input &&
-    typeof (input as { skill: unknown }).skill === 'string'
-  ) {
-    return (input as { skill: string })
-      .skill as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-  }
-
-  return undefined
-}
-
-const TOOL_INPUT_STRING_TRUNCATE_AT = 512
-const TOOL_INPUT_STRING_TRUNCATE_TO = 128
-const TOOL_INPUT_MAX_JSON_CHARS = 4 * 1024
-const TOOL_INPUT_MAX_COLLECTION_ITEMS = 20
-const TOOL_INPUT_MAX_DEPTH = 2
-
-function truncateToolInputValue(value: unknown, depth = 0): unknown {
-  if (typeof value === 'string') {
-    if (value.length > TOOL_INPUT_STRING_TRUNCATE_AT) {
-      return `${value.slice(0, TOOL_INPUT_STRING_TRUNCATE_TO)}…[${value.length} chars]`
-    }
-    return value
-  }
-  if (
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    value === null ||
-    value === undefined
-  ) {
-    return value
-  }
-  if (depth >= TOOL_INPUT_MAX_DEPTH) {
-    return '<nested>'
-  }
-  if (Array.isArray(value)) {
-    const mapped = value
-      .slice(0, TOOL_INPUT_MAX_COLLECTION_ITEMS)
-      .map(v => truncateToolInputValue(v, depth + 1))
-    if (value.length > TOOL_INPUT_MAX_COLLECTION_ITEMS) {
-      mapped.push(`…[${value.length} items]`)
-    }
-    return mapped
-  }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      // Skip internal marker keys (e.g. _simulatedSedEdit re-introduced by
-      // SedEditPermissionRequest) so they don't leak into telemetry.
-      .filter(([k]) => !k.startsWith('_'))
-    const mapped = entries
-      .slice(0, TOOL_INPUT_MAX_COLLECTION_ITEMS)
-      .map(([k, v]) => [k, truncateToolInputValue(v, depth + 1)])
-    if (entries.length > TOOL_INPUT_MAX_COLLECTION_ITEMS) {
-      mapped.push(['…', `${entries.length} keys`])
-    }
-    return Object.fromEntries(mapped)
-  }
-  return String(value)
-}
-
-/**
- * Serialize a tool's input arguments for the OTel tool_result event.
- * Truncates long strings and deep nesting to keep the output bounded while
- * preserving forensically useful fields like file paths, URLs, and MCP args.
- * Returns undefined when OTEL_LOG_TOOL_DETAILS is not enabled.
- */
-export function extractToolInputForTelemetry(
-  input: unknown,
-): string | undefined {
-  if (!isToolDetailsLoggingEnabled()) {
-    return undefined
-  }
-  const truncated = truncateToolInputValue(input)
-  let json = jsonStringify(truncated)
-  if (json.length > TOOL_INPUT_MAX_JSON_CHARS) {
-    json = json.slice(0, TOOL_INPUT_MAX_JSON_CHARS) + '…[truncated]'
-  }
-  return json
 }
 
 /**

@@ -11,7 +11,6 @@ import {
   Shield,
   Bot,
   Sparkles,
-  Wallet,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -38,12 +37,6 @@ const menuItems: NavItem[] = [
     title: '数据看板',
     url: '/',
     icon: LayoutDashboard,
-  },
-  {
-    title: '预算管理',
-    url: '/budget',
-    icon: Wallet,
-    requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
   },
   {
     title: '用户与组织',

@@ -47,8 +47,6 @@ import {
   isMcpServerDisabled,
   setMcpServerEnabled,
 } from 'src/services/mcp/config.js'
-import type { AppState } from 'src/state/AppState.js'
-import type { PluginError } from 'src/types/plugin.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import {
   useAppState,
@@ -60,54 +58,12 @@ import { errorMessage } from '../../utils/errors.js'
 import { logMCPDebug, logMCPError } from '../../utils/log.js'
 import { registerElicitationHandler } from './elicitationHandler.js'
 import { getMcpPrefix } from './mcpStringUtils.js'
-import { commandBelongsToServer, excludeStalePluginClients } from './utils.js'
+import { commandBelongsToServer, excludeStaleMcpClients } from './utils.js'
 
 // Constants for reconnection with exponential backoff
 const MAX_RECONNECT_ATTEMPTS = 5
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
-
-/**
- * Create a unique key for a plugin error to enable deduplication
- */
-function getErrorKey(error: PluginError): string {
-  const plugin = 'plugin' in error ? error.plugin : 'no-plugin'
-  return `${error.type}:${error.source}:${plugin}`
-}
-
-/**
- * Add errors to AppState, deduplicating to avoid showing the same error multiple times
- */
-function addErrorsToAppState(
-  setAppState: (updater: (prev: AppState) => AppState) => void,
-  newErrors: PluginError[],
-): void {
-  if (newErrors.length === 0) return
-
-  setAppState(prevState => {
-    // Build set of existing error keys
-    const existingKeys = new Set(
-      prevState.plugins.errors.map(e => getErrorKey(e)),
-    )
-
-    // Only add errors that don't already exist
-    const uniqueNewErrors = newErrors.filter(
-      error => !existingKeys.has(getErrorKey(error)),
-    )
-
-    if (uniqueNewErrors.length === 0) {
-      return prevState
-    }
-
-    return {
-      ...prevState,
-      plugins: {
-        ...prevState.plugins,
-        errors: [...prevState.plugins.errors, ...uniqueNewErrors],
-      },
-    }
-  })
-}
 
 /**
  * Hook to manage MCP (Model Context Protocol) server connections and updates
@@ -124,11 +80,6 @@ export function useManageMCPConnections(
 ) {
   const store = useAppStateStore()
   const _authVersion = useAppState(s => s.authVersion)
-  // Incremented by /reload-plugins (refreshActivePlugins) to pick up newly
-  // enabled plugin MCP servers. getClaudeCodeMcpConfigs() reads loadAllPlugins()
-  // which has been cleared by refreshActivePlugins, so the effects below see
-  // fresh plugin data on re-run.
-  const _pluginReconnectKey = useAppState(s => s.mcp.pluginReconnectKey)
   const setAppState = useSetAppState()
 
   // Track active reconnection attempts to allow cancellation
@@ -553,26 +504,22 @@ export function useManageMCPConnections(
   )
 
   // Initialize all servers to pending state if they don't exist in appState.
-  // Re-runs on session change (/clear) and on /reload-plugins (pluginReconnectKey).
-  // On plugin reload, also disconnects stale plugin MCP servers (scope 'dynamic')
-  // that no longer appear in configs — prevents ghost tools from disabled plugins.
+  // Re-runs on session change and disconnects stale servers whose config changed
+  // or dynamic entry disappeared.
   const sessionId = getSessionId()
   useEffect(() => {
     async function initializeServersAsPending() {
-      const { servers: existingConfigs, errors: mcpErrors } = isStrictMcpConfig
+      const { servers: existingConfigs } = isStrictMcpConfig
         ? { servers: {}, errors: [] }
         : await getClaudeCodeMcpConfigs(dynamicMcpConfig)
       const configs = { ...existingConfigs, ...dynamicMcpConfig }
 
-      // Add MCP errors to plugin errors for UI visibility (deduplicated)
-      addErrorsToAppState(setAppState, mcpErrors)
-
       setAppState(prevState => {
-        // Disconnect MCP servers that are stale: plugin servers removed from
-        // config, or any server whose config hash changed (edited .mcp.json).
+        // Disconnect MCP servers that are stale: dynamic servers removed from
+        // config, or any server whose config hash changed.
         // Stale servers get re-added as 'pending' below since their name is
         // now absent from mcpWithoutStale.clients.
-        const { stale, ...mcpWithoutStale } = excludeStalePluginClients(
+        const { stale, ...mcpWithoutStale } = excludeStaleMcpClients(
           prevState.mcp,
           configs,
         )
@@ -638,7 +585,6 @@ export function useManageMCPConnections(
     dynamicMcpConfig,
     setAppState,
     sessionId,
-    _pluginReconnectKey,
   ])
 
   // Load MCP configs and connect to servers
@@ -646,14 +592,11 @@ export function useManageMCPConnections(
     let cancelled = false
 
     async function loadAndConnectMcpConfigs() {
-      const { servers: claudeCodeConfigs, errors: mcpErrors } =
+      const { servers: claudeCodeConfigs } =
         isStrictMcpConfig
           ? { servers: {}, errors: [] }
           : await getClaudeCodeMcpConfigs(dynamicMcpConfig)
       if (cancelled) return
-
-      // Add MCP errors to plugin errors for UI visibility (deduplicated)
-      addErrorsToAppState(setAppState, mcpErrors)
 
       const configs = { ...claudeCodeConfigs, ...dynamicMcpConfig }
 
@@ -678,7 +621,7 @@ export function useManageMCPConnections(
         global: 0,
         project: 0,
         user: 0,
-        plugin: 0,
+        dynamic: 0,
       }
       // Ant-only: collect stdio command basenames to correlate with RSS/FPS
       // metrics. Stdio servers like rust-analyzer can be heavy and we want to
@@ -689,7 +632,7 @@ export function useManageMCPConnections(
         else if (serverConfig.scope === 'user') counts.global++
         else if (serverConfig.scope === 'project') counts.project++
         else if (serverConfig.scope === 'local') counts.user++
-        else if (serverConfig.scope === 'dynamic') counts.plugin++
+        else if (serverConfig.scope === 'dynamic') counts.dynamic++
 
         if (
           process.env.USER_TYPE === 'ant' &&
@@ -726,7 +669,6 @@ export function useManageMCPConnections(
     setAppState,
     _authVersion,
     sessionId,
-    _pluginReconnectKey,
   ])
 
   // Cleanup all timers on unmount

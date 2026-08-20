@@ -11,7 +11,6 @@ import type { HooksSettings } from '../utils/settings/types.js'
 import type { ThemeName } from '../utils/theme.js'
 import type { LogOption } from './logs.js'
 import type { Message } from './message.js'
-import type { PluginManifest } from './plugin.js'
 
 export type LocalCommandResult =
   | { type: 'text'; value: string }
@@ -29,11 +28,7 @@ export type PromptCommand = {
   argNames?: string[]
   allowedTools?: string[]
   model?: string
-  source: SettingSource | 'builtin' | 'mcp' | 'plugin' | 'bundled'
-  pluginInfo?: {
-    pluginManifest: PluginManifest
-    repository: string
-  }
+  source: SettingSource | 'builtin' | 'mcp' | 'bundled'
   disableNonInteractive?: boolean
   // Hooks to register when this skill is invoked
   hooks?: HooksSettings

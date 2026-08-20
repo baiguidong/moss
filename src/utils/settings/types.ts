@@ -4,7 +4,6 @@ import { SandboxSettingsSchema } from '../../entrypoints/sandboxTypes.js'
 import { isEnvTruthy } from '../envUtils.js'
 import { lazySchema } from '../lazySchema.js'
 import { EXTERNAL_PERMISSION_MODES } from '../permissions/PermissionMode.js'
-import { MarketplaceSourceSchema } from '../plugins/schemas.js'
 import { CLAUDE_CODE_SETTINGS_SCHEMA_URL } from './constants.js'
 import { PermissionRuleSchema } from './permissionValidation.js'
 
@@ -67,30 +66,6 @@ export const PermissionsSchema = lazySchema(() =>
         .describe('Additional directories to include in the permission scope'),
     })
     .passthrough(),
-)
-
-/**
- * Schema for extra marketplaces defined in repository settings
- * Same as KnownMarketplace but without lastUpdated (which is managed automatically)
- */
-export const ExtraKnownMarketplaceSchema = lazySchema(() =>
-  z.object({
-    source: MarketplaceSourceSchema().describe(
-      'Where to fetch the marketplace from',
-    ),
-    installLocation: z
-      .string()
-      .optional()
-      .describe(
-        'Local cache path where marketplace manifest is stored (auto-generated if not provided)',
-      ),
-    autoUpdate: z
-      .boolean()
-      .optional()
-      .describe(
-        'Whether to automatically update this marketplace and its installed plugins on startup',
-      ),
-  }),
 )
 
 /**
@@ -224,18 +199,6 @@ export const DeniedMcpServerEntrySchema = lazySchema(() =>
  * - .passthrough() preserves unknown fields in permissions object
  * - Invalid settings are simply not used, but remain in the file to be fixed by the user
  */
-
-/**
- * Surfaces lockable by `strictPluginOnlyCustomization`. Exported so the
- * schema preprocess (below) and the runtime helper (pluginOnlyPolicy.ts)
- * share one source of truth.
- */
-export const CUSTOMIZATION_SURFACES = [
-  'skills',
-  'agents',
-  'hooks',
-  'mcp',
-] as const
 
 export const SettingsSchema = lazySchema(() =>
   z
@@ -508,38 +471,6 @@ export const SettingsSchema = lazySchema(() =>
             'deniedMcpServers still merges from all sources, so users can deny servers for themselves. ' +
             'Users can still add their own MCP servers, but only the admin-defined allowlist applies.',
         ),
-      // Force customizations through plugins only (LinkedIn ask via GTM)
-      strictPluginOnlyCustomization: z
-        .preprocess(
-          // Forwards-compat: drop unknown surface names so a future enum
-          // value (e.g. 'commands') doesn't fail safeParse and null out the
-          // ENTIRE managed-settings file (settings.ts:101). ["skills",
-          // "commands"] on an old client → ["skills"] → locks what it knows,
-          // ignores what it doesn't. Degrades to less-locked, never to
-          // everything-unlocked.
-          v =>
-            Array.isArray(v)
-              ? v.filter(x =>
-                  (CUSTOMIZATION_SURFACES as readonly string[]).includes(x),
-                )
-              : v,
-          z.union([z.boolean(), z.array(z.enum(CUSTOMIZATION_SURFACES))]),
-        )
-        .optional()
-        // Non-array invalid values ("skills" string, {object}) pass through
-        // the preprocess unchanged and would fail the union → null the whole
-        // managed-settings file. .catch drops the field to undefined instead.
-        // Degrades to unlocked-for-this-field, never to everything-broken.
-        // Doctor flags the raw value.
-        .catch(undefined)
-        .describe(
-          'When set in managed settings, blocks non-plugin customization sources for the listed surfaces. ' +
-            'Array form locks specific surfaces (e.g. ["skills", "hooks"]); `true` locks all four; `false` is an explicit no-op. ' +
-            'Blocked: ~/.moss/{surface}/, .moss/{surface}/ (project), settings.json hooks, .mcp.json. ' +
-            'NOT blocked: managed (policySettings) sources, plugin-provided customizations. ' +
-            'Composes with strictKnownMarketplaces for end-to-end admin control — plugins gated by ' +
-            'marketplace allowlist, everything else blocked here.',
-        ),
       // Status line for custom status line display
       statusLine: z
         .object({
@@ -549,75 +480,6 @@ export const SettingsSchema = lazySchema(() =>
         })
         .optional()
         .describe('Custom status line display configuration'),
-      // Enabled plugins using marketplace-first format
-      enabledPlugins: z
-        .record(
-          z.string(),
-          z.union([z.array(z.string()), z.boolean(), z.undefined()]),
-        )
-        .optional()
-        .describe(
-          'Enabled plugins using plugin-id@marketplace-id format. Example: { "formatter@anthropic-tools": true }. Also supports extended format with version constraints.',
-        ),
-      // Extra marketplaces for this repository (usually for project settings)
-      extraKnownMarketplaces: z
-        .record(z.string(), ExtraKnownMarketplaceSchema())
-        .check(ctx => {
-          // For settings sources, key must equal source.name. diffMarketplaces
-          // looks up materialized state by dict key; addMarketplaceSource stores
-          // under marketplace.name (= source.name for settings). A mismatch means
-          // the reconciler never converges — every session: key-lookup misses →
-          // 'missing' → source-idempotency returns alreadyMaterialized but
-          // installed++ anyway → pointless cache clears. For github/git/url the
-          // name comes from a fetched marketplace.json (mismatch is expected and
-          // benign); for settings, both key and name are user-authored in the
-          // same JSON object.
-          for (const [key, entry] of Object.entries(ctx.value)) {
-            if (
-              entry.source.source === 'settings' &&
-              entry.source.name !== key
-            ) {
-              ctx.issues.push({
-                code: 'custom',
-                input: entry.source.name,
-                path: [key, 'source', 'name'],
-                message:
-                  `Settings-sourced marketplace name must match its extraKnownMarketplaces key ` +
-                  `(got key "${key}" but source.name "${entry.source.name}")`,
-              })
-            }
-          }
-        })
-        .optional()
-        .describe(
-          'Additional marketplaces to make available for this repository. Typically used in repository .moss/settings.json to ensure team members have required plugin sources.',
-        ),
-      // Enterprise strict list of allowed marketplace sources (policy settings only)
-      // When set, ONLY these exact sources can be added. Check happens BEFORE download.
-      strictKnownMarketplaces: z
-        .array(MarketplaceSourceSchema())
-        .optional()
-        .describe(
-          'Enterprise strict list of allowed marketplace sources. When set in managed settings, ' +
-            'ONLY these exact sources can be added as marketplaces. The check happens BEFORE ' +
-            'downloading, so blocked sources never touch the filesystem. ' +
-            'Note: this is a policy gate only — it does NOT register marketplaces. ' +
-            'To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.',
-        ),
-      // Enterprise blocklist of marketplace sources (policy settings only)
-      // When set, these exact sources are blocked. Check happens BEFORE download.
-      blockedMarketplaces: z
-        .array(MarketplaceSourceSchema())
-        .optional()
-        .describe(
-          'Enterprise blocklist of marketplace sources. When set in managed settings, ' +
-            'these exact sources are blocked from being added as marketplaces. The check happens BEFORE ' +
-            'downloading, so blocked sources never touch the filesystem.',
-        ),
-      otelHeadersHelper: z
-        .string()
-        .optional()
-        .describe('Path to a script that outputs OpenTelemetry headers'),
       outputStyle: z
         .string()
         .optional()
@@ -724,47 +586,6 @@ export const SettingsSchema = lazySchema(() =>
         .optional()
         .describe(
           'Company announcements to display at startup (one will be randomly selected if multiple are provided)',
-        ),
-      pluginConfigs: z
-        .record(
-          z.string(),
-          z.object({
-            mcpServers: z
-              .record(
-                z.string(),
-                z.record(
-                  z.string(),
-                  z.union([
-                    z.string(),
-                    z.number(),
-                    z.boolean(),
-                    z.array(z.string()),
-                  ]),
-                ),
-              )
-              .optional()
-              .describe(
-                'User configuration values for MCP servers keyed by server name',
-              ),
-            options: z
-              .record(
-                z.string(),
-                z.union([
-                  z.string(),
-                  z.number(),
-                  z.boolean(),
-                  z.array(z.string()),
-                ]),
-              )
-              .optional()
-              .describe(
-                'Non-sensitive option values from plugin manifest userConfig, keyed by option name. Sensitive values go to secure storage instead.',
-              ),
-          }),
-        )
-        .optional()
-        .describe(
-          'Per-plugin configuration including MCP server user configs, keyed by plugin ID (plugin@marketplace format)',
         ),
       remote: z
         .object({
@@ -899,15 +720,6 @@ export const SettingsSchema = lazySchema(() =>
             'Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). ' +
             'Examples: "/home/user/monorepo/CLAUDE.md", "**/code/CLAUDE.md", "**/some-dir/.moss/rules/**"',
         ),
-      pluginTrustMessage: z
-        .string()
-        .optional()
-        .describe(
-          'Custom message to append to the plugin trust warning shown before installation. ' +
-            'Only read from policy settings (managed-settings.json / MDM). ' +
-            'Useful for enterprise administrators to add organization-specific context ' +
-            '(e.g., "All plugins from our internal marketplace are vetted and approved.").',
-        ),
       bypassPermissions: z
         .boolean()
         .optional()
@@ -943,18 +755,6 @@ export const SettingsSchema = lazySchema(() =>
     })
     .passthrough(),
 )
-
-/**
- * Internal type for plugin hooks - includes plugin context for execution.
- * Not a Zod schema since it's not user-facing (plugins provide native hooks).
- */
-export type PluginHookMatcher = {
-  matcher?: string
-  hooks: HookCommand[]
-  pluginRoot: string
-  pluginName: string
-  pluginId: string // format: "pluginName@marketplaceName"
-}
 
 /**
  * Internal type for skill hooks - includes skill context for execution.

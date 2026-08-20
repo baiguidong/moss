@@ -227,7 +227,7 @@ export type TranscriptMessage = SerializedMessage & {
   teamName?: string // Team name if this is a spawned agent session
   agentName?: string // Agent's custom name (from /rename or swarm)
   agentColor?: string // Agent's color (from /rename or swarm)
-  promptId?: string // Correlates with OTel prompt.id for user prompt messages
+  promptId?: string // Correlates user prompt messages within the session
 }
 
 export type SpeculationAcceptMessage = {

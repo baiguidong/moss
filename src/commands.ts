@@ -1,47 +1,25 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import addDir from './commands/add-dir/index.js'
-import autofixPr from './commands/autofix-pr/index.js'
-import backfillSessions from './commands/backfill-sessions/index.js'
 import btw from './commands/btw/index.js'
 import clear from './commands/clear/index.js'
 import color from './commands/color/index.js'
-import commit from './commands/commit.js'
 import copy from './commands/copy/index.js'
-import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
 import config from './commands/config/index.js'
 import { context, contextNonInteractive } from './commands/context/index.js'
 import cost from './commands/cost/index.js'
 import diff from './commands/diff/index.js'
-import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
-import memory from './commands/memory/index.js'
 import help from './commands/help/index.js'
-import ide from './commands/ide/index.js'
 import init from './commands/init.js'
-import initVerifiers from './commands/init-verifiers.js'
 import keybindings from './commands/keybindings/index.js'
-import mcp from './commands/mcp/index.js'
-import onboarding from './commands/onboarding/index.js'
-import pr_comments from './commands/pr_comments/index.js'
 import rename from './commands/rename/index.js'
 import resume from './commands/resume/index.js'
-import review, { ultrareview } from './commands/review.js'
-import session from './commands/session/index.js'
+import review from './commands/review.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
-import teleport from './commands/teleport/index.js'
-/* eslint-disable @typescript-eslint/no-require-imports */
-const agentsPlatform =
-  process.env.USER_TYPE === 'ant'
-    ? require('./commands/agents-platform/index.js').default
-    : null
-/* eslint-enable @typescript-eslint/no-require-imports */
-import securityReview from './commands/security-review.js'
-import bughunter from './commands/bughunter/index.js'
 import terminalSetup from './commands/terminalSetup/index.js'
-import usage from './commands/usage/index.js'
 import theme from './commands/theme/index.js'
 import vim from './commands/vim/index.js'
 import { feature } from 'bun:bundle'
@@ -54,16 +32,10 @@ const proactive =
 const voiceCommand = feature('VOICE_MODE')
   ? require('./commands/voice/index.js').default
   : null
-const forceSnip = feature('HISTORY_SNIP')
-  ? require('./commands/force-snip.js').default
-  : null
 const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
   ? (
       require('./services/skillSearch/localSearch.js') as typeof import('./services/skillSearch/localSearch.js')
     ).clearSkillIndexCache
-  : null
-const ultraplan = feature('ULTRAPLAN')
-  ? require('./commands/ultraplan.js').default
   : null
 const forkCmd = feature('FORK_SUBAGENT')
   ? (
@@ -78,25 +50,10 @@ const buddy = feature('BUDDY')
 /* eslint-enable @typescript-eslint/no-require-imports */
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
-import fast from './commands/fast/index.js'
-import privacySettings from './commands/privacy-settings/index.js'
 import hooks from './commands/hooks/index.js'
-import files from './commands/files/index.js'
 import branch from './commands/branch/index.js'
 import agents from './commands/agents/index.js'
-import plugin from './commands/plugin/index.js'
-import reloadPlugins from './commands/reload-plugins/index.js'
 import rewind from './commands/rewind/index.js'
-import heapDump from './commands/heapdump/index.js'
-import mockLimits from './commands/mock-limits/index.js'
-import version from './commands/version.js'
-import summary from './commands/summary/index.js'
-import {
-  resetLimits,
-  resetLimitsNonInteractive,
-} from './commands/reset-limits/index.js'
-import antTrace from './commands/ant-trace/index.js'
-import perfIssue from './commands/perf-issue/index.js'
 import sandboxToggle from './commands/sandbox-toggle/index.js'
 import advisor from './commands/advisor.js'
 import { logError } from './utils/log.js'
@@ -108,27 +65,16 @@ import {
   getDynamicSkills,
 } from './skills/loadSkillsDir.js'
 import { getBundledSkills } from './skills/bundledSkills.js'
-import { getBuiltinPluginSkillCommands } from './plugins/builtinPlugins.js'
-import {
-  getPluginCommands,
-  clearPluginCommandCache,
-  getPluginSkills,
-  clearPluginSkillsCache,
-} from './utils/plugins/loadPluginCommands.js'
 import memoize from 'lodash-es/memoize.js'
 import { isUsing3PServices } from './utils/auth.js'
 import { isFirstPartyModelBaseUrl } from './utils/model/providers.js'
-import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
 import tag from './commands/tag/index.js'
-import outputStyle from './commands/output-style/index.js'
-import remoteEnv from './commands/remote-env/index.js'
 import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
-import debugToolCall from './commands/debug-tool-call/index.js'
 import { getSettingSourceName } from './utils/settings/constants.js'
 import {
   type Command,
@@ -148,30 +94,7 @@ export type {
 } from './types/command.js'
 export { getCommandName, isCommandEnabled } from './types/command.js'
 
-// Commands that get eliminated from the external build
-export const INTERNAL_ONLY_COMMANDS = [
-  backfillSessions,
-  bughunter,
-  commit,
-  commitPushPr,
-  ctx_viz,
-  initVerifiers,
-  ...(forceSnip ? [forceSnip] : []),
-  mockLimits,
-  version,
-  ...(ultraplan ? [ultraplan] : []),
-  resetLimits,
-  resetLimitsNonInteractive,
-  onboarding,
-  summary,
-  teleport,
-  antTrace,
-  perfIssue,
-  env,
-  debugToolCall,
-  agentsPlatform,
-  autofixPr,
-].filter(Boolean)
+export const INTERNAL_ONLY_COMMANDS: Command[] = []
 
 // Declared as a function so that we don't run this until getCommands is called,
 // since underlying functions read from config, which can't be read at module initialization time
@@ -193,24 +116,12 @@ const COMMANDS = memoize((): Command[] => [
   doctor,
   effort,
   exit,
-  fast,
-  files,
-  heapDump,
   help,
-  ide,
   init,
   keybindings,
-  mcp,
-  memory,
   model,
-  outputStyle,
-  remoteEnv,
-  plugin,
-  pr_comments,
-  reloadPlugins,
   rename,
   resume,
-  session,
   skills,
   stats,
   status,
@@ -218,11 +129,8 @@ const COMMANDS = memoize((): Command[] => [
   tag,
   theme,
   review,
-  ultrareview,
   rewind,
-  securityReview,
   terminalSetup,
-  usage,
   vim,
   ...(forkCmd ? [forkCmd] : []),
   ...(buddy ? [buddy] : []),
@@ -230,14 +138,10 @@ const COMMANDS = memoize((): Command[] => [
   ...(voiceCommand ? [voiceCommand] : []),
   permissions,
   plan,
-  privacySettings,
   hooks,
   exportCommand,
   sandboxToggle,
   tasks,
-  ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO
-    ? INTERNAL_ONLY_COMMANDS
-    : []),
 ])
 
 export const builtInCommandNames = memoize(
@@ -247,37 +151,24 @@ export const builtInCommandNames = memoize(
 
 async function getSkills(cwd: string): Promise<{
   skillDirCommands: Command[]
-  pluginSkills: Command[]
   bundledSkills: Command[]
-  builtinPluginSkills: Command[]
 }> {
   try {
-    const [skillDirCommands, pluginSkills] = await Promise.all([
-      getSkillDirCommands(cwd).catch(err => {
-        logError(toError(err))
-        logForDebugging(
-          'Skill directory commands failed to load, continuing without them',
-        )
-        return []
-      }),
-      getPluginSkills().catch(err => {
-        logError(toError(err))
-        logForDebugging('Plugin skills failed to load, continuing without them')
-        return []
-      }),
-    ])
+    const skillDirCommands = await getSkillDirCommands(cwd).catch(err => {
+      logError(toError(err))
+      logForDebugging(
+        'Skill directory commands failed to load, continuing without them',
+      )
+      return []
+    })
     // Bundled skills are registered synchronously at startup
     const bundledSkills = getBundledSkills()
-    // Built-in plugin skills come from enabled built-in plugins
-    const builtinPluginSkills = getBuiltinPluginSkillCommands()
     logForDebugging(
-      `getSkills returning: ${skillDirCommands.length} skill dir commands, ${pluginSkills.length} plugin skills, ${bundledSkills.length} bundled skills, ${builtinPluginSkills.length} builtin plugin skills`,
+      `getSkills returning: ${skillDirCommands.length} skill dir commands, ${bundledSkills.length} bundled skills`,
     )
     return {
       skillDirCommands,
-      pluginSkills,
       bundledSkills,
-      builtinPluginSkills,
     }
   } catch (err) {
     // This should never happen since we catch at the Promise level, but defensive
@@ -285,9 +176,7 @@ async function getSkills(cwd: string): Promise<{
     logForDebugging('Unexpected error in getSkills, returning empty')
     return {
       skillDirCommands: [],
-      pluginSkills: [],
       bundledSkills: [],
-      builtinPluginSkills: [],
     }
   }
 }
@@ -331,27 +220,22 @@ export function meetsAvailabilityRequirement(cmd: Command): boolean {
 }
 
 /**
- * Loads all command sources (skills, plugins, workflows). Memoized by cwd
+ * Loads all command sources (skills and workflows). Memoized by cwd
  * because loading is expensive (disk I/O, dynamic imports).
  */
 const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
   const [
-    { skillDirCommands, pluginSkills, bundledSkills, builtinPluginSkills },
-    pluginCommands,
+    { skillDirCommands, bundledSkills },
     workflowCommands,
   ] = await Promise.all([
     getSkills(cwd),
-    getPluginCommands(),
     getWorkflowCommands ? getWorkflowCommands(cwd) : Promise.resolve([]),
   ])
 
   return [
     ...bundledSkills,
-    ...builtinPluginSkills,
     ...skillDirCommands,
     ...workflowCommands,
-    ...pluginCommands,
-    ...pluginSkills,
     ...COMMANDS(),
   ]
 })
@@ -389,7 +273,7 @@ export async function getCommands(cwd: string): Promise<Command[]> {
     return baseCommands
   }
 
-  // Insert dynamic skills after plugin skills but before built-in commands
+  // Insert dynamic skills before built-in commands
   const builtInNames = new Set(COMMANDS().map(c => c.name))
   const insertIndex = baseCommands.findIndex(c => builtInNames.has(c.name))
 
@@ -421,8 +305,6 @@ export function clearCommandMemoizationCaches(): void {
 
 export function clearCommandsCache(): void {
   clearCommandMemoizationCaches()
-  clearPluginCommandCache()
-  clearPluginSkillsCache()
   clearSkillCaches()
 }
 
@@ -458,7 +340,7 @@ export const getSkillToolCommands = memoize(
         cmd.source !== 'builtin' &&
         // Always include skills from /skills/ dirs, bundled skills, and legacy /commands/ entries
         // (they all get an auto-derived description from the first line if frontmatter is missing).
-        // Plugin/MCP commands still require an explicit description to appear in the listing.
+        // MCP commands still require an explicit description to appear in the listing.
         (cmd.loadedFrom === 'bundled' ||
           cmd.loadedFrom === 'skills' ||
           cmd.loadedFrom === 'commands_DEPRECATED' ||
@@ -470,7 +352,7 @@ export const getSkillToolCommands = memoize(
 
 // Filters commands to include only skills. Skills are commands that provide
 // specialized capabilities for the model to use. They are identified by
-// loadedFrom being 'skills', 'plugin', or 'bundled', or having disableModelInvocation set.
+// loadedFrom being 'skills' or 'bundled', or having disableModelInvocation set.
 export const getSlashCommandToolSkills = memoize(
   async (cwd: string): Promise<Command[]> => {
     try {
@@ -481,7 +363,6 @@ export const getSlashCommandToolSkills = memoize(
           cmd.source !== 'builtin' &&
           (cmd.hasUserSpecifiedDescription || cmd.whenToUse) &&
           (cmd.loadedFrom === 'skills' ||
-            cmd.loadedFrom === 'plugin' ||
             cmd.loadedFrom === 'bundled' ||
             cmd.disableModelInvocation),
       )
@@ -505,7 +386,6 @@ export const getSlashCommandToolSkills = memoize(
  * 2. Preserving local-only commands in REPL's handleRemoteInit after CCR filters
  */
 export const REMOTE_SAFE_COMMANDS: Set<Command> = new Set([
-  session, // Shows QR code / URL for remote session
   exit, // Exit the TUI
   clear, // Clear screen
   help, // Show help
@@ -513,7 +393,6 @@ export const REMOTE_SAFE_COMMANDS: Set<Command> = new Set([
   color, // Change agent color
   vim, // Toggle vim mode
   cost, // Show session cost (local cost tracking)
-  usage, // Show usage info
   copy, // Copy last message
   btw, // Quick note
   plan, // Plan mode toggle
@@ -578,14 +457,6 @@ export function formatDescriptionWithSource(cmd: Command): string {
 
   if (cmd.kind === 'workflow') {
     return `${cmd.description} (workflow)`
-  }
-
-  if (cmd.source === 'plugin') {
-    const pluginName = cmd.pluginInfo?.pluginManifest.name
-    if (pluginName) {
-      return `(${pluginName}) ${cmd.description}`
-    }
-    return `${cmd.description} (plugin)`
   }
 
   if (cmd.source === 'builtin' || cmd.source === 'mcp') {

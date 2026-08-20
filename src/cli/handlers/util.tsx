@@ -6,7 +6,6 @@ import { c as _c } from "react/compiler-runtime";
 /* eslint-disable custom-rules/no-process-exit -- CLI subcommand handlers intentionally exit */
 
 import React from 'react';
-import { useManagePlugins } from '../../hooks/useManagePlugins.js';
 import type { Root } from '../../ink.js';
 import { KeybindingSetup } from '../../keybindings/KeybindingProviderSetup.js';
 import { logEvent } from '../../services/analytics/index.js';
@@ -17,12 +16,11 @@ import { onChangeAppState } from '../../state/onChangeAppState.js';
 const DoctorLazy = React.lazy(() => import('../../screens/Doctor.js').then(m => ({
   default: m.Doctor
 })));
-function DoctorWithPlugins(t0) {
+function DoctorScreen(t0) {
   const $ = _c(2);
   const {
     onDone
   } = t0;
-  useManagePlugins();
   let t1;
   if ($[0] !== onDone) {
     t1 = <React.Suspense fallback={null}><DoctorLazy onDone={onDone} /></React.Suspense>;
@@ -39,7 +37,7 @@ export async function doctorHandler(root: Root): Promise<void> {
     root.render(<AppStateProvider>
         <KeybindingSetup>
           <MCPConnectionManager dynamicMcpConfig={undefined} isStrictMcpConfig={false}>
-            <DoctorWithPlugins onDone={() => {
+            <DoctorScreen onDone={() => {
             void resolve();
           }} />
           </MCPConnectionManager>

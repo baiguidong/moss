@@ -12,7 +12,6 @@ import {
   logEvent,
 } from '../../services/analytics/index.js'
 import { count } from '../../utils/array.js'
-import { logForDebugging } from '../../utils/debug.js'
 import { toError } from '../../utils/errors.js'
 import { truncate } from '../../utils/format.js'
 import { logError } from '../../utils/log.js'
@@ -50,18 +49,6 @@ function getCommandDescription(cmd: Command): string {
 }
 
 function formatCommandDescription(cmd: Command): string {
-  // Debug: log if userFacingName differs from cmd.name for plugin skills
-  const displayName = getCommandName(cmd)
-  if (
-    cmd.name !== displayName &&
-    cmd.type === 'prompt' &&
-    cmd.source === 'plugin'
-  ) {
-    logForDebugging(
-      `Skill prompt: showing "${cmd.name}" (userFacingName="${displayName}")`,
-    )
-  }
-
   return `- ${cmd.name}: ${getCommandDescription(cmd)}`
 }
 

@@ -10,17 +10,16 @@ import { Pane } from '../design-system/Pane.js';
 import { Tabs, Tab } from '../design-system/Tabs.js';
 import { Status, buildDiagnostics } from './Status.js';
 import { Config } from './Config.js';
-import { Usage } from './Usage.js';
 import type { LocalJSXCommandContext, CommandResultDisplay } from '../../commands.js';
 type Props = {
   onClose: (result?: string, options?: {
     display?: CommandResultDisplay;
   }) => void;
   context: LocalJSXCommandContext;
-  defaultTab: 'Status' | 'Config' | 'Usage' | 'Gates';
+  defaultTab: 'Status' | 'Config' | 'Gates';
 };
 export function Settings(t0) {
-  const $ = _c(25);
+  const $ = _c(24);
   const {
     onClose,
     context,
@@ -86,45 +85,38 @@ export function Settings(t0) {
   } else {
     t5 = $[11];
   }
-  let t6;
-  if ($[12] === Symbol.for("react.memo_cache_sentinel")) {
-    t6 = <Tab key="usage" title="Usage"><Usage /></Tab>;
-    $[12] = t6;
-  } else {
-    t6 = $[12];
-  }
   let t7;
-  if ($[13] !== contentHeight) {
+  if ($[12] !== contentHeight) {
     t7 = false ? [<Tab key="gates" title="Gates"><Gates onOwnsEscChange={setGatesOwnsEsc} contentHeight={contentHeight} /></Tab>] : [];
-    $[13] = contentHeight;
-    $[14] = t7;
+    $[12] = contentHeight;
+    $[13] = t7;
   } else {
-    t7 = $[14];
+    t7 = $[13];
   }
   let t8;
-  if ($[15] !== t4 || $[16] !== t5 || $[17] !== t7) {
-    t8 = [t4, t5, t6, ...t7];
-    $[15] = t4;
-    $[16] = t5;
-    $[17] = t7;
-    $[18] = t8;
+  if ($[14] !== t4 || $[15] !== t5 || $[16] !== t7) {
+    t8 = [t4, t5, ...t7];
+    $[14] = t4;
+    $[15] = t5;
+    $[16] = t7;
+    $[17] = t8;
   } else {
-    t8 = $[18];
+    t8 = $[17];
   }
   const tabs = t8;
   const t9 = defaultTab !== "Config" && defaultTab !== "Gates";
   const t10 = tabsHidden || insideModal ? undefined : contentHeight;
   let t11;
-  if ($[19] !== selectedTab || $[20] !== t10 || $[21] !== t9 || $[22] !== tabs || $[23] !== tabsHidden) {
+  if ($[18] !== selectedTab || $[19] !== t10 || $[20] !== t9 || $[21] !== tabs || $[22] !== tabsHidden) {
     t11 = <Pane color="permission"><Tabs color="permission" selectedTab={selectedTab} onTabChange={setSelectedTab} hidden={tabsHidden} initialHeaderFocused={t9} contentHeight={t10}>{tabs}</Tabs></Pane>;
-    $[19] = selectedTab;
-    $[20] = t10;
-    $[21] = t9;
-    $[22] = tabs;
-    $[23] = tabsHidden;
-    $[24] = t11;
+    $[18] = selectedTab;
+    $[19] = t10;
+    $[20] = t9;
+    $[21] = tabs;
+    $[22] = tabsHidden;
+    $[23] = t11;
   } else {
-    t11 = $[24];
+    t11 = $[23];
   }
   return t11;
 }

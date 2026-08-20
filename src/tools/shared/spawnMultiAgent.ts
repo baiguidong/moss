@@ -7,7 +7,6 @@ import React from 'react'
 import {
   getChromeFlagOverride,
   getFlagSettingsPath,
-  getInlinePlugins,
   getMainLoopModelOverride,
   getSessionBypassPermissionsMode,
   getSessionId,
@@ -235,12 +234,6 @@ function buildInheritedCliFlags(options?: {
   const settingsPath = getFlagSettingsPath()
   if (settingsPath) {
     flags.push(`--settings ${quote([settingsPath])}`)
-  }
-
-  // Propagate --plugin-dir for each inline plugin
-  const inlinePlugins = getInlinePlugins()
-  for (const pluginDir of inlinePlugins) {
-    flags.push(`--plugin-dir ${quote([pluginDir])}`)
   }
 
   // Propagate --chrome / --no-chrome if explicitly set on the CLI

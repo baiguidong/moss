@@ -96,14 +96,9 @@ import { discardSessionSettingsCache } from './utils/settings/settingsCache.js'
 import { discardSessionHooksConfigSnapshot } from './utils/hooks/hooksConfigSnapshot.js'
 import { discardSessionFileChangedWatcher } from './utils/hooks/fileChangedWatcher.js'
 import { discardSessionEnvCache } from './utils/sessionEnvironment.js'
-import { discardSessionPluginLoaderCache } from './utils/plugins/pluginLoader.js'
-import { discardSessionPluginCommandCache } from './utils/plugins/loadPluginCommands.js'
-import { discardSessionPluginHookCache } from './utils/plugins/loadPluginHooks.js'
-import { discardSessionPluginAgentCache } from './utils/plugins/loadPluginAgents.js'
 import { discardSessionLspServerManager } from './services/lsp/manager.js'
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 import { initBundledSkills } from './skills/bundled/index.js'
-import { initBuiltinPlugins } from './plugins/bundled/index.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
 import {
   headlessProfilerStartTurn,
@@ -122,7 +117,6 @@ import { discardSessionMemoryState } from './services/SessionMemory/sessionMemor
 // "Previously ran inside setup() after ~20ms of await points,
 //  so the parallel getCommands() memoized an empty list."
 initBundledSkills()
-initBuiltinPlugins()
 
 export {
   createDirectConnectSession,
@@ -159,7 +153,6 @@ export function getAuthDebugSnapshot() {
   enableConfigs()
 
   const settings = getSettings_DEPRECATED() || {}
-  const globalConfig = getGlobalConfig()
   const apiKeyInfo = getAnthropicApiKeyWithSource({
     skipRetrievingKeyFromApiKeyHelper: true,
   })
@@ -548,8 +541,6 @@ export class ClaudeSession {
 
     const {
       model,
-      url,
-      apiKey,
       appendSystemPrompt,
       permissionMode,
       onPermissionRequest,
@@ -999,10 +990,6 @@ export class ClaudeSession {
     discardSessionHooksConfigSnapshot(this.sessionId)
     discardSessionFileChangedWatcher(this.sessionId)
     discardSessionEnvCache(this.sessionId)
-    discardSessionPluginLoaderCache(this.sessionId)
-    discardSessionPluginCommandCache(this.sessionId)
-    discardSessionPluginHookCache(this.sessionId)
-    discardSessionPluginAgentCache(this.sessionId)
     void discardSessionLspServerManager(this.sessionId)
     discardWorktreeSessionState(this.sessionId)
     this.#storageActivated = false

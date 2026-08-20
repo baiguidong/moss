@@ -21,7 +21,6 @@ import { logError } from 'src/utils/log.js'
 import { getAPIProviderForStatsig } from 'src/utils/model/providers.js'
 import type { PermissionMode } from 'src/utils/permissions/PermissionMode.js'
 import { jsonStringify } from 'src/utils/slowOperations.js'
-import { logOTelEvent } from 'src/utils/telemetry/events.js'
 import {
   endLLMRequestSpan,
   isBetaTracingEnabled,
@@ -366,16 +365,6 @@ export function logAPIError({
     ...getAnthropicEnvMetadata(),
   })
 
-  // Log API error event for OTLP
-  void logOTelEvent('api_error', {
-    model: model,
-    error: errStr,
-    status_code: String(status),
-    duration_ms: String(durationMs),
-    attempt: String(attempt),
-    speed: fastMode ? 'fast' : 'normal',
-  })
-
   // Pass the span to correctly match responses to requests when beta tracing is enabled
   endLLMRequestSpan(llmSpan, {
     success: false,
@@ -703,18 +692,6 @@ export function logAPISuccessAndDuration({
     previousRequestId,
     betas,
   })
-  // Log API request event for OTLP
-  void logOTelEvent('api_request', {
-    model,
-    input_tokens: String(usage.input_tokens),
-    output_tokens: String(usage.output_tokens),
-    cache_read_tokens: String(usage.cache_read_input_tokens),
-    cache_creation_tokens: String(usage.cache_creation_input_tokens),
-    cost_usd: String(costUSD),
-    duration_ms: String(durationMs),
-    speed: fastMode ? 'fast' : 'normal',
-  })
-
   // Extract model output, thinking output, and tool call flag when beta tracing is enabled
   let modelOutput: string | undefined
   let thinkingOutput: string | undefined

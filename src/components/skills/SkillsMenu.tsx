@@ -14,7 +14,7 @@ import { Dialog } from '../design-system/Dialog.js';
 
 // Skills are always PromptCommands with CommandBase properties
 type SkillCommand = CommandBase & PromptCommand;
-type SkillSource = SettingSource | 'plugin' | 'mcp';
+type SkillSource = SettingSource | 'mcp';
 type Props = {
   onExit: (result?: string, options?: {
     display?: CommandResultDisplay;
@@ -22,9 +22,6 @@ type Props = {
   commands: Command[];
 };
 function getSourceTitle(source: SkillSource): string {
-  if (source === 'plugin') {
-    return 'Plugin skills';
-  }
   if (source === 'mcp') {
     return 'MCP skills';
   }
@@ -67,7 +64,6 @@ export function SkillsMenu(t0) {
       projectSettings: [],
       localSettings: [],
       flagSettings: [],
-      plugin: [],
       mcp: []
     };
     for (const skill of skills) {
@@ -175,14 +171,7 @@ export function SkillsMenu(t0) {
   } else {
     t9 = $[19];
   }
-  let t10;
-  if ($[20] !== renderSkillGroup) {
-    t10 = renderSkillGroup("plugin");
-    $[20] = renderSkillGroup;
-    $[21] = t10;
-  } else {
-    t10 = $[21];
-  }
+  const t10 = null;
   let t11;
   if ($[22] !== renderSkillGroup) {
     t11 = renderSkillGroup("mcp");
@@ -225,12 +214,11 @@ export function SkillsMenu(t0) {
 function _temp3(skill_0) {
   const estimatedTokens = estimateSkillFrontmatterTokens(skill_0);
   const tokenDisplay = `~${formatTokens(estimatedTokens)}`;
-  const pluginName = skill_0.source === "plugin" ? skill_0.pluginInfo?.pluginManifest.name : undefined;
-  return <Box key={`${skill_0.name}-${skill_0.source}`}><Text>{getCommandName(skill_0)}</Text><Text dimColor={true}>{pluginName ? ` · ${pluginName}` : ""} · {tokenDisplay} description tokens</Text></Box>;
+  return <Box key={`${skill_0.name}-${skill_0.source}`}><Text>{getCommandName(skill_0)}</Text><Text dimColor={true}> · {tokenDisplay} description tokens</Text></Box>;
 }
 function _temp2(a, b) {
   return getCommandName(a).localeCompare(getCommandName(b));
 }
 function _temp(cmd) {
-  return cmd.type === "prompt" && (cmd.loadedFrom === "skills" || cmd.loadedFrom === "commands_DEPRECATED" || cmd.loadedFrom === "plugin" || cmd.loadedFrom === "mcp");
+  return cmd.type === "prompt" && (cmd.loadedFrom === "skills" || cmd.loadedFrom === "commands_DEPRECATED" || cmd.loadedFrom === "mcp");
 }

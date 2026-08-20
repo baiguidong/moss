@@ -1,6 +1,6 @@
-// Centralized analytics/telemetry logging for tool permission decisions.
+// Centralized analytics logging for tool permission decisions.
 // All permission approve/reject events flow through logPermissionDecision(),
-// which fans out to Statsig analytics, OTel telemetry, and code-edit metrics.
+// which fans out to analytics and code-edit metrics.
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -10,7 +10,6 @@ import { getCodeEditToolDecisionCounter } from '../../bootstrap/state.js'
 import type { Tool as ToolType, ToolUseContext } from '../../Tool.js'
 import { getLanguageName } from '../../utils/cliHighlight.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
-import { logOTelEvent } from '../../utils/telemetry/events.js'
 import type {
   PermissionApprovalSource,
   PermissionRejectionSource,
@@ -35,7 +34,7 @@ function isCodeEditingTool(toolName: string): boolean {
   return CODE_EDITING_TOOLS.includes(toolName)
 }
 
-// Builds OTel counter attributes for code editing tools, enriching with
+// Builds counter attributes for code editing tools, enriching with
 // language when the tool's target file path can be extracted from input
 async function buildCodeEditToolAttributes(
   tool: ToolType,
@@ -63,7 +62,7 @@ async function buildCodeEditToolAttributes(
   }
 }
 
-// Flattens structured source into a string label for analytics/OTel events
+// Flattens structured source into a string label for analytics events
 function sourceToString(
   source: PermissionApprovalSource | PermissionRejectionSource,
 ): string {
@@ -159,8 +158,8 @@ function logRejectionEvent(
 }
 
 // Single entry point for all permission decision logging. Called by permission
-// handlers after every approve/reject. Fans out to: analytics events, OTel
-// telemetry, code-edit OTel counters, and toolUseContext decision storage.
+// handlers after every approve/reject. Fans out to analytics events,
+// code-edit counters, and toolUseContext decision storage.
 function logPermissionDecision(
   ctx: PermissionLogContext,
   args: PermissionDecisionArgs,
@@ -210,11 +209,6 @@ function logPermissionDecision(
     timestamp: Date.now(),
   })
 
-  void logOTelEvent('tool_decision', {
-    decision,
-    source: sourceString,
-    tool_name: sanitizeToolNameForAnalytics(tool.name),
-  })
 }
 
 export { isCodeEditingTool, buildCodeEditToolAttributes, logPermissionDecision }

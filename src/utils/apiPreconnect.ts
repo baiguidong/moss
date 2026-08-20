@@ -3,7 +3,7 @@
  *
  * The TCP+TLS handshake is ~100-200ms that normally blocks inside the first
  * API call. Kicking a fire-and-forget fetch during init lets the handshake
- * happen in parallel with action-handler work (~100ms of setup/commands/mcp
+ * happen in parallel with action-handler work (~100ms of setup/MCP
  * before the API request in -p mode; unbounded "user is typing" window in
  * interactive mode).
  *

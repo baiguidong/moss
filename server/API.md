@@ -538,51 +538,9 @@ API key 登录：
 
 有 `sessions:list:any` 时可看当前 org 的全部 session；否则只看自己的。
 
-### GET `/api/v1/dashboard/stats`
-
-需要 scope：
-
-- `sessions:list`
-- 或 `sessions:list:any`
-
-可选查询参数：
-
-- `from=<unix_ms>`
-- `to=<unix_ms>`
-
-按 session 的 `createdAt` 时间范围聚合看板统计。
-
-示例响应：
-
-```json
-{
-  "sessions": {
-    "total": 12,
-    "active": 3
-  },
-  "agents": {
-    "total": 4,
-    "active": 2
-  },
-  "usage": {
-    "inputTokens": 12345,
-    "outputTokens": 6789,
-    "cacheReadInputTokens": 111,
-    "cacheCreationInputTokens": 222,
-    "totalTokens": 19467
-  }
-}
-```
-
 ### GET `/api/v1/sessions/:sessionId`
 
 返回单个 session；当 `desiredState=active` 时会确保 runtime attempt 可 attach。
-
-### GET `/api/v1/sessions/:sessionId/context`
-
-返回 transcript 派生的 usage / messages 上下文。
-
-当 transcript 还没有内容时返回 `404`。
 
 ### POST `/api/v1/sessions/:sessionId/resume`
 

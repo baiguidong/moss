@@ -2,7 +2,6 @@
 import { feature } from 'bun:bundle'
 import { readFile, stat } from 'fs/promises'
 import { dirname } from 'path'
-import { waitForRemoteManagedSettingsToLoad } from 'src/services/remoteManagedSettings/index.js'
 import { StructuredIO } from 'src/cli/structuredIO.js'
 import { RemoteIO } from 'src/cli/remoteIO.js'
 import {
@@ -24,10 +23,7 @@ import {
 } from 'src/services/analytics/index.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import { logForDebugging } from 'src/utils/debug.js'
-import {
-  logForDiagnosticsNoPII,
-  withDiagnosticsTiming,
-} from 'src/utils/diagLogs.js'
+import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { toolMatchesName, type Tool, type Tools } from 'src/Tool.js'
 import {
   type AgentDefinition,
@@ -109,7 +105,6 @@ import type {
   SDKControlRequest,
   SDKControlResponse,
   SDKControlMcpSetServersResponse,
-  SDKControlReloadPluginsResponse,
 } from 'src/entrypoints/sdk/controlTypes.js'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { PermissionMode as InternalPermissionMode } from 'src/types/permissions.js'
@@ -290,13 +285,9 @@ import { jsonStringify } from '../utils/slowOperations.js'
 import { skillChangeDetector } from '../utils/skills/skillChangeDetector.js'
 import { getCommands, clearCommandsCache } from '../commands.js'
 import {
-  isBareMode,
   isEnvTruthy,
   isEnvDefinedFalsy,
 } from '../utils/envUtils.js'
-import { installPluginsForHeadless } from '../utils/plugins/headlessPluginInstall.js'
-import { refreshActivePlugins } from '../utils/plugins/refresh.js'
-import { loadAllPluginsCacheOnly } from '../utils/plugins/pluginLoader.js'
 import {
   isTeamLead,
   hasActiveInProcessTeammates,
@@ -1519,7 +1510,7 @@ function runHeadlessStreaming(
   }
 
   // Build McpServerStatus[] for control responses. Shared by mcp_status and
-  // reload_plugins handlers. Reads closure state: sdkClients, dynamicMcpState.
+  // MCP control handlers. Reads closure state: sdkClients, dynamicMcpState.
   function buildMcpServerStatuses(): McpServerStatus[] {
     const currentAppState = getAppState()
     const currentMcpClients = currentAppState.mcp.clients
@@ -1581,114 +1572,12 @@ function runHeadlessStreaming(
     })
   }
 
-  // NOTE: Nested function required - needs closure access to applyMcpServerChanges and updateSdkMcp
-  async function installPluginsAndApplyMcpInBackground(): Promise<void> {
-    try {
-      await withDiagnosticsTiming('headless_managed_settings_wait', () =>
-        waitForRemoteManagedSettingsToLoad(),
-      )
-
-      const pluginsInstalled = await installPluginsForHeadless()
-
-      if (pluginsInstalled) {
-        await applyPluginMcpDiff()
-      }
-    } catch (error) {
-      logError(error)
-    }
-  }
-
-  // Background plugin installation for all headless users
-  // Installs marketplaces from extraKnownMarketplaces and missing enabled plugins
-  // CLAUDE_CODE_SYNC_PLUGIN_INSTALL=true: resolved in run() before the first
-  // query so plugins are guaranteed available on the first ask().
-  let pluginInstallPromise: Promise<void> | null = null
-  // --bare / SIMPLE: skip plugin install. Scripted calls don't add plugins
-  // mid-session; the next interactive run reconciles.
-  if (!isBareMode()) {
-    if (isEnvTruthy(process.env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL)) {
-      pluginInstallPromise = installPluginsAndApplyMcpInBackground()
-    } else {
-      void installPluginsAndApplyMcpInBackground()
-    }
-  }
-
   // Idle timeout management
   const idleTimeout = createIdleTimeoutManager(() => !running)
 
   // Mutable commands and agents for hot reloading
   let currentCommands = commands
   let currentAgents = agents
-
-  // Clear all plugin-related caches, reload commands/agents/hooks.
-  // Called after CLAUDE_CODE_SYNC_PLUGIN_INSTALL completes (before first query)
-  // and after non-sync background install finishes.
-  // refreshActivePlugins calls clearAllCaches() which is required because
-  // loadAllPlugins() may have run during main.tsx startup BEFORE managed
-  // settings were fetched. Without clearing, getCommands() would rebuild
-  // from a stale plugin list.
-  async function refreshPluginState(): Promise<void> {
-    // refreshActivePlugins handles the full cache sweep (clearAllCaches),
-    // reloads all plugin component loaders, writes AppState.plugins +
-    // AppState.agentDefinitions, registers hooks, and bumps mcp.pluginReconnectKey.
-    const { agentDefinitions: freshAgentDefs } =
-      await refreshActivePlugins(setAppState)
-
-    // Headless-specific: currentCommands/currentAgents are local mutable refs
-    // captured by the query loop (REPL uses AppState instead). getCommands is
-    // fresh because refreshActivePlugins cleared its cache.
-    currentCommands = await getCommands(cwd())
-
-    // Preserve SDK-provided agents (--agents CLI flag or SDK initialize
-    // control_request) — both inject via parseAgentsFromJson with
-    // source='flagSettings'. loadMarkdownFilesForSubdir never assigns this
-    // source, so it cleanly discriminates "injected, not disk-loadable".
-    //
-    // The previous filter used a negative set-diff (!freshAgentTypes.has(a))
-    // which also matched plugin agents that were in the poisoned initial
-    // currentAgents but correctly excluded from freshAgentDefs after managed
-    // settings applied — leaking policy-blocked agents into the init message.
-    // See gh-23085: isBridgeEnabled() at Commander-definition time poisoned
-    // the settings cache before setEligibility(true) ran.
-    const sdkAgents = currentAgents.filter(a => a.source === 'flagSettings')
-    currentAgents = [...freshAgentDefs.allAgents, ...sdkAgents]
-  }
-
-  // Re-diff MCP configs after plugin state changes. Filters to
-  // process-transport-supported types and carries SDK-mode servers through
-  // so applyMcpServerChanges' diff doesn't close their transports.
-  // Nested: needs closure access to sdkMcpConfigs, applyMcpServerChanges,
-  // updateSdkMcp.
-  async function applyPluginMcpDiff(): Promise<void> {
-    const { servers: newConfigs } = await getAllMcpConfigs()
-    const supportedConfigs: Record<string, McpServerConfigForProcessTransport> =
-      {}
-    for (const [name, config] of Object.entries(newConfigs)) {
-      const type = config.type
-      if (
-        type === undefined ||
-        type === 'stdio' ||
-        type === 'sse' ||
-        type === 'http' ||
-        type === 'sdk'
-      ) {
-        supportedConfigs[name] = config
-      }
-    }
-    for (const [name, config] of Object.entries(sdkMcpConfigs)) {
-      if (config.type === 'sdk' && !(name in supportedConfigs)) {
-        supportedConfigs[name] = config
-      }
-    }
-    const { response, sdkServersChanged } =
-      await applyMcpServerChanges(supportedConfigs)
-    if (sdkServersChanged) {
-      void updateSdkMcp()
-    }
-    logForDebugging(
-      `Headless MCP refresh: added=${response.added.length}, removed=${response.removed.length}`,
-    )
-  }
 
   // Subscribe to skill changes for hot reloading
   const unsubscribeSkillChanges = skillChangeDetector.subscribe(() => {
@@ -1747,45 +1636,6 @@ function runHeadlessStreaming(
 
     await updateSdkMcp()
     headlessProfilerCheckpoint('after_updateSdkMcp')
-
-    // Resolve deferred plugin installation (CLAUDE_CODE_SYNC_PLUGIN_INSTALL).
-    // The promise was started eagerly so installation overlaps with other init.
-    // Awaiting here guarantees plugins are available before the first ask().
-    // If CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS is set, races against that
-    // deadline and proceeds without plugins on timeout (logging an error).
-    if (pluginInstallPromise) {
-      const timeoutMs = parseInt(
-        process.env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS || '',
-        10,
-      )
-      if (timeoutMs > 0) {
-        const timeout = sleep(timeoutMs).then(() => 'timeout' as const)
-        const result = await Promise.race([pluginInstallPromise, timeout])
-        if (result === 'timeout') {
-          logError(
-            new Error(
-              `CLAUDE_CODE_SYNC_PLUGIN_INSTALL: plugin installation timed out after ${timeoutMs}ms`,
-            ),
-          )
-          logEvent('tengu_sync_plugin_install_timeout', {
-            timeout_ms: timeoutMs,
-          })
-        }
-      } else {
-        await pluginInstallPromise
-      }
-      pluginInstallPromise = null
-
-      // Refresh commands, agents, and hooks now that plugins are installed
-      await refreshPluginState()
-
-      // Set up hot-reload for plugin hooks now that the initial install is done.
-      // In sync-install mode, setup.ts skips this to avoid racing with the install.
-      const { setupPluginHookHotReload } = await import(
-        '../utils/plugins/loadPluginHooks.js'
-      )
-      setupPluginHookHotReload()
-    }
 
     // Only main-thread commands (agentId===undefined) — subagent
     // notifications are drained by the subagent's mid-turn gate in query.ts.
@@ -2863,62 +2713,6 @@ function runHeadlessStreaming(
           if (sdkServersChanged) {
             void updateSdkMcp()
           }
-        } else if (message.request.subtype === 'reload_plugins') {
-          try {
-            const r = await refreshActivePlugins(setAppState)
-
-            const sdkAgents = currentAgents.filter(
-              a => a.source === 'flagSettings',
-            )
-            currentAgents = [...r.agentDefinitions.allAgents, ...sdkAgents]
-
-            // Reload succeeded — gather response data best-effort so a
-            // read failure doesn't mask the successful state change.
-            // allSettled so one failure doesn't discard the others.
-            let plugins: SDKControlReloadPluginsResponse['plugins'] = []
-            const [cmdsR, mcpR, pluginsR] = await Promise.allSettled([
-              getCommands(cwd()),
-              applyPluginMcpDiff(),
-              loadAllPluginsCacheOnly(),
-            ])
-            if (cmdsR.status === 'fulfilled') {
-              currentCommands = cmdsR.value
-            } else {
-              logError(cmdsR.reason)
-            }
-            if (mcpR.status === 'rejected') {
-              logError(mcpR.reason)
-            }
-            if (pluginsR.status === 'fulfilled') {
-              plugins = pluginsR.value.enabled.map(p => ({
-                name: p.name,
-                path: p.path,
-                source: p.source,
-              }))
-            } else {
-              logError(pluginsR.reason)
-            }
-
-            sendControlResponseSuccess(message, {
-              commands: currentCommands
-                .filter(cmd => cmd.userInvocable !== false)
-                .map(cmd => ({
-                  name: getCommandName(cmd),
-                  description: formatDescriptionWithSource(cmd),
-                  argumentHint: cmd.argumentHint || '',
-                })),
-              agents: currentAgents.map(a => ({
-                name: a.agentType,
-                description: a.whenToUse,
-                model: a.model === 'inherit' ? undefined : a.model,
-              })),
-              plugins,
-              mcpServers: buildMcpServerStatuses(),
-              error_count: r.error_count,
-            } satisfies SDKControlReloadPluginsResponse)
-          } catch (error) {
-            sendControlResponseError(message, errorMessage(error))
-          }
         } else if (message.request.subtype === 'mcp_reconnect') {
           const currentAppState = getAppState()
           const { serverName } = message.request
@@ -3360,9 +3154,6 @@ function runHeadlessStreaming(
           // applySettingsChange() call that relied on its own internal reset —
           // now that the reset is centralized in fanOut, a direct call here
           // would read stale cached settings and silently drop the update.
-          // Bonus: going through notifyChange also tells the other subscribers
-          // (loadPluginHooks, sandbox-adapter) about the change, which the
-          // previous direct call skipped.
           settingsChangeDetector.notifyChange('flagSettings')
 
           // If the incoming settings include a model change, update the

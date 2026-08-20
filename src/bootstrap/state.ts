@@ -1,8 +1,3 @@
-import type { Attributes, Meter, MetricOptions } from '@opentelemetry/api'
-import type { logs } from '@opentelemetry/api-logs'
-import type { LoggerProvider } from '@opentelemetry/sdk-logs'
-import type { MeterProvider } from '@opentelemetry/sdk-metrics'
-import type { BasicTracerProvider } from '@opentelemetry/sdk-trace-base'
 import { realpathSync } from 'fs'
 import sumBy from 'lodash-es/sumBy.js'
 import { cwd } from 'process'
@@ -27,15 +22,43 @@ import {
 } from 'src/utils/sessionIdContext.js'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { resetSettingsCache } from 'src/utils/settings/settingsCache.js'
-import type { PluginHookMatcher } from 'src/utils/settings/types.js'
 import { createSignal } from 'src/utils/signal.js'
 
-// Union type for registered hooks - can be SDK callbacks or native plugin hooks
-type RegisteredHookMatcher = HookCallbackMatcher | PluginHookMatcher
+type RegisteredHookMatcher = HookCallbackMatcher
 
 import type { SessionId } from 'src/types/ids.js'
 
 // DO NOT ADD MORE STATE HERE - BE JUDICIOUS WITH GLOBAL STATE
+
+export type Attributes = Record<
+  string,
+  string | number | boolean | string[] | undefined
+>
+
+export type MetricOptions = {
+  description?: string
+  unit?: string
+}
+
+export type Meter = {
+  createCounter(
+    name: string,
+    options?: MetricOptions,
+  ): { add(value: number, attributes?: Attributes): void }
+}
+
+type TelemetryProvider = {
+  forceFlush?: () => Promise<void>
+  shutdown?: () => Promise<void>
+}
+
+type EventLogger = {
+  emit(record: { body?: string; attributes?: Attributes }): void
+}
+
+type LoggerProvider = TelemetryProvider
+type MeterProvider = TelemetryProvider
+type BasicTracerProvider = TelemetryProvider
 
 export type AttributedCounter = {
   add(value: number, additionalAttributes?: Attributes): void
@@ -96,7 +119,7 @@ type State = {
   parentSessionId: SessionId | undefined
   // Logger state
   loggerProvider: LoggerProvider | null
-  eventLogger: ReturnType<typeof logs.getLogger> | null
+  eventLogger: EventLogger | null
   // Meter provider state
   meterProvider: MeterProvider | null
   // Tracer provider state
@@ -106,8 +129,6 @@ type State = {
   agentColorIndex: number
   // In-memory error log for recent errors
   inMemoryErrorLog: Array<{ error: string; timestamp: string }>
-  // Session-only plugins from --plugin-dir flag
-  inlinePlugins: Array<string>
   // Explicit --chrome / --no-chrome flag value (undefined = not set on CLI)
   chromeFlagOverride: boolean | undefined
   // Use cowork_plugins directory instead of plugins (--cowork flag or env var)
@@ -140,11 +161,9 @@ type State = {
   hasExitedPlanMode: boolean
   // Track if we need to show the plan mode exit attachment (one-time notification)
   needsPlanModeExitAttachment: boolean
-  // Track if LSP plugin recommendation has been shown this session (only show once)
-  lspRecommendationShownThisSession: boolean
   // SDK init event state - jsonSchema for structured output
   initJsonSchema: Record<string, unknown> | null
-  // Registered hooks - SDK callbacks and plugin native hooks
+  // Registered hooks - SDK callbacks
   registeredHooks: Partial<Record<HookEvent, RegisteredHookMatcher[]>> | null
   // Cache for plan slugs: sessionId -> wordSlug
   planSlugCache: Map<string, string>
@@ -207,7 +226,7 @@ type State = {
   // benefit to keeping thinking). Once latched, stays on so the newly-warmed
   // thinking-cleared cache isn't busted by flipping back to keep:'all'.
   thinkingClearLatched: boolean | null
-  // Current prompt ID (UUID) correlating a user prompt with subsequent OTel events
+  // Current prompt ID (UUID) correlating a user prompt with subsequent work
   promptId: string | null
   // Last API requestId for the main conversation chain (not subagents).
   // Updated after each successful API response for main-session queries.
@@ -303,8 +322,6 @@ function getInitialState(): State {
     agentColorIndex: 0,
     // In-memory error log for recent errors
     inMemoryErrorLog: [],
-    // Session-only plugins from --plugin-dir flag
-    inlinePlugins: [],
     // Explicit --chrome / --no-chrome flag value (undefined = not set on CLI)
     chromeFlagOverride: undefined,
     // Use cowork_plugins directory instead of plugins
@@ -323,8 +340,6 @@ function getInitialState(): State {
     hasExitedPlanMode: false,
     // Track if we need to show the plan mode exit attachment
     needsPlanModeExitAttachment: false,
-    // Track if LSP plugin recommendation has been shown this session
-    lspRecommendationShownThisSession: false,
     // SDK init event state
     initJsonSchema: null,
     registeredHooks: null,
@@ -1098,13 +1113,11 @@ export function setLoggerProvider(provider: LoggerProvider | null): void {
   STATE.loggerProvider = provider
 }
 
-export function getEventLogger(): ReturnType<typeof logs.getLogger> | null {
+export function getEventLogger(): EventLogger | null {
   return STATE.eventLogger
 }
 
-export function setEventLogger(
-  logger: ReturnType<typeof logs.getLogger> | null,
-): void {
+export function setEventLogger(logger: EventLogger | null): void {
   STATE.eventLogger = logger
 }
 
@@ -1236,14 +1249,6 @@ export function preferThirdPartyAuthentication(): boolean {
   return getIsNonInteractiveSession() && STATE.clientType !== 'claude-vscode'
 }
 
-export function setInlinePlugins(plugins: Array<string>): void {
-  STATE.inlinePlugins = plugins
-}
-
-export function getInlinePlugins(): Array<string> {
-  return STATE.inlinePlugins
-}
-
 export function setChromeFlagOverride(value: boolean | undefined): void {
   STATE.chromeFlagOverride = value
 }
@@ -1362,15 +1367,6 @@ export function handlePlanModeTransition(
   }
 }
 
-// LSP plugin recommendation session tracking
-export function hasShownLspRecommendationThisSession(): boolean {
-  return STATE.lspRecommendationShownThisSession
-}
-
-export function setLspRecommendationShownThisSession(value: boolean): void {
-  STATE.lspRecommendationShownThisSession = value
-}
-
 // SDK init event state
 export function setInitJsonSchema(schema: Record<string, unknown>): void {
   STATE.initJsonSchema = schema
@@ -1407,26 +1403,6 @@ export function getRegisteredHooks(): Partial<
 
 export function clearRegisteredHooks(): void {
   setRegisteredHooksForCurrentSession(null)
-}
-
-export function clearRegisteredPluginHooks(): void {
-  const registeredHooks = getRegisteredHooksForCurrentSession()
-  if (!registeredHooks) {
-    return
-  }
-
-  const filtered: Partial<Record<HookEvent, RegisteredHookMatcher[]>> = {}
-  for (const [event, matchers] of Object.entries(registeredHooks)) {
-    // Keep only callback hooks (those without pluginRoot)
-    const callbackHooks = matchers.filter(m => !('pluginRoot' in m))
-    if (callbackHooks.length > 0) {
-      filtered[event as HookEvent] = callbackHooks
-    }
-  }
-
-  setRegisteredHooksForCurrentSession(
-    Object.keys(filtered).length > 0 ? filtered : null,
-  )
 }
 
 export function resetSdkInitState(): void {

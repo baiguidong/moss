@@ -9,7 +9,7 @@ import type { AssistantMessage, AttachmentMessage, Message, NormalizedUserMessag
 import { addInvokedSkill, getSessionId } from '../../bootstrap/state.js';
 import { COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG } from '../../constants/xml.js';
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js';
-import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, type AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED, logEvent } from '../../services/analytics/index.js';
+import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { buildPostCompactMessages } from '../../services/compact/compact.js';
 import { resetMicrocompactState } from '../../services/compact/microCompact.js';
 import type { Progress as AgentProgress } from '../../tools/AgentTool/AgentTool.js';
@@ -31,13 +31,9 @@ import { createCommandInputMessage, createSyntheticUserCaveatMessage, createSyst
 import type { ModelAlias } from '../model/aliases.js';
 import { parseToolListFromCLI } from '../permissions/permissionSetup.js';
 import { hasPermissionsToUseTool } from '../permissions/permissions.js';
-import { isOfficialMarketplaceName, parsePluginIdentifier } from '../plugins/pluginIdentifier.js';
-import { isRestrictedToPluginOnly, isSourceAdminTrusted } from '../settings/pluginOnlyPolicy.js';
 import { parseSlashCommand } from '../slashCommandParsing.js';
 import { sleep } from '../sleep.js';
 import { recordSkillUsage } from '../suggestions/skillUsageTracking.js';
-import { logOTelEvent, redactIfDisabled } from '../telemetry/events.js';
-import { buildPluginCommandTelemetryFields } from '../telemetry/pluginTelemetry.js';
 import { getAssistantMessageContentLength } from '../tokens.js';
 import { createAgentId } from '../uuid.js';
 import { getDoctorDiagnostic } from '../doctorDiagnostic.js';
@@ -50,12 +46,12 @@ type SlashCommandResult = ProcessUserInputBaseResult & {
 };
 
 const HELP_CATEGORIES: Record<string, string[]> = {
-  'Basic': ['help', 'clear', 'compact', 'status', 'cost', 'version', 'exit', 'quit'],
-  'Session': ['resume', 'branch', 'rename', 'session', 'tag', 'export', 'copy'],
-  'Model & Effort': ['model', 'effort', 'fast'],
-  'Configuration': ['config', 'mcp', 'permissions', 'context', 'memory', 'add-dir', 'theme', 'color', 'output-style', 'terminal-setup', 'privacy-settings'],
-  'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'commit', 'plan', 'ultraplan', 'btw', 'tasks', 'agents', 'plugin'],
-  'System': ['install', 'hooks', 'ide', 'desktop', 'remote-env', 'sandbox', 'usage'],
+  'Basic': ['help', 'clear', 'compact', 'status', 'cost', 'exit', 'quit'],
+  'Session': ['resume', 'branch', 'rename', 'tag', 'export', 'copy'],
+  'Model & Effort': ['model', 'effort'],
+  'Configuration': ['config', 'permissions', 'context', 'add-dir', 'theme', 'color', 'terminal-setup'],
+  'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'plan', 'btw', 'tasks', 'agents'],
+  'System': ['install', 'hooks', 'desktop', 'sandbox'],
 }
 
 function formatHelpText(commands: Command[]): string {
@@ -190,17 +186,9 @@ function formatConfigText(): string {
  */
 async function executeForkedSlashCommand(command: CommandBase & PromptCommand, args: string, context: ProcessUserInputContext, precedingInputBlocks: ContentBlockParam[], setToolJSX: SetToolJSXFn, canUseTool: CanUseToolFn): Promise<SlashCommandResult> {
   const agentId = createAgentId();
-  const pluginMarketplace = command.pluginInfo ? parsePluginIdentifier(command.pluginInfo.repository).marketplace : undefined;
   logEvent('tengu_slash_command_forked', {
     command_name: command.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     invocation_trigger: 'user-slash' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-    ...(command.pluginInfo && {
-      _PROTO_plugin_name: command.pluginInfo.pluginManifest.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED,
-      ...(pluginMarketplace && {
-        _PROTO_marketplace_name: pluginMarketplace as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED
-      }),
-      ...buildPluginCommandTelemetryFields(command.pluginInfo)
-    })
   });
   const {
     skillContent,
@@ -419,12 +407,6 @@ export async function processSlashCommand(inputString: string, precedingInputBlo
     const promptId = randomUUID();
     setPromptId(promptId);
     logEvent('tengu_input_prompt', {});
-    // Log user prompt event for OTLP
-    void logOTelEvent('user_prompt', {
-      prompt_length: String(inputString.length),
-      prompt: redactIfDisabled(inputString),
-      'prompt.id': promptId
-    });
     return {
       messages: [createUserMessage({
         content: prepareUserContent({
@@ -457,30 +439,6 @@ export async function processSlashCommand(inputString: string, precedingInputBlo
       input: sanitizedCommandName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     };
 
-    // Add plugin metadata if this is a plugin command
-    if (returnedCommand.type === 'prompt' && returnedCommand.pluginInfo) {
-      const {
-        pluginManifest,
-        repository
-      } = returnedCommand.pluginInfo;
-      const {
-        marketplace
-      } = parsePluginIdentifier(repository);
-      const isOfficial = isOfficialMarketplaceName(marketplace);
-      // _PROTO_* routes to PII-tagged plugin_name/marketplace_name BQ columns
-      // (unredacted, all users); plugin_name/plugin_repository stay in
-      // additional_metadata as redacted variants for general-access dashboards.
-      eventData._PROTO_plugin_name = pluginManifest.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED;
-      if (marketplace) {
-        eventData._PROTO_marketplace_name = marketplace as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED;
-      }
-      eventData.plugin_repository = (isOfficial ? repository : 'third-party') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-      eventData.plugin_name = (isOfficial ? pluginManifest.name : 'third-party') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-      if (isOfficial && pluginManifest.version) {
-        eventData.plugin_version = pluginManifest.version as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-      }
-      Object.assign(eventData, buildPluginCommandTelemetryFields(returnedCommand.pluginInfo));
-    }
     logEvent('tengu_input_command', {
       ...eventData,
       invocation_trigger: 'user-slash' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -528,27 +486,6 @@ export async function processSlashCommand(inputString: string, precedingInputBlo
     input: sanitizedCommandName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
   };
 
-  // Add plugin metadata if this is a plugin command
-  if (returnedCommand.type === 'prompt' && returnedCommand.pluginInfo) {
-    const {
-      pluginManifest,
-      repository
-    } = returnedCommand.pluginInfo;
-    const {
-      marketplace
-    } = parsePluginIdentifier(repository);
-    const isOfficial = isOfficialMarketplaceName(marketplace);
-    eventData._PROTO_plugin_name = pluginManifest.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED;
-    if (marketplace) {
-      eventData._PROTO_marketplace_name = marketplace as AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED;
-    }
-    eventData.plugin_repository = (isOfficial ? repository : 'third-party') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-    eventData.plugin_name = (isOfficial ? pluginManifest.name : 'third-party') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-    if (isOfficial && pluginManifest.version) {
-      eventData.plugin_version = pluginManifest.version as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS;
-    }
-    Object.assign(eventData, buildPluginCommandTelemetryFields(returnedCommand.pluginInfo));
-  }
   logEvent('tengu_input_command', {
     ...eventData,
     invocation_trigger: 'user-slash' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -931,15 +868,12 @@ function formatSlashCommandLoadingMetadata(commandName: string, args?: string): 
  * skills use the skill format ("The X skill is running").
  */
 function formatCommandLoadingMetadata(command: CommandBase & PromptCommand, args?: string): string {
-  // Use command.name (the qualified name including plugin prefix, e.g.
-  // "product-management:feature-spec") instead of userFacingName() which may
-  // strip the plugin prefix via displayName fallback.
   // User-invocable skills should show as /command-name like regular slash commands
   if (command.userInvocable !== false) {
     return formatSlashCommandLoadingMetadata(command.name, args);
   }
   // Model-only skills (userInvocable: false) show as "The X skill is running"
-  if (command.loadedFrom === 'skills' || command.loadedFrom === 'plugin' || command.loadedFrom === 'mcp') {
+  if (command.loadedFrom === 'skills' || command.loadedFrom === 'mcp') {
     return formatSkillLoadingMetadata(command.name, command.progressMessage);
   }
   return formatSlashCommandLoadingMetadata(command.name, args);
@@ -1001,8 +935,7 @@ async function getMessagesForPromptSlashCommand(command: CommandBase & PromptCom
   // Register skill hooks if defined. Under ["hooks"]-only (skills not locked),
   // user skills still load and reach this point — block hook REGISTRATION here
   // where source is known. Mirrors the agent frontmatter gate in runAgent.ts.
-  const hooksAllowedForThisSkill = !isRestrictedToPluginOnly('hooks') || isSourceAdminTrusted(command.source);
-  if (command.hooks && hooksAllowedForThisSkill) {
+  if (command.hooks) {
     const sessionId = getSessionId();
     registerSkillHooks(context.setAppState, sessionId, command.hooks, command.name, command.type === 'prompt' ? command.skillRoot : undefined);
   }

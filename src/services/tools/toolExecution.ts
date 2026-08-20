@@ -9,12 +9,8 @@ import {
   logEvent,
 } from 'src/services/analytics/index.js'
 import {
-  extractMcpToolDetails,
-  extractSkillName,
-  extractToolInputForTelemetry,
   getFileExtensionForAnalytics,
   getFileExtensionsFromBashCommand,
-  isToolDetailsLoggingEnabled,
   mcpToolDetailsForAnalytics,
   sanitizeToolNameForAnalytics,
 } from 'src/services/analytics/metadata.js'
@@ -41,8 +37,6 @@ import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
 import { NOTEBOOK_EDIT_TOOL_NAME } from '../../tools/NotebookEditTool/constants.js'
-import { POWERSHELL_TOOL_NAME } from '../../tools/PowerShellTool/toolName.js'
-import { parseGitCommitId } from '../../tools/shared/gitOperationTracking.js'
 import {
   isDeferredTool,
   TOOL_SEARCH_TOOL_NAME,
@@ -85,7 +79,6 @@ import {
 } from '../../utils/sessionActivity.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { Stream } from '../../utils/stream.js'
-import { logOTelEvent } from '../../utils/telemetry/events.js'
 import {
   addToolContentEvent,
   endToolBlockedOnUserSpan,
@@ -118,7 +111,6 @@ import { normalizeNameForMCP } from '../mcp/normalization.js'
 import type { MCPServerConnection } from '../mcp/types.js'
 import {
   getLoggingSafeMcpBaseUrl,
-  getMcpServerScopeFromToolName,
   isMcpTool,
 } from '../mcp/utils.js'
 import {
@@ -169,14 +161,14 @@ export function classifyToolError(error: unknown): string {
 }
 
 /**
- * Map a rule's origin to the documented OTel `source` vocabulary, matching
+ * Map a rule's origin to the permission decision source vocabulary, matching
  * the interactive path's semantics (permissionLogging.ts:81): session-scoped
  * grants are temporary, on-disk grants are permanent, and user-authored
  * denies are user_reject regardless of persistence. Everything the user
  * didn't write (cliArg, policySettings, projectSettings, flagSettings) is
  * config.
  */
-function ruleSourceToOTelSource(
+function ruleSourceToDecisionSource(
   ruleSource: string,
   behavior: 'allow' | 'deny',
 ): string {
@@ -192,8 +184,8 @@ function ruleSourceToOTelSource(
 }
 
 /**
- * Map a PermissionDecisionReason to the OTel `source` label for the
- * non-interactive tool_decision path, staying within the documented
+ * Map a PermissionDecisionReason to the source label for the
+ * non-interactive tool decision path, staying within the documented
  * vocabulary (config, hook, user_permanent, user_temporary, user_reject).
  *
  * For permissionPromptTool, the SDK host may set decisionClassification on
@@ -202,7 +194,7 @@ function ruleSourceToOTelSource(
  * Without it, we fall back conservatively: allow → user_temporary,
  * deny → user_reject.
  */
-function decisionReasonToOTelSource(
+function decisionReasonToDecisionSource(
   reason: PermissionDecisionReason | undefined,
   behavior: 'allow' | 'deny',
 ): string {
@@ -228,7 +220,7 @@ function decisionReasonToOTelSource(
       return behavior === 'allow' ? 'user_temporary' : 'user_reject'
     }
     case 'rule':
-      return ruleSourceToOTelSource(reason.rule.source, behavior)
+      return ruleSourceToDecisionSource(reason.rule.source, behavior)
     case 'hook':
       return 'hook'
     case 'mode':
@@ -905,26 +897,19 @@ async function checkPermissionsAndCallTool(
   const permissionDecision = resolved.decision
   processedInput = resolved.input
 
-  // Emit tool_decision OTel event and code-edit counter if the interactive
+  // Emit code-edit counter if the interactive
   // permission path didn't already log it (headless mode bypasses permission
-  // logging, so we need to emit both the generic event and the code-edit
-  // counter here)
+  // logging, so we need to emit the code-edit counter here)
   if (
     permissionDecision.behavior !== 'ask' &&
     !toolUseContext.toolDecisions?.has(toolUseID)
   ) {
     const decision =
       permissionDecision.behavior === 'allow' ? 'accept' : 'reject'
-    const source = decisionReasonToOTelSource(
+    const source = decisionReasonToDecisionSource(
       permissionDecision.decisionReason,
       permissionDecision.behavior,
     )
-    void logOTelEvent('tool_decision', {
-      decision,
-      source,
-      tool_name: sanitizeToolNameForAnalytics(tool.name),
-    })
-
     // Increment code-edit tool decision counter for headless mode
     if (isCodeEditingTool(tool.name)) {
       void buildCodeEditToolAttributes(
@@ -1059,43 +1044,6 @@ async function checkPermissionsAndCallTool(
   // (Don't overwrite if undefined - processedInput may have been modified by passthrough hooks)
   if (permissionDecision.updatedInput !== undefined) {
     processedInput = permissionDecision.updatedInput
-  }
-
-  // Prepare tool parameters for logging in tool_result event.
-  // Gated by OTEL_LOG_TOOL_DETAILS — tool parameters can contain sensitive
-  // content (bash commands, MCP server names, etc.) so they're opt-in only.
-  const telemetryToolInput = extractToolInputForTelemetry(processedInput)
-  let toolParameters: Record<string, unknown> = {}
-  if (isToolDetailsLoggingEnabled()) {
-    if (tool.name === BASH_TOOL_NAME && 'command' in processedInput) {
-      const bashInput = processedInput as BashToolInput
-      const commandParts = bashInput.command.trim().split(/\s+/)
-      const bashCommand = commandParts[0] || ''
-
-      toolParameters = {
-        bash_command: bashCommand,
-        full_command: bashInput.command,
-        ...(bashInput.timeout !== undefined && {
-          timeout: bashInput.timeout,
-        }),
-        ...(bashInput.description !== undefined && {
-          description: bashInput.description,
-        }),
-        ...('dangerouslyDisableSandbox' in bashInput && {
-          dangerouslyDisableSandbox: bashInput.dangerouslyDisableSandbox,
-        }),
-      }
-    }
-
-    const mcpDetails = extractMcpToolDetails(tool.name)
-    if (mcpDetails) {
-      toolParameters.mcp_server_name = mcpDetails.serverName
-      toolParameters.mcp_tool_name = mcpDetails.mcpToolName
-    }
-    const skillName = extractSkillName(tool.name, processedInput)
-    if (skillName) {
-      toolParameters.skill_name = skillName
-    }
   }
 
   const decisionInfo = toolUseContext.toolDecisions?.get(toolUseID)
@@ -1284,44 +1232,6 @@ async function checkPermissionsAndCallTool(
           requestId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       }),
       ...mcpToolDetailsForAnalytics(tool.name, mcpServerType, mcpServerBaseUrl),
-    })
-
-    // Enrich tool parameters with git commit ID from successful git commit output
-    if (
-      isToolDetailsLoggingEnabled() &&
-      (tool.name === BASH_TOOL_NAME || tool.name === POWERSHELL_TOOL_NAME) &&
-      'command' in processedInput &&
-      typeof processedInput.command === 'string' &&
-      processedInput.command.match(/\bgit\s+commit\b/) &&
-      result.data &&
-      typeof result.data === 'object' &&
-      'stdout' in result.data
-    ) {
-      const gitCommitId = parseGitCommitId(String(result.data.stdout))
-      if (gitCommitId) {
-        toolParameters.git_commit_id = gitCommitId
-      }
-    }
-
-    // Log tool result event for OTLP with tool parameters and decision context
-    const mcpServerScope = isMcpTool(tool)
-      ? getMcpServerScopeFromToolName(tool.name)
-      : null
-
-    void logOTelEvent('tool_result', {
-      tool_name: sanitizeToolNameForAnalytics(tool.name),
-      success: 'true',
-      duration_ms: String(durationMs),
-      ...(Object.keys(toolParameters).length > 0 && {
-        tool_parameters: jsonStringify(toolParameters),
-      }),
-      ...(telemetryToolInput && { tool_input: telemetryToolInput }),
-      tool_result_size_bytes: String(toolResultSizeBytes),
-      ...(decisionInfo && {
-        decision_source: decisionInfo.source,
-        decision_type: decisionInfo.decision,
-      }),
-      ...(mcpServerScope && { mcp_server_scope: mcpServerScope }),
     })
 
     // Run PostToolUse hooks
@@ -1595,27 +1505,6 @@ async function checkPermissionsAndCallTool(
           mcpServerType,
           mcpServerBaseUrl,
         ),
-      })
-      // Log tool result error event for OTLP with tool parameters and decision context
-      const mcpServerScope = isMcpTool(tool)
-        ? getMcpServerScopeFromToolName(tool.name)
-        : null
-
-      void logOTelEvent('tool_result', {
-        tool_name: sanitizeToolNameForAnalytics(tool.name),
-        use_id: toolUseID,
-        success: 'false',
-        duration_ms: String(durationMs),
-        error: errorMessage(error),
-        ...(Object.keys(toolParameters).length > 0 && {
-          tool_parameters: jsonStringify(toolParameters),
-        }),
-        ...(telemetryToolInput && { tool_input: telemetryToolInput }),
-        ...(decisionInfo && {
-          decision_source: decisionInfo.source,
-          decision_type: decisionInfo.decision,
-        }),
-        ...(mcpServerScope && { mcp_server_scope: mcpServerScope }),
       })
     }
     const content = formatError(error)

@@ -17,7 +17,6 @@ import type { AgentColorName } from '../tools/AgentTool/agentColorManager.js'
 import type { AgentDefinitionsResult } from '../tools/AgentTool/loadAgentsDir.js'
 import type { AgentId } from '../types/ids.js'
 import type { Message, UserMessage } from '../types/message.js'
-import type { LoadedPlugin, PluginError } from '../types/plugin.js'
 import type { DeepImmutable } from '../types/utils.js'
 import {
   type AttributionState,
@@ -125,44 +124,6 @@ export type AppState = DeepImmutable<{
     tools: Tool[]
     commands: Command[]
     resources: Record<string, ServerResource[]>
-    /**
-     * Incremented by /reload-plugins to trigger MCP effects to re-run
-     * and pick up newly-enabled plugin MCP servers. Effects read this
-     * as a dependency; the value itself is not consumed.
-     */
-    pluginReconnectKey: number
-  }
-  plugins: {
-    enabled: LoadedPlugin[]
-    disabled: LoadedPlugin[]
-    commands: Command[]
-    /**
-     * Plugin system errors collected during loading and initialization.
-     * See {@link PluginError} type documentation for complete details on error
-     * structure, context fields, and display format.
-     */
-    errors: PluginError[]
-    // Installation status for background plugin/marketplace installation
-    installationStatus: {
-      marketplaces: Array<{
-        name: string
-        status: 'pending' | 'installing' | 'installed' | 'failed'
-        error?: string
-      }>
-      plugins: Array<{
-        id: string
-        name: string
-        status: 'pending' | 'installing' | 'installed' | 'failed'
-        error?: string
-      }>
-    }
-    /**
-     * Set to true when plugin state on disk has changed (background reconcile,
-     * /plugin menu install, external settings edit) and active components are
-     * stale. In interactive mode, user runs /reload-plugins to consume. In
-     * headless mode, refreshPluginState() auto-consumes via refreshActivePlugins().
-     */
-    needsRefresh: boolean
   }
   agentDefinitions: AgentDefinitionsResult
   fileHistory: FileHistoryState
@@ -369,18 +330,6 @@ export function getDefaultAppState(): AppState {
       tools: [],
       commands: [],
       resources: {},
-      pluginReconnectKey: 0,
-    },
-    plugins: {
-      enabled: [],
-      disabled: [],
-      commands: [],
-      errors: [],
-      installationStatus: {
-        marketplaces: [],
-        plugins: [],
-      },
-      needsRefresh: false,
     },
     todos: {},
     remoteAgentTaskSuggestions: [],

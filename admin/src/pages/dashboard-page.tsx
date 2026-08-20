@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChartContainer, ChartTooltipContent } from '@/components/ui/chart'
-import { getDashboardStats, getSessions } from '@/lib/api/sessions'
+import { getSessions } from '@/lib/api/sessions'
 import { getUsers, getDepartments } from '@/lib/api/auth'
 import { ApiRequestError, hasAnyScope, hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
@@ -28,7 +28,6 @@ import type {
   Session,
   AuthUser,
   AuthDepartment,
-  DashboardStatsResponse,
 } from '@/lib/api/types'
 import { Link } from 'react-router-dom'
 import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns'
@@ -117,37 +116,22 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
-  const [dashboardStats, setDashboardStats] = useState<DashboardStatsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [dateRange, setDateRange] = useState(7)
   const canListSessions = hasAnyScope(scopes, ['sessions:list', 'sessions:list:any'])
   const canListUsers = hasScope(scopes, 'admin:users')
 
-  const getStatsQuery = useCallback((days: number) => {
-    if (days === -1) {
-      return undefined
-    }
-
-    const now = new Date()
-    return {
-      from: subDays(startOfDay(now), days).getTime(),
-      to: endOfDay(now).getTime(),
-    }
-  }, [])
-
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, usersRes, departmentsRes, statsRes] = await Promise.all([
+      const [sessionsRes, usersRes, departmentsRes] = await Promise.all([
         canListSessions ? getSessions() : Promise.resolve(null),
         canListUsers ? getUsers() : Promise.resolve(null),
         canListUsers ? getDepartments() : Promise.resolve(null),
-        canListSessions ? getDashboardStats(getStatsQuery(dateRange)) : Promise.resolve(null),
       ])
       setSessions(sessionsRes?.sessions ?? [])
       setUsers(usersRes?.users ?? [])
       setDepartments(departmentsRes?.departments ?? [])
-      setDashboardStats(statsRes)
     } catch (error) {
       if (!(error instanceof ApiRequestError && error.status === 401)) {
         console.error('Failed to fetch data:', error)
@@ -156,7 +140,7 @@ export default function DashboardPage() {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [canListSessions, canListUsers, dateRange, getStatsQuery])
+  }, [canListSessions, canListUsers])
 
   useEffect(() => {
     fetchData()
@@ -190,19 +174,12 @@ export default function DashboardPage() {
   const activeSessions = filteredSessions.filter((s) =>
     ['creating', 'active', 'detached'].includes(s.status)
   ).length
-  const assistantStats = dashboardStats?.assistants ?? []
-  // Count total sessions with assistantName and active sessions among them
-  const totalAssistantSessions = assistantStats.reduce((sum, a) => sum + a.totalSessions, 0)
-  const activeAssistantSessions = assistantStats.reduce((sum, a) => sum + a.activeSessions, 0)
+  const totalAssistantSessions = filteredSessions.filter(s => !!s.assistantName).length
+  const activeAssistantSessions = filteredSessions.filter(
+    s => !!s.assistantName && ['creating', 'active', 'detached'].includes(s.status),
+  ).length
   const totalUsers = users.length
   const activeUsers = new Set(filteredSessions.filter(s => ['creating', 'active', 'detached'].includes(s.status)).map(s => s.userId)).size
-  const tokenUsage = dashboardStats?.usage ?? {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-    totalTokens: 0,
-  }
 
   // Sessions by date
   const sessionsByDate = filteredSessions.reduce((acc, session) => {
@@ -325,19 +302,7 @@ export default function DashboardPage() {
             icon={Users}
             description="活跃 / 总数"
           />
-          <StatCard
-            title="总 Token 消耗"
-            value={tokenUsage.totalTokens.toLocaleString()}
-            icon={Coins}
-            description={
-              <div className="space-y-1">
-                <p>输入 {tokenUsage.inputTokens.toLocaleString()} · 输出 {tokenUsage.outputTokens.toLocaleString()}</p>
-                <p>
-                  缓存读 {tokenUsage.cacheReadInputTokens.toLocaleString()} · 写 {tokenUsage.cacheCreationInputTokens.toLocaleString()}
-                </p>
-              </div>
-            }
-          />
+          <StatCard title="部门数" value={departments.length} icon={Coins} description="已配置部门" />
           <StatCard title="总会话数" value={totalSessions} icon={MessageSquare} description={`活跃 ${activeSessions}`} />
           <StatCard title="智能体会话" value={`${activeAssistantSessions}/${totalAssistantSessions}`} icon={Bot} description="活跃 / 总数" />
         </div>
@@ -532,78 +497,6 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </div>
-
-        {/* Assistant Stats */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Bot className="size-4" />
-              智能体会话统计
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {assistantStats.length > 0 ? (
-              <ReactECharts
-                style={{ height: 300 }}
-                option={{
-                  tooltip: {
-                    trigger: 'axis',
-                    axisPointer: { type: 'shadow' }
-                  },
-                  grid: {
-                    left: 40,
-                    right: 20,
-                    top: 20,
-                    bottom: 60
-                  },
-                  xAxis: {
-                    type: 'category',
-                    data: assistantStats.map(a => a.displayName),
-                    axisLine: { show: false },
-                    axisTick: { show: false },
-                    axisLabel: { interval: 0, rotate: 30 }
-                  },
-                  yAxis: {
-                    type: 'value',
-                    axisLine: { show: false },
-                    axisTick: { show: false },
-                    splitLine: { lineStyle: { type: 'dashed' } }
-                  },
-                  series: [{
-                    type: 'bar',
-                    data: assistantStats.map(a => a.totalSessions),
-                    barMaxWidth: 40,
-                    itemStyle: {
-                      borderRadius: [4, 4, 0, 0],
-                      color: {
-                        type: 'linear',
-                        x: 0, y: 0, x2: 0, y2: 1,
-                        colorStops: [
-                          { offset: 0, color: '#83bff6' },
-                          { offset: 0.5, color: '#188df0' },
-                          { offset: 1, color: '#188df0' }
-                        ]
-                      }
-                    },
-                    label: {
-                      show: true,
-                      position: 'top',
-                      formatter: '{c}',
-                      color: '#666'
-                    }
-                  }]
-                }}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                <div className="text-center">
-                  <Bot className="size-8 mx-auto mb-2 opacity-50" />
-                  <p>暂无智能体会话数据</p>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
         {/* Recent Sessions */}
         <Card>

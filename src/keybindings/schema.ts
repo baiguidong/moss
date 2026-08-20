@@ -81,7 +81,6 @@ export const KEYBINDING_ACTIONS = [
   'chat:killAgents',
   'chat:cycleMode',
   'chat:modelPicker',
-  'chat:fastMode',
   'chat:thinkingToggle',
   'chat:submit',
   'chat:newline',

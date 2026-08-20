@@ -6,7 +6,6 @@ import { getPlatform } from 'src/utils/platform.js';
 import { isKeybindingCustomizationEnabled } from '../../keybindings/loadUserBindings.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
-import { isFastModeAvailable, isFastModeEnabled } from '../../utils/fastMode.js';
 import { getNewlineInstructions } from './utils.js';
 
 /** Format a shortcut for display in the help menu (e.g., "ctrl+o" → "ctrl + o") */
@@ -87,16 +86,6 @@ export function PromptInputHelpMenu(props) {
     t11 = $[11];
   }
   const modelPickerShortcut = t11;
-  const t12 = useShortcutDisplay("chat:fastMode", "Chat", "alt+o");
-  let t13;
-  if ($[12] !== t12) {
-    t13 = formatShortcut(t12);
-    $[12] = t12;
-    $[13] = t13;
-  } else {
-    t13 = $[13];
-  }
-  const fastModeShortcut = t13;
   const t14 = useShortcutDisplay("chat:externalEditor", "Chat", "ctrl+g");
   let t15;
   if ($[14] !== t14) {
@@ -291,15 +280,7 @@ export function PromptInputHelpMenu(props) {
   } else {
     t39 = $[72];
   }
-  let t40;
-  if ($[73] !== dimColor || $[74] !== fastModeShortcut) {
-    t40 = isFastModeEnabled() && isFastModeAvailable() && <Box><Text dimColor={dimColor}>{fastModeShortcut} to toggle fast mode</Text></Box>;
-    $[73] = dimColor;
-    $[74] = fastModeShortcut;
-    $[75] = t40;
-  } else {
-    t40 = $[75];
-  }
+  const t40 = null;
   let t41;
   if ($[76] !== dimColor || $[77] !== stashShortcut) {
     t41 = <Box><Text dimColor={dimColor}>{stashShortcut} to stash prompt</Text></Box>;

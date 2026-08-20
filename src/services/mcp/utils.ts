@@ -149,7 +149,7 @@ export function excludeResourcesByServer(
 }
 
 /**
- * Stable hash of an MCP server config for change detection on /reload-plugins.
+ * Stable hash of an MCP server config for dynamic change detection.
  * Excludes `scope` (provenance, not content — moving a server from .mcp.json
  * to settings.json shouldn't reconnect it). Keys sorted so `{a:1,b:2}` and
  * `{b:2,a:1}` hash the same.
@@ -171,18 +171,16 @@ export function hashMcpConfig(config: ScopedMcpServerConfig): string {
 /**
  * Remove stale MCP clients and their tools/commands/resources. A client is
  * stale if:
- *   - scope 'dynamic' and name no longer in configs (plugin disabled), or
+ *   - scope 'dynamic' and name no longer in configs, or
  *   - config hash changed (args/url/env edited in .mcp.json) — any scope
  *
- * The removal case is scoped to 'dynamic' so /reload-plugins can't
- * accidentally disconnect a user-configured server that's just temporarily
- * absent from the in-memory config (e.g. during a partial reload). The
- * config-changed case applies to all scopes — if the config actually changed
- * on disk, reconnecting is what you want.
+ * The removal case is scoped to 'dynamic' so it cannot accidentally disconnect
+ * a user-configured server that's temporarily absent from in-memory config.
+ * The config-changed case applies to all scopes.
  *
  * Returns the stale clients so the caller can disconnect them (clearServerCache).
  */
-export function excludeStalePluginClients(
+export function excludeStaleMcpClients(
   mcp: {
     clients: MCPServerConnection[]
     tools: Tool[]

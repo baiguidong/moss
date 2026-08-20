@@ -150,7 +150,7 @@ export type ScopedMcpServerConfig = McpServerConfig & {
   scope: ConfigScope
   // For plugin-provided servers: the providing plugin's LoadedPlugin.source
   // (e.g. 'slack@anthropic'). Stashed at config-build time so the channel
-  // gate doesn't have to race AppState.plugins.enabled hydration.
+  // gate doesn't have to race dynamic MCP hydration.
   pluginSource?: string
 }
 

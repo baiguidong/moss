@@ -63,10 +63,6 @@ import {
   writeAgentMetadata,
 } from '../../utils/sessionStorage.js'
 import {
-  isRestrictedToPluginOnly,
-  isSourceAdminTrusted,
-} from '../../utils/settings/pluginOnlyPolicy.js'
-import {
   asSystemPrompt,
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
@@ -100,23 +96,6 @@ async function initializeAgentMcpServers(
 }> {
   // If no agent-specific servers defined, return parent clients as-is
   if (!agentDefinition.mcpServers?.length) {
-    return {
-      clients: parentClients,
-      tools: [],
-      cleanup: async () => {},
-    }
-  }
-
-  // When MCP is locked to plugin-only, skip frontmatter MCP servers for
-  // USER-CONTROLLED agents only. Plugin, built-in, and policySettings agents
-  // are admin-trusted — their frontmatter MCP is part of the admin-approved
-  // surface. Blocking them (as the first cut did) breaks plugin agents that
-  // legitimately need MCP, contradicting "plugin-provided always loads."
-  const agentIsAdminTrusted = isSourceAdminTrusted(agentDefinition.source)
-  if (isRestrictedToPluginOnly('mcp') && !agentIsAdminTrusted) {
-    logForDebugging(
-      `[Agent: ${agentDefinition.agentType}] Skipping MCP servers: strictPluginOnlyCustomization locks MCP to plugin-only (agent source: ${agentDefinition.source})`,
-    )
     return {
       clients: parentClients,
       tools: [],
@@ -544,15 +523,7 @@ export async function* runAgent({
 
   // Register agent's frontmatter hooks (scoped to agent lifecycle)
   // Pass isAgent=true to convert Stop hooks to SubagentStop (since subagents trigger SubagentStop)
-  // Same admin-trusted gate for frontmatter hooks: under ["hooks"] alone
-  // (skills/agents not locked), user agents still load — block their
-  // frontmatter-hook REGISTRATION here where source is known, rather than
-  // blanket-blocking all session hooks at execution time (which would
-  // also kill plugin agents' hooks).
-  const hooksAllowedForThisAgent =
-    !isRestrictedToPluginOnly('hooks') ||
-    isSourceAdminTrusted(agentDefinition.source)
-  if (agentDefinition.hooks && hooksAllowedForThisAgent) {
+  if (agentDefinition.hooks) {
     registerFrontmatterHooks(
       rootSetAppState,
       agentId,
@@ -930,7 +901,7 @@ function resolveSkillName(
   }
 
   // 2. Try prefixing with the agent's plugin name
-  // Plugin agents have agentType like "pluginName:agentName"
+  // Nested agents may have agentType like "namespace:agentName"
   const pluginPrefix = agentDefinition.agentType.split(':')[0]
   if (pluginPrefix) {
     const qualifiedName = `${pluginPrefix}:${skillName}`

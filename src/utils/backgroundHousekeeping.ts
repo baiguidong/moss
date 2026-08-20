@@ -13,7 +13,6 @@ import {
   cleanupNpmCacheForAnthropicPackages,
   cleanupOldMessageFilesInBackground,
 } from './cleanup.js'
-import { autoUpdateMarketplacesAndPluginsInBackground } from './plugins/pluginAutoupdate.js'
 
 // 24 hours in milliseconds
 const RECURRING_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -27,7 +26,6 @@ export function startBackgroundHousekeeping(): void {
     extractMemoriesModule!.initExtractMemories()
   }
   initAutoDream()
-  void autoUpdateMarketplacesAndPluginsInBackground()
   let needsCleanup = true
   async function runVerySlowOps(): Promise<void> {
     // If the user did something in the last minute, don't make them wait for these slow operations to run.

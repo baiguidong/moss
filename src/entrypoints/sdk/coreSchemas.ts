@@ -285,7 +285,7 @@ export const PermissionDecisionClassificationSchema = lazySchema(() =>
         'what actually happened: user_temporary for allow-once, user_permanent ' +
         'for always-allow (both the click and later cache hits), user_reject ' +
         'for deny. If unset, the CLI infers conservatively (temporary for ' +
-        'allow, reject for deny). The vocabulary matches tool_decision OTel ' +
+        'allow, reject for deny). The vocabulary matches tool decision ' +
         'events (monitoring-usage docs).',
     ),
 )
@@ -1448,18 +1448,6 @@ export const SDKSystemMessageSchema = lazySchema(() =>
     slash_commands: z.array(z.string()),
     output_style: z.string(),
     skills: z.array(z.string()),
-    plugins: z.array(
-      z.object({
-        name: z.string(),
-        path: z.string(),
-        source: z
-          .string()
-          .optional()
-          .describe(
-            '@internal Plugin source identifier in "name\\@marketplace" format. Sentinels: "name\\@inline" for --plugin-dir, "name\\@builtin" for built-in plugins.',
-          ),
-      }),
-    ),
     fast_mode_state: FastModeStateSchema().optional(),
     uuid: UUIDPlaceholder(),
     session_id: z.string(),

@@ -59,7 +59,6 @@ import { executeShellCommandsInPrompt } from '../utils/promptShellExecution.js'
 import type { SettingSource } from '../utils/settings/constants.js'
 import { isSettingSourceEnabled } from '../utils/settings/constants.js'
 import { getManagedFilePath } from '../utils/settings/managedPath.js'
-import { isRestrictedToPluginOnly } from '../utils/settings/pluginOnlyPolicy.js'
 import { HooksSchema, type HooksSettings } from '../utils/settings/types.js'
 import { createSignal } from '../utils/signal.js'
 import {
@@ -71,7 +70,6 @@ import { registerMCPSkillBuilders } from './mcpSkillBuilders.js'
 export type LoadedFrom =
   | 'commands_DEPRECATED'
   | 'skills'
-  | 'plugin'
   | 'managed'
   | 'bundled'
   | 'mcp'
@@ -80,7 +78,7 @@ export type LoadedFrom =
  * Returns a claude config directory path for a given source.
  */
 export function getSkillsPath(
-  source: SettingSource | 'plugin',
+  source: SettingSource,
   dir: 'skills' | 'commands',
 ): string {
   switch (source) {
@@ -90,8 +88,6 @@ export function getSkillsPath(
       return join(getMossConfigHomeDir(), dir)
     case 'projectSettings':
       return `.moss/${dir}`
-    case 'plugin':
-      return 'plugin'
     default:
       return ''
   }
@@ -673,18 +669,15 @@ export const getSkillDirCommands = memoize(
 
     // Load from additional directories (--add-dir)
     const additionalDirs = getAdditionalDirectoriesForClaudeMd()
-    const skillsLocked = isRestrictedToPluginOnly('skills')
-    const projectSettingsEnabled =
-      isSettingSourceEnabled('projectSettings') && !skillsLocked
+    const projectSettingsEnabled = isSettingSourceEnabled('projectSettings')
 
     // --bare: skip auto-discovery (managed/user/project dir walks + legacy
     // commands-dir). Load ONLY explicit --add-dir paths. Bundled skills
-    // register separately. skillsLocked still applies — --bare is not a
-    // policy bypass.
+    // register separately.
     if (isBareMode()) {
       if (additionalDirs.length === 0 || !projectSettingsEnabled) {
         logForDebugging(
-          `[bare] Skipping skill dir discovery (${additionalDirs.length === 0 ? 'no --add-dir' : 'projectSettings disabled or skillsLocked'})`,
+          `[bare] Skipping skill dir discovery (${additionalDirs.length === 0 ? 'no --add-dir' : 'projectSettings disabled'})`,
         )
         return []
       }
@@ -713,10 +706,10 @@ export const getSkillDirCommands = memoize(
       isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_POLICY_SKILLS)
         ? Promise.resolve([])
         : loadSkillsFromSkillsDir(managedSkillsDir, 'policySettings'),
-      isSettingSourceEnabled('userSettings') && !skillsLocked
+      isSettingSourceEnabled('userSettings')
         ? loadSkillsFromSkillsDir(userSkillsDir, 'userSettings')
         : Promise.resolve([]),
-      isSettingSourceEnabled('userSettings') && !skillsLocked
+      isSettingSourceEnabled('userSettings')
         ? Promise.all(
             managedLocalSkillDirs.map(dir =>
               loadSkillsFromSkillsDir(dir, 'userSettings'),
@@ -740,11 +733,7 @@ export const getSkillDirCommands = memoize(
             ),
           )
         : Promise.resolve([]),
-      // Legacy commands-as-skills goes through markdownConfigLoader with
-      // subdir='commands', which our agents-only guard there skips. Block
-      // here when skills are locked — these ARE skills, regardless of the
-      // directory they load from.
-      skillsLocked ? Promise.resolve([]) : loadSkillsFromCommandsDir(cwd),
+      loadSkillsFromCommandsDir(cwd),
     ])
 
     // Flatten and combine all skills
@@ -770,7 +759,7 @@ export const getSkillDirCommands = memoize(
 
     const seenFileIds = new Map<
       string,
-      SettingSource | 'builtin' | 'mcp' | 'plugin' | 'bundled'
+      SettingSource | 'builtin' | 'mcp' | 'bundled'
     >()
     const deduplicatedSkills: Command[] = []
 
@@ -956,12 +945,9 @@ export async function discoverSkillDirsForPaths(
  * @param dirs Array of skill directories to load from (should be sorted deepest first)
  */
 export async function addSkillDirectories(dirs: string[]): Promise<void> {
-  if (
-    !isSettingSourceEnabled('projectSettings') ||
-    isRestrictedToPluginOnly('skills')
-  ) {
+  if (!isSettingSourceEnabled('projectSettings')) {
     logForDebugging(
-      '[skills] Dynamic skill discovery skipped: projectSettings disabled or plugin-only policy',
+      '[skills] Dynamic skill discovery skipped: projectSettings disabled',
     )
     return
   }

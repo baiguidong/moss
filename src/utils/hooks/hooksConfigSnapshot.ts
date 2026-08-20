@@ -1,5 +1,4 @@
 import { resetSdkInitState } from '../../bootstrap/state.js'
-import { isRestrictedToPluginOnly } from '../settings/pluginOnlyPolicy.js'
 // Import as module object so spyOn works in tests (direct imports bypass spies)
 import * as settingsModule from '../settings/settings.js'
 import { resetSettingsCache } from '../settings/settingsCache.js'
@@ -49,18 +48,6 @@ function getHooksFromAllowedSources(): HooksSettings {
   // If allowManagedHooksOnly is set in managed settings, only use managed hooks
   if (policySettings?.allowManagedHooksOnly === true) {
     return policySettings.hooks ?? {}
-  }
-
-  // strictPluginOnlyCustomization: block user/project/local settings hooks.
-  // Plugin hooks (registered channel, hooks.ts:1391) are NOT affected —
-  // they're assembled separately and the managedOnly skip there is keyed
-  // on shouldAllowManagedHooksOnly(), not on this policy. Agent frontmatter
-  // hooks are gated at REGISTRATION (runAgent.ts:~535) by agent source —
-  // plugin/built-in/policySettings agents register normally, user-sourced
-  // agents skip registration under ["hooks"]. A blanket execution-time
-  // block here would over-kill plugin agents' hooks.
-  if (isRestrictedToPluginOnly('hooks')) {
-    return policySettings?.hooks ?? {}
   }
 
   const mergedSettings = settingsModule.getSettings_DEPRECATED()

@@ -68,7 +68,6 @@ import {
   getMainLoopModel,
   parseUserSpecifiedModel,
 } from './utils/model/model.js'
-import { loadAllPluginsCacheOnly } from './utils/plugins/pluginLoader.js'
 import {
   type ProcessUserInputContext,
   processUserInput,
@@ -570,22 +569,14 @@ export class QueryEngine {
       setSDKStatus,
     }
 
-    headlessProfilerCheckpoint('before_skills_plugins')
-    const skillsPluginsStart = Date.now()
-    // Cache-only: headless/SDK/CCR startup must not block on network for
-    // ref-tracked plugins. CCR populates the cache via CLAUDE_CODE_SYNC_PLUGIN_INSTALL
-    // (headlessPluginInstall) or CLAUDE_CODE_PLUGIN_SEED_DIR before this runs;
-    // SDK callers that need fresh source can call /reload-plugins.
-    const [skills, { enabled: enabledPlugins }] = await Promise.all([
-      getSlashCommandToolSkills(getCwd()),
-      loadAllPluginsCacheOnly(),
-    ])
-    logForDiagnosticsNoPII('info', 'query_engine_skills_plugins_completed', {
-      duration_ms: Date.now() - skillsPluginsStart,
+    headlessProfilerCheckpoint('before_skills')
+    const skillsStart = Date.now()
+    const skills = await getSlashCommandToolSkills(getCwd())
+    logForDiagnosticsNoPII('info', 'query_engine_skills_completed', {
+      duration_ms: Date.now() - skillsStart,
       skill_count: skills.length,
-      plugin_count: enabledPlugins.length,
     })
-    headlessProfilerCheckpoint('after_skills_plugins')
+    headlessProfilerCheckpoint('after_skills')
 
     yield buildSystemInitMessage({
       tools,
@@ -596,7 +587,6 @@ export class QueryEngine {
       commands,
       agents,
       skills,
-      plugins: enabledPlugins,
       fastMode: initialAppState.fastMode,
     })
 

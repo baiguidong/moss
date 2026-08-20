@@ -15,7 +15,7 @@ import { getFsImplementation } from '../../utils/fsOperations.js';
 import { gracefulShutdownSync } from '../../utils/gracefulShutdown.js';
 import { Select } from '../CustomSelect/index.js';
 import { PermissionDialog } from '../permissions/PermissionDialog.js';
-import { getApiKeyHelperSources, getAwsCommandsSources, getBashPermissionSources, getDangerousEnvVarsSources, getGcpCommandsSources, getHooksSources, getOtelHeadersHelperSources } from './utils.js';
+import { getApiKeyHelperSources, getAwsCommandsSources, getBashPermissionSources, getDangerousEnvVarsSources, getGcpCommandsSources, getHooksSources } from './utils.js';
 type Props = {
   onDone(): void;
   commands?: Command[];
@@ -88,15 +88,6 @@ export function TrustDialog(t0) {
   }
   const gcpCommandsSources = t7;
   const hasGcpCommands = gcpCommandsSources.length > 0;
-  let t8;
-  if ($[7] === Symbol.for("react.memo_cache_sentinel")) {
-    t8 = getOtelHeadersHelperSources();
-    $[7] = t8;
-  } else {
-    t8 = $[7];
-  }
-  const otelHeadersHelperSources = t8;
-  const hasOtelHeadersHelper = otelHeadersHelperSources.length > 0;
   let t9;
   if ($[8] === Symbol.for("react.memo_cache_sentinel")) {
     t9 = getDangerousEnvVarsSources();
@@ -139,11 +130,10 @@ export function TrustDialog(t0) {
         hasApiKeyHelper,
         hasAwsCommands,
         hasGcpCommands,
-        hasOtelHeadersHelper,
         hasDangerousEnvVars
       });
     };
-    t13 = [hasMcpServers, hasHooks, hasAnyBashExecution, hasApiKeyHelper, hasAwsCommands, hasGcpCommands, hasOtelHeadersHelper, hasDangerousEnvVars];
+    t13 = [hasMcpServers, hasHooks, hasAnyBashExecution, hasApiKeyHelper, hasAwsCommands, hasGcpCommands, hasDangerousEnvVars];
     $[13] = hasAnyBashExecution;
     $[14] = t12;
     $[15] = t13;
@@ -168,7 +158,6 @@ export function TrustDialog(t0) {
         hasApiKeyHelper,
         hasAwsCommands,
         hasGcpCommands,
-        hasOtelHeadersHelper,
         hasDangerousEnvVars
       });
       if (isHomeDir_0) {
@@ -276,7 +265,7 @@ function _temp5(current) {
   };
 }
 function _temp4(command_0) {
-  return command_0.type === "prompt" && (command_0.loadedFrom === "skills" || command_0.loadedFrom === "plugin") && (command_0.source === "projectSettings" || command_0.source === "localSettings" || command_0.source === "plugin") && command_0.allowedTools?.some(_temp3);
+  return command_0.type === "prompt" && command_0.loadedFrom === "skills" && (command_0.source === "projectSettings" || command_0.source === "localSettings") && command_0.allowedTools?.some(_temp3);
 }
 function _temp3(tool_0) {
   return tool_0 === BASH_TOOL_NAME || tool_0.startsWith(BASH_TOOL_NAME + "(");

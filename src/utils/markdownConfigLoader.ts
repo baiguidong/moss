@@ -23,7 +23,6 @@ import {
   type SettingSource,
 } from './settings/constants.js'
 import { getManagedFilePath } from './settings/managedPath.js'
-import { isRestrictedToPluginOnly } from './settings/pluginOnlyPolicy.js'
 
 // Moss configuration directory names
 export const MOSS_CONFIG_DIRECTORIES = [
@@ -344,8 +343,7 @@ export const loadMarkdownFilesForSubdir = memoize(
         })),
       ),
       // Conditionally load user files
-      isSettingSourceEnabled('userSettings') &&
-      !(subdir === 'agents' && isRestrictedToPluginOnly('agents'))
+      isSettingSourceEnabled('userSettings')
         ? loadMarkdownFiles(userDir).then(_ =>
             _.map(file => ({
               ...file,
@@ -355,8 +353,7 @@ export const loadMarkdownFilesForSubdir = memoize(
           )
         : Promise.resolve([]),
       // Conditionally load project files from all directories up to home
-      isSettingSourceEnabled('projectSettings') &&
-      !(subdir === 'agents' && isRestrictedToPluginOnly('agents'))
+      isSettingSourceEnabled('projectSettings')
         ? Promise.all(
             projectDirs.map(projectDir =>
               loadMarkdownFiles(projectDir).then(_ =>

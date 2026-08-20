@@ -143,18 +143,7 @@ export const CLAUDE_CODE_GUIDE_AGENT: BuiltInAgentDefinition = {
       contextSections.push(`**Configured MCP servers:**\n${mcpList}`)
     }
 
-    // 4. Plugin commands
-    const pluginCommands = commands.filter(
-      cmd => cmd.type === 'prompt' && cmd.source === 'plugin',
-    )
-    if (pluginCommands.length > 0) {
-      const pluginList = pluginCommands
-        .map(cmd => `- /${cmd.name}: ${cmd.description}`)
-        .join('\n')
-      contextSections.push(`**Available plugin skills:**\n${pluginList}`)
-    }
-
-    // 5. User settings
+    // 4. User settings
     const settings = getSettings_DEPRECATED()
     if (Object.keys(settings).length > 0) {
       // eslint-disable-next-line no-restricted-syntax -- human-facing UI, not tool_result

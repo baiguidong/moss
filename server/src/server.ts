@@ -38,9 +38,6 @@ import {
 } from './skillStore.js'
 import { createAdaptersApi } from './api/adapters.js'
 import { adapterProcessManager } from './adapterProcessManager.js'
-import { loadBudgetStats } from './budgetStats.js'
-import { loadDashboardStats } from './dashboardStats.js'
-import { loadSessionContextFromTranscript } from './transcript.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 
 type JsonBody = Record<string, unknown>
@@ -106,22 +103,6 @@ function serializeSession(session: {
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
   }
-}
-
-function parseOptionalTimestampQuery(
-  value: string | null,
-  paramName: string,
-): number | null {
-  if (value === null || value.trim() === '') {
-    return null
-  }
-
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new HttpError(400, `Invalid ${paramName} query parameter`)
-  }
-
-  return parsed
 }
 
 function stableJson(value: unknown): string {
@@ -1231,81 +1212,6 @@ export function startServer(
           activeOnly,
         })
         writeJson(res, 200, { sessions })
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/dashboard/stats') {
-        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
-        const from = parseOptionalTimestampQuery(
-          url.searchParams.get('from'),
-          'from',
-        )
-        const to = parseOptionalTimestampQuery(url.searchParams.get('to'), 'to')
-        if (from !== null && to !== null && from > to) {
-          throw new HttpError(400, 'Invalid dashboard stats range')
-        }
-
-        const sessions = runtime
-          .listSessionRecords({
-            orgId: auth.orgId,
-            userId: hasScope(auth.scopes, 'sessions:list:any')
-              ? undefined
-              : auth.userId,
-          })
-          .filter(session => {
-            if (from !== null && session.createdAt < from) {
-              return false
-            }
-            if (to !== null && session.createdAt > to) {
-              return false
-            }
-            return true
-          })
-
-        const stats = await loadDashboardStats(sessions)
-        writeJson(res, 200, stats)
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/budget/stats') {
-        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
-        const sessions = runtime.listSessionRecords({
-          orgId: auth.orgId,
-          userId: hasScope(auth.scopes, 'sessions:list:any')
-            ? undefined
-            : auth.userId,
-        })
-
-        const stats = await loadBudgetStats(sessions)
-        writeJson(res, 200, stats)
-        return
-      }
-
-      const sessionContextMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/context$/)
-      if (req.method === 'GET' && sessionContextMatch) {
-        const sessionId = sessionContextMatch[1] || ''
-        const session = runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        const context = await loadSessionContextFromTranscript(session)
-        if (!context) {
-          throw new HttpError(404, 'Session context not found')
-        }
-        writeJson(res, 200, {
-          session: serializeSession(session),
-          usage: context.usage,
-          context: {
-            customTitle: context.customTitle,
-            tag: context.tag,
-            summary: context.summary,
-            mode: context.mode,
-            messages: context.messages,
-          },
-        })
         return
       }
 

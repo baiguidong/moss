@@ -34,13 +34,12 @@ function ensureHeadlessGlobalInit(): {
 
   globalInitPromise = (async () => {
     await withDiagnosticsTiming('bootstrap_headless_global_init', () => init())
-    // Note: initBundledSkills() and initBuiltinPlugins() are now called at
+    // Note: initBundledSkills() is called at
     // module initialization time in electron-direct.ts to ensure bundled
     // skills are registered before any memoized getCommands() call.
     // This matches the pattern in main.tsx:2004.
 
     // Initialize LSP manager (non-blocking)
-    // This will use whatever plugins/servers are available in the user's environment
     initializeLspServerManager()
   })().catch(error => {
     globalInitPromise = null
@@ -77,7 +76,7 @@ export interface BootstrapResult {
 
 /**
  * Performs a unified headless initialization, ensuring both the CLI and SDK
- * have full feature parity (Skills, Plugins, CLAUDE.md, MCP, etc.).
+ * have full feature parity (Skills, CLAUDE.md, MCP, etc.).
  *
  * @param cwd The working directory for the session
  * @returns Initialization results to pass to the QueryEngine and AppState
