@@ -15,7 +15,7 @@ export async function resolveDirectConnectAccessToken(options: {
     return envToken
   }
 
-  const serverUrl = options.serverUrl || process.env.MOSS_SERVER_URL || ''
+  const serverUrl = options.serverUrl || ''
   const apiKey = options.apiKey || process.env.MOSS_API_KEY || ''
   const username =
     options.username ||

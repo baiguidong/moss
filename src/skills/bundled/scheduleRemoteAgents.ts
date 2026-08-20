@@ -1,5 +1,4 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
-import type { MCPServerConnection } from '../../services/mcp/types.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import { isPolicyAllowed } from '../../services/policyLimits/index.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../tools/AskUserQuestionTool/prompt.js'
@@ -18,94 +17,6 @@ import {
   fetchEnvironments,
 } from '../../utils/teleport/environments.js'
 import { registerBundledSkill } from '../bundledSkills.js'
-
-// Base58 alphabet (Bitcoin-style) used by the tagged ID system
-const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-/**
- * Decode a mcpsrv_ tagged ID to a UUID string.
- * Tagged IDs have format: mcpsrv_01{base58(uuid.int)}
- * where 01 is the version prefix.
- *
- * TODO(public-ship): Before shipping publicly, the /v1/mcp_servers endpoint
- * should return the raw UUID directly so we don't need this client-side decoding.
- * The tagged ID format is an internal implementation detail that could change.
- */
-function taggedIdToUUID(taggedId: string): string | null {
-  const prefix = 'mcpsrv_'
-  if (!taggedId.startsWith(prefix)) {
-    return null
-  }
-  const rest = taggedId.slice(prefix.length)
-  // Skip version prefix (2 chars, always "01")
-  const base58Data = rest.slice(2)
-
-  // Decode base58 to bigint
-  let n = 0n
-  for (const c of base58Data) {
-    const idx = BASE58.indexOf(c)
-    if (idx === -1) {
-      return null
-    }
-    n = n * 58n + BigInt(idx)
-  }
-
-  // Convert to UUID hex string
-  const hex = n.toString(16).padStart(32, '0')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
-}
-
-type ConnectorInfo = {
-  uuid: string
-  name: string
-  url: string
-}
-
-function getConnectedClaudeAIConnectors(
-  mcpClients: MCPServerConnection[],
-): ConnectorInfo[] {
-  const connectors: ConnectorInfo[] = []
-  for (const client of mcpClients) {
-    if (client.type !== 'connected') {
-      continue
-    }
-    if (client.config.type !== 'claudeai-proxy') {
-      continue
-    }
-    const uuid = taggedIdToUUID(client.config.id)
-    if (!uuid) {
-      continue
-    }
-    connectors.push({
-      uuid,
-      name: client.name,
-      url: client.config.url,
-    })
-  }
-  return connectors
-}
-
-function sanitizeConnectorName(name: string): string {
-  return name
-    .replace(/^claude[.\s-]ai[.\s-]/i, '')
-    .replace(/[^a-zA-Z0-9_-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function formatConnectorsInfo(connectors: ConnectorInfo[]): string {
-  if (connectors.length === 0) {
-    return 'No connected MCP connectors found. The user may need to connect servers in Moss settings.'
-  }
-  const lines = ['Connected connectors (available for triggers):']
-  for (const c of connectors) {
-    const safeName = sanitizeConnectorName(c.name)
-    lines.push(
-      `- ${c.name} (connector_uuid: ${c.uuid}, name: ${safeName}, url: ${c.url})`,
-    )
-  }
-  return lines.join('\n')
-}
 
 const BASE_QUESTION = 'What would you like to do with scheduled remote agents?'
 
@@ -133,7 +44,6 @@ async function getCurrentRepoHttpsUrl(): Promise<string | null> {
 
 function buildPrompt(opts: {
   userTimezone: string
-  connectorsInfo: string
   gitRepoUrl: string | null
   environmentsInfo: string
   createdEnvironment: EnvironmentResource | null
@@ -143,7 +53,6 @@ function buildPrompt(opts: {
 }): string {
   const {
     userTimezone,
-    connectorsInfo,
     gitRepoUrl,
     environmentsInfo,
     createdEnvironment,
@@ -224,15 +133,9 @@ You CANNOT delete triggers. If the user asks to delete, direct them to the sched
 
 Generate a fresh lowercase UUID for \`events[].data.uuid\` yourself.
 
-## Available MCP Connectors
+## MCP Connectors
 
-These are the user's currently connected claude.ai MCP connectors:
-
-${connectorsInfo}
-
-When attaching connectors to a trigger, use the \`connector_uuid\` and \`name\` shown above (the name is already sanitized to only contain letters, numbers, hyphens, and underscores), and the connector's URL. The \`name\` field in \`mcp_connections\` must only contain \`[a-zA-Z0-9_-]\` — dots and spaces are NOT allowed.
-
-**Important:** Infer what services the agent needs from the user's description. For example, if they say "check Datadog and Slack me errors," the agent needs both Datadog and Slack connectors. Cross-reference against the list above and warn if any required service isn't connected. If a needed connector is missing, direct the user to connect it in Moss settings first.
+This build does not import MCP connectors from Claude.ai. If the user needs MCP access for a scheduled agent, ask them to configure the required connectors in the selected Moss environment before creating the trigger.
 
 ## Environments
 
@@ -286,7 +189,7 @@ Minimum interval is 1 hour. \`*/30 * * * *\` will be rejected.
    - Explicit about what actions to take (open PRs, commit, just analyze, etc.)
 3. **Set the schedule** — Ask when and how often. The user's timezone is ${userTimezone}. When they say a time (e.g., "every morning at 9am"), assume they mean their local time and convert to UTC for the cron expression. Always confirm the conversion: "9am ${userTimezone} = Xam UTC."
 4. **Choose the model** — Default to \`claude-sonnet-4-6\`. Tell the user which model you're defaulting to and ask if they want a different one.
-5. **Validate connections** — Infer what services the agent will need from the user's description. For example, if they say "check Datadog and Slack me errors," the agent needs both Datadog and Slack MCP connectors. Cross-reference with the connectors list above. If any are missing, warn the user and ask them to connect them in Moss settings first.${gitRepoUrl ? ` The default git repo is already set to \`${gitRepoUrl}\`. Ask the user if this is the right repo or if they need a different one.` : ' Ask which git repos the remote agent needs cloned into its environment.'}
+5. **Validate connections** — Infer what services the agent will need from the user's description. For example, if they say "check monitoring and Slack me errors," the agent needs both monitoring and Slack MCP connectors. Cross-reference with the connectors list above. If any are missing, warn the user and ask them to connect them in Moss settings first.${gitRepoUrl ? ` The default git repo is already set to \`${gitRepoUrl}\`. Ask the user if this is the right repo or if they need a different one.` : ' Ask which git repos the remote agent needs cloned into its environment.'}
 6. **Review and confirm** — Show the full configuration before creating. Let them adjust.
 7. **Create it** \u2014 Call \`${REMOTE_TRIGGER_TOOL_NAME}\` with \`action: "create"\` and show the result. The response includes the trigger ID.
 
@@ -404,17 +307,7 @@ export function registerScheduleRemoteAgentsSkill(): void {
       // would be factually wrong — getCurrentRepoHttpsUrl() below will
       // still populate gitRepoUrl with the GHE URL.
 
-      const connectors = getConnectedClaudeAIConnectors(
-        context.options.mcpClients,
-      )
-      if (connectors.length === 0) {
-        setupNotes.push(
-          `No MCP connectors — connect one in Moss settings if needed.`,
-        )
-      }
-
       const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-      const connectorsInfo = formatConnectorsInfo(connectors)
       const gitRepoUrl = await getCurrentRepoHttpsUrl()
       const lines = ['Available environments:']
       for (const env of environments) {
@@ -425,7 +318,6 @@ export function registerScheduleRemoteAgentsSkill(): void {
       const environmentsInfo = lines.join('\n')
       const prompt = buildPrompt({
         userTimezone,
-        connectorsInfo,
         gitRepoUrl,
         environmentsInfo,
         createdEnvironment,

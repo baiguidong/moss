@@ -473,7 +473,7 @@ export async function processResumedConversation(
     if (prepared) {
       switchSession(asSessionId(prepared.sessionId), prepared.projectDir)
       // Rename asciicast recording to match the resumed session ID so
-      // getSessionRecordingPaths() can discover it during /share
+      // getSessionRecordingPaths() can discover it.
       await renameRecordingForSession()
       await resetSessionFilePointer()
       restoreCostStateForSession(prepared.sessionId)

@@ -10,7 +10,7 @@ import { isAnalyticsDisabled } from 'src/services/analytics/config.js'
 import {
   checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
-} from 'src/services/analytics/growthbook.js'
+} from 'src/services/analytics/featureFlags.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -135,7 +135,7 @@ export async function toolToAPISchema(
 ): Promise<BetaToolUnion> {
   // Session-stable base schema: name, description, input_schema, strict,
   // eager_input_streaming. These are computed once per session and cached to
-  // prevent mid-session GrowthBook flips (tengu_tool_pear, tengu_fgts) or
+  // prevent mid-session feature flag flips (tengu_tool_pear, tengu_fgts) or
   // tool.prompt() drift from churning the serialized tool array bytes.
   // See toolSchemaCache.ts for rationale.
   //

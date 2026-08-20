@@ -18,30 +18,6 @@ import type {
 import type { SessionRuntimeInfo } from './backendTypes.js'
 
 type SqlRow = Record<string, unknown>
-export type ReportEventKind =
-  | 'telemetry_event'
-  | 'telemetry_metrics'
-  | 'feedback'
-  | 'transcript'
-  | 'bootstrap'
-  | 'remote_settings'
-  | 'policy_limits'
-
-export type ReportEventRecord = {
-  reportId: string
-  orgId: string | null
-  userId: string | null
-  kind: ReportEventKind
-  source: string | null
-  payload: unknown
-  createdAt: number
-}
-
-export type ReportEventSummary = {
-  kind: ReportEventKind
-  count: number
-  lastCreatedAt: number | null
-}
 
 function now(): number {
   return Date.now()
@@ -125,29 +101,6 @@ function mapAttempt(row: SqlRow): AttemptRecord {
   }
 }
 
-function parseReportPayload(value: unknown): unknown {
-  if (typeof value !== 'string' || value.trim() === '') {
-    return null
-  }
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return value
-  }
-}
-
-function mapReportEvent(row: SqlRow): ReportEventRecord {
-  return {
-    reportId: String(row.report_id),
-    orgId: typeof row.org_id === 'string' ? row.org_id : null,
-    userId: typeof row.user_id === 'string' ? row.user_id : null,
-    kind: String(row.kind) as ReportEventKind,
-    source: typeof row.source === 'string' ? row.source : null,
-    payload: parseReportPayload(row.payload_json),
-    createdAt: Number(row.created_at),
-  }
-}
-
 export class DirectConnectStore {
   readonly db: DatabaseSync
 
@@ -226,26 +179,12 @@ export class DirectConnectStore {
         created_at INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS report_events (
-        report_id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT,
-        kind TEXT NOT NULL,
-        source TEXT,
-        payload_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
       CREATE INDEX IF NOT EXISTS sessions_user_idx
         ON sessions (org_id, user_id, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS sessions_state_idx
         ON sessions (org_id, status, last_active_at DESC);
       CREATE INDEX IF NOT EXISTS attempts_session_idx
         ON session_attempts (session_id, generation DESC);
-      CREATE INDEX IF NOT EXISTS report_events_kind_created_idx
-        ON report_events (kind, created_at DESC);
-      CREATE INDEX IF NOT EXISTS report_events_org_created_idx
-        ON report_events (org_id, created_at DESC);
     `)
 
     // Migration: add assistant_name column if it doesn't exist
@@ -258,124 +197,6 @@ export class DirectConnectStore {
 
   close(): void {
     this.db.close()
-  }
-
-  addReportEvent(input: {
-    kind: ReportEventKind
-    orgId?: string | null
-    userId?: string | null
-    source?: string | null
-    payload: unknown
-  }): { reportId: string; createdAt: number } {
-    const reportId = randomUUID()
-    const createdAt = now()
-    this.db.prepare(`
-      INSERT INTO report_events (
-        report_id, org_id, user_id, kind, source, payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      reportId,
-      input.orgId ?? null,
-      input.userId ?? null,
-      input.kind,
-      input.source ?? null,
-      JSON.stringify(input.payload),
-      createdAt,
-    )
-    return { reportId, createdAt }
-  }
-
-  listReportEvents(input: {
-    orgId: string
-    userId?: string
-    kind?: ReportEventKind
-    before?: number
-    from?: number
-    to?: number
-    limit?: number
-  }): { events: ReportEventRecord[]; nextCursor: number | null } {
-    const clauses = ['org_id = ?']
-    const values: Array<string | number> = [input.orgId]
-
-    if (input.userId) {
-      clauses.push('user_id = ?')
-      values.push(input.userId)
-    }
-    if (input.kind) {
-      clauses.push('kind = ?')
-      values.push(input.kind)
-    }
-    if (input.before !== undefined) {
-      clauses.push('created_at < ?')
-      values.push(input.before)
-    }
-    if (input.from !== undefined) {
-      clauses.push('created_at >= ?')
-      values.push(input.from)
-    }
-    if (input.to !== undefined) {
-      clauses.push('created_at <= ?')
-      values.push(input.to)
-    }
-
-    const limit = Math.max(1, Math.min(input.limit ?? 50, 500))
-    const rows = this.db.prepare(`
-      SELECT *
-      FROM report_events
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY created_at DESC, report_id DESC
-      LIMIT ?
-    `).all(...values, limit + 1) as SqlRow[]
-
-    const hasMore = rows.length > limit
-    const pageRows = hasMore ? rows.slice(0, limit) : rows
-    const events = pageRows.map(mapReportEvent)
-    return {
-      events,
-      nextCursor: hasMore
-        ? Number(pageRows[pageRows.length - 1]?.created_at ?? null)
-        : null,
-    }
-  }
-
-  getReportEvent(orgId: string, reportId: string): ReportEventRecord | null {
-    const row = this.db.prepare(`
-      SELECT *
-      FROM report_events
-      WHERE org_id = ? AND report_id = ?
-      LIMIT 1
-    `).get(orgId, reportId) as SqlRow | undefined
-    return row ? mapReportEvent(row) : null
-  }
-
-  summarizeReportEvents(input: {
-    orgId: string
-    from?: number
-    to?: number
-  }): ReportEventSummary[] {
-    const clauses = ['org_id = ?']
-    const values: Array<string | number> = [input.orgId]
-    if (input.from !== undefined) {
-      clauses.push('created_at >= ?')
-      values.push(input.from)
-    }
-    if (input.to !== undefined) {
-      clauses.push('created_at <= ?')
-      values.push(input.to)
-    }
-    const rows = this.db.prepare(`
-      SELECT kind, COUNT(*) AS count, MAX(created_at) AS last_created_at
-      FROM report_events
-      WHERE ${clauses.join(' AND ')}
-      GROUP BY kind
-      ORDER BY kind ASC
-    `).all(...values) as SqlRow[]
-    return rows.map(row => ({
-      kind: String(row.kind) as ReportEventKind,
-      count: Number(row.count ?? 0),
-      lastCreatedAt:
-        row.last_created_at == null ? null : Number(row.last_created_at),
-    }))
   }
 
   registerServerInstance(host: string, pid = process.pid): ServerInstanceRecord {

@@ -1,9 +1,4 @@
-import axios from 'axios'
-import {
-  getMossServerApiUrl,
-  getMossServerAuthHeaders,
-} from 'src/constants/api.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import {
   getIsNonInteractiveSession,
   preferThirdPartyAuthentication,
@@ -13,7 +8,7 @@ import {
   logEvent,
 } from '../services/analytics/index.js'
 import { isInBundledMode } from './bundledMode.js'
-import { getGlobalConfig, saveGlobalConfig } from './config.js'
+import { saveGlobalConfig } from './config.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './envUtils.js'
 import {
@@ -23,7 +18,6 @@ import {
   parseUserSpecifiedModel,
 } from './model/model.js'
 import { getAPIProvider } from './model/providers.js'
-import { isEssentialTrafficOnly } from './privacyLevel.js'
 import {
   getInitialSettings,
   getSettingsForSource,
@@ -349,34 +343,8 @@ let orgStatus: FastModeOrgStatus = { status: 'pending' }
 const orgFastModeChange = createSignal<[orgEnabled: boolean]>()
 export const onOrgFastModeChanged = orgFastModeChange.subscribe
 
-type FastModeResponse = {
-  enabled: boolean
-  disabled_reason: FastModeDisabledReason | null
-}
-
-async function fetchFastModeStatus(): Promise<FastModeResponse> {
-  const endpoint = getMossServerApiUrl('/api/v1/fast-mode')
-  if (!endpoint) {
-    throw new Error('MOSS_SERVER_URL is not configured')
-  }
-  const headers = getMossServerAuthHeaders()
-  if (Object.keys(headers).length === 0) {
-    throw new Error('MOSS_SERVER_AUTH_TOKEN is not configured')
-  }
-  const response = await axios.get<FastModeResponse>(endpoint, {
-    headers,
-  })
-  return response.data
-}
-
-const PREFETCH_MIN_INTERVAL_MS = 30_000
-let lastPrefetchAt = 0
-let inflightPrefetch: Promise<void> | null = null
-
 /**
- * Resolve orgStatus from the persisted cache without making any API calls.
- * Used when startup prefetches are throttled to avoid hitting the network
- * while still making fast mode availability checks work.
+ * Resolve orgStatus without making server calls.
  */
 export function resolveFastModeStatusFromCache(): void {
   if (!isFastModeEnabled()) {
@@ -385,95 +353,14 @@ export function resolveFastModeStatusFromCache(): void {
   if (orgStatus.status !== 'pending') {
     return
   }
-  const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
-  orgStatus =
-    cachedEnabled
-      ? { status: 'enabled' }
-      : { status: 'disabled', reason: 'unknown' }
+  orgStatus = { status: 'enabled' }
 }
 
 export async function prefetchFastModeStatus(): Promise<void> {
-  // Skip network requests if nonessential traffic is disabled
-  if (isEssentialTrafficOnly()) {
-    return
-  }
-
   if (!isFastModeEnabled()) {
     return
   }
 
-  if (inflightPrefetch) {
-    logForDebugging(
-      'Fast mode prefetch in progress, returning in-flight promise',
-    )
-    return inflightPrefetch
-  }
-
-  if (
-    !getMossServerApiUrl('/api/v1/fast-mode') ||
-    Object.keys(getMossServerAuthHeaders()).length === 0
-  ) {
-    const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
-    orgStatus =
-      cachedEnabled
-        ? { status: 'enabled' }
-        : { status: 'disabled', reason: 'preference' }
-    return
-  }
-
-  const now = Date.now()
-  if (now - lastPrefetchAt < PREFETCH_MIN_INTERVAL_MS) {
-    logForDebugging('Skipping fast mode prefetch, fetched recently')
-    return
-  }
-  lastPrefetchAt = now
-
-  async function doFetch(): Promise<void> {
-    try {
-      const status = await fetchFastModeStatus()
-
-      const previousEnabled =
-        orgStatus.status !== 'pending'
-          ? orgStatus.status === 'enabled'
-          : getGlobalConfig().penguinModeOrgEnabled
-      orgStatus = status.enabled
-        ? { status: 'enabled' }
-        : {
-            status: 'disabled',
-            reason: status.disabled_reason ?? 'preference',
-          }
-      if (previousEnabled !== status.enabled) {
-        // When org disables fast mode, permanently turn off the user's fast mode setting
-        if (!status.enabled) {
-          updateSettingsForSource('userSettings', { fastMode: undefined })
-        }
-        saveGlobalConfig(current => ({
-          ...current,
-          penguinModeOrgEnabled: status.enabled,
-        }))
-        orgFastModeChange.emit(status.enabled)
-      }
-      logForDebugging(
-        `Org fast mode: ${status.enabled ? 'enabled' : `disabled (${status.disabled_reason ?? 'preference'})`}`,
-      )
-    } catch (err) {
-      // On failure: fall back to the cached penguinModeOrgEnabled value;
-      // if no positive cache, disable with network_error reason.
-      const cachedEnabled = getGlobalConfig().penguinModeOrgEnabled === true
-      orgStatus =
-        cachedEnabled
-          ? { status: 'enabled' }
-          : { status: 'disabled', reason: 'network_error' }
-      logForDebugging(
-        `Failed to fetch org fast mode status, defaulting to ${orgStatus.status === 'enabled' ? 'enabled (cached)' : 'disabled (network_error)'}: ${err}`,
-        { level: 'error' },
-      )
-      logEvent('tengu_org_penguin_mode_fetch_failed', {})
-    } finally {
-      inflightPrefetch = null
-    }
-  }
-
-  inflightPrefetch = doFetch()
-  return inflightPrefetch
+  orgStatus = { status: 'enabled' }
+  return
 }

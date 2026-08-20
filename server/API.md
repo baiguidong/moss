@@ -43,7 +43,7 @@ prepare 会把随代码变化的运行产物复制到 server root：
 - `~/.moss/server/skills/`
 - `~/.moss/server/assistants/`
 
-服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。Telemetry、metrics、feedback 和 transcript 分享的 Moss Server 上报地址属于客户端配置，写在桌面端 `~/.moss/settings.json` 的 `reporting` 下，不写入 server 端系统设置。
+服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
 
 只准备但不启动：
 
@@ -151,83 +151,7 @@ Authorization: Bearer <access_token>
 
 ## Health
 
-## Reports
-
-上报数据先只做原始存储，统一写入 SQLite `report_events` 表。读取接口仅用于排查和后续 UI 对接，要求 `admin:settings` 权限。
-写入接口要求 `Authorization: Bearer ...`，Bearer 值可以是 access token，也可以是 Moss Server API key；写入只要求认证通过，读取 reports 需要 `admin:settings`。
-
-### 写入接口
-
-- `POST /api/v1/telemetry/events/batch`
-- `POST /api/v1/telemetry/metrics`
-- `POST /api/v1/feedback`
-- `POST /api/v1/transcripts/share`
-- `GET /api/v1/bootstrap`
-- `GET /api/v1/settings/remote-managed`
-- `GET /api/v1/policy-limits`
-
-写入后会返回生成的 `report_id`，`feedback` 返回 `feedback_id`，`transcript` 返回 `transcript_id`。
-
-配置类读取接口当前返回空配置/空策略，同时记录一次读取事件，便于后续从 Admin UI 观察客户端实际调用情况。
-
-### GET `/api/v1/reports/summary`
-
-按上报类型汇总数量。
-
-Query:
-
-- `from`: 可选，毫秒时间戳
-- `to`: 可选，毫秒时间戳
-
-Response:
-
-```json
-{
-  "summaries": [
-    {
-      "kind": "feedback",
-      "count": 3,
-      "lastCreatedAt": 1787050000000
-    }
-  ]
-}
-```
-
-### GET `/api/v1/reports/events`
-
-分页查看原始上报数据。
-
-Query:
-
-- `kind`: 可选，`telemetry_event` / `telemetry_metrics` / `feedback` / `transcript` / `bootstrap` / `remote_settings` / `policy_limits`
-- `user_id`: 可选
-- `from`: 可选，毫秒时间戳
-- `to`: 可选，毫秒时间戳
-- `before`: 可选，上一页返回的 `nextCursor`
-- `limit`: 可选，默认 `50`，最大 `500`
-
-Response:
-
-```json
-{
-  "events": [
-    {
-      "reportId": "uuid",
-      "orgId": "org-id",
-      "userId": "user-id",
-      "kind": "feedback",
-      "source": "feedback",
-      "payload": {},
-      "createdAt": 1787050000000
-    }
-  ],
-  "nextCursor": null
-}
-```
-
-### GET `/api/v1/reports/events/:report_id`
-
-查看单条原始上报数据。
+## Client Config
 
 ### GET `/api/v1/bootstrap`
 
@@ -236,8 +160,7 @@ Response:
 ```json
 {
   "client_data": null,
-  "additional_model_options": [],
-  "report_id": "uuid"
+  "additional_model_options": []
 }
 ```
 
@@ -249,8 +172,7 @@ Response:
 {
   "uuid": "org-id:default",
   "checksum": "sha256:...",
-  "settings": {},
-  "report_id": "uuid"
+  "settings": {}
 }
 ```
 
@@ -260,8 +182,7 @@ Response:
 
 ```json
 {
-  "restrictions": {},
-  "report_id": "uuid"
+  "restrictions": {}
 }
 ```
 

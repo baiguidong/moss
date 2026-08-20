@@ -23,7 +23,7 @@ import { writeFile } from 'fs/promises'
 import isEqual from 'lodash-es/isEqual.js'
 import memoize from 'lodash-es/memoize.js'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'path'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import { logForDebugging } from '../debug.js'
 import { isEnvTruthy } from '../envUtils.js'
 import {
@@ -182,7 +182,7 @@ export function getDeclaredMarketplaces(): Record<string, DeclaredMarketplace> {
   }
 
   // Lowest precedence: implicit < --add-dir < merged settings.
-  // An explicit extraKnownMarketplaces entry for claude-plugins-official
+  // An explicit extraKnownMarketplaces entry for the default Moss marketplace
   // in --add-dir or settings wins.
   return {
     ...implicit,
@@ -2441,7 +2441,7 @@ export async function refreshMarketplace(
       }
       // GCS failed — fall through to git ONLY if the kill-switch allows.
       // Default true (backend write perms are pending as of inc-5046); flip
-      // to false via GrowthBook once the backend is confirmed live so new
+      // to false via feature flag once the backend is confirmed live so new
       // clients NEVER hit GitHub for the official marketplace.
       if (
         !getFeatureValue_CACHED_MAY_BE_STALE(
@@ -2532,10 +2532,7 @@ export async function refreshMarketplace(
           source.source === 'github'
             ? source.repo
             : redactUrlCredentials(source.url)
-        const reason =
-          name === 'claude-code-plugins'
-            ? `We've deprecated "claude-code-plugins" in favor of "claude-plugins-official".`
-            : `This marketplace may have been deprecated or moved to a new location.`
+        const reason = `This marketplace may have been deprecated or moved to a new location.`
         throw new Error(
           `The marketplace.json file is no longer present in this repository.\n\n` +
             `${reason}\n` +

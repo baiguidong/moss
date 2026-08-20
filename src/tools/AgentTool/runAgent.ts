@@ -13,8 +13,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
-import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
 import {
   connectToServer,
@@ -42,7 +41,6 @@ import type {
 } from '../../types/message.js'
 import { createAttachmentMessage } from '../../utils/attachments.js'
 import { AbortError } from '../../utils/errors.js'
-import { getDisplayPath } from '../../utils/file.js'
 import {
   cloneFileStateCache,
   createFileStateCacheWithSizeLimit,
@@ -356,13 +354,6 @@ export async function* runAgent({
   if (isPerfettoTracingEnabled()) {
     const parentId = toolUseContext.agentId ?? getSessionId()
     registerPerfettoAgent(agentId, agentDefinition.agentType, parentId)
-  }
-
-  // Log API calls path for subagents (ant-only)
-  if (process.env.USER_TYPE === 'ant') {
-    logForDebugging(
-      `[Subagent ${agentDefinition.agentType}] API calls: ${getDisplayPath(getDumpPromptsPath(agentId))}`,
-    )
   }
 
   // Handle message forking for context sharing

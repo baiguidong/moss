@@ -148,20 +148,8 @@ export const McpServerConfigForProcessTransportSchema = lazySchema(() =>
   ]),
 )
 
-export const McpClaudeAIProxyServerConfigSchema = lazySchema(() =>
-  z.object({
-    type: z.literal('claudeai-proxy'),
-    url: z.string(),
-    id: z.string(),
-  }),
-)
-
-// Broader config type for status responses (includes claudeai-proxy which is output-only)
 export const McpServerStatusConfigSchema = lazySchema(() =>
-  z.union([
-    McpServerConfigForProcessTransportSchema(),
-    McpClaudeAIProxyServerConfigSchema(),
-  ]),
+  McpServerConfigForProcessTransportSchema(),
 )
 
 export const McpServerStatusSchema = lazySchema(() =>
@@ -188,9 +176,7 @@ export const McpServerStatusSchema = lazySchema(() =>
       scope: z
         .string()
         .optional()
-        .describe(
-          'Configuration scope (e.g., project, user, local, claudeai, managed)',
-        ),
+        .describe('Configuration scope (e.g., project, user, local, managed)'),
       tools: z
         .array(
           z.object({

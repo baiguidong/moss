@@ -1,4 +1,3 @@
-import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import type { Attributes, Meter, MetricOptions } from '@opentelemetry/api'
 import type { logs } from '@opentelemetry/api-logs'
 import type { LoggerProvider } from '@opentelemetry/sdk-logs'
@@ -105,12 +104,6 @@ type State = {
   // Agent color state
   agentColorMap: Map<string, AgentColorName>
   agentColorIndex: number
-  // Last API request for bug reports
-  lastAPIRequest: Omit<BetaMessageStreamParams, 'messages'> | null
-  // Messages from the last API request (ant-only; reference, not clone).
-  // Captures the exact post-compaction, CLAUDE.md-injected message set sent
-  // to the API so /share's serialized_conversation.json reflects reality.
-  lastAPIRequestMessages: BetaMessageStreamParams['messages'] | null
   // In-memory error log for recent errors
   inMemoryErrorLog: Array<{ error: string; timestamp: string }>
   // Session-only plugins from --plugin-dir flag
@@ -195,7 +188,7 @@ type State = {
   additionalDirectoriesForClaudeMd: string[]
   // Dir containing the session's `.jsonl`; null = derive from originalCwd.
   sessionProjectDir: string | null
-  // Cached prompt cache 1h TTL allowlist from GrowthBook (session-stable)
+  // Cached prompt cache 1h TTL allowlist from feature flag (session-stable)
   promptCache1hAllowlist: string[] | null
   // Cached 1h TTL user eligibility (session-stable). Latched on first
   // evaluation so mid-session overage flips don't change the cache_control
@@ -207,7 +200,7 @@ type State = {
   fastModeHeaderLatched: boolean | null
   // Sticky-on latch for the cache-editing beta header. Once cached
   // microcompact is first enabled, keep sending the header so mid-session
-  // GrowthBook/settings toggles don't bust the prompt cache.
+  // feature flag/settings toggles don't bust the prompt cache.
   cacheEditingHeaderLatched: boolean | null
   // Sticky-on latch for clearing thinking from prior tool loops. Triggered
   // when >1h since last API call (confirmed cache miss — no cache-hit
@@ -308,9 +301,6 @@ function getInitialState(): State {
     // Agent color state
     agentColorMap: new Map(),
     agentColorIndex: 0,
-    // Last API request for bug reports
-    lastAPIRequest: null,
-    lastAPIRequestMessages: null,
     // In-memory error log for recent errors
     inMemoryErrorLog: [],
     // Session-only plugins from --plugin-dir flag
@@ -362,7 +352,7 @@ function getInitialState(): State {
     additionalDirectoriesForClaudeMd: [],
     // Session project dir (null = derive from originalCwd)
     sessionProjectDir: null,
-    // Prompt cache 1h allowlist (null = not yet fetched from GrowthBook)
+    // Prompt cache 1h allowlist (null = not yet fetched from feature flag)
     promptCache1hAllowlist: null,
     // Prompt cache 1h eligibility (null = not yet evaluated)
     promptCache1hEligible: null,
@@ -1220,31 +1210,6 @@ export function getApiKeyFromFd(): string | null | undefined {
 
 export function setApiKeyFromFd(key: string | null): void {
   STATE.apiKeyFromFd = key
-}
-
-export function setLastAPIRequest(
-  params: Omit<BetaMessageStreamParams, 'messages'> | null,
-): void {
-  STATE.lastAPIRequest = params
-}
-
-export function getLastAPIRequest(): Omit<
-  BetaMessageStreamParams,
-  'messages'
-> | null {
-  return STATE.lastAPIRequest
-}
-
-export function setLastAPIRequestMessages(
-  messages: BetaMessageStreamParams['messages'] | null,
-): void {
-  STATE.lastAPIRequestMessages = messages
-}
-
-export function getLastAPIRequestMessages():
-  | BetaMessageStreamParams['messages']
-  | null {
-  return STATE.lastAPIRequestMessages
 }
 
 export function addToInMemoryErrorLog(errorInfo: {

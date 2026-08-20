@@ -2,7 +2,7 @@ import { c as _c } from "react/compiler-runtime";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useTheme } from '../../../ink.js';
 import { useKeybinding } from '../../../keybindings/useKeybinding.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../../services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../../services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../../services/analytics/index.js';
 import { sanitizeToolNameForAnalytics } from '../../../services/analytics/metadata.js';
 import { BashTool } from '../../../tools/BashTool/BashTool.js';

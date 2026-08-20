@@ -2,7 +2,7 @@ import memoize from 'lodash-es/memoize.js'
 import {
   checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
-} from 'src/services/analytics/growthbook.js'
+} from 'src/services/analytics/featureFlags.js'
 import { getIsNonInteractiveSession, getSdkBetas } from '../bootstrap/state.js'
 import {
   BEDROCK_EXTRA_PARAMS_HEADERS,
@@ -171,7 +171,7 @@ export function shouldIncludeFirstPartyOnlyBetas(): boolean {
 
 /**
  * Global-scope prompt caching is firstParty only. Foundry is excluded because
- * GrowthBook never bucketed Foundry users into the rollout experiment — the
+ * feature flag never bucketed Foundry users into the rollout experiment — the
  * treatment data is firstParty-only.
  */
 export function shouldUseGlobalCacheScope(): boolean {

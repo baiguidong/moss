@@ -1,14 +1,14 @@
 // Critical system constants extracted to break circular dependencies
 
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logForDebugging } from '../utils/debug.js'
 import { isEnvDefinedFalsy } from '../utils/envUtils.js'
 import { getAPIProvider } from '../utils/model/providers.js'
 import { getWorkload } from '../utils/workloadContext.js'
 
-const DEFAULT_PREFIX = `You are Claude Code, Anthropic's official CLI for Claude.`
-const AGENT_SDK_CLAUDE_CODE_PRESET_PREFIX = `You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.`
-const AGENT_SDK_PREFIX = `You are a Claude agent, built on Anthropic's Claude Agent SDK.`
+const DEFAULT_PREFIX = `You are Moss, an AI coding agent.`
+const AGENT_SDK_CLAUDE_CODE_PRESET_PREFIX = `You are Moss, an AI coding agent running within an agent SDK.`
+const AGENT_SDK_PREFIX = `You are a Moss agent.`
 
 const CLI_SYSPROMPT_PREFIX_VALUES = [
   DEFAULT_PREFIX,
@@ -46,7 +46,7 @@ export function getCLISyspromptPrefix(options?: {
 
 /**
  * Check if attribution header is enabled.
- * Enabled by default, can be disabled via env var or GrowthBook killswitch.
+ * Enabled by default, can be disabled via env var or feature flag killswitch.
  */
 function isAttributionHeaderEnabled(): boolean {
   if (isEnvDefinedFalsy(process.env.CLAUDE_CODE_ATTRIBUTION_HEADER)) {
@@ -58,7 +58,7 @@ function isAttributionHeaderEnabled(): boolean {
 /**
  * Get attribution header for API requests.
  * Returns a header string with cc_version (including fingerprint) and cc_entrypoint.
- * Enabled by default, can be disabled via env var or GrowthBook killswitch.
+ * Enabled by default, can be disabled via env var or feature flag killswitch.
  */
 export function getAttributionHeader(fingerprint: string): string {
   if (!isAttributionHeaderEnabled()) {

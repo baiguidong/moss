@@ -3,14 +3,10 @@ import addDir from './commands/add-dir/index.js'
 import autofixPr from './commands/autofix-pr/index.js'
 import backfillSessions from './commands/backfill-sessions/index.js'
 import btw from './commands/btw/index.js'
-import goodClaude from './commands/good-claude/index.js'
-import issue from './commands/issue/index.js'
-import feedback from './commands/feedback/index.js'
 import clear from './commands/clear/index.js'
 import color from './commands/color/index.js'
 import commit from './commands/commit.js'
 import copy from './commands/copy/index.js'
-import desktop from './commands/desktop/index.js'
 import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
 import config from './commands/config/index.js'
@@ -25,16 +21,13 @@ import ide from './commands/ide/index.js'
 import init from './commands/init.js'
 import initVerifiers from './commands/init-verifiers.js'
 import keybindings from './commands/keybindings/index.js'
-import installSlackApp from './commands/install-slack-app/index.js'
 import mcp from './commands/mcp/index.js'
-import mobile from './commands/mobile/index.js'
 import onboarding from './commands/onboarding/index.js'
 import pr_comments from './commands/pr_comments/index.js'
 import rename from './commands/rename/index.js'
 import resume from './commands/resume/index.js'
 import review, { ultrareview } from './commands/review.js'
 import session from './commands/session/index.js'
-import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
@@ -64,11 +57,6 @@ const voiceCommand = feature('VOICE_MODE')
 const forceSnip = feature('HISTORY_SNIP')
   ? require('./commands/force-snip.js').default
   : null
-const workflowsCmd = feature('WORKFLOW_SCRIPTS')
-  ? (
-      require('./commands/workflows/index.js') as typeof import('./commands/workflows/index.js')
-    ).default
-  : null
 const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
   ? (
       require('./services/skillSearch/localSearch.js') as typeof import('./services/skillSearch/localSearch.js')
@@ -88,8 +76,6 @@ const buddy = feature('BUDDY')
     ).default
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
-import thinkback from './commands/thinkback/index.js'
-import thinkbackPlay from './commands/thinkback-play/index.js'
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
 import fast from './commands/fast/index.js'
@@ -112,8 +98,6 @@ import {
 import antTrace from './commands/ant-trace/index.js'
 import perfIssue from './commands/perf-issue/index.js'
 import sandboxToggle from './commands/sandbox-toggle/index.js'
-import chrome from './commands/chrome/index.js'
-import stickers from './commands/stickers/index.js'
 import advisor from './commands/advisor.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
@@ -144,21 +128,6 @@ import remoteEnv from './commands/remote-env/index.js'
 import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
-// insights.ts is 113KB (3200 lines, includes diffLines/html rendering). Lazy
-// shim defers the heavy module until /insights is actually invoked.
-const usageReport: Command = {
-  type: 'prompt',
-  name: 'insights',
-  description: 'Generate a report analyzing your Claude Code sessions',
-  contentLength: 0,
-  progressMessage: 'analyzing your sessions',
-  source: 'builtin',
-  async getPromptForCommand(args, context) {
-    const real = (await import('./commands/insights.js')).default
-    if (real.type !== 'prompt') throw new Error('unreachable')
-    return real.getPromptForCommand(args, context)
-  },
-}
 import debugToolCall from './commands/debug-tool-call/index.js'
 import { getSettingSourceName } from './utils/settings/constants.js'
 import {
@@ -186,8 +155,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   commit,
   commitPushPr,
   ctx_viz,
-  goodClaude,
-  issue,
   initVerifiers,
   ...(forceSnip ? [forceSnip] : []),
   mockLimits,
@@ -196,7 +163,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   resetLimits,
   resetLimitsNonInteractive,
   onboarding,
-  share,
   summary,
   teleport,
   antTrace,
@@ -215,13 +181,11 @@ const COMMANDS = memoize((): Command[] => [
   agents,
   branch,
   btw,
-  chrome,
   clear,
   color,
   compact,
   config,
   copy,
-  desktop,
   context,
   contextNonInteractive,
   cost,
@@ -236,10 +200,8 @@ const COMMANDS = memoize((): Command[] => [
   ide,
   init,
   keybindings,
-  installSlackApp,
   mcp,
   memory,
-  mobile,
   model,
   outputStyle,
   remoteEnv,
@@ -253,24 +215,19 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   statusline,
-  stickers,
   tag,
   theme,
-  feedback,
   review,
   ultrareview,
   rewind,
   securityReview,
   terminalSetup,
   usage,
-  usageReport,
   vim,
   ...(forkCmd ? [forkCmd] : []),
   ...(buddy ? [buddy] : []),
   ...(proactive ? [proactive] : []),
   ...(voiceCommand ? [voiceCommand] : []),
-  thinkback,
-  thinkbackPlay,
   permissions,
   plan,
   privacySettings,
@@ -278,7 +235,6 @@ const COMMANDS = memoize((): Command[] => [
   exportCommand,
   sandboxToggle,
   tasks,
-  ...(workflowsCmd ? [workflowsCmd] : []),
   ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO
     ? INTERNAL_ONLY_COMMANDS
     : []),
@@ -560,12 +516,9 @@ export const REMOTE_SAFE_COMMANDS: Set<Command> = new Set([
   usage, // Show usage info
   copy, // Copy last message
   btw, // Quick note
-  feedback, // Send feedback
   plan, // Plan mode toggle
   keybindings, // Keybinding management
   statusline, // Status line toggle
-  stickers, // Stickers
-  mobile, // Mobile QR code
 ])
 
 /**

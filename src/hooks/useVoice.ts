@@ -35,7 +35,7 @@ const DEFAULT_STT_LANGUAGE = 'en'
 // the voice_stream Deepgram backend.  Keys must be lowercase.
 //
 // This list must be a SUBSET of the server-side supported_language_codes
-// allowlist (GrowthBook: speech_to_text_voice_stream_config).
+// allowlist (feature flag: speech_to_text_voice_stream_config).
 // If the CLI sends a code the server rejects, the WebSocket closes with
 // 1008 "Unsupported language" and voice breaks.  Unsupported languages
 // fall back to DEFAULT_STT_LANGUAGE so recording still works.
@@ -88,7 +88,7 @@ const LANGUAGE_NAME_TO_CODE: Record<string, string> = {
   norsk: 'no',
 }
 
-// Subset of the GrowthBook speech_to_text_voice_stream_config allowlist.
+// Subset of the feature flag speech_to_text_voice_stream_config allowlist.
 // Sending a code not in the server allowlist closes the connection.
 const SUPPORTED_LANGUAGE_CODES = new Set([
   'en',
@@ -501,7 +501,7 @@ export function useVoice({
           } else if (!hadAudioSignal) {
             // Distinguish silent mic (capture issue) from speech not recognized.
             onErrorRef.current?.(
-              'No audio detected from microphone. Check that the correct input device is selected and that Claude Code has microphone access.',
+              'No audio detected from microphone. Check that the correct input device is selected and that Moss has microphone access.',
             )
           } else {
             onErrorRef.current?.('No speech detected.')

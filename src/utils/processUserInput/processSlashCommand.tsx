@@ -10,7 +10,6 @@ import { addInvokedSkill, getSessionId } from '../../bootstrap/state.js';
 import { COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG } from '../../constants/xml.js';
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, type AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED, logEvent } from '../../services/analytics/index.js';
-import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js';
 import { buildPostCompactMessages } from '../../services/compact/compact.js';
 import { resetMicrocompactState } from '../../services/compact/microCompact.js';
 import type { Progress as AgentProgress } from '../../tools/AgentTool/AgentTool.js';
@@ -22,7 +21,6 @@ import { createAttachmentMessage, getAttachmentMessages } from '../attachments.j
 import { logForDebugging } from '../debug.js';
 import { isEnvTruthy } from '../envUtils.js';
 import { AbortError, MalformedCommandError } from '../errors.js';
-import { getDisplayPath } from '../file.js';
 import { extractResultText, prepareForkedCommandContext } from '../forkedAgent.js';
 import { getFsImplementation } from '../fsOperations.js';
 import { isFullscreenEnvEnabled } from '../fullscreen.js';
@@ -53,11 +51,11 @@ type SlashCommandResult = ProcessUserInputBaseResult & {
 
 const HELP_CATEGORIES: Record<string, string[]> = {
   'Basic': ['help', 'clear', 'compact', 'status', 'cost', 'version', 'exit', 'quit'],
-  'Session': ['resume', 'branch', 'rename', 'session', 'tag', 'export', 'copy', 'share'],
-  'Model & Effort': ['model', 'effort', 'fast', 'thinkback-play'],
+  'Session': ['resume', 'branch', 'rename', 'session', 'tag', 'export', 'copy'],
+  'Model & Effort': ['model', 'effort', 'fast'],
   'Configuration': ['config', 'mcp', 'permissions', 'context', 'memory', 'add-dir', 'theme', 'color', 'output-style', 'terminal-setup', 'privacy-settings'],
   'Tools & Skills': ['skills', 'doctor', 'diff', 'review', 'commit', 'plan', 'ultraplan', 'btw', 'tasks', 'agents', 'plugin'],
-  'System': ['install', 'hooks', 'ide', 'chrome', 'desktop', 'mobile', 'remote-env', 'sandbox', 'usage'],
+  'System': ['install', 'hooks', 'ide', 'desktop', 'remote-env', 'sandbox', 'usage'],
 }
 
 function formatHelpText(commands: Command[]): string {
@@ -307,11 +305,6 @@ async function executeForkedSlashCommand(command: CommandBase & PromptCommand, a
   }
   let resultText = extractResultText(agentMessages, 'Command completed');
   logForDebugging(`Forked slash command /${command.name} completed with agent ${agentId}`);
-
-  // Prepend debug log for ant users so it appears inside the command output
-  if ("external" === 'ant') {
-    resultText = `[ANT-ONLY] API calls: ${getDisplayPath(getDumpPromptsPath(agentId))}\n${resultText}`;
-  }
 
   // Return the result as a user message (simulates the agent's output)
   const messages: UserMessage[] = [createUserMessage({
@@ -604,7 +597,7 @@ async function getMessagesForSlashCommand(commandName: string, args: string, set
           precedingInputBlocks
         })
       }), createUserMessage({
-        content: `This skill can only be invoked by Claude, not directly by users. Ask Claude to use the "${commandName}" skill for you.`
+        content: `This skill can only be invoked by Moss, not directly by users. Ask Moss to use the "${commandName}" skill for you.`
       })],
       shouldQuery: false,
       command

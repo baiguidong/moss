@@ -91,19 +91,15 @@ export const init = memoize(async (): Promise<void> => {
     setupGracefulShutdown()
     profileCheckpoint('init_after_graceful_shutdown')
 
-    // Initialize 1P event logging (no security concerns, but deferred to avoid
-    // loading OpenTelemetry sdk-logs at startup). growthbook.js is already in
-    // the module cache by this point (firstPartyEventLogger imports it), so the
-    // second dynamic import adds no load cost.
+    // Keep the 1P event logging hooks wired as no-ops after server-side report
+    // ingestion removal. feature flag refresh handling remains harmless and avoids
+    // touching call sites that still import logEventTo1P.
     void Promise.all([
       import('../services/analytics/firstPartyEventLogger.js'),
-      import('../services/analytics/growthbook.js'),
-    ]).then(([fp, gb]) => {
+      import('../services/analytics/featureFlags.js'),
+    ]).then(([fp, featureFlags]) => {
       fp.initialize1PEventLogging()
-      // Rebuild the logger provider if tengu_1p_event_batch_config changes
-      // mid-session. Change detection (isEqual) is inside the handler so
-      // unchanged refreshes are no-ops.
-      gb.onGrowthBookRefresh(() => {
+      featureFlags.onFeatureFlagsRefresh(() => {
         void fp.reinitialize1PEventLoggingIfConfigChanged()
       })
     })
@@ -159,7 +155,7 @@ export const init = memoize(async (): Promise<void> => {
 
     // CCR upstreamproxy: start the local CONNECT relay so agent subprocesses
     // can reach org-configured upstreams with credential injection. Gated on
-    // CLAUDE_CODE_REMOTE + GrowthBook; fail-open on any error. Lazy import so
+    // CLAUDE_CODE_REMOTE + feature flag; fail-open on any error. Lazy import so
     // non-CCR startups don't pay the module load. The getUpstreamProxyEnv
     // function is registered with subprocessEnv.ts so subprocess spawning can
     // inject proxy vars without a static import of the upstreamproxy module.

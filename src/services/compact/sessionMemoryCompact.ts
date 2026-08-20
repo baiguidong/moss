@@ -20,7 +20,7 @@ import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
 import { extractDiscoveredToolNames } from '../../utils/toolSearch.js'
 import {
   getDynamicConfig_BLOCKS_ON_INIT,
-} from '../analytics/growthbook.js'
+} from '../analytics/featureFlags.js'
 import { logEvent } from '../analytics/index.js'
 import {
   isSessionMemoryEmpty,
@@ -99,7 +99,7 @@ export function resetSessionMemoryCompactConfig(): void {
 }
 
 /**
- * Initialize configuration from remote config (GrowthBook).
+ * Initialize configuration from remote config (feature flag).
  * Only fetches once per session - subsequent calls return immediately.
  */
 async function initSessionMemoryCompactConfig(): Promise<void> {
@@ -108,7 +108,7 @@ async function initSessionMemoryCompactConfig(): Promise<void> {
   }
   configInitialized = true
 
-  // Load config from GrowthBook, merging with defaults
+  // Load config from feature flag, merging with defaults
   const remoteConfig = await getDynamicConfig_BLOCKS_ON_INIT<
     Partial<SessionMemoryCompactConfig>
   >('tengu_sm_compact_config', {})

@@ -76,8 +76,11 @@ export function getAttributionTexts(): AttributionTexts {
     isInternalModelRepoCached() || isKnownPublicModel
       ? getPublicModelName(model)
       : 'Claude Opus 4.6'
-  const defaultAttribution = '🤖 Generated with Claude Code'
-  const defaultCommit = `Co-Authored-By: ${modelName} <noreply@anthropic.com>`
+  const attributionName = process.env.MOSS_ATTRIBUTION_NAME?.trim() || modelName
+  const attributionEmail =
+    process.env.MOSS_ATTRIBUTION_EMAIL?.trim() || 'noreply@moss.local'
+  const defaultAttribution = 'Generated with Moss'
+  const defaultCommit = `Co-Authored-By: ${attributionName} <${attributionEmail}>`
 
   const settings = getInitialSettings()
 

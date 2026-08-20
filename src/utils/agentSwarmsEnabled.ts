@@ -1,4 +1,4 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { isEnvTruthy } from './envUtils.js'
 
 /**
@@ -19,7 +19,7 @@ function isAgentTeamsFlagSet(): boolean {
  * Ant builds: always enabled.
  * External builds require both:
  * 1. Opt-in via CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var OR --agent-teams flag
- * 2. GrowthBook gate 'tengu_amber_flint' enabled (killswitch)
+ * 2. feature flag gate 'tengu_amber_flint' enabled (killswitch)
  */
 export function isAgentSwarmsEnabled(): boolean {
   // Ant: always on

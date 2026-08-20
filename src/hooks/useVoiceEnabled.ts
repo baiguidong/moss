@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useAppState } from '../state/AppState.js'
 import {
   hasVoiceAuth,
-  isVoiceGrowthBookEnabled,
+  isVoiceFeatureFlagEnabled,
 } from '../voice/voiceModeEnabled.js'
 
 /**
@@ -20,5 +20,5 @@ export function useVoiceEnabled(): boolean {
   const authVersion = useAppState(s => s.authVersion)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const authed = useMemo(hasVoiceAuth, [authVersion])
-  return userIntent && authed && isVoiceGrowthBookEnabled()
+  return userIntent && authed && isVoiceFeatureFlagEnabled()
 }

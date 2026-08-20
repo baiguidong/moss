@@ -35,7 +35,7 @@ import { getInitialSettings, getSettingsForSource, updateSettingsForSource } fro
 import { DEFAULT_OUTPUT_STYLE_NAME } from 'src/constants/outputStyles.js';
 import { isEnvTruthy, isRunningOnHomespace } from 'src/utils/envUtils.js';
 import type { LocalJSXCommandContext, CommandResultDisplay } from '../../commands.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js';
 import { getCliTeammateModeOverride, clearCliTeammateModeOverride } from '../../utils/swarm/backends/teammateModeSnapshot.js';
 import { getHardcodedTeammateModelFallback } from '../../utils/swarm/teammateModel.js';
@@ -718,25 +718,7 @@ export function Config({
         source: 'config_panel' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
     }
-  }] : []), {
-    id: 'claudeInChromeDefaultEnabled',
-    label: 'Claude in Chrome enabled by default',
-    value: globalConfig.claudeInChromeDefaultEnabled ?? true,
-    type: 'boolean' as const,
-    onChange(enabled_5: boolean) {
-      saveGlobalConfig(current_18 => ({
-        ...current_18,
-        claudeInChromeDefaultEnabled: enabled_5
-      }));
-      setGlobalConfig({
-        ...getGlobalConfig(),
-        claudeInChromeDefaultEnabled: enabled_5
-      });
-      logEvent('tengu_claude_in_chrome_setting_changed', {
-        enabled: enabled_5
-      });
-    }
-  },
+  }] : []),
   // Teammate mode (only shown when agent swarms are enabled)
   ...(isAgentSwarmsEnabled() ? (() => {
     const cliOverride = getCliTeammateModeOverride();
@@ -901,7 +883,7 @@ export function Config({
     });
     // Check for API key changes
     // On homespace, ANTHROPIC_API_KEY is preserved in process.env for child
-    // processes but ignored by Claude Code itself (see auth.ts).
+    // processes but ignored by Moss itself (see auth.ts).
     const effectiveApiKey = isRunningOnHomespace() ? undefined : process.env.ANTHROPIC_API_KEY;
     const initialUsingCustomKey = Boolean(effectiveApiKey && initialConfig.current.customApiKeyResponses?.approved?.includes(normalizeApiKeyForConfig(effectiveApiKey)));
     const currentUsingCustomKey = Boolean(effectiveApiKey && globalConfig.customApiKeyResponses?.approved?.includes(normalizeApiKeyForConfig(effectiveApiKey)));

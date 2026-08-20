@@ -2,7 +2,7 @@ import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { isAbsolute, join, normalize, sep } from 'path'
 import { getIsNonInteractiveSession } from '../bootstrap/state.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
   getMossConfigHomeDir,
   isEnvDefinedFalsy,

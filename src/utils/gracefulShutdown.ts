@@ -29,7 +29,6 @@ import {
   supportsTabStatus,
   wrapForMultiplexer,
 } from '../ink/termio/osc.js'
-import { shutdownDatadog } from '../services/analytics/datadog.js'
 import { shutdown1PEventLogging } from '../services/analytics/firstPartyEventLogger.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -498,12 +497,10 @@ export async function gracefulShutdown(
     })
   }
 
-  // Flush analytics — capped at 500ms. Previously unbounded: the 1P exporter
-  // awaits all pending axios POSTs (10s each), eating the full failsafe budget.
-  // Lost analytics on slow networks are acceptable; a hanging exit is not.
+  // Flush local analytics compatibility hooks if any were initialized.
   try {
     await Promise.race([
-      Promise.all([shutdown1PEventLogging(), shutdownDatadog()]),
+      shutdown1PEventLogging(),
       sleep(500),
     ])
   } catch {

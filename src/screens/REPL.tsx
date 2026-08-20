@@ -95,13 +95,6 @@ const useVoiceIntegration: typeof import('../hooks/useVoiceIntegration.js').useV
   resetAnchor: () => {}
 });
 const VoiceKeybindingHandler: typeof import('../hooks/useVoiceIntegration.js').VoiceKeybindingHandler = feature('VOICE_MODE') ? require('../hooks/useVoiceIntegration.js').VoiceKeybindingHandler : () => null;
-// Frustration detection is ant-only (dogfooding). Conditional require so external
-// builds eliminate the module entirely (including its two O(n) useMemos that run
-// on every messages change, plus the GrowthBook fetch).
-const useFrustrationDetection: typeof import('../components/FeedbackSurvey/useFrustrationDetection.js').useFrustrationDetection = "external" === 'ant' ? require('../components/FeedbackSurvey/useFrustrationDetection.js').useFrustrationDetection : () => ({
-  state: 'closed',
-  handleTranscriptSelect: () => {}
-});
 // Ant-only org warning. Conditional require so the org UUID list is
 // eliminated from external builds (one UUID is on excluded-strings).
 const useAntOrgWarningNotification: typeof import('../hooks/notifs/useAntOrgWarningNotification.js').useAntOrgWarningNotification = "external" === 'ant' ? require('../hooks/notifs/useAntOrgWarningNotification.js').useAntOrgWarningNotification : () => {};
@@ -122,7 +115,7 @@ import { SLEEP_TOOL_NAME } from '../tools/SleepTool/prompt.js';
 import { getGlobalConfig, saveGlobalConfig, getGlobalConfigWriteCount } from '../utils/config.js';
 import { hasConsoleBillingAccess } from '../utils/billing.js';
 import { logEvent, type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 'src/services/analytics/index.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
 import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, formatCommandInputTags } from '../utils/messages.js';
 import { generateSessionTitle } from '../utils/sessionTitle.js';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml.js';
@@ -215,14 +208,8 @@ const UndercoverAutoCallout = "external" === 'ant' ? require('../components/Unde
 import { activityManager } from '../utils/activityManager.js';
 import { createAbortController } from '../utils/abortController.js';
 import { MCPConnectionManager } from 'src/services/mcp/MCPConnectionManager.js';
-import { useFeedbackSurvey } from 'src/components/FeedbackSurvey/useFeedbackSurvey.js';
-import { useMemorySurvey } from 'src/components/FeedbackSurvey/useMemorySurvey.js';
-import { usePostCompactSurvey } from 'src/components/FeedbackSurvey/usePostCompactSurvey.js';
-import { FeedbackSurvey } from 'src/components/FeedbackSurvey/FeedbackSurvey.js';
 import { useAwaySummary } from 'src/hooks/useAwaySummary.js';
-import { useChromeExtensionNotification } from 'src/hooks/useChromeExtensionNotification.js';
 import { useOfficialMarketplaceNotification } from 'src/hooks/useOfficialMarketplaceNotification.js';
-import { usePromptsFromClaudeInChrome } from 'src/hooks/usePromptsFromClaudeInChrome.js';
 import { getTipToShowOnSpinner, recordShownTip } from 'src/services/tips/tipScheduler.js';
 import type { Theme } from 'src/utils/theme.js';
 import { checkAndDisableBypassPermissionsIfNeeded, useKickOffCheckAndDisableBypassPermissionsIfNeeded } from 'src/utils/permissions/bypassPermissionsKillswitch.js';
@@ -238,7 +225,6 @@ import { useLspPluginRecommendation } from 'src/hooks/useLspPluginRecommendation
 import { LspRecommendationMenu } from 'src/components/LspRecommendation/LspRecommendationMenu.js';
 import { useClaudeCodeHintRecommendation } from 'src/hooks/useClaudeCodeHintRecommendation.js';
 import { PluginHintMenu } from 'src/components/ClaudeCodeHint/PluginHintMenu.js';
-import { DesktopUpsellStartup, shouldShowDesktopUpsellStartup } from 'src/components/DesktopUpsell/DesktopUpsellStartup.js';
 import { usePluginInstallationStatus } from 'src/hooks/notifs/usePluginInstallationStatus.js';
 import { usePluginAutoupdateNotification } from 'src/hooks/notifs/usePluginAutoupdateNotification.js';
 import { performStartupChecks } from 'src/utils/plugins/performStartupChecks.js';
@@ -250,13 +236,10 @@ import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
 import { useTeammateLifecycleNotification } from 'src/hooks/notifs/useTeammateShutdownNotification.js';
 import { useFastModeNotification } from 'src/hooks/notifs/useFastModeNotification.js';
-import { AutoRunIssueNotification, shouldAutoRunIssue, getAutoRunIssueReasonText, getAutoRunCommand, type AutoRunIssueReason } from '../utils/autoRunIssue.js';
 import type { HookProgress } from '../types/hooks.js';
 /* eslint-disable @typescript-eslint/no-require-imports */
 const WebBrowserPanelModule = feature('WEB_BROWSER_TOOL') ? require('../tools/WebBrowserTool/WebBrowserPanel.js') as typeof import('../tools/WebBrowserTool/WebBrowserPanel.js') : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
-import { IssueFlagBanner } from '../components/PromptInput/IssueFlagBanner.js';
-import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner.js';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite.js';
 import { DevBar } from '../components/DevBar.js';
 // Session manager removed - using AppState now
@@ -707,7 +690,6 @@ export function REPL({
     return false;
   });
   const [showEffortCallout, setShowEffortCallout] = useState(() => shouldShowEffortCallout(mainLoopModel));
-  const [showDesktopUpsellStartup, setShowDesktopUpsellStartup] = useState(() => shouldShowDesktopUpsellStartup());
   // notifications
   useModelMigrationNotifications();
   useIDEStatusIndicator({
@@ -725,7 +707,6 @@ export function REPL({
   useFastModeNotification();
   useDeprecationWarningNotification(mainLoopModel);
   useAntOrgWarningNotification();
-  useChromeExtensionNotification();
   useOfficialMarketplaceNotification();
   useLspInitializationNotification();
   useTeammateLifecycleNotification();
@@ -761,10 +742,6 @@ export function REPL({
     if (isRemoteSession) return;
     void performStartupChecks(setAppState);
   }, [setAppState, isRemoteSession]);
-
-  // Allow Claude in Chrome MCP to send prompts through MCP notifications
-  // and sync permission mode changes to the Chrome extension
-  usePromptsFromClaudeInChrome(isRemoteSession ? EMPTY_MCP_CLIENTS : mcpClients, toolPermissionContext.mode);
 
   // Initialize swarm features: teammate hooks and context
   // Handles both fresh spawns and resumed teammate sessions
@@ -1123,7 +1100,7 @@ export function REPL({
   const messagesRef = useRef(messages);
   // Stores the willowMode variant that was shown (or false if no hint shown).
   // Captured at hint_shown time so hint_converted telemetry reports the same
-  // variant — the GrowthBook value shouldn't change mid-session, but reading
+  // variant — the feature flag value shouldn't change mid-session, but reading
   // it once guarantees consistency between the paired events.
   const idleHintShownRef = useRef<string | false>(false);
   // Wrap setMessages so messagesRef is always current the instant the
@@ -1403,7 +1380,7 @@ export function REPL({
   lastQueryCompletionTimeRef.current = lastQueryCompletionTime;
 
   // Aggregate tool result budget: per-conversation decision tracking.
-  // When the GrowthBook flag is on, query.ts enforces the budget; when
+  // When the feature flag is on, query.ts enforces the budget; when
   // off (undefined), enforcement is skipped entirely. Stale entries after
   // /clear, rewind, or compact are harmless (tool_use_ids are UUIDs, stale
   // keys are never looked up). Memory is bounded by total replacement count
@@ -1560,41 +1537,6 @@ export function REPL({
   !pendingWorkerRequest && !onlySleepToolActive && (
   // Hide spinner when streaming text is visible (the text IS the feedback).
   !visibleStreamingText);
-
-  // Check if any permission or ask question prompt is currently visible
-  // This is used to prevent the survey from opening while prompts are active
-  const hasActivePrompt = toolUseConfirmQueue.length > 0 || promptQueue.length > 0 || sandboxPermissionRequestQueue.length > 0 || elicitation.queue.length > 0 || workerSandboxPermissions.queue.length > 0;
-  const feedbackSurveyOriginal = useFeedbackSurvey(messages, isLoading, submitCount, 'session', hasActivePrompt);
-  const showIssueFlagBanner = useIssueFlagBanner(messages, submitCount);
-
-  // Wrap feedback survey handler to trigger auto-run /issue
-  const feedbackSurvey = useMemo(() => ({
-    ...feedbackSurveyOriginal,
-    handleSelect: (selected: 'dismissed' | 'bad' | 'fine' | 'good') => {
-      // Reset the ref when a new survey response comes in
-      didAutoRunIssueRef.current = false;
-      const showedTranscriptPrompt = feedbackSurveyOriginal.handleSelect(selected);
-      // Auto-run /issue for "bad" if transcript prompt wasn't shown
-      if (selected === 'bad' && !showedTranscriptPrompt && shouldAutoRunIssue('feedback_survey_bad')) {
-        setAutoRunIssueReason('feedback_survey_bad');
-        didAutoRunIssueRef.current = true;
-      }
-    }
-  }), [feedbackSurveyOriginal]);
-
-  // Post-compact survey: shown after compaction if feature gate is enabled
-  const postCompactSurvey = usePostCompactSurvey(messages, isLoading, hasActivePrompt, {
-    enabled: !isRemoteSession
-  });
-
-  // Memory survey: shown when the assistant mentions memory and a memory file
-  // was read this conversation
-  const memorySurvey = useMemorySurvey(messages, isLoading, hasActivePrompt, {
-    enabled: !isRemoteSession
-  });
-
-  // Frustration detection: show transcript sharing prompt after detecting frustrated messages
-  const frustrationDetection = useFrustrationDetection(messages, isLoading, hasActivePrompt, feedbackSurvey.state !== 'closed' || postCompactSurvey.state !== 'closed' || memorySurvey.state !== 'closed');
 
   // Initialize IDE integration
   useIDEIntegration({
@@ -1872,13 +1814,6 @@ export function REPL({
     reverify
   } = useApiKeyVerification();
 
-  // Auto-run /issue state
-  const [autoRunIssueReason, setAutoRunIssueReason] = useState<AutoRunIssueReason | null>(null);
-  // Ref to track if autoRunIssue was triggered this survey cycle,
-  // so we can suppress the [1] follow-up prompt even after
-  // autoRunIssueReason is cleared.
-  const didAutoRunIssueRef = useRef(false);
-
   // State for exit feedback flow
   const [exitFlow, setExitFlow] = useState<React.ReactNode>(null);
   const [isExiting, setIsExiting] = useState(false);
@@ -1931,8 +1866,6 @@ export function REPL({
     // Plugin hint from CLI/SDK stderr (same priority band as LSP rec)
     if (allowDialogsWithAnimation && hintRecommendation) return 'plugin-hint';
 
-    // Desktop app upsell (max 3 launches, lowest priority)
-    if (allowDialogsWithAnimation && showDesktopUpsellStartup) return 'desktop-upsell';
     return undefined;
   }
   const focusedInputDialog = getFocusedInputDialog();
@@ -3370,34 +3303,6 @@ export function REPL({
     helpers.clearBuffer();
   }, [setAppState, setInputValue, getToolUseContext, canUseTool, mainLoopModel, addNotification]);
 
-  // Handlers for auto-run /issue or /good-claude (defined after onSubmit)
-  const handleAutoRunIssue = useCallback(() => {
-    const command = autoRunIssueReason ? getAutoRunCommand(autoRunIssueReason) : '/issue';
-    setAutoRunIssueReason(null); // Clear the state
-    onSubmit(command, {
-      setCursorOffset: () => {},
-      clearBuffer: () => {},
-      resetHistory: () => {}
-    }).catch(err => {
-      logForDebugging(`Auto-run ${command} failed: ${errorMessage(err)}`);
-    });
-  }, [onSubmit, autoRunIssueReason]);
-  const handleCancelAutoRunIssue = useCallback(() => {
-    setAutoRunIssueReason(null);
-  }, []);
-
-  // Handler for when user presses 1 on survey thanks screen to share details
-  const handleSurveyRequestFeedback = useCallback(() => {
-    const command = "external" === 'ant' ? '/issue' : '/feedback';
-    onSubmit(command, {
-      setCursorOffset: () => {},
-      clearBuffer: () => {},
-      resetHistory: () => {}
-    }).catch(err => {
-      logForDebugging(`Survey feedback request failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
-  }, [onSubmit]);
-
   // onSubmit is unstable (deps include `messages` which changes every turn).
   // `handleOpenRateLimitOptions` is prop-drilled to every MessageRow, and each
   // MessageRow fiber pins the closure (and transitively the entire REPL render
@@ -4368,8 +4273,8 @@ export function REPL({
               {feature('BUDDY') && companionNarrow && isFullscreenEnvEnabled() && companionVisible ? <CompanionSprite /> : null}
               <Box flexDirection="column" flexGrow={1}>
                 {permissionStickyFooter}
-                {/* Immediate local-jsx commands (/btw, /sandbox,
-                  /issue) render here, NOT inside scrollable. They stay mounted
+                {/* Immediate local-jsx commands (/btw, /sandbox) render here,
+                  NOT inside scrollable. They stay mounted
                   while the main conversation streams behind them, so ScrollBox
                   relayouts on each new message would drag them around. bottom
                   is flexShrink={0} outside the ScrollBox — it never moves.
@@ -4598,8 +4503,6 @@ export function REPL({
 
                 {focusedInputDialog === 'lsp-recommendation' && lspRecommendation && <LspRecommendationMenu pluginName={lspRecommendation.pluginName} pluginDescription={lspRecommendation.pluginDescription} fileExtension={lspRecommendation.fileExtension} onResponse={handleLspResponse} />}
 
-                {focusedInputDialog === 'desktop-upsell' && <DesktopUpsellStartup onDone={() => setShowDesktopUpsellStartup(false)} />}
-
                 {feature('ULTRAPLAN') ? focusedInputDialog === 'ultraplan-choice' && ultraplanPendingChoice && <UltraplanChoiceDialog plan={ultraplanPendingChoice.plan} sessionId={ultraplanPendingChoice.sessionId} taskId={ultraplanPendingChoice.taskId} setMessages={setMessages} readFileState={readFileState.current} getAppState={() => store.getState()} setConversationId={setConversationId} /> : null}
 
                 {feature('ULTRAPLAN') ? focusedInputDialog === 'ultraplan-launch' && ultraplanLaunchPending && <UltraplanLaunchDialog onChoice={choice => {
@@ -4644,11 +4547,6 @@ export function REPL({
                 {mrRender()}
 
                 {!toolJSX?.shouldHidePromptInput && !focusedInputDialog && !isExiting && !disabled && !cursor && <>
-                      {autoRunIssueReason && <AutoRunIssueNotification onRun={handleAutoRunIssue} onCancel={handleCancelAutoRunIssue} reason={getAutoRunIssueReasonText(autoRunIssueReason)} />}
-                      {postCompactSurvey.state !== 'closed' ? <FeedbackSurvey state={postCompactSurvey.state} lastResponse={postCompactSurvey.lastResponse} handleSelect={postCompactSurvey.handleSelect} inputValue={inputValue} setInputValue={setInputValue} onRequestFeedback={handleSurveyRequestFeedback} /> : memorySurvey.state !== 'closed' ? <FeedbackSurvey state={memorySurvey.state} lastResponse={memorySurvey.lastResponse} handleSelect={memorySurvey.handleSelect} handleTranscriptSelect={memorySurvey.handleTranscriptSelect} inputValue={inputValue} setInputValue={setInputValue} onRequestFeedback={handleSurveyRequestFeedback} message="How well did Claude use its memory? (optional)" /> : <FeedbackSurvey state={feedbackSurvey.state} lastResponse={feedbackSurvey.lastResponse} handleSelect={feedbackSurvey.handleSelect} handleTranscriptSelect={feedbackSurvey.handleTranscriptSelect} inputValue={inputValue} setInputValue={setInputValue} onRequestFeedback={didAutoRunIssueRef.current ? undefined : handleSurveyRequestFeedback} />}
-                      {/* Frustration-triggered transcript sharing prompt */}
-                      {frustrationDetection.state !== 'closed' && <FeedbackSurvey state={frustrationDetection.state} lastResponse={null} handleSelect={() => {}} handleTranscriptSelect={frustrationDetection.handleTranscriptSelect} inputValue={inputValue} setInputValue={setInputValue} />}
-                      {showIssueFlagBanner && <IssueFlagBanner />}
                       {}
                       <PromptInput debug={debug} ideSelection={ideSelection} hasSuppressedDialogs={!!hasSuppressedDialogs} isLocalJSXCommandActive={isShowingLocalJSXCommand} getToolUseContext={getToolUseContext} toolPermissionContext={toolPermissionContext} setToolPermissionContext={setToolPermissionContext} apiKeyStatus={apiKeyStatus} commands={commands} agents={agentDefinitions.activeAgents} isLoading={isLoading} onExit={handleExit} verbose={verbose} messages={messages} input={inputValue} onInputChange={setInputValue} mode={inputMode} onModeChange={setInputMode} stashedPrompt={stashedPrompt} setStashedPrompt={setStashedPrompt} submitCount={submitCount} onShowMessageSelector={handleShowMessageSelector} onMessageActionsEnter={
             // Works during isLoading — edit cancels first; uuid selection survives appends.

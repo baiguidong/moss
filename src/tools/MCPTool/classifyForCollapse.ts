@@ -26,7 +26,7 @@ const SEARCH_TOOLS = new Set([
   'search_users',
   // Linear (mcp.linear.app)
   'search_documentation',
-  // Datadog (mcp.datadoghq.com)
+  // Observability connectors
   'search_logs',
   'search_spans',
   'search_rum_events',
@@ -217,7 +217,7 @@ const READ_TOOLS = new Set([
   'get_team',
   'list_users',
   'get_user',
-  // Datadog (mcp.datadoghq.com)
+  // Observability connectors
   'aggregate_logs',
   'list_spans',
   'aggregate_spans',

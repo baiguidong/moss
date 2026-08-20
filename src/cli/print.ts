@@ -22,7 +22,7 @@ import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from 'src/services/analytics/index.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import {
   logForDiagnosticsNoPII,
@@ -314,7 +314,7 @@ import { getRunningTasks } from '../utils/task/framework.js'
 import { isBackgroundTask } from '../tasks/types.js'
 import { stopTask } from '../tasks/stopTask.js'
 import { drainSdkEvents } from '../utils/sdkEventQueue.js'
-import { initializeGrowthBook } from '../services/analytics/growthbook.js'
+import { initializeFeatureFlags } from '../services/analytics/featureFlags.js'
 import { errorMessage, toError } from '../utils/errors.js'
 import { sleep } from '../utils/sleep.js'
 import { isExtractModeActive } from '../memdir/paths.js'
@@ -508,9 +508,9 @@ export async function runHeadless(
   headlessProfilerStartTurn()
   headlessProfilerCheckpoint('runHeadless_entry')
 
-  // Initialize GrowthBook so feature flags take effect in headless mode.
+  // Initialize feature flag so feature flags take effect in headless mode.
   // Without this, the disk cache is empty and all flags fall back to defaults.
-  void initializeGrowthBook()
+  void initializeFeatureFlags()
 
   if (options.resumeSessionAt && !options.resume) {
     process.stderr.write(`Error: --resume-session-at requires --resume\n`)
@@ -1546,12 +1546,6 @@ function runHeadlessStreaming(
           url: connection.config.url,
           headers: connection.config.headers,
           oauth: connection.config.oauth,
-        }
-      } else if (connection.config.type === 'claudeai-proxy') {
-        config = {
-          type: 'claudeai-proxy' as const,
-          url: connection.config.url,
-          id: connection.config.id,
         }
       } else if (
         connection.config.type === 'stdio' ||

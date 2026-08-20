@@ -32,7 +32,7 @@ import {
 } from '../bootstrap/state.js'
 import { builtInCommandNames } from '../commands.js'
 import { COMMAND_NAME_TAG, TICK_TAG } from '../constants/xml.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import * as sessionIngress from '../services/api/sessionIngress.js'
 import { REPL_TOOL_NAME } from '../tools/REPLTool/constants.js'
 import {
@@ -2366,7 +2366,7 @@ function recoverOrphanedParallelToolResults(
  * delta = 0: round-trip consistent
  *
  * Called from loadConversationForResume — fires once per resume, not on
- * /share or log-listing chain rebuilds.
+ * log-listing chain rebuilds.
  */
 export function checkResumeConsistency(chain: Message[]): void {
   for (let i = chain.length - 1; i >= 0; i--) {
@@ -4616,7 +4616,7 @@ function collectReplIds(messages: readonly Message[]): Set<string> {
  * REPL tool_use/tool_result pairs and promote isVirtual messages to real. On
  * --resume the model then sees a coherent native-tool-call history (assistant
  * called Bash, got result, called Read, got result) without the REPL wrapper.
- * Ant transcripts keep the wrapper so /share training data sees REPL usage.
+ * Internal transcripts keep the wrapper so diagnostics preserve REPL usage.
  *
  * replIds is pre-collected from the FULL session array, not the slice being
  * transformed — recordTranscript receives incremental slices where the REPL

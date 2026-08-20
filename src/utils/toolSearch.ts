@@ -7,7 +7,7 @@
  */
 
 import memoize from 'lodash-es/memoize.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -204,11 +204,11 @@ const DEFAULT_UNSUPPORTED_MODEL_PATTERNS = ['haiku']
 
 /**
  * Get the list of model patterns that do NOT support tool_reference.
- * Can be configured via GrowthBook for live updates without code changes.
+ * Can be configured via feature flag for live updates without code changes.
  */
 function getUnsupportedToolReferencePatterns(): string[] {
   try {
-    // Try to get from GrowthBook for live configuration
+    // Try to get from feature flag for live configuration
     const patterns = getFeatureValue_CACHED_MAY_BE_STALE<string[] | null>(
       'tengu_tool_search_unsupported_models',
       null,
@@ -217,7 +217,7 @@ function getUnsupportedToolReferencePatterns(): string[] {
       return patterns
     }
   } catch {
-    // GrowthBook not ready, use defaults
+    // feature flag not ready, use defaults
   }
   return DEFAULT_UNSUPPORTED_MODEL_PATTERNS
 }
@@ -230,7 +230,7 @@ function getUnsupportedToolReferencePatterns(): string[] {
  * models work by default without code changes.
  *
  * Currently, Haiku models do NOT support tool_reference. This can be
- * updated via GrowthBook feature 'tengu_tool_search_unsupported_models'.
+ * updated via feature flag 'tengu_tool_search_unsupported_models'.
  *
  * @param model The model name to check
  * @returns true if the model supports tool_reference, false otherwise

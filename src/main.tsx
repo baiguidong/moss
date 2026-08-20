@@ -25,7 +25,7 @@ import { init, initializeTelemetryAfterTrust } from './entrypoints/init.js';
 import { addToHistory } from './history.js';
 import type { Root } from './ink.js';
 import { launchRepl } from './replLauncher.js';
-import { hasGrowthBookEnvOverride, initializeGrowthBook, refreshGrowthBookAfterAuthChange } from './services/analytics/growthbook.js';
+import { hasFeatureFlagEnvOverride, initializeFeatureFlags, refreshFeatureFlagsAfterAuthChange } from './services/analytics/featureFlags.js';
 import { fetchBootstrapData } from './services/api/bootstrap.js';
 import { prefetchOfficialMcpUrls } from './services/mcp/officialRegistry.js';
 import type { McpSdkServerConfig, McpServerConfig, ScopedMcpServerConfig } from './services/mcp/types.js';
@@ -66,7 +66,7 @@ const coordinatorModeModule = feature('COORDINATOR_MODE') ? require('./coordinat
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { relative, resolve } from 'path';
 import { isAnalyticsDisabled } from 'src/services/analytics/config.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import { initializeAnalyticsGates } from 'src/services/analytics/sink.js';
 import { getOriginalCwd, setAdditionalDirectoriesForClaudeMd, setIsRemoteMode, setMainLoopModelOverride, setMainThreadAgentType, setTeleportedSessionInfo } from './bootstrap/state.js';
@@ -85,8 +85,6 @@ import type { AgentColorName } from './tools/AgentTool/agentColorManager.js';
 import { getActiveAgentsFromList, getAgentDefinitionsWithOverrides, isBuiltInAgent, isCustomAgent, parseAgentsFromJson } from './tools/AgentTool/loadAgentsDir.js';
 import type { LogOption } from './types/logs.js';
 import type { Message as MessageType } from './types/message.js';
-import { CLAUDE_IN_CHROME_SKILL_HINT, CLAUDE_IN_CHROME_SKILL_HINT_WITH_WEBBROWSER } from './utils/claudeInChrome/prompt.js';
-import { setupClaudeInChrome, shouldAutoEnableClaudeInChrome, shouldEnableClaudeInChrome } from './utils/claudeInChrome/setup.js';
 import { getContextWindowForModel } from './utils/context.js';
 import { loadConversationForResume } from './utils/conversationRecovery.js';
 import { hasNodeOption, isBareMode, isEnvTruthy, isInProtectedNamespace } from './utils/envUtils.js';
@@ -109,7 +107,7 @@ import { getGlobExclusionsForPluginCache } from './utils/plugins/orphanedPluginF
 import { getPluginSeedDirs } from './utils/plugins/pluginDirectories.js';
 import { countFilesRoundedRg } from './utils/ripgrep.js';
 import { processSessionStartHooks, processSetupHooks } from './utils/sessionStart.js';
-import { cacheSessionTitle, getSessionIdFromLog, loadTranscriptFromFile, saveAgentSetting, saveMode, searchSessionsByCustomTitle, sessionIdExists } from './utils/sessionStorage.js';
+import { cacheSessionTitle, getSessionIdFromLog, saveAgentSetting, saveMode, searchSessionsByCustomTitle, sessionIdExists } from './utils/sessionStorage.js';
 import { ensureMdmSettingsLoaded } from './utils/settings/mdm/settings.js';
 import { getInitialSettings, getManagedSettingsKeysForLogging, getSettingsForSource, getSettingsWithErrors } from './utils/settings/settings.js';
 import { resetSettingsCache } from './utils/settings/settingsCache.js';
@@ -124,13 +122,10 @@ import { validateUuid } from './utils/uuid.js';
 import { registerMcpAddCommand } from 'src/commands/mcp/addCommand.js';
 import { registerMcpXaaIdpCommand } from 'src/commands/mcp/xaaIdpCommand.js';
 import { logPermissionContextForAnts } from 'src/services/internalLogging.js';
-import { clearServerCache } from 'src/services/mcp/client.js';
-import { areMcpConfigsAllowedWithEnterpriseMcpConfig, doesEnterpriseMcpConfigExist, filterMcpServersByPolicy, getClaudeCodeMcpConfigs, getMcpServerSignature, parseMcpConfig, parseMcpConfigFromFilePath } from 'src/services/mcp/config.js';
-import { excludeCommandsByServer, excludeResourcesByServer } from 'src/services/mcp/utils.js';
+import { areMcpConfigsAllowedWithEnterpriseMcpConfig, doesEnterpriseMcpConfigExist, filterMcpServersByPolicy, getClaudeCodeMcpConfigs, parseMcpConfig, parseMcpConfigFromFilePath } from 'src/services/mcp/config.js';
 import { isXaaEnabled } from 'src/services/mcp/xaaIdpLogin.js';
 import { getRelevantTips } from 'src/services/tips/tipRegistry.js';
 import { logContextMetrics } from 'src/utils/api.js';
-import { CLAUDE_IN_CHROME_MCP_SERVER_NAME, isClaudeInChromeMCPServer } from 'src/utils/claudeInChrome/common.js';
 import { registerCleanup } from 'src/utils/cleanupRegistry.js';
 import { eagerParseCliFlag } from 'src/utils/cliArgs.js';
 import { createEmptyAttributionState } from 'src/utils/commitAttribution.js';
@@ -147,7 +142,7 @@ import { setCwd } from 'src/utils/Shell.js';
 import { type ProcessedResume, processResumedConversation } from 'src/utils/sessionRestore.js';
 import { parseSettingSourcesFlag } from 'src/utils/settings/constants.js';
 import { plural } from 'src/utils/stringUtils.js';
-import { getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSessionId, setAllowedSettingSources, setChromeFlagOverride, setClientType, setCwdState, setDirectConnectServerUrl, setFlagSettingsPath, setInitialMainLoopModel, setInlinePlugins, setIsInteractive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled, switchSession } from './bootstrap/state.js';
+import { getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSessionId, setAllowedSettingSources, setClientType, setCwdState, setDirectConnectServerUrl, setFlagSettingsPath, setInitialMainLoopModel, setInlinePlugins, setIsInteractive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled, switchSession } from './bootstrap/state.js';
 
 // TeleportRepoMismatchDialog, TeleportResumeWrapper dynamically imported at call sites
 import { migrateBypassPermissionsAcceptedToSettings } from './migrations/migrateBypassPermissionsAcceptedToSettings.js';
@@ -833,7 +828,7 @@ async function run(): Promise<CommanderCommand> {
   // `mcp` and `add` as paths, then choked on --transport as an unknown
   // top-level option. Single-value + collect accumulator means each
   // --plugin-dir takes exactly one arg; repeat the flag for multiple dirs.
-  .option('--plugin-dir <path>', 'Load plugins from a directory for this session only (repeatable: --plugin-dir A --plugin-dir B)', (val: string, prev: string[]) => [...prev, val], [] as string[]).option('--disable-slash-commands', 'Disable all skills', () => true).option('--chrome', 'Enable Claude in Chrome integration').option('--no-chrome', 'Disable Claude in Chrome integration').action(async (prompt, options) => {
+  .option('--plugin-dir <path>', 'Load plugins from a directory for this session only (repeatable: --plugin-dir A --plugin-dir B)', (val: string, prev: string[]) => [...prev, val], [] as string[]).option('--disable-slash-commands', 'Disable all skills', () => true).action(async (prompt, options) => {
     profileCheckpoint('action_handler_start');
 
     // --bare = one-switch minimal mode. Sets SIMPLE so all the existing
@@ -1197,20 +1192,6 @@ async function run(): Promise<CommanderCommand> {
         process.exit(1);
       }
       if (Object.keys(allConfigs).length > 0) {
-        // SDK hosts (Nest/Desktop) own their server naming and may reuse
-        // built-in names — skip reserved-name checks for type:'sdk'.
-        const nonSdkConfigNames = Object.entries(allConfigs).filter(([, config]) => config.type !== 'sdk').map(([name]) => name);
-        let reservedNameError: string | null = null;
-        if (nonSdkConfigNames.some(isClaudeInChromeMCPServer)) {
-          reservedNameError = `Invalid MCP configuration: "${CLAUDE_IN_CHROME_MCP_SERVER_NAME}" is a reserved MCP name.`;
-        }
-        if (reservedNameError) {
-          // stderr+exit(1) — a throw here becomes a silent unhandled
-          // rejection in stream-json mode (void main() in cli.tsx).
-          process.stderr.write(`Error: ${reservedNameError}\n`);
-          process.exit(1);
-        }
-
         // Add dynamic scope to all configs. type:'sdk' entries pass through
         // unchanged — they're extracted into sdkMcpConfigs downstream and
         // passed to print.ts. The Python SDK relies on this path (it doesn't
@@ -1240,60 +1221,6 @@ async function run(): Promise<CommanderCommand> {
           ...dynamicMcpConfig,
           ...allowed
         };
-      }
-    }
-
-    // Chrome integration is not supported in this build.
-    const chromeOpts = options as {
-      chrome?: boolean;
-    };
-    // Store the explicit CLI flag so teammates can inherit it
-    setChromeFlagOverride(chromeOpts.chrome);
-    const enableClaudeInChrome = false;
-    const autoEnableClaudeInChrome = !enableClaudeInChrome && shouldAutoEnableClaudeInChrome();
-    if (enableClaudeInChrome) {
-      const platform = getPlatform();
-      try {
-        logEvent('tengu_claude_in_chrome_setup', {
-          platform: platform as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-        });
-        const {
-          mcpConfig: chromeMcpConfig,
-          allowedTools: chromeMcpTools,
-          systemPrompt: chromeSystemPrompt
-        } = setupClaudeInChrome();
-        dynamicMcpConfig = {
-          ...dynamicMcpConfig,
-          ...chromeMcpConfig
-        };
-        allowedTools.push(...chromeMcpTools);
-        if (chromeSystemPrompt) {
-          appendSystemPrompt = appendSystemPrompt ? `${chromeSystemPrompt}\n\n${appendSystemPrompt}` : chromeSystemPrompt;
-        }
-      } catch (error) {
-        logEvent('tengu_claude_in_chrome_setup_failed', {
-          platform: platform as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-        });
-        logForDebugging(`[Claude in Chrome] Error: ${error}`);
-        logError(error);
-        // biome-ignore lint/suspicious/noConsole:: intentional console output
-        console.error(`Error: Failed to run with Claude in Chrome.`);
-        process.exit(1);
-      }
-    } else if (autoEnableClaudeInChrome) {
-      try {
-        const {
-          mcpConfig: chromeMcpConfig
-        } = setupClaudeInChrome();
-        dynamicMcpConfig = {
-          ...dynamicMcpConfig,
-          ...chromeMcpConfig
-        };
-        const hint = feature('WEB_BROWSER_TOOL') && typeof Bun !== 'undefined' && 'WebView' in Bun ? CLAUDE_IN_CHROME_SKILL_HINT_WITH_WEBBROWSER : CLAUDE_IN_CHROME_SKILL_HINT;
-        appendSystemPrompt = appendSystemPrompt ? `${appendSystemPrompt}\n\n${hint}` : hint;
-      } catch (error) {
-        // Silently skip any errors for the auto-enable
-        logForDebugging(`[Claude in Chrome] Error (auto-enable): ${error}`);
       }
     }
 
@@ -1347,8 +1274,6 @@ async function run(): Promise<CommanderCommand> {
       // biome-ignore lint/suspicious/noConsole:: intentional console output
       console.error(warning);
     });
-    const claudeaiConfigPromise: Promise<Record<string, ScopedMcpServerConfig>> = Promise.resolve({});
-
     // Kick off MCP config loading early (safe - just reads files, no execution).
     // Both interactive and -p use getClaudeCodeMcpConfigs (local file reads only).
     // The local promise is awaited later (before prefetchAllMcpResources) to
@@ -1534,7 +1459,7 @@ async function run(): Promise<CommanderCommand> {
     }
 
     // Ant model aliases (capybara-fast etc.) resolve via the
-    // tengu_ant_model_override GrowthBook flag. _CACHED_MAY_BE_STALE reads
+    // tengu_ant_model_override feature flag. _CACHED_MAY_BE_STALE reads
     // disk synchronously; disk is populated by a fire-and-forget write. On a
     // cold cache, parseUserSpecifiedModel returns the unresolved alias, the
     // API 404s, and -p exits before the async write lands — crashloop on
@@ -1545,8 +1470,8 @@ async function run(): Promise<CommanderCommand> {
     //  - no env override (which short-circuits _CACHED_MAY_BE_STALE before disk)
     //  - flag absent from disk (== null also catches pre-#22279 poisoned null)
     const explicitModel = options.model || process.env.ANTHROPIC_MODEL;
-    if ("external" === 'ant' && explicitModel && explicitModel !== 'default' && !hasGrowthBookEnvOverride('tengu_ant_model_override') && getGlobalConfig().cachedGrowthBookFeatures?.['tengu_ant_model_override'] == null) {
-      await initializeGrowthBook();
+    if ("external" === 'ant' && explicitModel && explicitModel !== 'default' && !hasFeatureFlagEnvOverride('tengu_ant_model_override') && getGlobalConfig().cachedFeatureFlags?.['tengu_ant_model_override'] == null) {
+      await initializeFeatureFlags();
     }
 
     // Special case the default model with the null keyword
@@ -1746,7 +1671,7 @@ async function run(): Promise<CommanderCommand> {
       });
       logForDebugging('[STARTUP] Running showSetupScreens()...');
       const setupScreensStart = Date.now();
-      const onboardingShown = await showSetupScreens(root, permissionMode, allowDangerouslySkipPermissions, commands, enableClaudeInChrome);
+      const onboardingShown = await showSetupScreens(root, permissionMode, allowDangerouslySkipPermissions, commands);
       logForDebugging(`[STARTUP] showSetupScreens() completed in ${Date.now() - setupScreensStart}ms`);
 
       // Check for pending agent memory snapshot updates (only for --agent mode, ant-only)
@@ -1771,10 +1696,10 @@ async function run(): Promise<CommanderCommand> {
         // Refresh auth-dependent services after onboarding updates credentials.
         void refreshRemoteManagedSettings();
         void refreshPolicyLimits();
-        // Clear user data cache BEFORE GrowthBook refresh so it picks up fresh credentials
+        // Clear user data cache BEFORE feature flag refresh so it picks up fresh credentials
         resetUserCache();
-        // Refresh GrowthBook after credential changes to get updated feature flags.
-        refreshGrowthBookAfterAuthChange();
+        // Refresh feature flag after credential changes to get updated feature flags.
+        refreshFeatureFlagsAfterAuthChange();
       }
 
     }
@@ -1883,23 +1808,10 @@ async function run(): Promise<CommanderCommand> {
       tools: [],
       commands: []
     }) : prefetchAllMcpResources(regularMcpConfigs);
-    const claudeaiMcpPromise = isNonInteractiveSession ? Promise.resolve({
-      clients: [],
-      tools: [],
-      commands: []
-    }) : claudeaiConfigPromise.then(configs => Object.keys(configs).length > 0 ? prefetchAllMcpResources(configs) : {
-      clients: [],
-      tools: [],
-      commands: []
-    });
-    // Merge with dedup by name: each prefetchAllMcpResources call independently
-    // adds helper tools (ListMcpResourcesTool, ReadMcpResourceTool) via
-    // local dedup flags, so merging two calls can yield duplicates. print.ts
-    // already uniqBy's the final tool pool, but dedup here keeps appState clean.
-    const mcpPromise = Promise.all([localMcpPromise, claudeaiMcpPromise]).then(([local, claudeai]) => ({
-      clients: [...local.clients, ...claudeai.clients],
-      tools: uniqBy([...local.tools, ...claudeai.tools], 'name'),
-      commands: uniqBy([...local.commands, ...claudeai.commands], 'name')
+    const mcpPromise = localMcpPromise.then(local => ({
+      clients: local.clients,
+      tools: uniqBy(local.tools, 'name'),
+      commands: uniqBy(local.commands, 'name')
     }));
 
     // Start hooks early so they run in parallel with MCP connections.
@@ -2173,81 +2085,10 @@ async function run(): Promise<CommanderCommand> {
       // message and turn-1 tool list both need configured MCP tools present.
       // Zero-server case is free via the early return in connectMcpBatch.
       // Connectors parallelize inside getMcpToolsCommandsAndResources
-      // (processBatched with Promise.all). claude.ai is awaited too — its
-      // fetch was kicked off early (line ~2558) so only residual time blocks
-      // here. --bare skips claude.ai entirely for perf-sensitive scripts.
+      // (processBatched with Promise.all).
       profileCheckpoint('before_connectMcp');
       await connectMcpBatch(regularMcpConfigs, 'regular');
       profileCheckpoint('after_connectMcp');
-      // Dedup: suppress plugin MCP servers that duplicate a claude.ai
-      // connector (connector wins), then connect claude.ai servers.
-      // Bounded wait — #23725 made this blocking so single-turn -p sees
-      // connectors, but with 40+ slow connectors tengu_startup_perf p99
-      // climbed to 76s. If fetch+connect doesn't finish in time, proceed;
-      // the promise keeps running and updates headlessStore in the
-      // background so turn 2+ still sees connectors.
-      const CLAUDE_AI_MCP_TIMEOUT_MS = 5_000;
-      const claudeaiConnect = claudeaiConfigPromise.then(claudeaiConfigs => {
-        if (Object.keys(claudeaiConfigs).length > 0) {
-          const claudeaiSigs = new Set<string>();
-          for (const config of Object.values(claudeaiConfigs)) {
-            const sig = getMcpServerSignature(config);
-            if (sig) claudeaiSigs.add(sig);
-          }
-          const suppressed = new Set<string>();
-          for (const [name, config] of Object.entries(regularMcpConfigs)) {
-            if (!name.startsWith('plugin:')) continue;
-            const sig = getMcpServerSignature(config);
-            if (sig && claudeaiSigs.has(sig)) suppressed.add(name);
-          }
-          if (suppressed.size > 0) {
-            logForDebugging(`[MCP] Lazy dedup: suppressing ${suppressed.size} plugin server(s) that duplicate claude.ai connectors: ${[...suppressed].join(', ')}`);
-            // Disconnect before filtering from state. Only connected
-            // servers need cleanup — clearServerCache on a never-connected
-            // server triggers a real connect just to kill it (memoize
-            // cache-miss path, see useManageMCPConnections.ts:870).
-            for (const c of headlessStore.getState().mcp.clients) {
-              if (!suppressed.has(c.name) || c.type !== 'connected') continue;
-              c.client.onclose = undefined;
-              void clearServerCache(c.name, c.config).catch(() => {});
-            }
-            headlessStore.setState(prev => {
-              let {
-                clients,
-                tools,
-                commands,
-                resources
-              } = prev.mcp;
-              clients = clients.filter(c => !suppressed.has(c.name));
-              tools = tools.filter(t => !t.mcpInfo || !suppressed.has(t.mcpInfo.serverName));
-              for (const name of suppressed) {
-                commands = excludeCommandsByServer(commands, name);
-                resources = excludeResourcesByServer(resources, name);
-              }
-              return {
-                ...prev,
-                mcp: {
-                  ...prev.mcp,
-                  clients,
-                  tools,
-                  commands,
-                  resources
-                }
-              };
-            });
-          }
-        }
-        return connectMcpBatch({}, 'claudeai');
-      });
-      let claudeaiTimer: ReturnType<typeof setTimeout> | undefined;
-      const claudeaiTimedOut = await Promise.race([claudeaiConnect.then(() => false), new Promise<boolean>(resolve => {
-        claudeaiTimer = setTimeout(r => r(true), CLAUDE_AI_MCP_TIMEOUT_MS, resolve);
-      })]);
-      if (claudeaiTimer) clearTimeout(claudeaiTimer);
-      if (claudeaiTimedOut) {
-        logForDebugging(`[MCP] claude.ai connectors not ready after ${CLAUDE_AI_MCP_TIMEOUT_MS}ms — proceeding; background connection continues`);
-      }
-      profileCheckpoint('after_connectMcp_claudeai');
 
       // In headless mode, start deferred prefetches immediately (no user typing delay)
       // --bare / SIMPLE: startDeferredPrefetches early-returns internally.
@@ -2822,92 +2663,6 @@ async function run(): Promise<CommanderCommand> {
           }
         }
       }
-      if ("external" === 'ant') {
-        if (options.resume && typeof options.resume === 'string' && !maybeSessionId) {
-          // Check for ccshare URL (e.g. https://go/ccshare/boris-20260311-211036)
-          const {
-            parseCcshareId,
-            loadCcshare
-          } = await import('./utils/ccshareResume.js');
-          const ccshareId = parseCcshareId(options.resume);
-          if (ccshareId) {
-            try {
-              const resumeStart = performance.now();
-              const logOption = await loadCcshare(ccshareId);
-              const result = await loadConversationForResume(logOption, undefined);
-              if (result) {
-                processedResume = await processResumedConversation(result, {
-                  forkSession: true,
-                  transcriptPath: result.fullPath
-                }, resumeContext);
-                if (processedResume.restoredAgentDef) {
-                  mainThreadAgentDefinition = processedResume.restoredAgentDef;
-                }
-                logEvent('tengu_session_resumed', {
-                  entrypoint: 'ccshare' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                  success: true,
-                  resume_duration_ms: Math.round(performance.now() - resumeStart)
-                });
-              } else {
-                logEvent('tengu_session_resumed', {
-                  entrypoint: 'ccshare' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                  success: false
-                });
-              }
-            } catch (error) {
-              logEvent('tengu_session_resumed', {
-                entrypoint: 'ccshare' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                success: false
-              });
-              logError(error);
-              await exitWithError(root, `Unable to resume from ccshare: ${errorMessage(error)}`, () => gracefulShutdown(1));
-            }
-          } else {
-            const resolvedPath = resolve(options.resume);
-            try {
-              const resumeStart = performance.now();
-              let logOption;
-              try {
-                // Attempt to load as a transcript file; ENOENT falls through to session-ID handling
-                logOption = await loadTranscriptFromFile(resolvedPath);
-              } catch (error) {
-                if (!isENOENT(error)) throw error;
-                // ENOENT: not a file path — fall through to session-ID handling
-              }
-              if (logOption) {
-                const result = await loadConversationForResume(logOption, undefined /* sourceFile */);
-                if (result) {
-                  processedResume = await processResumedConversation(result, {
-                    forkSession: !!options.forkSession,
-                    transcriptPath: result.fullPath
-                  }, resumeContext);
-                  if (processedResume.restoredAgentDef) {
-                    mainThreadAgentDefinition = processedResume.restoredAgentDef;
-                  }
-                  logEvent('tengu_session_resumed', {
-                    entrypoint: 'file' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    success: true,
-                    resume_duration_ms: Math.round(performance.now() - resumeStart)
-                  });
-                } else {
-                  logEvent('tengu_session_resumed', {
-                    entrypoint: 'file' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                    success: false
-                  });
-                }
-              }
-            } catch (error) {
-              logEvent('tengu_session_resumed', {
-                entrypoint: 'file' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-                success: false
-              });
-              logError(error);
-              await exitWithError(root, `Unable to load transcript from file: ${options.resume}`, () => gracefulShutdown(1));
-            }
-          }
-        }
-      }
-
       // If not loaded as a file, try as session ID
       if (maybeSessionId) {
         // Resume specific session by ID
@@ -3117,14 +2872,6 @@ async function run(): Promise<CommanderCommand> {
       mcpAddJsonHandler
     } = await import('./cli/handlers/mcp.js');
     await mcpAddJsonHandler(name, json, options);
-  });
-  mcp.command('add-from-claude-desktop').description('Import MCP servers from Claude Desktop (Mac and WSL only)').option('-s, --scope <scope>', 'Configuration scope (local, user, or project)', 'local').action(async (options: {
-    scope?: string;
-  }) => {
-    const {
-      mcpAddFromDesktopHandler
-    } = await import('./cli/handlers/mcp.js');
-    await mcpAddFromDesktopHandler(options);
   });
   mcp.command('reset-project-choices').description('Reset all approved and rejected project-scoped (.mcp.json) servers within this project').action(async () => {
     const {

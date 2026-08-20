@@ -29,7 +29,6 @@ const SLASH_COMMANDS = [
   { name: "/init", description: "初始化项目" },
   { name: "/rename", description: "重命名会话" },
   { name: "/tasks", description: "管理任务列表" },
-  { name: "/share", description: "分享对话" },
   { name: "/ide", description: "IDE 集成设置" },
 ];
 

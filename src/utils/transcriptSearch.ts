@@ -6,8 +6,8 @@ import {
 
 const SYSTEM_REMINDER_CLOSE = '</system-reminder>'
 
-// UserTextMessage.tsx:~84 replaces these with <InterruptedByUser />
-// (renders 'Interrupted · /issue...'). Raw text never appears on screen;
+// UserTextMessage.tsx:~84 replaces these with <InterruptedByUser />.
+// Raw text never appears on screen;
 // searching it yields phantom matches — /terr → in[terr]upted.
 const RENDERED_AS_SENTINEL = new Set([
   INTERRUPT_MESSAGE,

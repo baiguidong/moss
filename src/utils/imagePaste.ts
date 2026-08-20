@@ -7,7 +7,7 @@ import {
   IMAGE_MAX_WIDTH,
   IMAGE_TARGET_RAW_SIZE,
 } from '../constants/apiLimits.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { getImageProcessor } from '../tools/FileReadTool/imageProcessor.js'
 import { logForDebugging } from './debug.js'
 import { execFileNoThrowWithCwd } from './execFileNoThrow.js'
@@ -19,7 +19,7 @@ import {
 } from './imageResizer.js'
 import { logError } from './log.js'
 
-// Native NSPasteboard reader. GrowthBook gate tengu_collage_kaleidoscope is
+// Native NSPasteboard reader. feature flag gate tengu_collage_kaleidoscope is
 // a kill switch (default on). Falls through to osascript when off.
 // The gate string is inlined at each callsite INSIDE the feature() condition
 // — module-scope helpers are NOT tree-shaken (see docs/feature-gating.md).

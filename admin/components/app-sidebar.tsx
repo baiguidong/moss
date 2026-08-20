@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   Users,
   MessageSquare,
-  FileText,
   Settings,
   LogOut,
   Shield,
@@ -45,12 +44,6 @@ const menuItems: NavItem[] = [
     url: '/budget',
     icon: Wallet,
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
-  },
-  {
-    title: '上报数据',
-    url: '/reports',
-    icon: FileText,
-    requiredScope: 'admin:settings',
   },
   {
     title: '用户与组织',

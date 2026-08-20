@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import instances from '../ink/instances.js';
 import { useKeybinding } from '../keybindings/useKeybinding.js';
 import type { Screen } from '../screens/REPL.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js';
 import { logEvent } from '../services/analytics/index.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
 import { count } from '../utils/array.js';

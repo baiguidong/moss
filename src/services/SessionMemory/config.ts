@@ -1,4 +1,4 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
 
 export function isSessionMemoryEnabled(): boolean {

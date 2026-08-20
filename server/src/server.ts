@@ -124,48 +124,6 @@ function parseOptionalTimestampQuery(
   return parsed
 }
 
-function parseOptionalPositiveIntegerQuery(
-  value: string | null,
-  paramName: string,
-): number | null {
-  if (value === null || value.trim() === '') {
-    return null
-  }
-
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new HttpError(400, `Invalid ${paramName} query parameter`)
-  }
-
-  return parsed
-}
-
-function parseReportEventKind(value: string | null):
-  | 'telemetry_event'
-  | 'telemetry_metrics'
-  | 'feedback'
-  | 'transcript'
-  | 'bootstrap'
-  | 'remote_settings'
-  | 'policy_limits'
-  | null {
-  if (value === null || value.trim() === '') {
-    return null
-  }
-  if (
-    value === 'telemetry_event' ||
-    value === 'telemetry_metrics' ||
-    value === 'feedback' ||
-    value === 'transcript' ||
-    value === 'bootstrap' ||
-    value === 'remote_settings' ||
-    value === 'policy_limits'
-  ) {
-    return value
-  }
-  throw new HttpError(400, 'Invalid kind query parameter')
-}
-
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableJson).join(',')}]`
@@ -181,21 +139,6 @@ function stableJson(value: unknown): string {
 
 function checksum(value: unknown): string {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
-}
-
-function queryParamsToObject(url: URL): Record<string, string | string[]> {
-  const result: Record<string, string | string[]> = {}
-  for (const [key, value] of url.searchParams) {
-    const current = result[key]
-    if (current === undefined) {
-      result[key] = value
-    } else if (Array.isArray(current)) {
-      current.push(value)
-    } else {
-      result[key] = [current, value]
-    }
-  }
-  return result
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -617,209 +560,28 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/bootstrap') {
-        const response = {
+        writeJson(res, 200, {
           client_data: null,
           additional_model_options: [],
-        }
-        const stored = runtime.store.addReportEvent({
-          kind: 'bootstrap',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'bootstrap',
-          payload: {
-            request: {
-              query: queryParamsToObject(url),
-            },
-            response,
-          },
-        })
-        writeJson(res, 200, {
-          ...response,
-          report_id: stored.reportId,
         })
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/settings/remote-managed') {
         const settings = {}
-        const response = {
+        writeJson(res, 200, {
           uuid: `${auth.orgId}:default`,
           checksum: checksum(settings),
           settings,
-        }
-        const stored = runtime.store.addReportEvent({
-          kind: 'remote_settings',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'remote-managed-settings',
-          payload: {
-            request: {
-              query: queryParamsToObject(url),
-              ifNoneMatch: req.headers['if-none-match'] ?? null,
-            },
-            response,
-          },
-        })
-        writeJson(res, 200, {
-          ...response,
-          report_id: stored.reportId,
         })
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/policy-limits') {
         const restrictions = {}
-        const response = {
+        writeJson(res, 200, {
           restrictions,
-        }
-        const stored = runtime.store.addReportEvent({
-          kind: 'policy_limits',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'policy-limits',
-          payload: {
-            request: {
-              query: queryParamsToObject(url),
-              ifNoneMatch: req.headers['if-none-match'] ?? null,
-            },
-            response: {
-              ...response,
-              etag: checksum(restrictions),
-            },
-          },
         })
-        writeJson(res, 200, {
-          ...response,
-          report_id: stored.reportId,
-        })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/telemetry/events/batch') {
-        const body = await readJsonBody(req)
-        const stored = runtime.store.addReportEvent({
-          kind: 'telemetry_event',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'telemetry-events-batch',
-          payload: body,
-        })
-        writeJson(res, 200, {
-          ok: true,
-          report_id: stored.reportId,
-          created_at: stored.createdAt,
-        })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/telemetry/metrics') {
-        const body = await readJsonBody(req)
-        const stored = runtime.store.addReportEvent({
-          kind: 'telemetry_metrics',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'telemetry-metrics',
-          payload: body,
-        })
-        writeJson(res, 200, {
-          ok: true,
-          report_id: stored.reportId,
-          created_at: stored.createdAt,
-        })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/feedback') {
-        const body = await readJsonBody(req)
-        const stored = runtime.store.addReportEvent({
-          kind: 'feedback',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'feedback',
-          payload: body,
-        })
-        writeJson(res, 200, {
-          ok: true,
-          feedback_id: stored.reportId,
-        })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/transcripts/share') {
-        const body = await readJsonBody(req)
-        const stored = runtime.store.addReportEvent({
-          kind: 'transcript',
-          orgId: auth.orgId,
-          userId: auth.userId,
-          source: 'transcript-share',
-          payload: body,
-        })
-        writeJson(res, 201, {
-          ok: true,
-          transcript_id: stored.reportId,
-        })
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/reports/summary') {
-        authService.requireScope(auth, 'admin:settings')
-        const from = parseOptionalTimestampQuery(url.searchParams.get('from'), 'from')
-        const to = parseOptionalTimestampQuery(url.searchParams.get('to'), 'to')
-        if (from !== null && to !== null && from > to) {
-          throw new HttpError(400, 'Invalid report summary range')
-        }
-        writeJson(res, 200, {
-          summaries: runtime.store.summarizeReportEvents({
-            orgId: auth.orgId,
-            from: from ?? undefined,
-            to: to ?? undefined,
-          }),
-        })
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/reports/events') {
-        authService.requireScope(auth, 'admin:settings')
-        const kind = parseReportEventKind(url.searchParams.get('kind'))
-        const before = parseOptionalTimestampQuery(
-          url.searchParams.get('before'),
-          'before',
-        )
-        const from = parseOptionalTimestampQuery(url.searchParams.get('from'), 'from')
-        const to = parseOptionalTimestampQuery(url.searchParams.get('to'), 'to')
-        const limit = parseOptionalPositiveIntegerQuery(
-          url.searchParams.get('limit'),
-          'limit',
-        )
-        if (from !== null && to !== null && from > to) {
-          throw new HttpError(400, 'Invalid report events range')
-        }
-        const userId = url.searchParams.get('user_id')?.trim() || undefined
-        writeJson(
-          res,
-          200,
-          runtime.store.listReportEvents({
-            orgId: auth.orgId,
-            userId,
-            kind: kind ?? undefined,
-            before: before ?? undefined,
-            from: from ?? undefined,
-            to: to ?? undefined,
-            limit: limit ?? undefined,
-          }),
-        )
-        return
-      }
-
-      const reportEventMatch = pathname.match(/^\/api\/v1\/reports\/events\/([^/]+)$/)
-      if (req.method === 'GET' && reportEventMatch) {
-        authService.requireScope(auth, 'admin:settings')
-        const reportId = decodeURIComponent(reportEventMatch[1] || '')
-        const event = runtime.store.getReportEvent(auth.orgId, reportId)
-        if (!event) {
-          throw new HttpError(404, 'Report event not found')
-        }
-        writeJson(res, 200, { event })
         return
       }
 

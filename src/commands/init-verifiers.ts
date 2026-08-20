@@ -54,7 +54,7 @@ Analyze the project to detect what's in different subdirectories. The project ma
    - Check MCP configuration (.mcp.json) for browser automation tools:
      - Playwright MCP server
      - Chrome DevTools MCP server
-     - Claude Chrome Extension MCP (browser-use via Claude's Chrome extension)
+     - Browser automation MCP servers
    - For Python projects, check for playwright, pytest-playwright
 
 ## Phase 2: Verification Tool Setup
@@ -72,7 +72,7 @@ Based on what was detected in Phase 1, help the user set up appropriate verifica
    - Options to offer:
      - **Playwright** (Recommended) - Full browser automation library, works headless, great for CI
      - **Chrome DevTools MCP** - Uses Chrome DevTools Protocol via MCP
-     - **Claude Chrome Extension** - Uses the Claude Chrome extension for browser interaction (requires the extension installed in Chrome)
+     - **Browser MCP** - Uses a configured browser automation MCP server
      - **None** - Skip browser automation (will use basic HTTP checks only)
 
 3. **If user chooses to install Playwright**, run the appropriate command based on package manager:

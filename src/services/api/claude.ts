@@ -87,7 +87,7 @@ import {
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
 import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
-import { getDynamicConfig_BLOCKS_ON_INIT } from '../analytics/growthbook.js'
+import { getDynamicConfig_BLOCKS_ON_INIT } from '../analytics/featureFlags.js'
 import {
   currentLimits,
   extractQuotaStatusFromError,
@@ -130,7 +130,7 @@ import {
 import type { QuerySource } from 'src/constants/querySource.js'
 import type { Notification } from 'src/context/notifications.js'
 import { addToTotalSessionCost } from 'src/cost-tracker.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import type { AgentId } from 'src/types/ids.js'
 import {
   ADVISOR_TOOL_INSTRUCTIONS,
@@ -146,8 +146,6 @@ import {
   shouldIncludeFirstPartyOnlyBetas,
   shouldUseGlobalCacheScope,
 } from 'src/utils/betas.js'
-import { CLAUDE_IN_CHROME_MCP_SERVER_NAME } from 'src/utils/claudeInChrome/common.js'
-import { CHROME_TOOL_SEARCH_INSTRUCTIONS } from 'src/utils/claudeInChrome/prompt.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { type EffortValue, modelSupportsEffort } from 'src/utils/effort.js'
@@ -209,7 +207,6 @@ import {
   pinCacheEdits,
 } from '../compact/microCompact.js'
 import { getInitializationStatus } from '../lsp/manager.js'
-import { isToolFromMcpServer } from '../mcp/utils.js'
 import { withStreamingVCR, withVCR } from '../vcr.js'
 import { CLIENT_REQUEST_ID_HEADER, getAnthropicClient } from './client.js'
 import {
@@ -347,9 +344,9 @@ export function getCacheControl({
  *
  * Only applied when:
  * 1. User is eligible
- * 2. The query source matches a pattern in the GrowthBook allowlist
+ * 2. The query source matches a pattern in the feature flag allowlist
  *
- * GrowthBook config shape: { allowlist: string[] }
+ * feature flag config shape: { allowlist: string[] }
  * Patterns support trailing '*' for prefix matching.
  * Examples:
  * - { allowlist: ["repl_main_thread*", "sdk"] } — main thread + SDK only
@@ -357,11 +354,11 @@ export function getCacheControl({
  * - { allowlist: ["*"] } — all sources
  *
  * The allowlist is cached in STATE for session stability — prevents mixed
- * TTLs when GrowthBook's disk cache updates mid-request.
+ * TTLs when feature flag disk cache updates mid-request.
  */
 function should1hCacheTTL(querySource?: QuerySource): boolean {
   // 3P Bedrock users get 1h TTL when opted in via env var — they manage their own billing
-  // No GrowthBook gating needed since 3P users don't have GrowthBook configured
+  // No feature flag gating needed since 3P users don't have feature flag configured
   if (
     getAPIProvider() === 'bedrock' &&
     isEnvTruthy(process.env.ENABLE_PROMPT_CACHING_1H_BEDROCK)
@@ -380,7 +377,7 @@ function should1hCacheTTL(querySource?: QuerySource): boolean {
   if (!userEligible) return false
 
   // Cache allowlist in bootstrap state for session stability — prevents mixed
-  // TTLs when GrowthBook's disk cache updates mid-request
+  // TTLs when feature flag disk cache updates mid-request
   let allowlist = getPromptCache1hAllowlist()
   if (allowlist === null) {
     const config = getFeatureValue_CACHED_MAY_BE_STALE<{
@@ -1011,7 +1008,7 @@ async function* queryModel(
   StreamEvent | AssistantMessage | SystemAPIErrorMessage,
   void
 > {
-  // Check cheap conditions first — the off-switch await blocks on GrowthBook
+  // Check cheap conditions first — the off-switch await blocks on feature flag
   // init (~10ms). For non-Opus models (haiku, sonnet) this skips the await
   // entirely.
   if (
@@ -1110,7 +1107,7 @@ async function* queryModel(
     'query',
   )
 
-  // Precompute once — isDeferredTool does 2 GrowthBook lookups per call
+  // Precompute once — isDeferredTool does 2 feature flag lookups per call
   const deferredToolNames = new Set<string>()
   if (useToolSearch) {
     for (const t of tools) {
@@ -1329,16 +1326,6 @@ async function* queryModel(
     }
   }
 
-  // Chrome tool-search instructions: when the delta attachment is enabled,
-  // these are carried as a client-side block in mcp_instructions_delta
-  // (attachments.ts) instead of here. This per-request sys-prompt append
-  // busts the prompt cache when chrome connects late.
-  const hasChromeTools = filteredTools.some(t =>
-    isToolFromMcpServer(t.name, CLAUDE_IN_CHROME_MCP_SERVER_NAME),
-  )
-  const injectChromeHere =
-    useToolSearch && hasChromeTools && !isMcpInstructionsDeltaEnabled()
-
   // filter(Boolean) works by converting each element to a boolean - empty strings become false and are filtered out.
   systemPrompt = asSystemPrompt(
     [
@@ -1349,7 +1336,6 @@ async function* queryModel(
       }),
       ...systemPrompt,
       ...(advisorModel ? [ADVISOR_TOOL_INSTRUCTIONS] : []),
-      ...(injectChromeHere ? [CHROME_TOOL_SEARCH_INSTRUCTIONS] : []),
     ].filter(Boolean),
   )
 
@@ -1729,7 +1715,7 @@ async function* queryModel(
         queryCheckpoint('query_client_creation_end')
 
         const params = paramsFromContext(context)
-        captureAPIRequest(params, options.querySource) // Capture for bug reports
+        captureAPIRequest(params, options.querySource)
 
         maxOutputTokens = params.max_tokens
 

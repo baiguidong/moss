@@ -107,7 +107,7 @@ function shouldLogDebugMessage(message: string): boolean {
   }
 
   // Non-ants only write debug logs when debug mode is active (via --debug at
-  // startup or /debug mid-session). Ants always log for /share, bug reports.
+  // startup or /debug mid-session).
   if (process.env.USER_TYPE !== 'ant' && !isDebugMode()) {
     return false
   }

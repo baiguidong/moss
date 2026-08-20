@@ -16,7 +16,6 @@ import {
 } from '../../context.js'
 import { clearFileSuggestionCaches } from '../../hooks/fileSuggestions.js'
 import { clearAllPendingCallbacks } from '../../hooks/useSwarmPermissionPoller.js'
-import { clearAllDumpState } from '../../services/api/dumpPrompts.js'
 import { resetPromptCacheBreakDetection } from '../../services/api/promptCacheBreakDetection.js'
 import { clearAllSessions } from '../../services/api/sessionIngress.js'
 import { runPostCompactCleanup } from '../../services/compact/postCompactCleanup.js'
@@ -40,7 +39,7 @@ import { clearSessionEnvVars } from '../../utils/sessionEnvVars.js'
  * @param preservedAgentIds - Agent IDs whose per-agent state should survive
  *   the clear (e.g., background tasks preserved across /clear). When non-empty,
  *   agentId-keyed state (invoked skills) is selectively cleared and requestId-keyed
- *   state (pending permission callbacks, dump state, cache-break tracking) is left
+ *   state (pending permission callbacks, cache-break tracking) is left
  *   intact since it cannot be safely scoped to the main session.
  */
 export function clearSessionCaches(
@@ -98,8 +97,6 @@ export function clearSessionCaches(
   clearRepositoryCaches()
   // Clear bash command prefix caches (Haiku-extracted prefixes)
   clearCommandPrefixCaches()
-  // Clear dump prompts state
-  if (!hasPreserved) clearAllDumpState()
   // Clear invoked skills cache (each entry holds full skill file content)
   clearInvokedSkills(preservedAgentIds)
   // Clear git dir resolution cache

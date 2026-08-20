@@ -39,10 +39,7 @@ import {
   setMeterProvider,
   setTracerProvider,
 } from 'src/bootstrap/state.js'
-import {
-  getOtelHeadersFromHelper,
-  is1PApiCustomer,
-} from 'src/utils/auth.js'
+import { getOtelHeadersFromHelper } from 'src/utils/auth.js'
 import { getPlatform, getWslVersion } from 'src/utils/platform.js'
 
 import { getCACertificates } from '../caCerts.js'
@@ -56,7 +53,6 @@ import { getSettings_DEPRECATED } from '../settings/settings.js'
 import { jsonStringify } from '../slowOperations.js'
 import { profileCheckpoint } from '../startupProfiler.js'
 import { isBetaTracingEnabled } from './betaSessionTracing.js'
-import { BigQueryMetricsExporter } from './bigqueryExporter.js'
 import { ClaudeCodeDiagLogger } from './logger.js'
 import { initializePerfettoTracing } from './perfettoTracing.js'
 import {
@@ -323,18 +319,6 @@ export function isTelemetryEnabled() {
   return isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_TELEMETRY)
 }
 
-function getBigQueryExportingReader() {
-  const bigqueryExporter = new BigQueryMetricsExporter()
-  return new PeriodicExportingMetricReader({
-    exporter: bigqueryExporter,
-    exportIntervalMillis: 5 * 60 * 1000, // 5mins for BigQuery metrics exporter to reduce load
-  })
-}
-
-function isBigQueryMetricsEnabled() {
-  return is1PApiCustomer()
-}
-
 /**
  * Initialize beta tracing - a separate code path for detailed debugging.
  * Uses BETA_TRACING_ENDPOINT instead of OTEL_EXPORTER_OTLP_ENDPOINT.
@@ -450,11 +434,6 @@ export async function initializeTelemetry() {
   )
   if (telemetryEnabled) {
     readers.push(...(await getOtlpReaders()))
-  }
-
-  // Add BigQuery exporter (for API customers, C4E users, and internal users)
-  if (isBigQueryMetricsEnabled()) {
-    readers.push(getBigQueryExportingReader())
   }
 
   // Create base resource with service attributes

@@ -32,10 +32,6 @@ function normalizeMossBaseUrl(value: string | undefined): string | undefined {
   return normalizeUrl(value)
 }
 
-function normalizeMossServerUrl(value: string | undefined): string | undefined {
-  return normalizeUrl(value)
-}
-
 /**
  * When the host owns inference routing (sets
  * CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST in spawn env), strip
@@ -91,14 +87,6 @@ function normalizeSettingsEnv(
       out.MOSS_MODEL_BASE_URL = normalized
     } else {
       delete out.MOSS_MODEL_BASE_URL
-    }
-  }
-  if (typeof out.MOSS_SERVER_URL === 'string') {
-    const normalized = normalizeMossServerUrl(out.MOSS_SERVER_URL)
-    if (normalized) {
-      out.MOSS_SERVER_URL = normalized
-    } else {
-      delete out.MOSS_SERVER_URL
     }
   }
   return out

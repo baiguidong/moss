@@ -1,7 +1,7 @@
-// GrowthBook-backed cron jitter configuration.
+// feature flag-backed cron jitter configuration.
 //
 // Separated from cronScheduler.ts so the scheduler can be bundled in the
-// Agent SDK public build without pulling in analytics/growthbook.ts and
+// Agent SDK public build without pulling in analytics/featureFlags.ts and
 // its large transitive dependency set (settings/hooks/config cycle).
 //
 // Usage:

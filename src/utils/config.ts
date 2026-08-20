@@ -33,7 +33,7 @@ import { jsonParse, jsonStringify } from './slowOperations.js'
 
 // Re-entrancy guard: prevents getConfig → logEvent → getGlobalConfig → getConfig
 // infinite recursion when the config file is corrupted. logEvent's sampling check
-// reads GrowthBook features from the global config, which calls getConfig again.
+// reads feature flags from the global config, which calls getConfig again.
 let insideGetConfig = false
 
 // Image dimension info for coordinate mapping (only set when image was resized)
@@ -160,12 +160,6 @@ export type GlobalConfig = {
   // Tracks the last version that reset onboarding, used with MIN_VERSION_REQUIRING_ONBOARDING_RESET
   lastOnboardingVersion?: string
   mcpServers?: Record<string, McpServerConfig>
-  // claude.ai MCP connectors that have successfully connected at least once.
-  // Used to gate "connector unavailable" / "needs auth" startup notifications:
-  // a connector the user has actually used is worth flagging when it breaks,
-  // but an org-configured connector that's been needs-auth since day one is
-  // something the user has demonstrably ignored and shouldn't nag about.
-  claudeAiMcpEverConnected?: string[]
   preferredNotifChannel: NotificationChannel
   /**
    * @deprecated. Use the Notification hook instead (docs/hooks.md).
@@ -221,14 +215,6 @@ export type GlobalConfig = {
   // /buddy companion soul — bones regenerated from userId on read. See src/buddy/.
   companion?: import('../buddy/types.js').StoredCompanion
   companionMuted?: boolean
-
-  // Feedback survey tracking
-  feedbackSurveyState?: {
-    lastShownTime?: number
-  }
-
-  // Transcript share prompt tracking ("Don't ask again")
-  transcriptShareDismissed?: boolean
 
   // Memory usage tracking
   memoryUsageCount: number // Number of times user has added to memory
@@ -310,12 +296,9 @@ export type GlobalConfig = {
   showSpinnerTree?: boolean // Whether to show the teammate spinner tree instead of pills
 
   // First start time tracking
-  firstStartTime?: string // ISO timestamp when Claude Code was first started on this machine
+  firstStartTime?: string // ISO timestamp when Moss was first started on this machine
 
-  messageIdleNotifThresholdMs: number // How long the user has to have been idle to get a notification that Claude is done generating
-
-  githubActionSetupCount?: number // Number of times the user has set up the GitHub Action
-  slackAppInstallCount?: number // Number of times the user has clicked to install the Slack app
+  messageIdleNotifThresholdMs: number // How long the user has to have been idle to get a notification that Moss is done generating
 
   // File checkpointing configuration
   fileCheckpointingEnabled: boolean
@@ -336,10 +319,6 @@ export type GlobalConfig = {
   // Effort callout tracking - shown once for Opus 4.6 users
   effortCalloutDismissed?: boolean // v1 - legacy, read to suppress v2 for Pro users who already saw it
   effortCalloutV2Dismissed?: boolean
-
-  // Desktop upsell startup dialog tracking
-  desktopUpsellSeenCount?: number // Total showings (max 3)
-  desktopUpsellDismissed?: boolean // "Don't ask again" picked
 
   // Idle-return dialog tracking
   idleReturnDismissed?: boolean // "Don't ask again" picked
@@ -365,12 +344,12 @@ export type GlobalConfig = {
   // Cached statsig dynamic configs
   cachedDynamicConfigs?: { [configName: string]: unknown }
 
-  // Cached GrowthBook feature values
-  cachedGrowthBookFeatures?: { [featureName: string]: unknown }
+  // Cached feature flag values
+  cachedFeatureFlags?: { [featureName: string]: unknown }
 
-  // Local GrowthBook overrides (ant-only, set via /config Gates tab).
+  // Local feature flag overrides (ant-only, set via /config Gates tab).
   // Checked after env-var overrides but before the real resolved value.
-  growthBookOverrides?: { [featureName: string]: unknown }
+  featureFlagOverrides?: { [featureName: string]: unknown }
 
   // Emergency tip tracking - stores the last shown tip to prevent re-showing
   lastShownEmergencyTip?: string
@@ -406,17 +385,6 @@ export type GlobalConfig = {
   officialMarketplaceAutoInstallLastAttemptTime?: number // Timestamp of last attempt
   officialMarketplaceAutoInstallNextRetryTime?: number // Earliest time to retry again
 
-  // Claude in Chrome settings
-  hasCompletedClaudeInChromeOnboarding?: boolean // Whether Claude in Chrome onboarding has been shown
-  claudeInChromeDefaultEnabled?: boolean // Whether Claude in Chrome is enabled by default (undefined means platform default)
-  cachedChromeExtensionInstalled?: boolean // Cached result of whether Chrome extension is installed
-
-  // Chrome extension pairing state (persisted across sessions)
-  chromeExtension?: {
-    pairedDeviceId?: string
-    pairedDeviceName?: string
-  }
-
   // LSP plugin recommendation preferences
   lspRecommendationDisabled?: boolean // Disable all LSP plugin recommendations
   lspRecommendationNeverPlugins?: string[] // Plugin IDs to never suggest
@@ -443,7 +411,7 @@ export type GlobalConfig = {
   // undefined = hardcoded Opus (backward-compat); null = leader's model; string = model alias/ID.
   teammateDefaultModel?: string | null
 
-  // PR status footer configuration (feature-flagged via GrowthBook)
+  // PR status footer configuration (feature-flagged via feature flag)
   prStatusFooterEnabled?: boolean // Show PR review status in footer (default: true)
 
   // Cached org-level fast mode status from the API.
@@ -513,7 +481,7 @@ function createDefaultGlobalConfig(): GlobalConfig {
     terminalProgressBarEnabled: true,
     cachedStatsigGates: {},
     cachedDynamicConfigs: {},
-    cachedGrowthBookFeatures: {},
+    cachedFeatureFlags: {},
     respectGitignore: true,
     copyFullResponse: false,
   }
@@ -543,8 +511,6 @@ export const GLOBAL_CONFIG_KEYS = [
   'terminalProgressBarEnabled',
   'showStatusInTerminalTab',
   'respectGitignore',
-  'claudeInChromeDefaultEnabled',
-  'hasCompletedClaudeInChromeOnboarding',
   'lspRecommendationDisabled',
   'lspRecommendationNeverPlugins',
   'lspRecommendationIgnoredCount',
@@ -1270,7 +1236,7 @@ function getConfig<A>(
 
       // Guard: logEvent → shouldSampleEvent → getGlobalConfig → getConfig
       // causes infinite recursion when the config file is corrupted, because
-      // the sampling check reads a GrowthBook feature from global config.
+      // the sampling check reads a feature flag from global config.
       // Only log analytics on the outermost call.
       if (!insideGetConfig) {
         insideGetConfig = true

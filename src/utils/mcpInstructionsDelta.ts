@@ -1,4 +1,4 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logEvent } from '../services/analytics/index.js'
 import type {
   ConnectedMCPServer,
@@ -18,8 +18,8 @@ export type McpInstructionsDelta = {
 /**
  * Client-authored instruction block to announce when a server connects,
  * in addition to (or instead of) the server's own `InitializeResult.instructions`.
- * Lets first-party servers (e.g., claude-in-chrome) carry client-side
- * context the server itself doesn't know about.
+ * Lets first-party servers carry client-side context the server itself doesn't
+ * know about.
  */
 export type ClientSideInstruction = {
   serverName: string
@@ -32,7 +32,7 @@ export type ClientSideInstruction = {
  * (rebuilt every turn; cache-busts on late connect).
  *
  * Env override for local testing: CLAUDE_CODE_MCP_INSTR_DELTA=true/false
- * wins over both ant bypass and the GrowthBook gate.
+ * wins over both ant bypass and the feature flag gate.
  */
 export function isMcpInstructionsDeltaEnabled(): boolean {
   if (isEnvTruthy(process.env.CLAUDE_CODE_MCP_INSTR_DELTA)) return true

@@ -86,7 +86,7 @@ import {
   extractDiscoveredToolNames,
   isToolSearchEnabled,
 } from '../../utils/toolSearch.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,

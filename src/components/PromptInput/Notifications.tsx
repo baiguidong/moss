@@ -231,7 +231,7 @@ function NotificationContent({
     return () => clearInterval(interval);
   }, []);
 
-  // Voice state (VOICE_MODE builds only, runtime-gated by GrowthBook)
+  // Voice state (VOICE_MODE builds only, runtime-gated by feature flag)
   const voiceState = feature('VOICE_MODE') ?
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
   useVoiceState(s => s.voiceState) : 'idle' as const;

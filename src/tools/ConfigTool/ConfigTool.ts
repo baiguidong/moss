@@ -108,10 +108,10 @@ export const ConfigTool = buildTool({
     // must also be gated at runtime. When the kill-switch is on, treat
     // voiceEnabled as an unknown setting so no voice-specific strings leak.
     if (feature('VOICE_MODE') && setting === 'voiceEnabled') {
-      const { isVoiceGrowthBookEnabled } = await import(
+      const { isVoiceFeatureFlagEnabled } = await import(
         '../../voice/voiceModeEnabled.js'
       )
-      if (!isVoiceGrowthBookEnabled()) {
+      if (!isVoiceFeatureFlagEnabled()) {
         return {
           data: { success: false, error: `Unknown setting: "${setting}"` },
         }

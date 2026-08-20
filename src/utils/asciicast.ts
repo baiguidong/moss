@@ -57,7 +57,7 @@ export function getSessionRecordingPaths(): string[] {
   const projectsDir = join(getMossConfigHomeDir(), 'projects')
   const projectDir = join(projectsDir, sanitizePath(getOriginalCwd()))
   try {
-    // eslint-disable-next-line custom-rules/no-sync-fs -- called during /share before upload, not in hot path
+    // eslint-disable-next-line custom-rules/no-sync-fs -- diagnostic listing, not in hot path
     const entries = getFsImplementation().readdirSync(projectDir)
     const names = (
       typeof entries[0] === 'string'
@@ -125,8 +125,7 @@ function getTerminalSize(): { cols: number; rows: number } {
 }
 
 /**
- * Flush pending recording data to disk.
- * Call before reading the .cast file (e.g., during /share).
+ * Flush pending recording data to disk before reading the .cast file.
  */
 export async function flushAsciicastRecorder(): Promise<void> {
   await recorder?.flush()

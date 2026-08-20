@@ -1,7 +1,7 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
 
 /**
- * GrowthBook config for time-based microcompact.
+ * feature flag config for time-based microcompact.
  *
  * Triggers content-clearing microcompact when the gap since the last main-loop
  * assistant message exceeds a threshold — the server-side prompt cache has

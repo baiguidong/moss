@@ -18,7 +18,7 @@ export function formatFileSize(sizeInBytes: number): string {
   if (mb < 1024) {
     return `${mb.toFixed(1).replace(/\.0$/, '')}MB`
   }
-  const gb = mb / 1024
+  const featureFlags = mb / 1024
   return `${gb.toFixed(1).replace(/\.0$/, '')}GB`
 }
 

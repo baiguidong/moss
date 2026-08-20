@@ -46,8 +46,8 @@ type WebSocketLike = Pick<
   | 'binaryType'
 >
 
-// Envoy per-request buffer cap. Week-1 Datadog payloads won't hit this, but
-// design for it so git-push doesn't need a relay rewrite.
+// Envoy per-request buffer cap. Design for git-push payloads so the relay
+// does not need a later rewrite.
 const MAX_CHUNK_BYTES = 512 * 1024
 
 // Sidecar idle timeout is 50s; ping well inside that.

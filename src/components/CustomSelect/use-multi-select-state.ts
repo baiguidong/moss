@@ -170,9 +170,8 @@ export function useMultiSelectState<T>({
   const [isSubmitFocused, setIsSubmitFocused] = useState(false)
 
   // Reset selectedValues when options change (e.g. async-loaded data changes
-  // defaultValue after mount). Mirrors the reset pattern in use-select-navigation.ts
-  // and the deleted ui/useMultiSelectState.ts — without this, MCPServerDesktopImportDialog
-  // keeps colliding servers checked after getAllMcpConfigs() resolves.
+  // defaultValue after mount). Mirrors the reset pattern in
+  // use-select-navigation.ts and the deleted ui/useMultiSelectState.ts.
   const [lastOptions, setLastOptions] = useState(options)
   if (options !== lastOptions && !isDeepStrictEqual(options, lastOptions)) {
     setSelectedValues(defaultValue)

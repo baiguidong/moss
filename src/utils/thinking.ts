@@ -1,7 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import type { Theme } from './theme.js'
 import { feature } from 'bun:bundle'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { getMaxThinkingTokensForModel } from './context.js'
 import { isEnvTruthy } from './envUtils.js'
 import { resolveAntModel } from './model/antModels.js'
@@ -24,7 +24,7 @@ export type APIThinkingParam =
   | { type: 'disabled' }
 
 /**
- * Build-time gate (feature) + runtime gate (GrowthBook). The build flag
+ * Build-time gate (feature) + runtime gate (feature flag). The build flag
  * controls code inclusion in external builds; the GB flag controls rollout.
  */
 export function isUltrathinkEnabled(): boolean {

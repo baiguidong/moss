@@ -8,9 +8,8 @@ import { clearInvokedSkillsForAgent, getSdkAgentProgressSummariesEnabled } from 
 import { enhanceSystemPromptWithEnvDetails, getSystemPrompt } from '../../constants/prompts.js';
 import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js';
 import { startAgentSummarization } from '../../services/AgentSummary/agentSummary.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js';
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
-import { clearDumpState } from '../../services/api/dumpPrompts.js';
 import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { checkRemoteAgentEligibility, formatPreconditionError, getRemoteTaskSessionUrl, registerRemoteAgentTask } from '../../tasks/RemoteAgentTask/RemoteAgentTask.js';
 import { assembleToolPool } from '../../tools.js';
@@ -68,7 +67,7 @@ const isBackgroundTasksDisabled =
 isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS);
 
 // Auto-background agent tasks after this many ms (0 = disabled)
-// Enabled by env var OR GrowthBook gate (checked lazily since GB may not be ready at module load)
+// Enabled by env var OR feature flag gate (checked lazily since GB may not be ready at module load)
 function getAutoBackgroundMs(): number {
   if (isEnvTruthy(process.env.CLAUDE_AUTO_BACKGROUND_TASKS) || getFeatureValue_CACHED_MAY_BE_STALE('tengu_auto_background_agents', false)) {
     return 120_000;
@@ -108,7 +107,7 @@ const fullInputSchema = lazySchema(() => {
 // which always includes all optional fields.
 export const inputSchema = lazySchema(() => {
   const schema = fullInputSchema();
-  // GrowthBook-in-lazySchema is acceptable here (unlike subagent_type, which
+  // feature flag in-lazySchema is acceptable here (unlike subagent_type, which
   // was removed in 906da6c723): the divergence window is one-session-per-
   // gate-flip via _CACHED_MAY_BE_STALE disk read, and worst case is either
   // "schema shows a no-op param" (gate flips on mid-session: param ignored
@@ -491,7 +490,7 @@ export const AgentTool = buildTool({
         forkParentSystemPrompt = toolUseContext.renderedSystemPrompt;
       } else {
         // Fallback: recompute. May diverge from parent's cached bytes if
-        // GrowthBook state changed between parent turn-start and fork spawn.
+        // feature flag state changed between parent turn-start and fork spawn.
         const mainThreadAgentDefinition = appState.agent ? appState.agentDefinitions.activeAgents.find(a => a.agentType === appState.agent) : undefined;
         const additionalWorkingDirectories = Array.from(appState.toolPermissionContext.additionalWorkingDirectories.keys());
         const defaultSystemPrompt = await getSystemPrompt(toolUseContext.options.tools, toolUseContext.options.mainLoopModel, additionalWorkingDirectories, toolUseContext.options.mcpClients);
@@ -1000,7 +999,6 @@ export const AgentTool = buildTool({
                   } finally {
                     stopBackgroundedSummarization?.();
                     clearInvokedSkillsForAgent(syncAgentId);
-                    clearDumpState(syncAgentId);
                     // Note: worktree cleanup is done before enqueueAgentNotification
                     // in both try and catch paths so we can include worktree info
                   }
@@ -1155,12 +1153,6 @@ export const AgentTool = buildTool({
 
           // Clean up scoped skills so they don't accumulate in the global map
           clearInvokedSkillsForAgent(syncAgentId);
-
-          // Clean up dumpState entry for this agent to prevent unbounded growth
-          // Skip if backgrounded — the backgrounded agent's finally handles cleanup
-          if (!wasBackgrounded) {
-            clearDumpState(syncAgentId);
-          }
 
           // Cancel auto-background timer if agent completed before it fired
           cancelAutoBackground?.();

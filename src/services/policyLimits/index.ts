@@ -16,10 +16,6 @@ import { createHash } from 'crypto'
 import { readFileSync as fsReadFileSync } from 'fs'
 import { unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
-import {
-  getMossServerApiUrl,
-  getMossServerAuthHeaders,
-} from '../../constants/api.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { getMossConfigHomeDir } from '../../utils/envUtils.js'
@@ -113,11 +109,7 @@ function getCachePath(): string {
  * Get the policy limits API endpoint
  */
 function getPolicyLimitsEndpoint(): string {
-  const endpoint = getMossServerApiUrl('/api/v1/policy-limits')
-  if (!endpoint) {
-    throw new Error('MOSS_SERVER_URL is not configured')
-  }
-  return endpoint
+  throw new Error('Policy limits are disabled')
 }
 
 /**
@@ -158,10 +150,7 @@ function computeChecksum(
  * getSettings() to avoid circular dependencies during settings loading.
  */
 export function isPolicyLimitsEligible(): boolean {
-  return (
-    Boolean(getMossServerApiUrl('/api/v1/policy-limits')) &&
-    Object.keys(getMossServerAuthHeaders()).length > 0
-  )
+  return false
 }
 
 /**
@@ -182,10 +171,10 @@ function getAuthHeaders(): {
   headers: Record<string, string>
   error?: string
 } {
-  const headers = getMossServerAuthHeaders()
-  return Object.keys(headers).length > 0
-    ? { headers }
-    : { headers: {}, error: 'No Moss server authentication available' }
+  return {
+    headers: {},
+    error: 'Policy limits are disabled',
+  }
 }
 
 /**

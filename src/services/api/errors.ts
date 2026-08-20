@@ -512,7 +512,7 @@ export function getAssistantMessageFromError(
     // (e.g. 1M context without Extra Usage) and infra capacity 429s land here.
     if (error.message.includes('Extra usage is required for long context')) {
       const hint = getIsNonInteractiveSession()
-        ? 'enable extra usage at claude.ai/settings/usage, or use --model to switch to standard context'
+        ? 'enable extra usage in your configured model service, or use --model to switch to standard context'
         : 'run /extra-usage to enable, or /model to switch to standard context'
       return createAssistantAPIErrorMessage({
         content: `${API_ERROR_MESSAGE_PREFIX}: Extra usage is required for 1M context · ${hint}`,
@@ -641,25 +641,14 @@ export function getAssistantMessageFromError(
       }
     }
 
-    if (process.env.USER_TYPE === 'ant') {
-      const baseMessage = `API Error: 400 ${error.message}\n\nRun /share and post the JSON file to ${MACRO.FEEDBACK_CHANNEL}.`
-      const rewindInstruction = getIsNonInteractiveSession()
-        ? ''
-        : ' Then, use /rewind to recover the conversation.'
-      return createAssistantAPIErrorMessage({
-        content: baseMessage + rewindInstruction,
-        error: 'invalid_request',
-      })
-    } else {
-      const baseMessage = 'API Error: 400 due to tool use concurrency issues.'
-      const rewindInstruction = getIsNonInteractiveSession()
-        ? ''
-        : ' Run /rewind to recover the conversation.'
-      return createAssistantAPIErrorMessage({
-        content: baseMessage + rewindInstruction,
-        error: 'invalid_request',
-      })
-    }
+    const baseMessage = 'API Error: 400 due to tool use concurrency issues.'
+    const rewindInstruction = getIsNonInteractiveSession()
+      ? ''
+      : ' Run /rewind to recover the conversation.'
+    return createAssistantAPIErrorMessage({
+      content: baseMessage + rewindInstruction,
+      error: 'invalid_request',
+    })
   }
 
   if (
@@ -864,8 +853,7 @@ function get3PModelFallbackSuggestion(model: string): string | undefined {
 }
 
 /**
- * Classifies an API error into a specific error type for analytics tracking.
- * Returns a standardized error type string suitable for Datadog tagging.
+ * Classifies an API error into a standardized error type string.
  */
 export function classifyAPIError(error: unknown): string {
   // Aborted requests

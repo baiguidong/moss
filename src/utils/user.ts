@@ -23,8 +23,7 @@ export type GitHubActionsMetadata = {
 }
 
 /**
- * Core user data used as base for all analytics providers.
- * This is also the format used by GrowthBook.
+ * Core user data used as base for runtime metadata.
  */
 export type CoreUserData = {
   deviceId: string
@@ -92,13 +91,6 @@ export const getCoreUserData = memoize(
   },
 )
 
-/**
- * Get user data for GrowthBook (same as core data with analytics metadata).
- */
-export function getUserForGrowthBook(): CoreUserData {
-  return getCoreUserData(true)
-}
-
 function getEmail(): string | undefined {
   // Return cached email if available (from async initialization)
   if (cachedEmail !== null) {
@@ -111,7 +103,7 @@ function getEmail(): string | undefined {
   }
 
   if (process.env.COO_CREATOR) {
-    return `${process.env.COO_CREATOR}@anthropic.com`
+    return formatCooCreatorEmail(process.env.COO_CREATOR)
   }
 
   // If initUser() wasn't called, we return undefined instead of blocking
@@ -125,7 +117,7 @@ async function getEmailAsync(): Promise<string | undefined> {
   }
 
   if (process.env.COO_CREATOR) {
-    return `${process.env.COO_CREATOR}@anthropic.com`
+    return formatCooCreatorEmail(process.env.COO_CREATOR)
   }
 
   return getGitEmail()
@@ -145,3 +137,8 @@ export const getGitEmail = memoize(async (): Promise<string | undefined> => {
     ? result.stdout.trim()
     : undefined
 })
+
+function formatCooCreatorEmail(username: string): string {
+  const domain = process.env.MOSS_USER_EMAIL_DOMAIN?.trim()
+  return domain ? `${username}@${domain}` : username
+}

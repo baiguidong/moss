@@ -154,10 +154,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     apiKey: '',
     model: '',
   },
-  reporting: {
-    serverUrl: '',
-    apiKey: '',
-  },
   sessionMemory: {
     enabled: true,
     compactEnabled: true,
@@ -207,10 +203,6 @@ function normalizeMossBaseUrl(value) {
   }
 }
 
-function normalizeMossServerUrl(value) {
-  return normalizeMossBaseUrl(value);
-}
-
 function objectField(source, key) {
   return isPlainObject(source?.[key]) ? source[key] : {};
 }
@@ -247,16 +239,25 @@ function isModelEndpointEnvKey(key) {
   return /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key);
 }
 
-function isReportingEndpointEnvKey(key) {
+function isLegacyServerEndpointEnvKey(key) {
   return key === 'MOSS_SERVER_URL' || key === 'MOSS_SERVER_AUTH_TOKEN';
 }
 
 function deleteManagedEndpointEnvKeys(env) {
   for (const key of Object.keys(env)) {
-    if (isModelEndpointEnvKey(key) || isReportingEndpointEnvKey(key)) {
+    if (isModelEndpointEnvKey(key) || isLegacyServerEndpointEnvKey(key)) {
       delete env[key];
     }
   }
+}
+
+function deleteLegacyServerSettings(target) {
+  delete target.reporting;
+  delete target.reportingServerUrl;
+  delete target.reportingApiKey;
+  delete target.reportingAuthToken;
+  delete target.serverUrl;
+  delete target.serverAuthToken;
 }
 
 function normalizeRemoteDirectCredentialMode(value) {
@@ -598,9 +599,9 @@ function loadLocalSettingsAuthConfig() {
       result.injected.push('MOSS_MODEL_AUTH_TOKEN');
     }
 
-    // 模型与上报端点只从结构化配置注入；env 仅保留其他运行变量。
+    // 模型端点只从结构化配置注入；env 仅保留其他运行变量。
     for (const key of Object.keys(env)) {
-      if (isModelEndpointEnvKey(key) || isReportingEndpointEnvKey(key)) {
+      if (isModelEndpointEnvKey(key) || isLegacyServerEndpointEnvKey(key)) {
         continue;
       }
       const value = env[key];
@@ -631,10 +632,6 @@ function normalizeDesktopSettings(input, existing = {}) {
   const existingModels = objectField(existing, 'models');
   const existingText = objectField(existingModels, 'text');
   const existingTextThinking = objectField(existingText, 'thinking');
-  const sourceEnv = objectField(source, 'env');
-  const existingEnv = objectField(existing, 'env');
-  const sourceReporting = objectField(source, 'reporting');
-  const existingReporting = objectField(existing, 'reporting');
   const sourceRemoteDirect = objectField(source, 'remoteDirect');
   const existingRemoteDirect = objectField(existing, 'remoteDirect');
 
@@ -714,30 +711,6 @@ function normalizeDesktopSettings(input, existing = {}) {
       stringField(result, 'apiKey'),
       stringField(existingText, 'apiKey'),
     ) || DEFAULT_DESKTOP_SETTINGS.apiKey;
-
-  result.reporting = {
-    serverUrl: normalizeMossServerUrl(
-      ownStringField(sourceReporting, 'serverUrl') ??
-      ownStringField(source, 'reportingServerUrl') ??
-      stringField(result.reporting, 'serverUrl') ??
-      stringField(sourceEnv, 'MOSS_SERVER_URL') ??
-      stringField(existingReporting, 'serverUrl') ??
-      stringField(existingEnv, 'MOSS_SERVER_URL') ??
-      DEFAULT_DESKTOP_SETTINGS.reporting.serverUrl,
-    ),
-    apiKey:
-      ownStringField(sourceReporting, 'apiKey') ??
-      ownStringField(sourceReporting, 'authToken') ??
-      ownStringField(source, 'reportingApiKey') ??
-      ownStringField(source, 'reportingAuthToken') ??
-      stringField(result.reporting, 'apiKey') ??
-      stringField(result.reporting, 'authToken') ??
-      stringField(sourceEnv, 'MOSS_SERVER_AUTH_TOKEN') ??
-      stringField(existingReporting, 'apiKey') ??
-      stringField(existingReporting, 'authToken') ??
-      stringField(existingEnv, 'MOSS_SERVER_AUTH_TOKEN') ??
-      DEFAULT_DESKTOP_SETTINGS.reporting.apiKey,
-  };
 
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
@@ -934,6 +907,7 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.mcp = normalizeMcpStore(DEFAULT_DESKTOP_SETTINGS.mcp);
   }
 
+  deleteLegacyServerSettings(result);
   return result;
 }
 
@@ -963,6 +937,7 @@ function loadDesktopSettings() {
       ...normalized,
       image: normalized.image || { ...DEFAULT_DESKTOP_SETTINGS.image },
     };
+    deleteLegacyServerSettings(result.value);
     result.loaded = true;
     return result;
   } catch (error) {
@@ -976,7 +951,6 @@ let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
 syncDesktopThinkingEnv(desktopSettings);
 syncDesktopModelEnv(desktopSettings);
-syncDesktopReportingEnv(desktopSettings);
 mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
 
 function syncDesktopThinkingEnv(settings) {
@@ -998,22 +972,6 @@ function syncDesktopModelEnv(settings) {
     process.env.MOSS_MODEL_AUTH_TOKEN = settings.apiKey;
   } else {
     delete process.env.MOSS_MODEL_AUTH_TOKEN;
-  }
-}
-
-function syncDesktopReportingEnv(settings) {
-  const reporting = objectField(settings, 'reporting');
-  const serverUrl = normalizeMossServerUrl(stringField(reporting, 'serverUrl') || '');
-  const apiKey = stringField(reporting, 'apiKey') || stringField(reporting, 'authToken') || '';
-  if (serverUrl) {
-    process.env.MOSS_SERVER_URL = serverUrl;
-  } else {
-    delete process.env.MOSS_SERVER_URL;
-  }
-  if (apiKey) {
-    process.env.MOSS_SERVER_AUTH_TOKEN = apiKey;
-  } else {
-    delete process.env.MOSS_SERVER_AUTH_TOKEN;
   }
 }
 
@@ -1087,16 +1045,6 @@ function saveDesktopSettings(nextSettings) {
     workspace: normalizedSettings.remoteDirectWorkspace || '',
   };
 
-  const existingReporting = existingFile.reporting && typeof existingFile.reporting === 'object'
-    ? existingFile.reporting
-    : {};
-  const reporting = {
-    ...existingReporting,
-    serverUrl: normalizeMossServerUrl(normalizedSettings.reporting?.serverUrl || ''),
-    apiKey: normalizedSettings.reporting?.apiKey || '',
-  };
-  delete reporting.authToken;
-
   const models = {
     ...existingModels,
     text: {
@@ -1118,15 +1066,10 @@ function saveDesktopSettings(nextSettings) {
     ...existingFile,
     ...normalizedSettings,
     models,
-    reporting,
     remoteDirect,
     env,
   };
-  delete toSave.reportingServerUrl;
-  delete toSave.reportingApiKey;
-  delete toSave.reportingAuthToken;
-  delete toSave.serverUrl;
-  delete toSave.serverAuthToken;
+  deleteLegacyServerSettings(toSave);
   delete toSave.remoteDirectServerUrl;
   delete toSave.remoteDirectCredentialMode;
   delete toSave.remoteDirectUserEmail;
@@ -1158,7 +1101,6 @@ function saveDesktopSettings(nextSettings) {
   desktopSettings = normalizedSettings;
   syncDesktopThinkingEnv(normalizedSettings);
   syncDesktopModelEnv(normalizedSettings);
-  syncDesktopReportingEnv(normalizedSettings);
 }
 
 function readJsonFile(filePath, fallbackValue) {

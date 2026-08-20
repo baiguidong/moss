@@ -24,7 +24,7 @@ import { resolve } from 'path'
 import {
   checkSecurityRestrictionGate,
   checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
-} from 'src/services/analytics/growthbook.js'
+} from 'src/services/analytics/featureFlags.js'
 import {
   addDirHelpMessage,
   validateDirectoryForWorkspace,
@@ -329,8 +329,8 @@ export function initialPermissionModeFromCLI({
 }): { mode: PermissionMode; notification?: string } {
   const settings = getSettings_DEPRECATED() || {}
 
-  // Check GrowthBook gate first - highest precedence
-  const growthBookDisableBypassPermissionsMode =
+  // Check feature flag gate first - highest precedence
+  const featureFlagDisableBypassPermissionsMode =
     checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
@@ -341,7 +341,7 @@ export function initialPermissionModeFromCLI({
 
   // Statsig gate takes precedence over settings
   const disableBypassPermissionsMode =
-    growthBookDisableBypassPermissionsMode ||
+    featureFlagDisableBypassPermissionsMode ||
     settingsDisableBypassPermissionsMode
 
   // Modes in order of priority
@@ -385,7 +385,7 @@ export function initialPermissionModeFromCLI({
 
   for (const mode of orderedModes) {
     if (mode === 'bypassPermissions' && disableBypassPermissionsMode) {
-      if (growthBookDisableBypassPermissionsMode) {
+      if (featureFlagDisableBypassPermissionsMode) {
         logForDebugging('bypassPermissions mode is disabled by Statsig gate', {
           level: 'warn',
         })
@@ -528,7 +528,7 @@ export async function initializeToolPermissionContext({
 
   // Check if bypassPermissions mode is available (not disabled by Statsig gate or settings)
   // Use cached values to avoid blocking on startup
-  const growthBookDisableBypassPermissionsMode =
+  const featureFlagDisableBypassPermissionsMode =
     checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
@@ -538,7 +538,7 @@ export async function initializeToolPermissionContext({
   const isBypassPermissionsModeAvailable =
     (permissionMode === 'bypassPermissions' ||
       allowDangerouslySkipPermissions) &&
-    !growthBookDisableBypassPermissionsMode &&
+    !featureFlagDisableBypassPermissionsMode &&
     !settingsDisableBypassPermissionsMode
 
   // Load all permission rules from disk
@@ -628,7 +628,7 @@ export function shouldDisableBypassPermissions(): Promise<boolean> {
  * This is a synchronous version that uses cached Statsig values.
  */
 export function isBypassPermissionsModeDisabled(): boolean {
-  const growthBookDisableBypassPermissionsMode =
+  const featureFlagDisableBypassPermissionsMode =
     checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
@@ -637,7 +637,7 @@ export function isBypassPermissionsModeDisabled(): boolean {
     settings.permissions?.disableBypassPermissionsMode === 'disable'
 
   return (
-    growthBookDisableBypassPermissionsMode ||
+    featureFlagDisableBypassPermissionsMode ||
     settingsDisableBypassPermissionsMode
   )
 }

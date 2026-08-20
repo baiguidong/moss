@@ -64,12 +64,12 @@ import {
 // Feature Gate and Config (Cached - Non-blocking)
 // ============================================================================
 // These functions return cached values from disk immediately without blocking
-// on GrowthBook initialization. Values may be stale but are updated in background.
+// on feature flag initialization. Values may be stale but are updated in background.
 
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
 import {
   getDynamicConfig_CACHED_MAY_BE_STALE,
-} from '../analytics/growthbook.js'
+} from '../analytics/featureFlags.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
 

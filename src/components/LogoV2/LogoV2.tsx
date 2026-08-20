@@ -6,7 +6,6 @@ import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { stringWidth } from '../../ink/stringWidth.js';
 import { getLayoutMode, calculateLayoutDimensions, calculateOptimalLeftWidth, formatWelcomeMessage, truncatePath, getRecentActivitySync, getLogoDisplayData } from '../../utils/logoV2Utils.js';
 import { truncate } from '../../utils/format.js';
-import { getDisplayPath } from '../../utils/file.js';
 import { Clawd } from './Clawd.js';
 import { FeedColumn } from './FeedColumn.js';
 import { createRecentActivityFeed, createProjectOnboardingFeed, createGuestPassesFeed } from './feedConfigs.js';
@@ -18,9 +17,7 @@ import { useEffect, useState } from 'react';
 import { getSteps, shouldShowProjectOnboarding, incrementProjectOnboardingSeenCount } from '../../projectOnboardingState.js';
 import { CondensedLogo } from './CondensedLogo.js';
 import { OffscreenFreeze } from '../OffscreenFreeze.js';
-import { getDumpPromptsPath } from 'src/services/api/dumpPrompts.js';
 import { isEnvTruthy } from 'src/utils/envUtils.js';
-import { getStartupPerfLogPath, isDetailedProfilingEnabled } from 'src/utils/startupProfiler.js';
 import { EmergencyTip } from './EmergencyTip.js';
 import { VoiceModeNotice } from './VoiceModeNotice.js';
 import { Opus1mMergeNotice } from './Opus1mMergeNotice.js';
@@ -198,10 +195,10 @@ export function LogoV2() {
     let t21;
     let t22;
     if ($[25] === Symbol.for("react.memo_cache_sentinel")) {
-      t19 = false && !process.env.DEMO_VERSION && <Box paddingLeft={2} flexDirection="column"><Text dimColor={true}>Use /issue to report model behavior issues</Text></Box>;
-      t20 = false && !process.env.DEMO_VERSION && <Box paddingLeft={2} flexDirection="column"><Text color="warning">[ANT-ONLY] Logs:</Text><Text dimColor={true}>API calls: {getDisplayPath(getDumpPromptsPath())}</Text><Text dimColor={true}>Debug logs: {getDisplayPath(getDebugLogPath())}</Text>{isDetailedProfilingEnabled() && <Text dimColor={true}>Startup Perf: {getDisplayPath(getStartupPerfLogPath())}</Text>}</Box>;
-      t21 = false && <GateOverridesWarning />;
-      t22 = false && <ExperimentEnrollmentNotice />;
+      t19 = null;
+      t20 = null;
+      t21 = null;
+      t22 = null;
       $[25] = t19;
       $[26] = t20;
       $[27] = t21;
@@ -224,8 +221,8 @@ export function LogoV2() {
   }
   const layoutMode = getLayoutMode(columns);
   const userTheme = resolveThemeSetting(getGlobalConfig().theme);
-  const borderTitle = ` ${color("claude", userTheme)("Claude Code")} ${color("inactive", userTheme)(`v${version}`)} `;
-  const compactBorderTitle = color("claude", userTheme)(" Claude Code ");
+  const borderTitle = ` ${color("claude", userTheme)("Moss")} ${color("inactive", userTheme)(`v${version}`)} `;
+  const compactBorderTitle = color("claude", userTheme)(" Moss ");
   if (layoutMode === "compact") {
     let welcomeMessage = formatWelcomeMessage(username);
     if (stringWidth(welcomeMessage) > columns - 4) {
@@ -294,8 +291,8 @@ export function LogoV2() {
     let t18;
     let t19;
     if ($[42] === Symbol.for("react.memo_cache_sentinel")) {
-      t18 = false && <GateOverridesWarning />;
-      t19 = false && <ExperimentEnrollmentNotice />;
+      t18 = null;
+      t19 = null;
       $[42] = t18;
       $[43] = t19;
     } else {
@@ -475,10 +472,10 @@ export function LogoV2() {
   let t39;
   let t40;
   if ($[86] === Symbol.for("react.memo_cache_sentinel")) {
-    t37 = false && !process.env.DEMO_VERSION && <Box paddingLeft={2} flexDirection="column"><Text dimColor={true}>Use /issue to report model behavior issues</Text></Box>;
-    t38 = false && !process.env.DEMO_VERSION && <Box paddingLeft={2} flexDirection="column"><Text color="warning">[ANT-ONLY] Logs:</Text><Text dimColor={true}>API calls: {getDisplayPath(getDumpPromptsPath())}</Text><Text dimColor={true}>Debug logs: {getDisplayPath(getDebugLogPath())}</Text>{isDetailedProfilingEnabled() && <Text dimColor={true}>Startup Perf: {getDisplayPath(getStartupPerfLogPath())}</Text>}</Box>;
-    t39 = false && <GateOverridesWarning />;
-    t40 = false && <ExperimentEnrollmentNotice />;
+    t37 = null;
+    t38 = null;
+    t39 = null;
+    t40 = null;
     $[86] = t37;
     $[87] = t38;
     $[88] = t39;

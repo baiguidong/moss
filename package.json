@@ -23,7 +23,6 @@
     "@aws-sdk/client-sts": "^3.1029.0",
     "@azure/identity": "^4.13.1",
     "@commander-js/extra-typings": "^14.0.0",
-    "@growthbook/growthbook": "^1.6.5",
     "@inquirer/prompts": "*",
     "@modelcontextprotocol/sdk": "*",
     "@opentelemetry/api": "^1.9.1",

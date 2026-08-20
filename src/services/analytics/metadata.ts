@@ -1,9 +1,9 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 /**
- * Shared event metadata enrichment for analytics systems
+ * Shared event metadata enrichment for the no-op analytics compatibility API.
  *
  * This module provides a single source of truth for collecting and formatting
- * event metadata across all analytics systems (Datadog, 1P).
+ * event metadata in a consistent shape for existing call sites.
  */
 
 import { extname } from 'path'
@@ -90,9 +90,8 @@ export function isToolDetailsLoggingEnabled(): boolean {
  *
  * Per go/taxonomy, MCP names are medium PII. We log them for:
  * - Cowork (entrypoint=local-agent) — no ZDR concept, log all MCPs
- * - claude.ai-proxied connectors — always official (from claude.ai's list)
  * - Servers whose URL matches the official MCP registry — directory
- *   connectors added via `claude mcp add`, not customer-specific config
+ *   connectors added via `moss mcp add`, not customer-specific config
  *
  * Custom/user-configured MCPs stay sanitized (toolName='mcp_tool').
  */
@@ -101,9 +100,6 @@ export function isAnalyticsToolDetailsLoggingEnabled(
   mcpServerBaseUrl: string | undefined,
 ): boolean {
   if (process.env.CLAUDE_CODE_ENTRYPOINT === 'local-agent') {
-    return true
-  }
-  if (mcpServerType === 'claudeai-proxy') {
     return true
   }
   if (mcpServerBaseUrl && isOfficialMcpUrl(mcpServerBaseUrl)) {
@@ -586,11 +582,7 @@ const buildEnvContext = memoize(async (): Promise<EnvContext> => {
       githubEventName: process.env.GITHUB_EVENT_NAME,
       githubActionsRunnerEnvironment: process.env.RUNNER_ENVIRONMENT,
       githubActionsRunnerOs: process.env.RUNNER_OS,
-      githubActionRef: process.env.GITHUB_ACTION_PATH?.includes(
-        'claude-code-action/',
-      )
-        ? process.env.GITHUB_ACTION_PATH.split('claude-code-action/')[1]
-        : undefined,
+      githubActionRef: process.env.GITHUB_ACTION_PATH,
     }),
     ...(getWslVersion() && { wslVersion: getWslVersion() }),
     ...(linuxDistroInfo ?? {}),
@@ -599,7 +591,7 @@ const buildEnvContext = memoize(async (): Promise<EnvContext> => {
 })
 
 // --
-// CPU% delta tracking — inherently process-global, same pattern as logBatch/flushTimer in datadog.ts
+// CPU% delta tracking is inherently process-global.
 let prevCpuUsage: NodeJS.CpuUsage | null = null
 let prevWallTimeMs: number | null = null
 
@@ -726,7 +718,7 @@ export type FirstPartyEventLoggingMetadata = {
   // account_id is intentionally omitted — only UUID fields are populated client-side.
   auth?: PublicApiAuth
   // core fields correspond to the top level of ClaudeCodeInternalEvent.
-  // They get directly exported to their individual columns in the BigQuery tables
+  // Private exporters can route these to individual columns.
   core: FirstPartyEventLoggingCoreMetadata
   // additional fields are populated in the additional_metadata field of the
   // ClaudeCodeInternalEvent proto. Includes but is not limited to information
@@ -737,8 +729,8 @@ export type FirstPartyEventLoggingMetadata = {
 /**
  * Convert metadata to 1P event logging format (snake_case fields).
  *
- * The Moss server telemetry batch endpoint expects snake_case field names
- * for environment and core metadata.
+ * Private event exporters expect snake_case field names for environment and
+ * core metadata.
  *
  * @param metadata - Core event metadata
  * @param additionalMetadata - Additional metadata to include

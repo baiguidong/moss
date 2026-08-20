@@ -209,7 +209,7 @@ export function createCronScheduler(
     // tasks excluded — they die with the process, no point persisting.
     const firedFileRecurring: string[] = []
     // Read once per tick. REPL callers pass getJitterConfig backed by
-    // GrowthBook so a config push takes effect without restart. Daemon and
+    // feature flag so a config push takes effect without restart. Daemon and
     // SDK callers omit it and get DEFAULT_CRON_JITTER_CONFIG (safe — jitter
     // is an ops lever for REPL fleet load-shedding, not a daemon concern).
     const jitterCfg = getJitterConfig?.() ?? DEFAULT_CRON_JITTER_CONFIG

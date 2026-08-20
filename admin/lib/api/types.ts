@@ -188,44 +188,6 @@ export interface UpdateSystemSettingsRequest {
   skillStore?: Partial<SystemSettingsSkillStore>
 }
 
-export type ReportEventKind =
-  | 'telemetry_event'
-  | 'telemetry_metrics'
-  | 'feedback'
-  | 'transcript'
-  | 'bootstrap'
-  | 'remote_settings'
-  | 'policy_limits'
-
-export interface ReportEventSummary {
-  kind: ReportEventKind
-  count: number
-  lastCreatedAt: number | null
-}
-
-export interface ReportEvent {
-  reportId: string
-  orgId: string | null
-  userId: string | null
-  kind: ReportEventKind
-  source: string | null
-  payload: unknown
-  createdAt: number
-}
-
-export interface ReportsSummaryResponse {
-  summaries: ReportEventSummary[]
-}
-
-export interface ReportsEventsResponse {
-  events: ReportEvent[]
-  nextCursor: number | null
-}
-
-export interface ReportEventResponse {
-  event: ReportEvent
-}
-
 // Direct Connect Server Types
 export type SessionStatus =
   | 'creating'

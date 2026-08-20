@@ -465,11 +465,10 @@ export function resolvePluginMcpEnvironment(
       break
     }
 
-    // For other types (sse-ide, ws-ide, sdk, claudeai-proxy), pass through unchanged
+    // For other types (sse-ide, ws-ide, sdk), pass through unchanged
     case 'sse-ide':
     case 'ws-ide':
     case 'sdk':
-    case 'claudeai-proxy':
       resolved = config
       break
   }

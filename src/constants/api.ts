@@ -6,20 +6,11 @@ export function getApiBaseUrl(): string {
   return baseUrl.replace(/\/+$/, '')
 }
 
-export function getMossServerBaseUrl(): string | null {
-  const baseUrl = process.env.MOSS_SERVER_URL?.trim()
+function normalizeOptionalBaseUrl(value: string | undefined): string | null {
+  const baseUrl = value?.trim()
   return baseUrl ? baseUrl.replace(/\/+$/, '') : null
 }
 
-export function getMossServerApiUrl(path: string): string | null {
-  const baseUrl = getMossServerBaseUrl()
-  if (!baseUrl) return null
-  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
+export function getMossWebOrigin(): string | null {
+  return normalizeOptionalBaseUrl(process.env.MOSS_WEB_BASE_URL)
 }
-
-export function getMossServerAuthHeaders(): Record<string, string> {
-  const token = process.env.MOSS_SERVER_AUTH_TOKEN?.trim()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
-export const CLAUDE_AI_ORIGIN = 'https://claude.ai'

@@ -12,7 +12,6 @@ import {
   Palette,
   RefreshCw,
   Search,
-  Server,
   Shield,
   Sparkles,
   SunMedium,
@@ -31,7 +30,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'reporting' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -135,13 +134,6 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Link2,
     iconGradientClassName: 'from-sky-400 to-blue-600',
     keywords: ['连接', 'connection', 'remote', 'server', 'workspace', '认证', 'credential', 'url'],
-  },
-  {
-    id: 'reporting',
-    title: '上报',
-    icon: Server,
-    iconGradientClassName: 'from-indigo-400 to-sky-600',
-    keywords: ['上报', 'reporting', 'telemetry', 'metrics', 'feedback', 'transcript', 'server', 'api key'],
   },
   {
     id: 'runtime',
@@ -1073,7 +1065,6 @@ export function SettingsView({
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     connection: null,
-    reporting: null,
     runtime: null,
     permission: null,
     memory: null,
@@ -1095,11 +1086,6 @@ export function SettingsView({
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
-  const reportingDraft = {
-    serverUrl: '',
-    apiKey: '',
-    ...(settingsDraft?.reporting || {}),
-  };
   const sessionMemoryDraft = {
     ...DEFAULT_SESSION_MEMORY_SETTINGS,
     ...(settingsDraft?.sessionMemory || {}),
@@ -1144,7 +1130,6 @@ export function SettingsView({
     visibleSectionKey,
     settingsDraft?.remoteEnabled,
     settingsDraft?.remoteDirectCredentialMode,
-    settingsDraft?.reporting,
     settingsDraft?.thinkingMode,
     settingsDraft?.sessionMemory,
     buddyEnabled,
@@ -1191,14 +1176,6 @@ export function SettingsView({
           ? nextDefaultModel
           : imageDraft.model,
     });
-  };
-
-  const updateReportingSettings = (patch: Partial<NonNullable<DesktopSettings['reporting']>>) => {
-    const nextReporting = {
-      ...reportingDraft,
-      ...patch,
-    };
-    updateSetting('reporting', nextReporting);
   };
 
   const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
@@ -1487,45 +1464,6 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'reporting') ? (
-                  <SettingsSection
-                    id="reporting"
-                    title="上报"
-                    sectionRef={(element) => {
-                      sectionRefs.current.reporting = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="Moss Server 地址"
-                        description="用于 telemetry、metrics、feedback 和 transcript 分享。为空时不上报。"
-                        controlClassName="sm:w-[360px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={reportingDraft.serverUrl || ''}
-                          onChange={(event) => updateReportingSettings({ serverUrl: event.target.value })}
-                          placeholder="http://127.0.0.1:43127"
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="API Key / Token"
-                        description="作为 Bearer 凭据发送，server 端会按 access token 或 API key 验证。"
-                        controlClassName="sm:w-[360px]"
-                      >
-                        <Input
-                          type="password"
-                          className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
-                          value={reportingDraft.apiKey || ''}
-                          onChange={(event) => updateReportingSettings({ apiKey: event.target.value })}
-                          placeholder="moss_live_..."
-                        />
-                      </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
-
                 {visibleSections.some((section) => section.id === 'runtime') ? (
                   <SettingsSection
                     id="runtime"
@@ -1748,7 +1686,7 @@ export function SettingsView({
                           className={FIELD_CLASS_NAME}
                           value={settingsDraft.model || ''}
                           onChange={(event) => updateSetting('model', event.target.value)}
-                          placeholder="claude-sonnet-4-6"
+                          placeholder="your-model-name"
                         />
                       </SettingsRow>
 
@@ -1760,7 +1698,7 @@ export function SettingsView({
                           className={FIELD_CLASS_NAME}
                           value={settingsDraft.url || ''}
                           onChange={(event) => updateSetting('url', event.target.value)}
-                          placeholder="https://api.anthropic.com"
+                          placeholder="https://model.example.com"
                         />
                       </SettingsRow>
 
@@ -1773,7 +1711,7 @@ export function SettingsView({
                             className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
                             value={settingsDraft.apiKey || ''}
                             onChange={(event) => updateSetting('apiKey', event.target.value)}
-                            placeholder="sk-ant-..."
+                            placeholder="your-model-api-key"
                           />
                           {settingsDraft.apiKey ? (
                             <Button

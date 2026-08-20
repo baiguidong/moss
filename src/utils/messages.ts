@@ -28,7 +28,7 @@ import { isAutoMemoryEnabled } from '../memdir/paths.js'
 import {
   checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
-} from '../services/analytics/growthbook.js'
+} from '../services/analytics/featureFlags.js'
 import {
   getImageTooLargeErrorMessage,
   getPdfInvalidErrorMessage,
@@ -178,7 +178,7 @@ const TOOL_REFERENCE_TURN_BOUNDARY = 'Tool loaded.'
 
 /**
  * Appends a memory correction hint to a rejection/cancellation message
- * when auto-memory is enabled and the GrowthBook flag is on.
+ * when auto-memory is enabled and the feature flag is on.
  */
 export function withMemoryCorrectionHint(message: string): string {
   if (
@@ -279,7 +279,7 @@ export function getLastAssistantMessage(
   messages: Message[],
 ): AssistantMessage | undefined {
   // findLast exits early from the end — much faster than filter + last for
-  // large message arrays (called on every REPL render via useFeedbackSurvey).
+  // large message arrays.
   return messages.findLast(
     (msg): msg is AssistantMessage => msg.type === 'assistant',
   )

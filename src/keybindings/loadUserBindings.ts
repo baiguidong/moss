@@ -13,7 +13,7 @@ import chokidar, { type FSWatcher } from 'chokidar'
 import { readFileSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
 import { dirname, join } from 'path'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logEvent } from '../services/analytics/index.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -33,7 +33,7 @@ import {
 /**
  * Check if keybinding customization is enabled.
  *
- * Returns true if the tengu_keybinding_customization_release GrowthBook gate is enabled.
+ * Returns true if the tengu_keybinding_customization_release feature flag gate is enabled.
  *
  * This function is exported so other parts of the codebase (e.g., /doctor)
  * can check the same condition consistently.

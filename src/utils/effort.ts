@@ -1,7 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { isUltrathinkEnabled } from './thinking.js'
 import { getInitialSettings } from './settings/settings.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
+import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -200,7 +200,7 @@ export function isValidNumericEffort(value: number): boolean {
 
 export function convertEffortValueToLevel(value: EffortValue): EffortLevel {
   if (typeof value === 'string') {
-    // Runtime guard: value may come from remote config (GrowthBook) where
+    // Runtime guard: value may come from remote config (feature flag) where
     // TypeScript types can't help us. Coerce unknown strings to 'high'
     // rather than passing them through unchecked.
     return isEffortLevel(value) ? value : 'high'

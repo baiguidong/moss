@@ -1,9 +1,21 @@
 export const PRODUCT_URL = ''
 
-// Claude Code Remote session URLs
-export const CLAUDE_AI_BASE_URL = 'https://claude.ai'
-export const CLAUDE_AI_STAGING_BASE_URL = 'https://claude-ai.staging.ant.dev'
-export const CLAUDE_AI_LOCAL_BASE_URL = 'http://localhost:4000'
+// Remote session Web URLs. Vendor-hosted Web endpoints are intentionally not
+// defaulted here; deployments that provide a compatible Web UI must opt in.
+export const REMOTE_SESSION_WEB_BASE_URL = ''
+export const REMOTE_SESSION_LOCAL_WEB_BASE_URL = 'http://localhost:4000'
+
+function normalizeOptionalBaseUrl(value: string | undefined): string | null {
+  const baseUrl = value?.trim()
+  return baseUrl ? baseUrl.replace(/\/+$/, '') : null
+}
+
+export function getConfiguredRemoteSessionBaseUrl(): string | null {
+  return (
+    normalizeOptionalBaseUrl(process.env.MOSS_REMOTE_SESSION_BASE_URL) ||
+    normalizeOptionalBaseUrl(process.env.MOSS_WEB_BASE_URL)
+  )
+}
 
 /**
  * Determine if we're in a staging environment for remote sessions.
@@ -34,27 +46,24 @@ export function isRemoteSessionLocal(
 }
 
 /**
- * Get the base URL for Claude AI based on environment.
+ * Get the configured Web base URL for remote-session links.
  */
-export function getClaudeAiBaseUrl(
+export function getRemoteSessionBaseUrl(
   sessionId?: string,
   ingressUrl?: string,
 ): string {
   if (isRemoteSessionLocal(sessionId, ingressUrl)) {
-    return CLAUDE_AI_LOCAL_BASE_URL
+    return REMOTE_SESSION_LOCAL_WEB_BASE_URL
   }
-  if (isRemoteSessionStaging(sessionId, ingressUrl)) {
-    return CLAUDE_AI_STAGING_BASE_URL
-  }
-  return CLAUDE_AI_BASE_URL
+  return getConfiguredRemoteSessionBaseUrl() ?? REMOTE_SESSION_WEB_BASE_URL
 }
 
 /**
  * Get the full session URL for a remote session.
  *
- * Worker APIs may return `cse_*` IDs while the claude.ai frontend routes on
- * `session_*`. Preserve the public URL compatibility conversion here without
- * depending on environment-specific session implementations.
+ * Worker APIs may return `cse_*` IDs while compatible frontends route on
+ * `session_*`. Preserve that compatibility conversion without defaulting to
+ * any vendor-hosted Web service.
  */
 export function getRemoteSessionUrl(
   sessionId: string,
@@ -63,6 +72,6 @@ export function getRemoteSessionUrl(
   const compatId = sessionId.startsWith('cse_')
     ? `session_${sessionId.slice('cse_'.length)}`
     : sessionId
-  const baseUrl = getClaudeAiBaseUrl(compatId, ingressUrl)
-  return `${baseUrl}/code/${compatId}`
+  const baseUrl = getRemoteSessionBaseUrl(compatId, ingressUrl)
+  return baseUrl ? `${baseUrl}/code/${compatId}` : compatId
 }

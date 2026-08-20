@@ -12,7 +12,7 @@ import { isSynchronizedOutputSupported } from './ink/terminal.js';
 import type { RenderOptions, Root, TextProps } from './ink.js';
 import { KeybindingSetup } from './keybindings/KeybindingProviderSetup.js';
 import { startDeferredPrefetches } from './main.js';
-import { initializeGrowthBook, resetGrowthBook } from './services/analytics/growthbook.js';
+import { initializeFeatureFlags, resetFeatureFlags } from './services/analytics/featureFlags.js';
 import { handleMcpjsonServerApprovals } from './services/mcpServerApproval.js';
 import { AppStateProvider } from './state/AppState.js';
 import { onChangeAppState } from './state/onChangeAppState.js';
@@ -99,7 +99,7 @@ export async function renderAndRun(root: Root, element: React.ReactNode): Promis
   await root.waitUntilExit();
   await gracefulShutdown(0);
 }
-export async function showSetupScreens(root: Root, permissionMode: PermissionMode, allowDangerouslySkipPermissions: boolean, commands?: Command[], claudeInChrome?: boolean): Promise<boolean> {
+export async function showSetupScreens(root: Root, permissionMode: PermissionMode, allowDangerouslySkipPermissions: boolean, commands?: Command[]): Promise<boolean> {
   if ("production" === 'test' || isEnvTruthy(false) || process.env.IS_DEMO // Skip onboarding in demo mode
   ) {
     return false;
@@ -138,14 +138,14 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
     }
 
     // Signal that trust has been verified for this session.
-    // GrowthBook checks this to decide whether to include auth headers.
+    // feature flag checks this to decide whether to include auth headers.
     setSessionTrustAccepted(true);
 
-    // Reset and reinitialize GrowthBook after trust is established.
+    // Reset and reinitialize feature flag after trust is established.
     // Defense for login/logout: clears any prior client so the next init
     // picks up fresh auth headers.
-    resetGrowthBook();
-    void initializeGrowthBook();
+    resetFeatureFlags();
+    void initializeFeatureFlags();
 
     // Now that trust is established, prefetch system context if it wasn't already
     void getSystemContext();
@@ -202,13 +202,6 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
       BypassPermissionsModeDialog
     } = await import('./components/BypassPermissionsModeDialog.js');
     await showSetupDialog(root, done => <BypassPermissionsModeDialog onAccept={done} />);
-  }
-  // Show Chrome onboarding for first-time Claude in Chrome users
-  if (claudeInChrome && !getGlobalConfig().hasCompletedClaudeInChromeOnboarding) {
-    const {
-      ClaudeInChromeOnboarding
-    } = await import('./components/ClaudeInChromeOnboarding.js');
-    await showSetupDialog(root, done => <ClaudeInChromeOnboarding onDone={done} />);
   }
   return onboardingShown;
 }

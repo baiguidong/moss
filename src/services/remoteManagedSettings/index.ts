@@ -14,10 +14,6 @@
 import axios from 'axios'
 import { createHash } from 'crypto'
 import { open, unlink } from 'fs/promises'
-import {
-  getMossServerApiUrl,
-  getMossServerAuthHeaders,
-} from '../../constants/api.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { classifyAxiosError, getErrnoCode } from '../../utils/errors.js'
@@ -100,11 +96,7 @@ export function initializeRemoteManagedSettingsLoadingPromise(): void {
  * Uses the configured base API URL.
  */
 function getRemoteManagedSettingsEndpoint() {
-  const endpoint = getMossServerApiUrl('/api/v1/settings/remote-managed')
-  if (!endpoint) {
-    throw new Error('MOSS_SERVER_URL is not configured')
-  }
-  return endpoint
+  throw new Error('Remote managed settings are disabled')
 }
 
 /**
@@ -168,10 +160,10 @@ function getRemoteSettingsAuthHeaders(): {
   headers: Record<string, string>
   error?: string
 } {
-  const headers = getMossServerAuthHeaders()
-  return Object.keys(headers).length > 0
-    ? { headers }
-    : { headers: {}, error: 'No Moss server authentication available' }
+  return {
+    headers: {},
+    error: 'Remote managed settings are disabled',
+  }
 }
 
 /**
