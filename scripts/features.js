@@ -20,9 +20,6 @@ export const RECOMMENDED = {
   // Token 用量实时追踪，在输入框底部显示剩余 token 预算
   TOKEN_BUDGET: true,
 
-  // 上下文折叠：长对话中折叠旧消息，减少视觉干扰
-  CONTEXT_COLLAPSE: true,
-
   // 响应式自动压缩：上下文接近上限时自动触发 compact，比手动更智能
   REACTIVE_COMPACT: true,
 

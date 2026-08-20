@@ -8,7 +8,7 @@ import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEve
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandCall } from '../../types/command.js';
 import type { EffortLevel } from '../../utils/effort.js';
-import { clearFastModeCooldown, isFastModeAvailable, isFastModeEnabled, isFastModeSupportedByModel } from '../../utils/fastMode.js';
+import { isFastModeAvailable, isFastModeEnabled, isFastModeSupportedByModel } from '../../utils/fastMode.js';
 import { MODEL_ALIASES } from '../../utils/model/aliases.js';
 import { checkOpus1mAccess, checkSonnet1mAccess } from '../../utils/model/check1mAccess.js';
 import { getDefaultMainLoopModelSetting, isOpus1mMergeEnabled, renderDefaultModelSetting } from '../../utils/model/model.js';
@@ -60,7 +60,6 @@ function ModelPickerWrapper(t0) {
       }
       let wasFastModeToggledOn = undefined;
       if (isFastModeEnabled()) {
-        clearFastModeCooldown();
         if (!isFastModeSupportedByModel(model) && isFastMode) {
           setAppState(_temp4);
           wasFastModeToggledOn = false;
@@ -200,7 +199,6 @@ function SetModelAndClose({
       let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`;
       let wasFastModeToggledOn = undefined;
       if (isFastModeEnabled()) {
-        clearFastModeCooldown();
         if (!isFastModeSupportedByModel(modelValue) && isFastMode) {
           setAppState(prev_0 => ({
             ...prev_0,

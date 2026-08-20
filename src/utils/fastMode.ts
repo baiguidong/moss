@@ -22,8 +22,6 @@ export function isFastModeSupportedByModel(_modelSetting: ModelSetting): boolean
   return false
 }
 
-export function clearFastModeCooldown(): void {}
-
 export function isFastModeCooldown(): boolean {
   return false
 }

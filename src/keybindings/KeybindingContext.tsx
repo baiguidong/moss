@@ -36,7 +36,7 @@ type KeybindingContextValue = {
   unregisterActiveContext: (context: KeybindingContextName) => void;
 
   /** Register a handler for an action (used by useKeybinding) */
-  registerHandler: (registration: HandlerRegistration) => () => void;
+  registerHandler: (registration: HandlerRegistration) => (() => void) | undefined;
 
   /** Invoke all handlers for an action (used by ChordInterceptor) */
   invokeAction: (action: string) => boolean;
@@ -83,7 +83,7 @@ export function KeybindingProvider(t0) {
     t2 = registration => {
       const registry = handlerRegistryRef.current;
       if (!registry) {
-        return _temp;
+        return undefined;
       }
       if (!registry.has(registration.action)) {
         registry.set(registration.action, new Set());
@@ -180,7 +180,6 @@ export function KeybindingProvider(t0) {
   }
   return t6;
 }
-function _temp() {}
 export function useKeybindingContext() {
   const ctx = useContext(KeybindingContext);
   if (!ctx) {

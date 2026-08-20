@@ -10,6 +10,7 @@ import { getCwd } from '../utils/cwd.js';
 import { openFileInExternalEditor } from '../utils/editor.js';
 import { truncatePathMiddle, truncateToWidth } from '../utils/format.js';
 import { highlightMatch } from '../utils/highlightMatch.js';
+import { logError } from '../utils/log.js';
 import { relativePath } from '../utils/permissions/filesystem.js';
 import { readFileInRange } from '../utils/readFileInRange.js';
 import { ripGrepStream } from '../utils/ripgrep.js';
@@ -300,7 +301,11 @@ function _temp4(query_0, controller_1, setMatches_0, setTruncated_0, setIsSearch
       setTruncated_0(true);
       setIsSearching_0(false);
     }
-  }).catch(_temp2).finally(() => {
+  }).catch(error => {
+    if (!controller_1.signal.aborted) {
+      logError(error);
+    }
+  }).finally(() => {
     if (controller_1.signal.aborted) {
       return;
     }
@@ -313,7 +318,6 @@ function _temp4(query_0, controller_1, setMatches_0, setTruncated_0, setIsSearch
 function _temp3(m_2) {
   return m_2.length ? [] : m_2;
 }
-function _temp2() {}
 function _temp(m) {
   return m.length ? [] : m;
 }

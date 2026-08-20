@@ -33,7 +33,7 @@ export function SessionBackgroundHint(t0) {
   const setAppState = useSetAppState();
   const appStateStore = useAppStateStore();
   const [showSessionHint, setShowSessionHint] = useState(false);
-  const handleDoublePress = useDoublePress(setShowSessionHint, onBackgroundSession, _temp);
+  const handleDoublePress = useDoublePress(setShowSessionHint, onBackgroundSession);
   let t1;
   if ($[0] !== appStateStore || $[1] !== handleDoublePress || $[2] !== isLoading || $[3] !== setAppState) {
     t1 = () => {
@@ -104,4 +104,3 @@ function _temp2(c) {
     hasUsedBackgroundTask: true
   };
 }
-function _temp() {}

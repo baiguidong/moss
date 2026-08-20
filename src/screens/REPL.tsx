@@ -210,7 +210,6 @@ import { useSettingsErrors } from 'src/hooks/notifs/useSettingsErrors.js';
 import { useMcpConnectivityStatus } from 'src/hooks/notifs/useMcpConnectivityStatus.js';
 import { UserTextMessage } from 'src/components/messages/UserTextMessage.js';
 import { AwsAuthStatusBox } from '../components/AwsAuthStatusBox.js';
-import { useRateLimitWarningNotification } from 'src/hooks/notifs/useRateLimitWarningNotification.js';
 import { useDeprecationWarningNotification } from 'src/hooks/notifs/useDeprecationWarningNotification.js';
 import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js';
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
@@ -660,7 +659,6 @@ export function REPL({
     mcpClients
   });
   useSettingsErrors();
-  useRateLimitWarningNotification(mainLoopModel);
   useDeprecationWarningNotification(mainLoopModel);
   useTeammateLifecycleNotification();
 
@@ -3199,18 +3197,6 @@ export function REPL({
     // Reset cached microcompact state so stale pinned cache edits
     // don't reference tool_use_ids from truncated messages
     resetMicrocompactState();
-    if (feature('CONTEXT_COLLAPSE')) {
-      // Rewind truncates the REPL array. Commits whose archived span
-      // was past the rewind point can't be projected anymore
-      // (projectView silently skips them) but the staged queue and ID
-      // maps reference stale uuids. Simplest safe reset: drop
-      // everything. The ctx-agent will re-stage on the next
-      // threshold crossing.
-      /* eslint-disable @typescript-eslint/no-require-imports */
-      ;
-      (require('../services/contextCollapse/index.js') as typeof import('../services/contextCollapse/index.js')).resetContextCollapse();
-      /* eslint-enable @typescript-eslint/no-require-imports */
-    }
 
     // Restore state from the message we're rewinding to
     setAppState(prev => ({

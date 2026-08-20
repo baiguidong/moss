@@ -348,7 +348,7 @@ export function MemoryFileSelector(t0) {
         const folderPath = value.slice(OPEN_FOLDER_PREFIX.length);
         mkdir(folderPath, {
           recursive: true
-        }).catch(_temp8).then(() => openPath(folderPath));
+        }).then(() => openPath(folderPath), () => openPath(folderPath));
         return;
       }
       lastSelectedPath = value;
@@ -391,7 +391,6 @@ export function MemoryFileSelector(t0) {
   }
   return t23;
 }
-function _temp8() {}
 function _temp7(prev_0) {
   return prev_0 !== null && prev_0 > 0 ? prev_0 - 1 : prev_0;
 }

@@ -2,8 +2,6 @@ import { dirname } from 'path'
 import { randomUUID } from 'crypto'
 import type {
   AttributionSnapshotMessage,
-  ContextCollapseCommitEntry,
-  ContextCollapseSnapshotEntry,
   LogOption,
   PersistedWorktreeSession,
 } from '../types/logs.js'
@@ -22,8 +20,6 @@ type LoadedResumeConversation = {
   fileHistorySnapshots?: FileHistorySnapshot[]
   attributionSnapshots?: AttributionSnapshotMessage[]
   contentReplacements?: ContentReplacementRecord[]
-  contextCollapseCommits?: ContextCollapseCommitEntry[]
-  contextCollapseSnapshot?: ContextCollapseSnapshotEntry
   sessionId: string | undefined
   agentName?: string
   agentColor?: string
@@ -49,8 +45,6 @@ export interface PreparedSessionResume {
   fileHistorySnapshots?: FileHistorySnapshot[]
   attributionSnapshots?: AttributionSnapshotMessage[]
   contentReplacements?: ContentReplacementRecord[]
-  contextCollapseCommits?: ContextCollapseCommitEntry[]
-  contextCollapseSnapshot?: ContextCollapseSnapshotEntry
   agentName?: string
   agentColor?: string
   agentSetting?: string
@@ -109,8 +103,6 @@ export function prepareLoadedSessionResume(
     fileHistorySnapshots: result.fileHistorySnapshots,
     attributionSnapshots: result.attributionSnapshots,
     contentReplacements: result.contentReplacements,
-    contextCollapseCommits: result.contextCollapseCommits,
-    contextCollapseSnapshot: result.contextCollapseSnapshot,
     agentName: result.agentName,
     agentColor: result.agentColor,
     agentSetting: result.agentSetting,

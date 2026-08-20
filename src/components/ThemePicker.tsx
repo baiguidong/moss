@@ -107,7 +107,7 @@ export function ThemePicker(t0) {
     t9 = $[6];
   }
   useKeybinding("theme:toggleSyntaxHighlighting", t8, t9);
-  const exitState = useExitOnCtrlCDWithKeybindings(skipExitHandling ? _temp2 : undefined);
+  const exitState = useExitOnCtrlCDWithKeybindings(undefined, undefined, !skipExitHandling);
   let t10;
   if ($[7] === Symbol.for("react.memo_cache_sentinel")) {
     t10 = [...(feature("AUTO_THEME") ? [{
@@ -326,7 +326,6 @@ export function ThemePicker(t0) {
   }
   return content;
 }
-function _temp2() {}
 function _temp(s) {
   return s.settings.syntaxHighlightingDisabled;
 }

@@ -72,9 +72,6 @@ export {
 } from './constants/tools.js'
 import { feature } from 'bun:bundle'
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
-const CtxInspectTool = feature('CONTEXT_COLLAPSE')
-  ? require('./tools/CtxInspectTool/CtxInspectTool.js').CtxInspectTool
-  : null
 const TerminalCaptureTool = feature('TERMINAL_PANEL')
   ? require('./tools/TerminalCaptureTool/TerminalCaptureTool.js')
       .TerminalCaptureTool
@@ -164,7 +161,6 @@ export function getAllBaseTools(): Tools {
     ...(isTodoV2Enabled()
       ? [TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool]
       : []),
-    ...(CtxInspectTool ? [CtxInspectTool] : []),
     ...(TerminalCaptureTool ? [TerminalCaptureTool] : []),
     ...(isEnvTruthy(process.env.ENABLE_LSP_TOOL) ? [LSPTool] : []),
     ...(isWorktreeModeEnabled() ? [EnterWorktreeTool, ExitWorktreeTool] : []),

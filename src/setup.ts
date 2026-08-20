@@ -268,13 +268,6 @@ export async function setup(
   // raced ahead and memoized an empty bundledSkills list.
   if (!isBareMode()) {
     initSessionMemory() // Synchronous - registers hook, gate check happens lazily
-    if (feature('CONTEXT_COLLAPSE')) {
-      /* eslint-disable @typescript-eslint/no-require-imports */
-      ;(
-        require('./services/contextCollapse/index.js') as typeof import('./services/contextCollapse/index.js')
-      ).initContextCollapse()
-      /* eslint-enable @typescript-eslint/no-require-imports */
-    }
   }
   logForDiagnosticsNoPII('info', 'setup_background_jobs_launched')
 

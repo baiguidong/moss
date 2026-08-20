@@ -17,19 +17,17 @@ import { resetMicrocompactState } from './microCompact.js'
  * createSkillAttachmentIfNeeded() can include the full skill text
  * in subsequent compaction attachments.
  *
- * querySource: pass the compacting query's source so we can skip
- * resets that would clobber main-thread module-level state. Subagents
- * (agent:*) run in the same process and share module-level state
- * (context-collapse store, getMemoryFiles one-shot hook flag,
- * getUserContext cache); resetting those when a SUBAGENT compacts
- * would corrupt the MAIN thread's state. All compaction callers should
- * pass querySource — undefined is only safe for callers that are
- * genuinely main-thread-only (/compact, /clear).
+ * querySource: pass the compacting query's source so we can skip resets
+ * that would clobber main-thread module-level state. Subagents (agent:*)
+ * run in the same process and share module-level state such as memory file
+ * caches and getUserContext cache. All compaction callers should pass
+ * querySource — undefined is only safe for callers that are genuinely
+ * main-thread-only (/compact, /clear).
  */
 export function runPostCompactCleanup(querySource?: QuerySource): void {
   // Subagents (agent:*) run in the same process and share module-level
   // state with the main thread. Only reset main-thread module-level state
-  // (context-collapse, memory file cache) for main-thread compacts.
+  // for main-thread compacts.
   // Same startsWith pattern as isMainThread (index.ts:188).
   const isMainThreadCompact =
     querySource === undefined ||
@@ -37,15 +35,6 @@ export function runPostCompactCleanup(querySource?: QuerySource): void {
     querySource === 'sdk'
 
   resetMicrocompactState()
-  if (feature('CONTEXT_COLLAPSE')) {
-    if (isMainThreadCompact) {
-      /* eslint-disable @typescript-eslint/no-require-imports */
-      ;(
-        require('../contextCollapse/index.js') as typeof import('../contextCollapse/index.js')
-      ).resetContextCollapse()
-      /* eslint-enable @typescript-eslint/no-require-imports */
-    }
-  }
   if (isMainThreadCompact) {
     // getUserContext is a memoized outer layer wrapping getClaudeMds() →
     // getMemoryFiles(). If only the inner getMemoryFiles cache is cleared,

@@ -291,7 +291,7 @@ export function ModelPicker(t0) {
   } else {
     t19 = $[48];
   }
-  const t20 = onCancel ?? _temp4;
+  const t20 = onCancel;
   let t21;
   if ($[49] !== handleFocus || $[50] !== handleSelect || $[51] !== initialFocusValue || $[52] !== initialValue || $[53] !== selectOptions || $[54] !== t20 || $[55] !== visibleCount) {
     t21 = <Box flexDirection="column"><Select defaultValue={initialValue} defaultFocusValue={initialFocusValue} options={selectOptions} onChange={handleSelect} onFocus={handleFocus} onCancel={t20} visibleOptionCount={visibleCount} /></Box>;
@@ -385,7 +385,6 @@ export function ModelPicker(t0) {
   }
   return t29;
 }
-function _temp4() {}
 function _temp3(opt_0) {
   return {
     ...opt_0,
