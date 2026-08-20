@@ -35,7 +35,7 @@ export function buildSessionEnv(
   options: BackendSpawnOptions,
   overrides: Record<string, string | undefined> = {},
 ): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     MOSS_SERVER_HOME,
     MOSS_HOME,
@@ -52,6 +52,9 @@ export function buildSessionEnv(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
     ),
   }
+  delete env.MOSS_SERVER_URL
+  delete env.MOSS_SERVER_AUTH_TOKEN
+  return env
 }
 
 export function createStreamBackendHandle(

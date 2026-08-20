@@ -23,8 +23,6 @@ export type SystemSettingsPayload = {
   thinkingBudgetTokens: number
   url: string
   apiKey: string
-  serverUrl: string
-  serverAuthToken: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
   settingsPath: string
@@ -60,8 +58,6 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
-  serverUrl: '',
-  serverAuthToken: '',
   image: {
     provider: 'minimax',
     url: 'https://api.minimaxi.com/v1/image_generation',
@@ -130,9 +126,13 @@ function boundedInt(
     : undefined
 }
 
-function deleteModelEndpointEnvKeys(env: Record<string, unknown>): void {
+function deleteManagedEndpointEnvKeys(env: Record<string, unknown>): void {
   for (const key of Object.keys(env)) {
-    if (/^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key)) {
+    if (
+      /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key) ||
+      key === 'MOSS_SERVER_URL' ||
+      key === 'MOSS_SERVER_AUTH_TOKEN'
+    ) {
       delete env[key]
     }
   }
@@ -201,18 +201,6 @@ function normalizeSystemSettings(
       stringField(result, 'apiKey'),
       stringField(existingText, 'apiKey'),
     ) ?? DEFAULT_SYSTEM_SETTINGS.apiKey
-
-  if (typeof source.serverUrl === 'string') {
-    result.serverUrl = source.serverUrl.trim()
-  } else if (result.serverUrl === undefined) {
-    result.serverUrl = DEFAULT_SYSTEM_SETTINGS.serverUrl
-  }
-
-  if (typeof source.serverAuthToken === 'string') {
-    result.serverAuthToken = source.serverAuthToken.trim()
-  } else if (result.serverAuthToken === undefined) {
-    result.serverAuthToken = DEFAULT_SYSTEM_SETTINGS.serverAuthToken
-  }
 
   const sourceImage = isRecord(source.image)
     ? source.image
@@ -291,28 +279,11 @@ function readSystemSettingsState(): SystemSettingsState {
     const raw = readFileSync(settingsPath, 'utf8')
     const parsed = JSON.parse(raw)
     const rawSettings = isRecord(parsed) ? parsed : {}
-    const env = isRecord(rawSettings.env) ? rawSettings.env : {}
-    const serverUrlFromEnv =
-      typeof env.MOSS_SERVER_URL === 'string'
-        ? env.MOSS_SERVER_URL.trim()
-        : ''
-    const serverAuthTokenFromEnv =
-      typeof env.MOSS_SERVER_AUTH_TOKEN === 'string'
-        ? env.MOSS_SERVER_AUTH_TOKEN.trim()
-        : ''
     const normalized = normalizeSystemSettings(rawSettings, rawSettings)
 
     result.value = {
       ...rawSettings,
       ...normalized,
-      serverUrl:
-        serverUrlFromEnv ||
-        normalized.serverUrl ||
-        DEFAULT_SYSTEM_SETTINGS.serverUrl,
-      serverAuthToken:
-        serverAuthTokenFromEnv ||
-        normalized.serverAuthToken ||
-        DEFAULT_SYSTEM_SETTINGS.serverAuthToken,
       image: normalized.image || { ...DEFAULT_SYSTEM_SETTINGS.image },
       skillStore: normalized.skillStore || {
         ...DEFAULT_SYSTEM_SETTINGS.skillStore,
@@ -337,8 +308,6 @@ function toSystemSettingsPayload(
     thinkingBudgetTokens: state.value.thinkingBudgetTokens,
     url: state.value.url,
     apiKey: state.value.apiKey,
-    serverUrl: state.value.serverUrl,
-    serverAuthToken: state.value.serverAuthToken,
     image: state.value.image,
     skillStore: state.value.skillStore,
     settingsPath: state.path,
@@ -380,17 +349,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   }
 
   const env: Record<string, unknown> = { ...existingEnv }
-  deleteModelEndpointEnvKeys(env)
-  if (nextSettings.serverUrl) {
-    env.MOSS_SERVER_URL = nextSettings.serverUrl
-  } else {
-    delete env.MOSS_SERVER_URL
-  }
-  if (nextSettings.serverAuthToken) {
-    env.MOSS_SERVER_AUTH_TOKEN = nextSettings.serverAuthToken
-  } else {
-    delete env.MOSS_SERVER_AUTH_TOKEN
-  }
+  deleteManagedEndpointEnvKeys(env)
 
   const existingModels = isRecord(existingFile.models) ? existingFile.models : {}
   const existingText = isRecord(existingModels.text)
@@ -460,8 +419,6 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     thinkingBudgetTokens: nextSettings.thinkingBudgetTokens,
     url: nextSettings.url,
     apiKey: nextSettings.apiKey,
-    serverUrl: nextSettings.serverUrl,
-    serverAuthToken: nextSettings.serverAuthToken,
     image: nextSettings.image,
     skillStore: nextSettings.skillStore,
     settingsPath,

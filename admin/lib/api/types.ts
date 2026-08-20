@@ -157,8 +157,6 @@ export interface SystemSettings {
   thinkingBudgetTokens: number
   url: string
   apiKey: string
-  serverUrl: string
-  serverAuthToken: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
   settingsPath: string
@@ -169,8 +167,6 @@ export interface SystemSettings {
 
 export interface UpdateSystemSettingsRequest {
   bypassPermissions?: boolean
-  serverUrl?: string
-  serverAuthToken?: string
   models?: {
     text?: {
       baseUrl?: string

@@ -116,14 +116,18 @@ function buildManagedRuntimeEnv(
   return {
     MOSS_MODEL_BASE_URL: settings.url || undefined,
     MOSS_MODEL_AUTH_TOKEN: settings.apiKey || undefined,
-    MOSS_SERVER_URL: settings.serverUrl || undefined,
-    MOSS_SERVER_AUTH_TOKEN: settings.serverAuthToken || undefined,
+    MOSS_SERVER_URL: undefined,
+    MOSS_SERVER_AUTH_TOKEN: undefined,
   }
 }
 
-function deleteModelEndpointEnvKeys(env: JsonObject): void {
+function deleteManagedEndpointEnvKeys(env: JsonObject): void {
   for (const key of Object.keys(env)) {
-    if (/^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key)) {
+    if (
+      /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key) ||
+      key === 'MOSS_SERVER_URL' ||
+      key === 'MOSS_SERVER_AUTH_TOKEN'
+    ) {
       delete env[key]
     }
   }
@@ -167,7 +171,7 @@ export async function writeManagedSessionSettings(
     ? existingText.thinking
     : {}
   const env: JsonObject = { ...existingEnv }
-  deleteModelEndpointEnvKeys(env)
+  deleteManagedEndpointEnvKeys(env)
   for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
     if (value) {
       env[key] = value

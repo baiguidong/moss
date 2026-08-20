@@ -41,8 +41,6 @@ describe('direct embedded backend model settings', () => {
         maxTurns: 55,
         thinkingMode: 'enabled',
         thinkingBudgetTokens: 12345,
-        serverUrl: 'http://server.session.test',
-        serverAuthToken: 'server-session-token',
       }),
     )
 
@@ -62,8 +60,6 @@ describe('direct embedded backend model settings', () => {
     expect(persisted.env).toEqual({
       MOSS_MODEL_BASE_URL: 'https://model.session.test',
       MOSS_MODEL_AUTH_TOKEN: 'model-session-key',
-      MOSS_SERVER_URL: 'http://server.session.test',
-      MOSS_SERVER_AUTH_TOKEN: 'server-session-token',
     })
     expect(persisted.model).toBeUndefined()
     expect(persisted.maxTurns).toBeUndefined()
@@ -76,21 +72,17 @@ describe('direct embedded backend model settings', () => {
       makeSettings({
         url: 'https://model.env.test',
         apiKey: 'model-env-key',
-        serverUrl: 'http://server.env.test',
-        serverAuthToken: 'server-env-token',
       }),
     )
     expect(process.env.MOSS_MODEL_BASE_URL).toBe('https://model.env.test')
     expect(process.env.MOSS_MODEL_AUTH_TOKEN).toBe('model-env-key')
-    expect(process.env.MOSS_SERVER_URL).toBe('http://server.env.test')
-    expect(process.env.MOSS_SERVER_AUTH_TOKEN).toBe('server-env-token')
+    expect(process.env.MOSS_SERVER_URL).toBeUndefined()
+    expect(process.env.MOSS_SERVER_AUTH_TOKEN).toBeUndefined()
 
     applyManagedRuntimeEnv(
       makeSettings({
         url: '',
         apiKey: '',
-        serverUrl: '',
-        serverAuthToken: '',
       }),
     )
     expect(process.env.MOSS_MODEL_BASE_URL).toBeUndefined()
@@ -111,8 +103,6 @@ function makeSettings(
     thinkingBudgetTokens: 16000,
     url: '',
     apiKey: '',
-    serverUrl: '',
-    serverAuthToken: '',
     image: {
       provider: 'openai',
       url: 'https://image.default.test',

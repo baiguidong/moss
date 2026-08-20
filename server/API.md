@@ -43,7 +43,7 @@ prepare 会把随代码变化的运行产物复制到 server root：
 - `~/.moss/server/skills/`
 - `~/.moss/server/assistants/`
 
-服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
+服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。Telemetry、metrics、feedback 和 transcript 分享的 Moss Server 上报地址属于客户端配置，写在桌面端 `~/.moss/settings.json` 的 `reporting` 下，不写入 server 端系统设置。
 
 只准备但不启动：
 
@@ -154,6 +154,7 @@ Authorization: Bearer <access_token>
 ## Reports
 
 上报数据先只做原始存储，统一写入 SQLite `report_events` 表。读取接口仅用于排查和后续 UI 对接，要求 `admin:settings` 权限。
+写入接口要求 `Authorization: Bearer ...`，Bearer 值可以是 access token，也可以是 Moss Server API key；写入只要求认证通过，读取 reports 需要 `admin:settings`。
 
 ### 写入接口
 

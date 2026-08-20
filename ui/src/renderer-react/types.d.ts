@@ -137,6 +137,10 @@ export type DesktopSettings = {
     apiKey: string;
     model: string;
   };
+  reporting?: {
+    serverUrl: string;
+    apiKey: string;
+  };
   sessionMemory?: {
     enabled?: boolean;
     compactEnabled?: boolean;

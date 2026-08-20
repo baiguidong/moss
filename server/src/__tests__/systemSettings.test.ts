@@ -47,6 +47,7 @@ describe('system settings model layout', () => {
             },
           },
           env: {
+            KEEP_ME: 'yes',
             MOSS_SERVER_URL: 'http://server.initial.test',
             MOSS_SERVER_AUTH_TOKEN: 'server-token-initial',
           },
@@ -68,8 +69,6 @@ describe('system settings model layout', () => {
       thinkingBudgetTokens: 4096,
       url: 'https://model.initial.test',
       apiKey: 'model-key-initial',
-      serverUrl: 'http://server.initial.test',
-      serverAuthToken: 'server-token-initial',
       image: {
         provider: 'openai',
         url: 'https://image.initial.test',
@@ -149,12 +148,13 @@ describe('system settings model layout', () => {
     expect(persisted.apiKey).toBeUndefined()
     expect(persisted.image).toBeUndefined()
     expect(persisted.env).toEqual({
-      MOSS_SERVER_URL: 'http://server.initial.test',
-      MOSS_SERVER_AUTH_TOKEN: 'server-token-initial',
+      KEEP_ME: 'yes',
     })
     expect(
       Object.keys(persisted.env || {}).some(key =>
-        /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key),
+        /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key) ||
+        key === 'MOSS_SERVER_URL' ||
+        key === 'MOSS_SERVER_AUTH_TOKEN',
       ),
     ).toBe(false)
   })
