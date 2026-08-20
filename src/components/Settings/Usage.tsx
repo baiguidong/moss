@@ -12,7 +12,6 @@ import { jsonStringify } from '../../utils/slowOperations.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
 import { Byline } from '../design-system/Byline.js';
 import { ProgressBar } from '../design-system/ProgressBar.js';
-import { isEligibleForOverageCreditGrant, OverageCreditUpsell } from '../LogoV2/OverageCreditUpsell.js';
 type LimitBarProps = {
   title: string;
   limit: RateLimit;
@@ -248,8 +247,6 @@ export function Usage(): React.ReactNode {
     }) => limit_0 && <LimitBar key={title} title={title} limit={limit_0} maxWidth={maxWidth} />)}
 
       {utilization.extra_usage && <ExtraUsageSection extraUsage={utilization.extra_usage} maxWidth={maxWidth} />}
-
-      {isEligibleForOverageCreditGrant() && <OverageCreditUpsell maxWidth={maxWidth} />}
 
       <Text dimColor>
         <ConfigurableShortcutHint action="confirm:no" context="Settings" fallback="Esc" description="cancel" />

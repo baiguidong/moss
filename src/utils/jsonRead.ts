@@ -1,8 +1,8 @@
 /**
  * Leaf stripBOM — extracted from json.ts to break settings → json → log →
  * types/logs → … → settings. json.ts imports this for its memoized+logging
- * safeParseJSON; leaf callers that can't import json.ts use stripBOM +
- * jsonParse inline (syncCacheState does this).
+ * safeParseJSON; leaf callers that can't import json.ts can use stripBOM +
+ * jsonParse inline.
  *
  * UTF-8 BOM (U+FEFF): PowerShell 5.x writes UTF-8 with BOM by default
  * (Out-File, Set-Content). We can't control user environments, so strip on

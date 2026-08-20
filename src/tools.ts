@@ -21,9 +21,6 @@ const cronTools = [
   require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
   require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
 ]
-const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
-  ? require('./tools/RemoteTriggerTool/RemoteTriggerTool.js').RemoteTriggerTool
-  : null
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import { TaskOutputTool } from './tools/TaskOutputTool/TaskOutputTool.js'
 import { WebSearchTool } from './tools/WebSearchTool/WebSearchTool.js'
@@ -182,7 +179,6 @@ export function getAllBaseTools(): Tools {
     ...(WorkflowTool ? [WorkflowTool] : []),
     ...(SleepTool ? [SleepTool] : []),
     ...cronTools,
-    ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     ...(getPowerShellTool() ? [getPowerShellTool()] : []),
     ...(SnipTool ? [SnipTool] : []),
     ...(process.env.NODE_ENV === 'test' ? [TestingPermissionTool] : []),

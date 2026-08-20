@@ -102,7 +102,6 @@ import {
 } from '../api/errors.js'
 import { notifyCompaction } from '../api/promptCacheBreakDetection.js'
 import { getRetryDelay } from '../api/withRetry.js'
-import { logPermissionContextForAnts } from '../internalLogging.js'
 import {
   roughTokenCountEstimation,
   roughTokenCountEstimationForMessages,
@@ -394,9 +393,6 @@ export async function compactConversation(
     }
 
     const preCompactTokenCount = tokenCountWithEstimation(messages)
-
-    const appState = context.getAppState()
-    void logPermissionContextForAnts(appState.toolPermissionContext, 'summary')
 
     context.onCompactProgress?.({
       type: 'hooks_start',

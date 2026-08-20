@@ -29,7 +29,6 @@ import {
   supportsTabStatus,
   wrapForMultiplexer,
 } from '../ink/termio/osc.js'
-import { shutdown1PEventLogging } from '../services/analytics/firstPartyEventLogger.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -40,7 +39,6 @@ import { logForDebugging } from './debug.js'
 import { logForDiagnosticsNoPII } from './diagLogs.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCurrentSessionTitle, sessionIdExists } from './sessionStorage.js'
-import { sleep } from './sleep.js'
 import { profileReport } from './startupProfiler.js'
 
 /**
@@ -495,16 +493,6 @@ export async function gracefulShutdown(
       last_request_id:
         lastRequestId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
-  }
-
-  // Flush local analytics compatibility hooks if any were initialized.
-  try {
-    await Promise.race([
-      shutdown1PEventLogging(),
-      sleep(500),
-    ])
-  } catch {
-    // Ignore analytics shutdown errors
   }
 
   if (options?.finalMessage) {

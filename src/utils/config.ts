@@ -234,36 +234,6 @@ export type GlobalConfig = {
     { hasAccess: boolean; hasAccessNotAsDefault?: boolean; timestamp: number }
   >
 
-  // Grove config cache per account - key is account UUID
-  groveConfigCache?: Record<
-    string,
-    { grove_enabled: boolean; timestamp: number }
-  >
-
-  // Guest passes upsell tracking
-  passesUpsellSeenCount?: number // Number of times the guest passes upsell has been shown
-  hasVisitedPasses?: boolean // Whether the user has visited /passes command
-  passesLastSeenRemaining?: number // Last seen remaining_passes count — reset upsell when it increases
-
-  // Overage credit grant upsell tracking (keyed by org UUID — multi-org users).
-  // Inlined shape (not import()) because config.ts is in the SDK build surface
-  // and the SDK bundler can't resolve CLI service modules.
-  overageCreditGrantCache?: Record<
-    string,
-    {
-      info: {
-        available: boolean
-        eligible: boolean
-        granted: boolean
-        amount_minor_units: number | null
-        currency: string | null
-      }
-      timestamp: number
-    }
-  >
-  overageCreditUpsellSeenCount?: number // Number of times the overage credit upsell has been shown
-  hasVisitedExtraUsage?: boolean // Whether the user has visited /extra-usage — hides credit upsells
-
   // Voice mode notice tracking
   voiceNoticeSeenCount?: number // Number of times the voice-mode-available notice has been shown
   voiceLangHintShownCount?: number // Number of times the /voice dictation-language hint has been shown
@@ -366,18 +336,6 @@ export type GlobalConfig = {
 
   // Skill usage tracking for autocomplete ranking
   skillUsage?: Record<string, { usageCount: number; lastUsedAt: number }>
-  // Official marketplace auto-install tracking
-  officialMarketplaceAutoInstallAttempted?: boolean // Whether auto-install was attempted
-  officialMarketplaceAutoInstalled?: boolean // Whether auto-install succeeded
-  officialMarketplaceAutoInstallFailReason?:
-    | 'policy_blocked'
-    | 'git_unavailable'
-    | 'gcs_unavailable'
-    | 'unknown' // Reason for failure if applicable
-  officialMarketplaceAutoInstallRetryCount?: number // Number of retry attempts
-  officialMarketplaceAutoInstallLastAttemptTime?: number // Timestamp of last attempt
-  officialMarketplaceAutoInstallNextRetryTime?: number // Earliest time to retry again
-
   // LSP plugin recommendation preferences
   lspRecommendationDisabled?: boolean // Disable all LSP plugin recommendations
   lspRecommendationNeverPlugins?: string[] // Plugin IDs to never suggest
@@ -410,10 +368,6 @@ export type GlobalConfig = {
   // Cached org-level fast mode status from the API.
   // Used to detect cross-session changes and notify users.
   penguinModeOrgEnabled?: boolean
-
-  // Epoch ms when background refreshes last ran (fast mode, quota, passes, client data).
-  // Used with tengu_cicada_nap_ms to throttle API calls
-  startupPrefetchedAt?: number
 
   // Cached extra usage disabled reason from the last API response
   // undefined = no cache, null = extra usage enabled, string = disabled reason.

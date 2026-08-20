@@ -1,6 +1,5 @@
 import { feature } from 'bun:bundle'
 import { initAutoDream } from '../services/autoDream/autoDream.js'
-import { initMagicDocs } from '../services/MagicDocs/magicDocs.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const extractMemoriesModule = feature('EXTRACT_MEMORIES')
@@ -15,7 +14,6 @@ import { cleanupOldMessageFilesInBackground } from './cleanup.js'
 const DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION = 10 * 60 * 1000
 
 export function startBackgroundHousekeeping(): void {
-  void initMagicDocs()
   if (feature('EXTRACT_MEMORIES')) {
     extractMemoriesModule!.initExtractMemories()
   }

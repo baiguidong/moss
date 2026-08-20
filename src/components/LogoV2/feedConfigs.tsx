@@ -1,7 +1,5 @@
 import figures from 'figures';
 import { homedir } from 'os';
-import * as React from 'react';
-import { Box, Text } from '../../ink.js';
 import type { Step } from '../../projectOnboardingState.js';
 import type { LogOption } from '../../types/logs.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -45,21 +43,5 @@ export function createProjectOnboardingFeed(steps: Step[]): FeedConfig {
   return {
     title: 'Tips for getting started',
     lines
-  };
-}
-export function createGuestPassesFeed(): FeedConfig {
-  return {
-    title: '3 guest passes',
-    lines: [],
-    customContent: {
-      content: <>
-          <Box marginY={1}>
-            <Text color="claude">[✻] [✻] [✻]</Text>
-          </Box>
-          <Text dimColor>Guest passes are not available in this build.</Text>
-        </>,
-      width: 48
-    },
-    footer: '/passes'
   };
 }

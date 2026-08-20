@@ -425,10 +425,9 @@ function startMdmPoll(): void {
  * applySettingsChange reset defensively because some notification paths
  * (file-watch at :289/340, MDM poll at :385) did not reset before iterating
  * listeners. That defense caused N-way thrashing when N listeners were
- * subscribed: each listener cleared the cache, re-read from disk (populating
- * it), then the next listener cleared it again — N full disk reloads per
- * notification. Profile showed 5 loadSettingsFromDisk calls in 12ms when
- * remote managed settings resolved at startup.
+	 * subscribed: each listener cleared the cache, re-read from disk (populating
+	 * it), then the next listener cleared it again — N full disk reloads per
+	 * notification.
  *
  * With the reset centralized here, one notification = one disk reload: the
  * first listener to call getSettingsWithErrors() pays the miss and
@@ -441,8 +440,7 @@ function fanOut(source: SettingSource): void {
 
 /**
  * Manually notify listeners of a settings change.
- * Used for programmatic settings changes (e.g., remote managed settings refresh)
- * that don't involve file system changes.
+ * Used for programmatic settings changes that don't involve file system changes.
  */
 export function notifyChange(source: SettingSource): void {
   logForDebugging(`Programmatic settings change notification for ${source}`)

@@ -84,8 +84,8 @@ export const DANGEROUS_SHELL_SETTINGS = [
  * These are Claude Code specific settings that don't pose security risks.
  *
  * IMPORTANT: This is the source of truth for which env vars are safe.
- * Any env var NOT in this list is considered dangerous and will trigger
- * a security dialog when set via remote managed settings.
+ * Any env var NOT in this list is considered unsafe to apply before project
+ * trust is established.
  *
  * Dangerous env vars (NOT in this list):
  *

@@ -9,7 +9,6 @@ import {
 } from './skillStore.js'
 import { MOSS_HOME } from './lib/env.js'
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
 const HUB_AUTHORIZATION =
   String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
 
@@ -61,10 +60,22 @@ const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
   process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
 )
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const ASSISTANT_HUB_BASE_URL = `${HUB_API_BASE_URL}/assistants`
-const ASSISTANT_HUB_CURSOR_URL = `${ASSISTANT_HUB_BASE_URL}/cursor`
+const HUB_API_BASE_URL = configuredHubApiBaseUrl
+
+function isHubStoreEnabled(): boolean {
+  return HUB_API_BASE_URL.length > 0
+}
+
+function assertHubStoreEnabled(): void {
+  if (!isHubStoreEnabled()) {
+    throw new Error('Agent hub is disabled. Set MOSS_HUB_API_BASE_URL to enable remote hub access.')
+  }
+}
+
+function getHubApiUrl(pathname: string): string {
+  assertHubStoreEnabled()
+  return `${HUB_API_BASE_URL}${pathname}`
+}
 
 export type AgentHubAssistant = {
   id: string
@@ -269,6 +280,7 @@ async function fetchJson(
   url: string,
   init?: RequestInit,
 ): Promise<unknown> {
+  assertHubStoreEnabled()
   const headers = new Headers(init?.headers)
   headers.set('Authorization', HUB_AUTHORIZATION)
   if (!headers.has('User-Agent')) {
@@ -363,6 +375,7 @@ function normalizeAgentHubAssistant(rawValue: unknown): AgentHubAssistant | null
 }
 
 async function downloadFileBuffer(url: string): Promise<Buffer> {
+  assertHubStoreEnabled()
   const response = await fetch(url, {
     headers: {
       Authorization: HUB_AUTHORIZATION,
@@ -653,13 +666,17 @@ export async function fetchAgentHubAssistants(
   next_cursor: string | null
   has_more: boolean
 }> {
+  if (!isHubStoreEnabled()) {
+    return { assistants: [], next_cursor: null, has_more: false }
+  }
+
   const searchParams = new URLSearchParams()
   if (params.cursor) searchParams.set('cursor', params.cursor)
   if (params.limit) searchParams.set('limit', String(params.limit))
   if (params.query) searchParams.set('query', params.query)
   if (params.category) searchParams.set('category', params.category)
 
-  const result = await fetchJson(`${ASSISTANT_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(getHubApiUrl(`/assistants/cursor?${searchParams}`))
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : unwrapped
   const rawAssistants = Array.isArray(data.assistants) ? data.assistants : []
@@ -677,7 +694,11 @@ export async function fetchAgentHubAssistants(
 }
 
 export async function fetchAgentHubCategories(): Promise<string[]> {
-  const result = await fetchJson(`${HUB_CATEGORIES_URL}?type=1`)
+  if (!isHubStoreEnabled()) {
+    return []
+  }
+
+  const result = await fetchJson(getHubApiUrl('/categories?type=1'))
   if (Array.isArray(result)) {
     return result.filter(
       (item): item is string =>
@@ -696,8 +717,12 @@ export async function fetchAgentHubCategories(): Promise<string[]> {
 export async function fetchAgentHubAssistantDetail(
   assistantId: string,
 ): Promise<AgentHubDetail | null> {
+  if (!isHubStoreEnabled()) {
+    return null
+  }
+
   const result = await fetchJson(
-    `${ASSISTANT_HUB_BASE_URL}/${encodeURIComponent(assistantId)}`,
+    getHubApiUrl(`/assistants/${encodeURIComponent(assistantId)}`),
   )
   const unwrapped = unwrapHubResponse(result)
   const rawDetail = isRecord(unwrapped.data)
@@ -785,6 +810,7 @@ export async function installHubAssistant(params: {
   installedSkills: string[]
   failedSkills: string[]
 }> {
+  assertHubStoreEnabled()
   const assistantName = String(params.assistantName || '').trim()
   const sourceUrl = String(params.sourceUrl || '').trim()
   if (!assistantName) {

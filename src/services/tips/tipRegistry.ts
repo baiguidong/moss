@@ -8,7 +8,6 @@ import {
 } from 'src/utils/settings/settings.js'
 import { shouldOfferTerminalSetup } from '../../commands/terminalSetup/terminalSetup.js'
 import { color } from '../../components/design-system/color.js'
-import { shouldShowOverageCreditUpsell } from '../../components/LogoV2/OverageCreditUpsell.js'
 import { getShortcutDisplay } from '../../keybindings/shortcutFormat.js'
 import { isCronEnabled } from '../../tools/ScheduleCronTool/prompt.js'
 import { is1PApiCustomer } from '../../utils/auth.js'
@@ -39,10 +38,6 @@ import {
   isCustomTitleEnabled,
 } from '../../utils/sessionStorage.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
-import {
-  formatGrantAmount,
-  getCachedOverageCreditGrant,
-} from '../api/overageCreditGrant.js'
 import { getSessionsSinceLastShown } from './tipHistory.js'
 import type { Tip, TipContext } from './types.js'
 
@@ -469,19 +464,6 @@ const externalTips: Tip[] = [
         ) !== 'off'
       )
     },
-  },
-  {
-    id: 'overage-credit',
-    content: async ctx => {
-      const claude = color('claude', ctx.theme)
-      const info = getCachedOverageCreditGrant()
-      const amount = info ? formatGrantAmount(info) : null
-      if (!amount) return ''
-      // Copy from "OC & Bulk Overages copy" doc (#5 — CLI Rotating tip)
-      return `${claude(`${amount} in extra usage, on us`)} · third-party apps · ${claude('/extra-usage')}`
-    },
-    cooldownSessions: 3,
-    isRelevant: async () => shouldShowOverageCreditUpsell(),
   },
 ]
 const internalOnlyTips: Tip[] = []

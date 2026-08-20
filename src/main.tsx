@@ -26,11 +26,7 @@ import { addToHistory } from './history.js';
 import type { Root } from './ink.js';
 import { launchRepl } from './replLauncher.js';
 import { refreshFeatureFlagsAfterAuthChange } from './services/analytics/featureFlags.js';
-import { fetchBootstrapData } from './services/api/bootstrap.js';
-import { prefetchOfficialMcpUrls } from './services/mcp/officialRegistry.js';
 import type { McpSdkServerConfig, McpServerConfig, ScopedMcpServerConfig } from './services/mcp/types.js';
-import { isPolicyAllowed, loadPolicyLimits, refreshPolicyLimits, waitForPolicyLimitsToLoad } from './services/policyLimits/index.js';
-import { loadRemoteManagedSettings, refreshRemoteManagedSettings } from './services/remoteManagedSettings/index.js';
 import type { ToolInputJSONSchema } from './Tool.js';
 import { createSyntheticOutputTool, isSyntheticOutputToolEnabled } from './tools/SyntheticOutputTool/SyntheticOutputTool.js';
 import { getTools } from './tools.js';
@@ -41,7 +37,7 @@ import { prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSaf
 import { checkHasTrustDialogAccepted, getGlobalConfig, saveGlobalConfig } from './utils/config.js';
 import { stopCapturingEarlyInput } from './utils/earlyInput.js';
 import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
-import { getInitialFastModeSetting, isFastModeEnabled, prefetchFastModeStatus, resolveFastModeStatusFromCache } from './utils/fastMode.js';
+import { getInitialFastModeSetting, isFastModeEnabled } from './utils/fastMode.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
 import { createSystemMessage, createUserMessage } from './utils/messages.js';
 import { getPlatform } from './utils/platform.js';
@@ -64,7 +60,6 @@ const getTeammateModeSnapshot = () => require('./utils/swarm/backends/teammateMo
 const coordinatorModeModule = feature('COORDINATOR_MODE') ? require('./coordinator/coordinatorMode.js') as typeof import('./coordinator/coordinatorMode.js') : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { resolve } from 'path';
-import { isAnalyticsDisabled } from 'src/services/analytics/config.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import { getOriginalCwd, setAdditionalDirectoriesForClaudeMd, setIsRemoteMode, setMainLoopModelOverride, setMainThreadAgentType, setTeleportedSessionInfo } from './bootstrap/state.js';
@@ -74,21 +69,18 @@ import { launchInvalidSettingsDialog, launchResumeChooser, launchSnapshotUpdateD
 import { SHOW_CURSOR } from './ink/termio/dec.js';
 import { exitWithError, getRenderContext, renderAndRun, showSetupScreens } from './interactiveHelpers.js';
 /* eslint-enable @typescript-eslint/no-require-imports */
-import { checkQuotaStatus } from './services/claudeAiLimits.js';
 import { getMcpToolsCommandsAndResources, prefetchAllMcpResources } from './services/mcp/client.js';
 import { initBundledSkills } from './skills/bundled/index.js';
 import type { AgentColorName } from './tools/AgentTool/agentColorManager.js';
 import { getActiveAgentsFromList, getAgentDefinitionsWithOverrides, isBuiltInAgent, isCustomAgent, parseAgentsFromJson } from './tools/AgentTool/loadAgentsDir.js';
 import type { LogOption } from './types/logs.js';
 import type { Message as MessageType } from './types/message.js';
-import { getContextWindowForModel } from './utils/context.js';
 import { loadConversationForResume } from './utils/conversationRecovery.js';
-import { hasNodeOption, isBareMode, isEnvTruthy, isInProtectedNamespace } from './utils/envUtils.js';
+import { isBareMode, isEnvTruthy, isInProtectedNamespace } from './utils/envUtils.js';
 import { refreshExampleCommands } from './utils/exampleCommands.js';
 import type { FpsMetrics } from './utils/fpsTracker.js';
 import { getWorktreePaths } from './utils/getWorktreePaths.js';
-import { getBranch, getIsGit, getWorktreeCount } from './utils/git.js';
-import { getGhAuthStatus } from './utils/github/ghAuthStatus.js';
+import { getBranch } from './utils/git.js';
 import { safeParseJSON } from './utils/json.js';
 import { logError } from './utils/log.js';
 import { getModelDeprecationWarning } from './utils/model/deprecation.js';
@@ -100,16 +92,13 @@ import { countFilesRoundedRg } from './utils/ripgrep.js';
 import { processSessionStartHooks, processSetupHooks } from './utils/sessionStart.js';
 import { cacheSessionTitle, getSessionIdFromLog, saveAgentSetting, saveMode, searchSessionsByCustomTitle, sessionIdExists } from './utils/sessionStorage.js';
 import { ensureMdmSettingsLoaded } from './utils/settings/mdm/settings.js';
-import { getInitialSettings, getManagedSettingsKeysForLogging, getSettingsForSource, getSettingsWithErrors } from './utils/settings/settings.js';
+import { getInitialSettings, getSettingsWithErrors } from './utils/settings/settings.js';
 import { resetSettingsCache } from './utils/settings/settingsCache.js';
 import type { ValidationError } from './utils/settings/validation.js';
-import { logSkillsLoaded } from './utils/telemetry/skillLoadedEvent.js';
 import { generateTempFilePath } from './utils/tempfile.js';
 import { validateUuid } from './utils/uuid.js';
-import { logPermissionContextForAnts } from 'src/services/internalLogging.js';
 import { areMcpConfigsAllowedWithEnterpriseMcpConfig, doesEnterpriseMcpConfigExist, filterMcpServersByPolicy, getClaudeCodeMcpConfigs, parseMcpConfig, parseMcpConfigFromFilePath } from 'src/services/mcp/config.js';
 import { getRelevantTips } from 'src/services/tips/tipRegistry.js';
-import { logContextMetrics } from 'src/utils/api.js';
 import { registerCleanup } from 'src/utils/cleanupRegistry.js';
 import { eagerParseCliFlag } from 'src/utils/cliArgs.js';
 import { createEmptyAttributionState } from 'src/utils/commitAttribution.js';
@@ -120,13 +109,12 @@ import { errorMessage, getErrnoCode, isENOENT, TeleportOperationError, toError }
 import { getFsImplementation, safeResolvePath } from 'src/utils/fsOperations.js';
 import { gracefulShutdown, gracefulShutdownSync } from 'src/utils/gracefulShutdown.js';
 import { setAllHookEventsEnabled } from 'src/utils/hooks/hookEvents.js';
-import { refreshModelCapabilities } from 'src/utils/model/modelCapabilities.js';
 import { peekForStdinData, writeToStderr } from 'src/utils/process.js';
 import { setCwd } from 'src/utils/Shell.js';
 import { type ProcessedResume, processResumedConversation } from 'src/utils/sessionRestore.js';
 import { parseSettingSourcesFlag } from 'src/utils/settings/constants.js';
 import { plural } from 'src/utils/stringUtils.js';
-import { getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSessionId, setAllowedSettingSources, setClientType, setCwdState, setDirectConnectServerUrl, setFlagSettingsPath, setInitialMainLoopModel, setIsInteractive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled, switchSession } from './bootstrap/state.js';
+import { getInitialMainLoopModel, getIsNonInteractiveSession, getSessionId, setAllowedSettingSources, setClientType, setCwdState, setDirectConnectServerUrl, setFlagSettingsPath, setInitialMainLoopModel, setIsInteractive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled, switchSession } from './bootstrap/state.js';
 
 // TeleportRepoMismatchDialog, TeleportResumeWrapper dynamically imported at call sites
 import { migrateBypassPermissionsAcceptedToSettings } from './migrations/migrateBypassPermissionsAcceptedToSettings.js';
@@ -151,7 +139,6 @@ import { filterAllowedSdkBetas } from './utils/betas.js';
 import { isInBundledMode, isRunningWithBun } from './utils/bundledMode.js';
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js';
 import { filterExistingPaths, getKnownPathsForRepo } from './utils/githubRepoPathMapping.js';
-import { SandboxManager } from './utils/sandbox/sandbox-adapter.js';
 import { fetchSession, prepareApiRequest } from './utils/teleport/api.js';
 import { checkOutTeleportedSessionBranch, processMessagesForTeleportResume, teleportToRemoteWithErrorHandling, validateGitState, validateSessionRepository } from './utils/teleport.js';
 import { shouldEnableThinkingByDefault, type ThinkingConfig } from './utils/thinking.js';
@@ -160,26 +147,6 @@ import { getTmuxInstallInstructions, isTmuxAvailable, parsePRReference } from '.
 
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
 profileCheckpoint('main_tsx_imports_loaded');
-
-/**
- * Log managed settings keys to the analytics facade.
- * This is called after init() completes to ensure settings are loaded
- * and environment variables are applied before model resolution.
- */
-function logManagedSettings(): void {
-  try {
-    const policySettings = getSettingsForSource('policySettings');
-    if (policySettings) {
-      const allKeys = getManagedSettingsKeysForLogging(policySettings);
-      logEvent('tengu_managed_settings_loaded', {
-        keyCount: allKeys.length,
-        keys: allKeys.join(',') as unknown as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-      });
-    }
-  } catch {
-    // Silently ignore errors - this is just for analytics
-  }
-}
 
 // Check if running in debug/inspection mode
 function isBeingDebugged() {
@@ -221,47 +188,6 @@ if ("external" !== 'ant' && isBeingDebugged()) {
   // and gracefulShutdown is not yet available
   // eslint-disable-next-line custom-rules/no-top-level-side-effects
   process.exit(1);
-}
-
-/**
- * Per-session skill telemetry. Called from both the interactive path
- * and the headless -p path (before runHeadless) — both go through
- * main.tsx but branch before the interactive startup path, so it needs two
- * call sites here rather than one here + one in QueryEngine.
- */
-function logSessionTelemetry(): void {
-  const model = parseUserSpecifiedModel(getInitialMainLoopModel() ?? getDefaultMainLoopModel());
-  void logSkillsLoaded(getCwd(), getContextWindowForModel(model, getSdkBetas()));
-}
-function getCertEnvVarTelemetry(): Record<string, boolean> {
-  const result: Record<string, boolean> = {};
-  if (process.env.NODE_EXTRA_CA_CERTS) {
-    result.has_node_extra_ca_certs = true;
-  }
-  if (process.env.CLAUDE_CODE_CLIENT_CERT) {
-    result.has_client_cert = true;
-  }
-  if (hasNodeOption('--use-system-ca')) {
-    result.has_use_system_ca = true;
-  }
-  if (hasNodeOption('--use-openssl-ca')) {
-    result.has_use_openssl_ca = true;
-  }
-  return result;
-}
-async function logStartupTelemetry(): Promise<void> {
-  if (isAnalyticsDisabled()) return;
-  const [isGit, worktreeCount, ghAuthStatus] = await Promise.all([getIsGit(), getWorktreeCount(), getGhAuthStatus()]);
-  logEvent('tengu_startup_telemetry', {
-    is_git: isGit,
-    worktree_count: worktreeCount,
-    gh_auth_status: ghAuthStatus as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-    sandbox_enabled: SandboxManager.isSandboxingEnabled(),
-    are_unsandboxed_commands_allowed: SandboxManager.areUnsandboxedCommandsAllowed(),
-    is_auto_bash_allowed_if_sandbox_enabled: SandboxManager.isAutoAllowBashIfSandboxedEnabled(),
-    prefers_reduced_motion: getInitialSettings().prefersReducedMotion ?? false,
-    ...getCertEnvVarTelemetry()
-  });
 }
 
 // @[MODEL LAUNCH]: Consider any migrations you may need for model strings. See migrateSonnet1mToSonnet45.ts for an example.
@@ -344,10 +270,6 @@ export function startDeferredPrefetches(): void {
     void prefetchGcpCredentialsIfSafe();
   }
   void countFilesRoundedRg(getCwd(), AbortSignal.timeout(3000), []);
-
-  // Registry and capability prefetches
-  void prefetchOfficialMcpUrls();
-  void refreshModelCapabilities();
 
   // File change detectors deferred from init() to unblock first render
   void settingsChangeDetector.initialize();
@@ -709,9 +631,7 @@ async function run(): Promise<CommanderCommand> {
     profileCheckpoint('preAction_start');
     // Await async subprocess loads started at module evaluation (lines 12-20).
     // Nearly free — subprocesses complete during the ~135ms of imports above.
-    // Must resolve before init() which triggers the first settings read
-    // (applySafeConfigEnvironmentVariables → getSettingsForSource('policySettings')
-    // → isRemoteManagedSettingsEligible → sync keychain reads otherwise ~65ms).
+    // Must resolve before init() triggers the first settings read.
     await ensureMdmSettingsLoaded();
     profileCheckpoint('preAction_after_mdm');
     await init();
@@ -738,13 +658,6 @@ async function run(): Promise<CommanderCommand> {
     runMigrations();
     profileCheckpoint('preAction_after_migrations');
 
-    // Load remote managed settings for enterprise customers (non-blocking)
-    // Fails open - if fetch fails, continues without remote settings
-    // Settings are applied via hot-reload when they arrive
-    // Must happen after init() to ensure config reading is allowed
-    void loadRemoteManagedSettings();
-    void loadPolicyLimits();
-    profileCheckpoint('preAction_after_remote_settings');
   });
   program.name('claude').description(`Claude Code - starts an interactive session by default, use -p/--print for non-interactive output`).argument('[prompt]', 'Your prompt', String)
   // Subcommands inherit helpOption via commander's copyInheritedSettings —
@@ -1362,9 +1275,8 @@ async function run(): Promise<CommanderCommand> {
       // so PATH/GIT_DIR/GIT_WORK_TREE from all sources (trusted + project)
       // are applied. getSystemContext is memoized; the
       // prefetchSystemContextIfSafe call in startDeferredPrefetches becomes
-      // a cache hit. The microtask from await getIsGit() drains at the
-      // getCommands Promise.all await below. Trust is implicit in -p mode
-      // (same gate as prefetchSystemContextIfSafe).
+      // a cache hit. Trust is implicit in -p mode (same gate as
+      // prefetchSystemContextIfSafe).
       void getSystemContext();
       // Kick getUserContext now too — its first await (fs.readFile in
       // getMemoryFiles) yields naturally, so the CLAUDE.md directory walk
@@ -1601,9 +1513,6 @@ async function run(): Promise<CommanderCommand> {
       }
 
       if (onboardingShown) {
-        // Refresh auth-dependent services after onboarding updates credentials.
-        void refreshRemoteManagedSettings();
-        void refreshPolicyLimits();
         // Clear user data cache BEFORE feature flag refresh so it picks up fresh credentials
         resetUserCache();
         // Refresh feature flag after credential changes to get updated feature flags.
@@ -1642,43 +1551,6 @@ async function run(): Promise<CommanderCommand> {
       }
     }
 
-    // Check quota status, fast mode, passes eligibility, and bootstrap data
-    // after trust is established. These make API calls which could trigger
-    // apiKeyHelper execution.
-    // --bare / SIMPLE: skip — these are cache-warms for the REPL's
-    // first-turn responsiveness (quota, passes, fastMode, bootstrap data). Fast
-    // mode doesn't apply to the Agent SDK anyway (see getFastModeUnavailableReason).
-    const bgRefreshThrottleMs = getFeatureValue_CACHED_MAY_BE_STALE('tengu_cicada_nap_ms', 0);
-    const lastPrefetched = getGlobalConfig().startupPrefetchedAt ?? 0;
-    const skipStartupPrefetches = isBareMode() || bgRefreshThrottleMs > 0 && Date.now() - lastPrefetched < bgRefreshThrottleMs;
-    if (!skipStartupPrefetches) {
-      const lastPrefetchedInfo = lastPrefetched > 0 ? ` last ran ${Math.round((Date.now() - lastPrefetched) / 1000)}s ago` : '';
-      logForDebugging(`Starting background startup prefetches${lastPrefetchedInfo}`);
-      checkQuotaStatus().catch(error => logError(error));
-
-      // Fetch bootstrap data from the server and update all cache values.
-      void fetchBootstrapData();
-
-      // TODO: Consolidate other prefetches into a single bootstrap request.
-      if (!getFeatureValue_CACHED_MAY_BE_STALE('tengu_miraculo_the_bard', false)) {
-        void prefetchFastModeStatus();
-      } else {
-        // Kill switch skips the network call, not org-policy enforcement.
-        // Resolve from cache so orgStatus doesn't stay 'pending' (which
-        // getFastModeUnavailableReason treats as permissive).
-        resolveFastModeStatusFromCache();
-      }
-      if (bgRefreshThrottleMs > 0) {
-        saveGlobalConfig(current => ({
-          ...current,
-          startupPrefetchedAt: Date.now()
-        }));
-      }
-    } else {
-      logForDebugging(`Skipping startup prefetches, last ran ${Math.round((Date.now() - lastPrefetched) / 1000)}s ago`);
-      // Resolve fast mode org status from cache (no network)
-      resolveFastModeStatusFromCache();
-    }
     if (!isNonInteractiveSession) {
       void refreshExampleCommands(); // Pre-fetch example commands (runs git log, no API call)
     }
@@ -1815,11 +1687,6 @@ async function run(): Promise<CommanderCommand> {
       appendSystemPromptFlag: appendSystemPrompt ? options.appendSystemPromptFile ? 'file' : 'flag' : undefined,
       thinkingConfig
     });
-
-    // Log context metrics once at initialization
-    void logContextMetrics(regularMcpConfigs, toolPermissionContext);
-    void logPermissionContextForAnts(null, 'initialization');
-    logManagedSettings();
 
     // Register PID file for concurrent-session detection (~/.moss/sessions/)
     // and fire multi-clauding telemetry. Lives here (not init.ts) so only the
@@ -1976,7 +1843,6 @@ async function run(): Promise<CommanderCommand> {
         startDeferredPrefetches();
         void import('./utils/backgroundHousekeeping.js').then(m => m.startBackgroundHousekeeping());
       }
-      logSessionTelemetry();
       profileCheckpoint('before_print_import');
       const {
         runHeadless
@@ -2149,15 +2015,11 @@ async function run(): Promise<CommanderCommand> {
 
     // Increment numStartups synchronously — first-render readers like
     // shouldShowEffortCallout (via useState initializer) need the updated
-    // value before setImmediate fires. Defer only telemetry.
+    // value before first render.
     saveGlobalConfig(current => ({
       ...current,
       numStartups: (current.numStartups ?? 0) + 1
     }));
-    setImmediate(() => {
-      void logStartupTelemetry();
-      logSessionTelemetry();
-    });
 
     const sessionConfig = {
       debug: debug || debugToStderr,
@@ -2328,13 +2190,6 @@ async function run(): Promise<CommanderCommand> {
         }
       }
 
-      // --remote and --teleport both create/resume Claude Code Web sessions.
-      if (remote !== null || teleport) {
-        await waitForPolicyLimitsToLoad();
-        if (!isPolicyAllowed('allow_remote_sessions')) {
-          return await exitWithError(root, "Error: Remote sessions are disabled by your organization's policy.", () => gracefulShutdown(1));
-        }
-      }
       if (remote !== null) {
         // Create remote session (optionally with initial prompt)
         const hasInitialPrompt = remote.length > 0;

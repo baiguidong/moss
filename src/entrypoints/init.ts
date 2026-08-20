@@ -4,14 +4,6 @@ import '../utils/config.js'
 import memoize from 'lodash-es/memoize.js'
 import { getIsNonInteractiveSession } from 'src/bootstrap/state.js'
 import { shutdownLspServerManager } from '../services/lsp/manager.js'
-import {
-  initializePolicyLimitsLoadingPromise,
-  isPolicyLimitsEligible,
-} from '../services/policyLimits/index.js'
-import {
-  initializeRemoteManagedSettingsLoadingPromise,
-  isEligibleForRemoteManagedSettings,
-} from '../services/remoteManagedSettings/index.js'
 import { preconnectAnthropicApi } from '../utils/apiPreconnect.js'
 import { applyExtraCACertsFromConfig } from '../utils/caCertsConfig.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
@@ -76,37 +68,12 @@ export const init = memoize(async (): Promise<void> => {
     setupGracefulShutdown()
     profileCheckpoint('init_after_graceful_shutdown')
 
-    // Keep the 1P event logging hooks wired as no-ops after server-side report
-    // ingestion removal. feature flag refresh handling remains harmless and avoids
-    // touching call sites that still import logEventTo1P.
-    void Promise.all([
-      import('../services/analytics/firstPartyEventLogger.js'),
-      import('../services/analytics/featureFlags.js'),
-    ]).then(([fp, featureFlags]) => {
-      fp.initialize1PEventLogging()
-      featureFlags.onFeatureFlagsRefresh(() => {
-        void fp.reinitialize1PEventLoggingIfConfigChanged()
-      })
-    })
-    profileCheckpoint('init_after_1p_event_logging')
-
     // Initialize JetBrains IDE detection asynchronously (populates cache for later sync access)
     void initJetBrainsDetection()
     profileCheckpoint('init_after_jetbrains_detection')
 
     // Detect GitHub repository asynchronously (populates cache for gitDiff PR linking)
     void detectCurrentRepository()
-
-    // Initialize the loading promise early so that other systems (like plugin hooks)
-    // can await remote settings loading. The promise includes a timeout to prevent
-    // deadlocks if loadRemoteManagedSettings() is never called (e.g., Agent SDK tests).
-    if (isEligibleForRemoteManagedSettings()) {
-      initializeRemoteManagedSettingsLoadingPromise()
-    }
-    if (isPolicyLimitsEligible()) {
-      initializePolicyLimitsLoadingPromise()
-    }
-    profileCheckpoint('init_after_remote_settings_check')
 
     // Record the first start time
     recordFirstStartTime()

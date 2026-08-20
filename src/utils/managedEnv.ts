@@ -1,4 +1,3 @@
-import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
 import { clearCACertsCache } from './caCerts.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -107,7 +106,7 @@ function filterSettingsEnv(
  *
  * - userSettings (~/.moss/settings.json): controlled by the user, not project-specific
  * - flagSettings (--settings CLI flag or SDK inline settings): explicitly passed by the user
- * - policySettings (managed settings from enterprise API or local managed-settings.json):
+ * - policySettings (local managed settings):
  *   controlled by IT/admin (highest priority, cannot be overridden)
  *
  * Project-scoped sources (projectSettings, localSettings) are excluded because they live
@@ -164,26 +163,12 @@ export function applySafeConfigEnvironmentVariables(): void {
   // doesn't get clobbered by ~/.moss/settings.json env (gh#217). policy/flag
   // sources are always enabled, so this only ever filters userSettings.
   for (const source of TRUSTED_SETTING_SOURCES) {
-    if (source === 'policySettings') continue
     if (!isSettingSourceEnabled(source)) continue
     Object.assign(
       process.env,
       filterSettingsEnv(getSettingsForSource(source)?.env),
     )
   }
-
-  // Compute remote-managed-settings eligibility now, with userSettings and
-  // flagSettings env applied. Eligibility reads CLAUDE_CODE_USE_BEDROCK,
-  // MOSS_MODEL_BASE_URL — both settable via settings.env.
-  // getSettingsForSource('policySettings') below consults the remote cache,
-  // which guards on this. The two-phase structure makes the ordering
-  // dependency visible: non-policy env → eligibility → policy env.
-  isRemoteManagedSettingsEligible()
-
-  Object.assign(
-    process.env,
-    filterSettingsEnv(getSettingsForSource('policySettings')?.env),
-  )
 
   // Apply only safe env vars from the fully-merged settings (which includes
   // project-scoped sources). For safe vars that also exist in trusted sources,

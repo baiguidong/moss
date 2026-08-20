@@ -132,7 +132,7 @@ export function buildSettingSourcesProperties(): Property[] {
   });
 
   // Map internal names to user-friendly names
-  // For policySettings, distinguish between remote and local (or skip if neither exists)
+  // For policySettings, distinguish between local managed sources.
   const sourceNames = sourcesWithSettings.map(source => {
     if (source === 'policySettings') {
       const origin = getPolicySettingsOrigin();
@@ -140,8 +140,6 @@ export function buildSettingSourcesProperties(): Property[] {
         return null; // Skip - no policy settings exist
       }
       switch (origin) {
-        case 'remote':
-          return 'Enterprise managed settings (remote)';
         case 'plist':
           return 'Enterprise managed settings (plist)';
         case 'hklm':

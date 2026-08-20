@@ -8,7 +8,6 @@ import {
   SKILL_HUB_META_FILE,
 } from './lib/env.js'
 
-const DEFAULT_HUB_API_BASE_URL = 'https://sudoclawhub.sudoprivacy.com/api'
 const HUB_AUTHORIZATION =
   String(process.env.MOSS_HUB_AUTHORIZATION || 'sud0@sudo').trim() || 'sud0@sudo'
 
@@ -24,10 +23,22 @@ const configuredHubApiBaseUrl = normalizeHubApiBaseUrl(
   process.env.MOSS_HUB_API_BASE_URL || process.env.MOSS_HUB_BASE_URL || '',
 )
 
-const HUB_API_BASE_URL = configuredHubApiBaseUrl || DEFAULT_HUB_API_BASE_URL
-const HUB_CATEGORIES_URL = `${HUB_API_BASE_URL}/categories`
-const SKILL_HUB_BASE_URL = `${HUB_API_BASE_URL}/skills`
-const SKILL_HUB_CURSOR_URL = `${SKILL_HUB_BASE_URL}/cursor`
+const HUB_API_BASE_URL = configuredHubApiBaseUrl
+
+function isHubStoreEnabled(): boolean {
+  return HUB_API_BASE_URL.length > 0
+}
+
+function assertHubStoreEnabled(): void {
+  if (!isHubStoreEnabled()) {
+    throw new Error('Skill hub is disabled. Set MOSS_HUB_API_BASE_URL to enable remote hub access.')
+  }
+}
+
+function getHubApiUrl(pathname: string): string {
+  assertHubStoreEnabled()
+  return `${HUB_API_BASE_URL}${pathname}`
+}
 
 export type SkillHubVersion = {
   version: string
@@ -173,6 +184,7 @@ function parseStringArray(value: unknown): string[] {
 }
 
 async function fetchJson(url: string): Promise<unknown> {
+  assertHubStoreEnabled()
   const response = await fetch(url, {
     headers: {
       Authorization: HUB_AUTHORIZATION,
@@ -201,6 +213,7 @@ function unwrapHubResponse(result: unknown): Record<string, unknown> {
 }
 
 async function downloadFileBuffer(url: string): Promise<Buffer> {
+  assertHubStoreEnabled()
   const response = await fetch(url, {
     headers: {
       Authorization: HUB_AUTHORIZATION,
@@ -622,6 +635,10 @@ async function findInstalledSkillPath(
 export async function fetchSkillHubSkills(
   params: FetchSkillHubSkillsParams,
 ): Promise<{ skills: SkillHubSkill[]; next_cursor: string | null; has_more: boolean }> {
+  if (!isHubStoreEnabled()) {
+    return { skills: [], next_cursor: null, has_more: false }
+  }
+
   const searchParams = new URLSearchParams()
   if (params.cursor) searchParams.set('cursor', params.cursor)
   if (params.limit) searchParams.set('limit', String(params.limit))
@@ -631,7 +648,7 @@ export async function fetchSkillHubSkills(
     searchParams.set('tenant_id', params.tenantId.trim())
   }
 
-  const result = await fetchJson(`${SKILL_HUB_CURSOR_URL}?${searchParams}`)
+  const result = await fetchJson(getHubApiUrl(`/skills/cursor?${searchParams}`))
   const unwrapped = unwrapHubResponse(result)
   const data = isRecord(unwrapped.data) ? unwrapped.data : {}
 
@@ -648,7 +665,11 @@ export async function fetchSkillHubSkills(
 }
 
 export async function fetchSkillHubCategories(): Promise<string[]> {
-  const result = await fetchJson(HUB_CATEGORIES_URL)
+  if (!isHubStoreEnabled()) {
+    return []
+  }
+
+  const result = await fetchJson(getHubApiUrl('/categories'))
   const categories = unwrapHubResponse(result).data
   return Array.isArray(categories)
     ? categories.filter((item): item is string => typeof item === 'string')
@@ -658,7 +679,11 @@ export async function fetchSkillHubCategories(): Promise<string[]> {
 export async function fetchSkillHubSkillDetail(
   skillId: string,
 ): Promise<SkillHubDetail | null> {
-  const result = await fetchJson(`${SKILL_HUB_BASE_URL}/${encodeURIComponent(skillId)}`)
+  if (!isHubStoreEnabled()) {
+    return null
+  }
+
+  const result = await fetchJson(getHubApiUrl(`/skills/${encodeURIComponent(skillId)}`))
   const unwrapped = unwrapHubResponse(result)
   if (!isRecord(unwrapped.data)) {
     return null
@@ -680,6 +705,7 @@ export async function installHubSkill(params: {
   checksum?: string
   skillMeta?: SkillHubSkill | null
 }): Promise<{ skillName: string; version: string }> {
+  assertHubStoreEnabled()
   if (!params.skillName?.trim()) {
     throw new Error('skillName is required')
   }

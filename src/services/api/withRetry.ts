@@ -19,14 +19,6 @@ import {
 } from '../../utils/auth.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { errorMessage } from '../../utils/errors.js'
-import {
-  type CooldownReason,
-  handleFastModeOverageRejection,
-  handleFastModeRejectedByAPI,
-  isFastModeCooldown,
-  isFastModeEnabled,
-  triggerFastModeCooldown,
-} from '../../utils/fastMode.js'
 import { isNonCustomOpusModel } from '../../utils/model/model.js'
 import { disableKeepAlive } from '../../utils/proxy.js'
 import { sleep } from '../../utils/sleep.js'
@@ -36,9 +28,6 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../analytics/index.js'
-import {
-  isMockRateLimitError,
-} from '../rateLimitMocking.js'
 import { REPEATED_529_ERROR_MESSAGE } from './errors.js'
 import { extractConnectionErrorDetails } from './errorUtils.js'
 
@@ -169,7 +158,6 @@ export async function* withRetry<T>(
   const retryContext: RetryContext = {
     model: options.model,
     thinkingConfig: options.thinkingConfig,
-    ...(isFastModeEnabled() && { fastMode: options.fastMode }),
   }
   let client: Anthropic | null = null
   let consecutive529Errors = options.initialConsecutive529Errors ?? 0
@@ -179,12 +167,6 @@ export async function* withRetry<T>(
     if (options.signal?.aborted) {
       throw new APIUserAbortError()
     }
-
-    // Capture whether fast mode is active before this attempt
-    // (fallback may change the state mid-loop)
-    const wasFastModeActive = isFastModeEnabled()
-      ? retryContext.fastMode && !isFastModeCooldown()
-      : false
 
     try {
       // Get a fresh client instance on first attempt or after authentication errors
@@ -223,61 +205,6 @@ export async function* withRetry<T>(
         `API error (attempt ${attempt}/${maxRetries + 1}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
         { level: 'error' },
       )
-
-      // Fast mode fallback: on 429/529, either wait and retry (short delays)
-      // or fall back to standard speed (long delays) to avoid cache thrashing.
-      // Skip in persistent mode: the short-retry path below loops with fast
-      // mode still active, so its `continue` never reaches the attempt clamp
-      // and the for-loop terminates. Persistent sessions want the chunked
-      // keep-alive path instead of fast-mode cache-preservation anyway.
-      if (
-        wasFastModeActive &&
-        !isPersistentRetryEnabled() &&
-        error instanceof APIError &&
-        (error.status === 429 || is529Error(error))
-      ) {
-        // If the 429 is specifically because extra usage (overage) is not
-        // available, permanently disable fast mode with a specific message.
-        const overageReason = error.headers?.get(
-          'anthropic-ratelimit-unified-overage-disabled-reason',
-        )
-        if (overageReason !== null && overageReason !== undefined) {
-          handleFastModeOverageRejection(overageReason)
-          retryContext.fastMode = false
-          continue
-        }
-
-        const retryAfterMs = getRetryAfterMs(error)
-        if (retryAfterMs !== null && retryAfterMs < SHORT_RETRY_THRESHOLD_MS) {
-          // Short retry-after: wait and retry with fast mode still active
-          // to preserve prompt cache (same model name on retry).
-          await sleep(retryAfterMs, options.signal, { abortError })
-          continue
-        }
-        // Long or unknown retry-after: enter cooldown (switches to standard
-        // speed model), with a minimum floor to avoid flip-flopping.
-        const cooldownMs = Math.max(
-          retryAfterMs ?? DEFAULT_FAST_MODE_FALLBACK_HOLD_MS,
-          MIN_COOLDOWN_MS,
-        )
-        const cooldownReason: CooldownReason = is529Error(error)
-          ? 'overloaded'
-          : 'rate_limit'
-        triggerFastModeCooldown(Date.now() + cooldownMs, cooldownReason)
-        if (isFastModeEnabled()) {
-          retryContext.fastMode = false
-        }
-        continue
-      }
-
-      // Fast mode fallback: if the API rejects the fast mode parameter
-      // (e.g., org doesn't have fast mode enabled), permanently disable fast
-      // mode and retry at standard speed.
-      if (wasFastModeActive && isFastModeNotEnabledError(error)) {
-        handleFastModeRejectedByAPI()
-        retryContext.fastMode = false
-        continue
-      }
 
       // Non-foreground sources bail immediately on 529 — no retry amplification
       // during capacity cascades. User never sees these fail.
@@ -556,19 +483,6 @@ export function parseMaxTokensContextOverflowError(error: APIError):
   return { inputTokens, maxTokens, contextLimit }
 }
 
-// TODO: Replace with a response header check once the API adds a dedicated
-// header for fast-mode rejection (e.g., x-fast-mode-rejected). String-matching
-// the error message is fragile and will break if the API wording changes.
-function isFastModeNotEnabledError(error: unknown): boolean {
-  if (!(error instanceof APIError)) {
-    return false
-  }
-  return (
-    error.status === 400 &&
-    (error.message?.includes('Fast mode is not enabled') ?? false)
-  )
-}
-
 export function is529Error(error: unknown): boolean {
   if (!(error instanceof APIError)) {
     return false
@@ -648,11 +562,6 @@ function handleGcpCredentialError(error: unknown): boolean {
 }
 
 function shouldRetry(error: APIError): boolean {
-  // Never retry mock errors - they're from /mock-limits command for testing
-  if (isMockRateLimitError(error)) {
-    return false
-  }
-
   // Persistent mode: 429/529 always retryable, bypass x-should-retry header.
   if (isPersistentRetryEnabled() && isTransientCapacityError(error)) {
     return true
@@ -729,21 +638,6 @@ export function getDefaultMaxRetries(): number {
 }
 function getMaxRetries(options: RetryOptions): number {
   return options.maxRetries ?? getDefaultMaxRetries()
-}
-
-const DEFAULT_FAST_MODE_FALLBACK_HOLD_MS = 30 * 60 * 1000 // 30 minutes
-const SHORT_RETRY_THRESHOLD_MS = 20 * 1000 // 20 seconds
-const MIN_COOLDOWN_MS = 10 * 60 * 1000 // 10 minutes
-
-function getRetryAfterMs(error: APIError): number | null {
-  const retryAfter = getRetryAfter(error)
-  if (retryAfter) {
-    const seconds = parseInt(retryAfter, 10)
-    if (!isNaN(seconds)) {
-      return seconds * 1000
-    }
-  }
-  return null
 }
 
 function getRateLimitResetDelayMs(error: APIError): number | null {

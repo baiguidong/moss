@@ -4,7 +4,6 @@ import { randomUUID } from 'crypto';
 import React from 'react';
 import { getOriginalCwd } from 'src/bootstrap/state.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
-import { isPolicyAllowed } from 'src/services/policyLimits/index.js';
 import { z } from 'zod/v4';
 import { getTeleportErrors, TeleportError, type TeleportLocalErrorType } from '../components/TeleportError.js';
 import { getApiBaseUrl } from '../constants/api.js';
@@ -422,9 +421,6 @@ export async function validateSessionRepository(sessionData: SessionResource): P
  * @returns The raw session log and branch name
  */
 export async function teleportResumeCodeSession(sessionId: string, onProgress?: TeleportProgressCallback): Promise<TeleportRemoteResponse> {
-  if (!isPolicyAllowed('allow_remote_sessions')) {
-    throw new Error("Remote sessions are disabled by your organization's policy.");
-  }
   logForDebugging(`Resuming code session ID: ${sessionId}`);
   try {
     const accessToken: string | undefined = undefined;

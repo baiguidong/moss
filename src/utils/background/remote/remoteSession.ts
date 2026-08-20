@@ -1,5 +1,4 @@
 import type { SDKMessage } from 'src/entrypoints/agentSdkTypes.js'
-import { isPolicyAllowed } from '../../../services/policyLimits/index.js'
 import { detectCurrentRepositoryWithHost } from '../../detectRepository.js'
 import type { TodoList } from '../../todo/types.js'
 import {
@@ -32,7 +31,6 @@ export type BackgroundRemoteSessionPrecondition =
   | { type: 'not_in_git_repo' }
   | { type: 'no_git_remote' }
   | { type: 'github_app_not_installed' }
-  | { type: 'policy_blocked' }
 
 /**
  * Checks eligibility for creating a background remote session
@@ -42,12 +40,6 @@ export type BackgroundRemoteSessionPrecondition =
  */
 export async function checkBackgroundRemoteSessionEligibility(): Promise<BackgroundRemoteSessionPrecondition[]> {
   const errors: BackgroundRemoteSessionPrecondition[] = []
-
-  // Check policy first - if blocked, no need to check other preconditions
-  if (!isPolicyAllowed('allow_remote_sessions')) {
-    errors.push({ type: 'policy_blocked' })
-    return errors
-  }
 
   const [needsLogin, hasRemoteEnv, repository] = await Promise.all([
     checkNeedsClaudeAiLogin(),

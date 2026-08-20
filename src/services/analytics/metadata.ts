@@ -18,7 +18,6 @@ import {
   getParentSessionId as getParentSessionIdFromState,
 } from '../../bootstrap/state.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
-import { isOfficialMcpUrl } from '../mcp/officialRegistry.js'
 import { getRepoRemoteHash } from '../../utils/git.js'
 import {
   getWslVersion,
@@ -78,19 +77,13 @@ export function sanitizeToolNameForAnalytics(
  *
  * Per go/taxonomy, MCP names are medium PII. We log them for:
  * - Cowork (entrypoint=local-agent) — no ZDR concept, log all MCPs
- * - Servers whose URL matches the official MCP registry — directory
- *   connectors added via `moss mcp add`, not customer-specific config
- *
  * Custom/user-configured MCPs stay sanitized (toolName='mcp_tool').
  */
 export function isAnalyticsToolDetailsLoggingEnabled(
-  mcpServerType: string | undefined,
-  mcpServerBaseUrl: string | undefined,
+  _mcpServerType: string | undefined,
+  _mcpServerBaseUrl: string | undefined,
 ): boolean {
   if (process.env.CLAUDE_CODE_ENTRYPOINT === 'local-agent') {
-    return true
-  }
-  if (mcpServerBaseUrl && isOfficialMcpUrl(mcpServerBaseUrl)) {
     return true
   }
   return false

@@ -71,7 +71,6 @@ import { updateSessionName } from './utils/concurrentSessions.js'
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
 import { sleep } from './utils/sleep.js'
-import { renameRecordingForSession } from './utils/asciicast.js'
 import {
   prepareSessionResume,
   type PreparedSessionResume,
@@ -492,10 +491,6 @@ export class ClaudeSession {
     const { projectDir, resumeState, coordinatorMode } = this.#opts
 
     switchSession(asSessionId(this.sessionId), projectDir ?? null)
-
-    if (resumeState && !resumeState.forkSession) {
-      await renameRecordingForSession()
-    }
 
     await resetSessionFilePointer()
     clearSessionMetadata()

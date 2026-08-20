@@ -204,8 +204,7 @@ export type AxiosErrorKind =
 /**
  * Classify a caught error from an axios request into one of a few buckets.
  * Replaces the ~20-line isAxiosError → 401/403 → ECONNABORTED → ECONNREFUSED
- * chain duplicated across sync-style services (policyLimits,
- * remoteManagedSettings).
+ * chain used by sync-style services.
  *
  * Checks the `.isAxiosError` marker property directly (same as
  * axios.isAxiosError()) to keep this module dependency-free.
