@@ -43,8 +43,8 @@ function isLocalSettingsAuthOnly(): boolean {
 
 /** Where the auth token is being sourced from, if any. */
 export function getAuthTokenSource() {
-  if (getSessionMossAuthToken() || process.env.MOSS_AUTH_TOKEN) {
-    return { source: 'MOSS_AUTH_TOKEN' as const, hasToken: true }
+  if (getSessionMossAuthToken() || process.env.MOSS_MODEL_AUTH_TOKEN) {
+    return { source: 'MOSS_MODEL_AUTH_TOKEN' as const, hasToken: true }
   }
   const apiKeyHelper = getConfiguredApiKeyHelper()
   if (apiKeyHelper) {

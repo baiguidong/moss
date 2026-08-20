@@ -89,27 +89,75 @@ function normalizeThinkingMode(value: unknown): ThinkingMode | null {
   return null
 }
 
+function recordField(
+  source: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  return isRecord(source[key]) ? source[key] : {}
+}
+
+function stringField(
+  source: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  return typeof source[key] === 'string' ? source[key].trim() : undefined
+}
+
+function firstNonEmptyString(
+  ...values: Array<string | undefined>
+): string | undefined {
+  return values.find(value => typeof value === 'string' && value.length > 0)
+}
+
+function boundedInt(
+  value: unknown,
+  min: number,
+  max: number,
+): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  const parsed = Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) && parsed >= min
+    ? Math.min(parsed, max)
+    : undefined
+}
+
+function deleteModelEndpointEnvKeys(env: Record<string, unknown>): void {
+  for (const key of Object.keys(env)) {
+    if (/^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key)) {
+      delete env[key]
+    }
+  }
+}
+
 function normalizeSystemSettings(
   input: unknown,
   existing: Record<string, unknown> = {},
 ): PersistedSystemSettings {
   const source = isRecord(input) ? input : {}
   const result: Record<string, unknown> = { ...existing }
+  const sourceModels = recordField(source, 'models')
+  const sourceText = recordField(sourceModels, 'text')
+  const sourceTextThinking = recordField(sourceText, 'thinking')
+  const existingModels = recordField(existing, 'models')
+  const existingText = recordField(existingModels, 'text')
+  const existingTextThinking = recordField(existingText, 'thinking')
 
-  if (typeof source.model === 'string' && source.model.trim()) {
-    result.model = source.model.trim()
-  } else if (result.model === undefined) {
-    result.model = DEFAULT_SYSTEM_SETTINGS.model
-  }
+  result.model =
+    firstNonEmptyString(
+      stringField(source, 'model'),
+      stringField(sourceText, 'model'),
+      stringField(result, 'model'),
+      stringField(existingText, 'model'),
+    ) ?? DEFAULT_SYSTEM_SETTINGS.model
 
-  if (source.maxTurns !== undefined) {
-    const maxTurns = Number.parseInt(String(source.maxTurns), 10)
-    if (Number.isFinite(maxTurns) && maxTurns >= 1) {
-      result.maxTurns = Math.min(maxTurns, 10_000)
-    }
-  } else if (result.maxTurns === undefined) {
-    result.maxTurns = DEFAULT_SYSTEM_SETTINGS.maxTurns
-  }
+  result.maxTurns =
+    boundedInt(source.maxTurns, 1, 10_000) ??
+    boundedInt(sourceText.maxTurns, 1, 10_000) ??
+    boundedInt(result.maxTurns, 1, 10_000) ??
+    boundedInt(existingText.maxTurns, 1, 10_000) ??
+    DEFAULT_SYSTEM_SETTINGS.maxTurns
 
   if (source.bypassPermissions !== undefined) {
     result.bypassPermissions = Boolean(source.bypassPermissions)
@@ -117,37 +165,35 @@ function normalizeSystemSettings(
     result.bypassPermissions = DEFAULT_SYSTEM_SETTINGS.bypassPermissions
   }
 
-  if (source.thinkingMode !== undefined) {
-    result.thinkingMode =
-      normalizeThinkingMode(source.thinkingMode) ??
-      DEFAULT_SYSTEM_SETTINGS.thinkingMode
-  } else if (
-    result.thinkingMode === undefined ||
-    normalizeThinkingMode(result.thinkingMode) === null
-  ) {
-    result.thinkingMode = DEFAULT_SYSTEM_SETTINGS.thinkingMode
-  }
+  result.thinkingMode =
+    normalizeThinkingMode(source.thinkingMode) ??
+    normalizeThinkingMode(sourceTextThinking.mode) ??
+    normalizeThinkingMode(result.thinkingMode) ??
+    normalizeThinkingMode(existingTextThinking.mode) ??
+    DEFAULT_SYSTEM_SETTINGS.thinkingMode
 
-  if (source.thinkingBudgetTokens !== undefined) {
-    const tokens = Number.parseInt(String(source.thinkingBudgetTokens), 10)
-    if (Number.isFinite(tokens) && tokens >= 1024) {
-      result.thinkingBudgetTokens = Math.min(tokens, 128_000)
-    }
-  } else if (result.thinkingBudgetTokens === undefined) {
-    result.thinkingBudgetTokens = DEFAULT_SYSTEM_SETTINGS.thinkingBudgetTokens
-  }
+  result.thinkingBudgetTokens =
+    boundedInt(source.thinkingBudgetTokens, 1024, 128_000) ??
+    boundedInt(sourceTextThinking.budgetTokens, 1024, 128_000) ??
+    boundedInt(result.thinkingBudgetTokens, 1024, 128_000) ??
+    boundedInt(existingTextThinking.budgetTokens, 1024, 128_000) ??
+    DEFAULT_SYSTEM_SETTINGS.thinkingBudgetTokens
 
-  if (typeof source.url === 'string') {
-    result.url = source.url.trim()
-  } else if (result.url === undefined) {
-    result.url = DEFAULT_SYSTEM_SETTINGS.url
-  }
+  result.url =
+    firstNonEmptyString(
+      stringField(source, 'url'),
+      stringField(sourceText, 'baseUrl'),
+      stringField(result, 'url'),
+      stringField(existingText, 'baseUrl'),
+    ) ?? DEFAULT_SYSTEM_SETTINGS.url
 
-  if (typeof source.apiKey === 'string') {
-    result.apiKey = source.apiKey.trim()
-  } else if (result.apiKey === undefined) {
-    result.apiKey = DEFAULT_SYSTEM_SETTINGS.apiKey
-  }
+  result.apiKey =
+    firstNonEmptyString(
+      stringField(source, 'apiKey'),
+      stringField(sourceText, 'apiKey'),
+      stringField(result, 'apiKey'),
+      stringField(existingText, 'apiKey'),
+    ) ?? DEFAULT_SYSTEM_SETTINGS.apiKey
 
   if (typeof source.serverUrl === 'string') {
     result.serverUrl = source.serverUrl.trim()
@@ -161,32 +207,45 @@ function normalizeSystemSettings(
     result.serverAuthToken = DEFAULT_SYSTEM_SETTINGS.serverAuthToken
   }
 
-  const sourceImage = isRecord(source.image) ? source.image : {}
+  const sourceImage = isRecord(source.image)
+    ? source.image
+    : recordField(sourceModels, 'image')
   const existingImage = isRecord(result.image) ? result.image : {}
+  const existingModelImage = recordField(existingModels, 'image')
   result.image = {
     provider:
       typeof sourceImage.provider === 'string'
         ? sourceImage.provider.trim()
         : typeof existingImage.provider === 'string'
           ? existingImage.provider
+          : typeof existingModelImage.provider === 'string'
+            ? existingModelImage.provider
           : DEFAULT_SYSTEM_SETTINGS.image.provider,
     url:
       typeof sourceImage.url === 'string'
         ? sourceImage.url.trim()
+        : typeof sourceImage.baseUrl === 'string'
+          ? sourceImage.baseUrl.trim()
         : typeof existingImage.url === 'string'
           ? existingImage.url
+          : typeof existingModelImage.baseUrl === 'string'
+            ? existingModelImage.baseUrl
           : DEFAULT_SYSTEM_SETTINGS.image.url,
     apiKey:
       typeof sourceImage.apiKey === 'string'
         ? sourceImage.apiKey.trim()
         : typeof existingImage.apiKey === 'string'
           ? existingImage.apiKey
+          : typeof existingModelImage.apiKey === 'string'
+            ? existingModelImage.apiKey
           : DEFAULT_SYSTEM_SETTINGS.image.apiKey,
     model:
       typeof sourceImage.model === 'string'
         ? sourceImage.model.trim()
         : typeof existingImage.model === 'string'
           ? existingImage.model
+          : typeof existingModelImage.model === 'string'
+            ? existingModelImage.model
           : DEFAULT_SYSTEM_SETTINGS.image.model,
   }
 
@@ -225,14 +284,6 @@ function readSystemSettingsState(): SystemSettingsState {
     const parsed = JSON.parse(raw)
     const rawSettings = isRecord(parsed) ? parsed : {}
     const env = isRecord(rawSettings.env) ? rawSettings.env : {}
-    const urlFromEnv =
-      typeof env.MOSS_BASE_URL === 'string'
-        ? env.MOSS_BASE_URL.trim()
-        : ''
-    const apiKeyFromEnv =
-      typeof env.MOSS_AUTH_TOKEN === 'string'
-        ? env.MOSS_AUTH_TOKEN.trim()
-        : ''
     const serverUrlFromEnv =
       typeof env.MOSS_SERVER_URL === 'string'
         ? env.MOSS_SERVER_URL.trim()
@@ -246,9 +297,6 @@ function readSystemSettingsState(): SystemSettingsState {
     result.value = {
       ...rawSettings,
       ...normalized,
-      url: urlFromEnv || normalized.url || DEFAULT_SYSTEM_SETTINGS.url,
-      apiKey:
-        apiKeyFromEnv || normalized.apiKey || DEFAULT_SYSTEM_SETTINGS.apiKey,
       serverUrl:
         serverUrlFromEnv ||
         normalized.serverUrl ||
@@ -323,16 +371,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   }
 
   const env: Record<string, unknown> = { ...existingEnv }
-  if (nextSettings.url) {
-    env.MOSS_BASE_URL = nextSettings.url
-  } else {
-    delete env.MOSS_BASE_URL
-  }
-  if (nextSettings.apiKey) {
-    env.MOSS_AUTH_TOKEN = nextSettings.apiKey
-  } else {
-    delete env.MOSS_AUTH_TOKEN
-  }
+  deleteModelEndpointEnvKeys(env)
   if (nextSettings.serverUrl) {
     env.MOSS_SERVER_URL = nextSettings.serverUrl
   } else {
@@ -344,12 +383,52 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     delete env.MOSS_SERVER_AUTH_TOKEN
   }
 
+  const existingModels = isRecord(existingFile.models) ? existingFile.models : {}
+  const existingText = isRecord(existingModels.text)
+    ? existingModels.text
+    : {}
+  const existingTextThinking = isRecord(existingText.thinking)
+    ? existingText.thinking
+    : {}
+  const existingImage = isRecord(existingModels.image)
+    ? existingModels.image
+    : {}
+  const models = {
+    ...existingModels,
+    text: {
+      ...existingText,
+      baseUrl: nextSettings.url,
+      apiKey: nextSettings.apiKey,
+      model: nextSettings.model,
+      maxTurns: nextSettings.maxTurns,
+      thinking: {
+        ...existingTextThinking,
+        mode: nextSettings.thinkingMode,
+        budgetTokens: nextSettings.thinkingBudgetTokens,
+      },
+    },
+    image: {
+      ...existingImage,
+      provider: nextSettings.image.provider,
+      baseUrl: nextSettings.image.url,
+      apiKey: nextSettings.image.apiKey,
+      model: nextSettings.image.model,
+    },
+  }
+
   const toSave: Record<string, unknown> = {
     ...existingFile,
-    ...nextSettings,
+    bypassPermissions: nextSettings.bypassPermissions,
+    models,
+    skillStore: nextSettings.skillStore,
     env,
   }
 
+  delete toSave.image
+  delete toSave.model
+  delete toSave.maxTurns
+  delete toSave.thinkingMode
+  delete toSave.thinkingBudgetTokens
   delete toSave.url
   delete toSave.apiKey
   delete toSave.serverUrl

@@ -36,7 +36,7 @@ import { logForDebugging } from './debug.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
 import {
   getAPIProvider,
-  isFirstPartyAnthropicBaseUrl,
+  isFirstPartyModelBaseUrl,
 } from './model/providers.js'
 import { jsonStringify } from './slowOperations.js'
 import { zodToJsonSchema } from './zodToJsonSchema.js'
@@ -177,7 +177,6 @@ export function getToolSearchMode(): ToolSearchMode {
   // reach the wire, even if ENABLE_TOOL_SEARCH is also set. This is the
   // explicit escape hatch for proxy gateways that the heuristic in
   // isToolSearchEnabledOptimistic doesn't cover.
-  // github.com/anthropics/claude-code/issues/20031
   if (isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS)) {
     return 'standard'
   }
@@ -280,12 +279,10 @@ export function isToolSearchEnabledOptimistic(): boolean {
   }
 
   // tool_reference is a beta content type that third-party API gateways
-  // (MOSS_BASE_URL proxies) typically don't support. When the provider
+  // (MOSS_MODEL_BASE_URL proxies) typically don't support. When the provider
   // is 'firstParty' but the base URL points elsewhere, the proxy will reject
   // tool_reference blocks with a 400. Vertex/Bedrock/Foundry are unaffected —
   // they have their own endpoints and beta headers.
-  // https://github.com/anthropics/claude-code/issues/30912
-  //
   // HOWEVER: some proxies DO support tool_reference (LiteLLM passthrough,
   // Cloudflare AI Gateway, corp gateways that forward beta headers). The
   // blanket disable breaks defer_loading for those users — all MCP tools
@@ -299,12 +296,12 @@ export function isToolSearchEnabledOptimistic(): boolean {
   if (
     !process.env.ENABLE_TOOL_SEARCH &&
     getAPIProvider() === 'firstParty' &&
-    !isFirstPartyAnthropicBaseUrl()
+    !isFirstPartyModelBaseUrl()
   ) {
     if (!loggedOptimistic) {
       loggedOptimistic = true
       logForDebugging(
-        `[ToolSearch:optimistic] disabled: MOSS_BASE_URL=${process.env.MOSS_BASE_URL} is not a first-party Anthropic host. Set ENABLE_TOOL_SEARCH=true (or auto / auto:N) if your proxy forwards tool_reference blocks.`,
+        `[ToolSearch:optimistic] disabled: MOSS_MODEL_BASE_URL=${process.env.MOSS_MODEL_BASE_URL} is not a first-party model host. Set ENABLE_TOOL_SEARCH=true (or auto / auto:N) if your proxy forwards tool_reference blocks.`,
       )
     }
     return false

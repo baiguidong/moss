@@ -203,6 +203,40 @@ function normalizeMossBaseUrl(value) {
   }
 }
 
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function objectField(source, key) {
+  return isPlainObject(source?.[key]) ? source[key] : {};
+}
+
+function stringField(source, key) {
+  return typeof source?.[key] === 'string' ? source[key].trim() : undefined;
+}
+
+function firstNonEmptyString(...values) {
+  return values.find(value => typeof value === 'string' && value.length > 0);
+}
+
+function boundedInt(value, min, max) {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : undefined;
+}
+
+function isModelEndpointEnvKey(key) {
+  return /^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key);
+}
+
+function deleteModelEndpointEnvKeys(env) {
+  for (const key of Object.keys(env)) {
+    if (isModelEndpointEnvKey(key)) {
+      delete env[key];
+    }
+  }
+}
+
 function djb2Hash(value) {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
@@ -526,14 +560,26 @@ function loadLocalSettingsAuthConfig() {
     const env = parsed && typeof parsed === 'object' && parsed.env && typeof parsed.env === 'object'
       ? parsed.env
       : {};
+    const textModel = objectField(objectField(parsed, 'models'), 'text');
+    const modelBaseUrl = normalizeMossBaseUrl(stringField(textModel, 'baseUrl') || '');
+    const modelAuthToken = stringField(textModel, 'apiKey') || '';
+    if (modelBaseUrl) {
+      process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
+      result.injected.push('MOSS_MODEL_BASE_URL');
+    }
+    if (modelAuthToken) {
+      process.env.MOSS_MODEL_AUTH_TOKEN = modelAuthToken;
+      result.injected.push('MOSS_MODEL_AUTH_TOKEN');
+    }
 
-    // 允许注入 env 对象中的所有环境变量，不再限制特定的三个 key
+    // 模型配置只从 models.text 注入；env 仅保留非模型运行变量。
     for (const key of Object.keys(env)) {
+      if (isModelEndpointEnvKey(key)) {
+        continue;
+      }
       const value = env[key];
       if (typeof value === 'string' && value.trim()) {
-        const normalizedValue = key === 'MOSS_BASE_URL'
-          ? normalizeMossBaseUrl(value)
-          : value.trim();
+        const normalizedValue = value.trim();
         if (!normalizedValue) continue;
         process.env[key] = normalizedValue;
         result.injected.push(key);
@@ -553,6 +599,12 @@ const localSettingsAuthConfig = loadLocalSettingsAuthConfig();
 function normalizeDesktopSettings(input, existing = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
+  const sourceModels = objectField(source, 'models');
+  const sourceText = objectField(sourceModels, 'text');
+  const sourceTextThinking = objectField(sourceText, 'thinking');
+  const existingModels = objectField(existing, 'models');
+  const existingText = objectField(existingModels, 'text');
+  const existingTextThinking = objectField(existingText, 'thinking');
 
   if (source.agentMode !== undefined) {
     result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
@@ -572,11 +624,13 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.remoteEnabled = DEFAULT_DESKTOP_SETTINGS.remoteEnabled;
   }
 
-  if (typeof source.model === 'string' && source.model.trim()) {
-    result.model = source.model.trim();
-  } else if (result.model === undefined) {
-    result.model = DEFAULT_DESKTOP_SETTINGS.model;
-  }
+  result.model =
+    firstNonEmptyString(
+      stringField(source, 'model'),
+      stringField(sourceText, 'model'),
+      stringField(result, 'model'),
+      stringField(existingText, 'model'),
+    ) || DEFAULT_DESKTOP_SETTINGS.model;
 
   if (source.appendSystemPrompt !== undefined) {
     result.appendSystemPrompt = source.appendSystemPrompt;
@@ -584,29 +638,26 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.appendSystemPrompt = DEFAULT_DESKTOP_SETTINGS.appendSystemPrompt;
   }
 
-  if (source.maxTurns !== undefined) {
-    let maxTurns = Number.parseInt(String(source.maxTurns), 10);
-    if (Number.isFinite(maxTurns) && maxTurns >= 1) {
-      result.maxTurns = Math.min(maxTurns, 10_000);
-    }
-  } else if (result.maxTurns === undefined) {
-    result.maxTurns = DEFAULT_DESKTOP_SETTINGS.maxTurns;
-  }
+  result.maxTurns =
+    boundedInt(source.maxTurns, 1, 10_000) ??
+    boundedInt(sourceText.maxTurns, 1, 10_000) ??
+    boundedInt(result.maxTurns, 1, 10_000) ??
+    boundedInt(existingText.maxTurns, 1, 10_000) ??
+    DEFAULT_DESKTOP_SETTINGS.maxTurns;
 
-  if (source.thinkingMode !== undefined) {
-    result.thinkingMode = source.thinkingMode;
-  } else if (result.thinkingMode === undefined) {
-    result.thinkingMode = DEFAULT_DESKTOP_SETTINGS.thinkingMode;
-  }
+  result.thinkingMode =
+    source.thinkingMode ??
+    sourceTextThinking.mode ??
+    result.thinkingMode ??
+    existingTextThinking.mode ??
+    DEFAULT_DESKTOP_SETTINGS.thinkingMode;
 
-  if (source.thinkingBudgetTokens !== undefined) {
-    let tokens = Number.parseInt(String(source.thinkingBudgetTokens), 10);
-    if (Number.isFinite(tokens) && tokens >= 1024) {
-      result.thinkingBudgetTokens = Math.min(tokens, 128_000);
-    }
-  } else if (result.thinkingBudgetTokens === undefined) {
-    result.thinkingBudgetTokens = DEFAULT_DESKTOP_SETTINGS.thinkingBudgetTokens;
-  }
+  result.thinkingBudgetTokens =
+    boundedInt(source.thinkingBudgetTokens, 1024, 128_000) ??
+    boundedInt(sourceTextThinking.budgetTokens, 1024, 128_000) ??
+    boundedInt(result.thinkingBudgetTokens, 1024, 128_000) ??
+    boundedInt(existingTextThinking.budgetTokens, 1024, 128_000) ??
+    DEFAULT_DESKTOP_SETTINGS.thinkingBudgetTokens;
 
   if (source.bypassPermissions !== undefined) {
     result.bypassPermissions = Boolean(source.bypassPermissions);
@@ -614,44 +665,61 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.bypassPermissions = DEFAULT_DESKTOP_SETTINGS.bypassPermissions;
   }
 
-  if (typeof source.url === 'string') {
-    result.url = normalizeMossBaseUrl(source.url);
-  } else if (result.url === undefined) {
-    result.url = DEFAULT_DESKTOP_SETTINGS.url;
-  }
+  result.url =
+    normalizeMossBaseUrl(
+      firstNonEmptyString(
+        stringField(source, 'url'),
+        stringField(sourceText, 'baseUrl'),
+        stringField(result, 'url'),
+        stringField(existingText, 'baseUrl'),
+      ) || '',
+    ) || DEFAULT_DESKTOP_SETTINGS.url;
 
-  if (typeof source.apiKey === 'string') {
-    result.apiKey = source.apiKey.trim();
-  } else if (result.apiKey === undefined) {
-    result.apiKey = DEFAULT_DESKTOP_SETTINGS.apiKey;
-  }
+  result.apiKey =
+    firstNonEmptyString(
+      stringField(source, 'apiKey'),
+      stringField(sourceText, 'apiKey'),
+      stringField(result, 'apiKey'),
+      stringField(existingText, 'apiKey'),
+    ) || DEFAULT_DESKTOP_SETTINGS.apiKey;
 
-  const sourceImage = source.image && typeof source.image === 'object' ? source.image : {};
+  const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
+  const existingModelImage = objectField(existingModels, 'image');
   result.image = {
     provider:
       typeof sourceImage.provider === 'string'
         ? sourceImage.provider.trim()
         : typeof existingImage.provider === 'string'
           ? existingImage.provider
+          : typeof existingModelImage.provider === 'string'
+            ? existingModelImage.provider
           : DEFAULT_DESKTOP_SETTINGS.image.provider,
     url:
       typeof sourceImage.url === 'string'
         ? sourceImage.url.trim()
+        : typeof sourceImage.baseUrl === 'string'
+          ? sourceImage.baseUrl.trim()
         : typeof existingImage.url === 'string'
           ? existingImage.url
+          : typeof existingModelImage.baseUrl === 'string'
+            ? existingModelImage.baseUrl
           : DEFAULT_DESKTOP_SETTINGS.image.url,
     apiKey:
       typeof sourceImage.apiKey === 'string'
         ? sourceImage.apiKey.trim()
         : typeof existingImage.apiKey === 'string'
           ? existingImage.apiKey
+          : typeof existingModelImage.apiKey === 'string'
+            ? existingModelImage.apiKey
           : DEFAULT_DESKTOP_SETTINGS.image.apiKey,
     model:
       typeof sourceImage.model === 'string'
         ? sourceImage.model.trim()
         : typeof existingImage.model === 'string'
           ? existingImage.model
+          : typeof existingModelImage.model === 'string'
+            ? existingModelImage.model
           : DEFAULT_DESKTOP_SETTINGS.image.model,
   };
 
@@ -816,20 +884,11 @@ function loadDesktopSettings() {
     const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
     const parsed = JSON.parse(raw);
     result.appearancePersisted = hasPersistedAppearance(parsed);
-    // 从 env 中提取 url 和 apiKey
-    const env = parsed && parsed.env && typeof parsed.env === 'object' ? parsed.env : {};
-    const urlFromEnv = normalizeMossBaseUrl(
-      typeof env.MOSS_BASE_URL === 'string' ? env.MOSS_BASE_URL : '',
-    );
-    const apiKeyFromEnv = typeof env.MOSS_AUTH_TOKEN === 'string' ? env.MOSS_AUTH_TOKEN.trim() : '';
     // 启动加载时，保留原始 JSON 中的所有 key，只对标准 key 进行合并/格式化
     const normalized = normalizeDesktopSettings(parsed, parsed);
     result.value = {
       ...parsed,
       ...normalized,
-      // 从 env 中读取 url 和 apiKey
-      url: urlFromEnv || normalized.url || DEFAULT_DESKTOP_SETTINGS.url,
-      apiKey: apiKeyFromEnv || normalized.apiKey || DEFAULT_DESKTOP_SETTINGS.apiKey,
       image: normalized.image || { ...DEFAULT_DESKTOP_SETTINGS.image },
     };
     result.loaded = true;
@@ -844,6 +903,7 @@ function loadDesktopSettings() {
 let desktopSettingsState = loadDesktopSettings();
 let desktopSettings = desktopSettingsState.value;
 syncDesktopThinkingEnv(desktopSettings);
+syncDesktopModelEnv(desktopSettings);
 mossLog('info', 'settings', 'Settings loaded', { path: desktopSettingsState.path, exists: desktopSettingsState.exists });
 
 function syncDesktopThinkingEnv(settings) {
@@ -851,6 +911,20 @@ function syncDesktopThinkingEnv(settings) {
     process.env.CLAUDE_CODE_DISABLE_THINKING = '1';
   } else {
     delete process.env.CLAUDE_CODE_DISABLE_THINKING;
+  }
+}
+
+function syncDesktopModelEnv(settings) {
+  const modelBaseUrl = normalizeMossBaseUrl(settings?.url || '');
+  if (modelBaseUrl) {
+    process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
+  } else {
+    delete process.env.MOSS_MODEL_BASE_URL;
+  }
+  if (settings?.apiKey) {
+    process.env.MOSS_MODEL_AUTH_TOKEN = settings.apiKey;
+  } else {
+    delete process.env.MOSS_MODEL_AUTH_TOKEN;
   }
 }
 
@@ -870,39 +944,72 @@ function saveDesktopSettings(nextSettings) {
   const normalizedSettings = normalizeDesktopSettings(nextSettings, desktopSettings);
 
   // 读取现有文件，保留 env 等其他配置
+  let existingFile = {};
   let existingEnv = {};
   try {
     if (fs.existsSync(DESKTOP_SETTINGS_PATH)) {
       const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
       const existing = JSON.parse(raw);
+      if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+        existingFile = existing;
+      }
       if (existing && existing.env && typeof existing.env === 'object') {
         existingEnv = existing.env;
       }
     }
   } catch { /* ignore */ }
 
-  // 将 url 和 apiKey 存入 env
   const env = { ...existingEnv };
-  const normalizedUrl = normalizeMossBaseUrl(normalizedSettings.url);
-  if (normalizedUrl) {
-    env.MOSS_BASE_URL = normalizedUrl;
-  } else {
-    delete env.MOSS_BASE_URL;
-  }
-  if (normalizedSettings.apiKey) {
-    env.MOSS_AUTH_TOKEN = normalizedSettings.apiKey;
-  } else {
-    delete env.MOSS_AUTH_TOKEN;
-  }
+  deleteModelEndpointEnvKeys(env);
 
-  // 构建完整的保存对象，保留所有现有配置
-  const toSave = {
-    ...normalizedSettings,
-    env,
-    // 从顶级别存，避免重复
-    url: undefined,
-    apiKey: undefined,
+  const existingModels = existingFile.models && typeof existingFile.models === 'object'
+    ? existingFile.models
+    : {};
+  const existingText = existingModels.text && typeof existingModels.text === 'object'
+    ? existingModels.text
+    : {};
+  const existingTextThinking = existingText.thinking && typeof existingText.thinking === 'object'
+    ? existingText.thinking
+    : {};
+  const existingImage = existingModels.image && typeof existingModels.image === 'object'
+    ? existingModels.image
+    : {};
+  const models = {
+    ...existingModels,
+    text: {
+      ...existingText,
+      baseUrl: normalizeMossBaseUrl(normalizedSettings.url),
+      apiKey: normalizedSettings.apiKey || '',
+      model: normalizedSettings.model,
+      maxTurns: normalizedSettings.maxTurns,
+      thinking: {
+        ...existingTextThinking,
+        mode: normalizedSettings.thinkingMode,
+        budgetTokens: normalizedSettings.thinkingBudgetTokens,
+      },
+    },
+    image: {
+      ...existingImage,
+      provider: normalizedSettings.image?.provider ?? DEFAULT_DESKTOP_SETTINGS.image.provider,
+      baseUrl: normalizedSettings.image?.url ?? DEFAULT_DESKTOP_SETTINGS.image.url,
+      apiKey: normalizedSettings.image?.apiKey ?? DEFAULT_DESKTOP_SETTINGS.image.apiKey,
+      model: normalizedSettings.image?.model ?? DEFAULT_DESKTOP_SETTINGS.image.model,
+    },
   };
+
+  const toSave = {
+    ...existingFile,
+    ...normalizedSettings,
+    models,
+    env,
+  };
+  delete toSave.model;
+  delete toSave.maxTurns;
+  delete toSave.thinkingMode;
+  delete toSave.thinkingBudgetTokens;
+  delete toSave.url;
+  delete toSave.apiKey;
+  delete toSave.image;
   // 删除 undefined 字段
   Object.keys(toSave).forEach(k => toSave[k] === undefined && delete toSave[k]);
   if (!Object.keys(env).length) {
@@ -920,6 +1027,7 @@ function saveDesktopSettings(nextSettings) {
   };
   desktopSettings = normalizedSettings;
   syncDesktopThinkingEnv(normalizedSettings);
+  syncDesktopModelEnv(normalizedSettings);
 }
 
 function readJsonFile(filePath, fallbackValue) {
@@ -1932,7 +2040,7 @@ function installRuntimeMacros() {
     BUILD_TIME: '',
     PACKAGE_URL: typeof packageMetadata.name === 'string' && packageMetadata.name
       ? packageMetadata.name
-      : '@anthropic-ai/claude-code',
+      : 'moss',
     FEEDBACK_CHANNEL: '',
     ISSUES_EXPLAINER: '',
     VERSION_CHANGELOG: '',
@@ -2044,7 +2152,7 @@ function formatAuthDebug(authDebug) {
     `authTokenSource=${authDebug.authTokenSource || 'none'}`,
     `hasAuthToken=${authDebug.hasAuthTokenCandidate ? 'yes' : 'no'}`,
     `apiKeyEnv=${authDebug.hasAnthropicApiKeyEnv ? 'yes' : 'no'}`,
-    `authTokenEnv=${authDebug.hasMossAuthTokenEnv ? 'yes' : 'no'}`,
+    `authTokenEnv=${authDebug.hasMossModelAuthTokenEnv ? 'yes' : 'no'}`,
     `apiKeyHelper=${authDebug.hasApiKeyHelper ? 'yes' : 'no'}`,
     `storedOauth=${authDebug.hasStoredOauthAccount ? 'yes' : 'no'}`,
     `primaryApiKey=${authDebug.hasPrimaryApiKey ? 'yes' : 'no'}`,

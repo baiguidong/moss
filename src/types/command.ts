@@ -163,11 +163,11 @@ type LocalJSXCommand = {
  * of the listed auth types. See meetsAvailabilityRequirement() in commands.ts.
  *
  * Example: `availability: ['console']` shows the command to users on the
- * Anthropic-compatible model API path, but hides it from Bedrock/Vertex/Foundry
+ * configured model API path, but hides it from Bedrock/Vertex/Foundry
  * users.
  */
 export type CommandAvailability =
-  // Anthropic-compatible model API user.
+  // configured model API user.
   'console'
 
 export type CommandBase = {

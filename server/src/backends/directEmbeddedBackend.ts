@@ -114,10 +114,18 @@ function buildManagedRuntimeEnv(
   settings: ReturnType<typeof getSystemSettings>,
 ): Record<string, string | undefined> {
   return {
-    MOSS_BASE_URL: settings.url || undefined,
-    MOSS_AUTH_TOKEN: settings.apiKey || undefined,
+    MOSS_MODEL_BASE_URL: settings.url || undefined,
+    MOSS_MODEL_AUTH_TOKEN: settings.apiKey || undefined,
     MOSS_SERVER_URL: settings.serverUrl || undefined,
     MOSS_SERVER_AUTH_TOKEN: settings.serverAuthToken || undefined,
+  }
+}
+
+function deleteModelEndpointEnvKeys(env: JsonObject): void {
+  for (const key of Object.keys(env)) {
+    if (/^MOSS_(MODEL_)?(BASE_URL|AUTH_TOKEN)$/.test(key)) {
+      delete env[key]
+    }
   }
 }
 
@@ -149,7 +157,15 @@ async function writeManagedSessionSettings(
   } catch {}
 
   const existingEnv = isJsonObject(existing.env) ? existing.env : {}
+  const existingModels = isJsonObject(existing.models) ? existing.models : {}
+  const existingText = isJsonObject(existingModels.text)
+    ? existingModels.text
+    : {}
+  const existingTextThinking = isJsonObject(existingText.thinking)
+    ? existingText.thinking
+    : {}
   const env: JsonObject = { ...existingEnv }
+  deleteModelEndpointEnvKeys(env)
   for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
     if (value) {
       env[key] = value
@@ -160,12 +176,27 @@ async function writeManagedSessionSettings(
 
   const next: JsonObject = {
     ...existing,
-    model: settings.model,
-    maxTurns: settings.maxTurns,
-    thinkingMode: settings.thinkingMode,
-    thinkingBudgetTokens: settings.thinkingBudgetTokens,
+    models: {
+      ...existingModels,
+      text: {
+        ...existingText,
+        baseUrl: settings.url,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        maxTurns: settings.maxTurns,
+        thinking: {
+          ...existingTextThinking,
+          mode: settings.thinkingMode,
+          budgetTokens: settings.thinkingBudgetTokens,
+        },
+      },
+    },
     bypassPermissions: settings.bypassPermissions,
   }
+  delete next.model
+  delete next.maxTurns
+  delete next.thinkingMode
+  delete next.thinkingBudgetTokens
   if (Object.keys(env).length > 0) {
     next.env = env
   } else {

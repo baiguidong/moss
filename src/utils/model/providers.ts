@@ -1,6 +1,5 @@
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../../services/analytics/index.js'
 import { isEnvTruthy } from '../envUtils.js'
-import { getSessionMossBaseUrl } from '../sessionApiOverrides.js'
 
 export type APIProvider = 'firstParty' | 'bedrock' | 'vertex' | 'foundry'
 
@@ -19,16 +18,9 @@ export function getAPIProviderForStatsig(): AnalyticsMetadata_I_VERIFIED_THIS_IS
 }
 
 /**
- * Check whether a Moss model API base URL is configured for the
- * Anthropic-compatible protocol path.
+ * Moss model endpoints are owned by local/server configuration, so they should
+ * not be treated as provider-native first-party routing.
  */
-export function isFirstPartyAnthropicBaseUrl(): boolean {
-  const baseUrl = getSessionMossBaseUrl() || process.env.MOSS_BASE_URL
-  if (!baseUrl) return false
-  try {
-    new URL(baseUrl)
-    return true
-  } catch {
-    return false
-  }
+export function isFirstPartyModelBaseUrl(): boolean {
+  return false
 }

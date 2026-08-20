@@ -1,7 +1,7 @@
 export function getApiBaseUrl(): string {
-  const baseUrl = process.env.MOSS_BASE_URL?.trim()
+  const baseUrl = process.env.MOSS_MODEL_BASE_URL?.trim()
   if (!baseUrl) {
-    throw new Error('MOSS_BASE_URL must be configured for model API requests')
+    throw new Error('MOSS_MODEL_BASE_URL must be configured for model API requests')
   }
   return baseUrl.replace(/\/+$/, '')
 }

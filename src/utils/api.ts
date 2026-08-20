@@ -46,7 +46,7 @@ import { isEnvTruthy } from './envUtils.js'
 import { createUserMessage } from './messages.js'
 import {
   getAPIProvider,
-  isFirstPartyAnthropicBaseUrl,
+  isFirstPartyModelBaseUrl,
 } from './model/providers.js'
 import {
   getFileReadIgnorePatterns,
@@ -194,11 +194,11 @@ export async function toolToAPISchema(
     // Enable fine-grained tool streaming via per-tool API field.
     // Without FGTS, the API buffers entire tool input parameters before sending
     // input_json_delta events, causing multi-minute hangs on large tool inputs.
-    // Gated to Anthropic-compatible model API endpoints. Some provider
+    // Gated to configured model API endpoints. Some provider
     // backends reject this field with 400. See GH#32742, PR #21729.
     if (
       getAPIProvider() === 'firstParty' &&
-      isFirstPartyAnthropicBaseUrl() &&
+      isFirstPartyModelBaseUrl() &&
       (getFeatureValue_CACHED_MAY_BE_STALE('tengu_fgts', false) ||
         isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING))
     ) {
@@ -230,7 +230,7 @@ export async function toolToAPISchema(
   }
 
   // CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS is the kill switch for beta API
-  // shapes. Proxy gateways (MOSS_BASE_URL → LiteLLM → Bedrock) reject
+  // shapes. Proxy gateways (MOSS_MODEL_BASE_URL → LiteLLM → Bedrock) reject
   // fields like defer_loading with "Extra inputs are not permitted". The gates
   // above each field are scattered and not all provider-aware, so this strips
   // everything not in the base-tool allowlist at the one choke point all tool

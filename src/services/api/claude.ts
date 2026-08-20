@@ -22,7 +22,7 @@ import type { Stream } from '@anthropic-ai/sdk/streaming.mjs'
 import { randomUUID } from 'crypto'
 import {
   getAPIProvider,
-  isFirstPartyAnthropicBaseUrl,
+  isFirstPartyModelBaseUrl,
 } from 'src/utils/model/providers.js'
 import {
   getAttributionHeader,
@@ -1751,7 +1751,7 @@ async function* queryModel(
         // server request ID) can still be correlated with server logs.
         // First-party only — 3P providers don't log it (inc-4029 class).
         clientRequestId =
-          getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()
+          getAPIProvider() === 'firstParty' && isFirstPartyModelBaseUrl()
             ? randomUUID()
             : undefined
 

@@ -78,31 +78,42 @@ bun run dist:all
 
 ## 配置文件
 
-程序配置存储在 `~/.moss/settings.json`。你可以手动修改该文件来配置自定义的 API 地址、模型名称或环境变量。
+桌面端配置存储在 `~/.moss/settings.json`，服务端配置存储在 `~/.moss/server/settings.json`。模型配置统一写在 `models.text` 和 `models.image` 下；运行时需要传给模型进程时，再由程序注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN`。
 
 ### 配置示例
 
 ```json
 {
-  "model": "MiniMax-M2.7",
   "bypassPermissions": true,
-  "maxTurns": 100,
-  "thinkingMode": "disabled",
-  "thinkingBudgetTokens": 16000,
-  "env": {
-    "MOSS_BASE_URL": "https://api.minimaxi.com/anthropic",
-    "MOSS_AUTH_TOKEN": "your-api-key"
+  "models": {
+    "text": {
+      "baseUrl": "https://model.example.com",
+      "apiKey": "your-model-api-key",
+      "model": "gpt-5.5",
+      "maxTurns": 100,
+      "thinking": {
+        "mode": "disabled",
+        "budgetTokens": 128000
+      }
+    },
+    "image": {
+      "provider": "openai",
+      "baseUrl": "https://image.example.com",
+      "apiKey": "your-image-api-key",
+      "model": "gpt-image-2"
+    }
   }
 }
 ```
 
 ### 参数说明
 
-- **model**: 指定使用的模型名称。
+- **models.text.model**: 指定文本模型名称。
+- **models.text.baseUrl / models.text.apiKey**: 文本模型 API 地址和 key。
+- **models.text.maxTurns**: 单次会话的最大轮数。
+- **models.text.thinking**: 思考模式和 Token 预算。
+- **models.image**: 图片模型 provider、API 地址、key 和模型名称。
 - **bypassPermissions**: 是否跳过工具执行的权限确认（建议仅在受控环境下开启）。
-- **maxTurns**: 单次会话的最大轮数。
-- **thinkingMode**: 思考模式配置（如 `disabled`, `enabled`）。
-- **thinkingBudgetTokens**: 思考过程的 Token 预算。
-- **env**: 环境变量配置，可用于设置 `MOSS_BASE_URL` (API 中转地址) 和 `MOSS_AUTH_TOKEN` (API Key)。
+- **env**: 仅保留非模型运行环境变量；模型 API 地址和 key 不再写在这里。
 
 UI 的设置页面会以增量方式更新此文件，不会删除你手动添加的自定义 Key。

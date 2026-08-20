@@ -15,7 +15,7 @@ import { isEnvTruthy } from './envUtils.js'
 const GHA_SUBPROCESS_SCRUB = [
   // API auth - Moss re-reads these per request; subprocesses don't need them
   'ANTHROPIC_API_KEY',
-  'MOSS_AUTH_TOKEN',
+  'MOSS_MODEL_AUTH_TOKEN',
   'MOSS_SERVER_AUTH_TOKEN',
   'ANTHROPIC_FOUNDRY_API_KEY',
   'ANTHROPIC_CUSTOM_HEADERS',

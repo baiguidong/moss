@@ -93,7 +93,7 @@ const GATEWAY_FINGERPRINTS: Partial<
 }
 
 // Gateways that use provider-owned domains (not self-hosted), so the
-// MOSS_BASE_URL hostname is a reliable signal even without a
+// MOSS_MODEL_BASE_URL hostname is a reliable signal even without a
 // distinctive response header.
 const GATEWAY_HOST_SUFFIXES: Partial<Record<KnownGateway, string[]>> = {
   // https://docs.databricks.com/aws/en/ai-gateway/
@@ -140,7 +140,7 @@ function detectGateway({
 
 function getAnthropicEnvMetadata() {
   const mossBaseUrl =
-    getSessionMossBaseUrl() || process.env.MOSS_BASE_URL
+    getSessionMossBaseUrl() || process.env.MOSS_MODEL_BASE_URL
   return {
     ...(mossBaseUrl
       ? {
@@ -276,7 +276,7 @@ export function logAPIError({
   const gateway = detectGateway({
     headers:
       error instanceof APIError && error.headers ? error.headers : headers,
-    baseUrl: getSessionMossBaseUrl() || process.env.MOSS_BASE_URL,
+    baseUrl: getSessionMossBaseUrl() || process.env.MOSS_MODEL_BASE_URL,
   })
 
   const errStr = getErrorMessage(error)
@@ -635,7 +635,7 @@ export function logAPISuccessAndDuration({
 }): void {
   const gateway = detectGateway({
     headers,
-    baseUrl: getSessionMossBaseUrl() || process.env.MOSS_BASE_URL,
+    baseUrl: getSessionMossBaseUrl() || process.env.MOSS_MODEL_BASE_URL,
   })
 
   let textContentLength: number | undefined

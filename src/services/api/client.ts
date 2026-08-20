@@ -11,7 +11,7 @@ import { getUserAgent } from 'src/utils/http.js'
 import { getSmallFastModel } from 'src/utils/model/model.js'
 import {
   getAPIProvider,
-  isFirstPartyAnthropicBaseUrl,
+  isFirstPartyModelBaseUrl,
 } from 'src/utils/model/providers.js'
 import { getProxyFetchOptions } from 'src/utils/proxy.js'
 import {
@@ -295,7 +295,7 @@ export async function getAnthropicClient({
 
   const mossBaseUrl =
     getSessionMossBaseUrl() ||
-    process.env.MOSS_BASE_URL ||
+    process.env.MOSS_MODEL_BASE_URL ||
     getApiBaseUrl()
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: apiKey || getAnthropicApiKey(),
@@ -316,7 +316,7 @@ async function configureApiKeyHeaders(
 ): Promise<string | null> {
   const token =
     getSessionMossAuthToken() ||
-    process.env.MOSS_AUTH_TOKEN ||
+    process.env.MOSS_MODEL_AUTH_TOKEN ||
     (await getApiKeyFromApiKeyHelper(isNonInteractiveSession))
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
@@ -361,7 +361,7 @@ function buildFetch(
   // Only send to the first-party API — Bedrock/Vertex/Foundry don't log it
   // and unknown headers risk rejection by strict proxies (inc-4029 class).
   const injectClientRequestId =
-    getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()
+    getAPIProvider() === 'firstParty' && isFirstPartyModelBaseUrl()
   return (input, init) => {
     // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
     const headers = new Headers(init?.headers)

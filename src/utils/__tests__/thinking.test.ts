@@ -7,7 +7,7 @@ import {
 } from '../thinking.js'
 
 const ORIGINAL_ENV = {
-  MOSS_BASE_URL: process.env.MOSS_BASE_URL,
+  MOSS_MODEL_BASE_URL: process.env.MOSS_MODEL_BASE_URL,
   ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
   ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES,
@@ -47,16 +47,16 @@ beforeEach(() => {
   get3PModelCapabilityOverride.cache.clear?.()
 })
 
-describe('thinking support on Anthropic-compatible third-party endpoints', () => {
+describe('thinking support on custom third-party model endpoints', () => {
   it('does not assume unknown custom-base-url models support thinking by default', () => {
-    process.env.MOSS_BASE_URL = 'https://api.minimaxi.com/anthropic'
+    process.env.MOSS_MODEL_BASE_URL = 'https://api.minimaxi.com/v1'
 
     expect(modelSupportsThinking('MiniMax-M2.7')).toBe(false)
     expect(modelSupportsAdaptiveThinking('MiniMax-M2.7')).toBe(false)
   })
 
   it('still sends an explicit disabled thinking param when the user turns thinking off', () => {
-    process.env.MOSS_BASE_URL = 'https://api.minimaxi.com/anthropic'
+    process.env.MOSS_MODEL_BASE_URL = 'https://api.minimaxi.com/v1'
 
     expect(
       buildAPIThinkingParam('MiniMax-M2.7', { type: 'disabled' }, 8000),
@@ -67,7 +67,7 @@ describe('thinking support on Anthropic-compatible third-party endpoints', () =>
   })
 
   it('honors explicit capability overrides for custom compatible endpoints', () => {
-    process.env.MOSS_BASE_URL = 'https://api.minimaxi.com/anthropic'
+    process.env.MOSS_MODEL_BASE_URL = 'https://api.minimaxi.com/v1'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'MiniMax-M2.7'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES =
       'thinking, adaptive_thinking'

@@ -169,7 +169,7 @@ export function getAuthDebugSnapshot() {
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     hasAnthropicApiKeyEnv: Boolean(process.env.ANTHROPIC_API_KEY),
-    hasMossAuthTokenEnv: Boolean(process.env.MOSS_AUTH_TOKEN),
+    hasMossModelAuthTokenEnv: Boolean(process.env.MOSS_MODEL_AUTH_TOKEN),
     hasApiKeyHelper: typeof settings.apiKeyHelper === 'string' && settings.apiKeyHelper.length > 0,
     apiKeySource: apiKeyInfo.source,
     hasApiKeyCandidate: Boolean(apiKeyInfo.key),

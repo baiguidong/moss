@@ -238,10 +238,10 @@ export function buildAPIProviderProperties(): Property[] {
     });
   }
   if (apiProvider === 'firstParty') {
-    const mossBaseUrl = process.env.MOSS_BASE_URL;
+    const mossBaseUrl = process.env.MOSS_MODEL_BASE_URL;
     if (mossBaseUrl) {
       properties.push({
-        label: 'Moss base URL',
+        label: 'Moss model base URL',
         value: mossBaseUrl
       });
     }

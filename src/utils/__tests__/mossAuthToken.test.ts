@@ -7,8 +7,8 @@ import {
 } from '../sessionApiOverrides.js'
 import { subprocessEnv } from '../subprocessEnv.js'
 
-const originalMossAuthToken = process.env.MOSS_AUTH_TOKEN
-const originalMossBaseUrl = process.env.MOSS_BASE_URL
+const originalMossAuthToken = process.env.MOSS_MODEL_AUTH_TOKEN
+const originalMossBaseUrl = process.env.MOSS_MODEL_BASE_URL
 const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY
 const originalSubprocessScrub = process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
 const testGlobal = globalThis as typeof globalThis & {
@@ -17,8 +17,8 @@ const testGlobal = globalThis as typeof globalThis & {
 const originalMacro = testGlobal.MACRO
 
 afterEach(() => {
-  restoreEnv('MOSS_AUTH_TOKEN', originalMossAuthToken)
-  restoreEnv('MOSS_BASE_URL', originalMossBaseUrl)
+  restoreEnv('MOSS_MODEL_AUTH_TOKEN', originalMossAuthToken)
+  restoreEnv('MOSS_MODEL_BASE_URL', originalMossBaseUrl)
   restoreEnv('ANTHROPIC_API_KEY', originalAnthropicApiKey)
   restoreEnv('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', originalSubprocessScrub)
   if (originalMacro === undefined) {
@@ -28,10 +28,10 @@ afterEach(() => {
   }
 })
 
-describe('Moss auth token', () => {
-  test('passes the Moss endpoint and token explicitly to the API client', async () => {
-    process.env.MOSS_AUTH_TOKEN = 'moss-token'
-    process.env.MOSS_BASE_URL = 'https://moss.example.test'
+describe('Moss model auth token', () => {
+  test('passes the Moss model endpoint and token explicitly to the API client', async () => {
+    process.env.MOSS_MODEL_AUTH_TOKEN = 'moss-token'
+    process.env.MOSS_MODEL_BASE_URL = 'https://moss.example.test'
     process.env.ANTHROPIC_API_KEY = 'direct-api-key'
     testGlobal.MACRO = { VERSION: 'test' }
 
@@ -47,7 +47,7 @@ describe('Moss auth token', () => {
     expect(client.authToken).toBe('moss-token')
   })
 
-  test('supports session-scoped Moss endpoint and token overrides', () => {
+  test('supports session-scoped Moss model endpoint and token overrides', () => {
     const overrides = runWithSessionApiOverrides(
       {
         mossBaseUrl: 'https://moss.example.test',
@@ -68,16 +68,16 @@ describe('Moss auth token', () => {
   })
 
   test('is protected from settings overrides in host-managed sessions', () => {
-    expect(isProviderManagedEnvVar('MOSS_AUTH_TOKEN')).toBe(true)
-    expect(isProviderManagedEnvVar('MOSS_BASE_URL')).toBe(true)
+    expect(isProviderManagedEnvVar('MOSS_MODEL_AUTH_TOKEN')).toBe(true)
+    expect(isProviderManagedEnvVar('MOSS_MODEL_BASE_URL')).toBe(true)
   })
 
   test('is removed from scrubbed subprocess environments', () => {
-    process.env.MOSS_AUTH_TOKEN = 'secret-token'
+    process.env.MOSS_MODEL_AUTH_TOKEN = 'secret-token'
     process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
 
-    expect(subprocessEnv().MOSS_AUTH_TOKEN).toBeUndefined()
-    expect(process.env.MOSS_AUTH_TOKEN).toBe('secret-token')
+    expect(subprocessEnv().MOSS_MODEL_AUTH_TOKEN).toBeUndefined()
+    expect(process.env.MOSS_MODEL_AUTH_TOKEN).toBe('secret-token')
   })
 })
 

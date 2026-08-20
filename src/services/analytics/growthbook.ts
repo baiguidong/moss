@@ -430,18 +430,18 @@ function isGrowthBookEnabled(): boolean {
 }
 
 /**
- * Hostname of MOSS_BASE_URL when it points at a non-Anthropic proxy.
+ * Hostname of MOSS_MODEL_BASE_URL when it points at a model proxy.
  *
  * Enterprise-proxy deployments (Epic, Marble, etc.) typically use
  * apiKeyHelper auth, which means organizationUUID/accountUUID/email are all
  * absent from GrowthBook attributes. Without this, there's no stable
  * attribute to target them on — only per-device IDs.
  *
- * Returns undefined when MOSS_BASE_URL is unset. Hostname only — no
+ * Returns undefined when MOSS_MODEL_BASE_URL is unset. Hostname only — no
  * path/query/creds.
  */
 export function getApiBaseUrlHost(): string | undefined {
-  const baseUrl = process.env.MOSS_BASE_URL
+  const baseUrl = process.env.MOSS_MODEL_BASE_URL
   if (!baseUrl) return undefined
   try {
     const host = new URL(baseUrl).host

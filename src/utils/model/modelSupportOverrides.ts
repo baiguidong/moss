@@ -1,5 +1,5 @@
 import memoize from 'lodash-es/memoize.js'
-import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './providers.js'
+import { getAPIProvider, isFirstPartyModelBaseUrl } from './providers.js'
 
 export type ModelCapabilityOverride =
   | 'effort'
@@ -31,7 +31,7 @@ export const get3PModelCapabilityOverride = memoize(
   (model: string, capability: ModelCapabilityOverride): boolean | undefined => {
     if (
       getAPIProvider() === 'firstParty' &&
-      isFirstPartyAnthropicBaseUrl()
+      isFirstPartyModelBaseUrl()
     ) {
       return undefined
     }

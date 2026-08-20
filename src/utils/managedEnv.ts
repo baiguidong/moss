@@ -85,12 +85,12 @@ function normalizeSettingsEnv(
 ): Record<string, string> {
   if (!env) return {}
   const out = { ...env }
-  if (typeof out.MOSS_BASE_URL === 'string') {
-    const normalized = normalizeMossBaseUrl(out.MOSS_BASE_URL)
+  if (typeof out.MOSS_MODEL_BASE_URL === 'string') {
+    const normalized = normalizeMossBaseUrl(out.MOSS_MODEL_BASE_URL)
     if (normalized) {
-      out.MOSS_BASE_URL = normalized
+      out.MOSS_MODEL_BASE_URL = normalized
     } else {
-      delete out.MOSS_BASE_URL
+      delete out.MOSS_MODEL_BASE_URL
     }
   }
   if (typeof out.MOSS_SERVER_URL === 'string') {
@@ -125,7 +125,7 @@ function filterSettingsEnv(
  *
  * Project-scoped sources (projectSettings, localSettings) are excluded because they live
  * inside the project directory and could be committed by a malicious actor to redirect
- * traffic (e.g., MOSS_BASE_URL) to an attacker-controlled server.
+ * traffic (e.g., MOSS_MODEL_BASE_URL) to an attacker-controlled server.
  */
 const TRUSTED_SETTING_SOURCES = [
   'userSettings',
@@ -148,10 +148,10 @@ export function applyDefaultConfigEnvironmentVariables(): void {
 /**
  * Apply environment variables from trusted sources to process.env.
  * Called before the trust dialog so that user/enterprise env vars like
- * MOSS_BASE_URL take effect during first-run/onboarding.
+ * MOSS_MODEL_BASE_URL take effect during first-run/onboarding.
  *
  * For trusted sources (user settings, managed settings, CLI flags), ALL env vars
- * are applied — including ones like MOSS_BASE_URL that would be dangerous
+ * are applied — including ones like MOSS_MODEL_BASE_URL that would be dangerous
  * from project-scoped settings.
  *
  * For project-scoped sources (projectSettings, localSettings), only safe env vars
@@ -187,7 +187,7 @@ export function applySafeConfigEnvironmentVariables(): void {
 
   // Compute remote-managed-settings eligibility now, with userSettings and
   // flagSettings env applied. Eligibility reads CLAUDE_CODE_USE_BEDROCK,
-  // MOSS_BASE_URL — both settable via settings.env.
+  // MOSS_MODEL_BASE_URL — both settable via settings.env.
   // getSettingsForSource('policySettings') below consults the remote cache,
   // which guards on this. The two-phase structure makes the ordering
   // dependency visible: non-policy env → eligibility → policy env.

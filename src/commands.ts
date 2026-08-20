@@ -133,7 +133,7 @@ import {
 } from './utils/plugins/loadPluginCommands.js'
 import memoize from 'lodash-es/memoize.js'
 import { isUsing3PServices } from './utils/auth.js'
-import { isFirstPartyAnthropicBaseUrl } from './utils/model/providers.js'
+import { isFirstPartyModelBaseUrl } from './utils/model/providers.js'
 import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
@@ -359,9 +359,9 @@ export function meetsAvailabilityRequirement(cmd: Command): boolean {
     switch (a) {
       case 'console':
         // Console API key user = direct 1P API customer (not 3P).
-        // Excludes 3P (Bedrock/Vertex/Foundry) who don't set MOSS_BASE_URL
+        // Excludes 3P (Bedrock/Vertex/Foundry) who don't set MOSS_MODEL_BASE_URL
         // and gateway users who proxy through a custom base URL.
-        if (!isUsing3PServices() && isFirstPartyAnthropicBaseUrl())
+        if (!isUsing3PServices() && isFirstPartyModelBaseUrl())
           return true
         break
       default: {
