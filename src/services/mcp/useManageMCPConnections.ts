@@ -1,5 +1,4 @@
 import { feature } from 'bun:bundle'
-import { basename } from 'path'
 import { useCallback, useEffect, useRef } from 'react'
 import { getSessionId } from '../../bootstrap/state.js'
 import type { Command } from '../../commands.js'
@@ -623,37 +622,15 @@ export function useManageMCPConnections(
         user: 0,
         dynamic: 0,
       }
-      // Ant-only: collect stdio command basenames to correlate with RSS/FPS
-      // metrics. Stdio servers like rust-analyzer can be heavy and we want to
-      // know which ones correlate with poor session performance.
-      const stdioCommands: string[] = []
       for (const [name, serverConfig] of Object.entries(allConfigs)) {
         if (serverConfig.scope === 'enterprise') counts.enterprise++
         else if (serverConfig.scope === 'user') counts.global++
         else if (serverConfig.scope === 'project') counts.project++
         else if (serverConfig.scope === 'local') counts.user++
         else if (serverConfig.scope === 'dynamic') counts.dynamic++
-
-        if (
-          process.env.USER_TYPE === 'ant' &&
-          !isMcpServerDisabled(name) &&
-          (serverConfig.type === undefined || serverConfig.type === 'stdio') &&
-          'command' in serverConfig
-        ) {
-          stdioCommands.push(basename(serverConfig.command))
-        }
       }
       logEvent('tengu_mcp_servers', {
         ...counts,
-        ...(process.env.USER_TYPE === 'ant' && stdioCommands.length > 0
-          ? {
-              stdio_commands: stdioCommands
-                .sort()
-                .join(
-                  ',',
-                ) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-            }
-          : {}),
       })
     }
 

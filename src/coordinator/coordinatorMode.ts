@@ -1,6 +1,6 @@
 import { feature } from 'bun:bundle'
 import { ASYNC_AGENT_ALLOWED_TOOLS } from '../constants/tools.js'
-import { checkStatsigFeatureGate_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -23,7 +23,7 @@ import { isEnvTruthy } from '../utils/envUtils.js'
 // getCoordinatorUserContext's scratchpadDir parameter (dependency injection
 // from QueryEngine.ts, which lives higher in the dep graph).
 function isScratchpadGateEnabled(): boolean {
-  return checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_scratch')
+  return checkFeatureGate_CACHED_MAY_BE_STALE('tengu_scratch')
 }
 
 const INTERNAL_WORKER_TOOLS = new Set([

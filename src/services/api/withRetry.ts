@@ -11,7 +11,7 @@ import { isAwsCredentialsProviderError } from 'src/utils/aws.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logError } from 'src/utils/log.js'
 import { createSystemAPIErrorMessage } from 'src/utils/messages.js'
-import { getAPIProviderForStatsig } from 'src/utils/model/providers.js'
+import { getAPIProviderForAnalytics } from 'src/utils/model/providers.js'
 import {
   clearApiKeyHelperCache,
   clearAwsCredentialsCache,
@@ -37,7 +37,6 @@ import {
   logEvent,
 } from '../analytics/index.js'
 import {
-  checkMockRateLimitError,
   isMockRateLimitError,
 } from '../rateLimitMocking.js'
 import { REPEATED_529_ERROR_MESSAGE } from './errors.js'
@@ -78,7 +77,7 @@ function shouldRetry529(querySource: QuerySource | undefined): boolean {
   )
 }
 
-// CLAUDE_CODE_UNATTENDED_RETRY: for unattended sessions (ant-only). Retries 429/529
+// CLAUDE_CODE_UNATTENDED_RETRY: for unattended sessions. Retries 429/529
 // indefinitely with higher backoff and periodic keep-alive yields so the host
 // environment does not mark the session idle mid-wait.
 // TODO(ANT-344): the keep-alive via SystemAPIErrorMessage yields is a stopgap
@@ -188,17 +187,6 @@ export async function* withRetry<T>(
       : false
 
     try {
-      // Check for mock rate limits (used by /mock-limits command for Ant employees)
-      if (process.env.USER_TYPE === 'ant') {
-        const mockError = checkMockRateLimitError(
-          retryContext.model,
-          wasFastModeActive,
-        )
-        if (mockError) {
-          throw mockError
-        }
-      }
-
       // Get a fresh client instance on first attempt or after authentication errors
       // - 401 for first-party API authentication failures
       // - Bedrock-specific auth errors (403 or CredentialsProviderError)
@@ -318,7 +306,7 @@ export async function* withRetry<T>(
                 options.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
               fallback_model:
                 options.fallbackModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-              provider: getAPIProviderForStatsig(),
+              provider: getAPIProviderForAnalytics(),
             })
 
             // Throw special error to indicate fallback was triggered
@@ -328,11 +316,7 @@ export async function* withRetry<T>(
             )
           }
 
-          if (
-            process.env.USER_TYPE === 'external' &&
-            !process.env.IS_SANDBOX &&
-            !isPersistentRetryEnabled()
-          ) {
+          if (!process.env.IS_SANDBOX && !isPersistentRetryEnabled()) {
             logEvent('tengu_api_custom_529_overloaded_error', {})
             throw new CannotRetryError(
               new Error(REPEATED_529_ERROR_MESSAGE),
@@ -449,7 +433,7 @@ export async function* withRetry<T>(
         error: (error as APIError)
           .message as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         status: (error as APIError).status,
-        provider: getAPIProviderForStatsig(),
+        provider: getAPIProviderForAnalytics(),
       })
 
       if (persistent) {
@@ -458,7 +442,7 @@ export async function* withRetry<T>(
             status: (error as APIError).status,
             delayMs,
             attempt: reportedAttempt,
-            provider: getAPIProviderForStatsig(),
+            provider: getAPIProviderForAnalytics(),
           })
         }
         // Chunk long sleeps so the host sees periodic stdout activity and
@@ -705,13 +689,8 @@ function shouldRetry(error: APIError): boolean {
     return true
   }
 
-  // Ants can ignore x-should-retry: false for 5xx server errors only.
-  // For other status codes (401, 403, 400, 429, etc.), respect the header.
   if (shouldRetryHeader === 'false') {
-    const is5xxError = error.status !== undefined && error.status >= 500
-    if (!(process.env.USER_TYPE === 'ant' && is5xxError)) {
-      return false
-    }
+    return false
   }
 
   if (error instanceof APIConnectionError) {

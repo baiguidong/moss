@@ -1,20 +1,18 @@
 import memoize from 'lodash-es/memoize.js'
 import {
-  checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
+  checkFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
 } from 'src/services/analytics/featureFlags.js'
 import { getIsNonInteractiveSession, getSdkBetas } from '../bootstrap/state.js'
 import {
   BEDROCK_EXTRA_PARAMS_HEADERS,
   CLAUDE_CODE_20250219_BETA_HEADER,
-  CLI_INTERNAL_BETA_HEADER,
   CONTEXT_1M_BETA_HEADER,
   CONTEXT_MANAGEMENT_BETA_HEADER,
   INTERLEAVED_THINKING_BETA_HEADER,
   PROMPT_CACHING_SCOPE_BETA_HEADER,
   REDACT_THINKING_BETA_HEADER,
   STRUCTURED_OUTPUTS_BETA_HEADER,
-  TOKEN_EFFICIENT_TOOLS_BETA_HEADER,
   TOOL_SEARCH_BETA_HEADER_1P,
   TOOL_SEARCH_BETA_HEADER_3P,
   WEB_SEARCH_BETA_HEADER,
@@ -189,14 +187,6 @@ export const getAllModelBetas = memoize((model: string): string[] => {
 
   if (!isHaiku) {
     betaHeaders.push(CLAUDE_CODE_20250219_BETA_HEADER)
-    if (
-      process.env.USER_TYPE === 'ant' &&
-      process.env.CLAUDE_CODE_ENTRYPOINT === 'cli'
-    ) {
-      if (CLI_INTERNAL_BETA_HEADER) {
-        betaHeaders.push(CLI_INTERNAL_BETA_HEADER)
-      }
-    }
   }
   if (has1mContext(model)) {
     betaHeaders.push(CONTEXT_1M_BETA_HEADER)
@@ -223,16 +213,12 @@ export const getAllModelBetas = memoize((model: string): string[] => {
     betaHeaders.push(REDACT_THINKING_BETA_HEADER)
   }
 
-  // Add context management beta for tool clearing (ant opt-in) or thinking preservation
-  const antOptedIntoToolClearing =
-    isEnvTruthy(process.env.USE_API_CONTEXT_MANAGEMENT) &&
-    process.env.USER_TYPE === 'ant'
-
+  // Add context management beta for thinking preservation.
   const thinkingPreservationEnabled = modelSupportsContextManagement(model)
 
   if (
     shouldIncludeFirstPartyOnlyBetas() &&
-    (antOptedIntoToolClearing || thinkingPreservationEnabled)
+    thinkingPreservationEnabled
   ) {
     betaHeaders.push(CONTEXT_MANAGEMENT_BETA_HEADER)
   }
@@ -243,12 +229,7 @@ export const getAllModelBetas = memoize((model: string): string[] => {
   // firstParty but forward to Vertex reject this header with 400.
   // github.com/deshaw/anthropic-issues/issues/5
   const strictToolsEnabled =
-    checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_tool_pear')
-  // 3P default: false. API rejects strict + token-efficient-tools together
-  // (tool_use.py:139), so these are mutually exclusive — strict wins.
-  const tokenEfficientToolsEnabled =
-    !strictToolsEnabled &&
-    getFeatureValue_CACHED_MAY_BE_STALE('tengu_amber_json_tools', false)
+    checkFeatureGate_CACHED_MAY_BE_STALE('tengu_tool_pear')
   if (
     includeFirstPartyOnlyBetas &&
     modelSupportsStructuredOutputs(model) &&
@@ -256,18 +237,6 @@ export const getAllModelBetas = memoize((model: string): string[] => {
   ) {
     betaHeaders.push(STRUCTURED_OUTPUTS_BETA_HEADER)
   }
-  // JSON tool_use format (FC v3) — ~4.5% output token reduction vs ANTML.
-  // Sends the v2 header (2026-03-28) added in anthropics/anthropic#337072 to
-  // isolate the CC A/B cohort from ~9.2M/week existing v1 senders. Ant-only
-  // while the restored JsonToolUseOutputParser soaks.
-  if (
-    process.env.USER_TYPE === 'ant' &&
-    includeFirstPartyOnlyBetas &&
-    tokenEfficientToolsEnabled
-  ) {
-    betaHeaders.push(TOKEN_EFFICIENT_TOOLS_BETA_HEADER)
-  }
-
   // Add web search beta for Vertex Claude 4.0+ models only
   if (provider === 'vertex' && vertexModelSupportsWebSearch(model)) {
     betaHeaders.push(WEB_SEARCH_BETA_HEADER)
@@ -332,14 +301,6 @@ export function getMergedBetas(
   if (options?.isAgenticQuery) {
     if (!baseBetas.includes(CLAUDE_CODE_20250219_BETA_HEADER)) {
       baseBetas.push(CLAUDE_CODE_20250219_BETA_HEADER)
-    }
-    if (
-      process.env.USER_TYPE === 'ant' &&
-      process.env.CLAUDE_CODE_ENTRYPOINT === 'cli' &&
-      CLI_INTERNAL_BETA_HEADER &&
-      !baseBetas.includes(CLI_INTERNAL_BETA_HEADER)
-    ) {
-      baseBetas.push(CLI_INTERNAL_BETA_HEADER)
     }
   }
 

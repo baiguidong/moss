@@ -465,18 +465,6 @@ function OverviewTab({
         </Box>
       </Box>
 
-      {/* Speculation time saved (ant-only) */}
-      {"external" === 'ant' && stats.totalSpeculationTimeSavedMs > 0 && <Box flexDirection="row" gap={4}>
-            <Box flexDirection="column" width={28}>
-              <Text wrap="truncate">
-                Speculation saved:{' '}
-                <Text color="claude">
-                  {formatDuration(stats.totalSpeculationTimeSavedMs)}
-                </Text>
-              </Text>
-            </Box>
-          </Box>}
-
       {/* Fun factoid */}
       {factoid && <Box marginTop={1}>
           <Text color="suggestion">{factoid}</Text>
@@ -1056,12 +1044,6 @@ function renderOverviewToAnsi(stats: ClaudeCodeStats): string[] {
   const activeDaysVal = `${stats.activeDays}/${stats.totalDays}`;
   const peakHourVal = stats.peakActivityHour !== null ? `${stats.peakActivityHour}:00-${stats.peakActivityHour + 1}:00` : 'N/A';
   lines.push(row('Active days', activeDaysVal, 'Peak hour', peakHourVal));
-
-  // Speculation time saved (ant-only)
-  if ("external" === 'ant' && stats.totalSpeculationTimeSavedMs > 0) {
-    const label = 'Speculation saved:'.padEnd(COL1_LABEL_WIDTH);
-    lines.push(label + h(formatDuration(stats.totalSpeculationTimeSavedMs)));
-  }
 
   lines.push('');
 

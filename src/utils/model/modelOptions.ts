@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { getInitialMainLoopModel } from '../../bootstrap/state.js'
 import { getModelStrings } from './modelStrings.js'
 import {
@@ -37,18 +36,6 @@ export type ModelOption = {
 }
 
 export function getDefaultOptionForUser(fastMode = false): ModelOption {
-  if (process.env.USER_TYPE === 'ant') {
-    const currentModel = renderDefaultModelSetting(
-      getDefaultMainLoopModelSetting(),
-    )
-    return {
-      value: null,
-      label: 'Default (recommended)',
-      description: `Use the default model for Ants (currently ${currentModel})`,
-      descriptionForModel: `Default model (currently ${currentModel})`,
-    }
-  }
-
   const is3P = getAPIProvider() !== 'firstParty'
   return {
     value: null,
@@ -250,24 +237,6 @@ function getOpusPlanOption(): ModelOption {
 
 // @[MODEL LAUNCH]: Update the model picker lists below to include/reorder options for the new model.
 function getModelOptionsBase(fastMode = false): ModelOption[] {
-  if (process.env.USER_TYPE === 'ant') {
-    // Build options from antModels config
-    const antModelOptions: ModelOption[] = getAntModels().map(m => ({
-      value: m.alias,
-      label: m.label,
-      description: m.description ?? `[ANT-ONLY] ${m.label} (${m.model})`,
-    }))
-
-    return [
-      getDefaultOptionForUser(),
-      ...antModelOptions,
-      getMergedOpus1MOption(fastMode),
-      getSonnet46Option(),
-      getSonnet46_1MOption(),
-      getHaiku45Option(),
-    ]
-  }
-
   // PAYG 1P API: Default (Sonnet) + Sonnet 1M + Opus 4.6 + Opus 1M + Haiku
   if (getAPIProvider() === 'firstParty') {
     const payg1POptions = [getDefaultOptionForUser(fastMode)]

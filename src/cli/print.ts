@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { feature } from 'bun:bundle'
 import { readFile, stat } from 'fs/promises'
 import { dirname } from 'path'
@@ -448,17 +447,6 @@ export async function runHeadless(
     setSDKStatus?: (status: SDKStatus) => void
   },
 ): Promise<void> {
-  if (
-    process.env.USER_TYPE === 'ant' &&
-    isEnvTruthy(process.env.CLAUDE_CODE_EXIT_AFTER_FIRST_RENDER)
-  ) {
-    process.stderr.write(
-      `\nStartup time: ${Math.round(process.uptime() * 1000)}ms\n`,
-    )
-    // eslint-disable-next-line custom-rules/no-process-exit
-    process.exit(0)
-  }
-
   // In headless mode there is no React tree, so the useSettingsChange hook
   // never runs. Subscribe directly so that settings changes (including
   // managed-settings / policy updates) are fully applied.
@@ -2480,7 +2468,7 @@ function runHeadlessStreaming(
 
       if (message.type === 'control_request') {
         if (message.request.subtype === 'interrupt') {
-          // Track escapes for attribution (ant-only feature)
+          // Track escapes for attribution.
           if (feature('COMMIT_ATTRIBUTION')) {
             setAppState(prev => ({
               ...prev,
@@ -3193,7 +3181,7 @@ function runHeadlessStreaming(
             ...getSettingsWithSources(),
             applied: {
               model,
-              // Numeric effort (ant-only) → null; SDK schema is string-level only.
+              // Numeric effort is not part of the SDK schema.
               effort: typeof effort === 'string' ? effort : null,
             },
           })
@@ -4110,7 +4098,6 @@ async function loadInitialMessages(
   }
 
   // Handle resume in print mode (accepts session ID or URL)
-  // URLs are [ANT-ONLY]
   if (options.resume) {
     try {
       logEvent('tengu_resume_print', {})

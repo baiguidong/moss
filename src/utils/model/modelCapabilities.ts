@@ -11,7 +11,6 @@ import { safeParseJSON } from '../json.js'
 import { lazySchema } from '../lazySchema.js'
 import { isEssentialTrafficOnly } from '../privacyLevel.js'
 import { jsonStringify } from '../slowOperations.js'
-import { getAPIProvider, isFirstPartyModelBaseUrl } from './providers.js'
 
 // .strip() — don't persist internal-only fields (mycro_deployments etc.) to disk
 const ModelCapabilitySchema = lazySchema(() =>
@@ -42,10 +41,7 @@ function getCachePath(): string {
 }
 
 function isModelCapabilitiesEligible(): boolean {
-  if (process.env.USER_TYPE !== 'ant') return false
-  if (getAPIProvider() !== 'firstParty') return false
-  if (!isFirstPartyModelBaseUrl()) return false
-  return true
+  return false
 }
 
 // Longest-id-first so substring match prefers most specific; secondary key for stable isEqual

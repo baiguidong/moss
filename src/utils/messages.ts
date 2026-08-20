@@ -26,7 +26,7 @@ import { NO_CONTENT_MESSAGE } from '../constants/messages.js'
 import { OUTPUT_STYLE_CONFIG } from '../constants/outputStyles.js'
 import { isAutoMemoryEnabled } from '../memdir/paths.js'
 import {
-  checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
+  checkFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
 } from '../services/analytics/featureFlags.js'
 import {
@@ -2119,7 +2119,7 @@ export function normalizeMessagesForAPI(
           // that gets relocated, so skipping it saves a scan. When gate is
           // off, this is the fallback (same as pre-#21049 main).
           if (
-            !checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+            !checkFeatureGate_CACHED_MAY_BE_STALE(
               'tengu_toolref_defer_j8m',
             )
           ) {
@@ -2232,7 +2232,7 @@ export function normalizeMessagesForAPI(
           const rawAttachmentMessage = normalizeAttachmentForAPI(
             message.attachment,
           )
-          const attachmentMessage = checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+          const attachmentMessage = checkFeatureGate_CACHED_MAY_BE_STALE(
             'tengu_chair_sermon',
           )
             ? rawAttachmentMessage.map(ensureSystemReminderWrap)
@@ -2260,7 +2260,7 @@ export function normalizeMessagesForAPI(
   // Runs after merge (siblings are in place) and before ID tagging (so
   // tags reflect final positions). When gate is OFF, this is a noop and
   // the TOOL_REFERENCE_TURN_BOUNDARY injection above serves as fallback.
-  const relocated = checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+  const relocated = checkFeatureGate_CACHED_MAY_BE_STALE(
     'tengu_toolref_defer_j8m',
   )
     ? relocateToolReferenceSiblings(result)
@@ -2293,7 +2293,7 @@ export function normalizeMessagesForAPI(
   // Gated together: the merge exists solely to feed the smoosh; running it
   // ungated changes VCR fixture hashes for @-mention scenarios (adjacent
   // [prompt, attachment] users) without any benefit when the smoosh is off.
-  const smooshed = checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+  const smooshed = checkFeatureGate_CACHED_MAY_BE_STALE(
     'tengu_chair_sermon',
   )
     ? smooshSystemReminderSiblings(mergeAdjacentUserMessages(withNonEmpty))
@@ -2574,7 +2574,7 @@ export function mergeUserContentBlocks(
     return [...a, ...b]
   }
 
-  if (!checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_chair_sermon')) {
+  if (!checkFeatureGate_CACHED_MAY_BE_STALE('tengu_chair_sermon')) {
     // Legacy (ungated) smoosh: only string-content tool_result + all-text
     // siblings → joined string. Matches pre-universal-smoosh behavior on main.
     // The precondition guarantees smooshIntoToolResult hits its string path
@@ -2646,12 +2646,6 @@ export function normalizeContentFromAPI(
               toolName: sanitizeToolNameForAnalytics(contentBlock.name),
               inputLen: contentBlock.input.length,
             })
-            if (process.env.USER_TYPE === 'ant') {
-              logForDebugging(
-                `tool input JSON parse fail: ${contentBlock.input.slice(0, 200)}`,
-                { level: 'warn' },
-              )
-            }
           }
           normalizedInput = parsed ?? {}
         } else {
@@ -5233,7 +5227,7 @@ export function ensureToolResultPairing(
         // [tool_result, text] sibling the smoosh inside normalize never saw
         // (pairing runs after normalize). Re-smoosh just this one message.
         result.push(
-          checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_chair_sermon')
+          checkFeatureGate_CACHED_MAY_BE_STALE('tengu_chair_sermon')
             ? smooshSystemReminderSiblings([patchedNext])[0]!
             : patchedNext,
         )

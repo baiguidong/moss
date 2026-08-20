@@ -18,7 +18,7 @@ import type { AssistantMessage } from 'src/types/message.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import type { EffortLevel } from 'src/utils/effort.js'
 import { logError } from 'src/utils/log.js'
-import { getAPIProviderForStatsig } from 'src/utils/model/providers.js'
+import { getAPIProviderForAnalytics } from 'src/utils/model/providers.js'
 import type { PermissionMode } from 'src/utils/permissions/PermissionMode.js'
 import { jsonStringify } from 'src/utils/slowOperations.js'
 import {
@@ -198,7 +198,7 @@ export function logAPIQuery({
     model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     messagesLength,
     temperature: temperature,
-    provider: getAPIProviderForStatsig(),
+    provider: getAPIProviderForAnalytics(),
     buildAgeMins: getBuildAgeMinutes(),
     ...(betas?.length
       ? {
@@ -314,7 +314,7 @@ export function logAPIError({
     durationMs,
     durationMsIncludingRetries,
     attempt,
-    provider: getAPIProviderForStatsig(),
+    provider: getAPIProviderForAnalytics(),
     requestId:
       (requestId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS) ||
       undefined,
@@ -475,7 +475,7 @@ function logAPISuccess({
     attempt: attempt,
     ttftMs: ttftMs ?? undefined,
     buildAgeMins: getBuildAgeMinutes(),
-    provider: getAPIProviderForStatsig(),
+    provider: getAPIProviderForAnalytics(),
     requestId:
       (requestId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS) ??
       undefined,
@@ -692,7 +692,7 @@ export function logAPISuccessAndDuration({
     previousRequestId,
     betas,
   })
-  // Extract model output, thinking output, and tool call flag when beta tracing is enabled
+  // Extract model output and tool call flag when beta tracing is enabled.
   let modelOutput: string | undefined
   let thinkingOutput: string | undefined
   let hasToolCall: boolean | undefined
@@ -707,18 +707,6 @@ export function logAPISuccessAndDuration({
             .map(c => (c as { type: 'text'; text: string }).text),
         )
         .join('\n') || undefined
-
-    // Thinking output - Ant-only (build-time gated)
-    if (process.env.USER_TYPE === 'ant') {
-      thinkingOutput =
-        newMessages
-          .flatMap(m =>
-            m.message.content
-              .filter(c => c.type === 'thinking')
-              .map(c => (c as { type: 'thinking'; thinking: string }).thinking),
-          )
-          .join('\n') || undefined
-    }
 
     // Check if any tool_use blocks were in the output
     hasToolCall = newMessages.some(m =>

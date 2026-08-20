@@ -23,7 +23,7 @@ import { loadAllPermissionRulesFromDisk } from './permissionsLoader.js'
 import { resolve } from 'path'
 import {
   checkSecurityRestrictionGate,
-  checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
+  checkFeatureGate_CACHED_MAY_BE_STALE,
 } from 'src/services/analytics/featureFlags.js'
 import {
   addDirHelpMessage,
@@ -331,7 +331,7 @@ export function initialPermissionModeFromCLI({
 
   // Check feature flag gate first - highest precedence
   const featureFlagDisableBypassPermissionsMode =
-    checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+    checkFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
 
@@ -339,7 +339,7 @@ export function initialPermissionModeFromCLI({
   const settingsDisableBypassPermissionsMode =
     settings.permissions?.disableBypassPermissionsMode === 'disable'
 
-  // Statsig gate takes precedence over settings
+  // Feature gate takes precedence over settings
   const disableBypassPermissionsMode =
     featureFlagDisableBypassPermissionsMode ||
     settingsDisableBypassPermissionsMode
@@ -386,7 +386,7 @@ export function initialPermissionModeFromCLI({
   for (const mode of orderedModes) {
     if (mode === 'bypassPermissions' && disableBypassPermissionsMode) {
       if (featureFlagDisableBypassPermissionsMode) {
-        logForDebugging('bypassPermissions mode is disabled by Statsig gate', {
+        logForDebugging('bypassPermissions mode is disabled by feature gate', {
           level: 'warn',
         })
         notification =
@@ -526,10 +526,10 @@ export async function initializeToolPermissionContext({
     })
   }
 
-  // Check if bypassPermissions mode is available (not disabled by Statsig gate or settings)
+  // Check if bypassPermissions mode is available (not disabled by feature gate or settings)
   // Use cached values to avoid blocking on startup
   const featureFlagDisableBypassPermissionsMode =
-    checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+    checkFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
   const settings = getSettings_DEPRECATED() || {}
@@ -544,24 +544,7 @@ export async function initializeToolPermissionContext({
   // Load all permission rules from disk
   const rulesFromDisk = loadAllPermissionRulesFromDisk()
 
-  // Ant-only: Detect overly broad shell allow rules for all modes.
-  // Bash(*) or PowerShell(*) bypass prompts for that shell.
-  // Skip in CCR/BYOC where --allowed-tools is the intended pre-approval mechanism.
-  // Variable name kept for return-field compat; contains both shells.
   let overlyBroadBashPermissions: DangerousPermissionInfo[] = []
-  if (
-    process.env.USER_TYPE === 'ant' &&
-    !isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
-    process.env.CLAUDE_CODE_ENTRYPOINT !== 'local-agent'
-  ) {
-    overlyBroadBashPermissions = [
-      ...findOverlyBroadBashPermissions(rulesFromDisk, parsedAllowedToolsCli),
-      ...findOverlyBroadPowerShellPermissions(
-        rulesFromDisk,
-        parsedAllowedToolsCli,
-      ),
-    ]
-  }
 
   let toolPermissionContext = applyPermissionRulesToPermissionContext(
     {
@@ -617,19 +600,19 @@ export async function initializeToolPermissionContext({
 }
 
 /**
- * Core logic to check if bypassPermissions should be disabled based on Statsig gate
+ * Core logic to check if bypassPermissions should be disabled by feature gate.
  */
 export function shouldDisableBypassPermissions(): Promise<boolean> {
   return checkSecurityRestrictionGate('tengu_disable_bypass_permissions_mode')
 }
 
 /**
- * Checks if bypassPermissions mode is currently disabled by Statsig gate or settings.
- * This is a synchronous version that uses cached Statsig values.
+ * Checks if bypassPermissions mode is currently disabled by feature gate or settings.
+ * This is a synchronous version that uses cached feature values.
  */
 export function isBypassPermissionsModeDisabled(): boolean {
   const featureFlagDisableBypassPermissionsMode =
-    checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+    checkFeatureGate_CACHED_MAY_BE_STALE(
       'tengu_disable_bypass_permissions_mode',
     )
   const settings = getSettings_DEPRECATED() || {}
@@ -664,7 +647,7 @@ export function createDisabledBypassPermissionsContext(
 }
 
 /**
- * Asynchronously checks if the bypassPermissions mode should be disabled based on Statsig gate
+ * Asynchronously checks if the bypassPermissions mode should be disabled by feature gate
  * and returns an updated toolPermissionContext if needed
  */
 export async function checkAndDisableBypassPermissions(
@@ -682,7 +665,7 @@ export async function checkAndDisableBypassPermissions(
 
   // Gate is enabled, need to disable bypassPermissions mode
   logForDebugging(
-    'bypassPermissions mode is being disabled by Statsig gate (async check)',
+    'bypassPermissions mode is being disabled by feature gate (async check)',
     { level: 'warn' },
   )
 

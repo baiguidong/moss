@@ -3,7 +3,7 @@
  * initialization phases.
  *
  * Two modes:
- * 1. Sampled logging: 100% of ant users, 0.1% of external users - logs phases to Statsig
+ * 1. Sampled logging: logs phases through the analytics facade.
  * 2. Detailed profiling: CLAUDE_CODE_PROFILE_STARTUP=1 - full report with memory snapshots
  *
  * Uses Node.js built-in performance hooks API for standard timing measurement.
@@ -25,15 +25,14 @@ import { writeFileSync_DEPRECATED } from './slowOperations.js'
 // eslint-disable-next-line custom-rules/no-process-env-top-level
 const DETAILED_PROFILING = isEnvTruthy(process.env.CLAUDE_CODE_PROFILE_STARTUP)
 
-// Sampling for Statsig logging: 100% ant, 0.5% external
+// Sampling for analytics logging.
 // Decision made once at startup - non-sampled users pay no profiling cost
-const STATSIG_SAMPLE_RATE = 0.005
+const ANALYTICS_SAMPLE_RATE = 0.005
 // eslint-disable-next-line custom-rules/no-process-env-top-level
-const STATSIG_LOGGING_SAMPLED =
-  process.env.USER_TYPE === 'ant' || Math.random() < STATSIG_SAMPLE_RATE
+const ANALYTICS_LOGGING_SAMPLED = Math.random() < ANALYTICS_SAMPLE_RATE
 
-// Enable profiling if either detailed mode OR sampled for Statsig
-const SHOULD_PROFILE = DETAILED_PROFILING || STATSIG_LOGGING_SAMPLED
+// Enable profiling if either detailed mode OR sampled for analytics.
+const SHOULD_PROFILE = DETAILED_PROFILING || ANALYTICS_LOGGING_SAMPLED
 
 // Track memory snapshots separately (perf_hooks doesn't track memory).
 // Only used when DETAILED_PROFILING is enabled.
@@ -45,7 +44,7 @@ const SHOULD_PROFILE = DETAILED_PROFILING || STATSIG_LOGGING_SAMPLED
 // first's memory snapshot.
 const memorySnapshots: NodeJS.MemoryUsage[] = []
 
-// Phase definitions for Statsig logging: [startCheckpoint, endCheckpoint]
+// Phase definitions for analytics logging: [startCheckpoint, endCheckpoint]
 const PHASE_DEFINITIONS = {
   import_time: ['cli_entry', 'main_tsx_imports_loaded'],
   init_time: ['init_function_start', 'init_function_end'],
@@ -124,7 +123,7 @@ export function profileReport(): void {
   if (reported) return
   reported = true
 
-  // Log to Statsig (sampled: 100% ant, 0.1% external)
+  // Log through the analytics facade if sampled.
   logStartupPerf()
 
   // Output detailed report if CLAUDE_CODE_PROFILE_STARTUP=1
@@ -153,12 +152,12 @@ export function getStartupPerfLogPath(): string {
 }
 
 /**
- * Log startup performance phases to Statsig.
+ * Log startup performance phases through the analytics facade.
  * Only logs if this session was sampled at startup.
  */
 export function logStartupPerf(): void {
   // Only log if we were sampled (decision made at module load)
-  if (!STATSIG_LOGGING_SAMPLED) return
+  if (!ANALYTICS_LOGGING_SAMPLED) return
 
   const perf = getPerformance()
   const marks = perf.getEntriesByType('mark')

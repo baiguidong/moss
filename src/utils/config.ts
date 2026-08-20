@@ -171,8 +171,6 @@ export type GlobalConfig = {
     rejected?: string[]
   }
   hasAcknowledgedCostThreshold?: boolean
-  hasSeenUndercoverAutoNotice?: boolean // ant-only: whether the one-time auto-undercover explainer has been shown
-  hasSeenUltraplanTerms?: boolean // ant-only: whether the one-time CCR terms notice has been shown in the ultraplan launch dialog
   iterm2KeyBindingInstalled?: boolean // Legacy - keeping for backward compatibility
   editorMode?: EditorMode
   bypassPermissionsModeAccepted?: boolean
@@ -311,11 +309,6 @@ export type GlobalConfig = {
   // from the title (the dot makes it redundant).
   showStatusInTerminalTab?: boolean
 
-  // Model switch callout tracking (ant-only)
-  modelSwitchCalloutDismissed?: boolean // Whether user chose "Don't show again"
-  modelSwitchCalloutLastShown?: number // Timestamp of last shown (don't show for 24h)
-  modelSwitchCalloutVersion?: string
-
   // Effort callout tracking - shown once for Opus 4.6 users
   effortCalloutDismissed?: boolean // v1 - legacy, read to suppress v2 for Pro users who already saw it
   effortCalloutV2Dismissed?: boolean
@@ -336,19 +329,19 @@ export type GlobalConfig = {
   // Sonnet 4.5 → 4.6 migration (pro/max/team premium)
   sonnet45To46MigrationTimestamp?: number
 
-  // Cached statsig gate values
-  cachedStatsigGates: {
+  // Cached feature gate values
+  cachedFeatureGates: {
     [gateName: string]: boolean
   }
 
-  // Cached statsig dynamic configs
+  // Cached dynamic configs
   cachedDynamicConfigs?: { [configName: string]: unknown }
 
   // Cached feature flag values
   cachedFeatureFlags?: { [featureName: string]: unknown }
 
-  // Local feature flag overrides (ant-only, set via /config Gates tab).
-  // Checked after env-var overrides but before the real resolved value.
+  // Local feature flag overrides.
+  // Checked after env-var overrides but before default values.
   featureFlagOverrides?: { [featureName: string]: unknown }
 
   // Emergency tip tracking - stores the last shown tip to prevent re-showing
@@ -426,12 +419,6 @@ export type GlobalConfig = {
   // undefined = no cache, null = extra usage enabled, string = disabled reason.
   cachedExtraUsageDisabledReason?: string | null
 
-  // Auto permissions notification tracking (ant-only)
-
-  // Speculation configuration (ant-only)
-  speculationEnabled?: boolean // Whether speculation is enabled (default: true)
-
-
   // Client data for server-side experiments (fetched during bootstrap).
   clientDataCache?: Record<string, unknown> | null
 
@@ -479,7 +466,7 @@ function createDefaultGlobalConfig(): GlobalConfig {
     autoInstallIdeExtension: true,
     fileCheckpointingEnabled: true,
     terminalProgressBarEnabled: true,
-    cachedStatsigGates: {},
+    cachedFeatureGates: {},
     cachedDynamicConfigs: {},
     cachedFeatureFlags: {},
     respectGitignore: true,
@@ -709,8 +696,8 @@ let lastReadFileStats: { mtime: number; size: number } | null = null
 let configCacheHits = 0
 let configCacheMisses = 0
 // Session-total count of actual disk writes to the global config file.
-// Exposed for ant-only dev diagnostics (see inc-4552) so anomalous write
-// rates surface in the UI before they corrupt ~/.moss/moss.json.
+// Exposed for dev diagnostics so anomalous write rates surface before they
+// corrupt ~/.moss/moss.json.
 let globalConfigWriteCount = 0
 
 export function getGlobalConfigWriteCount(): number {

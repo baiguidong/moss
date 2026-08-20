@@ -1,6 +1,5 @@
 import memoize from 'lodash-es/memoize.js'
 import type { HookEvent } from 'src/entrypoints/agentSdkTypes.js'
-import { getRegisteredHooks } from '../../bootstrap/state.js'
 import type { AppState } from '../../state/AppState.js'
 import {
   getAllHooks,
@@ -318,35 +317,6 @@ export function groupHooksByEventAndMatcher(
       eventGroup[matcherKey].push(hook)
     }
   })
-
-  // Include registered SDK callback hooks
-  const registeredHooks = getRegisteredHooks()
-  if (registeredHooks) {
-    for (const [event, matchers] of Object.entries(registeredHooks)) {
-      const hookEvent = event as HookEvent
-      const eventGroup = grouped[hookEvent]
-      if (!eventGroup) continue
-
-      for (const matcher of matchers) {
-        const matcherKey = matcher.matcher || ''
-
-        if (process.env.USER_TYPE === 'ant') {
-          eventGroup[matcherKey] ??= []
-          for (const _hook of matcher.hooks) {
-            eventGroup[matcherKey].push({
-              event: hookEvent,
-              config: {
-                type: 'command',
-                command: '[ANT-ONLY] Built-in Hook',
-              },
-              matcher: matcher.matcher,
-              source: 'builtinHook',
-            })
-          }
-        }
-      }
-    }
-  }
 
   return grouped
 }

@@ -1,5 +1,4 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
-import { toolMatchesName, type Tool, type Tools } from './Tool.js'
+import { type Tool, type Tools } from './Tool.js'
 import { AgentTool } from './tools/AgentTool/AgentTool.js'
 import { SkillTool } from './tools/SkillTool/SkillTool.js'
 import { BashTool } from './tools/BashTool/BashTool.js'
@@ -11,17 +10,7 @@ import { NotebookEditTool } from './tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
 import { MossTool } from './tools/MossTool/MossTool.js'
-// Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
-const REPLTool =
-  process.env.USER_TYPE === 'ant'
-    ? require('./tools/REPLTool/REPLTool.js').REPLTool
-    : null
-const SuggestBackgroundPRTool =
-  process.env.USER_TYPE === 'ant'
-    ? require('./tools/SuggestBackgroundPRTool/SuggestBackgroundPRTool.js')
-        .SuggestBackgroundPRTool
-    : null
 const SleepTool =
   feature('PROACTIVE')
     ? require('./tools/SleepTool/SleepTool.js').SleepTool
@@ -62,7 +51,6 @@ import { ToolSearchTool } from './tools/ToolSearchTool/ToolSearchTool.js'
 import { EnterPlanModeTool } from './tools/EnterPlanModeTool/EnterPlanModeTool.js'
 import { EnterWorktreeTool } from './tools/EnterWorktreeTool/EnterWorktreeTool.js'
 import { ExitWorktreeTool } from './tools/ExitWorktreeTool/ExitWorktreeTool.js'
-import { ConfigTool } from './tools/ConfigTool/ConfigTool.js'
 import { TaskCreateTool } from './tools/TaskCreateTool/TaskCreateTool.js'
 import { TaskGetTool } from './tools/TaskGetTool/TaskGetTool.js'
 import { TaskUpdateTool } from './tools/TaskUpdateTool/TaskUpdateTool.js'
@@ -117,12 +105,7 @@ import { isEnvTruthy } from './utils/envUtils.js'
 import { isPowerShellToolEnabled } from './utils/shell/shellToolUtils.js'
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js'
 import { isWorktreeModeEnabled } from './utils/worktreeModeEnabled.js'
-import {
-  REPL_TOOL_NAME,
-  REPL_ONLY_TOOLS,
-  isReplModeEnabled,
-} from './tools/REPLTool/constants.js'
-export { REPL_ONLY_TOOLS }
+export { REPL_ONLY_TOOLS } from './tools/REPLTool/constants.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const getPowerShellTool = () => {
   if (!isPowerShellToolEnabled()) return null
@@ -169,9 +152,6 @@ export function getAllBaseTools(): Tools {
     AgentTool,
     TaskOutputTool,
     BashTool,
-    // Ant-native builds have bfs/ugrep embedded in the bun binary (same ARGV0
-    // trick as ripgrep). When available, find/grep in Claude's shell are aliased
-    // to these fast tools, so the dedicated Glob/Grep tools are unnecessary.
     ...(hasEmbeddedSearchTools() ? [] : [GlobTool, GrepTool]),
     ExitPlanModeV2Tool,
     FileReadTool,
@@ -186,8 +166,6 @@ export function getAllBaseTools(): Tools {
     SkillTool,
     MossTool,
     EnterPlanModeTool,
-    ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),
-    ...(SuggestBackgroundPRTool ? [SuggestBackgroundPRTool] : []),
     ...(WebBrowserTool ? [WebBrowserTool] : []),
     ...(isTodoV2Enabled()
       ? [TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool]
@@ -201,7 +179,6 @@ export function getAllBaseTools(): Tools {
       ? [getTeamCreateTool(), getTeamDeleteTool()]
       : []),
     ...(VerifyPlanExecutionTool ? [VerifyPlanExecutionTool] : []),
-    ...(process.env.USER_TYPE === 'ant' && REPLTool ? [REPLTool] : []),
     ...(WorkflowTool ? [WorkflowTool] : []),
     ...(SleepTool ? [SleepTool] : []),
     ...cronTools,
@@ -238,19 +215,6 @@ export function filterToolsByDenyRules<
 export const getTools = (permissionContext: ToolPermissionContext): Tools => {
   // Simple mode: only Bash, Read, and Edit tools
   if (isEnvTruthy(process.env.CLAUDE_CODE_SIMPLE)) {
-    // --bare + REPL mode: REPL wraps Bash/Read/Edit/etc inside the VM, so
-    // return REPL instead of the raw primitives. Matches the non-bare path
-    // below which also hides REPL_ONLY_TOOLS when REPL is enabled.
-    if (isReplModeEnabled() && REPLTool) {
-      const replSimple: Tool[] = [REPLTool]
-      if (
-        feature('COORDINATOR_MODE') &&
-        coordinatorModeModule?.isCoordinatorMode()
-      ) {
-        replSimple.push(TaskStopTool, getSendMessageTool())
-      }
-      return filterToolsByDenyRules(replSimple, permissionContext)
-    }
     const simpleTools: Tool[] = [BashTool, FileReadTool, FileEditTool]
     // When coordinator mode is also active, include AgentTool and TaskStopTool
     // so the coordinator gets Task+TaskStop (via useMergedTools filtering) and
@@ -275,19 +239,6 @@ export const getTools = (permissionContext: ToolPermissionContext): Tools => {
 
   // Filter out tools that are denied by the deny rules
   let allowedTools = filterToolsByDenyRules(tools, permissionContext)
-
-  // When REPL mode is enabled, hide primitive tools from direct use.
-  // They're still accessible inside REPL via the VM context.
-  if (isReplModeEnabled()) {
-    const replEnabled = allowedTools.some(tool =>
-      toolMatchesName(tool, REPL_TOOL_NAME),
-    )
-    if (replEnabled) {
-      allowedTools = allowedTools.filter(
-        tool => !REPL_ONLY_TOOLS.has(tool.name),
-      )
-    }
-  }
 
   const isEnabled = allowedTools.map(_ => _.isEnabled())
   return allowedTools.filter((_, i) => isEnabled[i])

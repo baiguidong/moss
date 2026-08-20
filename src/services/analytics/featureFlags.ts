@@ -160,7 +160,7 @@ export function getFeatureValue_CACHED_WITH_REFRESH<T>(
   return getLocalFeatureValue(feature, defaultValue)
 }
 
-export function checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+export function checkFeatureGate_CACHED_MAY_BE_STALE(
   gate: string,
 ): boolean {
   return Boolean(getLocalFeatureValue(gate, false))

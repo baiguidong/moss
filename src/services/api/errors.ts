@@ -18,10 +18,7 @@ import {
   createAssistantAPIErrorMessage,
   NO_RESPONSE_REQUESTED,
 } from 'src/utils/messages.js'
-import {
-  getDefaultMainLoopModelSetting,
-  isNonCustomOpusModel,
-} from 'src/utils/model/model.js'
+import { isNonCustomOpusModel } from 'src/utils/model/model.js'
 import { getModelStrings } from 'src/utils/model/modelStrings.js'
 import { getAPIProvider } from 'src/utils/model/providers.js'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
@@ -334,7 +331,7 @@ function logToolUseToolResultMismatch(
       }
     }
 
-    // Log to Statsig
+    // Log through the analytics facade
     logEvent('tengu_tool_use_tool_result_mismatch_error', {
       toolUseId:
         toolUseId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -628,7 +625,7 @@ export function getAssistantMessageFromError(
       '`tool_use` ids were found without `tool_result` blocks immediately after',
     )
   ) {
-    // Log to Statsig if we have the message context
+    // Log through the analytics facade if we have the message context
     if (options?.messages && options?.messagesForAPI) {
       const toolUseIdMatch = error.message.match(/toolu_[a-zA-Z0-9]+/)
       const toolUseId = toolUseIdMatch ? toolUseIdMatch[0] : null
@@ -675,24 +672,6 @@ export function getAssistantMessageFromError(
       content: `API Error: 400 duplicate tool_use ID in conversation history.${rewindInstruction}`,
       error: 'invalid_request',
       errorDetails: error.message,
-    })
-  }
-
-  // Check for invalid model name error for Ant users. Claude Code may be
-  // defaulting to a custom internal-only model for Ants, and there might be
-  // Ants using new or unknown org IDs that haven't been gated in.
-  if (
-    process.env.USER_TYPE === 'ant' &&
-    !process.env.ANTHROPIC_MODEL &&
-    error instanceof Error &&
-    error.message.toLowerCase().includes('invalid model name')
-  ) {
-    const baseMsg = `[ANT-ONLY] Your org isn't gated into the \`${model}\` model. Either run \`claude\` with \`ANTHROPIC_MODEL=${getDefaultMainLoopModelSetting()}\``
-    const msg = `${baseMsg} or reach out in ${MACRO.FEEDBACK_CHANNEL} for help getting access.`
-
-    return createAssistantAPIErrorMessage({
-      content: msg,
-      error: 'invalid_request',
     })
   }
 

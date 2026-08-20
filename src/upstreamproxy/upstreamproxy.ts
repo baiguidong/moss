@@ -104,9 +104,8 @@ export async function initUpstreamProxy(opts?: {
   setNonDumpable()
 
   // CCR injects MOSS_MODEL_BASE_URL via StartupContext (sessionExecutor.ts /
-  // sessionHandler.ts). The global API base config is wrong here: it keys off
-  // USER_TYPE + USE_{LOCAL,STAGING}_OAUTH, none of which the container sets,
-  // so it always returned the prod URL and the CA fetch 404'd.
+  // sessionHandler.ts). Prefer that over the global API base config inside the
+  // container so the CA fetch hits the matching CCR endpoint.
   const baseUrl =
     opts?.ccrBaseUrl ??
     process.env.MOSS_MODEL_BASE_URL ??

@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 /**
  * Shared event metadata enrichment for the no-op analytics compatibility API.
  *
@@ -347,8 +346,6 @@ export type EventMetadata = {
   agentType?: 'teammate' | 'subagent' | 'standalone' // Distinguishes swarm teammates, Agent tool subagents, and standalone agents
   teamName?: string // Team name for swarm agents (from env var or AsyncLocalStorage)
   rh?: string // Hashed repo remote URL (first 16 chars of SHA256), for joining with server-side data
-  skillMode?: 'discovery' | 'coach' | 'discovery_and_coach' // Which skill surfacing mechanism(s) are gated on (ant-only; for BQ session segmentation)
-  observerMode?: 'backseat' | 'skillcoach' | 'both' // Which observer classifiers are gated on (ant-only; for BQ cohort splits on tengu_backseat_* events)
 }
 
 /**
@@ -552,7 +549,7 @@ export async function getEventMetadata(
   const metadata: EventMetadata = {
     model,
     sessionId: getSessionId(),
-    userType: process.env.USER_TYPE || '',
+    userType: 'external',
     ...(betas.length > 0 ? { betas: betas } : {}),
     envContext,
     ...(process.env.CLAUDE_CODE_ENTRYPOINT && {
@@ -637,8 +634,6 @@ export function to1PEventFormat(
     envContext,
     processMetrics,
     rh,
-    skillMode,
-    observerMode,
     ...coreFields
   } = metadata
 
@@ -794,8 +789,6 @@ export function to1PEventFormat(
     core,
     additional: {
       ...(rh && { rh }),
-      ...(skillMode && { skill_mode: skillMode }),
-      ...(observerMode && { observer_mode: observerMode }),
       ...additionalMetadata,
     },
   }

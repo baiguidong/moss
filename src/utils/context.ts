@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -52,20 +51,6 @@ export function getContextWindowForModel(
   model: string,
   betas?: string[],
 ): number {
-  // Allow override via environment variable (ant-only)
-  // This takes precedence over all other context window resolution, including 1M detection,
-  // so users can cap the effective context window for local decisions (auto-compact, etc.)
-  // while still using a 1M-capable endpoint.
-  if (
-    process.env.USER_TYPE === 'ant' &&
-    process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS
-  ) {
-    const override = parseInt(process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, 10)
-    if (!isNaN(override) && override > 0) {
-      return override
-    }
-  }
-
   // [1m] suffix — explicit client-side opt-in, respected over all detection
   if (has1mContext(model)) {
     return 1_000_000
@@ -87,12 +72,6 @@ export function getContextWindowForModel(
   }
   if (getSonnet1mExpTreatmentEnabled(model)) {
     return 1_000_000
-  }
-  if (process.env.USER_TYPE === 'ant') {
-    const antModel = resolveAntModel(model)
-    if (antModel?.contextWindow) {
-      return antModel.contextWindow
-    }
   }
   return MODEL_CONTEXT_WINDOW_DEFAULT
 }
@@ -152,15 +131,6 @@ export function getModelMaxOutputTokens(model: string): {
 } {
   let defaultTokens: number
   let upperLimit: number
-
-  if (process.env.USER_TYPE === 'ant') {
-    const antModel = resolveAntModel(model.toLowerCase())
-    if (antModel) {
-      defaultTokens = antModel.defaultMaxTokens ?? MAX_OUTPUT_TOKENS_DEFAULT
-      upperLimit = antModel.upperMaxTokensLimit ?? MAX_OUTPUT_TOKENS_UPPER_LIMIT
-      return { default: defaultTokens, upperLimit }
-    }
-  }
 
   const m = getCanonicalName(model)
 

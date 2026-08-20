@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { Box, Text, type TextProps } from '../../ink.js';
 import * as React from 'react';
 import { useState } from 'react';
@@ -14,7 +13,7 @@ import { TURN_COMPLETION_VERBS } from '../../constants/turnCompletionVerbs.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import type { SystemMessage, SystemStopHookSummaryMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage } from '../../types/message.js';
 import { SystemAPIErrorMessage } from './SystemAPIErrorMessage.js';
-import { formatDuration, formatNumber, formatSecondsShort } from '../../utils/format.js';
+import { formatDuration, formatNumber } from '../../utils/format.js';
 import { getGlobalConfig } from '../../utils/config.js';
 import ThemedText from '../design-system/ThemedText.js';
 import { CtrlOToExpand } from '../CtrlOToExpand.js';
@@ -226,7 +225,7 @@ function StopHookSummaryMessage(t0) {
   }
   let t2;
   if ($[3] !== totalDurationMs) {
-    t2 = false && totalDurationMs > 0 ? ` (${formatSecondsShort(totalDurationMs)})` : "";
+    t2 = "";
     $[3] = totalDurationMs;
     $[4] = t2;
   } else {
@@ -358,11 +357,11 @@ function StopHookSummaryMessage(t0) {
   return t15;
 }
 function _temp3(info_0, idx_0) {
-  const durationStr_0 = false && info_0.durationMs !== undefined ? ` (${formatSecondsShort(info_0.durationMs)})` : "";
+  const durationStr_0 = "";
   return <Text key={`cmd-${idx_0}`} dimColor={true}>⎿  {info_0.command === "prompt" ? `prompt: ${info_0.promptText || ""}` : info_0.command}{durationStr_0}</Text>;
 }
 function _temp2(info, idx) {
-  const durationStr = false && info.durationMs !== undefined ? ` (${formatSecondsShort(info.durationMs)})` : "";
+  const durationStr = "";
   return <Text key={`cmd-${idx}`} dimColor={true}>{"     \u23BF "}{info.command === "prompt" ? `prompt: ${info.promptText || ""}` : info.command}{durationStr}</Text>;
 }
 function _temp(sum, h) {

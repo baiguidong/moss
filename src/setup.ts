@@ -26,8 +26,6 @@ import { prefetchApiKeyFromApiKeyHelperIfSafe } from './utils/auth.js'
 import { clearMemoryFileCaches } from './utils/claudemd.js'
 import { getCurrentProjectConfig } from './utils/config.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
-import { env } from './utils/env.js'
-import { envDynamic } from './utils/envDynamic.js'
 import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
 import { errorMessage } from './utils/errors.js'
 import { findCanonicalGitRoot, findGitRoot, getIsGit } from './utils/git.js'
@@ -293,19 +291,6 @@ export async function setup(
   // overhead. NOT an early-return: the --dangerously-skip-permissions safety
   // gate, tengu_started beacon, and apiKeyHelper prefetch below must still run.
   if (!isBareMode()) {
-    if (process.env.USER_TYPE === 'ant') {
-      // Prime repo classification cache for auto-undercover mode. Default is
-      // undercover ON until proven internal; if this resolves to internal, clear
-      // the prompt cache so the next turn picks up the OFF state.
-      void import('./utils/commitAttribution.js').then(async m => {
-        if (await m.isInternalModelRepo()) {
-          const { clearSystemPromptSections } = await import(
-            './constants/systemPromptSections.js'
-          )
-          clearSystemPromptSections()
-        }
-      })
-    }
     if (feature('COMMIT_ATTRIBUTION')) {
       // Dynamic import to enable dead code elimination (module contains excluded strings).
       // Defer to next tick so the git subprocess spawn runs after first render
@@ -313,7 +298,7 @@ export async function setup(
       setImmediate(() => {
         void import('./utils/attributionHooks.js').then(
           ({ registerAttributionHooks }) => {
-            registerAttributionHooks() // Register attribution tracking hooks (ant-only feature)
+            registerAttributionHooks()
           },
         )
       })
@@ -353,32 +338,6 @@ export async function setup(
       process.exit(1)
     }
 
-    if (
-      process.env.USER_TYPE === 'ant' &&
-      // Skip for Desktop's local agent mode — same trust model as CCR/BYOC
-      // (trusted Anthropic-managed launcher intentionally pre-approving everything).
-      // Precedent: permissionSetup.ts:861, applySettingsChange.ts:55 (PR #19116)
-      process.env.CLAUDE_CODE_ENTRYPOINT !== 'local-agent' &&
-      // Same for CCD (Claude Code in Desktop) — apps#29127 passes the flag
-      // unconditionally to unlock mid-session bypass switching
-      process.env.CLAUDE_CODE_ENTRYPOINT !== 'claude-desktop'
-    ) {
-      // Only await if permission mode is set to bypass
-      const [isDocker, hasInternet] = await Promise.all([
-        envDynamic.getIsDocker(),
-        env.hasInternetAccess(),
-      ])
-      const isBubblewrap = envDynamic.getIsBubblewrapSandbox()
-      const isSandbox = process.env.IS_SANDBOX === '1'
-      const isSandboxed = isDocker || isBubblewrap || isSandbox
-      if (!isSandboxed || hasInternet) {
-        // biome-ignore lint/suspicious/noConsole:: intentional console output
-        console.error(
-          `--dangerously-skip-permissions can only be used in Docker/sandbox containers with no internet access but got Docker: ${isDocker}, Bubblewrap: ${isBubblewrap}, IS_SANDBOX: ${isSandbox}, hasInternet: ${hasInternet}`,
-        )
-        process.exit(1)
-      }
-    }
   }
 
   if (process.env.NODE_ENV === 'test') {

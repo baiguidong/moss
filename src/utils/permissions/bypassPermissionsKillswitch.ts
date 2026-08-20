@@ -17,8 +17,8 @@ export async function checkAndDisableBypassPermissionsIfNeeded(
   toolPermissionContext: ToolPermissionContext,
   setAppState: (f: (prev: AppState) => AppState) => void,
 ): Promise<void> {
-  // Check if bypassPermissions should be disabled based on Statsig gate
-  // Do this only once, before the first query, to ensure we have the latest gate value
+  // Check if bypassPermissions should be disabled by feature gate.
+  // Do this only once, before the first query, to ensure we have the latest value.
   if (bypassPermissionsCheckRan) {
     return
   }

@@ -8,7 +8,7 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from 'src/constants/prompts.js'
 import { getSystemContext, getUserContext } from 'src/context.js'
 import { isAnalyticsDisabled } from 'src/services/analytics/config.js'
 import {
-  checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
+  checkFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
 } from 'src/services/analytics/featureFlags.js'
 import {
@@ -152,7 +152,7 @@ export async function toolToAPISchema(
   let base = cache.get(cacheKey)
   if (!base) {
     const strictToolsEnabled =
-      checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_tool_pear')
+      checkFeatureGate_CACHED_MAY_BE_STALE('tengu_tool_pear')
     // Use tool's JSON schema directly if provided, otherwise convert Zod schema
     let input_schema = (
       'inputJSONSchema' in tool && tool.inputJSONSchema

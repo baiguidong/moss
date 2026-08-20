@@ -319,7 +319,6 @@ const initSessionMemoryConfigIfNeeded = memoize((): void => {
  * Session memory post-sampling hook that extracts and updates session notes
  */
 // Track if we've logged the gate check failure this session (to avoid spam)
-let hasLoggedGateFailure = false
 let sessionMemoryHookRegistered = false
 
 const extractSessionMemory = async function (
@@ -336,11 +335,6 @@ const extractSessionMemory = async function (
 
   // Check gate lazily when hook runs (cached, non-blocking)
   if (!isSessionMemoryEnabled()) {
-    // Log gate failure once per session (ant-only)
-    if (process.env.USER_TYPE === 'ant' && !hasLoggedGateFailure) {
-      hasLoggedGateFailure = true
-      logEvent('tengu_session_memory_gate_disabled', {})
-    }
     return
   }
 
@@ -417,11 +411,6 @@ const extractSessionMemory = async function (
 export function initSessionMemory(): void {
   if (getIsRemoteMode()) return
   if (sessionMemoryHookRegistered) return
-
-  // Log initialization state (ant-only to avoid noise in external logs)
-  if (process.env.USER_TYPE === 'ant') {
-    logEvent('tengu_session_memory_init', {})
-  }
 
   // Register hook unconditionally - gate check happens lazily when hook runs
   registerPostSamplingHook(extractSessionMemory)

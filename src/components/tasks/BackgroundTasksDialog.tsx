@@ -94,9 +94,8 @@ type ListItem = {
   status: 'running';
 };
 
-// WORKFLOW_SCRIPTS is ant-only (build_flags.yaml). Static imports would leak
-// ~1.3K lines into external builds. Gate with feature() + require so the
-// bundler can dead-code-eliminate the branch.
+// WORKFLOW_SCRIPTS is feature-gated. Use feature() + require so the bundler can
+// dead-code-eliminate the branch.
 /* eslint-disable @typescript-eslint/no-require-imports */
 const WorkflowDetailDialog = feature('WORKFLOW_SCRIPTS') ? (require('./WorkflowDetailDialog.js') as typeof import('./WorkflowDetailDialog.js')).WorkflowDetailDialog : null;
 const workflowTaskModule = feature('WORKFLOW_SCRIPTS') ? require('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') as typeof import('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') : null;

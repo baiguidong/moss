@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { Box, Text, useTheme, useThemeSetting, useTerminalFocus } from '../../ink.js';
 import type { KeyboardEvent } from '../../ink/events/keyboard-event.js';
 import * as React from 'react';
@@ -326,7 +325,7 @@ export function Config({
       }
     }
   }] : []),
-  // Fast mode toggle (ant-only, eliminated from external builds)
+  // Fast mode toggle.
   ...(isFastModeEnabled() && isFastModeAvailable() ? [{
     id: 'fastMode',
     label: `Fast mode (${FAST_MODE_MODEL_DISPLAY} only)`,
@@ -372,29 +371,6 @@ export function Config({
       }));
       updateSettingsForSource('userSettings', {
         promptSuggestionEnabled: enabled_1 ? undefined : false
-      });
-    }
-  }] : []),
-  // Speculation toggle (ant-only)
-  ...("external" === 'ant' ? [{
-    id: 'speculationEnabled',
-    label: 'Speculative execution',
-    value: globalConfig.speculationEnabled ?? true,
-    type: 'boolean' as const,
-    onChange(enabled_2: boolean) {
-      saveGlobalConfig(current_1 => {
-        if (current_1.speculationEnabled === enabled_2) return current_1;
-        return {
-          ...current_1,
-          speculationEnabled: enabled_2
-        };
-      });
-      setGlobalConfig({
-        ...getGlobalConfig(),
-        speculationEnabled: enabled_2
-      });
-      logEvent('tengu_speculation_setting_changed', {
-        enabled: enabled_2
       });
     }
   }] : []), ...(isFileCheckpointingAvailable ? [{

@@ -4,9 +4,8 @@
  * Loads keybindings from ~/.moss/keybindings.json and watches
  * for changes to reload them automatically.
  *
- * NOTE: User keybinding customization is currently only available for
- * Anthropic employees (USER_TYPE === 'ant'). External users always
- * use the default bindings.
+ * NOTE: User keybinding customization is controlled by a release feature flag.
+ * When disabled, users always use the default bindings.
  */
 
 import chokidar, { type FSWatcher } from 'chokidar'
@@ -127,8 +126,7 @@ function getDefaultParsedBindings(): ParsedBinding[] {
  * Load and parse keybindings from user config file.
  * Returns merged default + user bindings along with validation warnings.
  *
- * For external users, always returns default bindings only.
- * User customization is currently gated to Anthropic employees.
+ * When the release flag is disabled, always returns default bindings only.
  */
 export async function loadKeybindings(): Promise<KeybindingsLoadResult> {
   const defaultBindings = getDefaultParsedBindings()

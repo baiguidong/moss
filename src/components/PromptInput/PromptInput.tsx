@@ -40,7 +40,7 @@ import { enterTeammateView, exitTeammateView, stopOrDismissAgent } from '../../s
 import type { ToolPermissionContext } from '../../Tool.js';
 import { getRunningTeammatesSorted } from '../../tasks/InProcessTeammateTask/InProcessTeammateTask.js';
 import type { InProcessTeammateTaskState } from '../../tasks/InProcessTeammateTask/types.js';
-import { isPanelAgentTask, type LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
+import type { LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { isBackgroundTask } from '../../tasks/types.js';
 import { AGENT_COLOR_TO_THEME_COLOR, AGENT_COLORS, type AgentColorName } from '../../tools/AgentTool/agentColorManager.js';
 import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js';
@@ -350,7 +350,7 @@ function PromptInput({
   // exist. When only local_agent tasks are running (coordinator/fork mode), the
   // pill is absent, so the -1 sentinel would leave nothing visually selected.
   // In that case, skip -1 and treat 0 as the minimum selectable index.
-  const hasBgTaskPill = useMemo(() => Object.values(tasks).some(t => isBackgroundTask(t) && !("external" === 'ant' && isPanelAgentTask(t))), [tasks]);
+  const hasBgTaskPill = useMemo(() => Object.values(tasks).some(t => isBackgroundTask(t)), [tasks]);
   const minCoordinatorIndex = hasBgTaskPill ? -1 : 0;
   // Clamp index when tasks complete and the list shrinks beneath the cursor
   useEffect(() => {
@@ -410,7 +410,7 @@ function PromptInput({
   // Panel shows retained-completed agents too (getVisibleAgentTasks), so the
   // pill must stay navigable whenever the panel has rows — not just when
   // something is running.
-  const tasksFooterVisible = (runningTaskCount > 0 || "external" === 'ant' && coordinatorTaskCount > 0) && !shouldHideTasksFooter(tasks, showSpinnerTree);
+  const tasksFooterVisible = runningTaskCount > 0 && !shouldHideTasksFooter(tasks, showSpinnerTree);
   const teamsFooterVisible = cachedTeams.length > 0;
   const footerItems = useMemo(() => [tasksFooterVisible && 'tasks', bagelFooterVisible && 'bagel', teamsFooterVisible && 'teams', companionFooterVisible && 'companion'].filter(Boolean) as FooterItem[], [tasksFooterVisible, bagelFooterVisible, teamsFooterVisible, companionFooterVisible]);
 
@@ -1495,21 +1495,9 @@ function PromptInput({
   // selected — its useInput is inactive, so this is the only path.
   useKeybindings({
     'footer:up': () => {
-      // ↑ scrolls within the coordinator task list before leaving the pill
-      if (tasksSelected && "external" === 'ant' && coordinatorTaskCount > 0 && coordinatorTaskIndex > minCoordinatorIndex) {
-        setCoordinatorTaskIndex(prev => prev - 1);
-        return;
-      }
       navigateFooter(-1, true);
     },
     'footer:down': () => {
-      // ↓ scrolls within the coordinator task list, never leaves the pill
-      if (tasksSelected && "external" === 'ant' && coordinatorTaskCount > 0) {
-        if (coordinatorTaskIndex < coordinatorTaskCount - 1) {
-          setCoordinatorTaskIndex(prev => prev + 1);
-        }
-        return;
-      }
       if (tasksSelected && !isTeammateMode) {
         setShowBashesDialog(true);
         selectFooterItem(null);
@@ -1851,7 +1839,7 @@ function PromptInput({
     }} onCancel={() => setShowHistoryPicker(false)} />;
   }
 
-  // Show loop mode menu when requested (ant-only, eliminated from external builds)
+  // Show the model picker menu when requested.
   if (modelPickerElement) {
     return modelPickerElement;
   }

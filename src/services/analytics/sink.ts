@@ -35,14 +35,6 @@ function logEventAsyncImpl(
 }
 
 /**
- * No-op compatibility hook retained for callers that used to initialize
- * analytics gates during startup.
- */
-export function initializeAnalyticsGates(): void {
-  return
-}
-
-/**
  * Initialize the analytics sink.
  *
  * Call this during app startup to attach the analytics backend.

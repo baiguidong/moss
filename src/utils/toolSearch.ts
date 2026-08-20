@@ -406,8 +406,7 @@ export async function isToolSearchEnabled(
       checkedModel:
         model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       mcpToolCount,
-      userType: (process.env.USER_TYPE ??
-        'external') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      userType: ('external') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       ...extraProps,
     })
   }
@@ -625,7 +624,7 @@ export type DeferredToolsDeltaScanContext = {
  */
 export function isDeferredToolsDeltaEnabled(): boolean {
   return (
-    process.env.USER_TYPE === 'ant' ||
+    false ||
     getFeatureValue_CACHED_MAY_BE_STALE('tengu_glacier_2xr', false)
   )
 }

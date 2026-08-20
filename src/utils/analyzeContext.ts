@@ -27,7 +27,6 @@ import {
   type ToolPermissionContext,
   type Tools,
   type ToolUseContext,
-  toolMatchesName,
 } from '../Tool.js'
 import type {
   AgentDefinition,
@@ -138,22 +137,6 @@ interface McpTool {
   isLoaded?: boolean
 }
 
-export interface DeferredBuiltinTool {
-  name: string
-  tokens: number
-  isLoaded: boolean
-}
-
-export interface SystemToolDetail {
-  name: string
-  tokens: number
-}
-
-export interface SystemPromptSectionDetail {
-  name: string
-  tokens: number
-}
-
 interface Agent {
   agentType: string
   source: SettingSource | 'built-in'
@@ -197,12 +180,6 @@ export interface ContextData {
   readonly model: string
   readonly memoryFiles: MemoryFile[]
   readonly mcpTools: McpTool[]
-  /** Ant-only: per-tool breakdown of deferred built-in tools */
-  readonly deferredBuiltinTools?: DeferredBuiltinTool[]
-  /** Ant-only: per-tool breakdown of always-loaded built-in tools */
-  readonly systemTools?: SystemToolDetail[]
-  /** Ant-only: per-section breakdown of system prompt */
-  readonly systemPromptSections?: SystemPromptSectionDetail[]
   readonly agents: Agent[]
   readonly slashCommands?: SlashCommandInfo
   /** Skill statistics */
@@ -257,64 +234,38 @@ export async function countToolDefinitionTokens(
   return result ?? 0
 }
 
-/** Extract a human-readable name from a system prompt section's content */
-function extractSectionName(content: string): string {
-  // Try to find first markdown heading
-  const headingMatch = content.match(/^#+\s+(.+)$/m)
-  if (headingMatch) {
-    return headingMatch[1]!.trim()
-  }
-  // Fall back to a truncated preview of the first non-empty line
-  const firstLine = content.split('\n').find(l => l.trim().length > 0) ?? ''
-  return firstLine.length > 40 ? firstLine.slice(0, 40) + '…' : firstLine
-}
-
 async function countSystemTokens(
   effectiveSystemPrompt: readonly string[],
-): Promise<{
-  systemPromptTokens: number
-  systemPromptSections: SystemPromptSectionDetail[]
-}> {
+): Promise<number> {
   // Get system context (gitStatus, etc.) which is always included
   const systemContext = await getSystemContext()
 
-  // Build named entries: system prompt parts + system context values
+  // Build entries: system prompt parts + system context values
   // Skip empty strings and the global-cache boundary marker
-  const namedEntries: Array<{ name: string; content: string }> = [
+  const entries = [
     ...effectiveSystemPrompt
       .filter(
         content =>
           content.length > 0 && content !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
       )
-      .map(content => ({ name: extractSectionName(content), content })),
+      .map(content => content),
     ...Object.entries(systemContext)
       .filter(([, content]) => content.length > 0)
-      .map(([name, content]) => ({ name, content })),
+      .map(([, content]) => content),
   ]
 
-  if (namedEntries.length < 1) {
-    return { systemPromptTokens: 0, systemPromptSections: [] }
+  if (entries.length < 1) {
+    return 0
   }
 
   const systemTokenCounts = await Promise.all(
-    namedEntries.map(({ content }) =>
-      countTokensWithFallback([{ role: 'user', content }], []),
-    ),
+    entries.map(content => countTokensWithFallback([{ role: 'user', content }], [])),
   )
 
-  const systemPromptSections: SystemPromptSectionDetail[] = namedEntries.map(
-    (entry, i) => ({
-      name: entry.name,
-      tokens: systemTokenCounts[i] || 0,
-    }),
-  )
-
-  const systemPromptTokens = systemTokenCounts.reduce(
+  return systemTokenCounts.reduce(
     (sum: number, tokens) => sum + (tokens || 0),
     0,
   )
-
-  return { systemPromptTokens, systemPromptSections }
 }
 
 async function countMemoryFileTokens(): Promise<{
@@ -368,17 +319,13 @@ async function countBuiltInToolTokens(
   messages?: Message[],
 ): Promise<{
   builtInToolTokens: number
-  deferredBuiltinDetails: DeferredBuiltinTool[]
   deferredBuiltinTokens: number
-  systemToolDetails: SystemToolDetail[]
 }> {
   const builtInTools = tools.filter(tool => !tool.isMcp)
   if (builtInTools.length < 1) {
     return {
       builtInToolTokens: 0,
-      deferredBuiltinDetails: [],
       deferredBuiltinTokens: 0,
-      systemToolDetails: [],
     }
   }
 
@@ -408,34 +355,6 @@ async function countBuiltInToolTokens(
         )
       : 0
 
-  // Build per-tool breakdown for always-loaded tools (ant-only, proportional
-  // split of the bulk count based on rough schema size estimation). Excludes
-  // SkillTool since its tokens are shown in the separate Skills category.
-  let systemToolDetails: SystemToolDetail[] = []
-  if (process.env.USER_TYPE === 'ant') {
-    const toolsForBreakdown = alwaysLoadedTools.filter(
-      t => !toolMatchesName(t, SKILL_TOOL_NAME),
-    )
-    if (toolsForBreakdown.length > 0) {
-      const estimates = toolsForBreakdown.map(t =>
-        roughTokenCountEstimation(jsonStringify(t.inputSchema ?? {})),
-      )
-      const estimateTotal = estimates.reduce((s, e) => s + e, 0) || 1
-      const distributable = Math.max(
-        0,
-        alwaysLoadedTokens - TOOL_TOKEN_COUNT_OVERHEAD,
-      )
-      systemToolDetails = toolsForBreakdown
-        .map((t, i) => ({
-          name: t.name,
-          tokens: Math.round((estimates[i]! / estimateTotal) * distributable),
-        }))
-        .sort((a, b) => b.tokens - a.tokens)
-    }
-  }
-
-  // Count deferred builtin tools individually for details
-  const deferredBuiltinDetails: DeferredBuiltinTool[] = []
   let loadedDeferredTokens = 0
   let totalDeferredTokens = 0
 
@@ -479,11 +398,6 @@ async function countBuiltInToolTokens(
         (tokensByTool[i] || 0) - TOOL_TOKEN_COUNT_OVERHEAD,
       )
       const isLoaded = loadedToolNames.has(tool.name)
-      deferredBuiltinDetails.push({
-        name: tool.name,
-        tokens,
-        isLoaded,
-      })
       totalDeferredTokens += tokens
       if (isLoaded) {
         loadedDeferredTokens += tokens
@@ -499,18 +413,14 @@ async function countBuiltInToolTokens(
     )
     return {
       builtInToolTokens: alwaysLoadedTokens + deferredTokens,
-      deferredBuiltinDetails: [],
       deferredBuiltinTokens: 0,
-      systemToolDetails,
     }
   }
 
   return {
     // When deferred, only count always-loaded tools + any loaded deferred tools
     builtInToolTokens: alwaysLoadedTokens + loadedDeferredTokens,
-    deferredBuiltinDetails,
     deferredBuiltinTokens: totalDeferredTokens - loadedDeferredTokens,
-    systemToolDetails,
   }
 }
 
@@ -946,14 +856,9 @@ export async function analyzeContextUsage(
 
   // Critical operations that should not fail due to skills
   const [
-    { systemPromptTokens, systemPromptSections },
+    systemPromptTokens,
     { claudeMdTokens, memoryFileDetails },
-    {
-      builtInToolTokens,
-      deferredBuiltinDetails,
-      deferredBuiltinTokens,
-      systemToolDetails,
-    },
+    { builtInToolTokens, deferredBuiltinTokens },
     { mcpToolTokens, mcpToolDetails, deferredToolTokens },
     { agentTokens, agentDetails },
     { slashCommandTokens, commandInfo },
@@ -1015,14 +920,10 @@ export async function analyzeContextUsage(
   }
 
   // Built-in tools right after system prompt (skills shown separately below)
-  // Ant users get a per-tool breakdown via systemToolDetails
   const systemToolsTokens = builtInToolTokens - skillFrontmatterTokens
   if (systemToolsTokens > 0) {
     cats.push({
-      name:
-        process.env.USER_TYPE === 'ant'
-          ? '[ANT-ONLY] System tools'
-          : 'System tools',
+      name: 'System tools',
       tokens: systemToolsTokens,
       color: 'inactive',
     })
@@ -1348,12 +1249,6 @@ export async function analyzeContextUsage(
     model: runtimeModel,
     memoryFiles: memoryFileDetails,
     mcpTools: mcpToolDetails,
-    deferredBuiltinTools:
-      process.env.USER_TYPE === 'ant' ? deferredBuiltinDetails : undefined,
-    systemTools:
-      process.env.USER_TYPE === 'ant' ? systemToolDetails : undefined,
-    systemPromptSections:
-      process.env.USER_TYPE === 'ant' ? systemPromptSections : undefined,
     agents: agentDetails,
     slashCommands:
       slashCommandTokens > 0

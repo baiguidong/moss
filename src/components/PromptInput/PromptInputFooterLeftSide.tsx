@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { feature } from 'bun:bundle';
 // Dead code elimination: conditional import for COORDINATOR_MODE
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -16,8 +15,6 @@ import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
 import { isDefaultMode, permissionModeSymbol, permissionModeTitle, getModeColor } from '../../utils/permissions/PermissionMode.js';
 import { BackgroundTaskStatus } from '../tasks/BackgroundTaskStatus.js';
 import { isBackgroundTask } from '../../tasks/types.js';
-import { isPanelAgentTask } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
-import { getVisibleAgentTasks } from '../CoordinatorAgentStatus.js';
 import { count } from '../../utils/array.js';
 import { shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js';
@@ -268,7 +265,7 @@ function ModeIndicator({
   const selGetState = useSelection().getState;
   const hasNextTick = nextTickAt !== null;
   const isCoordinator = feature('COORDINATOR_MODE') ? coordinatorModule?.isCoordinatorMode() === true : false;
-  const runningTaskCount = useMemo(() => count(Object.values(tasks), t => isBackgroundTask(t) && !("external" === 'ant' && isPanelAgentTask(t))), [tasks]);
+  const runningTaskCount = useMemo(() => count(Object.values(tasks), t => isBackgroundTask(t)), [tasks]);
   const tasksV2 = useTasksV2();
   const hasTaskItems = tasksV2 !== undefined && tasksV2.length > 0;
   const escShortcut = useShortcutDisplay('chat:cancel', 'Chat', 'esc').toLowerCase();
@@ -390,9 +387,6 @@ function ModeIndicator({
       </Box>;
   }
 
-  // Add "↓ to manage tasks" hint when panel has visible rows
-  const hasCoordinatorTasks = "external" === 'ant' && getVisibleAgentTasks(tasks).length > 0;
-
   // Tasks pill renders as a Box sibling (not a parts entry) so its
   // click-target Box isn't nested inside <Text wrap="truncate"> — the
   // reconciler throws on Box-in-Text. Computed here so the empty-checks
@@ -439,7 +433,7 @@ function ModeIndicator({
         hold {voiceKeyShortcut} to speak
       </Text>);
   }
-  if ((tasksPart || hasCoordinatorTasks) && showHint && !hasTeams) {
+  if (tasksPart && showHint && !hasTeams) {
     parts.push(<Text dimColor key="manage-tasks">
         {tasksSelected ? <KeyboardShortcutHint shortcut="Enter" action="view tasks" /> : <KeyboardShortcutHint shortcut="↓" action="manage" />}
       </Text>);

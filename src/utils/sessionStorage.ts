@@ -463,7 +463,7 @@ export function getNodeEnv(): string {
 
 // exported for testing
 export function getUserType(): string {
-  return process.env.USER_TYPE || 'external'
+  return 'external'
 }
 
 function getEntrypoint(): string | undefined {
@@ -2129,7 +2129,7 @@ function applyPreservedSegmentRelinks(
 function applySnipRemovals(messages: Map<UUID, TranscriptMessage>): void {
   // Structural check — snipMetadata only exists on the boundary subtype.
   // Avoids the subtype literal which is in excluded-strings.txt
-  // (HISTORY_SNIP is ant-only; the literal must not leak into external builds).
+  // Keep the subtype literal out of this shared path.
   type WithSnipMeta = { snipMetadata?: { removedUuids?: UUID[] } }
   const toDelete = new Set<UUID>()
   for (const entry of messages.values()) {

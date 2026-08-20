@@ -76,7 +76,7 @@ export const getCoreUserData = memoize(
       email: getEmail(),
       appVersion: MACRO.VERSION,
       platform: getHostPlatformForAnalytics(),
-      userType: process.env.USER_TYPE,
+      userType: 'external',
       ...(isEnvTruthy(process.env.GITHUB_ACTIONS) && {
         githubActionsMetadata: {
           actor: process.env.GITHUB_ACTOR,
@@ -97,30 +97,12 @@ function getEmail(): string | undefined {
     return cachedEmail
   }
 
-  // Ant-only fallbacks below (no execSync)
-  if (process.env.USER_TYPE !== 'ant') {
-    return undefined
-  }
-
-  if (process.env.COO_CREATOR) {
-    return formatCooCreatorEmail(process.env.COO_CREATOR)
-  }
-
   // If initUser() wasn't called, we return undefined instead of blocking
   return undefined
 }
 
 async function getEmailAsync(): Promise<string | undefined> {
-  // Ant-only fallbacks below
-  if (process.env.USER_TYPE !== 'ant') {
-    return undefined
-  }
-
-  if (process.env.COO_CREATOR) {
-    return formatCooCreatorEmail(process.env.COO_CREATOR)
-  }
-
-  return getGitEmail()
+  return undefined
 }
 
 /**
@@ -137,8 +119,3 @@ export const getGitEmail = memoize(async (): Promise<string | undefined> => {
     ? result.stdout.trim()
     : undefined
 })
-
-function formatCooCreatorEmail(username: string): string {
-  const domain = process.env.MOSS_USER_EMAIL_DOMAIN?.trim()
-  return domain ? `${username}@${domain}` : username
-}

@@ -37,7 +37,7 @@ import { getMemoryPath } from '../../utils/config.js'
 import { COMPACT_MAX_OUTPUT_TOKENS } from '../../utils/context.js'
 import {
   analyzeContext,
-  tokenStatsToStatsigMetrics,
+  tokenStatsToAnalyticsMetrics,
 } from '../../utils/contextAnalysis.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
@@ -681,7 +681,7 @@ export async function compactConversation(
       // as reactiveCompact.ts.
       ...(() => {
         try {
-          return tokenStatsToStatsigMetrics(analyzeContext(messages))
+          return tokenStatsToAnalyticsMetrics(analyzeContext(messages))
         } catch (error) {
           logError(error as Error)
           return {}

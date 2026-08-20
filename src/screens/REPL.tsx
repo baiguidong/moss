@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { feature } from 'bun:bundle';
 import { spawnSync } from 'child_process';
 import { snapshotOutputTokensForTurn, getCurrentTurnTokenBudget, getTurnOutputTokens, getBudgetContinuationCount, getTotalInputTokens } from '../bootstrap/state.js';
@@ -29,12 +28,12 @@ import { startPreventSleep, stopPreventSleep } from '../services/preventSleep.js
 import { useTerminalNotification } from '../ink/useTerminalNotification.js';
 import { hasCursorUpViewportYankBug } from '../ink/terminal.js';
 import { createFileStateCacheWithSizeLimit, mergeFileStateCaches, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache.js';
-import { updateLastInteractionTime, getLastInteractionTime, getOriginalCwd, getProjectRoot, getSessionId, switchSession, setCostStateForRestore, getTurnHookDurationMs, getTurnHookCount, resetTurnHookDuration, getTurnToolDurationMs, getTurnToolCount, resetTurnToolDuration } from '../bootstrap/state.js';
+import { updateLastInteractionTime, getLastInteractionTime, getOriginalCwd, getProjectRoot, getSessionId, switchSession, setCostStateForRestore, resetTurnHookDuration, resetTurnToolDuration } from '../bootstrap/state.js';
 import { asSessionId, asAgentId } from '../types/ids.js';
 import { logForDebugging } from '../utils/debug.js';
 import { QueryGuard } from '../utils/QueryGuard.js';
 import { isEnvTruthy } from '../utils/envUtils.js';
-import { formatTokens, truncateToWidth } from '../utils/format.js';
+import { formatTokens } from '../utils/format.js';
 import { consumeEarlyInput } from '../utils/earlyInput.js';
 import { setMemberActive } from '../utils/swarm/teamHelpers.js';
 import { isSwarmWorker, generateSandboxRequestId, sendSandboxPermissionRequestViaMailbox, sendSandboxPermissionResponseViaMailbox } from '../utils/swarm/permissionSync.js';
@@ -95,9 +94,6 @@ const useVoiceIntegration: typeof import('../hooks/useVoiceIntegration.js').useV
   resetAnchor: () => {}
 });
 const VoiceKeybindingHandler: typeof import('../hooks/useVoiceIntegration.js').VoiceKeybindingHandler = feature('VOICE_MODE') ? require('../hooks/useVoiceIntegration.js').VoiceKeybindingHandler : () => null;
-// Ant-only org warning. Conditional require so the org UUID list is
-// eliminated from external builds (one UUID is on excluded-strings).
-const useAntOrgWarningNotification: typeof import('../hooks/notifs/useAntOrgWarningNotification.js').useAntOrgWarningNotification = "external" === 'ant' ? require('../hooks/notifs/useAntOrgWarningNotification.js').useAntOrgWarningNotification : () => {};
 // Dead code elimination: conditional import for coordinator mode
 const getCoordinatorUserContext: (mcpClients: ReadonlyArray<{
   name: string;
@@ -112,11 +108,11 @@ import { buildPermissionUpdates } from '../components/permissions/ExitPlanModePe
 import { getScratchpadDir, isScratchpadEnabled } from '../utils/permissions/filesystem.js';
 import { WEB_FETCH_TOOL_NAME } from '../tools/WebFetchTool/prompt.js';
 import { SLEEP_TOOL_NAME } from '../tools/SleepTool/prompt.js';
-import { getGlobalConfig, saveGlobalConfig, getGlobalConfigWriteCount } from '../utils/config.js';
+import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js';
 import { hasConsoleBillingAccess } from '../utils/billing.js';
 import { logEvent, type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 'src/services/analytics/index.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
-import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, formatCommandInputTags } from '../utils/messages.js';
+import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createSystemMessage, createCommandInputMessage, formatCommandInputTags } from '../utils/messages.js';
 import { generateSessionTitle } from '../utils/sessionTitle.js';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml.js';
 import { escapeXml } from '../utils/xml.js';
@@ -182,7 +178,6 @@ const useProactive = feature('PROACTIVE') ? require('../proactive/useProactive.j
 const useScheduledTasks = feature('AGENT_TRIGGERS') ? require('../hooks/useScheduledTasks.js').useScheduledTasks : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { isAgentSwarmsEnabled } from '../utils/agentSwarmsEnabled.js';
-import { useTaskListWatcher } from '../hooks/useTaskListWatcher.js';
 import type { SandboxAskCallback, NetworkHostPattern } from '../utils/sandbox/sandbox-adapter.js';
 import { type IDEExtensionInstallationStatus, closeOpenDiffs, getConnectedIdeClient, type IdeType } from '../utils/ide.js';
 import { useIDEIntegration } from '../hooks/useIDEIntegration.js';
@@ -199,11 +194,6 @@ import { handleSpeculationAccept, type ActiveSpeculationState } from '../service
 import { IdeOnboardingDialog } from '../components/IdeOnboardingDialog.js';
 import { EffortCallout, shouldShowEffortCallout } from '../components/EffortCallout.js';
 import type { EffortValue } from '../utils/effort.js';
-/* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
-const AntModelSwitchCallout = "external" === 'ant' ? require('../components/AntModelSwitchCallout.js').AntModelSwitchCallout : null;
-const shouldShowAntModelSwitch = "external" === 'ant' ? require('../components/AntModelSwitchCallout.js').shouldShowModelSwitchCallout : (): boolean => false;
-const UndercoverAutoCallout = "external" === 'ant' ? require('../components/UndercoverAutoCallout.js').UndercoverAutoCallout : null;
-/* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import { activityManager } from '../utils/activityManager.js';
 import { createAbortController } from '../utils/abortController.js';
 import { MCPConnectionManager } from 'src/services/mcp/MCPConnectionManager.js';
@@ -230,7 +220,6 @@ import type { HookProgress } from '../types/hooks.js';
 const WebBrowserPanelModule = feature('WEB_BROWSER_TOOL') ? require('../tools/WebBrowserTool/WebBrowserPanel.js') as typeof import('../tools/WebBrowserTool/WebBrowserPanel.js') : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite.js';
-import { DevBar } from '../components/DevBar.js';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager.js';
 import { REMOTE_SAFE_COMMANDS } from '../commands.js';
@@ -258,12 +247,6 @@ const RECENT_SCROLL_REPIN_WINDOW_MS = 3000;
 // Use LRU cache to prevent unbounded memory growth
 // 100 files should be sufficient for most coding sessions while preventing
 // memory issues when working across many files in large projects
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1]! + sorted[mid]!) / 2) : sorted[mid]!;
-}
 
 /**
  * Small component to display transcript mode footer with dynamic keybinding.
@@ -508,8 +491,6 @@ export type Props = {
   mainThreadAgentDefinition?: AgentDefinition;
   // When true, disables all slash commands
   disableSlashCommands?: boolean;
-  // Task list id: when set, enables tasks mode that watches a task list and auto-processes tasks.
-  taskListId?: string;
   // Remote session config for --remote mode (uses CCR as execution engine)
   remoteSessionConfig?: RemoteSessionConfig;
   // Direct connect config for `claude connect` mode (connects to a claude server)
@@ -539,7 +520,6 @@ export function REPL({
   disabled = false,
   mainThreadAgentDefinition: initialMainThreadAgentDefinition,
   disableSlashCommands = false,
-  taskListId,
   remoteSessionConfig,
   directConnectConfig,
   thinkingConfig
@@ -549,7 +529,7 @@ export function REPL({
   // Env-var gates hoisted to mount-time — isEnvTruthy does toLowerCase+trim+
   // includes, and these were on the render path (hot during PageUp spam).
   const titleDisabled = useMemo(() => isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE), []);
-  const moreRightEnabled = useMemo(() => "external" === 'ant' && isEnvTruthy(process.env.CLAUDE_MORERIGHT), []);
+  const moreRightEnabled = false;
   const disableVirtualScroll = useMemo(() => isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_VIRTUAL_SCROLL), []);
   const disableMessageActions = feature('MESSAGE_ACTIONS') ?
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
@@ -668,13 +648,6 @@ export function REPL({
   const [ideToInstallExtension, setIDEToInstallExtension] = useState<IdeType | null>(null);
   const [ideInstallationStatus, setIDEInstallationStatus] = useState<IDEExtensionInstallationStatus | null>(null);
   const [showIdeOnboarding, setShowIdeOnboarding] = useState(false);
-  // Dead code elimination: model switch callout state (ant-only)
-  const [showModelSwitchCallout, setShowModelSwitchCallout] = useState(() => {
-    if ("external" === 'ant') {
-      return shouldShowAntModelSwitch();
-    }
-    return false;
-  });
   const [showEffortCallout, setShowEffortCallout] = useState(() => shouldShowEffortCallout(mainLoopModel));
   // notifications
   useModelMigrationNotifications();
@@ -689,7 +662,6 @@ export function REPL({
   useSettingsErrors();
   useRateLimitWarningNotification(mainLoopModel);
   useDeprecationWarningNotification(mainLoopModel);
-  useAntOrgWarningNotification();
   useTeammateLifecycleNotification();
 
   // Memoize the combined initial tools array to prevent reference changes
@@ -887,25 +859,6 @@ export function REPL({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [showUndercoverCallout, setShowUndercoverCallout] = useState(false);
-  useEffect(() => {
-    if ("external" === 'ant') {
-      void (async () => {
-        // Wait for repo classification to settle (memoized, no-op if primed).
-        const {
-          isInternalModelRepo
-        } = await import('../utils/commitAttribution.js');
-        await isInternalModelRepo();
-        const {
-          shouldShowUndercoverAutoNotice
-        } = await import('../utils/undercover.js');
-        if (shouldShowUndercoverAutoNotice()) {
-          setShowUndercoverCallout(true);
-        }
-      })();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [toolJSX, setToolJSXInternal] = useState<{
     jsx: React.ReactNode | null;
     shouldHidePromptInput: boolean;
@@ -1038,7 +991,7 @@ export function REPL({
     }
   }, [sessionStatus, waitingFor]);
 
-  // 3P default: off — OSC 21337 is ant-only while the spec stabilizes.
+  // 3P default: off while the spec stabilizes.
   // Gated so we can roll back if the sidebar indicator conflicts with
   // the title spinner in terminals that render both. When the flag is
   // on, the user-facing config setting controls whether it's active.
@@ -1270,7 +1223,7 @@ export function REPL({
   // Ref instead of state to avoid triggering React re-renders on every
   // streaming text_delta. The spinner reads this via its animation timer.
   const responseLengthRef = useRef(0);
-  // API performance metrics ref for ant-only spinner display (TTFT/OTPS).
+  // API performance metrics ref for spinner display (TTFT/OTPS).
   // Accumulates metrics from all API requests in a turn for P50 aggregation.
   const apiMetricsRef = useRef<Array<{
     ttftMs: number;
@@ -1770,7 +1723,7 @@ export function REPL({
   // Permission and interactive dialogs can show even when toolJSX is set,
   // as long as shouldContinueAnimation is true. This prevents deadlocks when
   // agents set background hints while waiting for user interaction.
-  function getFocusedInputDialog(): 'message-selector' | 'sandbox-permission' | 'tool-permission' | 'prompt' | 'worker-sandbox-permission' | 'elicitation' | 'cost' | 'idle-return' | 'init-onboarding' | 'ide-onboarding' | 'model-switch' | 'undercover-callout' | 'effort-callout' | 'remote-callout' | 'desktop-upsell' | undefined {
+  function getFocusedInputDialog(): 'message-selector' | 'sandbox-permission' | 'tool-permission' | 'prompt' | 'worker-sandbox-permission' | 'elicitation' | 'cost' | 'idle-return' | 'init-onboarding' | 'ide-onboarding' | 'effort-callout' | 'remote-callout' | 'desktop-upsell' | undefined {
     // Exit states always take precedence
     if (isExiting || exitFlow) return undefined;
 
@@ -1792,12 +1745,6 @@ export function REPL({
     if (allowDialogsWithAnimation && idleReturnPending) return 'idle-return';
     // Onboarding dialogs (special conditions)
     if (allowDialogsWithAnimation && showIdeOnboarding) return 'ide-onboarding';
-
-    // Model switch callout (ant-only, eliminated from external builds)
-    if ("external" === 'ant' && allowDialogsWithAnimation && showModelSwitchCallout) return 'model-switch';
-
-    // Undercover auto-enable explainer (ant-only, eliminated from external builds)
-    if ("external" === 'ant' && allowDialogsWithAnimation && showUndercoverCallout) return 'undercover-callout';
 
     // Effort callout (shown once for Opus 4.6 users when effort is enabled)
     if (allowDialogsWithAnimation && showEffortCallout) return 'effort-callout';
@@ -2181,17 +2128,7 @@ export function REPL({
       dynamicSkillDirTriggers: new Set<string>(),
       discoveredSkillNames: discoveredSkillNamesRef.current,
       setResponseLength,
-      pushApiMetricsEntry: "external" === 'ant' ? (ttftMs: number) => {
-        const now = Date.now();
-        const baseline = responseLengthRef.current;
-        apiMetricsRef.current.push({
-          ttftMs,
-          firstTokenTime: now,
-          lastTokenTime: now,
-          responseLengthBaseline: baseline,
-          endResponseLength: baseline
-        });
-      } : undefined,
+      pushApiMetricsEntry: undefined,
       setStreamMode,
       onCompactProgress: event => {
         switch (event.type) {
@@ -2505,37 +2442,6 @@ export function REPL({
     }
     queryCheckpoint('query_end');
 
-    // Capture ant-only API metrics before resetLoadingState clears the ref.
-    // For multi-request turns (tool use loops), compute P50 across all requests.
-    if ("external" === 'ant' && apiMetricsRef.current.length > 0) {
-      const entries = apiMetricsRef.current;
-      const ttfts = entries.map(e => e.ttftMs);
-      // Compute per-request OTPS using only active streaming time and
-      // streaming-only content. endResponseLength tracks content added by
-      // streaming deltas only, excluding subagent/compaction inflation.
-      const otpsValues = entries.map(e => {
-        const delta = Math.round((e.endResponseLength - e.responseLengthBaseline) / 4);
-        const samplingMs = e.lastTokenTime - e.firstTokenTime;
-        return samplingMs > 0 ? Math.round(delta / (samplingMs / 1000)) : 0;
-      });
-      const isMultiRequest = entries.length > 1;
-      const hookMs = getTurnHookDurationMs();
-      const hookCount = getTurnHookCount();
-      const toolMs = getTurnToolDurationMs();
-      const toolCount = getTurnToolCount();
-      const turnMs = Date.now() - loadingStartTimeRef.current;
-      setMessages(prev => [...prev, createApiMetricsMessage({
-        ttftMs: isMultiRequest ? median(ttfts) : ttfts[0]!,
-        otps: isMultiRequest ? median(otpsValues) : otpsValues[0]!,
-        isP50: isMultiRequest,
-        hookDurationMs: hookMs > 0 ? hookMs : undefined,
-        hookCount: hookCount > 0 ? hookCount : undefined,
-        turnDurationMs: turnMs > 0 ? turnMs : undefined,
-        toolDurationMs: toolMs > 0 ? toolMs : undefined,
-        toolCount: toolCount > 0 ? toolCount : undefined,
-        configWriteCount: getGlobalConfigWriteCount()
-      })]);
-    }
     resetLoadingState();
 
     // Log query profiling report if enabled
@@ -2621,7 +2527,7 @@ export function REPL({
         resetLoadingState();
         await mrOnTurnComplete(messagesRef.current, abortController.signal.aborted);
 
-        // Capture budget info before clearing (ant-only)
+        // Capture budget info before clearing
         let budgetInfo: {
           tokens: number;
           limit: number;
@@ -2732,22 +2638,14 @@ export function REPL({
         }
       }
 
-      // Atomically: clear initial message, set permission mode and rules, and store plan for verification
-      const shouldStorePlanForVerification = initialMsg.message.planContent && "external" === 'ant' && isEnvTruthy(undefined);
+      // Atomically: clear initial message and set permission mode/rules.
       setAppState(prev => {
         // Build and apply the requested permission mode update.
         const updatedToolPermissionContext = initialMsg.mode ? applyPermissionUpdates(prev.toolPermissionContext, buildPermissionUpdates(initialMsg.mode)) : prev.toolPermissionContext;
         return {
           ...prev,
           initialMessage: null,
-          toolPermissionContext: updatedToolPermissionContext,
-          ...(shouldStorePlanForVerification && {
-            pendingPlanVerification: {
-              plan: initialMsg.message.planContent!,
-              verificationStarted: false,
-              verificationCompleted: false
-            }
-          })
+          toolPermissionContext: updatedToolPermissionContext
         };
       });
 
@@ -3683,38 +3581,6 @@ export function REPL({
   // - Workers receive permission responses via mailbox messages
   // - Leaders receive permission requests via mailbox messages
 
-  if ("external" === 'ant') {
-    // Tasks mode: watch for tasks and auto-process them
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    // biome-ignore lint/correctness/useHookAtTopLevel: conditional for dead code elimination in external builds
-    useTaskListWatcher({
-      taskListId,
-      isLoading,
-      onSubmitTask: handleIncomingPrompt
-    });
-
-    // Loop mode: auto-tick when enabled (via /job command)
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    // biome-ignore lint/correctness/useHookAtTopLevel: conditional for dead code elimination in external builds
-    useProactive?.({
-      // Suppress ticks while an initial message is pending — the initial
-      // message will be processed asynchronously and a premature tick would
-      // race with it, causing concurrent-query enqueue of expanded skill text.
-      isLoading: isLoading || initialMessage !== null,
-      queuedCommandsLength: queuedCommands.length,
-      hasActiveLocalJsxUI: isShowingLocalJSXCommand,
-      isInPlanMode: toolPermissionContext.mode === 'plan',
-      onSubmitTick: (prompt: string) => handleIncomingPrompt(prompt, {
-        isMeta: true
-      }),
-      onQueueTick: (prompt: string) => enqueue({
-        mode: 'prompt',
-        value: prompt,
-        isMeta: true
-      })
-    });
-  }
-
   // Abort the current operation when a 'now' priority message arrives
   // (e.g. from a chat UI client via UDS).
   useEffect(() => {
@@ -3792,11 +3658,6 @@ export function REPL({
 
     // Fall back to default behavior
     const hookType = currentHooks[0]?.data.hookEvent === 'SubagentStop' ? 'subagent stop' : 'stop';
-    if ("external" === 'ant') {
-      const cmd = currentHooks[completedCount]?.data.command;
-      const label = cmd ? ` '${truncateToWidth(cmd, 40)}'` : '';
-      return total === 1 ? `running ${hookType} hook${label}` : `running ${hookType} hook${label}\u2026 ${completedCount}/${total}`;
-    }
     return total === 1 ? `running ${hookType} hook` : `running stop hooks… ${completedCount}/${total}`;
   }, [messages, isLoading]);
 
@@ -4411,17 +4272,6 @@ export function REPL({
             });
           }} />}
                 {focusedInputDialog === 'ide-onboarding' && <IdeOnboardingDialog onDone={() => setShowIdeOnboarding(false)} installationStatus={ideInstallationStatus} />}
-                {"external" === 'ant' && focusedInputDialog === 'model-switch' && AntModelSwitchCallout && <AntModelSwitchCallout onDone={(selection: string, modelAlias?: string) => {
-            setShowModelSwitchCallout(false);
-            if (selection === 'switch' && modelAlias) {
-              setAppState(prev => ({
-                ...prev,
-                mainLoopModel: modelAlias,
-                mainLoopModelForSession: null
-              }));
-            }
-          }} />}
-                {"external" === 'ant' && focusedInputDialog === 'undercover-callout' && UndercoverAutoCallout && <UndercoverAutoCallout onDone={() => setShowUndercoverCallout(false)} />}
                 {focusedInputDialog === 'effort-callout' && <EffortCallout model={mainLoopModel} onDone={selection => {
             setShowEffortCallout(false);
             if (selection !== 'dismiss') {
@@ -4527,7 +4377,6 @@ export function REPL({
             setIsMessageSelectorVisible(false);
             setMessageSelectorPreselect(undefined);
           }} />}
-                {"external" === 'ant' && <DevBar />}
               </Box>
               {feature('BUDDY') && !(companionNarrow && isFullscreenEnvEnabled()) && companionVisible ? <CompanionSprite /> : null}
             </Box>} />

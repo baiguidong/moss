@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { Box, Text } from '../ink.js';
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -186,15 +185,7 @@ function SpinnerWithVerbInner({
   const messageColor = overrideColor ?? defaultColor;
   const shimmerColor = overrideShimmerColor ?? defaultShimmerColor;
 
-  // Compute TTFT string here (off the 50ms animation clock) and pass to
-  // SpinnerAnimationRow so it folds into the `(thought for Ns · ...)` status
-  // line instead of taking a separate row. apiMetricsRef is a ref so this
-  // doesn't trigger re-renders; we pick up updates on the parent's ~25x/turn
-  // re-render cadence, same as the old ApiMetricsLine did.
-  let ttftText: string | null = null;
-  if ("external" === 'ant' && apiMetricsRef?.current && apiMetricsRef.current.length > 0) {
-    ttftText = computeTtftText(apiMetricsRef.current);
-  }
+  const ttftText: string | null = null;
 
   // When leader is idle but teammates are running (and we're viewing the leader),
   // show a static dim idle display instead of the animated spinner — otherwise
@@ -231,7 +222,7 @@ function SpinnerWithVerbInner({
   const showBtwTip = tipsEnabled && elapsedSnapshot > 30_000 && !getGlobalConfig().btwUseCount;
   const effectiveTip = contextTipsActive ? undefined : showClearTip && !nextTask ? 'Use /clear to start fresh when switching topics and free up context' : showBtwTip && !nextTask ? "Use /btw to ask a quick side question without interrupting Claude's current work" : spinnerTip;
 
-  // Budget text (ant-only) — shown above the tip line
+  // Budget text shown above the tip line.
   let budgetText: string | null = null;
   if (feature('TOKEN_BUDGET')) {
     const budget = getCurrentTurnTokenBudget();

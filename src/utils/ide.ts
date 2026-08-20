@@ -842,7 +842,7 @@ export function hasAccessToIDEExtensionDiffFeature(
 }
 
 const EXTENSION_ID =
-  process.env.USER_TYPE === 'ant'
+  false
     ? 'anthropic.claude-code-internal'
     : 'anthropic.claude-code'
 

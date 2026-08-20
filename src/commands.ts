@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import addDir from './commands/add-dir/index.js'
 import btw from './commands/btw/index.js'
 import clear from './commands/clear/index.js'
@@ -71,7 +70,6 @@ import { isFirstPartyModelBaseUrl } from './utils/model/providers.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
-import tag from './commands/tag/index.js'
 import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
@@ -126,7 +124,6 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   statusline,
-  tag,
   theme,
   review,
   rewind,

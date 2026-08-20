@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import * as React from 'react';
 import { Suspense, useState } from 'react';
 import { useKeybinding } from '../../keybindings/useKeybinding.js';
@@ -16,7 +15,7 @@ type Props = {
     display?: CommandResultDisplay;
   }) => void;
   context: LocalJSXCommandContext;
-  defaultTab: 'Status' | 'Config' | 'Gates';
+  defaultTab: 'Status' | 'Config';
 };
 export function Settings(t0) {
   const $ = _c(24);
@@ -28,7 +27,6 @@ export function Settings(t0) {
   const [selectedTab, setSelectedTab] = useState(defaultTab);
   const [tabsHidden, setTabsHidden] = useState(false);
   const [configOwnsEsc, setConfigOwnsEsc] = useState(false);
-  const [gatesOwnsEsc, setGatesOwnsEsc] = useState(false);
   const insideModal = useIsInsideModal();
   const {
     rows
@@ -53,7 +51,7 @@ export function Settings(t0) {
     t1 = $[2];
   }
   const handleEscape = t1;
-  const t2 = !tabsHidden && !(selectedTab === "Config" && configOwnsEsc) && !(selectedTab === "Gates" && gatesOwnsEsc);
+  const t2 = !tabsHidden && !(selectedTab === "Config" && configOwnsEsc);
   let t3;
   if ($[3] !== t2) {
     t3 = {
@@ -87,7 +85,7 @@ export function Settings(t0) {
   }
   let t7;
   if ($[12] !== contentHeight) {
-    t7 = false ? [<Tab key="gates" title="Gates"><Gates onOwnsEscChange={setGatesOwnsEsc} contentHeight={contentHeight} /></Tab>] : [];
+    t7 = [];
     $[12] = contentHeight;
     $[13] = t7;
   } else {
@@ -104,7 +102,7 @@ export function Settings(t0) {
     t8 = $[17];
   }
   const tabs = t8;
-  const t9 = defaultTab !== "Config" && defaultTab !== "Gates";
+  const t9 = defaultTab !== "Config";
   const t10 = tabsHidden || insideModal ? undefined : contentHeight;
   let t11;
   if ($[18] !== selectedTab || $[19] !== t10 || $[20] !== t9 || $[21] !== tabs || $[22] !== tabsHidden) {

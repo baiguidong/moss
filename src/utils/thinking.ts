@@ -1,10 +1,8 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import type { Theme } from './theme.js'
 import { feature } from 'bun:bundle'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { getMaxThinkingTokensForModel } from './context.js'
 import { isEnvTruthy } from './envUtils.js'
-import { resolveAntModel } from './model/antModels.js'
 import { getCanonicalName } from './model/model.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import {
@@ -103,11 +101,6 @@ export function modelSupportsThinking(model: string): boolean {
   if (supported3P !== undefined) {
     return supported3P
   }
-  if (process.env.USER_TYPE === 'ant') {
-    if (resolveAntModel(model.toLowerCase())) {
-      return true
-    }
-  }
   // IMPORTANT: Do not change thinking support without notifying the model
   // launch DRI and research. This can greatly affect model quality and bashing.
   const canonical = getCanonicalName(model)
@@ -160,10 +153,7 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
 }
 
 function modelRejectsDisabledThinking(model: string): boolean {
-  return (
-    process.env.USER_TYPE === 'ant' &&
-    resolveAntModel(model)?.alwaysOnThinking === true
-  )
+  return false
 }
 
 export function buildAPIThinkingParam(

@@ -188,7 +188,7 @@ export async function shouldAutoCompact(
 
   // Reactive-only mode: suppress proactive autocompact, let reactive compact
   // catch the API's prompt-too-long. feature() wrapper keeps the flag string
-  // out of external builds (REACTIVE_COMPACT is ant-only).
+  // behind the configured build gate.
   // Note: returning false here also means autoCompactIfNeeded never reaches
   // trySessionMemoryCompaction in the query loop — the /compact call site
   // still tries session memory first. Revisit if reactive-only graduates.

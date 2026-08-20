@@ -32,7 +32,7 @@ function hashFileContent(
 const MAX_CONTENT_HASH_SIZE = 100 * 1024
 
 /**
- * Logs file operation analytics to Statsig
+ * Logs file operation analytics through the local analytics facade.
  */
 export function logFileOperation(params: {
   operation: 'read' | 'write' | 'edit'

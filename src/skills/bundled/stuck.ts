@@ -62,7 +62,7 @@ export function registerStuckSkill(): void {
   registerBundledSkill({
     name: 'stuck',
     description:
-      '[ANT-ONLY] Investigate frozen/stuck/slow Claude Code sessions on this machine and post a diagnostic report to #claude-code-feedback.',
+      'Investigate frozen, stuck, or slow Moss sessions on this machine and produce a local diagnostic report.',
     userInvocable: true,
     async getPromptForCommand(args) {
       let prompt = STUCK_PROMPT

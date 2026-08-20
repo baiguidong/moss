@@ -25,7 +25,7 @@ import { init } from './entrypoints/init.js';
 import { addToHistory } from './history.js';
 import type { Root } from './ink.js';
 import { launchRepl } from './replLauncher.js';
-import { hasFeatureFlagEnvOverride, initializeFeatureFlags, refreshFeatureFlagsAfterAuthChange } from './services/analytics/featureFlags.js';
+import { refreshFeatureFlagsAfterAuthChange } from './services/analytics/featureFlags.js';
 import { fetchBootstrapData } from './services/api/bootstrap.js';
 import { prefetchOfficialMcpUrls } from './services/mcp/officialRegistry.js';
 import type { McpSdkServerConfig, McpServerConfig, ScopedMcpServerConfig } from './services/mcp/types.js';
@@ -37,7 +37,6 @@ import { getTools } from './tools.js';
 import { canUserConfigureAdvisor, getInitialAdvisorSetting, isAdvisorEnabled, isValidAdvisorModel, modelSupportsAdvisor } from './utils/advisor.js';
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js';
 import { count, uniq } from './utils/array.js';
-import { installAsciicastRecorder } from './utils/asciicast.js';
 import { prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe } from './utils/auth.js';
 import { checkHasTrustDialogAccepted, getGlobalConfig, saveGlobalConfig } from './utils/config.js';
 import { stopCapturingEarlyInput } from './utils/earlyInput.js';
@@ -64,11 +63,10 @@ const getTeammateModeSnapshot = () => require('./utils/swarm/backends/teammateMo
 /* eslint-disable @typescript-eslint/no-require-imports */
 const coordinatorModeModule = feature('COORDINATOR_MODE') ? require('./coordinator/coordinatorMode.js') as typeof import('./coordinator/coordinatorMode.js') : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
-import { relative, resolve } from 'path';
+import { resolve } from 'path';
 import { isAnalyticsDisabled } from 'src/services/analytics/config.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
-import { initializeAnalyticsGates } from 'src/services/analytics/sink.js';
 import { getOriginalCwd, setAdditionalDirectoriesForClaudeMd, setIsRemoteMode, setMainLoopModelOverride, setMainThreadAgentType, setTeleportedSessionInfo } from './bootstrap/state.js';
 import { filterCommandsForRemoteMode, getCommands } from './commands.js';
 import type { StatsStore } from './context/stats.js';
@@ -89,7 +87,7 @@ import { hasNodeOption, isBareMode, isEnvTruthy, isInProtectedNamespace } from '
 import { refreshExampleCommands } from './utils/exampleCommands.js';
 import type { FpsMetrics } from './utils/fpsTracker.js';
 import { getWorktreePaths } from './utils/getWorktreePaths.js';
-import { findGitRoot, getBranch, getIsGit, getWorktreeCount } from './utils/git.js';
+import { getBranch, getIsGit, getWorktreeCount } from './utils/git.js';
 import { getGhAuthStatus } from './utils/github/ghAuthStatus.js';
 import { safeParseJSON } from './utils/json.js';
 import { logError } from './utils/log.js';
@@ -97,7 +95,7 @@ import { getModelDeprecationWarning } from './utils/model/deprecation.js';
 import { getDefaultMainLoopModel, getUserSpecifiedModelSetting, normalizeModelStringForAPI, parseUserSpecifiedModel } from './utils/model/model.js';
 import { ensureModelStringsInitialized } from './utils/model/modelStrings.js';
 import { PERMISSION_MODES } from './utils/permissions/PermissionMode.js';
-import { checkAndDisableBypassPermissions, initializeToolPermissionContext, initialPermissionModeFromCLI, parseToolListFromCLI, removeDangerousPermissions } from './utils/permissions/permissionSetup.js';
+import { checkAndDisableBypassPermissions, initializeToolPermissionContext, initialPermissionModeFromCLI, parseToolListFromCLI } from './utils/permissions/permissionSetup.js';
 import { countFilesRoundedRg } from './utils/ripgrep.js';
 import { processSessionStartHooks, processSetupHooks } from './utils/sessionStart.js';
 import { cacheSessionTitle, getSessionIdFromLog, saveAgentSetting, saveMode, searchSessionsByCustomTitle, sessionIdExists } from './utils/sessionStorage.js';
@@ -105,7 +103,6 @@ import { ensureMdmSettingsLoaded } from './utils/settings/mdm/settings.js';
 import { getInitialSettings, getManagedSettingsKeysForLogging, getSettingsForSource, getSettingsWithErrors } from './utils/settings/settings.js';
 import { resetSettingsCache } from './utils/settings/settingsCache.js';
 import type { ValidationError } from './utils/settings/validation.js';
-import { DEFAULT_TASKS_MODE_TASK_LIST_ID, TASK_STATUSES } from './utils/tasks.js';
 import { logSkillsLoaded } from './utils/telemetry/skillLoadedEvent.js';
 import { generateTempFilePath } from './utils/tempfile.js';
 import { validateUuid } from './utils/uuid.js';
@@ -134,7 +131,6 @@ import { getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSe
 // TeleportRepoMismatchDialog, TeleportResumeWrapper dynamically imported at call sites
 import { migrateBypassPermissionsAcceptedToSettings } from './migrations/migrateBypassPermissionsAcceptedToSettings.js';
 import { migrateEnableAllProjectMcpServersToSettings } from './migrations/migrateEnableAllProjectMcpServersToSettings.js';
-import { migrateFennecToOpus } from './migrations/migrateFennecToOpus.js';
 import { migrateLegacyOpusToCurrent } from './migrations/migrateLegacyOpusToCurrent.js';
 import { migrateOpusToOpus1m } from './migrations/migrateOpusToOpus1m.js';
 import { migrateSonnet1mToSonnet45 } from './migrations/migrateSonnet1mToSonnet45.js';
@@ -166,7 +162,7 @@ import { getTmuxInstallInstructions, isTmuxAvailable, parsePRReference } from '.
 profileCheckpoint('main_tsx_imports_loaded');
 
 /**
- * Log managed settings keys to Statsig for analytics.
+ * Log managed settings keys to the analytics facade.
  * This is called after init() completes to ensure settings are loaded
  * and environment variables are applied before model resolution.
  */
@@ -280,9 +276,6 @@ function runMigrations(): void {
     migrateLegacyOpusToCurrent();
     migrateSonnet45ToSonnet46();
     migrateOpusToOpus1m();
-    if ("external" === 'ant') {
-      migrateFennecToOpus();
-    }
     saveGlobalConfig(prev => prev.migrationVersion === CURRENT_MIGRATION_VERSION ? prev : {
       ...prev,
       migrationVersion: CURRENT_MIGRATION_VERSION
@@ -352,8 +345,7 @@ export function startDeferredPrefetches(): void {
   }
   void countFilesRoundedRg(getCwd(), AbortSignal.timeout(3000), []);
 
-  // Analytics and feature flag initialization
-  void initializeAnalyticsGates();
+  // Registry and capability prefetches
   void prefetchOfficialMcpUrls();
   void refreshModelCapabilities();
 
@@ -363,10 +355,6 @@ export function startDeferredPrefetches(): void {
     void skillChangeDetector.initialize();
   }
 
-  // Event loop stall detector — logs when the main thread is blocked >500ms
-  if ("external" === 'ant') {
-    void import('./utils/eventLoopStallDetector.js').then(m => m.startEventLoopStallDetector());
-  }
 }
 function loadSettingsFromFlag(settingsFile: string): void {
   try {
@@ -855,15 +843,6 @@ async function run(): Promise<CommanderCommand> {
     // Extract disable slash commands flag
     const disableSlashCommands = options.disableSlashCommands || false;
 
-    // Extract tasks mode options (ant-only)
-    const tasksOption = "external" === 'ant' && (options as {
-      tasks?: boolean | string;
-    }).tasks;
-    const taskListId = tasksOption ? typeof tasksOption === 'string' ? tasksOption : DEFAULT_TASKS_MODE_TASK_LIST_ID : undefined;
-    if ("external" === 'ant' && taskListId) {
-      process.env.CLAUDE_CODE_TASK_LIST_ID = taskListId;
-    }
-
     // Extract worktree option
     // worktree can be true (flag without value) or a string (custom name or PR reference)
     const worktreeOption = isWorktreeModeEnabled() ? (options as {
@@ -1222,13 +1201,6 @@ async function run(): Promise<CommanderCommand> {
       overlyBroadBashPermissions
     } = initResult;
 
-    // Handle overly broad shell allow rules for ant users (Bash(*), PowerShell(*))
-    if ("external" === 'ant' && overlyBroadBashPermissions.length > 0) {
-      for (const permission of overlyBroadBashPermissions) {
-        logForDebugging(`Ignoring overly broad shell permission ${permission.ruleDisplay} from ${permission.sourceDisplay}`);
-      }
-      toolPermissionContext = removeDangerousPermissions(toolPermissionContext, overlyBroadBashPermissions);
-    }
     // Print any warnings from initialization
     warnings.forEach(warning => {
       // biome-ignore lint/suspicious/noConsole:: intentional console output
@@ -1417,22 +1389,6 @@ async function run(): Promise<CommanderCommand> {
       cacheSessionTitle(sessionNameArg);
     }
 
-    // Ant model aliases (capybara-fast etc.) resolve via the
-    // tengu_ant_model_override feature flag. _CACHED_MAY_BE_STALE reads
-    // disk synchronously; disk is populated by a fire-and-forget write. On a
-    // cold cache, parseUserSpecifiedModel returns the unresolved alias, the
-    // API 404s, and -p exits before the async write lands — crashloop on
-    // fresh pods. Awaiting init here populates the in-memory payload map that
-    // _CACHED_MAY_BE_STALE now checks first. Gated so the warm path stays
-    // non-blocking:
-    //  - explicit model via --model or ANTHROPIC_MODEL (both feed alias resolution)
-    //  - no env override (which short-circuits _CACHED_MAY_BE_STALE before disk)
-    //  - flag absent from disk (== null also catches pre-#22279 poisoned null)
-    const explicitModel = options.model || process.env.ANTHROPIC_MODEL;
-    if ("external" === 'ant' && explicitModel && explicitModel !== 'default' && !hasFeatureFlagEnvOverride('tengu_ant_model_override') && getGlobalConfig().cachedFeatureFlags?.['tengu_ant_model_override'] == null) {
-      await initializeFeatureFlags();
-    }
-
     // Special case the default model with the null keyword
     // NOTE: Model resolution happens after setup() to ensure trust is established before AWS auth
     const userSpecifiedModel = options.model === 'default' ? getDefaultMainLoopModel() : options.model;
@@ -1575,9 +1531,6 @@ async function run(): Promise<CommanderCommand> {
         // Log agent memory loaded event for tmux teammates
         if (customAgent.memory) {
           logEvent('tengu_agent_memory_loaded', {
-            ...("external" === 'ant' && {
-              agent_type: customAgent.agentType as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-            }),
             scope: customAgent.memory as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
             source: 'teammate' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
           });
@@ -1611,10 +1564,6 @@ async function run(): Promise<CommanderCommand> {
       const ctx = getRenderContext(false);
       getFpsMetrics = ctx.getFpsMetrics;
       stats = ctx.stats;
-      // Install asciicast recorder before Ink mounts (ant-only, opt-in via CLAUDE_CODE_TERMINAL_RECORDING=1)
-      if ("external" === 'ant') {
-        installAsciicastRecorder();
-      }
       const {
         createRoot
       } = await import('./ink.js');
@@ -1633,7 +1582,7 @@ async function run(): Promise<CommanderCommand> {
       const onboardingShown = await showSetupScreens(root, permissionMode, allowDangerouslySkipPermissions, commands);
       logForDebugging(`[STARTUP] showSetupScreens() completed in ${Date.now() - setupScreensStart}ms`);
 
-      // Check for pending agent memory snapshot updates (only for --agent mode, ant-only)
+      // Check for pending agent memory snapshot updates in --agent mode.
       if (feature('AGENT_MEMORY_SNAPSHOT') && mainThreadAgentDefinition && isCustomAgent(mainThreadAgentDefinition) && mainThreadAgentDefinition.memory && mainThreadAgentDefinition.pendingSnapshotUpdate) {
         const agentDef = mainThreadAgentDefinition;
         const choice = await launchSnapshotUpdateDialog(root, {
@@ -1960,7 +1909,7 @@ async function run(): Promise<CommanderCommand> {
       // Init app state
       const headlessStore = createStore(headlessInitialState, onChangeAppState);
 
-      // Check if bypassPermissions should be disabled based on Statsig gate
+      // Check if bypassPermissions should be disabled by local feature gates.
       // This runs in parallel to the code below, to avoid blocking the main loop.
       if (toolPermissionContext.mode === 'bypassPermissions' || allowDangerouslySkipPermissions) {
         void checkAndDisableBypassPermissions(toolPermissionContext);
@@ -2026,9 +1975,6 @@ async function run(): Promise<CommanderCommand> {
       if (!isBareMode()) {
         startDeferredPrefetches();
         void import('./utils/backgroundHousekeeping.js').then(m => m.startBackgroundHousekeeping());
-        if ("external" === 'ant') {
-          void import('./utils/sdkHeapDumpMonitor.js').then(m => m.startSdkMemoryMonitor());
-        }
       }
       logSessionTelemetry();
       profileCheckpoint('before_print_import');
@@ -2213,21 +2159,6 @@ async function run(): Promise<CommanderCommand> {
       logSessionTelemetry();
     });
 
-    // Set up per-turn session environment data uploader (ant-only build).
-    // Default-enabled for all ant users when working in an Anthropic-owned
-    // repo. Captures git/filesystem state (NOT transcripts) at each turn so
-    // environments can be recreated at any user message index. Gating:
-    //   - Build-time: this import is stubbed in external builds.
-    //   - Runtime: uploader checks github.com/anthropics/* remote + gcloud auth.
-    //   - Safety: CLAUDE_CODE_DISABLE_SESSION_DATA_UPLOAD=1 bypasses (tests set this).
-    // Import is dynamic + async to avoid adding startup latency.
-    const sessionUploaderPromise = "external" === 'ant' ? import('./utils/sessionDataUploader.js') : null;
-
-    // Defer session uploader resolution to the onTurnComplete callback to avoid
-    // adding a new top-level await in main.tsx (performance-critical path).
-    // The per-turn auth logic in sessionDataUploader.ts handles unauthenticated
-    // state gracefully (re-checks each turn, so auth recovery mid-session works).
-    const uploaderReady = sessionUploaderPromise ? sessionUploaderPromise.then(mod => mod.createSessionTurnUploader()).catch(() => null) : null;
     const sessionConfig = {
       debug: debug || debugToStderr,
       commands: [...commands, ...mcpCommands],
@@ -2240,13 +2171,7 @@ async function run(): Promise<CommanderCommand> {
       strictMcpConfig,
       systemPrompt,
       appendSystemPrompt,
-      taskListId,
-      thinkingConfig,
-      ...(uploaderReady && {
-        onTurnComplete: (messages: MessageType[]) => {
-          void uploaderReady.then(uploader => uploader?.(messages));
-        }
-      })
+      thinkingConfig
     };
 
     // Shared context for processResumedConversation calls
@@ -2358,7 +2283,7 @@ async function run(): Promise<CommanderCommand> {
       }, renderAndRun);
       return;
     } else if (options.resume || options.fromPr || teleport || remote !== null) {
-      // Handle resume flow - from file (ant-only), session ID, or interactive selector
+      // Handle resume flow from file, session ID, or interactive selector.
 
       // Clear stale caches before resuming to ensure fresh file/skill discovery
       const {
@@ -2690,10 +2615,6 @@ async function run(): Promise<CommanderCommand> {
   if (canUserConfigureAdvisor()) {
     program.addOption(new Option('--advisor <model>', 'Enable the server-side advisor tool with the specified model (alias or full ID).').hideHelp());
   }
-  if ("external" === 'ant') {
-    program.addOption(new Option('--tasks [id]', '[ANT-ONLY] Tasks mode: watch for tasks and auto-process them. Optional id is used as both the task list ID and agent ID (defaults to "tasklist").').argParser(String).hideHelp());
-    program.option('--agent-teams', '[ANT-ONLY] Force Claude to use multi-agent mode for solving problems', () => true);
-  }
   if (feature('PROACTIVE')) {
     program.addOption(new Option('--proactive', 'Start in proactive autonomous mode'));
   }
@@ -2914,130 +2835,6 @@ async function run(): Promise<CommanderCommand> {
     await doctorHandler(root);
   });
 
-  // claude up — run the project's CLAUDE.md "# claude up" setup instructions.
-  if ("external" === 'ant') {
-    program.command('up').description('[ANT-ONLY] Initialize or upgrade the local dev environment using the "# claude up" section of the nearest CLAUDE.md').action(async () => {
-      const {
-        up
-      } = await import('src/cli/up.js');
-      await up();
-    });
-  }
-
-  // claude rollback (ant-only)
-  // Rolls back to previous releases
-  if ("external" === 'ant') {
-    program.command('rollback [target]').description('[ANT-ONLY] Roll back to a previous release\n\nExamples:\n  claude rollback                                    Go 1 version back from current\n  claude rollback 3                                  Go 3 versions back from current\n  claude rollback 2.0.73-dev.20251217.t190658        Roll back to a specific version').option('-l, --list', 'List recent published versions with ages').option('--dry-run', 'Show what would be installed without installing').option('--safe', 'Roll back to the server-pinned safe version (set by oncall during incidents)').action(async (target?: string, options?: {
-      list?: boolean;
-      dryRun?: boolean;
-      safe?: boolean;
-    }) => {
-      const {
-        rollback
-      } = await import('src/cli/rollback.js');
-      await rollback(target, options);
-    });
-  }
-
-  // ant-only commands
-  if ("external" === 'ant') {
-    const validateLogId = (value: string) => {
-      const maybeSessionId = validateUuid(value);
-      if (maybeSessionId) return maybeSessionId;
-      return Number(value);
-    };
-    // claude log
-    program.command('log').description('[ANT-ONLY] Manage conversation logs.').argument('[number|sessionId]', 'A number (0, 1, 2, etc.) to display a specific log, or the sesssion ID (uuid) of a log', validateLogId).action(async (logId: string | number | undefined) => {
-      const {
-        logHandler
-      } = await import('./cli/handlers/ant.js');
-      await logHandler(logId);
-    });
-
-    // claude error
-    program.command('error').description('[ANT-ONLY] View error logs. Optionally provide a number (0, -1, -2, etc.) to display a specific log.').argument('[number]', 'A number (0, 1, 2, etc.) to display a specific log', parseInt).action(async (number: number | undefined) => {
-      const {
-        errorHandler
-      } = await import('./cli/handlers/ant.js');
-      await errorHandler(number);
-    });
-
-    // claude export
-    program.command('export').description('[ANT-ONLY] Export a conversation to a text file.').usage('<source> <outputFile>').argument('<source>', 'Session ID, log index (0, 1, 2...), or path to a .json/.jsonl log file').argument('<outputFile>', 'Output file path for the exported text').addHelpText('after', `
-Examples:
-  $ claude export 0 conversation.txt                Export conversation at log index 0
-  $ claude export <uuid> conversation.txt           Export conversation by session ID
-  $ claude export input.json output.txt             Render JSON log file to text
-  $ claude export <uuid>.jsonl output.txt           Render JSONL session file to text`).action(async (source: string, outputFile: string) => {
-      const {
-        exportHandler
-      } = await import('./cli/handlers/ant.js');
-      await exportHandler(source, outputFile);
-    });
-    if ("external" === 'ant') {
-      const taskCmd = program.command('task').description('[ANT-ONLY] Manage task list tasks');
-      taskCmd.command('create <subject>').description('Create a new task').option('-d, --description <text>', 'Task description').option('-l, --list <id>', 'Task list ID (defaults to "tasklist")').action(async (subject: string, opts: {
-        description?: string;
-        list?: string;
-      }) => {
-        const {
-          taskCreateHandler
-        } = await import('./cli/handlers/ant.js');
-        await taskCreateHandler(subject, opts);
-      });
-      taskCmd.command('list').description('List all tasks').option('-l, --list <id>', 'Task list ID (defaults to "tasklist")').option('--pending', 'Show only pending tasks').option('--json', 'Output as JSON').action(async (opts: {
-        list?: string;
-        pending?: boolean;
-        json?: boolean;
-      }) => {
-        const {
-          taskListHandler
-        } = await import('./cli/handlers/ant.js');
-        await taskListHandler(opts);
-      });
-      taskCmd.command('get <id>').description('Get details of a task').option('-l, --list <id>', 'Task list ID (defaults to "tasklist")').action(async (id: string, opts: {
-        list?: string;
-      }) => {
-        const {
-          taskGetHandler
-        } = await import('./cli/handlers/ant.js');
-        await taskGetHandler(id, opts);
-      });
-      taskCmd.command('update <id>').description('Update a task').option('-l, --list <id>', 'Task list ID (defaults to "tasklist")').option('-s, --status <status>', `Set status (${TASK_STATUSES.join(', ')})`).option('--subject <text>', 'Update subject').option('-d, --description <text>', 'Update description').option('--owner <agentId>', 'Set owner').option('--clear-owner', 'Clear owner').action(async (id: string, opts: {
-        list?: string;
-        status?: string;
-        subject?: string;
-        description?: string;
-        owner?: string;
-        clearOwner?: boolean;
-      }) => {
-        const {
-          taskUpdateHandler
-        } = await import('./cli/handlers/ant.js');
-        await taskUpdateHandler(id, opts);
-      });
-      taskCmd.command('dir').description('Show the tasks directory path').option('-l, --list <id>', 'Task list ID (defaults to "tasklist")').action(async (opts: {
-        list?: string;
-      }) => {
-        const {
-          taskDirHandler
-        } = await import('./cli/handlers/ant.js');
-        await taskDirHandler(opts);
-      });
-    }
-
-    // claude completion <shell>
-    program.command('completion <shell>', {
-      hidden: true
-    }).description('Generate shell completion script (bash, zsh, or fish)').option('--output <file>', 'Write completion script directly to a file instead of stdout').action(async (shell: string, opts: {
-      output?: string;
-    }) => {
-      const {
-        completionHandler
-      } = await import('./cli/handlers/ant.js');
-      await completionHandler(shell, opts, program);
-    });
-  }
   profileCheckpoint('run_before_parse');
   await program.parseAsync(process.argv);
   profileCheckpoint('run_after_parse');
@@ -3045,7 +2842,7 @@ Examples:
   // Record final checkpoint for total_time calculation
   profileCheckpoint('main_after_run');
 
-  // Log startup perf to Statsig (sampled) and output detailed report if enabled
+  // Record startup perf and output a detailed report if enabled.
   profileReport();
   return program;
 }
@@ -3126,15 +2923,7 @@ async function logTenguInit({
         appendSystemPromptFlag: appendSystemPromptFlag as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       }),
       is_simple: isBareMode() || undefined,
-      is_coordinator: feature('COORDINATOR_MODE') && coordinatorModeModule?.isCoordinatorMode() ? true : undefined,
-      ...("external" === 'ant' ? (() => {
-        const cwd = getCwd();
-        const gitRoot = findGitRoot(cwd);
-        const rp = gitRoot ? relative(gitRoot, cwd) || '.' : undefined;
-        return rp ? {
-          relativeProjectPath: rp as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-        } : {};
-      })() : {})
+      is_coordinator: feature('COORDINATOR_MODE') && coordinatorModeModule?.isCoordinatorMode() ? true : undefined
     });
   } catch (error) {
     logError(error);

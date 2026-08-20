@@ -371,7 +371,7 @@ function should1hCacheTTL(querySource?: QuerySource): boolean {
   // would bust the server-side prompt cache (~20K tokens per flip).
   let userEligible = getPromptCache1hEligible()
   if (userEligible === null) {
-    userEligible = process.env.USER_TYPE === 'ant'
+    userEligible = false
     setPromptCache1hEligible(userEligible)
   }
   if (!userEligible) return false
@@ -404,7 +404,7 @@ function should1hCacheTTL(querySource?: QuerySource): boolean {
 function configureEffortParams(
   effortValue: EffortValue | undefined,
   outputConfig: BetaOutputConfig,
-  extraBodyParams: Record<string, unknown>,
+  _extraBodyParams: Record<string, unknown>,
   betas: string[],
   model: string,
 ): void {
@@ -418,14 +418,6 @@ function configureEffortParams(
     // Send string effort level as is
     outputConfig.effort = effortValue
     betas.push(EFFORT_BETA_HEADER)
-  } else if (process.env.USER_TYPE === 'ant') {
-    // Numeric effort override - ant-only (uses anthropic_internal)
-    const existingInternal =
-      (extraBodyParams.anthropic_internal as Record<string, unknown>) || {}
-    extraBodyParams.anthropic_internal = {
-      ...existingInternal,
-      effort_override: effortValue,
-    }
   }
 }
 
@@ -1166,7 +1158,7 @@ async function* queryModel(
   // Determine if cached microcompact is enabled for this model.
   // Computed once here (in async context) and captured by paramsFromContext.
   // The beta header is also captured here to avoid a top-level import of the
-  // ant-only CACHE_EDITING_BETA_HEADER constant.
+  // cache-editing beta constant.
   let cachedMCEnabled = false
   let cacheEditingBetaHeader = ''
   if (feature('CACHED_MICROCOMPACT')) {
@@ -1689,7 +1681,6 @@ async function* queryModel(
   let fallbackMessage: AssistantMessage | undefined
   let maxOutputTokens = 0
   let responseHeaders: globalThis.Headers | undefined = undefined
-  let research: unknown = undefined
   let isFastModeRequest = isFastMode // Keep separate state as it may change if falling back
   let isAdvisorInProgress = false
 
@@ -1922,15 +1913,6 @@ async function* queryModel(
             partialMessage = part.message
             ttftMs = Date.now() - start
             usage = updateUsage(usage, part.message?.usage)
-            // Capture research from message_start if available (internal only).
-            // Always overwrite with the latest value.
-            if (
-              process.env.USER_TYPE === 'ant' &&
-              'research' in (part.message as unknown as Record<string, unknown>)
-            ) {
-              research = (part.message as unknown as Record<string, unknown>)
-                .research
-            }
             break
           }
           case 'content_block_start':
@@ -2085,11 +2067,6 @@ async function* queryModel(
                 contentBlock.thinking += delta.thinking
                 break
             }
-            // Capture research from content_block_delta if available (internal only).
-            // Always overwrite with the latest value.
-            if (process.env.USER_TYPE === 'ant' && 'research' in part) {
-              research = (part as { research: unknown }).research
-            }
             break
           }
           case 'content_block_stop': {
@@ -2135,8 +2112,6 @@ async function* queryModel(
               type: 'assistant',
               uuid: randomUUID(),
               timestamp: new Date().toISOString(),
-              ...(process.env.USER_TYPE === 'ant' &&
-                research !== undefined && { research }),
               ...(advisorModel && { advisorModel }),
             }
             newMessages.push(m)
@@ -2145,20 +2120,6 @@ async function* queryModel(
           }
           case 'message_delta': {
             usage = updateUsage(usage, part.usage)
-            // Capture research from message_delta if available (internal only).
-            // Always overwrite with the latest value. Also write back to
-            // already-yielded messages since message_delta arrives after
-            // content_block_stop.
-            if (
-              process.env.USER_TYPE === 'ant' &&
-              'research' in (part as unknown as Record<string, unknown>)
-            ) {
-              research = (part as unknown as Record<string, unknown>).research
-              for (const msg of newMessages) {
-                msg.research = research
-              }
-            }
-
             // Write final usage and stop_reason back to the last yielded
             // message. Messages are created at content_block_stop from
             // partialMessage, which was set at message_start before any tokens
@@ -2520,10 +2481,6 @@ async function* queryModel(
         type: 'assistant',
         uuid: randomUUID(),
         timestamp: new Date().toISOString(),
-        ...(process.env.USER_TYPE === 'ant' &&
-          research !== undefined && {
-            research,
-          }),
         ...(advisorModel && {
           advisorModel,
         }),
@@ -2621,8 +2578,6 @@ async function* queryModel(
           type: 'assistant',
           uuid: randomUUID(),
           timestamp: new Date().toISOString(),
-          ...(process.env.USER_TYPE === 'ant' &&
-            research !== undefined && { research }),
           ...(advisorModel && { advisorModel }),
         }
         newMessages.push(m)

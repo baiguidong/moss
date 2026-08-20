@@ -235,7 +235,7 @@ export function registerLoremIpsumSkill(): void {
   registerBundledSkill({
     name: 'lorem-ipsum',
     description:
-      'Generate filler text for long context testing. Specify token count as argument (e.g., /lorem-ipsum 50000). Outputs approximately the requested number of tokens. Ant-only.',
+      'Generate filler text for long context testing. Specify token count as argument (e.g., /lorem-ipsum 50000). Outputs approximately the requested number of tokens.',
     argumentHint: '[token_count]',
     userInvocable: true,
     async getPromptForCommand(args) {

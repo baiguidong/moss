@@ -2,7 +2,7 @@ import { logForDebugging } from 'src/utils/debug.js'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../utils/lazySchema.js'
 import {
-  checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
+  checkFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
 } from '../analytics/featureFlags.js'
 import { logEvent } from '../analytics/index.js'
@@ -30,7 +30,7 @@ export function notifyVscodeFileUpdated(
   oldContent: string | null,
   newContent: string | null,
 ): void {
-  if (process.env.USER_TYPE !== 'ant' || !vscodeMcpClient) {
+  if (true || !vscodeMcpClient) {
     return
   }
 
@@ -70,10 +70,10 @@ export function setupVscodeSdkMcp(sdkClients: MCPServerConnection[]): void {
 
     // Send necessary experiment gates to VSCode immediately.
     const gates: Record<string, boolean | string> = {
-      tengu_vscode_review_upsell: checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+      tengu_vscode_review_upsell: checkFeatureGate_CACHED_MAY_BE_STALE(
         'tengu_vscode_review_upsell',
       ),
-      tengu_vscode_onboarding: checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
+      tengu_vscode_onboarding: checkFeatureGate_CACHED_MAY_BE_STALE(
         'tengu_vscode_onboarding',
       ),
       // Browser support.

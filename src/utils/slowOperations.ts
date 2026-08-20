@@ -24,7 +24,6 @@ type WriteFileOptionsWithFlush =
  * Operations taking longer than this will be logged for debugging.
  * - Override: set CLAUDE_CODE_SLOW_OPERATION_THRESHOLD_MS to a number
  * - Dev builds: 20ms (lower threshold for development)
- * - Ants: 300ms (enabled for all internal users)
  */
 const SLOW_OPERATION_THRESHOLD_MS = (() => {
   const envValue = process.env.CLAUDE_CODE_SLOW_OPERATION_THRESHOLD_MS
@@ -36,9 +35,6 @@ const SLOW_OPERATION_THRESHOLD_MS = (() => {
   }
   if (process.env.NODE_ENV === 'development') {
     return 20
-  }
-  if (process.env.USER_TYPE === 'ant') {
-    return 300
   }
   return Infinity
 })()

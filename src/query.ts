@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import type {
   ToolResultBlockParam,
   ToolUseBlock,
@@ -53,7 +52,6 @@ import {
   getMessagesAfterCompactBoundary,
   createToolUseSummaryMessage,
   createMicrocompactBoundaryMessage,
-  stripSignatureBlocks,
 } from './utils/messages.js'
 import { generateToolUseSummary } from './services/toolUseSummary/toolUseSummaryGenerator.js'
 import { prependUserContext, appendSystemContext } from './utils/api.js'
@@ -306,7 +304,7 @@ async function* queryLoop(
   // sites.
   let taskBudgetRemaining: number | undefined = undefined
 
-  // Snapshot immutable env/statsig/session state once at entry. See QueryConfig
+  // Snapshot immutable env/feature/session state once at entry. See QueryConfig
   // for what's included and why feature() gates are intentionally excluded.
   const config = buildQueryConfig()
 
@@ -924,13 +922,6 @@ async function* queryLoop(
 
             // Update tool use context with new model
             toolUseContext.options.mainLoopModel = fallbackModel
-
-            // Thinking signatures are model-bound: replaying a protected-thinking
-            // block (e.g. capybara) to an unprotected fallback (e.g. opus) 400s.
-            // Strip before retry so the fallback model gets clean history.
-            if (process.env.USER_TYPE === 'ant') {
-              messagesForQuery = stripSignatureBlocks(messagesForQuery)
-            }
 
             // Log the fallback event
             logEvent('tengu_model_fallback_triggered', {

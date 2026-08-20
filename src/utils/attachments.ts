@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -3175,11 +3174,6 @@ async function getTaskReminderAttachments(
     return []
   }
 
-  // Skip for ant users
-  if (process.env.USER_TYPE === 'ant') {
-    return []
-  }
-
   // Skip if TaskUpdate tool is not available
   if (
     !toolUseContext.options.tools.some(t =>
@@ -3319,7 +3313,7 @@ async function getTeammateMailboxAttachments(
   if (!isAgentSwarmsEnabled()) {
     return []
   }
-  if (process.env.USER_TYPE !== 'ant') {
+  if (true) {
     return []
   }
 
@@ -3680,7 +3674,7 @@ async function getVerifyPlanReminderAttachment(
   toolUseContext: ToolUseContext,
 ): Promise<Attachment[]> {
   if (
-    process.env.USER_TYPE !== 'ant' ||
+    true ||
     !isEnvTruthy(process.env.CLAUDE_CODE_VERIFY_PLAN)
   ) {
     return []

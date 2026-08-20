@@ -113,14 +113,8 @@ export function shouldMaintainProjectWorkingDir(): boolean {
   return isEnvTruthy(process.env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR)
 }
 
-/**
- * Check if running on Homespace (ant-internal cloud environment)
- */
 export function isRunningOnHomespace(): boolean {
-  return (
-    process.env.USER_TYPE === 'ant' &&
-    isEnvTruthy(process.env.COO_RUNNING_ON_HOMESPACE)
-  )
+  return false
 }
 
 /**
@@ -135,15 +129,6 @@ export function isRunningOnHomespace(): boolean {
  * Used for telemetry about activity in sensitive environments.
  */
 export function isInProtectedNamespace(): boolean {
-  // USER_TYPE is build-time --define'd; in external builds this block is
-  // DCE'd so the require() and namespace allowlist never appear in the bundle.
-  if (process.env.USER_TYPE === 'ant') {
-    /* eslint-disable @typescript-eslint/no-require-imports */
-    return (
-      require('./protectedNamespace.js') as typeof import('./protectedNamespace.js')
-    ).checkProtectedNamespace()
-    /* eslint-enable @typescript-eslint/no-require-imports */
-  }
   return false
 }
 

@@ -1,7 +1,6 @@
 import { c as _c } from "react/compiler-runtime";
 import chalk from 'chalk';
 import figures from 'figures';
-import Fuse from 'fuse.js';
 import React from 'react';
 import { getOriginalCwd, getSessionId } from '../bootstrap/state.js';
 import { useExitOnCtrlCDWithKeybindings } from '../hooks/useExitOnCtrlCDWithKeybindings.js';
@@ -73,7 +72,6 @@ const DEEP_SEARCH_MAX_MESSAGES = 2000;
 const DEEP_SEARCH_CROP_SIZE = 1000;
 const DEEP_SEARCH_MAX_TEXT_LENGTH = 50000; // Cap searchable text per session
 const FUSE_THRESHOLD = 0.3;
-const DATE_TIE_THRESHOLD_MS = 60 * 1000; // 1 minute - use relevance as tie-breaker within this window
 const SNIPPET_CONTEXT_CHARS = 50; // Characters to show before/after match
 
 type Snippet = {
@@ -444,12 +442,8 @@ export function LogSelector(t0) {
   let t23;
   let t24;
   if ($[42] !== debouncedDeepSearchQuery || $[43] !== deferredSearchQuery) {
-    t23 = () => {
-      if (false && deferredSearchQuery && deferredSearchQuery !== debouncedDeepSearchQuery) {
-        setIsSearching(true);
-      }
-    };
-    t24 = [deferredSearchQuery, debouncedDeepSearchQuery, false];
+    t23 = () => {};
+    t24 = [];
     $[42] = debouncedDeepSearchQuery;
     $[43] = deferredSearchQuery;
     $[44] = t23;
@@ -463,17 +457,10 @@ export function LogSelector(t0) {
   let t26;
   if ($[46] !== debouncedDeepSearchQuery) {
     t25 = () => {
-      if (true || !debouncedDeepSearchQuery || true) {
-        setDeepSearchResults(null);
-        setIsSearching(false);
-        return;
-      }
-      const timeoutId_0 = setTimeout(_temp5, 0, null, debouncedDeepSearchQuery, setDeepSearchResults, setIsSearching);
-      return () => {
-        clearTimeout(timeoutId_0);
-      };
+      setDeepSearchResults(null);
+      setIsSearching(false);
     };
-    t26 = [debouncedDeepSearchQuery, null, false];
+    t26 = [];
     $[46] = debouncedDeepSearchQuery;
     $[47] = t25;
     $[48] = t26;
@@ -1053,9 +1040,7 @@ export function LogSelector(t0) {
             exitSearchMode();
           } else {
             if (key.return || key.downArrow) {
-              if (searchQuery.trim() && onAgenticSearch && false && agenticSearchState.status !== "results") {
-                setIsAgenticSearchOptionFocused(true);
-              }
+              return;
             }
           }
         } else {
@@ -1343,7 +1328,7 @@ export function LogSelector(t0) {
   }
   let t69;
   if ($[197] !== agenticSearchState.status || $[198] !== isAgenticSearchOptionFocused || $[199] !== onAgenticSearch || $[200] !== searchQuery) {
-    t69 = Boolean(searchQuery.trim()) && onAgenticSearch && false && agenticSearchState.status !== "searching" && agenticSearchState.status !== "results" && agenticSearchState.status !== "error" && <Box flexShrink={0} flexDirection="column"><Box flexDirection="row" gap={1}><Text color={isAgenticSearchOptionFocused ? "suggestion" : undefined}>{isAgenticSearchOptionFocused ? figures.pointer : " "}</Text><Text color={isAgenticSearchOptionFocused ? "suggestion" : undefined} bold={isAgenticSearchOptionFocused}>Search deeply using Moss →</Text></Box><Box height={1} /></Box>;
+    t69 = null;
     $[197] = agenticSearchState.status;
     $[198] = isAgenticSearchOptionFocused;
     $[199] = onAgenticSearch;
@@ -1409,7 +1394,7 @@ export function LogSelector(t0) {
   }
   let t71;
   if ($[222] !== agenticSearchState.status || $[223] !== currentBranch || $[224] !== exitState.keyName || $[225] !== exitState.pending || $[226] !== getExpandCollapseHint || $[227] !== hasMultipleWorktrees || $[228] !== isAgenticSearchOptionFocused || $[229] !== isSearching || $[230] !== onToggleAllProjects || $[231] !== showAllProjects || $[232] !== showAllWorktrees || $[233] !== viewMode) {
-    t71 = <Box paddingLeft={2}>{exitState.pending ? <Text dimColor={true}>Press {exitState.keyName} again to exit</Text> : viewMode === "rename" ? <Text dimColor={true}><Byline><KeyboardShortcutHint shortcut="Enter" action="save" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : agenticSearchState.status === "searching" ? <Text dimColor={true}><Byline><Text>Searching with Claude…</Text><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : isAgenticSearchOptionFocused ? <Text dimColor={true}><Byline><KeyboardShortcutHint shortcut="Enter" action="search" /><KeyboardShortcutHint shortcut={"\u2193"} action="skip" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : viewMode === "search" ? <Text dimColor={true}><Byline><Text>{isSearching && false ? "Searching\u2026" : "Type to Search"}</Text><KeyboardShortcutHint shortcut="Enter" action="select" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="clear" /></Byline></Text> : <Text dimColor={true}><Byline>{onToggleAllProjects && <KeyboardShortcutHint shortcut="Ctrl+A" action={`show ${showAllProjects ? "current dir" : "all projects"}`} />}{currentBranch && <KeyboardShortcutHint shortcut="Ctrl+B" action="toggle branch" />}{hasMultipleWorktrees && <KeyboardShortcutHint shortcut="Ctrl+W" action={`show ${showAllWorktrees ? "current worktree" : "all worktrees"}`} />}<KeyboardShortcutHint shortcut="Ctrl+V" action="preview" /><KeyboardShortcutHint shortcut="Ctrl+R" action="rename" /><Text>Type to search</Text><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" />{getExpandCollapseHint() && <Text>{getExpandCollapseHint()}</Text>}</Byline></Text>}</Box>;
+    t71 = <Box paddingLeft={2}>{exitState.pending ? <Text dimColor={true}>Press {exitState.keyName} again to exit</Text> : viewMode === "rename" ? <Text dimColor={true}><Byline><KeyboardShortcutHint shortcut="Enter" action="save" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : agenticSearchState.status === "searching" ? <Text dimColor={true}><Byline><Text>Searching with Claude…</Text><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : isAgenticSearchOptionFocused ? <Text dimColor={true}><Byline><KeyboardShortcutHint shortcut="Enter" action="search" /><KeyboardShortcutHint shortcut={"\u2193"} action="skip" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" /></Byline></Text> : viewMode === "search" ? <Text dimColor={true}><Byline><Text>Type to Search</Text><KeyboardShortcutHint shortcut="Enter" action="select" /><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="clear" /></Byline></Text> : <Text dimColor={true}><Byline>{onToggleAllProjects && <KeyboardShortcutHint shortcut="Ctrl+A" action={`show ${showAllProjects ? "current dir" : "all projects"}`} />}{currentBranch && <KeyboardShortcutHint shortcut="Ctrl+B" action="toggle branch" />}{hasMultipleWorktrees && <KeyboardShortcutHint shortcut="Ctrl+W" action={`show ${showAllWorktrees ? "current worktree" : "all worktrees"}`} />}<KeyboardShortcutHint shortcut="Ctrl+V" action="preview" /><KeyboardShortcutHint shortcut="Ctrl+R" action="rename" /><Text>Type to search</Text><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="cancel" />{getExpandCollapseHint() && <Text>{getExpandCollapseHint()}</Text>}</Byline></Text>}</Box>;
     $[222] = agenticSearchState.status;
     $[223] = currentBranch;
     $[224] = exitState.keyName;
@@ -1456,31 +1441,6 @@ function _temp7(r_0) {
 }
 function _temp6(log_6) {
   return log_6.messages[0]?.uuid;
-}
-function _temp5(fuseIndex_0, debouncedDeepSearchQuery_0, setDeepSearchResults_0, setIsSearching_0) {
-  const results = fuseIndex_0.search(debouncedDeepSearchQuery_0);
-  results.sort(_temp3);
-  setDeepSearchResults_0({
-    results: results.map(_temp4),
-    query: debouncedDeepSearchQuery_0
-  });
-  setIsSearching_0(false);
-}
-function _temp4(r) {
-  return {
-    log: r.item.log,
-    score: r.score,
-    searchableText: r.item.searchableText
-  };
-}
-function _temp3(a, b) {
-  const aTime = new Date(a.item.log.modified).getTime();
-  const bTime = new Date(b.item.log.modified).getTime();
-  const timeDiff = bTime - aTime;
-  if (Math.abs(timeDiff) > DATE_TIE_THRESHOLD_MS) {
-    return timeDiff;
-  }
-  return (a.score ?? 1) - (b.score ?? 1);
 }
 function _temp2(log_1) {
   const currentSessionId = getSessionId();

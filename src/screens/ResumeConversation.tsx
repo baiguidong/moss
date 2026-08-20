@@ -59,7 +59,6 @@ type Props = {
   initialSearchQuery?: string;
   disableSlashCommands?: boolean;
   forkSession?: boolean;
-  taskListId?: string;
   filterByPr?: boolean | number | string;
   thinkingConfig: ThinkingConfig;
   onTurnComplete?: (messages: Message[]) => void | Promise<void>;
@@ -79,7 +78,6 @@ export function ResumeConversation({
   initialSearchQuery,
   disableSlashCommands = false,
   forkSession,
-  taskListId,
   filterByPr,
   thinkingConfig,
   onTurnComplete
@@ -294,7 +292,7 @@ export function ResumeConversation({
     return <CrossProjectMessage command={crossProjectCommand} />;
   }
   if (resumeData) {
-    return <REPL debug={debug} commands={commands} initialTools={initialTools} initialMessages={resumeData.messages} initialFileHistorySnapshots={resumeData.fileHistorySnapshots} initialContentReplacements={resumeData.contentReplacements} initialAgentName={resumeData.agentName} initialAgentColor={resumeData.agentColor} mcpClients={mcpClients} dynamicMcpConfig={dynamicMcpConfig} strictMcpConfig={strictMcpConfig} systemPrompt={systemPrompt} appendSystemPrompt={appendSystemPrompt} mainThreadAgentDefinition={resumeData.mainThreadAgentDefinition} autoConnectIdeFlag={autoConnectIdeFlag} disableSlashCommands={disableSlashCommands} taskListId={taskListId} thinkingConfig={thinkingConfig} onTurnComplete={onTurnComplete} />;
+    return <REPL debug={debug} commands={commands} initialTools={initialTools} initialMessages={resumeData.messages} initialFileHistorySnapshots={resumeData.fileHistorySnapshots} initialContentReplacements={resumeData.contentReplacements} initialAgentName={resumeData.agentName} initialAgentColor={resumeData.agentColor} mcpClients={mcpClients} dynamicMcpConfig={dynamicMcpConfig} strictMcpConfig={strictMcpConfig} systemPrompt={systemPrompt} appendSystemPrompt={appendSystemPrompt} mainThreadAgentDefinition={resumeData.mainThreadAgentDefinition} autoConnectIdeFlag={autoConnectIdeFlag} disableSlashCommands={disableSlashCommands} thinkingConfig={thinkingConfig} onTurnComplete={onTurnComplete} />;
   }
   if (loading) {
     return <Box>

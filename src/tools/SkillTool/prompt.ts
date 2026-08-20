@@ -7,11 +7,6 @@ import {
 } from 'src/commands.js'
 import { COMMAND_NAME_TAG } from '../../constants/xml.js'
 import { stringWidth } from '../../ink/stringWidth.js'
-import {
-  type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-  logEvent,
-} from '../../services/analytics/index.js'
-import { count } from '../../utils/array.js'
 import { toError } from '../../utils/errors.js'
 import { truncate } from '../../utils/format.js'
 import { logError } from '../../utils/log.js'
@@ -109,18 +104,6 @@ export function formatCommandsWithinBudget(
 
   if (maxDescLen < MIN_DESC_LENGTH) {
     // Extreme case: non-bundled go names-only, bundled keep descriptions
-    if (process.env.USER_TYPE === 'ant') {
-      logEvent('tengu_skill_descriptions_truncated', {
-        skill_count: commands.length,
-        budget,
-        full_total: fullTotal,
-        truncation_mode:
-          'names_only' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-        max_desc_length: maxDescLen,
-        bundled_count: bundledIndices.size,
-        bundled_chars: bundledChars,
-      })
-    }
     return commands
       .map((cmd, i) =>
         bundledIndices.has(i) ? fullEntries[i]!.full : `- ${cmd.name}`,
@@ -129,24 +112,6 @@ export function formatCommandsWithinBudget(
   }
 
   // Truncate non-bundled descriptions to fit within budget
-  const truncatedCount = count(
-    restCommands,
-    cmd => stringWidth(getCommandDescription(cmd)) > maxDescLen,
-  )
-  if (process.env.USER_TYPE === 'ant') {
-    logEvent('tengu_skill_descriptions_truncated', {
-      skill_count: commands.length,
-      budget,
-      full_total: fullTotal,
-      truncation_mode:
-        'description_trimmed' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      max_desc_length: maxDescLen,
-      truncated_count: truncatedCount,
-      // Count of bundled skills included in this prompt (excludes skills with disableModelInvocation)
-      bundled_count: bundledIndices.size,
-      bundled_chars: bundledChars,
-    })
-  }
   return commands
     .map((cmd, i) => {
       // Bundled skills always get full descriptions
