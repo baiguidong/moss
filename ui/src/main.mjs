@@ -203,16 +203,26 @@ function normalizeMossBaseUrl(value) {
   }
 }
 
-function isPlainObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value);
-}
-
 function objectField(source, key) {
   return isPlainObject(source?.[key]) ? source[key] : {};
 }
 
 function stringField(source, key) {
   return typeof source?.[key] === 'string' ? source[key].trim() : undefined;
+}
+
+function ownStringField(source, key) {
+  return Object.prototype.hasOwnProperty.call(source || {}, key) &&
+    typeof source?.[key] === 'string'
+    ? source[key].trim()
+    : undefined;
+}
+
+function ownRawStringField(source, key) {
+  return Object.prototype.hasOwnProperty.call(source || {}, key) &&
+    typeof source?.[key] === 'string'
+    ? source[key]
+    : undefined;
 }
 
 function firstNonEmptyString(...values) {
@@ -235,6 +245,10 @@ function deleteModelEndpointEnvKeys(env) {
       delete env[key];
     }
   }
+}
+
+function normalizeRemoteDirectCredentialMode(value) {
+  return value === 'api-key' ? 'api-key' : 'password';
 }
 
 function djb2Hash(value) {
@@ -605,6 +619,8 @@ function normalizeDesktopSettings(input, existing = {}) {
   const existingModels = objectField(existing, 'models');
   const existingText = objectField(existingModels, 'text');
   const existingTextThinking = objectField(existingText, 'thinking');
+  const sourceRemoteDirect = objectField(source, 'remoteDirect');
+  const existingRemoteDirect = objectField(existing, 'remoteDirect');
 
   if (source.agentMode !== undefined) {
     result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
@@ -696,14 +712,14 @@ function normalizeDesktopSettings(input, existing = {}) {
             ? existingModelImage.provider
           : DEFAULT_DESKTOP_SETTINGS.image.provider,
     url:
-      typeof sourceImage.url === 'string'
-        ? sourceImage.url.trim()
-        : typeof sourceImage.baseUrl === 'string'
-          ? sourceImage.baseUrl.trim()
-        : typeof existingImage.url === 'string'
-          ? existingImage.url
-          : typeof existingModelImage.baseUrl === 'string'
-            ? existingModelImage.baseUrl
+      typeof sourceImage.baseUrl === 'string'
+        ? sourceImage.baseUrl.trim()
+        : typeof sourceImage.url === 'string'
+          ? sourceImage.url.trim()
+        : typeof existingModelImage.baseUrl === 'string'
+          ? existingModelImage.baseUrl
+          : typeof existingImage.url === 'string'
+            ? existingImage.url
           : DEFAULT_DESKTOP_SETTINGS.image.url,
     apiKey:
       typeof sourceImage.apiKey === 'string'
@@ -723,43 +739,59 @@ function normalizeDesktopSettings(input, existing = {}) {
           : DEFAULT_DESKTOP_SETTINGS.image.model,
   };
 
-  if (typeof source.remoteDirectServerUrl === 'string') {
-    result.remoteDirectServerUrl = source.remoteDirectServerUrl.trim();
-  } else if (result.remoteDirectServerUrl === undefined) {
-    result.remoteDirectServerUrl = DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
-  }
+  result.remoteDirectServerUrl =
+    ownStringField(source, 'remoteDirectServerUrl') ??
+    ownStringField(sourceRemoteDirect, 'serverUrl') ??
+    stringField(result, 'remoteDirectServerUrl') ??
+    stringField(existingRemoteDirect, 'serverUrl') ??
+    DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
 
-  if (source.remoteDirectCredentialMode === 'api-key') {
-    result.remoteDirectCredentialMode = 'api-key';
-  } else if (source.remoteDirectCredentialMode === 'password') {
-    result.remoteDirectCredentialMode = 'password';
-  } else if (result.remoteDirectCredentialMode === undefined) {
-    result.remoteDirectCredentialMode = DEFAULT_DESKTOP_SETTINGS.remoteDirectCredentialMode;
-  }
+  result.remoteDirectCredentialMode = normalizeRemoteDirectCredentialMode(
+    source.remoteDirectCredentialMode ??
+      sourceRemoteDirect.credentialMode ??
+      result.remoteDirectCredentialMode ??
+      existingRemoteDirect.credentialMode ??
+      DEFAULT_DESKTOP_SETTINGS.remoteDirectCredentialMode,
+  );
 
-  if (typeof source.remoteDirectUserEmail === 'string') {
-    result.remoteDirectUserEmail = source.remoteDirectUserEmail.trim();
-  } else if (result.remoteDirectUserEmail === undefined) {
-    result.remoteDirectUserEmail = DEFAULT_DESKTOP_SETTINGS.remoteDirectUserEmail;
-  }
+  result.remoteDirectUserEmail =
+    ownStringField(source, 'remoteDirectUserEmail') ??
+    ownStringField(sourceRemoteDirect, 'userEmail') ??
+    stringField(result, 'remoteDirectUserEmail') ??
+    stringField(existingRemoteDirect, 'userEmail') ??
+    DEFAULT_DESKTOP_SETTINGS.remoteDirectUserEmail;
 
-  if (typeof source.remoteDirectUserPassword === 'string') {
-    result.remoteDirectUserPassword = source.remoteDirectUserPassword;
-  } else if (result.remoteDirectUserPassword === undefined) {
-    result.remoteDirectUserPassword = DEFAULT_DESKTOP_SETTINGS.remoteDirectUserPassword;
-  }
+  result.remoteDirectUserPassword =
+    ownRawStringField(source, 'remoteDirectUserPassword') ??
+    ownRawStringField(sourceRemoteDirect, 'userPassword') ??
+    (typeof result.remoteDirectUserPassword === 'string'
+      ? result.remoteDirectUserPassword
+      : typeof existingRemoteDirect.userPassword === 'string'
+        ? existingRemoteDirect.userPassword
+        : DEFAULT_DESKTOP_SETTINGS.remoteDirectUserPassword);
 
-  if (typeof source.remoteDirectApiKey === 'string') {
-    result.remoteDirectApiKey = source.remoteDirectApiKey.trim();
-  } else if (result.remoteDirectApiKey === undefined) {
-    result.remoteDirectApiKey = DEFAULT_DESKTOP_SETTINGS.remoteDirectApiKey;
-  }
+  result.remoteDirectApiKey =
+    ownStringField(source, 'remoteDirectApiKey') ??
+    ownStringField(sourceRemoteDirect, 'apiKey') ??
+    stringField(result, 'remoteDirectApiKey') ??
+    stringField(existingRemoteDirect, 'apiKey') ??
+    DEFAULT_DESKTOP_SETTINGS.remoteDirectApiKey;
 
-  if (typeof source.remoteDirectWorkspace === 'string') {
-    result.remoteDirectWorkspace = source.remoteDirectWorkspace.trim();
-  } else if (result.remoteDirectWorkspace === undefined) {
-    result.remoteDirectWorkspace = DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
-  }
+  result.remoteDirectWorkspace =
+    ownStringField(source, 'remoteDirectWorkspace') ??
+    ownStringField(sourceRemoteDirect, 'workspace') ??
+    stringField(result, 'remoteDirectWorkspace') ??
+    stringField(existingRemoteDirect, 'workspace') ??
+    DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
+
+  result.remoteDirect = {
+    serverUrl: result.remoteDirectServerUrl,
+    credentialMode: result.remoteDirectCredentialMode,
+    userEmail: result.remoteDirectUserEmail,
+    userPassword: result.remoteDirectUserPassword,
+    apiKey: result.remoteDirectApiKey,
+    workspace: result.remoteDirectWorkspace,
+  };
 
   if (source.coordinatorMode !== undefined) {
     result.coordinatorMode = Boolean(source.coordinatorMode);
@@ -974,6 +1006,30 @@ function saveDesktopSettings(nextSettings) {
   const existingImage = existingModels.image && typeof existingModels.image === 'object'
     ? existingModels.image
     : {};
+  const imageModel = {
+    ...existingImage,
+    provider: normalizedSettings.image?.provider ?? DEFAULT_DESKTOP_SETTINGS.image.provider,
+    baseUrl: normalizedSettings.image?.url ?? DEFAULT_DESKTOP_SETTINGS.image.url,
+    apiKey: normalizedSettings.image?.apiKey ?? DEFAULT_DESKTOP_SETTINGS.image.apiKey,
+    model: normalizedSettings.image?.model ?? DEFAULT_DESKTOP_SETTINGS.image.model,
+  };
+  delete imageModel.url;
+
+  const existingRemoteDirect = existingFile.remoteDirect && typeof existingFile.remoteDirect === 'object'
+    ? existingFile.remoteDirect
+    : {};
+  const remoteDirect = {
+    ...existingRemoteDirect,
+    serverUrl: normalizedSettings.remoteDirectServerUrl || '',
+    credentialMode: normalizeRemoteDirectCredentialMode(
+      normalizedSettings.remoteDirectCredentialMode,
+    ),
+    userEmail: normalizedSettings.remoteDirectUserEmail || '',
+    userPassword: normalizedSettings.remoteDirectUserPassword || '',
+    apiKey: normalizedSettings.remoteDirectApiKey || '',
+    workspace: normalizedSettings.remoteDirectWorkspace || '',
+  };
+
   const models = {
     ...existingModels,
     text: {
@@ -988,21 +1044,22 @@ function saveDesktopSettings(nextSettings) {
         budgetTokens: normalizedSettings.thinkingBudgetTokens,
       },
     },
-    image: {
-      ...existingImage,
-      provider: normalizedSettings.image?.provider ?? DEFAULT_DESKTOP_SETTINGS.image.provider,
-      baseUrl: normalizedSettings.image?.url ?? DEFAULT_DESKTOP_SETTINGS.image.url,
-      apiKey: normalizedSettings.image?.apiKey ?? DEFAULT_DESKTOP_SETTINGS.image.apiKey,
-      model: normalizedSettings.image?.model ?? DEFAULT_DESKTOP_SETTINGS.image.model,
-    },
+    image: imageModel,
   };
 
   const toSave = {
     ...existingFile,
     ...normalizedSettings,
     models,
+    remoteDirect,
     env,
   };
+  delete toSave.remoteDirectServerUrl;
+  delete toSave.remoteDirectCredentialMode;
+  delete toSave.remoteDirectUserEmail;
+  delete toSave.remoteDirectUserPassword;
+  delete toSave.remoteDirectApiKey;
+  delete toSave.remoteDirectWorkspace;
   delete toSave.model;
   delete toSave.maxTurns;
   delete toSave.thinkingMode;
@@ -1270,10 +1327,43 @@ function isRemoteDirectModeEnabled(settings = desktopSettings) {
   return getDesktopAgentMode(settings) === 'remote-direct';
 }
 
+function getRemoteDirectSettings(settings = desktopSettings) {
+  const remoteDirect = objectField(settings, 'remoteDirect');
+  const nestedServerUrl = ownStringField(remoteDirect, 'serverUrl');
+  const nestedUserEmail = ownStringField(remoteDirect, 'userEmail');
+  const nestedUserPassword = ownRawStringField(remoteDirect, 'userPassword');
+  const nestedApiKey = ownStringField(remoteDirect, 'apiKey');
+  const nestedWorkspace = ownStringField(remoteDirect, 'workspace');
+  return {
+    serverUrl:
+      nestedServerUrl ??
+      stringField(settings, 'remoteDirectServerUrl') ??
+      '',
+    credentialMode: normalizeRemoteDirectCredentialMode(
+      remoteDirect.credentialMode ?? settings?.remoteDirectCredentialMode,
+    ),
+    userEmail:
+      nestedUserEmail ??
+      stringField(settings, 'remoteDirectUserEmail') ??
+      '',
+    userPassword:
+      nestedUserPassword ??
+      (typeof settings?.remoteDirectUserPassword === 'string'
+        ? settings.remoteDirectUserPassword
+        : ''),
+    apiKey:
+      nestedApiKey ??
+      stringField(settings, 'remoteDirectApiKey') ??
+      '',
+    workspace:
+      nestedWorkspace ??
+      stringField(settings, 'remoteDirectWorkspace') ??
+      '',
+  };
+}
+
 function getRemoteDirectWorkspace(settings = desktopSettings) {
-  const value = typeof settings?.remoteDirectWorkspace === 'string'
-    ? settings.remoteDirectWorkspace.trim()
-    : '';
+  const value = getRemoteDirectSettings(settings).workspace;
   return value || undefined;
 }
 
@@ -1384,9 +1474,8 @@ async function requestRemoteDirectAccessToken({
 }
 
 async function resolveRemoteDirectConnection() {
-  const raw = typeof desktopSettings.remoteDirectServerUrl === 'string'
-    ? desktopSettings.remoteDirectServerUrl.trim()
-    : '';
+  const remoteDirect = getRemoteDirectSettings();
+  const raw = remoteDirect.serverUrl;
 
   if (!raw) {
     throw new Error('Remote Direct server URL is required.');
@@ -1395,11 +1484,10 @@ async function resolveRemoteDirectConnection() {
   const parsed = parseRemoteDirectServerInput(raw);
   const authToken = await requestRemoteDirectAccessToken({
     authCenterUrl: parsed.authCenterUrl,
-    credentialMode: desktopSettings.remoteDirectCredentialMode,
-    // Legacy settings key; accepts either username or email.
-    loginIdentifier: desktopSettings.remoteDirectUserEmail,
-    password: desktopSettings.remoteDirectUserPassword,
-    apiKey: desktopSettings.remoteDirectApiKey,
+    credentialMode: remoteDirect.credentialMode,
+    loginIdentifier: remoteDirect.userEmail,
+    password: remoteDirect.userPassword,
+    apiKey: remoteDirect.apiKey,
   });
 
   return {

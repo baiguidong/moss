@@ -161,6 +161,14 @@ export type DesktopSettings = {
       updatedAt?: number;
     }>;
   };
+  remoteDirect?: {
+    serverUrl: string;
+    credentialMode: 'password' | 'api-key';
+    userEmail: string;
+    userPassword: string;
+    apiKey: string;
+    workspace: string;
+  };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
   // Legacy key name; stores either username or email for password login.

@@ -127,24 +127,39 @@ function buildSystemSettingsPatch(
   if (draft.bypassPermissions !== settings.bypassPermissions) {
     patch.bypassPermissions = draft.bypassPermissions
   }
+
+  const textPatch: NonNullable<
+    NonNullable<UpdateSystemSettingsRequest['models']>['text']
+  > = {}
   if (draft.model !== settings.model) {
-    patch.model = draft.model
+    textPatch.model = draft.model
   }
   if (draft.maxTurns !== settings.maxTurns) {
-    patch.maxTurns = draft.maxTurns
+    textPatch.maxTurns = draft.maxTurns
   }
+  const thinkingPatch: NonNullable<typeof textPatch.thinking> = {}
   if (draft.thinkingMode !== settings.thinkingMode) {
-    patch.thinkingMode = draft.thinkingMode
+    thinkingPatch.mode = draft.thinkingMode
   }
   if (draft.thinkingBudgetTokens !== settings.thinkingBudgetTokens) {
-    patch.thinkingBudgetTokens = draft.thinkingBudgetTokens
+    thinkingPatch.budgetTokens = draft.thinkingBudgetTokens
+  }
+  if (Object.keys(thinkingPatch).length > 0) {
+    textPatch.thinking = thinkingPatch
   }
   if (draft.url !== settings.url) {
-    patch.url = draft.url
+    textPatch.baseUrl = draft.url
   }
   if (draft.apiKey !== settings.apiKey) {
-    patch.apiKey = draft.apiKey
+    textPatch.apiKey = draft.apiKey
   }
+  if (Object.keys(textPatch).length > 0) {
+    patch.models = {
+      ...patch.models,
+      text: textPatch,
+    }
+  }
+
   if (draft.serverUrl !== settings.serverUrl) {
     patch.serverUrl = draft.serverUrl
   }
@@ -152,12 +167,14 @@ function buildSystemSettingsPatch(
     patch.serverAuthToken = draft.serverAuthToken
   }
 
-  const imagePatch: NonNullable<UpdateSystemSettingsRequest['image']> = {}
+  const imagePatch: NonNullable<
+    NonNullable<UpdateSystemSettingsRequest['models']>['image']
+  > = {}
   if (draft.image.provider !== settings.image.provider) {
     imagePatch.provider = draft.image.provider
   }
   if (draft.image.url !== settings.image.url) {
-    imagePatch.url = draft.image.url
+    imagePatch.baseUrl = draft.image.url
   }
   if (draft.image.apiKey !== settings.image.apiKey) {
     imagePatch.apiKey = draft.image.apiKey
@@ -166,7 +183,10 @@ function buildSystemSettingsPatch(
     imagePatch.model = draft.image.model
   }
   if (Object.keys(imagePatch).length > 0) {
-    patch.image = imagePatch
+    patch.models = {
+      ...patch.models,
+      image: imagePatch,
+    }
   }
 
   const skillStorePatch: NonNullable<UpdateSystemSettingsRequest['skillStore']> = {}
@@ -546,7 +566,7 @@ export default function SystemSettingsPage() {
             />
           </SettingField>
 
-          <SettingField label="API URL" description="Anthropic 协议模型接口地址，写入 MOSS_BASE_URL。">
+          <SettingField label="API URL" description="文本模型接口地址，保存到 models.text.baseUrl。">
             <Input
               value={draft.url}
               onChange={(event) =>
@@ -559,13 +579,13 @@ export default function SystemSettingsPage() {
                     : current,
                 )
               }
-              placeholder="https://api.minimaxi.com/anthropic"
+              placeholder="https://model.example.com"
             />
           </SettingField>
 
           <SettingField
             label="API Key"
-            description="保存后会写入 ~/.moss/settings.json 的 env 配置。"
+            description="文本模型认证信息，保存到 models.text.apiKey。"
           >
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input

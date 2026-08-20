@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import path from 'path'
-import { MOSS_HOME } from './lib/env.js'
+import { getMossServerHomeDir } from './lib/env.js'
 
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
 
@@ -40,7 +40,14 @@ type PersistedSystemSettings = Record<string, unknown> & Omit<
 
 const DEFAULT_BYPASS_PERMISSIONS =
   process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true'
-export const SYSTEM_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json')
+export const SYSTEM_SETTINGS_PATH = path.join(
+  getMossServerHomeDir(),
+  'settings.json',
+)
+
+function getSystemSettingsPath(): string {
+  return path.join(getMossServerHomeDir(), 'settings.json')
+}
 
 const DEFAULT_SYSTEM_SETTINGS: Omit<
   SystemSettingsPayload,
@@ -222,14 +229,14 @@ function normalizeSystemSettings(
             ? existingModelImage.provider
           : DEFAULT_SYSTEM_SETTINGS.image.provider,
     url:
-      typeof sourceImage.url === 'string'
-        ? sourceImage.url.trim()
-        : typeof sourceImage.baseUrl === 'string'
-          ? sourceImage.baseUrl.trim()
-        : typeof existingImage.url === 'string'
-          ? existingImage.url
-          : typeof existingModelImage.baseUrl === 'string'
-            ? existingModelImage.baseUrl
+      typeof sourceImage.baseUrl === 'string'
+        ? sourceImage.baseUrl.trim()
+        : typeof sourceImage.url === 'string'
+          ? sourceImage.url.trim()
+        : typeof existingModelImage.baseUrl === 'string'
+          ? existingModelImage.baseUrl
+          : typeof existingImage.url === 'string'
+            ? existingImage.url
           : DEFAULT_SYSTEM_SETTINGS.image.url,
     apiKey:
       typeof sourceImage.apiKey === 'string'
@@ -266,8 +273,9 @@ function normalizeSystemSettings(
 }
 
 function readSystemSettingsState(): SystemSettingsState {
+  const settingsPath = getSystemSettingsPath()
   const result: SystemSettingsState = {
-    path: SYSTEM_SETTINGS_PATH,
+    path: settingsPath,
     exists: false,
     loaded: false,
     parseError: '',
@@ -275,12 +283,12 @@ function readSystemSettingsState(): SystemSettingsState {
   }
 
   try {
-    if (!existsSync(SYSTEM_SETTINGS_PATH)) {
+    if (!existsSync(settingsPath)) {
       return result
     }
 
     result.exists = true
-    const raw = readFileSync(SYSTEM_SETTINGS_PATH, 'utf8')
+    const raw = readFileSync(settingsPath, 'utf8')
     const parsed = JSON.parse(raw)
     const rawSettings = isRecord(parsed) ? parsed : {}
     const env = isRecord(rawSettings.env) ? rawSettings.env : {}
@@ -345,6 +353,7 @@ export function getSystemSettings(): SystemSettingsPayload {
 }
 
 export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
+  const settingsPath = getSystemSettingsPath()
   const state = readSystemSettingsState()
   const currentSettings = state.value
   const nextSettings = {
@@ -356,8 +365,8 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   let existingEnv: Record<string, unknown> = {}
 
   try {
-    if (existsSync(SYSTEM_SETTINGS_PATH)) {
-      const raw = readFileSync(SYSTEM_SETTINGS_PATH, 'utf8')
+    if (existsSync(settingsPath)) {
+      const raw = readFileSync(settingsPath, 'utf8')
       const parsed = JSON.parse(raw)
       if (isRecord(parsed)) {
         existingFile = parsed
@@ -393,6 +402,15 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   const existingImage = isRecord(existingModels.image)
     ? existingModels.image
     : {}
+  const imageModel: Record<string, unknown> = {
+    ...existingImage,
+    provider: nextSettings.image.provider,
+    baseUrl: nextSettings.image.url,
+    apiKey: nextSettings.image.apiKey,
+    model: nextSettings.image.model,
+  }
+  delete imageModel.url
+
   const models = {
     ...existingModels,
     text: {
@@ -407,13 +425,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
         budgetTokens: nextSettings.thinkingBudgetTokens,
       },
     },
-    image: {
-      ...existingImage,
-      provider: nextSettings.image.provider,
-      baseUrl: nextSettings.image.url,
-      apiKey: nextSettings.image.apiKey,
-      model: nextSettings.image.model,
-    },
+    image: imageModel,
   }
 
   const toSave: Record<string, unknown> = {
@@ -437,8 +449,8 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     delete toSave.env
   }
 
-  mkdirSync(MOSS_HOME, { recursive: true })
-  writeFileSync(SYSTEM_SETTINGS_PATH, `${JSON.stringify(toSave, null, 2)}\n`, 'utf8')
+  mkdirSync(path.dirname(settingsPath), { recursive: true })
+  writeFileSync(settingsPath, `${JSON.stringify(toSave, null, 2)}\n`, 'utf8')
 
   return {
     bypassPermissions: nextSettings.bypassPermissions,
@@ -452,7 +464,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     serverAuthToken: nextSettings.serverAuthToken,
     image: nextSettings.image,
     skillStore: nextSettings.skillStore,
-    settingsPath: SYSTEM_SETTINGS_PATH,
+    settingsPath,
     settingsExists: true,
     settingsLoaded: true,
     settingsParseError: '',

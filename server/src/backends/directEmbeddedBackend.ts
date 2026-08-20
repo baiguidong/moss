@@ -129,17 +129,19 @@ function deleteModelEndpointEnvKeys(env: JsonObject): void {
   }
 }
 
-function applyManagedRuntimeEnv(
+export function applyManagedRuntimeEnv(
   settings: ReturnType<typeof getSystemSettings>,
 ): void {
   for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
     if (value) {
       process.env[key] = value
+    } else {
+      delete process.env[key]
     }
   }
 }
 
-async function writeManagedSessionSettings(
+export async function writeManagedSessionSettings(
   configDir: string | undefined,
   settings: ReturnType<typeof getSystemSettings>,
 ): Promise<void> {

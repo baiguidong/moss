@@ -169,15 +169,26 @@ export interface SystemSettings {
 
 export interface UpdateSystemSettingsRequest {
   bypassPermissions?: boolean
-  model?: string
-  maxTurns?: number
-  thinkingMode?: ThinkingMode
-  thinkingBudgetTokens?: number
-  url?: string
-  apiKey?: string
   serverUrl?: string
   serverAuthToken?: string
-  image?: Partial<SystemSettingsImage>
+  models?: {
+    text?: {
+      baseUrl?: string
+      apiKey?: string
+      model?: string
+      maxTurns?: number
+      thinking?: {
+        mode?: ThinkingMode
+        budgetTokens?: number
+      }
+    }
+    image?: {
+      provider?: string
+      baseUrl?: string
+      apiKey?: string
+      model?: string
+    }
+  }
   skillStore?: Partial<SystemSettingsSkillStore>
 }
 
