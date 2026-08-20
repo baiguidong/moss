@@ -532,8 +532,7 @@ function isToolResultBlockWithContent(obj: unknown): obj is ToolResultBlock {
  *
  * Compaction replaces tool_reference-bearing messages with a summary, so it
  * snapshots the discovered set onto compactMetadata.preCompactDiscoveredTools
- * on the boundary marker; this scan reads it back. Snip instead protects the
- * tool_reference-carrying messages from removal.
+ * on the boundary marker; this scan reads it back.
  *
  * @param messages Array of messages that may contain tool_result blocks with tool_reference content
  * @returns Set of tool names that have been discovered via tool_reference blocks

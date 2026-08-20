@@ -23,26 +23,6 @@ export type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS = never
  */
 export type AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED = never
 
-/**
- * Strip `_PROTO_*` keys before metadata crosses the analytics boundary.
- *
- * Returns the input unchanged (same reference) when no _PROTO_ keys present.
- */
-export function stripProtoFields<V>(
-  metadata: Record<string, V>,
-): Record<string, V> {
-  let result: Record<string, V> | undefined
-  for (const key in metadata) {
-    if (key.startsWith('_PROTO_')) {
-      if (result === undefined) {
-        result = { ...metadata }
-      }
-      delete result[key]
-    }
-  }
-  return result ?? metadata
-}
-
 type LogEventMetadata = { [key: string]: boolean | number | undefined }
 
 export function logEvent(
@@ -51,17 +31,5 @@ export function logEvent(
   // to avoid accidentally logging code/filepaths
   _metadata: LogEventMetadata,
 ): void {
-  return
-}
-
-export async function logEventAsync(
-  _eventName: string,
-  // intentionally no strings, to avoid accidentally logging code/filepaths
-  _metadata: LogEventMetadata,
-): Promise<void> {
-  return
-}
-
-export function _resetForTesting(): void {
   return
 }

@@ -303,7 +303,6 @@ import { getRunningTasks } from '../utils/task/framework.js'
 import { isBackgroundTask } from '../tasks/types.js'
 import { stopTask } from '../tasks/stopTask.js'
 import { drainSdkEvents } from '../utils/sdkEventQueue.js'
-import { initializeFeatureFlags } from '../services/analytics/featureFlags.js'
 import { errorMessage, toError } from '../utils/errors.js'
 import { sleep } from '../utils/sleep.js'
 import { isExtractModeActive } from '../memdir/paths.js'
@@ -485,10 +484,6 @@ export async function runHeadless(
   // Start headless profiler for first turn
   headlessProfilerStartTurn()
   headlessProfilerCheckpoint('runHeadless_entry')
-
-  // Initialize feature flag so feature flags take effect in headless mode.
-  // Without this, the disk cache is empty and all flags fall back to defaults.
-  void initializeFeatureFlags()
 
   if (options.resumeSessionAt && !options.resume) {
     process.stderr.write(`Error: --resume-session-at requires --resume\n`)
@@ -2653,8 +2648,8 @@ function runHeadlessStreaming(
             cancelled: removed.length > 0,
           })
         } else if (message.request.subtype === 'seed_read_state') {
-          // Client observed a Read that was later removed from context (e.g.
-          // by snip), so transcript-based seeding missed it. Queued into
+          // Client observed a Read that was later removed from context, so
+          // transcript-based seeding missed it. Queued into
           // pendingSeeds; applied at the next clone-replace boundary.
           try {
             // expandPath: all other readFileState writers normalize (~, relative,

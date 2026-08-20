@@ -35,9 +35,6 @@ export const RECOMMENDED = {
   // 历史会话选择器：/resume 时用交互式 UI 选择历史会话，替代纯文本列表
   HISTORY_PICKER: true,
 
-  // 历史记录裁剪：compaction 时智能裁剪不重要的旧消息
-  HISTORY_SNIP: true,
-
   // /ultraplan 命令：生成超详细的多步骤执行计划
   ULTRAPLAN: true,
 

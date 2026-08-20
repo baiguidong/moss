@@ -47,7 +47,6 @@ import { dirname, parse, relative, resolve } from 'path'
 import { getCwd } from 'src/utils/cwd.js'
 import { getViewedTeammateTask } from '../state/selectors.js'
 import { logError } from './log.js'
-import { logAntError } from './debug.js'
 import { isENOENT, toError } from './errors.js'
 import type { DiagnosticFile } from '../services/diagnosticTracking.js'
 import { diagnosticTracker } from '../services/diagnosticTracking.js'
@@ -640,9 +639,6 @@ export type Attachment =
       type: 'compaction_reminder'
     }
   | {
-      type: 'context_efficiency'
-    }
-  | {
       type: 'date_change'
       newDate: string
     }
@@ -889,13 +885,6 @@ export async function getAttachments(
           ),
         ]
       : []),
-    ...(feature('HISTORY_SNIP')
-      ? [
-          maybe('context_efficiency', () =>
-            Promise.resolve(getContextEfficiencyAttachment(messages ?? [])),
-          ),
-        ]
-      : []),
   ]
 
   // Attachments which are semantically only for the main conversation or don't have concurrency-safe implementations
@@ -992,8 +981,6 @@ async function maybe<A>(label: string, f: () => Promise<A[]>): Promise<A[]> {
       } as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS)
     }
     logError(e)
-    // For Ant users, log the full error to help with debugging
-    logAntError(`Attachment error in ${label}`, e)
 
     return []
   }
@@ -3731,35 +3718,6 @@ export function getCompactionReminderAttachment(
 
   return [{ type: 'compaction_reminder' }]
 }
-
-/**
- * Context-efficiency nudge. Injected after every N tokens of growth without
- * a snip. Pacing is handled entirely by shouldNudgeForSnips — the 10k
- * interval resets on prior nudges, snip markers, snip boundaries, and
- * compact boundaries.
- */
-export function getContextEfficiencyAttachment(
-  messages: Message[],
-): Attachment[] {
-  if (!feature('HISTORY_SNIP')) {
-    return []
-  }
-  // Gate must match SnipTool.isEnabled() — don't nudge toward a tool that
-  // isn't in the tool list. Lazy require keeps this file snip-string-free.
-  const { isSnipRuntimeEnabled, shouldNudgeForSnips } =
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require('../services/compact/snipCompact.js') as typeof import('../services/compact/snipCompact.js')
-  if (!isSnipRuntimeEnabled()) {
-    return []
-  }
-
-  if (!shouldNudgeForSnips(messages)) {
-    return []
-  }
-
-  return [{ type: 'context_efficiency' }]
-}
-
 
 function isFileReadDenied(
   filePath: string,

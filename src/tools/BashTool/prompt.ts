@@ -36,9 +36,7 @@ function getBackgroundUsageNote(): string | null {
 }
 
 function getCommitAndPRInstructions(): string {
-  const undercoverSection = ''
-
-  if (!shouldIncludeGitInstructions()) return undercoverSection
+  if (!shouldIncludeGitInstructions()) return ''
 
   const { commit: commitAttribution, pr: prAttribution } = getAttributionTexts()
 

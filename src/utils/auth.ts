@@ -20,7 +20,7 @@ import {
 } from './aws.js'
 import { AwsAuthStatusManager } from './awsAuthStatusManager.js'
 import { checkHasTrustDialogAccepted, getGlobalConfig } from './config.js'
-import { logAntError, logForDebugging } from './debug.js'
+import { logForDebugging } from './debug.js'
 import { isBareMode, isEnvTruthy, isRunningOnHomespace } from './envUtils.js'
 import { memoizeWithTTLAsync } from './memoize.js'
 import {
@@ -399,10 +399,6 @@ async function _executeApiKeyHelper(
   if (isApiKeyHelperFromProjectOrLocalSettings()) {
     const hasTrust = checkHasTrustDialogAccepted()
     if (!hasTrust && !isNonInteractiveSession) {
-      const error = new Error(
-        `Security: apiKeyHelper executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`,
-      )
-      logAntError('apiKeyHelper invoked before trust check', error)
       logEvent('tengu_apiKeyHelper_missing_trust11', {})
       return null
     }
@@ -474,10 +470,6 @@ async function runAwsAuthRefresh(): Promise<boolean> {
     // Check if trust has been established for this project
     const hasTrust = checkHasTrustDialogAccepted()
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error = new Error(
-        `Security: awsAuthRefresh executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`,
-      )
-      logAntError('awsAuthRefresh invoked before trust check', error)
       logEvent('tengu_awsAuthRefresh_missing_trust', {})
       return false
     }
@@ -571,10 +563,6 @@ async function getAwsCredsFromCredentialExport(): Promise<{
     // Check if trust has been established for this project
     const hasTrust = checkHasTrustDialogAccepted()
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error = new Error(
-        `Security: awsCredentialExport executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`,
-      )
-      logAntError('awsCredentialExport invoked before trust check', error)
       logEvent('tengu_awsCredentialExport_missing_trust', {})
       return null
     }
@@ -738,10 +726,6 @@ async function runGcpAuthRefresh(): Promise<boolean> {
     // Pass true to indicate this is a dangerous feature that requires trust
     const hasTrust = checkHasTrustDialogAccepted()
     if (!hasTrust && !getIsNonInteractiveSession()) {
-      const error = new Error(
-        `Security: gcpAuthRefresh executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`,
-      )
-      logAntError('gcpAuthRefresh invoked before trust check', error)
       logEvent('tengu_gcpAuthRefresh_missing_trust', {})
       return false
     }

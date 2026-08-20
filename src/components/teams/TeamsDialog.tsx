@@ -22,7 +22,7 @@ import { jsonStringify } from '../../utils/slowOperations.js';
 import { IT2_COMMAND, isInsideTmuxSync } from '../../utils/swarm/backends/detection.js';
 import { ensureBackendsRegistered, getBackendByType, getCachedBackend } from '../../utils/swarm/backends/registry.js';
 import type { PaneBackendType } from '../../utils/swarm/backends/types.js';
-import { getSwarmSocketName, TMUX_COMMAND } from '../../utils/swarm/constants.js';
+import { getSwarmSocketName, SWARM_SESSION_NAME, SWARM_VIEW_WINDOW_NAME, TMUX_COMMAND } from '../../utils/swarm/constants.js';
 import { addHiddenPaneId, removeHiddenPaneId, removeMemberFromTeam, setMemberMode, setMultipleMemberModes } from '../../utils/swarm/teamHelpers.js';
 import { listTasks, type Task, unassignTeammateTasks } from '../../utils/tasks.js';
 import { getTeammateStatuses, type TeammateStatus, type TeamSummary } from '../../utils/teamDiscovery.js';
@@ -626,17 +626,37 @@ async function toggleTeammateVisibility(teammate: TeammateStatus, teamName: stri
   }
 }
 
-/**
- * Hide a teammate pane using the backend abstraction.
- * Only available for ant users (gated for dead code elimination in external builds)
- */
-async function hideTeammate(teammate: TeammateStatus, teamName: string): Promise<void> {}
+async function hideTeammate(teammate: TeammateStatus, teamName: string): Promise<void> {
+  if (!teammate.backendType) return;
+  await ensureBackendsRegistered();
+  const backend = getBackendByType(teammate.backendType);
+  if (!backend.supportsHideShow) return;
 
-/**
- * Show a previously hidden teammate pane using the backend abstraction.
- * Only available for ant users (gated for dead code elimination in external builds)
- */
-async function showTeammate(teammate: TeammateStatus, teamName: string): Promise<void> {}
+  const useExternalSession = teammate.backendType === 'tmux' && !isInsideTmuxSync();
+  const hidden = await backend.hidePane(teammate.tmuxPaneId, useExternalSession);
+  if (hidden) {
+    addHiddenPaneId(teamName, teammate.tmuxPaneId);
+  }
+}
+
+async function showTeammate(teammate: TeammateStatus, teamName: string): Promise<void> {
+  if (!teammate.backendType) return;
+  await ensureBackendsRegistered();
+  const backend = getBackendByType(teammate.backendType);
+  if (!backend.supportsHideShow) return;
+
+  const useExternalSession = teammate.backendType === 'tmux' && !isInsideTmuxSync();
+  const target = useExternalSession ? `${SWARM_SESSION_NAME}:${SWARM_VIEW_WINDOW_NAME}` : process.env.TMUX_PANE;
+  if (!target) {
+    logForDebugging(`[TeamsDialog] Cannot show hidden pane ${teammate.tmuxPaneId}: no tmux target`);
+    return;
+  }
+
+  const shown = await backend.showPane(teammate.tmuxPaneId, target, useExternalSession);
+  if (shown) {
+    removeHiddenPaneId(teamName, teammate.tmuxPaneId);
+  }
+}
 
 /**
  * Send a mode change message to a single teammate

@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
 import { findToolByName, type Tools } from '../Tool.js'
 import { extractBashCommentLabel } from '../tools/BashTool/commentLabel.js'
@@ -30,14 +29,6 @@ import {
   isShellCommandTargetingMemory,
 } from './memoryFileDetection.js'
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-const SNIP_TOOL_NAME = feature('HISTORY_SNIP')
-  ? (
-      require('../tools/SnipTool/prompt.js') as typeof import('../tools/SnipTool/prompt.js')
-    ).SNIP_TOOL_NAME
-  : null
-/* eslint-enable @typescript-eslint/no-require-imports */
-
 /**
  * Result of checking if a tool use is a search or read operation.
  */
@@ -51,8 +42,8 @@ export type SearchOrReadResult = {
   isMemoryWrite: boolean
   /**
    * True for meta-operations that should be absorbed into a collapse group
-   * without incrementing any count (Snip, ToolSearch). They remain visible
-   * in verbose mode via the groupMessages iteration.
+   * without incrementing any count. They remain visible in verbose mode via
+   * the groupMessages iteration.
    */
   isAbsorbedSilently: boolean
   /** MCP server name when this is an MCP tool */
@@ -171,12 +162,12 @@ export function getToolSearchOrReadInfo(
     }
   }
 
-  // Meta-operations absorbed silently: Snip (context cleanup) and ToolSearch
-  // (lazy tool schema loading). Neither should break a collapse group or
-  // contribute to its count, but both stay visible in verbose mode.
+  // Meta-operations absorbed silently: ToolSearch (lazy tool schema loading)
+  // should not break a collapse group or contribute to its count, but stays
+  // visible in verbose mode.
   if (
-    (feature('HISTORY_SNIP') && toolName === SNIP_TOOL_NAME) ||
-    (isFullscreenEnvEnabled() && toolName === TOOL_SEARCH_TOOL_NAME)
+    isFullscreenEnvEnabled() &&
+    toolName === TOOL_SEARCH_TOOL_NAME
   ) {
     return {
       isCollapsible: true,
@@ -758,7 +749,7 @@ export function collapseReadSearchGroups(
         const count = countToolUses(msg)
         currentGroup.memoryWriteCount += count
       } else if (toolInfo.isAbsorbedSilently) {
-        // Snip/ToolSearch absorbed silently — no count, no summary text.
+        // ToolSearch absorbed silently — no count, no summary text.
         // Hidden from the default view but still shown in verbose mode
         // (Ctrl+O) via the groupMessages iteration in CollapsedReadSearchContent.
       } else if (toolInfo.mcpServerName) {

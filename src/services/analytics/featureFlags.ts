@@ -135,10 +135,6 @@ export function clearFeatureFlagConfigOverrides(): void {
   }
 }
 
-export async function initializeFeatureFlags(): Promise<null> {
-  return null
-}
-
 export async function getFeatureValue_DEPRECATED<T>(
   feature: string,
   defaultValue: T,
@@ -176,26 +172,6 @@ export async function checkGate_CACHED_OR_BLOCKING(
   gate: string,
 ): Promise<boolean> {
   return Boolean(getLocalFeatureValue(gate, false))
-}
-
-export function refreshFeatureFlagsAfterAuthChange(): void {
-  return
-}
-
-export function resetFeatureFlags(): void {
-  return
-}
-
-export async function refreshFeatureFlags(): Promise<void> {
-  return
-}
-
-export function setupPeriodicFeatureFlagRefresh(): void {
-  return
-}
-
-export function stopPeriodicFeatureFlagRefresh(): void {
-  return
 }
 
 export async function getDynamicConfig_BLOCKS_ON_INIT<T>(

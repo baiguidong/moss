@@ -8,7 +8,6 @@ import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEve
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandCall } from '../../types/command.js';
 import type { EffortLevel } from '../../utils/effort.js';
-import { isBilledAsExtraUsage } from '../../utils/extraUsage.js';
 import { clearFastModeCooldown, isFastModeAvailable, isFastModeEnabled, isFastModeSupportedByModel } from '../../utils/fastMode.js';
 import { MODEL_ALIASES } from '../../utils/model/aliases.js';
 import { checkOpus1mAccess, checkSonnet1mAccess } from '../../utils/model/check1mAccess.js';
@@ -71,9 +70,6 @@ function ModelPickerWrapper(t0) {
             wasFastModeToggledOn = true;
           }
         }
-      }
-      if (isBilledAsExtraUsage(model, wasFastModeToggledOn === true, isOpus1mMergeEnabled())) {
-        message = message + " \xB7 Billed as extra usage";
       }
       if (wasFastModeToggledOn === false) {
         message = message + " \xB7 Fast mode OFF";
@@ -217,11 +213,7 @@ function SetModelAndClose({
           wasFastModeToggledOn = true;
         }
       }
-      if (isBilledAsExtraUsage(modelValue, wasFastModeToggledOn === true, isOpus1mMergeEnabled())) {
-        message += ` · Billed as extra usage`;
-      }
       if (wasFastModeToggledOn === false) {
-        // Fast mode was toggled off, show suffix after extra usage billing
         message += ` · Fast mode OFF`;
       }
       onDone(message);

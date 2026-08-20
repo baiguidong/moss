@@ -25,7 +25,6 @@ import { init } from './entrypoints/init.js';
 import { addToHistory } from './history.js';
 import type { Root } from './ink.js';
 import { launchRepl } from './replLauncher.js';
-import { refreshFeatureFlagsAfterAuthChange } from './services/analytics/featureFlags.js';
 import type { McpSdkServerConfig, McpServerConfig, ScopedMcpServerConfig } from './services/mcp/types.js';
 import type { ToolInputJSONSchema } from './Tool.js';
 import { createSyntheticOutputTool, isSyntheticOutputToolEnabled } from './tools/SyntheticOutputTool/SyntheticOutputTool.js';
@@ -1513,10 +1512,7 @@ async function run(): Promise<CommanderCommand> {
       }
 
       if (onboardingShown) {
-        // Clear user data cache BEFORE feature flag refresh so it picks up fresh credentials
         resetUserCache();
-        // Refresh feature flag after credential changes to get updated feature flags.
-        refreshFeatureFlagsAfterAuthChange();
       }
 
     }

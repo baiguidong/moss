@@ -11,7 +11,6 @@ import { isSynchronizedOutputSupported } from './ink/terminal.js';
 import type { RenderOptions, Root, TextProps } from './ink.js';
 import { KeybindingSetup } from './keybindings/KeybindingProviderSetup.js';
 import { startDeferredPrefetches } from './main.js';
-import { initializeFeatureFlags, resetFeatureFlags } from './services/analytics/featureFlags.js';
 import { handleMcpjsonServerApprovals } from './services/mcpServerApproval.js';
 import { AppStateProvider } from './state/AppState.js';
 import { onChangeAppState } from './state/onChangeAppState.js';
@@ -139,12 +138,6 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
     // Signal that trust has been verified for this session.
     // feature flag checks this to decide whether to include auth headers.
     setSessionTrustAccepted(true);
-
-    // Reset and reinitialize feature flag after trust is established.
-    // Defense for login/logout: clears any prior client so the next init
-    // picks up fresh auth headers.
-    resetFeatureFlags();
-    void initializeFeatureFlags();
 
     // Now that trust is established, prefetch system context if it wasn't already
     void getSystemContext();

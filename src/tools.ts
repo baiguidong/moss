@@ -85,9 +85,6 @@ const WebBrowserTool = feature('WEB_BROWSER_TOOL')
 const coordinatorModeModule = feature('COORDINATOR_MODE')
   ? (require('./coordinator/coordinatorMode.js') as typeof import('./coordinator/coordinatorMode.js'))
   : null
-const SnipTool = feature('HISTORY_SNIP')
-  ? require('./tools/SnipTool/SnipTool.js').SnipTool
-  : null
 const WorkflowTool = feature('WORKFLOW_SCRIPTS')
   ? (() => {
       require('./tools/WorkflowTool/bundled/index.js').initBundledWorkflows()
@@ -180,7 +177,6 @@ export function getAllBaseTools(): Tools {
     ...(SleepTool ? [SleepTool] : []),
     ...cronTools,
     ...(getPowerShellTool() ? [getPowerShellTool()] : []),
-    ...(SnipTool ? [SnipTool] : []),
     ...(process.env.NODE_ENV === 'test' ? [TestingPermissionTool] : []),
     ListMcpResourcesTool,
     ReadMcpResourceTool,

@@ -13,18 +13,6 @@ export const getGlobalMossFile = memoize(
   () => getMossConfigHomeDir(),
 )
 
-const hasInternetAccess = memoize(async (): Promise<boolean> => {
-  try {
-    const { default: axiosClient } = await import('axios')
-    await axiosClient.head('http://1.1.1.1', {
-      signal: AbortSignal.timeout(1000),
-    })
-    return true
-  } catch {
-    return false
-  }
-})
-
 async function isCommandAvailable(command: string): Promise<boolean> {
   try {
     // which does not execute the file.
@@ -302,7 +290,6 @@ function isSSHSession(): boolean {
 }
 
 export const env = {
-  hasInternetAccess,
   isCI: isEnvTruthy(process.env.CI),
   platform: (['win32', 'darwin'].includes(process.platform)
     ? process.platform

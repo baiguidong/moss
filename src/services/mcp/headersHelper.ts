@@ -1,6 +1,5 @@
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import { checkHasTrustDialogAccepted } from '../../utils/config.js'
-import { logAntError } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { execFileNoThrowWithCwd } from '../../utils/execFileNoThrow.js'
 import { logError, logMCPDebug, logMCPError } from '../../utils/log.js'
@@ -47,10 +46,6 @@ export async function getMcpHeadersFromHelper(
     // Check if trust has been established for this project
     const hasTrust = checkHasTrustDialogAccepted()
     if (!hasTrust) {
-      const error = new Error(
-        `Security: headersHelper for MCP server '${serverName}' executed before workspace trust is confirmed. If you see this message, post in ${MACRO.FEEDBACK_CHANNEL}.`,
-      )
-      logAntError('MCP headersHelper invoked before trust check', error)
       logEvent('tengu_mcp_headersHelper_missing_trust', {})
       return null
     }

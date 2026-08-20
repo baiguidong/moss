@@ -249,5 +249,3 @@ const updateLatestDebugLogSymlink = memoize(async (): Promise<void> => {
     // Silently fail if symlink creation fails
   }
 })
-
-export function logAntError(_context: string, _error: unknown): void {}
