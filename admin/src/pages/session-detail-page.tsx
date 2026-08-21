@@ -5,11 +5,26 @@ import { DashboardLayout } from '@/components/dashboard-layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getSession, resumeSession, terminateSession } from '@/lib/api/sessions'
+import { getSessionContext, resumeSession, terminateSession } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
-import type { AuthUser, Session } from '@/lib/api/types'
+import type {
+  AuthUser,
+  ContentBlock,
+  GetSessionContextResponse,
+  SessionMessage,
+} from '@/lib/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Loader2, Play, Power, Clock, Container, Server } from 'lucide-react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Container,
+  Loader2,
+  Play,
+  Power,
+  Server,
+  Wrench,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 const statusConfig: Record<
@@ -35,12 +50,128 @@ const lifecycleEvents = [
   { status: 'lost', label: '丢失', description: 'Runtime 无法访问' },
 ]
 
+function stringifyUnknown(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getMessageContent(message: SessionMessage): unknown {
+  if (message.message && 'content' in message.message) {
+    return message.message.content
+  }
+  return message.content
+}
+
+function extractMessageText(message: SessionMessage): string {
+  const content = getMessageContent(message)
+
+  if (typeof content === 'string') {
+    return content
+  }
+
+  if (Array.isArray(content)) {
+    const parts: string[] = []
+
+    for (const rawBlock of content as ContentBlock[]) {
+      const block = rawBlock as Record<string, unknown>
+      if (block.type === 'text' && typeof block.text === 'string') {
+        parts.push(block.text)
+      } else if (block.type === 'tool_use') {
+        const name = typeof block.name === 'string' ? block.name : 'unknown'
+        const input = stringifyUnknown(block.input)
+        parts.push(input ? `工具调用: ${name}\n${input}` : `工具调用: ${name}`)
+      } else if (block.type === 'tool_result') {
+        const header = block.is_error === true ? '工具结果: 错误' : '工具结果'
+        const result = stringifyUnknown(block.content)
+        parts.push(result ? `${header}\n${result}` : header)
+      } else if (
+        (block.type === 'thinking' || block.type === 'redacted_thinking') &&
+        typeof block.thinking === 'string'
+      ) {
+        parts.push(`思考过程:\n${block.thinking}`)
+      }
+    }
+
+    return parts.join('\n\n---\n\n').trim()
+  }
+
+  if (message.type === 'tool_use') {
+    const input = stringifyUnknown(message.input)
+    return input
+      ? `工具调用: ${message.tool_name || 'unknown'}\n${input}`
+      : `工具调用: ${message.tool_name || 'unknown'}`
+  }
+
+  if (message.type === 'tool_result') {
+    const header = message.is_error ? '工具结果: 错误' : '工具结果'
+    const result = stringifyUnknown(message.content)
+    return result ? `${header}\n${result}` : header
+  }
+
+  return ''
+}
+
+function getRoleLabel(message: SessionMessage): string {
+  if (message.type === 'tool_use') return '工具调用'
+  if (message.type === 'tool_result') return '工具结果'
+  if (message.type === 'user') return '用户'
+  if (message.type === 'assistant') return '助手'
+  if (message.type === 'system') return '系统'
+  if (message.type === 'attachment') return '附件'
+  if (message.role === 'user') return '用户'
+  if (message.role === 'assistant') return '助手'
+  return '系统'
+}
+
+function contentBlocks(message: SessionMessage): ContentBlock[] {
+  const content = getMessageContent(message)
+  return Array.isArray(content) ? (content as ContentBlock[]) : []
+}
+
+function isToolMessage(message: SessionMessage): boolean {
+  if (message.type === 'tool_use' || message.type === 'tool_result') {
+    return true
+  }
+  return contentBlocks(message).some((rawBlock) => {
+    const block = rawBlock as Record<string, unknown>
+    return block.type === 'tool_use' || block.type === 'tool_result'
+  })
+}
+
+function isToolError(message: SessionMessage): boolean {
+  if (message.type === 'tool_result' && message.is_error === true) {
+    return true
+  }
+  return contentBlocks(message).some((rawBlock) => {
+    const block = rawBlock as Record<string, unknown>
+    return block.type === 'tool_result' && block.is_error === true
+  })
+}
+
+function isUserMessage(message: SessionMessage): boolean {
+  if (message.type === 'user') return true
+  if (message.type === 'assistant') return false
+  return message.role === 'user'
+}
+
+function formatMessageTime(message: SessionMessage): string | null {
+  if (typeof message.timestamp !== 'string') return null
+  const date = new Date(message.timestamp)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString('zh-CN')
+}
+
 interface SessionDetailPageProps {
   sessionId: string
 }
 
 export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
-  const [session, setSession] = useState<Session | null>(null)
+  const [data, setData] = useState<GetSessionContextResponse | null>(null)
   const [users, setUsers] = useState<AuthUser[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isResuming, setIsResuming] = useState(false)
@@ -48,11 +179,11 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionRes, usersRes] = await Promise.all([
-        getSession(sessionId),
+      const [contextRes, usersRes] = await Promise.all([
+        getSessionContext(sessionId),
         getUsers().catch(() => ({ users: [] })),
       ])
-      setSession(sessionRes.session)
+      setData(contextRes)
       setUsers(usersRes.users)
     } catch (error) {
       console.error('Failed to fetch session:', error)
@@ -111,7 +242,7 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
     )
   }
 
-  if (!session) {
+  if (!data) {
     return (
       <DashboardLayout title="会话详情">
         <div className="flex h-64 items-center justify-center">
@@ -121,6 +252,7 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
     )
   }
 
+  const { session, context } = data
   const statusInfo = statusConfig[session.status] || {
     label: session.status,
     variant: 'outline' as const,
@@ -128,6 +260,8 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
   const canResume = ['ended', 'terminated', 'failed', 'lost'].includes(session.status)
   const canTerminate = ['active', 'creating', 'detached'].includes(session.status)
   const currentLifecycleIndex = lifecycleEvents.findIndex(event => event.status === session.status)
+  const parseErrorCount = context.transcript?.parseErrorCount ?? 0
+  const transcriptMissing = context.transcript?.missing === true
 
   return (
     <DashboardLayout title="会话详情" description={`Session ID: ${session.sessionId}`}>
@@ -216,19 +350,17 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
             <CardContent className="space-y-4">
               <div className="grid gap-3 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">类型</span>
-                  <Badge variant="secondary">{session.runtime.type}</Badge>
+                  <span className="text-muted-foreground">Backend</span>
+                  <Badge variant="secondary">{session.runtime.backend}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Profile</span>
+                  <Badge variant="outline">{session.runtime.profileMode}</Badge>
                 </div>
                 {session.runtime.dockerImage && (
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">镜像</span>
                     <span className="text-right font-mono text-xs">{session.runtime.dockerImage}</span>
-                  </div>
-                )}
-                {session.runtime.dockerMode && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">模式</span>
-                    <Badge variant="outline">{session.runtime.dockerMode}</Badge>
                   </div>
                 )}
                 {session.runtime.containerName && (
@@ -239,14 +371,18 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
                     </span>
                   </div>
                 )}
-                {session.runtime.configDir && (
-                  <div className="flex justify-between gap-4">
-                    <span className="text-muted-foreground">ConfigDir</span>
-                    <span className="max-w-[180px] truncate text-right font-mono text-xs" title={session.runtime.configDir}>
-                      {session.runtime.configDir}
-                    </span>
-                  </div>
-                )}
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">ProfileDir</span>
+                  <span className="max-w-[180px] truncate text-right font-mono text-xs" title={session.runtime.profileDir}>
+                    {session.runtime.profileDir}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">TranscriptDir</span>
+                  <span className="max-w-[180px] truncate text-right font-mono text-xs" title={session.runtime.transcriptDir}>
+                    {session.runtime.transcriptDir}
+                  </span>
+                </div>
                 {(session.workDir || session.cwd) && (
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">工作目录</span>
@@ -318,6 +454,110 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
                   </div>
                 )
               })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>
+                  对话历史
+                  {context.customTitle && (
+                    <span className="ml-2 font-normal text-muted-foreground">
+                      {context.customTitle}
+                    </span>
+                  )}
+                </CardTitle>
+                {context.summary && (
+                  <p className="mt-1 text-sm text-muted-foreground">{context.summary}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {context.mode && <Badge variant="outline">{context.mode}</Badge>}
+                {context.tag && <Badge variant="secondary">{context.tag}</Badge>}
+                {parseErrorCount > 0 && (
+                  <Badge variant="destructive">解析失败 {parseErrorCount} 行</Badge>
+                )}
+                {transcriptMissing && <Badge variant="destructive">Transcript 缺失</Badge>}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-[620px] space-y-4 overflow-y-auto pr-1">
+              {context.messages.length === 0 ? (
+                <p className="py-8 text-center text-muted-foreground">暂无消息记录</p>
+              ) : (
+                context.messages.map((message, index) => {
+                  const text = extractMessageText(message)
+                  const isTool = isToolMessage(message)
+                  if (!text && !isTool) return null
+
+                  const roleLabel = getRoleLabel(message)
+                  const isError = isToolError(message)
+                  const isUser = isUserMessage(message)
+                  const timestamp = formatMessageTime(message)
+
+                  return (
+                    <div
+                      key={message.uuid || `message-${index}`}
+                      className={`flex ${isUser && !isTool ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[85%] rounded-lg border p-4 ${
+                          isTool
+                            ? isError
+                              ? 'border-destructive/30 bg-destructive/10'
+                              : 'border-green-500/30 bg-green-500/10'
+                            : isUser
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-muted'
+                        }`}
+                      >
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          {isTool && (
+                            isError ? (
+                              <AlertCircle className="size-4 text-destructive" />
+                            ) : (
+                              <CheckCircle2 className="size-4 text-green-600" />
+                            )
+                          )}
+                          <Badge
+                            variant={isTool ? 'outline' : isUser ? 'secondary' : 'outline'}
+                            className={
+                              isUser && !isTool
+                                ? 'border-transparent bg-primary-foreground/20 text-primary-foreground'
+                                : isTool
+                                  ? isError
+                                    ? 'border-destructive/50 text-destructive'
+                                    : 'border-green-500/50 text-green-600'
+                                  : ''
+                            }
+                          >
+                            {isTool && <Wrench className="mr-1 size-3" />}
+                            {roleLabel}
+                          </Badge>
+                          {timestamp && (
+                            <span
+                              className={`text-xs ${
+                                isUser && !isTool
+                                  ? 'text-primary-foreground/70'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {timestamp}
+                            </span>
+                          )}
+                        </div>
+                        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+                          {text}
+                        </pre>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
             </div>
           </CardContent>
         </Card>

@@ -1587,6 +1587,69 @@ async function fetchRemoteDirectSessionContext({ serverUrl, authToken, sessionId
   return response.json();
 }
 
+async function fetchRemoteDirectWorkspaceDir({ serverUrl, authToken, sessionId, dirPath }) {
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/list`,
+    serverUrl,
+  );
+  if (typeof dirPath === 'string' && dirPath.trim()) {
+    endpoint.searchParams.set('dir', dirPath);
+  }
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to list remote workspace directory', response),
+    );
+  }
+
+  return response.json();
+}
+
+async function fetchRemoteDirectWorkspaceFile({ serverUrl, authToken, sessionId, filePath }) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Remote workspace file path is required.');
+  }
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/read`,
+    serverUrl,
+  );
+  endpoint.searchParams.set('file', filePath);
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to read remote workspace file', response),
+    );
+  }
+
+  return response.json();
+}
+
 async function resumeRemoteDirectSession({ serverUrl, authToken, sessionId }) {
   let response;
   try {
@@ -1702,10 +1765,12 @@ function createRemoteDirectRuntime({
       }
 
       if (!created) {
+        const requestedRemoteWorkspace =
+          sessionRecord.remoteWorkspace || getRemoteDirectWorkspace();
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
-          cwd: sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || sessionRecord.workspace || undefined,
+          cwd: requestedRemoteWorkspace || undefined,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
         });
@@ -1716,8 +1781,13 @@ function createRemoteDirectRuntime({
       if (created?.config?.sessionId) {
         sessionRecord.underlyingSessionId = created.config.sessionId;
       }
+      let workspaceChanged = false;
       if (created?.workDir) {
+        workspaceChanged = sessionRecord.remoteWorkspace !== created.workDir;
         sessionRecord.remoteWorkspace = created.workDir;
+      }
+      if (workspaceChanged && isAccessibleDirectory(getSessionWorkspaceRoot(sessionRecord))) {
+        void startWorkspaceWatcher(sessionRecord);
       }
       if (shouldPersistSessionRecord) {
         sessionRecord.updatedAt = Date.now();
@@ -3726,6 +3796,24 @@ function ensureInsideRoot(rootPath, targetPath) {
   return resolvedTarget;
 }
 
+function getSessionWorkspaceRoot(sessionRecord) {
+  const candidate = sessionRecord.agentMode === 'remote-direct'
+    ? sessionRecord.remoteWorkspace || getRemoteDirectWorkspace()
+    : sessionRecord.workspace;
+  return typeof candidate === 'string' && candidate.trim()
+    ? path.resolve(candidate.trim())
+    : null;
+}
+
+function isAccessibleDirectory(dirPath) {
+  if (!dirPath) return false;
+  try {
+    return fs.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function createSessionRecord({ workspace, isSubAgent = false, title, assistantName } = {}) {
   const now = Date.now();
   const normalizedWorkspace = normalizeWorkspace(workspace);
@@ -3849,9 +3937,10 @@ async function collectDirectories(rootPath) {
 }
 
 function emitWorkspaceChanged(sessionRecord, eventType, changedPath) {
+  const workspace = getSessionWorkspaceRoot(sessionRecord) || sessionRecord.workspace;
   emitToRenderer('workspace:changed', {
     sessionId: sessionRecord.id,
-    workspace: sessionRecord.workspace,
+    workspace,
     eventType,
     path: changedPath,
     timestamp: Date.now(),
@@ -3862,7 +3951,10 @@ async function syncWorkspaceWatcher(sessionRecord) {
   const watcherState = sessionRecord.workspaceWatcher;
   if (!watcherState || watcherState.closed) return;
 
-  const directories = await collectDirectories(sessionRecord.workspace);
+  const root = getSessionWorkspaceRoot(sessionRecord);
+  if (!isAccessibleDirectory(root)) return;
+
+  const directories = await collectDirectories(root);
   if (watcherState.closed) return;
   const nextPaths = new Set(directories);
 
@@ -4244,11 +4336,30 @@ function initializeAutoUpdater() {
 }
 
 async function listDirectoryEntries(sessionRecord, dirPath) {
-  if (sessionRecord.agentMode === 'remote-direct') {
-    const root = sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || '(remote workspace)';
+  if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
+    try {
+      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      return await fetchRemoteDirectWorkspaceDir({
+        serverUrl,
+        authToken,
+        sessionId: sessionRecord.underlyingSessionId,
+        dirPath,
+      });
+    } catch (error) {
+      mossLog('warn', 'workspace', 'Remote workspace list failed', {
+        sessionId: sessionRecord.id,
+        underlyingSessionId: sessionRecord.underlyingSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const root = getSessionWorkspaceRoot(sessionRecord);
+  if (sessionRecord.agentMode === 'remote-direct' && !isAccessibleDirectory(root)) {
+    const remoteRoot = sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || '(remote workspace)';
     return {
-      root,
-      path: root,
+      root: remoteRoot,
+      path: remoteRoot,
       relativePath: '.',
       items: [],
       remote: true,
@@ -4256,7 +4367,9 @@ async function listDirectoryEntries(sessionRecord, dirPath) {
     };
   }
 
-  const root = sessionRecord.workspace;
+  if (!root) {
+    throw new Error('Session workspace is required.');
+  }
   const targetPath = ensureInsideRoot(root, dirPath || root);
   const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
 
@@ -4383,11 +4496,33 @@ function getWorkspaceFilePreviewInfo(targetPath) {
 }
 
 async function readWorkspaceFile(sessionRecord, filePath) {
-  if (sessionRecord.agentMode === 'remote-direct') {
-    throw new Error('Remote Direct mode does not support reading remote workspace files from this UI yet.');
+  if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
+    try {
+      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      return await fetchRemoteDirectWorkspaceFile({
+        serverUrl,
+        authToken,
+        sessionId: sessionRecord.underlyingSessionId,
+        filePath,
+      });
+    } catch (error) {
+      mossLog('warn', 'workspace', 'Remote workspace read failed', {
+        sessionId: sessionRecord.id,
+        underlyingSessionId: sessionRecord.underlyingSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  const targetPath = ensureInsideRoot(sessionRecord.workspace, filePath);
+  const root = getSessionWorkspaceRoot(sessionRecord);
+  if (sessionRecord.agentMode === 'remote-direct' && !isAccessibleDirectory(root)) {
+    throw new Error('Remote Direct mode does not support reading remote workspace files from this UI yet.');
+  }
+  if (!root) {
+    throw new Error('Session workspace is required.');
+  }
+
+  const targetPath = ensureInsideRoot(root, filePath);
   const stat = await fsp.stat(targetPath);
   if (!stat.isFile()) {
     throw new Error('Target is not a file.');
@@ -4395,7 +4530,7 @@ async function readWorkspaceFile(sessionRecord, filePath) {
   const previewInfo = getWorkspaceFilePreviewInfo(targetPath);
   const baseResult = {
     path: targetPath,
-    relativePath: path.relative(sessionRecord.workspace, targetPath),
+    relativePath: path.relative(root, targetPath),
     size: stat.size,
     truncated: false,
     contentType: previewInfo.contentType,

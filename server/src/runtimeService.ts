@@ -2,10 +2,11 @@ import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
-import { join } from 'path'
 import { spawn } from 'child_process'
+import { join } from 'path'
 import { MOSS_SERVER_HOME } from './lib/env.js'
-import { DirectConnectStore, mergeRuntime, openDirectConnectStore, toSessionSummary } from './db.js'
+import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
+import { getSystemSettings } from './systemSettings.js'
 import type {
   AttemptRecord,
   RunnerManifest,
@@ -16,14 +17,21 @@ import type {
 } from './types.js'
 import {
   getAttachPath,
+  getAttemptManifestPath,
   getAttemptDir,
+  getDockerBackendManifestPath,
+  getProfileDir,
   getRuntimeStatusPath,
   getRuntimeStderrLogPath,
   getRuntimeStdoutLogPath,
-  getSessionConfigDir,
+  resolveSessionWorkspaceDir,
+  getSessionTranscriptDir,
   getTranscriptPath,
 } from './runtimePaths.js'
 import { errorMessage } from './lib/json.js'
+import type {
+  SessionRuntimeInfo,
+} from '../../packages/direct-connect-protocol/src/index.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -195,16 +203,46 @@ export class RuntimeService {
     }
 
     const sessionId = randomUUID()
-    const runtime = mergeRuntime(this.options.config, input.runtime)
-    runtime.configDir =
-      runtime.configDir ||
-      getSessionConfigDir(
+    const settings = getSystemSettings()
+    const runtimeSettings = settings.serverRuntime
+    const profileMode = input.profileMode ?? runtimeSettings.defaultProfileMode
+    if (!runtimeSettings.allowedProfileModes.includes(profileMode)) {
+      throw new Error(`Profile mode "${profileMode}" is not allowed by server settings`)
+    }
+    if (runtimeSettings.backend === 'docker' && !runtimeSettings.dockerImage.trim()) {
+      throw new Error('Docker backend is enabled but no docker image is configured')
+    }
+    const transcriptPath = getTranscriptPath(
+      this.options.config,
+      sessionId,
+      sessionId,
+    )
+    const workspaceDir = resolveSessionWorkspaceDir(
+      this.options.config,
+      sessionId,
+      input.cwd,
+    )
+    const runtime: SessionRuntimeInfo = {
+      backend: runtimeSettings.backend,
+      profileMode,
+      dockerImage:
+        runtimeSettings.backend === 'docker'
+          ? runtimeSettings.dockerImage.trim()
+          : undefined,
+      profileDir: getProfileDir(
         this.options.config,
         sessionId,
         input.userId,
-        runtime.type === 'docker' ? runtime.dockerMode : 'session',
-      )
-    const transcriptPath = getTranscriptPath(runtime.configDir, input.cwd, sessionId)
+        profileMode,
+      ),
+      transcriptDir: getSessionTranscriptDir(this.options.config, sessionId),
+      workspaceDir,
+    }
+    await Promise.all([
+      mkdir(runtime.profileDir, { recursive: true }),
+      mkdir(runtime.transcriptDir, { recursive: true }),
+      mkdir(workspaceDir, { recursive: true }),
+    ])
     const created = this.store.createSession({
       sessionId,
       transcriptSessionId: sessionId,
@@ -213,7 +251,7 @@ export class RuntimeService {
       orgId: input.orgId,
       role: input.role,
       scopes: input.scopes,
-      cwd: input.cwd,
+      cwd: workspaceDir,
       runtime,
       status: 'creating',
       desiredState: 'active',
@@ -339,35 +377,36 @@ export class RuntimeService {
     } = {},
   ): Promise<AttemptRecord> {
     const generation = this.store.getNextGeneration(session.sessionId)
-    const attemptDir = getAttemptDir(this.options.config, session.sessionId, generation)
-    const attachPath = getAttachPath(this.options.config, session.sessionId, generation)
-    const stdoutLogPath = getRuntimeStdoutLogPath(
+    const attemptId = randomUUID()
+    const attemptDir = getAttemptDir(this.options.config, session.sessionId, attemptId)
+    const attachPath = getAttachPath(this.options.config, attemptId)
+    const manifestPath = getAttemptManifestPath(attemptDir)
+    const backendManifestPath = getDockerBackendManifestPath(
       this.options.config,
-      session.sessionId,
-      generation,
+      attemptId,
     )
-    const stderrLogPath = getRuntimeStderrLogPath(
-      this.options.config,
-      session.sessionId,
-      generation,
-    )
-    const statusPath = getRuntimeStatusPath(
-      this.options.config,
-      session.sessionId,
-      generation,
-    )
+    const stdoutLogPath = getRuntimeStdoutLogPath(attemptDir)
+    const stderrLogPath = getRuntimeStderrLogPath(attemptDir)
+    const statusPath = getRuntimeStatusPath(attemptDir)
+    const settings = getSystemSettings()
+    const dangerouslySkipPermissions =
+      options.dangerouslySkipPermissions === true ||
+      settings.bypassPermissions === true
     await mkdir(attemptDir, { recursive: true })
     const attempt = this.store.createAttempt({
+      attemptId,
       sessionId: session.sessionId,
       generation,
-      backendType: session.runtime.type,
+      backendType: session.runtime.backend,
       resumeTranscriptSessionId:
         options.resumeTranscriptSessionId ?? session.transcriptSessionId,
       serverInstanceId: this.options.serverInstanceId,
       containerName:
-        session.runtime.type === 'docker'
-          ? `moss-session-${session.sessionId.slice(0, 12)}-g${generation}`
+        session.runtime.backend === 'docker'
+          ? `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`
           : undefined,
+      attemptDir,
+      manifestPath,
       attachPath,
     })
     this.store.setCurrentAttempt(session.sessionId, attempt.attemptId)
@@ -385,21 +424,21 @@ export class RuntimeService {
         orgId: session.orgId,
         role: session.role,
         scopes: session.scopes,
-        dangerouslySkipPermissions:
-          options.dangerouslySkipPermissions === true,
+        dangerouslySkipPermissions,
         assistantName: options.assistantName,
         runtime: {
           ...session.runtime,
           containerName:
-            session.runtime.type === 'docker'
-              ? `moss-session-${session.sessionId.slice(0, 12)}-g${generation}`
+            session.runtime.backend === 'docker'
+              ? `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`
               : session.runtime.containerName,
         },
       },
       attempt: {
         attemptId: attempt.attemptId,
         generation,
-        runtimeDir: attemptDir,
+        attemptDir,
+        backendManifestPath,
         attachPath,
         stdoutLogPath,
         stderrLogPath,
@@ -407,7 +446,6 @@ export class RuntimeService {
       },
     }
 
-    const manifestPath = join(attemptDir, 'manifest.json')
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 
     const runnerEntryPath = resolveRunnerEntryPath()

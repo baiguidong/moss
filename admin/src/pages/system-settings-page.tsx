@@ -27,6 +27,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import type {
+  ProfileMode,
+  RuntimeBackend,
   SystemSettings,
   ThinkingMode,
   UpdateSystemSettingsRequest,
@@ -38,6 +40,7 @@ import {
   Loader2,
   Package,
   RefreshCw,
+  Server,
   Shield,
   Sparkles,
   TriangleAlert,
@@ -84,6 +87,22 @@ const thinkingModeOptions: Array<{
   },
 ]
 
+const runtimeBackendOptions: Array<{
+  value: RuntimeBackend
+  label: string
+}> = [
+  { value: 'host', label: 'host' },
+  { value: 'docker', label: 'docker' },
+]
+
+const profileModeOptions: Array<{
+  value: ProfileMode
+  label: string
+}> = [
+  { value: 'session', label: 'session' },
+  { value: 'user', label: 'user' },
+]
+
 const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
   minimax: 'https://api.minimaxi.com/v1/image_generation',
   openai: 'https://api.openai.com/v1',
@@ -111,6 +130,12 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     },
     skillStore: {
       tenantId: settings.skillStore.tenantId,
+    },
+    serverRuntime: {
+      backend: settings.serverRuntime.backend,
+      dockerImage: settings.serverRuntime.dockerImage,
+      defaultProfileMode: settings.serverRuntime.defaultProfileMode,
+      allowedProfileModes: settings.serverRuntime.allowedProfileModes,
     },
   }
 }
@@ -185,6 +210,30 @@ function buildSystemSettingsPatch(
   }
   if (Object.keys(skillStorePatch).length > 0) {
     patch.skillStore = skillStorePatch
+  }
+
+  const serverRuntimePatch: NonNullable<UpdateSystemSettingsRequest['serverRuntime']> = {}
+  if (draft.serverRuntime.backend !== settings.serverRuntime.backend) {
+    serverRuntimePatch.backend = draft.serverRuntime.backend
+  }
+  if (draft.serverRuntime.dockerImage !== settings.serverRuntime.dockerImage) {
+    serverRuntimePatch.dockerImage = draft.serverRuntime.dockerImage
+  }
+  if (
+    draft.serverRuntime.defaultProfileMode !==
+    settings.serverRuntime.defaultProfileMode
+  ) {
+    serverRuntimePatch.defaultProfileMode = draft.serverRuntime.defaultProfileMode
+  }
+  if (
+    JSON.stringify(draft.serverRuntime.allowedProfileModes) !==
+    JSON.stringify(settings.serverRuntime.allowedProfileModes)
+  ) {
+    serverRuntimePatch.allowedProfileModes =
+      draft.serverRuntime.allowedProfileModes
+  }
+  if (Object.keys(serverRuntimePatch).length > 0) {
+    patch.serverRuntime = serverRuntimePatch
   }
 
   return patch
@@ -755,6 +804,138 @@ export default function SystemSettingsPage() {
               }
               placeholder="tenant-001"
             />
+          </SettingField>
+        </SettingSection>
+
+        <SettingSection
+          icon={Server}
+          title="会话运行时"
+          description="设置新会话使用的服务端执行后端和默认 Profile 模式。"
+        >
+          <SettingField label="执行后端" description="client 不能覆盖这个值。">
+            <Select
+              value={draft.serverRuntime.backend}
+              onValueChange={value =>
+                setDraft(current =>
+                  current
+                    ? {
+                        ...current,
+                        serverRuntime: {
+                          ...current.serverRuntime,
+                          backend: value as RuntimeBackend,
+                        },
+                      }
+                    : current,
+                )
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择执行后端" />
+              </SelectTrigger>
+              <SelectContent>
+                {runtimeBackendOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingField>
+
+          {draft.serverRuntime.backend === 'docker' ? (
+            <SettingField label="Docker Image" description="docker 后端创建新会话时使用。">
+              <Input
+                value={draft.serverRuntime.dockerImage}
+                onChange={(event) =>
+                  setDraft(current =>
+                    current
+                      ? {
+                          ...current,
+                          serverRuntime: {
+                            ...current.serverRuntime,
+                            dockerImage: event.target.value,
+                          },
+                        }
+                      : current,
+                  )
+                }
+                placeholder="moss-runtime:latest"
+              />
+            </SettingField>
+          ) : null}
+
+          <SettingField label="默认 Profile 模式" description="client 未指定时使用。">
+            <Select
+              value={draft.serverRuntime.defaultProfileMode}
+              onValueChange={value =>
+                setDraft(current => {
+                  if (!current) return current
+                  const profileMode = value as ProfileMode
+                  return {
+                    ...current,
+                    serverRuntime: {
+                      ...current.serverRuntime,
+                      defaultProfileMode: profileMode,
+                      allowedProfileModes: current.serverRuntime.allowedProfileModes.includes(profileMode)
+                        ? current.serverRuntime.allowedProfileModes
+                        : [...current.serverRuntime.allowedProfileModes, profileMode],
+                    },
+                  }
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择默认 Profile 模式" />
+              </SelectTrigger>
+              <SelectContent>
+                {profileModeOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingField>
+
+          <SettingField label="允许的 Profile 模式">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {profileModeOptions.map(option => (
+                <label
+                  key={option.value}
+                  className="flex min-h-10 items-center gap-3 rounded-md border px-3 py-2"
+                >
+                  <Switch
+                    checked={draft.serverRuntime.allowedProfileModes.includes(option.value)}
+                    onCheckedChange={checked =>
+                      setDraft(current => {
+                        if (!current) return current
+                        const currentAllowed =
+                          current.serverRuntime.allowedProfileModes
+                        const nextAllowed = checked
+                          ? [...new Set([...currentAllowed, option.value])]
+                          : currentAllowed.filter(mode => mode !== option.value)
+                        if (nextAllowed.length === 0) {
+                          return current
+                        }
+                        return {
+                          ...current,
+                          serverRuntime: {
+                            ...current.serverRuntime,
+                            allowedProfileModes: nextAllowed,
+                            defaultProfileMode: nextAllowed.includes(
+                              current.serverRuntime.defaultProfileMode,
+                            )
+                              ? current.serverRuntime.defaultProfileMode
+                              : nextAllowed[0],
+                          },
+                        }
+                      })
+                    }
+                  />
+                  <span className="text-sm font-medium">{option.label}</span>
+                </label>
+              ))}
+            </div>
           </SettingField>
         </SettingSection>
 

@@ -1910,7 +1910,7 @@ export default function UsersPage() {
                             <code className="text-xs">{session.sessionId.slice(0, 18)}...</code>
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <Badge variant="secondary" className="text-xs">
-                                {session.runtime.type}
+                                {session.runtime.backend}
                               </Badge>
                               <span>{new Date(session.createdAt).toLocaleString('zh-CN')}</span>
                             </div>

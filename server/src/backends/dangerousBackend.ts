@@ -16,18 +16,18 @@ export class DangerousBackend implements SessionBackend {
         ...options,
         runtime: {
           ...options.runtime,
-          type: 'host',
+          backend: 'host',
         },
       },
       buildSessionEnv(options, {
         MOSS_SESSION_RUNTIME_TYPE: 'host',
-        MOSS_CONFIG_DIR: options.runtime?.configDir,
+        MOSS_CONFIG_DIR: options.runtime.profileDir,
       }),
     )
 
     return createStreamBackendHandle(child, options, {
-      type: 'host',
-      configDir: options.runtime?.configDir,
+      ...options.runtime,
+      backend: 'host',
     })
   }
 }

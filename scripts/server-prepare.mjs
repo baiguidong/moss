@@ -35,9 +35,9 @@ async function main() {
 
   await Promise.all([
     mkdir(binDir, { recursive: true }),
-    mkdir(join(serverHome, 'runtime'), { recursive: true }),
-    mkdir(join(serverHome, 'transcripts'), { recursive: true }),
-    mkdir(join(serverHome, 'logs'), { recursive: true }),
+    mkdir(join(serverHome, 'var', 'lib'), { recursive: true }),
+    mkdir(join(serverHome, 'var', 'run'), { recursive: true }),
+    mkdir(join(serverHome, 'var', 'log'), { recursive: true }),
     mkdir(join(serverHome, 'skills'), { recursive: true }),
     mkdir(join(serverHome, 'assistants'), { recursive: true }),
   ])
@@ -50,10 +50,9 @@ async function main() {
     join(repoRoot, 'bin', 'moss-session-runner.mjs'),
     join(binDir, 'moss-session-runner.mjs'),
   )
-  await copyFileIntoServerHome(
-    join(repoRoot, 'bin', 'cli-node.js'),
-    join(binDir, 'cli-node.js'),
-  )
+  await rm(join(binDir, 'cli-node.js'), {
+    force: true,
+  })
   await rm(join(binDir, 'agent-runtime.mjs'), {
     force: true,
   })
@@ -71,7 +70,6 @@ async function main() {
   console.log(`\nPrepared Moss server runtime at ${serverHome}`)
   console.log(`  ${join(binDir, 'moss-server.mjs')}`)
   console.log(`  ${join(binDir, 'moss-session-runner.mjs')}`)
-  console.log(`  ${join(binDir, 'cli-node.js')}`)
   console.log(`  ${adminDistDir}`)
 }
 

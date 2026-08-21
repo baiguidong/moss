@@ -149,6 +149,16 @@ export interface SystemSettingsSkillStore {
   tenantId: string
 }
 
+export type RuntimeBackend = 'host' | 'docker'
+export type ProfileMode = 'session' | 'user'
+
+export interface SystemSettingsServerRuntime {
+  backend: RuntimeBackend
+  dockerImage: string
+  defaultProfileMode: ProfileMode
+  allowedProfileModes: ProfileMode[]
+}
+
 export interface SystemSettings {
   bypassPermissions: boolean
   model: string
@@ -159,6 +169,7 @@ export interface SystemSettings {
   apiKey: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
+  serverRuntime: SystemSettingsServerRuntime
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -186,6 +197,7 @@ export interface UpdateSystemSettingsRequest {
     }
   }
   skillStore?: Partial<SystemSettingsSkillStore>
+  serverRuntime?: Partial<SystemSettingsServerRuntime>
 }
 
 // Direct Connect Server Types
@@ -201,11 +213,13 @@ export type SessionStatus =
 export type DesiredState = 'active' | 'ended' | 'terminated'
 
 export interface SessionRuntime {
-  type: 'host' | 'docker'
+  backend: RuntimeBackend
+  profileMode: ProfileMode
   dockerImage?: string
-  dockerMode?: 'session' | 'user'
   containerName?: string
-  configDir?: string
+  profileDir: string
+  transcriptDir: string
+  workspaceDir?: string
 }
 
 export interface Session {
@@ -233,6 +247,73 @@ export interface SessionsListResponse {
 export interface GetSessionResponse {
   session: Session
   ws_url?: string
+}
+
+export interface TextContentBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ToolUseContentBlock {
+  type: 'tool_use'
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+}
+
+export interface ToolResultContentBlock {
+  type: 'tool_result'
+  tool_use_id?: string
+  content?: string | unknown[]
+  is_error?: boolean
+}
+
+export interface ThinkingContentBlock {
+  type: 'thinking' | 'redacted_thinking'
+  thinking?: string
+}
+
+export type ContentBlock =
+  | TextContentBlock
+  | ToolUseContentBlock
+  | ToolResultContentBlock
+  | ThinkingContentBlock
+  | Record<string, unknown>
+
+export interface SessionMessage {
+  type?: string
+  role?: string
+  content?: string | ContentBlock[] | unknown
+  message?: {
+    role?: string
+    content?: string | ContentBlock[] | unknown
+    [key: string]: unknown
+  }
+  timestamp?: string
+  uuid?: string
+  tool_use_id?: string
+  tool_name?: string
+  input?: Record<string, unknown>
+  is_error?: boolean
+  [key: string]: unknown
+}
+
+export interface SessionContext {
+  customTitle?: string
+  tag?: string
+  summary?: string
+  mode?: string
+  messages: SessionMessage[]
+  transcript?: {
+    lineCount: number
+    parseErrorCount: number
+    missing?: boolean
+  }
+}
+
+export interface GetSessionContextResponse {
+  session: Session
+  context: SessionContext
 }
 
 export interface UserSessionsResponse {

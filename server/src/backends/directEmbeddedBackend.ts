@@ -45,6 +45,7 @@ type DirectSessionOptions = {
   thinkingConfig?: unknown
   coordinatorMode?: boolean
   sessionId?: string
+  projectDir?: string
   sourceJsonlFile?: string
 }
 type DirectSession = {
@@ -146,14 +147,14 @@ export function applyManagedRuntimeEnv(
 }
 
 export async function writeManagedSessionSettings(
-  configDir: string | undefined,
+  profileDir: string | undefined,
   settings: ReturnType<typeof getSystemSettings>,
 ): Promise<void> {
-  if (!configDir) {
+  if (!profileDir) {
     return
   }
 
-  const settingsPath = join(configDir, 'settings.json')
+  const settingsPath = join(profileDir, 'settings.json')
   let existing: JsonObject = {}
   try {
     const parsed = JSON.parse(await readFile(settingsPath, 'utf8')) as unknown
@@ -522,18 +523,16 @@ class DirectEmbeddedHandle implements BackendHandle {
 
 export class DirectEmbeddedBackend implements SessionBackend {
   async spawn(options: BackendSpawnOptions): Promise<BackendHandle> {
-    const configDir = options.runtime?.configDir
-    if (configDir) {
-      await mkdir(configDir, { recursive: true })
-    }
+    const profileDir = options.runtime.profileDir
+    await mkdir(profileDir, { recursive: true })
     const settings = getSystemSettings()
-    await writeManagedSessionSettings(configDir, settings)
+    await writeManagedSessionSettings(profileDir, settings)
 
     Object.assign(
       process.env,
       buildSessionEnv(options, {
         MOSS_SESSION_RUNTIME_TYPE: 'host',
-        MOSS_CONFIG_DIR: configDir,
+        MOSS_CONFIG_DIR: profileDir,
       }),
     )
     applyManagedRuntimeEnv(settings)
@@ -541,23 +540,28 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const { ClaudeSession, resumeClaudeSession } = await loadDirectRuntime()
     let handle: DirectEmbeddedHandle | null = null
     const runtime: SessionRuntimeInfo = {
-      type: 'host',
-      configDir,
+      ...options.runtime,
+      backend: 'host',
+      profileDir,
     }
+    const bypassPermissions =
+      options.dangerouslySkipPermissions === true ||
+      settings.bypassPermissions === true
     const sessionOptions: DirectSessionOptions = {
       cwd: options.cwd,
       model: settings.model,
       appendSystemPrompt: undefined,
       maxTurns: settings.maxTurns,
       thinkingConfig: buildThinkingConfig(settings),
-      permissionMode:
-        options.dangerouslySkipPermissions || settings.bypassPermissions
-          ? 'allow-all'
-          : 'default',
+      projectDir: options.runtime.transcriptDir,
+      permissionMode: bypassPermissions ? 'allow-all' : 'default',
       url: settings.url || undefined,
       apiKey: settings.apiKey || undefined,
       sessionId: options.sessionId,
       onPermissionRequest: async (tool, input, request) => {
+        if (bypassPermissions) {
+          return { behavior: 'allow' }
+        }
         if (!handle) {
           return {
             behavior: 'deny',

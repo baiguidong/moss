@@ -262,7 +262,7 @@ export default function SessionsPage() {
                     <TableCell>{getUserName(session.userId)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <Badge variant="secondary">{session.runtime.type}</Badge>
+                        <Badge variant="secondary">{session.runtime.backend}</Badge>
                         {session.runtime.dockerImage && (
                           <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={session.runtime.dockerImage}>
                             {session.runtime.dockerImage}
@@ -271,11 +271,9 @@ export default function SessionsPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {session.runtime.dockerMode && (
-                        <Badge variant="outline" className="text-xs">
-                          {session.runtime.dockerMode}
-                        </Badge>
-                      )}
+                      <Badge variant="outline" className="text-xs">
+                        {session.runtime.profileMode}
+                      </Badge>
                     </TableCell>
                     <TableCell>{format(new Date(session.createdAt), 'MM-dd HH:mm')}</TableCell>
                     <TableCell>

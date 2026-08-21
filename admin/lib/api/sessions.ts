@@ -2,6 +2,7 @@ import { dcClient } from './client'
 import type {
   SessionsListResponse,
   GetSessionResponse,
+  GetSessionContextResponse,
   HealthResponse,
   UserSessionsResponse,
 } from './types'
@@ -17,6 +18,12 @@ export async function getSessions(activeOnly = false): Promise<SessionsListRespo
 
 export async function getSession(sessionId: string): Promise<GetSessionResponse> {
   return dcClient.get<GetSessionResponse>(`/api/v1/sessions/${sessionId}`)
+}
+
+export async function getSessionContext(
+  sessionId: string
+): Promise<GetSessionContextResponse> {
+  return dcClient.get<GetSessionContextResponse>(`/api/v1/sessions/${sessionId}/context`)
 }
 
 export async function terminateSession(

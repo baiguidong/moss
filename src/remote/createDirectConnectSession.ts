@@ -7,7 +7,7 @@ import type { DirectConnectConfig } from './directConnectManager.js'
 import {
   attachSessionResponseSchema,
   connectResponseSchema,
-  type SessionRuntimeOptions,
+  type SessionProfileMode,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { resolveDirectConnectAccessToken } from './authClient.js'
 
@@ -94,7 +94,7 @@ export async function createDirectConnectSession({
   password,
   cwd,
   dangerouslySkipPermissions,
-  runtime,
+  profileMode,
   assistantName,
 }: {
   serverUrl: string
@@ -105,7 +105,7 @@ export async function createDirectConnectSession({
   password?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
-  runtime?: SessionRuntimeOptions
+  profileMode?: SessionProfileMode
   assistantName?: string
 }): Promise<{
   config: DirectConnectConfig
@@ -130,7 +130,7 @@ export async function createDirectConnectSession({
         ...(dangerouslySkipPermissions && {
           dangerously_skip_permissions: true,
         }),
-        ...(runtime ? { runtime } : {}),
+        ...(profileMode ? { profileMode } : {}),
         ...(assistantName && { assistant_name: assistantName }),
       }),
     })

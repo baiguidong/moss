@@ -12,15 +12,17 @@ export function getDefaultServerConfigPath(): string {
 function getDefaultStoragePaths(): {
   rootDir: string
   dbPath: string
-  transcriptDir: string
-  runtimeDir: string
+  dataDir: string
+  runDir: string
+  logDir: string
 } {
   const baseDir = getMossServerHomeDir()
   return {
     rootDir: baseDir,
     dbPath: join(baseDir, 'moss-server.db'),
-    transcriptDir: join(baseDir, 'transcripts'),
-    runtimeDir: join(baseDir, 'runtime'),
+    dataDir: join(baseDir, 'var', 'lib'),
+    runDir: join(baseDir, 'var', 'run'),
+    logDir: join(baseDir, 'var', 'log'),
   }
 }
 
@@ -41,12 +43,11 @@ export function getDefaultServerConfig(): ServerFileConfig {
     storage: {
       rootDir: storage.rootDir,
       dbPath: storage.dbPath,
-      transcriptDir: storage.transcriptDir,
-      runtimeDir: storage.runtimeDir,
+      dataDir: storage.dataDir,
+      runDir: storage.runDir,
+      logDir: storage.logDir,
     },
     runtimeDefaults: {
-      type: 'host',
-      dockerMode: 'session',
       idleTimeoutMs: 10 * 60 * 1000,
       maxSessions: 32,
     },
@@ -86,9 +87,6 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     workspace: raw.runtimeDefaults.workspace
       ? normalizePath(raw.runtimeDefaults.workspace)
       : undefined,
-    defaultRuntime: raw.runtimeDefaults.type,
-    dockerImage: raw.runtimeDefaults.dockerImage,
-    dockerMode: raw.runtimeDefaults.dockerMode,
     idleTimeoutMs: raw.runtimeDefaults.idleTimeoutMs,
     maxSessions: raw.runtimeDefaults.maxSessions,
     rootDir: raw.storage.rootDir
@@ -97,12 +95,15 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     dbPath: raw.storage.dbPath
       ? normalizePath(raw.storage.dbPath)
       : defaultStorage.dbPath,
-    transcriptDir: raw.storage.transcriptDir
-      ? normalizePath(raw.storage.transcriptDir)
-      : defaultStorage.transcriptDir,
-    runtimeDir: raw.storage.runtimeDir
-      ? normalizePath(raw.storage.runtimeDir)
-      : defaultStorage.runtimeDir,
+    dataDir: raw.storage.dataDir
+      ? normalizePath(raw.storage.dataDir)
+      : defaultStorage.dataDir,
+    runDir: raw.storage.runDir
+      ? normalizePath(raw.storage.runDir)
+      : defaultStorage.runDir,
+    logDir: raw.storage.logDir
+      ? normalizePath(raw.storage.logDir)
+      : defaultStorage.logDir,
     dockerNetwork: raw.docker.network,
     dockerStopTimeoutSec: raw.docker.stopTimeoutSec,
     dockerLabels: raw.docker.labels,
@@ -160,8 +161,9 @@ export async function ensureServerDirectories(config: ServerConfig): Promise<voi
   await Promise.all([
     mkdir(config.rootDir, { recursive: true }),
     mkdir(dirname(config.dbPath), { recursive: true }),
-    mkdir(config.transcriptDir, { recursive: true }),
-    mkdir(config.runtimeDir, { recursive: true }),
+    mkdir(config.dataDir, { recursive: true }),
+    mkdir(config.runDir, { recursive: true }),
+    mkdir(config.logDir, { recursive: true }),
     config.auditFile ? mkdir(dirname(config.auditFile), { recursive: true }) : Promise.resolve(),
   ])
 }

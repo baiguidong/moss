@@ -1,8 +1,8 @@
 import { z } from 'zod/v4'
 import type {
+  SessionProfileMode,
+  SessionRuntimeBackend,
   SessionRuntimeInfo,
-  SessionRuntimeOptions,
-  SessionRuntimeType,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
 function lazySchema<T>(factory: () => T): () => T {
@@ -38,19 +38,15 @@ export const serverFileConfigSchema = lazySchema(() =>
     storage: z.object({
       rootDir: z.string().min(1).optional(),
       dbPath: z.string().min(1).optional(),
-      transcriptDir: z.string().min(1).optional(),
-      runtimeDir: z.string().min(1).optional(),
+      dataDir: z.string().min(1).optional(),
+      runDir: z.string().min(1).optional(),
+      logDir: z.string().min(1).optional(),
     }).default({}),
     runtimeDefaults: z.object({
-      type: z.enum(['host', 'docker']).default('host'),
-      dockerImage: z.string().optional(),
-      dockerMode: z.enum(['session', 'user']).default('session'),
       workspace: z.string().optional(),
       idleTimeoutMs: z.number().int().min(0).default(10 * 60 * 1000),
       maxSessions: z.number().int().min(0).default(32),
     }).default({
-      type: 'host',
-      dockerMode: 'session',
       idleTimeoutMs: 10 * 60 * 1000,
       maxSessions: 32,
     }),
@@ -96,15 +92,13 @@ export type ServerConfig = {
     email?: string
   }
   workspace?: string
-  defaultRuntime: SessionRuntimeType
-  dockerImage?: string
-  dockerMode?: 'session' | 'user'
   idleTimeoutMs: number
   maxSessions: number
   rootDir: string
   dbPath: string
-  transcriptDir: string
-  runtimeDir: string
+  dataDir: string
+  runDir: string
+  logDir: string
   dockerNetwork?: string
   dockerStopTimeoutSec: number
   dockerLabels: Record<string, string>
@@ -161,11 +155,13 @@ export type AttemptRecord = {
   attemptId: string
   sessionId: string
   generation: number
-  backendType: SessionRuntimeType
+  backendType: SessionRuntimeBackend
   runtimeState: AttemptRuntimeState
   serverInstanceId: string | null
   runnerPid: number | null
   containerName: string | null
+  attemptDir: string
+  manifestPath: string
   attachPath: string | null
   resumeTranscriptSessionId: string
   startedAt: number
@@ -221,13 +217,13 @@ export type SessionSummary = {
 }
 
 export type SessionCreateInput = {
-  cwd: string
+  cwd?: string
   dangerouslySkipPermissions: boolean
   userId: string
   orgId: string
   role: string
   scopes: string[]
-  runtime?: SessionRuntimeOptions
+  profileMode?: SessionProfileMode
   assistantName?: string
 }
 
@@ -250,7 +246,8 @@ export type RunnerManifest = {
   attempt: {
     attemptId: string
     generation: number
-    runtimeDir: string
+    attemptDir: string
+    backendManifestPath: string
     attachPath: string
     stdoutLogPath: string
     stderrLogPath: string

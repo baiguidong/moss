@@ -2,11 +2,11 @@ import http from 'http'
 import net from 'net'
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
-import { readFile, stat } from 'fs/promises'
-import { extname, join, resolve, sep } from 'path'
+import { readFile, readdir, stat } from 'fs/promises'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
-import type { SessionRuntimeOptions } from './backendTypes.js'
+import type { SessionProfileMode } from '../../packages/direct-connect-protocol/src/index.js'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
@@ -39,6 +39,7 @@ import {
 import { createAdaptersApi } from './api/adapters.js'
 import { adapterProcessManager } from './adapterProcessManager.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
+import { loadSessionContextFromTranscript } from './transcript.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -56,6 +57,7 @@ const MIME_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.webp': 'image/webp',
 }
+const MAX_WORKSPACE_FILE_BYTES = 200 * 1024
 
 class HttpError extends Error {
   constructor(
@@ -103,6 +105,182 @@ function serializeSession(session: {
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
   }
+}
+
+function getSessionWorkspaceRoot(session: SessionRecord): string {
+  return session.runtime.workspaceDir || session.cwd
+}
+
+function resolveSessionWorkspacePath(
+  session: SessionRecord,
+  inputPath?: string | null,
+): {
+  root: string
+  targetPath: string
+} {
+  const root = resolve(getSessionWorkspaceRoot(session))
+  const trimmed = typeof inputPath === 'string' ? inputPath.trim() : ''
+  const targetPath = trimmed
+    ? isAbsolute(trimmed)
+      ? resolve(trimmed)
+      : resolve(root, trimmed)
+    : root
+  const rel = relative(root, targetPath)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new HttpError(400, 'Path is outside the session workspace')
+  }
+  return { root, targetPath }
+}
+
+function getWorkspaceFilePreviewInfo(targetPath: string): {
+  contentType: string
+  language: string
+  mimeType: string
+} {
+  const ext = extname(targetPath).toLowerCase().replace(/^\./, '')
+  const imageMimeByExt: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    svg: 'image/svg+xml',
+    ico: 'image/x-icon',
+    avif: 'image/avif',
+    tif: 'image/tiff',
+    tiff: 'image/tiff',
+  }
+
+  if (imageMimeByExt[ext]) {
+    return { contentType: 'image', language: 'image', mimeType: imageMimeByExt[ext] }
+  }
+  if (ext === 'pdf') {
+    return { contentType: 'pdf', language: 'pdf', mimeType: 'application/pdf' }
+  }
+  if (ext === 'md' || ext === 'markdown') {
+    return { contentType: 'markdown', language: 'markdown', mimeType: 'text/markdown' }
+  }
+  if (ext === 'html' || ext === 'htm') {
+    return { contentType: 'html', language: 'html', mimeType: 'text/html' }
+  }
+  if (ext === 'diff' || ext === 'patch') {
+    return { contentType: 'diff', language: 'diff', mimeType: 'text/plain' }
+  }
+  if (['doc', 'docx', 'odt'].includes(ext)) {
+    return { contentType: 'word', language: ext || 'word', mimeType: 'application/octet-stream' }
+  }
+  if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) {
+    return { contentType: 'excel', language: ext || 'excel', mimeType: 'application/octet-stream' }
+  }
+  if (['ppt', 'pptx', 'odp'].includes(ext)) {
+    return { contentType: 'ppt', language: ext || 'ppt', mimeType: 'application/octet-stream' }
+  }
+  if (['txt', 'log', 'text'].includes(ext)) {
+    return { contentType: 'text', language: 'text', mimeType: 'text/plain' }
+  }
+  return { contentType: 'code', language: ext || 'text', mimeType: 'text/plain' }
+}
+
+async function listSessionWorkspaceDir(
+  session: SessionRecord,
+  dirPath?: string | null,
+) {
+  const { root, targetPath } = resolveSessionWorkspacePath(session, dirPath)
+  const targetStat = await stat(targetPath)
+  if (!targetStat.isDirectory()) {
+    throw new HttpError(400, 'Target is not a directory')
+  }
+  const entries = await readdir(targetPath, { withFileTypes: true })
+  const items = entries
+    .filter(entry => !entry.name.startsWith('.'))
+    .map(entry => {
+      const fullPath = join(targetPath, entry.name)
+      return {
+        name: entry.name,
+        path: fullPath,
+        relativePath: relative(root, fullPath) || entry.name,
+        type: entry.isDirectory() ? 'directory' : 'file',
+      }
+    })
+    .sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'directory' ? -1 : 1
+      }
+      return a.name.localeCompare(b.name)
+    })
+  return {
+    root,
+    path: targetPath,
+    relativePath: relative(root, targetPath) || '.',
+    items,
+  }
+}
+
+async function readSessionWorkspaceFile(
+  session: SessionRecord,
+  filePath?: string | null,
+) {
+  if (!filePath?.trim()) {
+    throw new HttpError(400, 'Missing file path')
+  }
+  const { root, targetPath } = resolveSessionWorkspacePath(session, filePath)
+  const targetStat = await stat(targetPath)
+  if (!targetStat.isFile()) {
+    throw new HttpError(400, 'Target is not a file')
+  }
+  const previewInfo = getWorkspaceFilePreviewInfo(targetPath)
+  const baseResult = {
+    path: targetPath,
+    relativePath: relative(root, targetPath),
+    size: targetStat.size,
+    truncated: false,
+    contentType: previewInfo.contentType,
+    language: previewInfo.language,
+    mimeType: previewInfo.mimeType,
+    metadata: {},
+  }
+
+  if (
+    previewInfo.contentType === 'image' ||
+    previewInfo.contentType === 'pdf' ||
+    previewInfo.contentType === 'word' ||
+    previewInfo.contentType === 'excel' ||
+    previewInfo.contentType === 'ppt'
+  ) {
+    return { ...baseResult, content: '' }
+  }
+
+  if (targetStat.size > MAX_WORKSPACE_FILE_BYTES) {
+    return {
+      ...baseResult,
+      truncated: true,
+      metadata: {
+        previewEditable: false,
+        previewSaveable: false,
+        previewReason: 'truncated',
+      },
+      content: `File too large to preview (${targetStat.size} bytes).`,
+    }
+  }
+
+  const buffer = await readFile(targetPath)
+  if (buffer.includes(0)) {
+    return {
+      ...baseResult,
+      contentType: 'unsupported',
+      language: 'binary',
+      mimeType: 'application/octet-stream',
+      metadata: {
+        previewEditable: false,
+        previewSaveable: false,
+        previewReason: 'binary',
+      },
+      content: 'Binary file cannot be previewed.',
+    }
+  }
+
+  return { ...baseResult, content: buffer.toString('utf8') }
 }
 
 function stableJson(value: unknown): string {
@@ -197,46 +375,14 @@ function redirect(
   res.end()
 }
 
-function parseRuntimeOptions(body: JsonBody): SessionRuntimeOptions | undefined {
-  if (typeof body.runtime_type === 'string') {
-    return {
-      type: body.runtime_type === 'docker' ? 'docker' : 'host',
-      dockerImage:
-        typeof body.docker_image === 'string' ? body.docker_image : undefined,
-      dockerMode:
-        body.docker_mode === 'user'
-          ? 'user'
-          : body.docker_mode === 'session'
-            ? 'session'
-            : undefined,
-    }
+function parseProfileMode(body: JsonBody): SessionProfileMode | undefined {
+  if (body.profileMode === 'session' || body.profileMode === 'user') {
+    return body.profileMode
   }
-  if (!isJsonBody(body.runtime)) {
-    return undefined
+  if (body.profile_mode === 'session' || body.profile_mode === 'user') {
+    return body.profile_mode
   }
-  const runtime = body.runtime
-  const type =
-    runtime.type === 'docker'
-      ? 'docker'
-      : runtime.type === 'host'
-        ? 'host'
-        : undefined
-  if (!type) {
-    return undefined
-  }
-  return {
-    type,
-    dockerImage:
-      typeof runtime.dockerImage === 'string'
-        ? runtime.dockerImage
-        : undefined,
-    dockerMode:
-      runtime.dockerMode === 'user'
-        ? 'user'
-        : runtime.dockerMode === 'session'
-          ? 'session'
-          : undefined,
-  }
+  return undefined
 }
 
 function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
@@ -1248,6 +1394,67 @@ export function startServer(
         return
       }
 
+      const sessionContextMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/context$/)
+      if (req.method === 'GET' && sessionContextMatch) {
+        const sessionId = sessionContextMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) {
+          throw new HttpError(404, 'Session not found')
+        }
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        const context = await loadSessionContextFromTranscript(session)
+        writeJson(res, 200, {
+          session: serializeSession(session),
+          context: context ?? {
+            messages: [],
+            transcript: {
+              lineCount: 0,
+              parseErrorCount: 0,
+              missing: true,
+            },
+          },
+        })
+        return
+      }
+
+      const sessionWorkspaceListMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/list$/)
+      if (req.method === 'GET' && sessionWorkspaceListMatch) {
+        const sessionId = sessionWorkspaceListMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) {
+          throw new HttpError(404, 'Session not found')
+        }
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(
+          res,
+          200,
+          await listSessionWorkspaceDir(session, url.searchParams.get('dir')),
+        )
+        return
+      }
+
+      const sessionWorkspaceReadMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/read$/)
+      if (req.method === 'GET' && sessionWorkspaceReadMatch) {
+        const sessionId = sessionWorkspaceReadMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) {
+          throw new HttpError(404, 'Session not found')
+        }
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(
+          res,
+          200,
+          await readSessionWorkspaceFile(session, url.searchParams.get('file')),
+        )
+        return
+      }
+
       const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (req.method === 'GET' && sessionIdMatch) {
         const sessionId = sessionIdMatch[1] || ''
@@ -1274,11 +1481,11 @@ export function startServer(
         const body = await readJsonBody(req)
         const cwd =
           typeof body.cwd === 'string' && body.cwd.trim()
-            ? body.cwd
-            : config.workspace || process.cwd()
+            ? body.cwd.trim()
+            : undefined
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
-        const runtimeOptions = parseRuntimeOptions(body)
+        const profileMode = parseProfileMode(body)
         const assistantName =
           typeof body.assistant_name === 'string' && body.assistant_name.trim()
             ? body.assistant_name.trim()
@@ -1290,7 +1497,7 @@ export function startServer(
           orgId: auth.orgId,
           role: auth.role,
           scopes: auth.scopes,
-          runtime: runtimeOptions,
+          profileMode,
           assistantName,
         })
         writeJson(res, 200, {

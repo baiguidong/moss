@@ -76,10 +76,7 @@ export class SessionRunnerDaemon {
   constructor(private readonly manifest: RunnerManifest) {
     this.#store = new DirectConnectStore(manifest.config.dbPath)
     this.#backend = new RuntimeBackend({
-      defaultRuntime: manifest.session.runtime,
       docker: {
-        image: manifest.session.runtime.dockerImage,
-        mode: manifest.session.runtime.dockerMode,
         network: manifest.config.dockerNetwork,
         labels: manifest.config.dockerLabels,
       },
@@ -92,7 +89,7 @@ export class SessionRunnerDaemon {
 
   async start(): Promise<void> {
     try {
-      await mkdir(this.manifest.attempt.runtimeDir, { recursive: true })
+      await mkdir(this.manifest.attempt.attemptDir, { recursive: true })
       await mkdir(dirname(this.manifest.attempt.attachPath), { recursive: true })
       await safeUnlink(this.manifest.attempt.attachPath)
       await writeStatus(this.manifest.attempt.statusPath, {
@@ -183,13 +180,13 @@ export class SessionRunnerDaemon {
       'active',
       'active',
     )
-    this.#send(socket, {
-      type: 'hello',
-      attemptId: this.manifest.attempt.attemptId,
-      sessionId: this.manifest.session.sessionId,
-      runtimeType: this.manifest.session.runtime.type,
-      state: this.#state,
-    })
+      this.#send(socket, {
+        type: 'hello',
+        attemptId: this.manifest.attempt.attemptId,
+        sessionId: this.manifest.session.sessionId,
+        runtimeType: this.manifest.session.runtime.backend,
+        state: this.#state,
+      })
     socket.on('data', chunk => {
       const text = Buffer.from(chunk).toString('utf8')
       socket.__buffer = (socket.__buffer ?? '') + text
@@ -267,6 +264,7 @@ export class SessionRunnerDaemon {
           ? this.manifest.session.transcriptSessionId
           : undefined,
         transcriptPath: this.manifest.session.transcriptPath,
+        backendManifestPath: this.manifest.attempt.backendManifestPath,
         cwd: this.manifest.session.cwd,
         dangerouslySkipPermissions: this.manifest.session.dangerouslySkipPermissions,
         userId: this.manifest.session.userId,
@@ -279,7 +277,6 @@ export class SessionRunnerDaemon {
 
       this.#handle = handle
       this.manifest.session.runtime.containerName = handle.runtime.containerName
-      this.manifest.session.runtime.configDir = handle.runtime.configDir
       this.#state = 'running'
       this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId, 'running')
       this.#store.setSessionLifecycle(
@@ -502,13 +499,11 @@ export class SessionRunnerDaemon {
       return
     }
     const currentTranscriptPath = this.manifest.session.transcriptPath
-    const nextTranscriptPath = this.manifest.session.runtime.configDir
-      ? getTranscriptPath(
-          this.manifest.session.runtime.configDir,
-          this.manifest.session.cwd,
-          nextTranscriptSessionId,
-        )
-      : currentTranscriptPath
+    const nextTranscriptPath = getTranscriptPath(
+      this.manifest.config,
+      this.manifest.session.sessionId,
+      nextTranscriptSessionId,
+    )
     this.#store.updateSessionTranscript(this.manifest.session.sessionId, {
       transcriptSessionId: nextTranscriptSessionId,
       transcriptPath: nextTranscriptPath,

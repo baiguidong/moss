@@ -1,21 +1,21 @@
 import type {
   SessionRuntimeInfo,
-  SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
-export type { SessionRuntimeInfo, SessionRuntimeOptions }
+export type { SessionRuntimeInfo }
 
 export type BackendSpawnOptions = {
   sessionId: string
   resumeSessionId?: string
   transcriptPath?: string
+  backendManifestPath?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
   userId?: string
   orgId?: string
   role?: string
   scopes?: string[]
-  runtime?: SessionRuntimeOptions
+  runtime: SessionRuntimeInfo
   assistantName?: string
 }
 

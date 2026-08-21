@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { mkdir } from 'fs/promises'
+import { mkdir, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { MOSS_HOME, MOSS_SERVER_HOME } from '../lib/env.js'
 import type {
@@ -8,18 +8,13 @@ import type {
   BackendSpawnOptions,
   SessionBackend,
   SessionRuntimeInfo,
-  SessionRuntimeOptions,
 } from '../backendTypes.js'
 import {
   buildSessionEnv,
   createStreamBackendHandle,
-  ensureCliExists,
-  resolveNodeCliPath,
 } from './backendUtils.js'
 
 type DockerBackendDefaults = {
-  image?: string
-  mode?: 'session' | 'user'
   network?: string
   labels?: Record<string, string>
 }
@@ -35,30 +30,16 @@ function resolveDockerUser(): string | null {
   return `${process.getuid()}:${process.getgid()}`
 }
 
-function buildConfigDir(
-  options: BackendSpawnOptions,
-  mode: 'session' | 'user',
-): string {
-  if (mode === 'user' && options.userId) {
-    return join(
-      MOSS_SERVER_HOME,
-      'runtime',
-      'users',
-      options.userId,
-      'config',
-    )
-  }
-  return join(
-    MOSS_SERVER_HOME,
-    'runtime',
-    'sessions',
-    options.sessionId,
-    'config',
-  )
+function resolveSessionRunnerPath(): string {
+  return join(MOSS_SERVER_HOME, 'bin', 'moss-session-runner.mjs')
 }
 
-function getHostSettingsPath(): string {
-  return join(MOSS_SERVER_HOME, 'settings.json')
+function ensureSessionRunnerExists(runnerPath: string): void {
+  if (!existsSync(runnerPath)) {
+    throw new Error(
+      `Missing ${runnerPath}. Build or install moss-session-runner.mjs to ${join(MOSS_SERVER_HOME, 'bin')}.`,
+    )
+  }
 }
 
 export class DockerBackend implements SessionBackend {
@@ -70,33 +51,53 @@ export class DockerBackend implements SessionBackend {
     }
 
     const runtime = options.runtime
-    const image = runtime?.dockerImage || this.defaults.image
-    const mode = runtime?.dockerMode || this.defaults.mode || 'session'
+    const image = runtime.dockerImage
     if (!image) {
       throw new Error(
         'Docker runtime requested but no docker image was configured',
       )
     }
+    if (!options.backendManifestPath) {
+      throw new Error('Docker runtime requested without backend manifest path')
+    }
 
-    const nodeCliPath = resolveNodeCliPath()
-    ensureCliExists(nodeCliPath)
+    const sessionRunnerPath = resolveSessionRunnerPath()
+    ensureSessionRunnerExists(sessionRunnerPath)
 
-    const configDir = runtime?.configDir || buildConfigDir(options, mode)
-    await mkdir(configDir, { recursive: true })
-    const hostSettingsPath = getHostSettingsPath()
+    const profileDir = runtime.profileDir
+    await mkdir(profileDir, { recursive: true })
+    const backendManifestPath = options.backendManifestPath
+    await mkdir(dirname(backendManifestPath), { recursive: true })
 
     const mounts = uniqueMounts([
       options.cwd,
-      dirname(nodeCliPath),
-      configDir,
+      dirname(sessionRunnerPath),
+      dirname(backendManifestPath),
+      profileDir,
+      runtime.transcriptDir,
       MOSS_HOME,
     ])
 
     const containerName =
-      runtime?.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
+      runtime.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
     const env = buildSessionEnv(options, {
-      MOSS_CONFIG_DIR: configDir,
+      MOSS_CONFIG_DIR: profileDir,
+      MOSS_SESSION_RUNTIME_TYPE: 'docker',
     })
+
+    const backendOptions: BackendSpawnOptions = {
+      ...options,
+      runtime: {
+        ...runtime,
+        backend: 'host',
+        containerName,
+      },
+    }
+    await writeFile(
+      backendManifestPath,
+      `${JSON.stringify(backendOptions, null, 2)}\n`,
+      'utf8',
+    )
 
     const args = ['run', '--rm', '-i', '--name', containerName]
     const dockerUser = resolveDockerUser()
@@ -111,9 +112,6 @@ export class DockerBackend implements SessionBackend {
     }
     for (const mount of mounts) {
       args.push('-v', `${mount}:${mount}`)
-    }
-    if (existsSync(hostSettingsPath)) {
-      args.push('-v', `${hostSettingsPath}:${join(configDir, 'settings.json')}:ro`)
     }
 
     args.push('-w', options.cwd)
@@ -131,33 +129,17 @@ export class DockerBackend implements SessionBackend {
         args.push('-e', `${key}=${env[key]}`)
       }
     }
-    args.push('-e', `HOME=${configDir}`)
+    args.push('-e', `HOME=${profileDir}`)
     args.push('-e', `MOSS_SERVER_HOME=${MOSS_SERVER_HOME}`)
     args.push('-e', `MOSS_HOME=${MOSS_HOME}`)
 
     args.push(
       image,
       'node',
-      nodeCliPath,
-      '--print',
-      '--verbose',
-      '--input-format',
-      'stream-json',
-      '--output-format',
-      'stream-json',
-      '--permission-prompt-tool',
-      'stdio',
+      sessionRunnerPath,
+      '--stdio',
+      backendManifestPath,
     )
-
-    if (options.resumeSessionId) {
-      args.push('--resume', options.resumeSessionId)
-    } else {
-      args.push('--session-id', options.sessionId)
-    }
-
-    if (options.dangerouslySkipPermissions) {
-      args.push('--dangerously-skip-permissions')
-    }
 
     const child = spawn('docker', args, {
       cwd: options.cwd,
@@ -167,16 +149,29 @@ export class DockerBackend implements SessionBackend {
     })
 
     const runtimeInfo: SessionRuntimeInfo = {
-      type: 'docker',
+      backend: 'docker',
+      profileMode: runtime.profileMode,
       dockerImage: image,
-      dockerMode: mode,
       containerName,
-      configDir,
+      profileDir,
+      transcriptDir: runtime.transcriptDir,
+      workspaceDir: runtime.workspaceDir,
     }
 
     const handle = createStreamBackendHandle(child, options, runtimeInfo)
     return {
       ...handle,
+      interrupt() {
+        const signal = spawn(
+          'docker',
+          ['kill', '--signal=SIGINT', containerName],
+          {
+            stdio: 'ignore',
+            windowsHide: true,
+          },
+        )
+        signal.unref()
+      },
       destroy(force = false) {
         if (child.killed) {
           return

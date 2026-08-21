@@ -15,6 +15,16 @@ export type SystemSettingsSkillStore = {
   tenantId: string
 }
 
+export type SystemRuntimeBackend = 'host' | 'docker'
+export type SystemProfileMode = 'session' | 'user'
+
+export type SystemSettingsServerRuntime = {
+  backend: SystemRuntimeBackend
+  dockerImage: string
+  defaultProfileMode: SystemProfileMode
+  allowedProfileModes: SystemProfileMode[]
+}
+
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
@@ -25,6 +35,7 @@ export type SystemSettingsPayload = {
   apiKey: string
   image: SystemSettingsImage
   skillStore: SystemSettingsSkillStore
+  serverRuntime: SystemSettingsServerRuntime
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -50,7 +61,7 @@ function getSystemSettingsPath(): string {
 const DEFAULT_SYSTEM_SETTINGS: Omit<
   SystemSettingsPayload,
   'settingsPath' | 'settingsExists' | 'settingsLoaded' | 'settingsParseError'
-> = Object.freeze({
+> = {
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
   maxTurns: 100,
@@ -67,7 +78,13 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   skillStore: {
     tenantId: '',
   },
-})
+  serverRuntime: {
+    backend: 'host',
+    dockerImage: '',
+    defaultProfileMode: 'session',
+    allowedProfileModes: ['session', 'user'],
+  },
+}
 
 type SystemSettingsState = {
   path: string
@@ -90,6 +107,26 @@ function normalizeThinkingMode(value: unknown): ThinkingMode | null {
     return value
   }
   return null
+}
+
+function normalizeRuntimeBackend(value: unknown): SystemRuntimeBackend | null {
+  return value === 'host' || value === 'docker' ? value : null
+}
+
+function normalizeProfileMode(value: unknown): SystemProfileMode | null {
+  return value === 'session' || value === 'user' ? value : null
+}
+
+function normalizeAllowedProfileModes(
+  value: unknown,
+): SystemProfileMode[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+  const modes = value
+    .map(normalizeProfileMode)
+    .filter((mode): mode is SystemProfileMode => mode !== null)
+  return [...new Set(modes)]
 }
 
 function recordField(
@@ -257,6 +294,39 @@ function normalizeSystemSettings(
           : DEFAULT_SYSTEM_SETTINGS.skillStore.tenantId,
   }
 
+  const sourceServerRuntime = isRecord(source.serverRuntime)
+    ? source.serverRuntime
+    : {}
+  const existingServerRuntime = isRecord(result.serverRuntime)
+    ? result.serverRuntime
+    : {}
+  const backend =
+    normalizeRuntimeBackend(sourceServerRuntime.backend) ??
+    normalizeRuntimeBackend(existingServerRuntime.backend) ??
+    DEFAULT_SYSTEM_SETTINGS.serverRuntime.backend
+  const defaultProfileMode =
+    normalizeProfileMode(sourceServerRuntime.defaultProfileMode) ??
+    normalizeProfileMode(existingServerRuntime.defaultProfileMode) ??
+    DEFAULT_SYSTEM_SETTINGS.serverRuntime.defaultProfileMode
+  const allowedProfileModes =
+    normalizeAllowedProfileModes(sourceServerRuntime.allowedProfileModes) ??
+    normalizeAllowedProfileModes(existingServerRuntime.allowedProfileModes) ??
+    DEFAULT_SYSTEM_SETTINGS.serverRuntime.allowedProfileModes
+  const normalizedAllowedProfileModes = allowedProfileModes.includes(defaultProfileMode)
+    ? allowedProfileModes
+    : [...allowedProfileModes, defaultProfileMode]
+  result.serverRuntime = {
+    backend,
+    dockerImage:
+      typeof sourceServerRuntime.dockerImage === 'string'
+        ? sourceServerRuntime.dockerImage.trim()
+        : typeof existingServerRuntime.dockerImage === 'string'
+          ? existingServerRuntime.dockerImage
+          : DEFAULT_SYSTEM_SETTINGS.serverRuntime.dockerImage,
+    defaultProfileMode,
+    allowedProfileModes: normalizedAllowedProfileModes,
+  }
+
   return result as PersistedSystemSettings
 }
 
@@ -310,6 +380,7 @@ function toSystemSettingsPayload(
     apiKey: state.value.apiKey,
     image: state.value.image,
     skillStore: state.value.skillStore,
+    serverRuntime: state.value.serverRuntime,
     settingsPath: state.path,
     settingsExists: state.exists,
     settingsLoaded: state.loaded,
@@ -392,6 +463,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     bypassPermissions: nextSettings.bypassPermissions,
     models,
     skillStore: nextSettings.skillStore,
+    serverRuntime: nextSettings.serverRuntime,
     env,
   }
 
@@ -421,6 +493,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
     skillStore: nextSettings.skillStore,
+    serverRuntime: nextSettings.serverRuntime,
     settingsPath,
     settingsExists: true,
     settingsLoaded: true,

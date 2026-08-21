@@ -1,21 +1,20 @@
 import { z } from 'zod/v4'
 
-export type SessionRuntimeType = 'host' | 'docker'
+export type SessionRuntimeBackend = 'host' | 'docker'
+export type SessionProfileMode = 'session' | 'user'
 
 export type SessionRuntimeOptions = {
-  type?: SessionRuntimeType
-  dockerImage?: string
-  dockerMode?: 'session' | 'user'
-  configDir?: string
-  containerName?: string
+  profileMode?: SessionProfileMode
 }
 
 export type SessionRuntimeInfo = {
-  type: SessionRuntimeType
+  backend: SessionRuntimeBackend
+  profileMode: SessionProfileMode
   dockerImage?: string
-  dockerMode?: 'session' | 'user'
   containerName?: string
-  configDir?: string
+  profileDir: string
+  transcriptDir: string
+  workspaceDir?: string
 }
 
 function lazySchema<T>(factory: () => T): () => T {
@@ -25,11 +24,13 @@ function lazySchema<T>(factory: () => T): () => T {
 
 export const runtimeInfoSchema = lazySchema(() =>
   z.object({
-    type: z.enum(['host', 'docker']),
+    backend: z.enum(['host', 'docker']),
+    profileMode: z.enum(['session', 'user']),
     dockerImage: z.string().optional(),
-    dockerMode: z.enum(['session', 'user']).optional(),
     containerName: z.string().optional(),
-    configDir: z.string().optional(),
+    profileDir: z.string(),
+    transcriptDir: z.string(),
+    workspaceDir: z.string().optional(),
   }),
 )
 

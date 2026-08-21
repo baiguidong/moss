@@ -524,7 +524,7 @@ export default function DashboardPage() {
                           variant="secondary"
                           className="text-xs"
                         >
-                          {session.runtime.type}
+                          {session.runtime.backend}
                         </Badge>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">

@@ -112,6 +112,12 @@ function makeSettings(
     skillStore: {
       tenantId: '',
     },
+    serverRuntime: {
+      backend: 'host',
+      dockerImage: '',
+      defaultProfileMode: 'session',
+      allowedProfileModes: ['session', 'user'],
+    },
     settingsPath: '',
     settingsExists: true,
     settingsLoaded: true,

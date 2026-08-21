@@ -8,7 +8,6 @@ import type {
   DesiredSessionState,
   ServerConfig,
   ServerInstanceRecord,
-  SessionCreateInput,
   SessionEventRecord,
   SessionListFilter,
   SessionRecord,
@@ -16,6 +15,9 @@ import type {
   SessionSummary,
 } from './types.js'
 import type { SessionRuntimeInfo } from './backendTypes.js'
+import type {
+  SessionRuntimeBackend,
+} from '../../packages/direct-connect-protocol/src/index.js'
 
 type SqlRow = Record<string, unknown>
 
@@ -37,17 +39,18 @@ function parseJsonArray(value: unknown): string[] {
 
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
   return {
-    type: String(row.runtime_type) === 'docker' ? 'docker' : 'host',
-    dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
-    dockerMode:
-      row.docker_mode === 'user'
+    backend: String(row.runtime_backend) === 'docker' ? 'docker' : 'host',
+    profileMode:
+      row.profile_mode === 'user'
         ? 'user'
-        : row.docker_mode === 'session'
-          ? 'session'
-          : undefined,
+        : 'session',
+    dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
     containerName:
       typeof row.container_name === 'string' ? row.container_name : undefined,
-    configDir: typeof row.config_dir === 'string' ? row.config_dir : undefined,
+    profileDir: String(row.profile_dir),
+    transcriptDir: String(row.transcript_dir),
+    workspaceDir:
+      typeof row.workspace_dir === 'string' ? row.workspace_dir : undefined,
   }
 }
 
@@ -88,6 +91,8 @@ function mapAttempt(row: SqlRow): AttemptRecord {
     runnerPid: row.runner_pid == null ? null : Number(row.runner_pid),
     containerName:
       typeof row.container_name === 'string' ? row.container_name : null,
+    attemptDir: String(row.attempt_dir),
+    manifestPath: String(row.manifest_path),
     attachPath: typeof row.attach_path === 'string' ? row.attach_path : null,
     resumeTranscriptSessionId: String(row.resume_transcript_session_id),
     startedAt: Number(row.started_at),
@@ -101,6 +106,25 @@ function mapAttempt(row: SqlRow): AttemptRecord {
   }
 }
 
+function tableColumns(db: DatabaseSync, table: string): string[] {
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .map(row => String((row as SqlRow).name))
+}
+
+function resetIncompatibleSessionSchema(db: DatabaseSync): void {
+  const columns = tableColumns(db, 'sessions')
+  if (columns.length === 0 || columns.includes('runtime_backend')) {
+    return
+  }
+  db.exec(`
+    DROP TABLE IF EXISTS session_events;
+    DROP TABLE IF EXISTS session_attempts;
+    DROP TABLE IF EXISTS sessions;
+  `)
+}
+
 export class DirectConnectStore {
   readonly db: DatabaseSync
 
@@ -112,6 +136,12 @@ export class DirectConnectStore {
       PRAGMA synchronous=FULL;
       PRAGMA foreign_keys=ON;
       PRAGMA busy_timeout=5000;
+    `)
+
+    resetIncompatibleSessionSchema(this.db)
+
+    this.db.exec(`
+      PRAGMA foreign_keys=ON;
 
       CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
@@ -121,10 +151,12 @@ export class DirectConnectStore {
         role TEXT NOT NULL,
         scopes_json TEXT NOT NULL,
         cwd TEXT NOT NULL,
-        runtime_type TEXT NOT NULL,
+        runtime_backend TEXT NOT NULL,
+        profile_mode TEXT NOT NULL,
         docker_image TEXT,
-        docker_mode TEXT,
-        config_dir TEXT,
+        profile_dir TEXT NOT NULL,
+        workspace_dir TEXT,
+        transcript_dir TEXT NOT NULL,
         container_name TEXT,
         status TEXT NOT NULL,
         desired_state TEXT NOT NULL,
@@ -148,6 +180,8 @@ export class DirectConnectStore {
         server_instance_id TEXT,
         runner_pid INTEGER,
         container_name TEXT,
+        attempt_dir TEXT NOT NULL,
+        manifest_path TEXT NOT NULL,
         attach_path TEXT,
         resume_transcript_session_id TEXT NOT NULL,
         started_at INTEGER NOT NULL,
@@ -253,10 +287,11 @@ export class DirectConnectStore {
     this.db.prepare(`
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
-        cwd, runtime_type, docker_image, docker_mode, config_dir, container_name,
-        status, desired_state, current_attempt_id, transcript_path, assistant_name,
-        created_at, last_active_at, ended_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+        cwd, runtime_backend, profile_mode, docker_image, profile_dir,
+        workspace_dir, transcript_dir, container_name,
+        status, desired_state, transcript_path, assistant_name,
+        created_at, last_active_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -265,10 +300,12 @@ export class DirectConnectStore {
       input.role,
       JSON.stringify(input.scopes),
       input.cwd,
-      input.runtime.type,
+      input.runtime.backend,
+      input.runtime.profileMode,
       input.runtime.dockerImage ?? null,
-      input.runtime.dockerMode ?? null,
-      input.runtime.configDir ?? null,
+      input.runtime.profileDir,
+      input.runtime.workspaceDir ?? null,
+      input.runtime.transcriptDir,
       input.runtime.containerName ?? null,
       input.status,
       input.desiredState,
@@ -286,41 +323,48 @@ export class DirectConnectStore {
   }
 
   createAttempt(input: {
+    attemptId: string
     sessionId: string
     generation: number
-    backendType: 'host' | 'docker'
+    backendType: SessionRuntimeBackend
     resumeTranscriptSessionId: string
     serverInstanceId: string
     containerName?: string
+    attemptDir: string
+    manifestPath: string
     attachPath?: string
   }): AttemptRecord {
-    const attemptId = randomUUID()
     const ts = now()
     this.db.prepare(`
       INSERT INTO session_attempts (
         attempt_id, session_id, generation, backend_type, runtime_state,
-        server_instance_id, runner_pid, container_name, attach_path,
+        server_instance_id, runner_pid, container_name, attempt_dir,
+        manifest_path, attach_path,
         resume_transcript_session_id, started_at, last_heartbeat_at
-      ) VALUES (?, ?, ?, ?, 'starting', ?, NULL, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, 'starting', ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      attemptId,
+      input.attemptId,
       input.sessionId,
       input.generation,
       input.backendType,
       input.serverInstanceId,
       input.containerName ?? null,
+      input.attemptDir,
+      input.manifestPath,
       input.attachPath ?? null,
       input.resumeTranscriptSessionId,
       ts,
       ts,
     )
-    this.addEvent(input.sessionId, attemptId, 'attempt_created', {
+    this.addEvent(input.sessionId, input.attemptId, 'attempt_created', {
       generation: input.generation,
       backendType: input.backendType,
       attachPath: input.attachPath,
       containerName: input.containerName,
+      attemptDir: input.attemptDir,
+      manifestPath: input.manifestPath,
     })
-    return this.getAttempt(attemptId)!
+    return this.getAttempt(input.attemptId)!
   }
 
   setCurrentAttempt(sessionId: string, attemptId: string | null): void {
@@ -643,18 +687,5 @@ export function toSessionSummary(session: SessionRecord): SessionSummary {
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
-  }
-}
-
-export function mergeRuntime(
-  config: ServerConfig,
-  runtime?: SessionCreateInput['runtime'],
-): SessionRuntimeInfo {
-  const type = runtime?.type || config.defaultRuntime
-  return {
-    type,
-    dockerImage: runtime?.dockerImage || config.dockerImage,
-    dockerMode: runtime?.dockerMode || config.dockerMode,
-    configDir: runtime?.configDir,
   }
 }

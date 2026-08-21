@@ -29,21 +29,30 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 - `~/.moss/server/bin/moss-server.mjs`
 - `~/.moss/server/bin/moss-session-runner.mjs`
-- `~/.moss/server/bin/cli-node.js`
 - `~/.moss/server/admin/dist/`
 
 运行期状态也只落在 server root 的子目录：
 
 - `~/.moss/server/server.json`
 - `~/.moss/server/moss-server.db`
-- `~/.moss/server/runtime/`
-- `~/.moss/server/transcripts/`
-- `~/.moss/server/logs/`
+- `~/.moss/server/var/lib/`
+- `~/.moss/server/var/run/`
+- `~/.moss/server/var/log/`
 - `~/.moss/server/settings.json`
 - `~/.moss/server/skills/`
 - `~/.moss/server/assistants/`
 
-服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
+服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。服务端执行后端写在 `serverRuntime.backend`，客户端只能指定 `profileMode`。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
+
+默认 session 目录结构：
+
+- `var/lib/sessions/<sessionId>/workspace/`: session 工作目录；不传 `cwd` 时 host/docker backend 都在这里执行
+- `var/lib/sessions/<sessionId>/transcripts/`: session transcript JSONL
+- `var/lib/profiles/sessions/<sessionId>/`: `profileMode=session` 的独立配置目录
+- `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享配置目录
+- `var/run/attempts/<sessionId>/<attemptId>/`: 单次 runner attempt 的 manifest、stdout/stderr、status
+- `var/run/sockets/<attemptId>.sock`: server 与 runner attach 的本机 socket
+- `var/run/docker/manifests/<attemptId>.json`: docker backend 的 stdio manifest
 
 只准备但不启动：
 
@@ -51,13 +60,11 @@ prepare 会把随代码变化的运行产物复制到 server root：
 bun run server:prepare
 ```
 
-服务端 host session 使用独立 runner 进程承接交互：
+服务端 session 使用独立 runner 进程承接交互：
 `MOSS_SERVER_HOME/bin/moss-session-runner.mjs <manifest>`。
-runner 进程内嵌和桌面端 `electron-direct.mjs` 同源的 Agent runtime；
-host 模式不再额外启动 `cli-node.js` 子进程，也不需要额外的 runtime bin 文件。
-
-`MOSS_SERVER_HOME/bin/cli-node.js` 仍由 `server:prepare` 构建并复制，当前主要
-保留给 docker runtime fallback 和手工诊断使用。
+runner 进程内嵌和桌面端 `electron-direct.mjs` 同源的 Agent runtime。
+host 模式直接在本机 runner 内运行 Agent；docker 模式在容器内运行
+`moss-session-runner.mjs --stdio <manifest>`，不再依赖 `cli-node.js`。
 
 默认配置文件：
 
@@ -470,11 +477,13 @@ API key 登录：
   "role": "user",
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
   "runtime": {
-    "type": "host",
+    "backend": "host",
+    "profileMode": "session",
     "dockerImage": "optional",
-    "dockerMode": "session",
     "containerName": "optional",
-    "configDir": "/abs/path/config"
+    "profileDir": "/abs/path/profile",
+    "transcriptDir": "/abs/path/session/transcripts",
+    "workspaceDir": "/abs/path/workspace"
   },
   "status": "creating|active|detached|ended|terminated|failed|lost",
   "desiredState": "active|ended|terminated",
@@ -494,21 +503,13 @@ API key 登录：
 {
   "cwd": "/abs/path/project",
   "dangerously_skip_permissions": true,
-  "runtime": {
-    "type": "host"
-  }
+  "profileMode": "session"
 }
 ```
 
-兼容旧字段：
-
-```json
-{
-  "runtime_type": "docker",
-  "docker_image": "my-image:tag",
-  "docker_mode": "session"
-}
-```
+`cwd` 可选。未指定时 server 使用
+`~/.moss/server/var/lib/sessions/<sessionId>/workspace` 作为 `work_dir`；
+指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
 
 示例响应：
 
@@ -518,9 +519,11 @@ API key 登录：
   "ws_url": "ws://127.0.0.1:43127/ws/sessions/uuid",
   "work_dir": "/abs/path/project",
   "runtime": {
-    "type": "host",
-    "dockerMode": "session",
-    "configDir": "/abs/path/config"
+    "backend": "host",
+    "profileMode": "session",
+    "profileDir": "/abs/path/profile",
+    "transcriptDir": "/abs/path/session/transcripts",
+    "workspaceDir": "/abs/path/workspace"
   }
 }
 ```
@@ -541,6 +544,14 @@ API key 登录：
 ### GET `/api/v1/sessions/:sessionId`
 
 返回单个 session；当 `desiredState=active` 时会确保 runtime attempt 可 attach。
+
+### GET `/api/v1/sessions/:sessionId/workspace/list?dir=<path>`
+
+列出 session workspace 内的目录。`dir` 可传相对路径，也可传 workspace 内的绝对路径；未传时列出 workspace root。
+
+### GET `/api/v1/sessions/:sessionId/workspace/read?file=<path>`
+
+读取 session workspace 内的文件预览。`file` 可传相对路径，也可传 workspace 内的绝对路径；超过预览大小或二进制文件会返回不可编辑预览信息。
 
 ### POST `/api/v1/sessions/:sessionId/resume`
 

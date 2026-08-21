@@ -2,16 +2,12 @@ import type {
   BackendHandle,
   BackendSpawnOptions,
   SessionBackend,
-  SessionRuntimeOptions,
 } from '../backendTypes.js'
 import { DirectEmbeddedBackend } from './directEmbeddedBackend.js'
 import { DockerBackend } from './dockerBackend.js'
 
 type RuntimeBackendOptions = {
-  defaultRuntime?: SessionRuntimeOptions
   docker?: {
-    image?: string
-    mode?: 'session' | 'user'
     network?: string
     labels?: Record<string, string>
   }
@@ -20,28 +16,16 @@ type RuntimeBackendOptions = {
 export class RuntimeBackend implements SessionBackend {
   readonly #hostBackend: SessionBackend
   readonly #dockerBackend: SessionBackend
-  readonly #defaultRuntime: SessionRuntimeOptions
 
   constructor(options: RuntimeBackendOptions = {}) {
     this.#hostBackend = new DirectEmbeddedBackend()
     this.#dockerBackend = new DockerBackend(options.docker)
-    this.#defaultRuntime = options.defaultRuntime ?? { type: 'host' }
   }
 
   async spawn(options: BackendSpawnOptions): Promise<BackendHandle> {
-    const runtimeType = options.runtime?.type || this.#defaultRuntime.type || 'host'
-    const mergedOptions: BackendSpawnOptions = {
-      ...options,
-      runtime: {
-        ...this.#defaultRuntime,
-        ...options.runtime,
-        type: runtimeType,
-      },
+    if (options.runtime.backend === 'docker') {
+      return this.#dockerBackend.spawn(options)
     }
-
-    if (runtimeType === 'docker') {
-      return this.#dockerBackend.spawn(mergedOptions)
-    }
-    return this.#hostBackend.spawn(mergedOptions)
+    return this.#hostBackend.spawn(options)
   }
 }
