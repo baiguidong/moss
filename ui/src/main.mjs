@@ -179,6 +179,7 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   remoteDirectUserPassword: '',
   remoteDirectApiKey: '',
   remoteDirectWorkspace: '',
+  remoteDirectProfileMode: 'session',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
@@ -262,6 +263,10 @@ function deleteLegacyServerSettings(target) {
 
 function normalizeRemoteDirectCredentialMode(value) {
   return value === 'api-key' ? 'api-key' : 'password';
+}
+
+function normalizeRemoteDirectProfileMode(value) {
+  return value === 'user' ? 'user' : 'session';
 }
 
 function djb2Hash(value) {
@@ -797,6 +802,14 @@ function normalizeDesktopSettings(input, existing = {}) {
     stringField(existingRemoteDirect, 'workspace') ??
     DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
 
+  result.remoteDirectProfileMode = normalizeRemoteDirectProfileMode(
+    source.remoteDirectProfileMode ??
+      sourceRemoteDirect.profileMode ??
+      result.remoteDirectProfileMode ??
+      existingRemoteDirect.profileMode ??
+      DEFAULT_DESKTOP_SETTINGS.remoteDirectProfileMode,
+  );
+
   result.remoteDirect = {
     serverUrl: result.remoteDirectServerUrl,
     credentialMode: result.remoteDirectCredentialMode,
@@ -804,6 +817,7 @@ function normalizeDesktopSettings(input, existing = {}) {
     userPassword: result.remoteDirectUserPassword,
     apiKey: result.remoteDirectApiKey,
     workspace: result.remoteDirectWorkspace,
+    profileMode: result.remoteDirectProfileMode,
   };
 
   if (source.coordinatorMode !== undefined) {
@@ -1043,6 +1057,9 @@ function saveDesktopSettings(nextSettings) {
     userPassword: normalizedSettings.remoteDirectUserPassword || '',
     apiKey: normalizedSettings.remoteDirectApiKey || '',
     workspace: normalizedSettings.remoteDirectWorkspace || '',
+    profileMode: normalizeRemoteDirectProfileMode(
+      normalizedSettings.remoteDirectProfileMode,
+    ),
   };
 
   const models = {
@@ -1076,6 +1093,7 @@ function saveDesktopSettings(nextSettings) {
   delete toSave.remoteDirectUserPassword;
   delete toSave.remoteDirectApiKey;
   delete toSave.remoteDirectWorkspace;
+  delete toSave.remoteDirectProfileMode;
   delete toSave.model;
   delete toSave.maxTurns;
   delete toSave.thinkingMode;
@@ -1350,6 +1368,7 @@ function getRemoteDirectSettings(settings = desktopSettings) {
   const nestedUserPassword = ownRawStringField(remoteDirect, 'userPassword');
   const nestedApiKey = ownStringField(remoteDirect, 'apiKey');
   const nestedWorkspace = ownStringField(remoteDirect, 'workspace');
+  const nestedProfileMode = ownStringField(remoteDirect, 'profileMode');
   return {
     serverUrl:
       nestedServerUrl ??
@@ -1375,6 +1394,9 @@ function getRemoteDirectSettings(settings = desktopSettings) {
       nestedWorkspace ??
       stringField(settings, 'remoteDirectWorkspace') ??
       '',
+    profileMode: normalizeRemoteDirectProfileMode(
+      nestedProfileMode ?? settings?.remoteDirectProfileMode,
+    ),
   };
 }
 
@@ -1765,12 +1787,14 @@ function createRemoteDirectRuntime({
       }
 
       if (!created) {
+        const remoteDirectSettings = getRemoteDirectSettings();
         const requestedRemoteWorkspace =
-          sessionRecord.remoteWorkspace || getRemoteDirectWorkspace();
+          remoteDirectSettings.workspace || undefined;
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
           cwd: requestedRemoteWorkspace || undefined,
+          profileMode: remoteDirectSettings.profileMode,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
         });
@@ -1781,11 +1805,10 @@ function createRemoteDirectRuntime({
       if (created?.config?.sessionId) {
         sessionRecord.underlyingSessionId = created.config.sessionId;
       }
-      let workspaceChanged = false;
-      if (created?.workDir) {
-        workspaceChanged = sessionRecord.remoteWorkspace !== created.workDir;
-        sessionRecord.remoteWorkspace = created.workDir;
-      }
+      const workspaceChanged = applyRemoteSessionWorkspace(
+        sessionRecord,
+        created?.workDir,
+      );
       if (workspaceChanged && isAccessibleDirectory(getSessionWorkspaceRoot(sessionRecord))) {
         void startWorkspaceWatcher(sessionRecord);
       }
@@ -2146,6 +2169,9 @@ function hydratePersistedSessions() {
       assistantName: row.assistant_name || null,
       assistantSystemPrompt: '',
     };
+    if (agentMode === 'remote-direct') {
+      applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
+    }
     sessions.set(sessionRecord.id, sessionRecord);
   }
 
@@ -2186,6 +2212,9 @@ function hydratePersistedSessions() {
       assistantName: null,
       assistantSystemPrompt: '',
     };
+    if (agentMode === 'remote-direct') {
+      applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
+    }
     subAgentSessions.set(sessionRecord.id, sessionRecord);
   }
 }
@@ -2592,7 +2621,11 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
     sessionRecord.workspace = metadata.cwd.trim();
   }
   if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
-    sessionRecord.remoteWorkspace = metadata.remoteWorkspace.trim();
+    if (sessionRecord.agentMode === 'remote-direct') {
+      applyRemoteSessionWorkspace(sessionRecord, metadata.remoteWorkspace);
+    } else {
+      sessionRecord.remoteWorkspace = metadata.remoteWorkspace.trim();
+    }
   }
 }
 
@@ -3805,6 +3838,19 @@ function getSessionWorkspaceRoot(sessionRecord) {
     : null;
 }
 
+function applyRemoteSessionWorkspace(sessionRecord, workspace) {
+  if (typeof workspace !== 'string' || !workspace.trim()) {
+    return false;
+  }
+  const normalized = workspace.trim();
+  const changed =
+    sessionRecord.workspace !== normalized ||
+    sessionRecord.remoteWorkspace !== normalized;
+  sessionRecord.workspace = normalized;
+  sessionRecord.remoteWorkspace = normalized;
+  return changed;
+}
+
 function isAccessibleDirectory(dirPath) {
   if (!dirPath) return false;
   try {
@@ -4045,7 +4091,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
       onPermissionRequest,
       onSessionCreated: (created) => {
         if (created?.workDir) {
-          sessionRecord.remoteWorkspace = created.workDir;
+          applyRemoteSessionWorkspace(sessionRecord, created.workDir);
         }
       },
     });

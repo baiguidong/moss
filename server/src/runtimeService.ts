@@ -220,6 +220,8 @@ export class RuntimeService {
     const workspaceDir = resolveSessionWorkspaceDir(
       this.options.config,
       sessionId,
+      input.userId,
+      profileMode,
       input.cwd,
     )
     const runtime: SessionRuntimeInfo = {

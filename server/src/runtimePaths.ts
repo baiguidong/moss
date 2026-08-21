@@ -28,15 +28,23 @@ export function getSessionWorkspaceDir(
   return join(getSessionDir(config, sessionId), 'workspace')
 }
 
+export function getUserWorkspaceDir(config: ServerConfig, userId: string): string {
+  return join(config.dataDir, 'workspaces', 'users', userId)
+}
+
 export function resolveSessionWorkspaceDir(
   config: ServerConfig,
   sessionId: string,
+  userId: string,
+  profileMode: SessionProfileMode,
   requestedCwd?: string,
 ): string {
   return (
     requestedCwd?.trim() ||
     config.workspace ||
-    getSessionWorkspaceDir(config, sessionId)
+    (profileMode === 'user'
+      ? getUserWorkspaceDir(config, userId)
+      : getSessionWorkspaceDir(config, sessionId))
   )
 }
 

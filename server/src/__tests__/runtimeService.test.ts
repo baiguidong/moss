@@ -7,15 +7,31 @@ describe('runtime service workspace layout', () => {
   test('uses per-session server workspace when client does not request cwd', () => {
     const config = makeConfig('/tmp/moss-server')
 
-    expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe(
+    expect(resolveSessionWorkspaceDir(config, 'session-1', 'user-1', 'session')).toBe(
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'workspace'),
+    )
+  })
+
+  test('uses per-user server workspace when profile mode is user', () => {
+    const config = makeConfig('/tmp/moss-server')
+
+    expect(resolveSessionWorkspaceDir(config, 'session-1', 'user-1', 'user')).toBe(
+      join('/tmp/moss-server', 'var', 'lib', 'workspaces', 'users', 'user-1'),
     )
   })
 
   test('respects an explicit requested cwd', () => {
     const config = makeConfig('/tmp/moss-server')
 
-    expect(resolveSessionWorkspaceDir(config, 'session-1', '/work/project')).toBe(
+    expect(
+      resolveSessionWorkspaceDir(
+        config,
+        'session-1',
+        'user-1',
+        'session',
+        '/work/project',
+      ),
+    ).toBe(
       '/work/project',
     )
   })
@@ -26,7 +42,7 @@ describe('runtime service workspace layout', () => {
       workspace: '/work/default',
     }
 
-    expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe('/work/default')
+    expect(resolveSessionWorkspaceDir(config, 'session-1', 'user-1', 'session')).toBe('/work/default')
   })
 })
 

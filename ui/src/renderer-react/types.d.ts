@@ -168,6 +168,7 @@ export type DesktopSettings = {
     userPassword: string;
     apiKey: string;
     workspace: string;
+    profileMode: 'session' | 'user';
   };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
@@ -176,6 +177,7 @@ export type DesktopSettings = {
   remoteDirectUserPassword: string;
   remoteDirectApiKey: string;
   remoteDirectWorkspace: string;
+  remoteDirectProfileMode: 'session' | 'user';
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;

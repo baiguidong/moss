@@ -1451,6 +1451,26 @@ export function SettingsView({
                               />
                             </SettingsRow>
 
+                            <SettingsRow
+                              title="会话目录模式"
+                              description="未指定工作空间时，按会话隔离或按登录用户共享。"
+                              controlClassName="sm:w-[180px]"
+                            >
+                              <select
+                                className={SELECT_CLASS_NAME}
+                                value={settingsDraft.remoteDirectProfileMode ?? 'session'}
+                                onChange={(event) => {
+                                  updateSetting(
+                                    'remoteDirectProfileMode',
+                                    event.target.value as DesktopSettings['remoteDirectProfileMode'],
+                                  );
+                                }}
+                              >
+                                <option value="session">按会话</option>
+                                <option value="user">按用户</option>
+                              </select>
+                            </SettingsRow>
+
                             <div className="px-4 py-4">
                               <div className="rounded-[18px] border border-amber-200/80 bg-amber-50/[0.85] px-4 py-3 text-xs leading-6 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
                                 当前版本会把远程登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在

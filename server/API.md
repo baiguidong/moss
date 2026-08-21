@@ -46,7 +46,8 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 默认 session 目录结构：
 
-- `var/lib/sessions/<sessionId>/workspace/`: session 工作目录；不传 `cwd` 时 host/docker backend 都在这里执行
+- `var/lib/sessions/<sessionId>/workspace/`: `profileMode=session` 的 session 工作目录；不传 `cwd` 且没有服务端默认 workspace 时 host/docker backend 都在这里执行
+- `var/lib/workspaces/users/<userId>/`: `profileMode=user` 的用户共享工作目录；同一登录用户的 remote 会话复用该目录
 - `var/lib/sessions/<sessionId>/transcripts/`: session transcript JSONL
 - `var/lib/profiles/sessions/<sessionId>/`: `profileMode=session` 的独立配置目录
 - `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享配置目录
@@ -507,9 +508,11 @@ API key 登录：
 }
 ```
 
-`cwd` 可选。未指定时 server 使用
-`~/.moss/server/var/lib/sessions/<sessionId>/workspace` 作为 `work_dir`；
-指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
+`cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
+未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，再按
+`profileMode` 选择目录：`session` 使用
+`~/.moss/server/var/lib/sessions/<sessionId>/workspace`，`user` 使用
+`~/.moss/server/var/lib/workspaces/users/<userId>`。
 
 示例响应：
 
