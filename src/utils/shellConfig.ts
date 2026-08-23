@@ -1,6 +1,6 @@
 /**
  * Utilities for managing shell configuration files (like .bashrc, .zshrc)
- * Used for managing claude aliases and PATH entries
+ * Used for managing Moss aliases and PATH entries.
  */
 
 import { open, readFile, stat } from 'fs/promises'
@@ -37,7 +37,7 @@ export function getShellConfigPaths(
 
 /**
  * Filter out installer-created claude aliases from an array of lines
- * Removes aliases pointing to the current or legacy local installer path.
+ * Removes aliases pointing to the Moss local installer path.
  * Preserves custom user aliases that point to other locations
  * Returns the filtered lines and whether our default installer alias was found
  */
@@ -46,10 +46,7 @@ export function filterClaudeAliases(lines: string[]): {
   hadAlias: boolean
 } {
   let hadAlias = false
-  const installerAliasTargets = new Set([
-    join(osHomedir(), '.moss', 'local', 'claude'),
-    join(osHomedir(), '.claude', 'local', 'claude'),
-  ])
+  const installerAliasTarget = join(osHomedir(), '.moss', 'local', 'claude')
   const filtered = lines.filter(line => {
     // Check if this is a claude alias
     if (CLAUDE_ALIAS_REGEX.test(line)) {
@@ -65,7 +62,7 @@ export function filterClaudeAliases(lines: string[]): {
         const target = match[1].trim()
         // Only remove if it points to the installer location
         // The installer always creates aliases with the full expanded path
-        if (installerAliasTargets.has(target)) {
+        if (target === installerAliasTarget) {
           hadAlias = true
           return false // Remove this line
         }

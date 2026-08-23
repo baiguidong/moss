@@ -178,8 +178,8 @@ export function emitHookResponse(data: {
 
 /**
  * Enable emission of all hook event types (beyond SessionStart and Setup).
- * Called when the SDK `includeHookEvents` option is set or when running
- * in CLAUDE_CODE_REMOTE mode.
+ * Called when the SDK `includeHookEvents` option is set or a remote host
+ * requests full hook events.
  */
 export function setAllHookEventsEnabled(enabled: boolean): void {
   allHookEventsEnabled = enabled

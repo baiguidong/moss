@@ -102,7 +102,7 @@ export type AppState = DeepImmutable<{
   spinnerTip?: string
   // Agent name from --agent CLI flag or settings (for logo display)
   agent: string | undefined
-  // Remote session URL for --remote mode (shown in footer indicator)
+  // Remote session URL shown in footer indicator
   remoteSessionUrl: string | undefined
 }> & {
   // Unified task state - excluded from DeepImmutable because TaskState contains function types
@@ -129,7 +129,6 @@ export type AppState = DeepImmutable<{
   fileHistory: FileHistoryState
   attribution: AttributionState
   todos: { [agentId: string]: TodoList }
-  remoteAgentTaskSuggestions: { summary: string; task: string }[]
   notifications: {
     current: Notification | null
     queue: Notification[]
@@ -264,24 +263,6 @@ export type AppState = DeepImmutable<{
   advisorModel?: string
   // Effort value
   effortValue?: EffortValue
-  // Set synchronously in launchUltraplan before the detached flow starts.
-  // Prevents duplicate launches during the ~5s window before
-  // ultraplanSessionUrl is set by teleportToRemote. Cleared by launchDetached
-  // once the URL is set or on failure.
-  ultraplanLaunching?: boolean
-  // Active ultraplan CCR session URL. Set while the RemoteAgentTask runs;
-  // truthy disables the keyword trigger + rainbow. Cleared when the poll
-  // reaches terminal state.
-  ultraplanSessionUrl?: string
-  // Approved ultraplan awaiting user choice (implement here vs fresh session).
-  // Set by RemoteAgentTask poll on approval; cleared by UltraplanChoiceDialog.
-  ultraplanPendingChoice?: { plan: string; sessionId: string; taskId: string }
-  // Pre-launch permission dialog. Set by /ultraplan (slash or keyword);
-  // cleared by UltraplanLaunchDialog on choice.
-  ultraplanLaunchPending?: { blurb: string }
-  // Remote-harness side: set via set_permission_mode control_request,
-  // pushed to CCR external_metadata.is_ultraplan_mode by onChangeAppState.
-  isUltraplanMode?: boolean
 }
 
 export type AppStateStore = Store<AppState>
@@ -332,7 +313,6 @@ export function getDefaultAppState(): AppState {
       resources: {},
     },
     todos: {},
-    remoteAgentTaskSuggestions: [],
     notifications: {
       current: null,
       queue: [],

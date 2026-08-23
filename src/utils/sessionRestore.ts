@@ -25,7 +25,7 @@ import type {
   PersistedWorktreeSession,
 } from '../types/logs.js'
 import type { Message } from '../types/message.js'
-import { clearMemoryFileCaches } from './claudemd.js'
+import { clearMemoryFileCaches } from './mossmd.js'
 import {
   type AttributionState,
   attributionRestoreStateFromLog,
@@ -151,7 +151,7 @@ export function computeRestoredAttributionState(
 
 /**
  * Compute standalone agent context (name/color) for session resume.
- * Used for computing initial state before render (per CLAUDE.md guidelines).
+ * Used for computing initial state before render.
  * Returns undefined if no name/color is set on the session.
  */
 export function computeStandaloneAgentContext(
@@ -502,7 +502,7 @@ export async function processResumedConversation(
     saveMode(context.modeApi?.isCoordinatorMode() ? 'coordinator' : 'normal')
   }
 
-  // Compute initial state before render (per CLAUDE.md guidelines)
+  // Compute initial state before render.
   const restoredAttribution = opts.includeAttribution
     ? computeRestoredAttributionState(result)
     : undefined

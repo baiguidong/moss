@@ -189,7 +189,7 @@ export async function copyPlanForResume(
       logError(e)
       return false
     }
-    // Only attempt recovery in remote sessions (CCR) where files don't persist
+    // Only attempt recovery in remote sessions where files don't persist
     if (!isRemoteEnvironment()) {
       return false
     }
@@ -359,7 +359,7 @@ function findFileSnapshotEntry(
 /**
  * Persist a snapshot of session files (plan, todos) to the transcript.
  * Called incrementally whenever these files change. Only active in remote
- * sessions (CCR) where local files don't persist between sessions.
+ * sessions where local files don't persist between sessions.
  */
 export async function persistFileSnapshotIfRemote(): Promise<void> {
   if (!isRemoteEnvironment()) {

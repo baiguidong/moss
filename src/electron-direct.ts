@@ -546,13 +546,13 @@ export class ClaudeSession {
       resumeState,
     } = this.#opts
     // A worktree restored on resume must also shape engine bootstrap
-    // (CLAUDE.md discovery, SessionStart hooks, commands) — not just the
+    // (MOSS.md discovery, SessionStart hooks, commands) — not just the
     // per-turn cwd context.
     const cwd =
       getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
       this.#opts.cwd
 
-    // 统一 Headless 初始化 (包含 Skills, Plugins, CLAUDE.md, MCP)
+    // 统一 Headless 初始化 (包含 Skills, Plugins, MOSS.md, MCP)
     const bootstrapStart = Date.now()
     const dynamicMcpServers = addDynamicMcpScope(this.#opts.mcpServers)
     logForDiagnosticsNoPII('info', 'local_agent_engine_dynamic_mcp_loaded', {
@@ -764,6 +764,8 @@ export class ClaudeSession {
     })
 
     try {
+      initLocalAgentRuntimeOnce()
+
       const sessionId = asSessionId(this.sessionId)
       const projectDir = this.#opts.projectDir
       const runInSessionContext = <T>(fn: () => T): T =>

@@ -15,10 +15,11 @@ import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLo
 import { useAppState } from '../../state/AppState.js';
 import { getAgentMemoryDir } from '../../tools/AgentTool/agentMemory.js';
 import { openPath } from '../../utils/browser.js';
-import { getMemoryFiles, type MemoryFileInfo } from '../../utils/claudemd.js';
+import { getMemoryFiles, type MemoryFileInfo } from '../../utils/mossmd.js';
 import { getMossConfigHomeDir } from '../../utils/envUtils.js';
 import { getDisplayPath } from '../../utils/file.js';
 import { formatRelativeTimeAgo } from '../../utils/format.js';
+import { PRIMARY_PROJECT_INSTRUCTION_FILENAME } from '../../utils/instructionFiles.js';
 import { projectIsInGitRepo } from '../../utils/memory/versions.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
 import { Select } from '../CustomSelect/index.js';
@@ -43,8 +44,8 @@ export function MemoryFileSelector(t0) {
     onCancel
   } = t0;
   const existingMemoryFiles = use(getMemoryFiles());
-  const userMemoryPath = join(getMossConfigHomeDir(), "CLAUDE.md");
-  const projectMemoryPath = join(getOriginalCwd(), "CLAUDE.md");
+  const userMemoryPath = join(getMossConfigHomeDir(), PRIMARY_PROJECT_INSTRUCTION_FILENAME);
+  const projectMemoryPath = join(getOriginalCwd(), PRIMARY_PROJECT_INSTRUCTION_FILENAME);
   const hasUserMemory = existingMemoryFiles.some(f => f.path === userMemoryPath);
   const hasProjectMemory = existingMemoryFiles.some(f_0 => f_0.path === projectMemoryPath);
   const allMemoryFiles = [...existingMemoryFiles.filter(_temp).map(_temp2), ...(hasUserMemory ? [] : [{
@@ -82,10 +83,10 @@ export function MemoryFileSelector(t0) {
     let description;
     const isGit = projectIsInGitRepo(getOriginalCwd());
     if (file.type === "User" && !file.isNested) {
-      description = "Saved in ~/.moss/CLAUDE.md";
+      description = `Saved in ~/.moss/${PRIMARY_PROJECT_INSTRUCTION_FILENAME}`;
     } else {
       if (file.type === "Project" && !file.isNested && file.path === projectMemoryPath) {
-        description = `${isGit ? "Checked in at" : "Saved in"} ./CLAUDE.md`;
+        description = `${isGit ? "Checked in at" : "Saved in"} ./${PRIMARY_PROJECT_INSTRUCTION_FILENAME}`;
       } else {
         if (file.parent) {
           description = "@-imported";

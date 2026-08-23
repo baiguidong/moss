@@ -96,9 +96,8 @@ export async function processUserInput({
 }: {
   input: string | Array<ContentBlockParam>
   /**
-   * Input before [Pasted text #N] expansion. Used for ultraplan keyword
-   * detection so pasted content containing the word cannot trigger. Falls
-   * back to the string `input` when unset.
+   * Input before [Pasted text #N] expansion. Falls back to the string `input`
+   * when unset.
    */
   preExpansionInput?: string
   mode: PromptInputMode
@@ -114,8 +113,8 @@ export async function processUserInput({
   canUseTool?: CanUseToolFn
   /**
    * When true, input starting with `/` is treated as plain text.
-   * Used for remotely-received CCR messages that should not
-   * trigger local slash commands or skills.
+   * Used for remotely received messages that should not trigger local slash
+   * commands or skills.
    */
   skipSlashCommands?: boolean
   /**

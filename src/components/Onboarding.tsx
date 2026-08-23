@@ -65,7 +65,7 @@ export function Onboarding({
           <OrderedList.Item>
             <Text>Moss can make mistakes</Text>
             <Text dimColor wrap="wrap">
-              You should always review Claude&apos;s responses, especially when
+              You should always review Moss&apos;s responses, especially when
               <Newline />
               running code.
               <Newline />

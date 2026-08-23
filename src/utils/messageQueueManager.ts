@@ -544,7 +544,7 @@ export function getCommandsByMaxPriority(
  * Returns true if the command is a slash command that should be routed through
  * processSlashCommand rather than sent to the model as text.
  *
- * Commands with `skipSlashCommands` (e.g. CCR messages) are NOT treated
+ * Commands with `skipSlashCommands` (e.g. remote messages) are NOT treated
  * as slash commands — their text is meant for the model.
  */
 export function isSlashCommand(cmd: QueuedCommand): boolean {

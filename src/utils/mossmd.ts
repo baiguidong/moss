@@ -1,10 +1,10 @@
 /**
  * Files are loaded in the following order:
  *
- * 1. Managed memory (eg. /etc/moss/CLAUDE.md) - Global instructions for all users
- * 2. User memory (~/.moss/CLAUDE.md) - Private global instructions for all projects
- * 3. Project memory (CLAUDE.md, .moss/CLAUDE.md, and .moss/rules/*.md in project roots) - Instructions checked into the codebase
- * 4. Local memory (CLAUDE.local.md in project roots) - Private project-specific instructions
+ * 1. Managed memory (eg. /etc/moss/MOSS.md) - Global instructions for all users
+ * 2. User memory (~/.moss/MOSS.md) - Private global instructions for all projects
+ * 3. Project memory (MOSS.md, .moss/MOSS.md, and .moss/rules/*.md in project roots) - Instructions checked into the codebase
+ * 4. Local memory (MOSS.local.md in project roots) - Private project-specific instructions
  *
  * Files are loaded in reverse order of priority, i.e. the latest files are highest priority
  * with the model paying more attention to them.
@@ -13,7 +13,7 @@
  * - User memory is loaded from the user's home directory
  * - Project and Local files are discovered by traversing from the current directory up to root
  * - Files closer to the current directory have higher priority (loaded later)
- * - CLAUDE.md, .moss/CLAUDE.md, and all .md files in .moss/rules/ are checked in each directory for Project memory
+ * - MOSS.md, .moss/MOSS.md, and all .md files in .moss/rules/ are checked in each directory for Project memory
  *
  * Memory @include directive:
  * - Memory files can include other files using @ notation
@@ -41,7 +41,7 @@ import {
 import picomatch from 'picomatch'
 import { logEvent } from 'src/services/analytics/index.js'
 import {
-  getAdditionalDirectoriesForClaudeMd,
+  getAdditionalDirectoriesForMossMd,
   getOriginalCwd,
 } from '../bootstrap/state.js'
 import { truncateEntrypointContent } from '../memdir/memdir.js'
@@ -76,6 +76,10 @@ import { expandPath } from './path.js'
 import { pathInWorkingPath } from './permissions/filesystem.js'
 import { isSettingSourceEnabled } from './settings/constants.js'
 import { getInitialSettings } from './settings/settings.js'
+import {
+  LOCAL_INSTRUCTION_FILENAMES,
+  PROJECT_INSTRUCTION_FILENAMES,
+} from './instructionFiles.js'
 
 let hasLoggedInitialLoad = false
 
@@ -530,19 +534,19 @@ function extractIncludePathsFromTokens(
 const MAX_INCLUDE_DEPTH = 5
 
 /**
- * Checks whether a CLAUDE.md file path is excluded by the claudeMdExcludes setting.
+ * Checks whether a MOSS.md file path is excluded by the mossMdExcludes setting.
  * Only applies to User, Project, and Local memory types.
  * Managed and AutoMem types are never excluded.
  *
  * Matches both the original path and the realpath-resolved path to handle symlinks
  * (e.g., /tmp -> /private/tmp on macOS).
  */
-function isClaudeMdExcluded(filePath: string, type: MemoryType): boolean {
+function isMossMdExcluded(filePath: string, type: MemoryType): boolean {
   if (type !== 'User' && type !== 'Project' && type !== 'Local') {
     return false
   }
 
-  const patterns = getInitialSettings().claudeMdExcludes
+  const patterns = getInitialSettings().mossMdExcludes
   if (!patterns || patterns.length === 0) {
     return false
   }
@@ -552,7 +556,7 @@ function isClaudeMdExcluded(filePath: string, type: MemoryType): boolean {
 
   // Build an expanded pattern list that includes realpath-resolved versions of
   // absolute patterns. This handles symlinks like /tmp -> /private/tmp on macOS:
-  // the user writes "/tmp/project/CLAUDE.md" in their exclude, but the system
+  // the user writes "/tmp/project/MOSS.md" in their exclude, but the system
   // resolves the CWD to "/private/tmp/project/...", so the file path uses the
   // real path. By resolving the patterns too, both sides match.
   const expandedPatterns = resolveExcludePatterns(patterns).filter(
@@ -589,7 +593,7 @@ function resolveExcludePatterns(patterns: string[]): string[] {
     const dirToResolve = dirname(staticPrefix)
 
     try {
-      // sync IO: called from sync context (isClaudeMdExcluded -> processMemoryFile -> getMemoryFiles)
+      // sync IO: called from sync context (isMossMdExcluded -> processMemoryFile -> getMemoryFiles)
       const resolvedDir = fs.realpathSync(dirToResolve).replaceAll('\\', '/')
       if (resolvedDir !== dirToResolve) {
         const resolvedPattern =
@@ -624,8 +628,8 @@ export async function processMemoryFile(
     return []
   }
 
-  // Skip if path is excluded by claudeMdExcludes setting
-  if (isClaudeMdExcluded(filePath, type)) {
+  // Skip if path is excluded by mossMdExcludes setting
+  if (isMossMdExcluded(filePath, type)) {
     return []
   }
 
@@ -790,14 +794,14 @@ export const getMemoryFiles = memoize(
     const config = getCurrentProjectConfig()
     const includeExternal =
       forceIncludeExternal ||
-      config.hasClaudeMdExternalIncludesApproved ||
+      config.hasMossMdExternalIncludesApproved ||
       false
 
     // Process Managed file first (always loaded - policy settings)
-    const managedClaudeMd = getMemoryPath('Managed')
+    const managedMossMd = getMemoryPath('Managed')
     result.push(
       ...(await processMemoryFile(
-        managedClaudeMd,
+        managedMossMd,
         'Managed',
         processedPaths,
         includeExternal,
@@ -817,10 +821,10 @@ export const getMemoryFiles = memoize(
 
     // Process User file (only if userSettings is enabled)
     if (isSettingSourceEnabled('userSettings')) {
-      const userClaudeMd = getMemoryPath('User')
+      const userMossMd = getMemoryPath('User')
       result.push(
         ...(await processMemoryFile(
-          userClaudeMd,
+          userMossMd,
           'User',
           processedPaths,
           true, // User memory can always include external files
@@ -852,10 +856,10 @@ export const getMemoryFiles = memoize(
     // When running from a git worktree nested inside its main repo (e.g.,
     // .moss/worktrees/<name>/ from `claude -w`), the upward walk passes
     // through both the worktree root and the main repo root. Both contain
-    // checked-in files like CLAUDE.md and .moss/rules/*.md, so the same
+    // checked-in files like MOSS.md and .moss/rules/*.md, so the same
     // content gets loaded twice. Skip Project-type (checked-in) files from
     // directories above the worktree but within the main repo — the worktree
-    // already has its own checkout. CLAUDE.local.md is gitignored so it only
+    // already has its own checkout. MOSS.local.md is gitignored so it only
     // exists in the main repo and is still loaded.
     // See: https://github.com/anthropics/claude-code/issues/29599
     const gitRoot = findGitRoot(originalCwd)
@@ -876,28 +880,29 @@ export const getMemoryFiles = memoize(
         pathInWorkingPath(dir, canonicalRoot) &&
         !pathInWorkingPath(dir, gitRoot)
 
-      // Try reading CLAUDE.md (Project) - only if projectSettings is enabled
+      // Try reading project instruction files - only if projectSettings is enabled
       if (isSettingSourceEnabled('projectSettings') && !skipProject) {
-        const projectPath = join(dir, 'CLAUDE.md')
-        result.push(
-          ...(await processMemoryFile(
-            projectPath,
-            'Project',
-            processedPaths,
-            includeExternal,
-          )),
-        )
+        for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
+          const projectPath = join(dir, filename)
+          result.push(
+            ...(await processMemoryFile(
+              projectPath,
+              'Project',
+              processedPaths,
+              includeExternal,
+            )),
+          )
 
-        // Try reading .moss/CLAUDE.md (Project)
-        const dotMossPath = join(dir, '.moss', 'CLAUDE.md')
-        result.push(
-          ...(await processMemoryFile(
-            dotMossPath,
-            'Project',
-            processedPaths,
-            includeExternal,
-          )),
-        )
+          const dotMossPath = join(dir, '.moss', filename)
+          result.push(
+            ...(await processMemoryFile(
+              dotMossPath,
+              'Project',
+              processedPaths,
+              includeExternal,
+            )),
+          )
+        }
 
         // Try reading .moss/rules/*.md files (Project)
         const rulesDir = join(dir, '.moss', 'rules')
@@ -912,48 +917,50 @@ export const getMemoryFiles = memoize(
         )
       }
 
-      // Try reading CLAUDE.local.md (Local) - only if localSettings is enabled
+      // Try reading local instruction files - only if localSettings is enabled
       if (isSettingSourceEnabled('localSettings')) {
-        const localPath = join(dir, 'CLAUDE.local.md')
-        result.push(
-          ...(await processMemoryFile(
-            localPath,
-            'Local',
-            processedPaths,
-            includeExternal,
-          )),
-        )
+        for (const filename of LOCAL_INSTRUCTION_FILENAMES) {
+          const localPath = join(dir, filename)
+          result.push(
+            ...(await processMemoryFile(
+              localPath,
+              'Local',
+              processedPaths,
+              includeExternal,
+            )),
+          )
+        }
       }
     }
 
-    // Process CLAUDE.md from additional directories (--add-dir) if env var is enabled
+    // Process instruction files from additional directories (--add-dir) if env var is enabled
     // This is controlled by CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD and defaults to off
     // Note: we don't check isSettingSourceEnabled('projectSettings') here because --add-dir
     // is an explicit user action and the SDK defaults settingSources to [] when not specified
     if (isEnvTruthy(process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD)) {
-      const additionalDirs = getAdditionalDirectoriesForClaudeMd()
+      const additionalDirs = getAdditionalDirectoriesForMossMd()
       for (const dir of additionalDirs) {
-        // Try reading CLAUDE.md from the additional directory
-        const projectPath = join(dir, 'CLAUDE.md')
-        result.push(
-          ...(await processMemoryFile(
-            projectPath,
-            'Project',
-            processedPaths,
-            includeExternal,
-          )),
-        )
+        for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
+          const projectPath = join(dir, filename)
+          result.push(
+            ...(await processMemoryFile(
+              projectPath,
+              'Project',
+              processedPaths,
+              includeExternal,
+            )),
+          )
 
-        // Try reading .moss/CLAUDE.md from the additional directory
-        const dotMossPath = join(dir, '.moss', 'CLAUDE.md')
-        result.push(
-          ...(await processMemoryFile(
-            dotMossPath,
-            'Project',
-            processedPaths,
-            includeExternal,
-          )),
-        )
+          const dotMossPath = join(dir, '.moss', filename)
+          result.push(
+            ...(await processMemoryFile(
+              dotMossPath,
+              'Project',
+              processedPaths,
+              includeExternal,
+            )),
+          )
+        }
 
         // Try reading .moss/rules/*.md files from the additional directory
         const rulesDir = join(dir, '.moss', 'rules')
@@ -1002,7 +1009,7 @@ export const getMemoryFiles = memoize(
 
     if (!hasLoggedInitialLoad) {
       hasLoggedInitialLoad = true
-      logEvent('tengu_claudemd__initial_load', {
+      logEvent('tengu_mossmd__initial_load', {
         file_count: result.length,
         total_content_length: totalContentLength,
         user_count: typeCounts['User'] ?? 0,
@@ -1017,9 +1024,9 @@ export const getMemoryFiles = memoize(
     // Fire InstructionsLoaded hook for each instruction file loaded
     // (fire-and-forget, audit/observability only).
     // AutoMem is intentionally excluded because it is a separate
-    // memory system, not "instructions" in the CLAUDE.md/rules sense.
+    // memory system, not "instructions" in the MOSS.md/rules sense.
     // Gated on !forceIncludeExternal: the forceIncludeExternal=true variant
-    // is only used by getExternalClaudeMdIncludes() for approval checks, not
+    // is only used by getExternalMossMdIncludes() for approval checks, not
     // for building context — firing the hook there would double-fire on startup.
     // The one-shot flag is consumed on every !forceIncludeExternal cache miss
     // (NOT gated on hasInstructionsLoadedHook) so the flag is released even
@@ -1125,7 +1132,7 @@ export function filterInjectedMemoryFiles(
   return files.filter(f => f.type !== 'AutoMem')
 }
 
-export const getClaudeMds = (
+export const getMossMds = (
   memoryFiles: MemoryFileInfo[],
   filter?: (type: MemoryType) => boolean,
 ): string => {
@@ -1206,7 +1213,7 @@ export async function getManagedAndUserConditionalRules(
 
 /**
  * Gets memory files for a single nested directory (between CWD and target).
- * Loads CLAUDE.md, unconditional rules, and conditional rules for that directory.
+ * Loads instruction files, unconditional rules, and conditional rules for that directory.
  *
  * @param dir The directory to process
  * @param targetPath The target file path (for conditional rule matching)
@@ -1220,34 +1227,38 @@ export async function getMemoryFilesForNestedDirectory(
 ): Promise<MemoryFileInfo[]> {
   const result: MemoryFileInfo[] = []
 
-  // Process project memory files (CLAUDE.md and .moss/CLAUDE.md)
+  // Process project instruction files
   if (isSettingSourceEnabled('projectSettings')) {
-    const projectPath = join(dir, 'CLAUDE.md')
-    result.push(
-      ...(await processMemoryFile(
-        projectPath,
-        'Project',
-        processedPaths,
-        false,
-      )),
-    )
-    const dotMossPath = join(dir, '.moss', 'CLAUDE.md')
-    result.push(
-      ...(await processMemoryFile(
-        dotMossPath,
-        'Project',
-        processedPaths,
-        false,
-      )),
-    )
+    for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
+      const projectPath = join(dir, filename)
+      result.push(
+        ...(await processMemoryFile(
+          projectPath,
+          'Project',
+          processedPaths,
+          false,
+        )),
+      )
+      const dotMossPath = join(dir, '.moss', filename)
+      result.push(
+        ...(await processMemoryFile(
+          dotMossPath,
+          'Project',
+          processedPaths,
+          false,
+        )),
+      )
+    }
   }
 
-  // Process local memory file (CLAUDE.local.md)
+  // Process local instruction files
   if (isSettingSourceEnabled('localSettings')) {
-    const localPath = join(dir, 'CLAUDE.local.md')
-    result.push(
-      ...(await processMemoryFile(localPath, 'Local', processedPaths, false)),
-    )
+    for (const filename of LOCAL_INSTRUCTION_FILENAMES) {
+      const localPath = join(dir, filename)
+      result.push(
+        ...(await processMemoryFile(localPath, 'Local', processedPaths, false)),
+      )
+    }
   }
 
   const rulesDir = join(dir, '.moss', 'rules')
@@ -1363,15 +1374,15 @@ export async function processConditionedMdRules(
   })
 }
 
-export type ExternalClaudeMdInclude = {
+export type ExternalMossMdInclude = {
   path: string
   parent: string
 }
 
-export function getExternalClaudeMdIncludes(
+export function getExternalMossMdIncludes(
   files: MemoryFileInfo[],
-): ExternalClaudeMdInclude[] {
-  const externals: ExternalClaudeMdInclude[] = []
+): ExternalMossMdInclude[] {
+  const externals: ExternalMossMdInclude[] = []
   for (const file of files) {
     if (file.type !== 'User' && file.parent && !pathInOriginalCwd(file.path)) {
       externals.push({ path: file.path, parent: file.parent })
@@ -1380,30 +1391,36 @@ export function getExternalClaudeMdIncludes(
   return externals
 }
 
-export function hasExternalClaudeMdIncludes(files: MemoryFileInfo[]): boolean {
-  return getExternalClaudeMdIncludes(files).length > 0
+export function hasExternalMossMdIncludes(files: MemoryFileInfo[]): boolean {
+  return getExternalMossMdIncludes(files).length > 0
 }
 
-export async function shouldShowClaudeMdExternalIncludesWarning(): Promise<boolean> {
+export async function shouldShowMossMdExternalIncludesWarning(): Promise<boolean> {
   const config = getCurrentProjectConfig()
   if (
-    config.hasClaudeMdExternalIncludesApproved ||
-    config.hasClaudeMdExternalIncludesWarningShown
+    config.hasMossMdExternalIncludesApproved ||
+    config.hasMossMdExternalIncludesWarningShown
   ) {
     return false
   }
 
-  return hasExternalClaudeMdIncludes(await getMemoryFiles(true))
+  return hasExternalMossMdIncludes(await getMemoryFiles(true))
 }
 
 /**
- * Check if a file path is a memory file (CLAUDE.md, CLAUDE.local.md, or .moss/rules/*.md)
+ * Check if a file path is a memory file (MOSS.md, MOSS.local.md, or .moss/rules/*.md)
  */
 export function isMemoryFilePath(filePath: string): boolean {
   const name = basename(filePath)
 
-  // CLAUDE.md or CLAUDE.local.md anywhere
-  if (name === 'CLAUDE.md' || name === 'CLAUDE.local.md') {
+  if (
+    PROJECT_INSTRUCTION_FILENAMES.includes(
+      name as (typeof PROJECT_INSTRUCTION_FILENAMES)[number],
+    ) ||
+    LOCAL_INSTRUCTION_FILENAMES.includes(
+      name as (typeof LOCAL_INSTRUCTION_FILENAMES)[number],
+    )
+  ) {
     return true
   }
 

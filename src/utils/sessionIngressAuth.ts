@@ -2,11 +2,7 @@ import {
   getSessionIngressToken,
   setSessionIngressToken,
 } from '../bootstrap/state.js'
-import {
-  CCR_SESSION_INGRESS_TOKEN_PATH,
-  maybePersistTokenForSubprocesses,
-  readTokenFromWellKnownFile,
-} from './authFileDescriptor.js'
+import { readTokenFromFile } from './authFileDescriptor.js'
 import { logForDebugging } from './debug.js'
 import { errorMessage } from './errors.js'
 import { getFsImplementation } from './fsOperations.js'
@@ -24,12 +20,10 @@ function getTokenFromFileDescriptor(): string | null {
 
   const fdEnv = process.env.CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR
   if (!fdEnv) {
-    // No FD env var — either we're not in CCR, or we're a subprocess whose
-    // parent stripped the (useless) FD env var. Try the well-known file.
-    const path =
-      process.env.CLAUDE_SESSION_INGRESS_TOKEN_FILE ??
-      CCR_SESSION_INGRESS_TOKEN_PATH
-    const fromFile = readTokenFromWellKnownFile(path, 'session ingress token')
+    const path = process.env.CLAUDE_SESSION_INGRESS_TOKEN_FILE
+    const fromFile = path
+      ? readTokenFromFile(path, 'session ingress token')
+      : null
     setSessionIngressToken(fromFile)
     return fromFile
   }
@@ -63,23 +57,16 @@ function getTokenFromFileDescriptor(): string | null {
     }
     logForDebugging(`Successfully read token from file descriptor ${fd}`)
     setSessionIngressToken(token)
-    maybePersistTokenForSubprocesses(
-      CCR_SESSION_INGRESS_TOKEN_PATH,
-      token,
-      'session ingress token',
-    )
     return token
   } catch (error) {
     logForDebugging(
       `Failed to read token from file descriptor ${fd}: ${errorMessage(error)}`,
       { level: 'error' },
     )
-    // FD env var was set but read failed — typically a subprocess that
-    // inherited the env var but not the FD (ENXIO). Try the well-known file.
-    const path =
-      process.env.CLAUDE_SESSION_INGRESS_TOKEN_FILE ??
-      CCR_SESSION_INGRESS_TOKEN_PATH
-    const fromFile = readTokenFromWellKnownFile(path, 'session ingress token')
+    const path = process.env.CLAUDE_SESSION_INGRESS_TOKEN_FILE
+    const fromFile = path
+      ? readTokenFromFile(path, 'session ingress token')
+      : null
     setSessionIngressToken(fromFile)
     return fromFile
   }
@@ -92,11 +79,9 @@ function getTokenFromFileDescriptor(): string | null {
  *  1. Environment variable (CLAUDE_CODE_SESSION_ACCESS_TOKEN) — set at spawn time,
  *     updated in-process via updateSessionIngressAuthToken or
  *     update_environment_variables stdin message from the parent controller.
- *  2. File descriptor (legacy path) — CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR,
+ *  2. File descriptor — CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR,
  *     read once and cached.
- *  3. Well-known file — CLAUDE_SESSION_INGRESS_TOKEN_FILE env var path, or
- *     /home/claude/.moss/remote/.session_ingress_token. Covers subprocesses
- *     that can't inherit the FD.
+ *  3. Explicit token file — CLAUDE_SESSION_INGRESS_TOKEN_FILE.
  */
 export function getSessionIngressAuthToken(): string | null {
   // 1. Check environment variable

@@ -3,7 +3,6 @@ import type WsWebSocket from 'ws'
 import { CircularBuffer } from '../../utils/CircularBuffer.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
-import { isEnvTruthy } from '../../utils/envUtils.js'
 import { getWebSocketTLSOptions } from '../../utils/mtls.js'
 import {
   getWebSocketProxyAgent,
@@ -14,7 +13,6 @@ import {
   unregisterSessionActivityCallback,
 } from '../../utils/sessionActivity.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
-import type { Transport } from './Transport.js'
 
 const KEEP_ALIVE_FRAME = '{"type":"keep_alive"}\n'
 
@@ -65,7 +63,7 @@ type WebSocketLike = {
   ping?(): void // Bun & ws both support this
 }
 
-export class WebSocketTransport implements Transport {
+export class WebSocketTransport {
   private ws: WebSocketLike | null = null
   private lastSentId: string | null = null
   protected url: URL
@@ -716,11 +714,6 @@ export class WebSocketTransport implements Transport {
 
   private startKeepaliveInterval(): void {
     this.stopKeepaliveInterval()
-
-    // In CCR sessions, session activity heartbeats handle keep-alives
-    if (isEnvTruthy(process.env.CLAUDE_CODE_REMOTE)) {
-      return
-    }
 
     this.keepAliveInterval = setInterval(() => {
       if (this.state === 'connected' && this.ws) {

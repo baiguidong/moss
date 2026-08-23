@@ -19,9 +19,9 @@ import { fromSDKCompactMetadata } from '../utils/messages/mappers.js'
 import { createUserMessage } from '../utils/messages.js'
 
 /**
- * Converts SDKMessage from CCR to REPL Message types.
+ * Converts SDKMessage from the remote server to REPL Message types.
  *
- * The CCR backend sends SDK-format messages via WebSocket. The REPL expects
+ * The remote server sends SDK-format messages via WebSocket. The REPL expects
  * internal Message types for rendering. This adapter bridges the two.
  */
 
@@ -106,7 +106,7 @@ function convertStatusMessage(msg: SDKStatusMessage): SystemMessage | null {
 /**
  * Convert an SDKToolProgressMessage to a SystemMessage.
  * We use a system message instead of ProgressMessage since the Progress type
- * is a complex union that requires tool-specific data we don't have from CCR.
+ * is a complex union that requires tool-specific data we don't have remotely.
  */
 function convertToolProgressMessage(
   msg: SDKToolProgressMessage,
@@ -150,7 +150,7 @@ export type ConvertedMessage =
 type ConvertOptions = {
   /** Convert user messages containing tool_result content blocks into UserMessages.
    * Used by direct connect mode where tool results come from the remote server
-   * and need to be rendered locally. CCR mode ignores user messages since they
+   * and need to be rendered locally. Remote mode ignores user messages since they
    * are handled differently. */
   convertToolResults?: boolean
   /**
@@ -210,7 +210,7 @@ export function convertSDKMessage(
         }
       }
       // User-typed messages (string content) are already added locally by REPL.
-      // In CCR mode, all user messages are ignored (tool results handled differently).
+      // In remote mode, all user messages are ignored (tool results handled differently).
       return { type: 'ignored' }
     }
 

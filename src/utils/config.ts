@@ -22,6 +22,10 @@ import { stripBOM } from './jsonRead.js'
 import * as lockfile from './lockfile.js'
 import { logError } from './log.js'
 import type { MemoryType } from './memory/types.js'
+import {
+  PRIMARY_LOCAL_INSTRUCTION_FILENAME,
+  PRIMARY_PROJECT_INSTRUCTION_FILENAME,
+} from './instructionFiles.js'
 import { normalizePathForConfigKey } from './path.js'
 import { getEssentialTrafficOnlyReason } from './privacyLevel.js'
 import { getManagedFilePath } from './settings/managedPath.js'
@@ -98,8 +102,8 @@ export type ProjectConfig = {
 
   hasCompletedProjectOnboarding?: boolean
   projectOnboardingSeenCount: number
-  hasClaudeMdExternalIncludesApproved?: boolean
-  hasClaudeMdExternalIncludesWarningShown?: boolean
+  hasMossMdExternalIncludesApproved?: boolean
+  hasMossMdExternalIncludesWarningShown?: boolean
   // MCP server approval fields - migrated to settings but kept for backward compatibility
   enabledMcpjsonServers?: string[]
   disabledMcpjsonServers?: string[]
@@ -125,8 +129,8 @@ const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
   disabledMcpjsonServers: [],
   hasTrustDialogAccepted: false,
   projectOnboardingSeenCount: 0,
-  hasClaudeMdExternalIncludesApproved: false,
-  hasClaudeMdExternalIncludesWarningShown: false,
+  hasMossMdExternalIncludesApproved: false,
+  hasMossMdExternalIncludesWarningShown: false,
 }
 
 export {
@@ -325,10 +329,6 @@ export type GlobalConfig = {
 
   // Fullscreen in-app text selection behavior
   copyOnSelect?: boolean // Auto-copy to clipboard on mouse-up (undefined → true; lets cmd+c "work" via no-op)
-
-  // GitHub repo path mapping for teleport directory switching
-  // Key: "owner/repo" (lowercase), Value: array of absolute paths where repo is cloned
-  githubRepoPaths?: Record<string, string[]>
 
   // iTerm2 it2 CLI setup
   iterm2It2SetupComplete?: boolean // Whether it2 setup has been verified
@@ -1425,13 +1425,13 @@ export function getMemoryPath(memoryType: MemoryType): string {
 
   switch (memoryType) {
     case 'User':
-      return join(getMossConfigHomeDir(), 'CLAUDE.md')
+      return join(getMossConfigHomeDir(), PRIMARY_PROJECT_INSTRUCTION_FILENAME)
     case 'Local':
-      return join(cwd, 'CLAUDE.local.md')
+      return join(cwd, PRIMARY_LOCAL_INSTRUCTION_FILENAME)
     case 'Project':
-      return join(cwd, 'CLAUDE.md')
+      return join(cwd, PRIMARY_PROJECT_INSTRUCTION_FILENAME)
     case 'Managed':
-      return join(getManagedFilePath(), 'CLAUDE.md')
+      return join(getManagedFilePath(), PRIMARY_PROJECT_INSTRUCTION_FILENAME)
     case 'AutoMem':
       return getAutoMemEntrypoint()
   }

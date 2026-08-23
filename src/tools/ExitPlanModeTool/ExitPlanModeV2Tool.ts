@@ -86,7 +86,7 @@ export const outputSchema = lazySchema(() =>
       .boolean()
       .optional()
       .describe(
-        'True when the user edited the plan (CCR web UI or Ctrl+G); determines whether the plan is echoed back in tool_result',
+        'True when the user edited the plan; determines whether the plan is echoed back in tool_result',
       ),
     awaitingLeaderApproval: z
       .boolean()
@@ -195,8 +195,8 @@ export const ExitPlanModeV2Tool: Tool<InputSchema, Output> = buildTool({
     const isAgent = !!context.agentId
 
     const filePath = getPlanFilePath(context.agentId)
-    // CCR web UI may send an edited plan via permissionResult.updatedInput.
-    // queryHelpers.ts full-replaces finalInput, so when CCR sends {} (no edit)
+    // Remote UI may send an edited plan via permissionResult.updatedInput.
+    // queryHelpers.ts full-replaces finalInput, so when remote UI sends {} (no edit)
     // input.plan is undefined -> disk fallback. The internal inputSchema omits
     // `plan` (normally injected by normalizeToolInput), hence the narrowing.
     const inputPlan =
@@ -353,8 +353,8 @@ Request ID: ${requestId}`,
       ? `\n\nIf this plan can be broken down into multiple independent tasks, consider using the ${TEAM_CREATE_TOOL_NAME} tool to create a team and parallelize the work.`
       : ''
 
-    // Always include the plan — extractApprovedPlan() in the Ultraplan CCR
-    // flow parses the tool_result to retrieve the plan text for the local CLI.
+    // Always include the plan so downstream callers can recover the approved
+    // content from the tool_result.
     // Label edited plans so the model knows the user changed something.
     const planLabel = planWasEdited
       ? 'Approved Plan (edited by user)'

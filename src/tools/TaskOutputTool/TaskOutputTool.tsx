@@ -11,7 +11,6 @@ import type { Tool } from '../../Tool.js';
 import { buildTool, type ToolDef } from '../../Tool.js';
 import type { LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import type { LocalShellTaskState } from '../../tasks/LocalShellTask/guards.js';
-import type { RemoteAgentTaskState } from '../../tasks/RemoteAgentTask/RemoteAgentTask.js';
 import type { TaskState } from '../../tasks/types.js';
 import { AbortError } from '../../utils/errors.js';
 import { lazySchema } from '../../utils/lazySchema.js';
@@ -104,13 +103,6 @@ async function getTaskOutputData(task: TaskState): Promise<TaskOutput> {
       error: agentTask.error
     };
   }
-  if (task.type === 'remote_agent') {
-    const remoteTask = task as RemoteAgentTaskState;
-    return {
-      ...baseOutput,
-      prompt: remoteTask.command
-    };
-  }
   return baseOutput;
 }
 
@@ -169,13 +161,13 @@ export const TaskOutputTool: Tool<InputSchema, TaskOutputToolOutput> = buildTool
   async prompt() {
     return `DEPRECATED: Prefer using the Read tool on the task's output file path instead. Background tasks return their output file path in the tool result, and you receive a <task-notification> with the same path when the task completes — Read that file directly.
 
-- Retrieves output from a running or completed task (background shell, agent, or remote session)
+- Retrieves output from a running or completed task (background shell or agent)
 - Takes a task_id parameter identifying the task
 - Returns the task output along with status information
 - Use block=true (default) to wait for task completion
 - Use block=false for non-blocking check of current status
 - Task IDs can be found using the /tasks command
-- Works with all task types: background shells, async agents, and remote sessions`;
+- Works with background shells and async agents`;
   },
   async validateInput({
     task_id
@@ -507,47 +499,6 @@ function TaskOutputResultDisplay(t0) {
       t3 = $[31];
     }
     return t3;
-  }
-  if (task.task_type === "remote_agent") {
-    let t3;
-    if ($[32] !== task.description || $[33] !== task.status) {
-      t3 = <Text>  {task.description} [{task.status}]</Text>;
-      $[32] = task.description;
-      $[33] = task.status;
-      $[34] = t3;
-    } else {
-      t3 = $[34];
-    }
-    let t4;
-    if ($[35] !== task.output || $[36] !== verbose) {
-      t4 = task.output && verbose && <Box paddingLeft={4} marginTop={1}><Text>{task.output}</Text></Box>;
-      $[35] = task.output;
-      $[36] = verbose;
-      $[37] = t4;
-    } else {
-      t4 = $[37];
-    }
-    let t5;
-    if ($[38] !== expandShortcut || $[39] !== task.output || $[40] !== verbose) {
-      t5 = !verbose && task.output && <Text dimColor={true}>{"     "}({expandShortcut} to expand)</Text>;
-      $[38] = expandShortcut;
-      $[39] = task.output;
-      $[40] = verbose;
-      $[41] = t5;
-    } else {
-      t5 = $[41];
-    }
-    let t6;
-    if ($[42] !== t3 || $[43] !== t4 || $[44] !== t5) {
-      t6 = <Box flexDirection="column">{t3}{t4}{t5}</Box>;
-      $[42] = t3;
-      $[43] = t4;
-      $[44] = t5;
-      $[45] = t6;
-    } else {
-      t6 = $[45];
-    }
-    return t6;
   }
   let t3;
   if ($[46] !== task.description || $[47] !== task.status) {

@@ -1,7 +1,7 @@
 import chalk from 'chalk'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { basename, dirname, join } from 'path'
+import { dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { color } from '../components/design-system/color.js'
 import { supportsHyperlinks } from '../ink/supports-hyperlinks.js'
@@ -18,7 +18,6 @@ type ShellInfo = {
   name: string
   rcFile: string
   cacheFile: string
-  legacyCacheFile: string
   completionLine: string
   shellFlag: string
 }
@@ -27,7 +26,6 @@ function detectShell(): ShellInfo | null {
   const shell = process.env.SHELL || ''
   const home = homedir()
   const mossDir = getMossConfigHomeDir()
-  const legacyClaudeDir = join(home, '.claude')
 
   if (shell.endsWith('/zsh') || shell.endsWith('/zsh.exe')) {
     const cacheFile = join(mossDir, 'completion.zsh')
@@ -35,7 +33,6 @@ function detectShell(): ShellInfo | null {
       name: 'zsh',
       rcFile: join(home, '.zshrc'),
       cacheFile,
-      legacyCacheFile: join(legacyClaudeDir, 'completion.zsh'),
       completionLine: `[[ -f "${cacheFile}" ]] && source "${cacheFile}"`,
       shellFlag: 'zsh',
     }
@@ -46,7 +43,6 @@ function detectShell(): ShellInfo | null {
       name: 'bash',
       rcFile: join(home, '.bashrc'),
       cacheFile,
-      legacyCacheFile: join(legacyClaudeDir, 'completion.bash'),
       completionLine: `[ -f "${cacheFile}" ] && source "${cacheFile}"`,
       shellFlag: 'bash',
     }
@@ -58,38 +54,11 @@ function detectShell(): ShellInfo | null {
       name: 'fish',
       rcFile: join(xdg, 'fish', 'config.fish'),
       cacheFile,
-      legacyCacheFile: join(legacyClaudeDir, 'completion.fish'),
       completionLine: `[ -f "${cacheFile}" ] && source "${cacheFile}"`,
       shellFlag: 'fish',
     }
   }
   return null
-}
-
-export function migrateLegacyCompletionSourceLines(
-  content: string,
-  legacyCacheFile: string,
-  cacheFile: string,
-): string {
-  const filename = basename(legacyCacheFile)
-  const legacyPaths = [
-    legacyCacheFile,
-    `~/.claude/${filename}`,
-    `$HOME/.claude/${filename}`,
-    `\${HOME}/.claude/${filename}`,
-  ]
-
-  return content
-    .split('\n')
-    .map(line => {
-      if (!line.includes('source')) return line
-      return legacyPaths.reduce(
-        (migrated, legacyPath) =>
-          migrated.split(legacyPath).join(cacheFile),
-        line,
-      )
-    })
-    .join('\n')
 }
 
 function formatPathLink(filePath: string): string {
@@ -136,15 +105,6 @@ export async function setupShellCompletion(theme: ThemeName): Promise<string> {
   let existing = ''
   try {
     existing = await readFile(shell.rcFile, { encoding: 'utf-8' })
-    const migrated = migrateLegacyCompletionSourceLines(
-      existing,
-      shell.legacyCacheFile,
-      shell.cacheFile,
-    )
-    if (migrated !== existing) {
-      await writeFile(shell.rcFile, migrated, { encoding: 'utf-8' })
-      existing = migrated
-    }
     if (
       existing.includes('claude completion') ||
       existing.includes(shell.cacheFile)
@@ -206,22 +166,6 @@ export async function regenerateCompletionCache(): Promise<void> {
       `update: Failed to regenerate ${shell.name} completion cache`,
     )
     return
-  }
-
-  try {
-    const existing = await readFile(shell.rcFile, { encoding: 'utf-8' })
-    const migrated = migrateLegacyCompletionSourceLines(
-      existing,
-      shell.legacyCacheFile,
-      shell.cacheFile,
-    )
-    if (migrated !== existing) {
-      await writeFile(shell.rcFile, migrated, { encoding: 'utf-8' })
-    }
-  } catch (error) {
-    if (!isENOENT(error)) {
-      logError(error)
-    }
   }
 
   logForDebugging(

@@ -1,5 +1,5 @@
 /**
- * Claude Code Feature Flags
+ * Moss Feature Flags
  *
  * 用法：在 package.json 的 build 脚本里，把想开启的 feature 加入 --define 参数：
  *   --define 'feature("FEATURE_NAME")=true'
@@ -31,9 +31,6 @@ export const RECOMMENDED = {
 
   // 历史会话选择器：/resume 时用交互式 UI 选择历史会话，替代纯文本列表
   HISTORY_PICKER: true,
-
-  // /ultraplan 命令：生成超详细的多步骤执行计划
-  ULTRAPLAN: true,
 
   // 消息操作按钮：消息旁显示复制、重试等快捷操作
   MESSAGE_ACTIONS: true,
@@ -90,7 +87,7 @@ export const EXPERIMENTAL = {
   // 定时任务（Cron）工具：让 Claude 创建和管理 cron 触发的 agent 任务
   AGENT_TRIGGERS: true,
 
-  // 模板支持：CLAUDE.md 中使用模板变量
+  // 模板支持：MOSS.md 中使用模板变量
   TEMPLATES: false,
 
   // 离开摘要：长时间无操作后，回来时显示 session 摘要

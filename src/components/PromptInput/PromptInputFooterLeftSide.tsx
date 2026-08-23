@@ -243,7 +243,7 @@ function ModeIndicator({
   const modeCycleShortcut = useShortcutDisplay('chat:cycleMode', 'Chat', 'shift+tab');
   const tasks = useAppState(s => s.tasks);
   const teamContext = useAppState(s_0 => s_0.teamContext);
-  // Set once in initialState (main.tsx --remote mode) and never mutated — lazy
+  // Set once in initialState and never mutated — lazy
   // init captures the immutable value without a subscription.
   const store = useAppStateStore();
   const [remoteSessionUrl] = useState(() => store.getState().remoteSessionUrl);
@@ -333,7 +333,7 @@ function ModeIndicator({
 
   // In remote mode the agent runs elsewhere;
   // the local permission mode shown here doesn't reflect the agent's state.
-  // Rendered before the tasks pill so a long pill label (e.g. ultraplan URL)
+  // Rendered before the tasks pill so a long pill label
   // doesn't push the mode indicator off-screen.
   const modePart = currentMode && hasActiveMode && !getIsRemoteMode() ? <Text color={getModeColor(currentMode)} key="mode">
         {permissionModeSymbol(currentMode)}{' '}

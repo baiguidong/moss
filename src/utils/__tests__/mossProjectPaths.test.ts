@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { join } from 'path'
+import { getOriginalCwd, setOriginalCwd } from '../../bootstrap/state.js'
 import statusline from '../../commands/statusline.js'
 import {
   getGlobalMossFolderPermissionPattern,
   GLOBAL_MOSS_FOLDER_PERMISSION_PATTERN,
   MOSS_FOLDER_PERMISSION_PATTERN,
 } from '../../tools/FileEditTool/constants.js'
-import {
-  CCR_API_KEY_PATH,
-  CCR_SESSION_INGRESS_TOKEN_PATH,
-} from '../authFileDescriptor.js'
 import { getMossConfigHomeDir } from '../envUtils.js'
+import { getMemoryPath } from '../config.js'
+import { isMemoryFilePath } from '../mossmd.js'
 import {
   getRelativeSettingsFilePathForSource,
   getSettingsFilePathForSource,
@@ -26,9 +25,11 @@ const { checkPathSafetyForAutoEdit } =
   await import('../permissions/filesystem.js')
 
 const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
+const originalCwd = getOriginalCwd()
 
 afterEach(() => {
   restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
+  setOriginalCwd(originalCwd)
 })
 
 describe('Moss project paths', () => {
@@ -46,6 +47,28 @@ describe('Moss project paths', () => {
     expect(getSettingsFilePathForSource('userSettings')).toBe(
       '/tmp/custom-moss/settings.json',
     )
+  })
+
+  test('uses MOSS.md for primary instruction memory paths', () => {
+    process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
+    setOriginalCwd('/tmp/moss-project')
+
+    expect(getMemoryPath('User')).toBe('/tmp/custom-moss/MOSS.md')
+    expect(getMemoryPath('Project')).toBe('/tmp/moss-project/MOSS.md')
+    expect(getMemoryPath('Local')).toBe('/tmp/moss-project/MOSS.local.md')
+  })
+
+  test('recognizes Moss instruction files as memory files', () => {
+    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.local.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.md'))).toBe(false)
+    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.local.md'))).toBe(
+      false,
+    )
+    expect(
+      isMemoryFilePath(join('/tmp/project', '.moss', 'rules', 'testing.md')),
+    ).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'README.md'))).toBe(false)
   })
 
   test('generates project and global Moss permission rules', () => {
@@ -75,13 +98,6 @@ describe('Moss project paths', () => {
     )
     expect(statusline.allowedTools).not.toContain(
       'Edit(~/.moss/settings.json)',
-    )
-  })
-
-  test('uses the Moss CCR credential directory', () => {
-    expect(CCR_API_KEY_PATH).toBe('/home/claude/.moss/remote/.api_key')
-    expect(CCR_SESSION_INGRESS_TOKEN_PATH).toBe(
-      '/home/claude/.moss/remote/.session_ingress_token',
     )
   })
 })

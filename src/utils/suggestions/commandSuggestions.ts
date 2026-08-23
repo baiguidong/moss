@@ -534,7 +534,7 @@ export function applyCommandSuggestion(
   }
 }
 
-// Helper function at bottom of file per CLAUDE.md
+// Helper function kept at the bottom of the file.
 function cleanWord(word: string) {
   return word.toLowerCase().replace(/[^a-z0-9]/g, '')
 }

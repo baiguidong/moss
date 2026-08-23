@@ -1,5 +1,5 @@
-// highlight.js's type defs carry `/// <reference lib="dom" />`. SSETransport,
-// mcp/client and ssh use DOM types (TextDecodeOptions, RequestInfo)
+// highlight.js's type defs carry `/// <reference lib="dom" />`. mcp/client
+// and ssh use DOM types (TextDecodeOptions, RequestInfo)
 // that only typecheck because this file's `typeof import('highlight.js')` pulls
 // lib.dom in. tsconfig has lib: ["ESNext"] only — fixing the actual DOM-type
 // deps is a separate sweep; this ref preserves the status quo.

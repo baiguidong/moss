@@ -111,8 +111,8 @@ export type HandlePromptSubmitParams = BaseExecutionParams & {
   uuid?: UUID
   /**
    * When true, input starting with `/` is treated as plain text.
-   * Used for remotely-received CCR messages that should not
-   * trigger local slash commands or skills.
+   * Used for remotely received messages that should not trigger local slash
+   * commands or skills.
    */
   skipSlashCommands?: boolean
 }

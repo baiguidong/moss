@@ -453,7 +453,7 @@ export function normalizeToolInput<T extends Tool>(
       // The V2 tool reads plan from file instead of input, but hooks/SDK
       const plan = getPlan(agentId)
       const planFilePath = getPlanFilePath(agentId)
-      // Persist file snapshot for CCR sessions so the plan survives pod recycling
+      // Persist file snapshot for remote sessions so the plan survives runtime recycling
       void persistFileSnapshotIfRemote()
       return plan !== null ? { ...input, plan, planFilePath } : input
     }

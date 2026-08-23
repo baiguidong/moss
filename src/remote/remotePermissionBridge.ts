@@ -7,7 +7,7 @@ import { jsonStringify } from '../utils/slowOperations.js'
 /**
  * Create a synthetic AssistantMessage for remote permission requests.
  * The ToolUseConfirm type requires an AssistantMessage, but in remote mode
- * we don't have a real one — the tool use runs on the CCR container.
+ * we don't have a real one — the tool use runs in the remote runtime.
  */
 export function createSyntheticAssistantMessage(
   request: SDKControlPermissionRequest,
@@ -47,7 +47,7 @@ export function createSyntheticAssistantMessage(
 
 /**
  * Create a minimal Tool stub for tools that aren't loaded locally.
- * This happens when the remote CCR has tools (e.g., MCP tools) that the
+ * This happens when the remote runtime has tools (e.g., MCP tools) that the
  * local CLI doesn't know about. The stub routes to FallbackPermissionRequest.
  */
 export function createToolStub(toolName: string): Tool {

@@ -7,7 +7,7 @@ import type {
   SDKControlPermissionRequest,
   StdoutMessage,
 } from '../entrypoints/sdk/controlTypes.js'
-import type { RemotePermissionResponse } from './RemoteSessionManager.js'
+import type { MossAppEvent, MossAppEventResult } from '../Tool.js'
 import { CircularBuffer } from '../utils/CircularBuffer.js'
 import { logForDebugging } from '../utils/debug.js'
 import { errorMessage } from '../utils/errors.js'
@@ -17,7 +17,6 @@ import {
   getWebSocketProxyUrl,
 } from '../utils/proxy.js'
 import { jsonParse, jsonStringify } from '../utils/slowOperations.js'
-import type { RemoteMessageContent } from '../utils/teleport/api.js'
 import {
   attachDirectConnectSession,
   DirectConnectError,
@@ -42,6 +41,21 @@ type BufferedMessage = {
   uuid: string
 }
 
+export type RemoteMessageContent =
+  | string
+  | Array<{ type: string; [key: string]: unknown }>
+
+export type RemotePermissionResponse =
+  | {
+      behavior: 'allow'
+      updatedInput?: Record<string, unknown>
+      updatedPermissions?: unknown[]
+    }
+  | {
+      behavior: 'deny'
+      message: string
+    }
+
 // Common interface between globalThis.WebSocket and ws.WebSocket
 type WebSocketLike = {
   close(): void
@@ -62,6 +76,7 @@ export type DirectConnectCallbacks = {
     request: SDKControlPermissionRequest,
     requestId: string,
   ) => void
+  onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   onConnected?: () => void
   onDisconnected?: () => void
   onReconnecting?: (attempt: number, maxAttempts: number) => void
@@ -260,15 +275,21 @@ export class DirectConnectSessionManager {
       const parsed = raw
 
       if (parsed.type === 'control_request') {
+        const request = parsed.request as {
+          subtype?: string
+          event?: unknown
+        }
         if (parsed.request.subtype === 'can_use_tool') {
           this.callbacks.onPermissionRequest(parsed.request, parsed.request_id)
+        } else if (request.subtype === 'moss_app_event') {
+          void this.handleAppEventRequest(parsed.request_id, request.event)
         } else {
           logForDebugging(
-            `[DirectConnect] Unsupported control request subtype: ${parsed.request.subtype}`,
+            `[DirectConnect] Unsupported control request subtype: ${request.subtype ?? 'unknown'}`,
           )
           this.sendErrorResponse(
             parsed.request_id,
-            `Unsupported control request subtype: ${parsed.request.subtype}`,
+            `Unsupported control request subtype: ${request.subtype ?? 'unknown'}`,
           )
         }
         continue
@@ -486,6 +507,56 @@ export class DirectConnectSessionManager {
               }
             : { message: result.message }),
         },
+      },
+    })
+    this.sendLine(line)
+  }
+
+  private async handleAppEventRequest(
+    requestId: string,
+    event: unknown,
+  ): Promise<void> {
+    if (!this.callbacks.onAppEvent) {
+      this.sendErrorResponse(
+        requestId,
+        'Moss app event bridge is not available in this direct-connect session.',
+      )
+      return
+    }
+    if (
+      typeof event !== 'object' ||
+      event === null ||
+      typeof (event as { type?: unknown }).type !== 'string'
+    ) {
+      this.sendErrorResponse(requestId, 'Invalid Moss app event request.')
+      return
+    }
+
+    try {
+      const result = await this.callbacks.onAppEvent(event as MossAppEvent)
+      this.sendSuccessResponse(requestId, result as Record<string, unknown>)
+    } catch (error) {
+      this.sendErrorResponse(
+        requestId,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+  }
+
+  private sendSuccessResponse(
+    requestId: string,
+    response?: Record<string, unknown>,
+  ): void {
+    if (!this.ws || this.state !== 'connected') {
+      return
+    }
+
+    const line = jsonStringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: requestId,
+        response,
       },
     })
     this.sendLine(line)

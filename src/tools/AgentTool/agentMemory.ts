@@ -1,13 +1,10 @@
 import { join, normalize, sep } from 'path'
-import { getProjectRoot } from '../../bootstrap/state.js'
 import {
   buildMemoryPrompt,
   ensureMemoryDirExists,
 } from '../../memdir/memdir.js'
 import { getMemoryBaseDir } from '../../memdir/paths.js'
 import { getCwd } from '../../utils/cwd.js'
-import { findCanonicalGitRoot } from '../../utils/git.js'
-import { sanitizePath } from '../../utils/path.js'
 
 // Persistent agent memory scope: 'user' (~/.moss/agent-memory/), 'project' (.moss/agent-memory/), or 'local' (.moss/agent-memory-local/)
 export type AgentMemoryScope = 'user' | 'project' | 'local'
@@ -23,23 +20,8 @@ function sanitizeAgentTypeForPath(agentType: string): string {
 
 /**
  * Returns the local agent memory directory, which is project-specific and not checked into VCS.
- * When CLAUDE_CODE_REMOTE_MEMORY_DIR is set, persists to the mount with project namespacing.
- * Otherwise, uses <cwd>/.moss/agent-memory-local/<agentType>/.
  */
 function getLocalAgentMemoryDir(dirName: string): string {
-  if (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR) {
-    return (
-      join(
-        process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR,
-        'projects',
-        sanitizePath(
-          findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot(),
-        ),
-        'agent-memory-local',
-        dirName,
-      ) + sep
-    )
-  }
   return join(getCwd(), '.moss', 'agent-memory-local', dirName) + sep
 }
 
@@ -82,17 +64,7 @@ export function isAgentMemoryPath(absolutePath: string): boolean {
     return true
   }
 
-  // Local scope: persisted to mount when CLAUDE_CODE_REMOTE_MEMORY_DIR is set, otherwise cwd-based
-  if (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR) {
-    if (
-      normalizedPath.includes(sep + 'agent-memory-local' + sep) &&
-      normalizedPath.startsWith(
-        join(process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR, 'projects') + sep,
-      )
-    ) {
-      return true
-    }
-  } else if (
+  if (
     normalizedPath.startsWith(
       join(getCwd(), '.moss', 'agent-memory-local') + sep,
     )

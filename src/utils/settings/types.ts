@@ -711,14 +711,14 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Whether the user has accepted the bypass permissions mode dialog',
         ),
-      claudeMdExcludes: z
+      mossMdExcludes: z
         .array(z.string())
         .optional()
         .describe(
-          'Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. ' +
+          'Glob patterns or absolute paths of MOSS.md instruction files to exclude from loading. ' +
             'Patterns are matched against absolute file paths using picomatch. ' +
             'Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). ' +
-            'Examples: "/home/user/monorepo/CLAUDE.md", "**/code/CLAUDE.md", "**/some-dir/.moss/rules/**"',
+            'Examples: "/home/user/monorepo/MOSS.md", "**/code/MOSS.md", "**/some-dir/.moss/rules/**"',
         ),
       bypassPermissions: z
         .boolean()

@@ -3,26 +3,9 @@ import { PassThrough } from 'stream'
 import { URL } from 'url'
 import { getSessionId } from '../bootstrap/state.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
-import { setCommandLifecycleListener } from '../utils/commandLifecycle.js'
 import { logForDebugging } from '../utils/debug.js'
-import { logForDiagnosticsNoPII } from '../utils/diagLogs.js'
-import { isEnvTruthy } from '../utils/envUtils.js'
-import { errorMessage } from '../utils/errors.js'
-import { gracefulShutdown } from '../utils/gracefulShutdown.js'
-import { logError } from '../utils/log.js'
 import { getSessionIngressAuthToken } from '../utils/sessionIngressAuth.js'
-import {
-  setSessionMetadataChangedListener,
-  setSessionStateChangedListener,
-} from '../utils/sessionState.js'
-import {
-  setInternalEventReader,
-  setInternalEventWriter,
-} from '../utils/sessionStorage.js'
 import { StructuredIO } from './structuredIO.js'
-import { CCRClient, CCRInitError } from './transports/ccrClient.js'
-import { SSETransport } from './transports/SSETransport.js'
-import type { Transport } from './transports/Transport.js'
 import { getTransportForUrl } from './transports/transportUtils.js'
 
 /**
@@ -31,9 +14,8 @@ import { getTransportForUrl } from './transports/transportUtils.js'
  */
 export class RemoteIO extends StructuredIO {
   private url: URL
-  private transport: Transport
+  private transport: ReturnType<typeof getTransportForUrl>
   private inputStream: PassThrough
-  private ccrClient: CCRClient | null = null
 
   constructor(
     streamUrl: string,
@@ -97,67 +79,7 @@ export class RemoteIO extends StructuredIO {
       this.inputStream.end()
     })
 
-    // Initialize CCR v2 client (heartbeats, epoch, state reporting, event writes).
-    // The CCRClient constructor wires the SSE received-ack handler
-    // synchronously, so new CCRClient() MUST run before transport.connect() —
-    // otherwise early SSE frames hit an unwired onEventCallback and their
-    // 'received' delivery acks are silently dropped.
-    if (isEnvTruthy(process.env.CLAUDE_CODE_USE_CCR_V2)) {
-      // CCR v2 is SSE+POST by definition. getTransportForUrl returns
-      // SSETransport under the same env var, but the two checks live in
-      // different files — assert the invariant so a future decoupling
-      // fails loudly here instead of confusingly inside CCRClient.
-      if (!(this.transport instanceof SSETransport)) {
-        throw new Error(
-          'CCR v2 requires SSETransport; check getTransportForUrl',
-        )
-      }
-      this.ccrClient = new CCRClient(this.transport, this.url)
-      const init = this.ccrClient.initialize()
-      this.restoredWorkerState = init.catch(() => null)
-      init.catch((error: unknown) => {
-        logForDiagnosticsNoPII('error', 'cli_worker_lifecycle_init_failed', {
-          reason: error instanceof CCRInitError ? error.reason : 'unknown',
-        })
-        logError(
-          new Error(`CCRClient initialization failed: ${errorMessage(error)}`),
-        )
-        void gracefulShutdown(1, 'other')
-      })
-      registerCleanup(async () => this.ccrClient?.close())
-
-      // Register internal event writer for transcript persistence.
-      // When set, sessionStorage writes transcript messages as CCR v2
-      // internal events instead of v1 Session Ingress.
-      setInternalEventWriter((eventType, payload, options) =>
-        this.ccrClient!.writeInternalEvent(eventType, payload, options),
-      )
-
-      // Register internal event readers for session resume.
-      // When set, hydrateFromCCRv2InternalEvents() can fetch foreground
-      // and subagent internal events to reconstruct conversation state.
-      setInternalEventReader(
-        () => this.ccrClient!.readInternalEvents(),
-        () => this.ccrClient!.readSubagentInternalEvents(),
-      )
-
-      const LIFECYCLE_TO_DELIVERY = {
-        started: 'processing',
-        completed: 'processed',
-      } as const
-      setCommandLifecycleListener((uuid, state) => {
-        this.ccrClient?.reportDelivery(uuid, LIFECYCLE_TO_DELIVERY[state])
-      })
-      setSessionStateChangedListener((state, details) => {
-        this.ccrClient?.reportState(state, details)
-      })
-      setSessionMetadataChangedListener(metadata => {
-        this.ccrClient?.reportMetadata(metadata)
-      })
-    }
-
-    // Start connection only after all callbacks are wired (setOnData above,
-    // setOnEvent inside new CCRClient() when CCR v2 is enabled).
+    // Start connection only after all callbacks are wired.
     void this.transport.connect()
 
     // Register for graceful shutdown cleanup
@@ -179,20 +101,8 @@ export class RemoteIO extends StructuredIO {
     }
   }
 
-  override flushInternalEvents(): Promise<void> {
-    return this.ccrClient?.flushInternalEvents() ?? Promise.resolve()
-  }
-
-  override get internalEventsPending(): number {
-    return this.ccrClient?.internalEventsPending ?? 0
-  }
-
   async write(message: StdoutMessage): Promise<void> {
-    if (this.ccrClient) {
-      await this.ccrClient.writeEvent(message)
-    } else {
-      await this.transport.write(message)
-    }
+    await this.transport.write(message)
   }
 
   /**

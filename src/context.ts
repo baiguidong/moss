@@ -1,11 +1,11 @@
 import memoize from 'lodash-es/memoize.js'
-import { getAdditionalDirectoriesForClaudeMd } from './bootstrap/state.js'
+import { getAdditionalDirectoriesForMossMd } from './bootstrap/state.js'
 import { getLocalISODate } from './constants/common.js'
 import {
   filterInjectedMemoryFiles,
-  getClaudeMds,
+  getMossMds,
   getMemoryFiles,
-} from './utils/claudemd.js'
+} from './utils/mossmd.js'
 import { getCwd } from './utils/cwd.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
 import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
@@ -146,12 +146,9 @@ export const getSystemContext = memoize(
     const startTime = Date.now()
     logForDiagnosticsNoPII('info', 'system_context_started')
 
-    // Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled
-    const gitStatus =
-      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ||
-      !shouldIncludeGitInstructions()
-        ? null
-        : await getGitStatus()
+    const gitStatus = !shouldIncludeGitInstructions()
+      ? null
+      : await getGitStatus()
 
     logForDiagnosticsNoPII('info', 'system_context_completed', {
       duration_ms: Date.now() - startTime,
@@ -176,29 +173,29 @@ export const getUserContext = memoize(
     const startTime = Date.now()
     logForDiagnosticsNoPII('info', 'user_context_started')
 
-    // CLAUDE_CODE_DISABLE_CLAUDE_MDS: hard off, always.
+    // MOSS_DISABLE_MOSS_MD: hard off, always.
     // --bare: skip auto-discovery (cwd walk), BUT honor explicit --add-dir.
     // --bare means "skip what I didn't ask for", not "ignore what I asked for".
-    const shouldDisableClaudeMd =
-      isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS) ||
-      (isBareMode() && getAdditionalDirectoriesForClaudeMd().length === 0)
+    const shouldDisableMossMd =
+      isEnvTruthy(process.env.MOSS_DISABLE_MOSS_MD) ||
+      (isBareMode() && getAdditionalDirectoriesForMossMd().length === 0)
     // Await the async I/O (readFile/readdir directory walk) so the event
     // loop yields naturally at the first fs.readFile.
-    const claudeMd = shouldDisableClaudeMd
+    const mossMd = shouldDisableMossMd
       ? null
-      : getClaudeMds(filterInjectedMemoryFiles(await getMemoryFiles()))
+      : getMossMds(filterInjectedMemoryFiles(await getMemoryFiles()))
     logForDiagnosticsNoPII('info', 'user_context_completed', {
       duration_ms: Date.now() - startTime,
-      claudemd_length: claudeMd?.length ?? 0,
-      claudemd_disabled: Boolean(shouldDisableClaudeMd),
+      mossmd_length: mossMd?.length ?? 0,
+      mossmd_disabled: Boolean(shouldDisableMossMd),
     })
 
     return {
-      ...(claudeMd && { claudeMd }),
+      ...(mossMd && { mossMd }),
       currentDate: `Today's date is ${getLocalISODate()}.`,
     }
   },
-  // Keyed by cwd: CLAUDE.md discovery walks from the session's cwd, so
+  // Keyed by cwd: instruction discovery walks from the session's cwd, so
   // concurrent embedded sessions must not share one cached result.
   () => getCwd(),
 )

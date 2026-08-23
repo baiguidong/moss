@@ -7,6 +7,10 @@ import {
 import { getCwd } from './utils/cwd.js'
 import { isDirEmpty } from './utils/file.js'
 import { getFsImplementation } from './utils/fsOperations.js'
+import {
+  PRIMARY_PROJECT_INSTRUCTION_FILENAME,
+  PROJECT_INSTRUCTION_FILENAMES,
+} from './utils/instructionFiles.js'
 
 export type Step = {
   key: string
@@ -17,23 +21,23 @@ export type Step = {
 }
 
 export function getSteps(): Step[] {
-  const hasClaudeMd = getFsImplementation().existsSync(
-    join(getCwd(), 'CLAUDE.md'),
+  const hasInstructionFile = PROJECT_INSTRUCTION_FILENAMES.some(filename =>
+    getFsImplementation().existsSync(join(getCwd(), filename)),
   )
   const isWorkspaceDirEmpty = isDirEmpty(getCwd())
 
   return [
     {
       key: 'workspace',
-      text: 'Ask Claude to create a new app or clone a repository',
+      text: 'Ask Moss to create a new app or clone a repository',
       isComplete: false,
       isCompletable: true,
       isEnabled: isWorkspaceDirEmpty,
     },
     {
-      key: 'claudemd',
-      text: 'Run /init to create a CLAUDE.md file with instructions for Claude',
-      isComplete: hasClaudeMd,
+      key: 'mossmd',
+      text: `Run /init to create a ${PRIMARY_PROJECT_INSTRUCTION_FILENAME} file with instructions for Moss`,
+      isComplete: hasInstructionFile,
       isCompletable: true,
       isEnabled: !isWorkspaceDirEmpty,
     },

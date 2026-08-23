@@ -121,15 +121,25 @@ export const SDKControlPermissionRequestSchema = lazySchema(() =>
     .describe('Requests permission to use a tool with the given input.'),
 )
 
+export const SDKControlMossAppEventRequestSchema = lazySchema(() =>
+  z
+    .object({
+      subtype: z.literal('moss_app_event'),
+      event: z
+        .object({
+          type: z.string(),
+          input: z.record(z.string(), z.unknown()).optional(),
+        })
+        .passthrough(),
+    })
+    .describe('Requests the SDK host to handle a Moss app/browser event.'),
+)
+
 export const SDKControlSetPermissionModeRequestSchema = lazySchema(() =>
   z
     .object({
       subtype: z.literal('set_permission_mode'),
       mode: PermissionModeSchema(),
-      ultraplan: z
-        .boolean()
-        .optional()
-        .describe('@internal CCR ultraplan session marker.'),
     })
     .describe('Sets the permission mode for tool execution handling.'),
 )
@@ -522,6 +532,7 @@ export const SDKControlRequestInnerSchema = lazySchema(() =>
   z.union([
     SDKControlInterruptRequestSchema(),
     SDKControlPermissionRequestSchema(),
+    SDKControlMossAppEventRequestSchema(),
     SDKControlInitializeRequestSchema(),
     SDKControlSetPermissionModeRequestSchema(),
     SDKControlSetModelRequestSchema(),

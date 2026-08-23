@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
-import type { RemotePermissionResponse } from '../remote/RemoteSessionManager.js'
 import {
   createSyntheticAssistantMessage,
   createToolStub,
@@ -13,14 +12,15 @@ import {
 import {
   type DirectConnectConfig,
   DirectConnectSessionManager,
+  type RemoteMessageContent,
+  type RemotePermissionResponse,
 } from '../remote/directConnectManager.js'
-import type { Tool } from '../Tool.js'
+import type { MossAppEvent, MossAppEventResult, Tool } from '../Tool.js'
 import { findToolByName } from '../Tool.js'
 import type { Message as MessageType } from '../types/message.js'
 import type { PermissionAskDecision } from '../types/permissions.js'
 import { logForDebugging } from '../utils/debug.js'
 import { gracefulShutdown } from '../utils/gracefulShutdown.js'
-import type { RemoteMessageContent } from '../utils/teleport/api.js'
 
 type UseDirectConnectResult = {
   isRemoteMode: boolean
@@ -38,6 +38,7 @@ type UseDirectConnectProps = {
   setIsLoading: (loading: boolean) => void
   setToolUseConfirmQueue: React.Dispatch<React.SetStateAction<ToolUseConfirm[]>>
   tools: Tool[]
+  onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
 }
 
 export function useDirectConnect({
@@ -46,6 +47,7 @@ export function useDirectConnect({
   setIsLoading,
   setToolUseConfirmQueue,
   tools,
+  onAppEvent,
 }: UseDirectConnectProps): UseDirectConnectResult {
   const isRemoteMode = !!config
 
@@ -162,6 +164,7 @@ export function useDirectConnect({
         setToolUseConfirmQueue(queue => [...queue, toolUseConfirm])
         setIsLoading(false)
       },
+      onAppEvent,
       onConnected: () => {
         const reconnected = hasEverConnectedRef.current
         logForDebugging(
@@ -233,7 +236,7 @@ export function useDirectConnect({
       manager.disconnect()
       managerRef.current = null
     }
-  }, [config, setMessages, setIsLoading, setToolUseConfirmQueue])
+  }, [config, setMessages, setIsLoading, setToolUseConfirmQueue, onAppEvent])
 
   const sendMessage = useCallback(
     async (
@@ -266,7 +269,7 @@ export function useDirectConnect({
     isConnectedRef.current = false
   }, [])
 
-  // Same stability concern as useRemoteSession — memoize so consumers
+  // Memoize so consumers
   // that depend on the result object don't see a fresh reference per render.
   return useMemo(
     () => ({ isRemoteMode, sendMessage, cancelRequest, disconnect }),

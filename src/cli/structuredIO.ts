@@ -130,8 +130,7 @@ export class StructuredIO {
   readonly structuredInput: AsyncGenerator<StdinMessage | SDKMessage>
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>()
 
-  // CCR external_metadata read back on worker start; null when the
-  // transport doesn't restore. Assigned by RemoteIO.
+  // Remote metadata restored by the transport when available.
   restoredWorkerState: Promise<SessionExternalMetadata | null> =
     Promise.resolve(null)
 
@@ -647,7 +646,7 @@ export class StructuredIO {
    * requests to the SDK host as can_use_tool control_requests.
    *
    * This piggybacks on the existing can_use_tool protocol with a synthetic
-   * tool name so that SDK hosts (VS Code, CCR, etc.) can prompt the user
+   * tool name so that SDK hosts (VS Code, remote UI, etc.) can prompt the user
    * for network access without requiring a new protocol subtype.
    */
   createSandboxAskCallback(): (hostPattern: {

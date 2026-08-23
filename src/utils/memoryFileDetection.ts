@@ -97,7 +97,7 @@ function isAgentMemFile(filePath: string): boolean {
 /**
  * Check if a file is a Claude-managed memory file (NOT user-managed instruction files).
  * Includes: auto-memory (memdir), agent memory, session memory/transcripts.
- * Excludes: CLAUDE.md, CLAUDE.local.md, .moss/rules/*.md (user-managed).
+ * Excludes: MOSS.md, MOSS.local.md, .moss/rules/*.md (user-managed).
  *
  * Use this for collapse/badge logic where user-managed files should show full diffs.
  */
@@ -231,7 +231,7 @@ export function isShellCommandTargetingMemory(command: string): boolean {
 }
 
 // Check if a glob/pattern targets auto-managed memory files only.
-// Excludes CLAUDE.md, CLAUDE.local.md, .moss/rules/ (user-managed).
+// Excludes MOSS.md, MOSS.local.md, .moss/rules/ (user-managed).
 // Used for collapse badge logic where user-managed files should not be
 // counted as "memory" operations.
 export function isAutoManagedMemoryPattern(pattern: string): boolean {

@@ -1,6 +1,5 @@
 import axios, { type AxiosError } from 'axios'
 import type { UUID } from 'crypto'
-import { getApiBaseUrl } from '../../constants/api.js'
 import type { Entry, TranscriptMessage } from '../../types/logs.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
@@ -10,7 +9,6 @@ import { sequential } from '../../utils/sequential.js'
 import { getSessionIngressAuthToken } from '../../utils/sessionIngressAuth.js'
 import { sleep } from '../../utils/sleep.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
-import { getBearerHeaders } from '../../utils/teleport/api.js'
 
 interface SessionIngressError {
   error?: {
@@ -237,181 +235,6 @@ export async function getSessionLogs(
   }
 
   return logs
-}
-
-/**
- * Get all session logs for hydration via bearer auth.
- * Used for teleporting sessions from the Sessions API
- */
-export async function getSessionLogsViaBearerAuth(
-  sessionId: string,
-  accessToken: string,
-  orgUUID: string,
-): Promise<Entry[] | null> {
-  const url = `${getApiBaseUrl()}/v1/session_ingress/session/${sessionId}`
-  logForDebugging(`[session-ingress] Fetching session logs from: ${url}`)
-  const headers = {
-    ...getBearerHeaders(accessToken),
-    'x-organization-uuid': orgUUID,
-  }
-  const result = await fetchSessionLogsFromUrl(sessionId, url, headers)
-  return result
-}
-
-/**
- * Response shape from GET /v1/code/sessions/{id}/teleport-events.
- * WorkerEvent.payload IS the Entry (TranscriptMessage struct) — the CLI
- * writes it via AddWorkerEvent, the server stores it opaque, we read it
- * back here.
- */
-type TeleportEventsResponse = {
-  data: Array<{
-    event_id: string
-    event_type: string
-    is_compaction: boolean
-    payload: Entry | null
-    created_at: string
-  }>
-  // Unset when there are no more pages — this IS the end-of-stream
-  // signal (no separate has_more field).
-  next_cursor?: string
-}
-
-/**
- * Get worker events (transcript) via the CCR v2 Sessions API. Replaces
- * getSessionLogsViaBearerAuth once session-ingress is retired.
- *
- * The server dispatches per-session: Spanner for v2-native sessions,
- * threadstore for pre-backfill session_* IDs. The cursor is opaque to us —
- * echo it back until next_cursor is unset.
- *
- * Paginated (500/page default, server max 1000). session-ingress's one-shot
- * 50k is gone; we loop.
- */
-export async function getTeleportEvents(
-  sessionId: string,
-  accessToken: string,
-  orgUUID: string,
-): Promise<Entry[] | null> {
-  const baseUrl = `${getApiBaseUrl()}/v1/code/sessions/${sessionId}/teleport-events`
-  const headers = {
-    ...getBearerHeaders(accessToken),
-    'x-organization-uuid': orgUUID,
-  }
-
-  logForDebugging(`[teleport] Fetching events from: ${baseUrl}`)
-
-  const all: Entry[] = []
-  let cursor: string | undefined
-  let pages = 0
-
-  // Infinite-loop guard: 1000/page × 100 pages = 100k events. Larger than
-  // session-ingress's 50k one-shot. If we hit this, something's wrong
-  // (server not advancing cursor) — bail rather than hang.
-  const maxPages = 100
-
-  while (pages < maxPages) {
-    const params: Record<string, string | number> = { limit: 1000 }
-    if (cursor !== undefined) {
-      params.cursor = cursor
-    }
-
-    let response
-    try {
-      response = await axios.get<TeleportEventsResponse>(baseUrl, {
-        headers,
-        params,
-        timeout: 20000,
-        validateStatus: status => status < 500,
-      })
-    } catch (e) {
-      const err = e as AxiosError
-      logError(new Error(`Teleport events fetch failed: ${err.message}`))
-      logForDiagnosticsNoPII('error', 'teleport_events_fetch_fail')
-      return null
-    }
-
-    if (response.status === 404) {
-      // 404 on page 0 is ambiguous during the migration window:
-      //   (a) Session genuinely not found (not in Spanner AND not in
-      //       threadstore) — nothing to fetch.
-      //   (b) Route-level 404: endpoint not deployed yet, or session is
-      //       a threadstore session not yet backfilled into Spanner.
-      // We can't tell them apart from the response alone. Returning null
-      // lets the caller fall back to session-ingress, which will correctly
-      // return empty for case (a) and data for case (b). Once the backfill
-      // is complete and session-ingress is gone, the fallback also returns
-      // null → same "Failed to fetch session logs" error as today.
-      //
-      // 404 mid-pagination (pages > 0) means session was deleted between
-      // pages — return what we have.
-      logForDebugging(
-        `[teleport] Session ${sessionId} not found (page ${pages})`,
-      )
-      logForDiagnosticsNoPII('warn', 'teleport_events_not_found')
-      return pages === 0 ? null : all
-    }
-
-    if (response.status === 401) {
-      logForDiagnosticsNoPII('error', 'teleport_events_bad_token')
-      throw new Error(
-        'Your session has expired. Configure credentials and try again.',
-      )
-    }
-
-    if (response.status !== 200) {
-      logError(
-        new Error(
-          `Teleport events returned ${response.status}: ${jsonStringify(response.data)}`,
-        ),
-      )
-      logForDiagnosticsNoPII('error', 'teleport_events_bad_status')
-      return null
-    }
-
-    const { data, next_cursor } = response.data
-    if (!Array.isArray(data)) {
-      logError(
-        new Error(
-          `Teleport events invalid response shape: ${jsonStringify(response.data)}`,
-        ),
-      )
-      logForDiagnosticsNoPII('error', 'teleport_events_invalid_shape')
-      return null
-    }
-
-    // payload IS the Entry. null payload happens for threadstore non-generic
-    // events (server skips them) or encryption failures — skip here too.
-    for (const ev of data) {
-      if (ev.payload !== null) {
-        all.push(ev.payload)
-      }
-    }
-
-    pages++
-    // == null covers both `null` and `undefined` — the proto omits the
-    // field at end-of-stream, but some serializers emit `null`. Strict
-    // `=== undefined` would loop forever on `null` (cursor=null in query
-    // params stringifies to "null", which the server rejects or echoes).
-    if (next_cursor == null) {
-      break
-    }
-    cursor = next_cursor
-  }
-
-  if (pages >= maxPages) {
-    // Don't fail — return what we have. Better to teleport with a
-    // truncated transcript than not at all.
-    logError(
-      new Error(`Teleport events hit page cap (${maxPages}) for ${sessionId}`),
-    )
-    logForDiagnosticsNoPII('warn', 'teleport_events_page_cap')
-  }
-
-  logForDebugging(
-    `[teleport] Fetched ${all.length} events over ${pages} page(s) for ${sessionId}`,
-  )
-  return all
 }
 
 /**

@@ -76,7 +76,7 @@ export interface BootstrapResult {
 
 /**
  * Performs a unified headless initialization, ensuring both the CLI and SDK
- * have full feature parity (Skills, CLAUDE.md, MCP, etc.).
+ * have full feature parity (Skills, MOSS.md, MCP, etc.).
  *
  * @param cwd The working directory for the session
  * @returns Initialization results to pass to the QueryEngine and AppState
@@ -149,7 +149,7 @@ export async function bootstrapHeadless(
     }),
   )
 
-  // 5. Load SessionStart hooks (includes CLAUDE.md and plugin hooks)
+  // 5. Load SessionStart hooks (includes MOSS.md and plugin hooks)
   // This must run after context is set and MCP is initialized.
   const hookSnapshotStart = Date.now()
   captureHooksConfigSnapshot()

@@ -96,12 +96,6 @@ const TEAMMATE_ENV_VARS = [
   'MOSS_MODEL_BASE_URL',
   // Config directory override
   'MOSS_CONFIG_DIR',
-  // CCR marker — teammates need this for CCR-aware code paths.
-  'CLAUDE_CODE_REMOTE',
-  // Auto-memory gate (memdir/paths.ts) checks REMOTE && !MEMORY_DIR to
-  // disable memory on ephemeral CCR filesystems. Forwarding REMOTE alone
-  // would flip teammates to memory-off when the parent has it on.
-  'CLAUDE_CODE_REMOTE_MEMORY_DIR',
   // Upstream proxy — the parent's MITM relay is reachable from teammates
   // (same container network). Forward the proxy vars so teammates route
   // customer-configured upstream traffic through the relay for credential

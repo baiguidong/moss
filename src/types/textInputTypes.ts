@@ -307,15 +307,14 @@ export type QueuedCommand = {
   pastedContents?: Record<number, PastedContent>
   /**
    * The input string before [Pasted text #N] placeholders were expanded.
-   * Used for ultraplan keyword detection so pasted content containing the
-   * keyword does not trigger a CCR session. Falls back to `value` when
-   * unset (remote sources such as MCP have no paste expansion).
+   * Falls back to `value` when unset (remote sources such as MCP have no
+   * paste expansion).
    */
   preExpansionValue?: string
   /**
    * When true, the input is treated as plain text even if it starts with `/`.
-   * Used for remotely-received messages (e.g. CCR) that should not
-   * trigger local slash commands or skills.
+   * Used for remotely received messages that should not trigger local slash
+   * commands or skills.
    */
   skipSlashCommands?: boolean
   /**
