@@ -6,6 +6,8 @@ import {
   Monitor,
   MoonStar,
   PenSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pin,
   Search,
   Settings,
@@ -313,6 +315,15 @@ export function AppSidebar({
           ) : (
             <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
           )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn("h-8 w-8 rounded-xl", collapsed ? "mt-2" : "")}
+            onClick={onToggleCollapse}
+            title={collapsed ? "展开侧栏" : "收起侧栏"}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </Button>
         </div>
 
         <Button
