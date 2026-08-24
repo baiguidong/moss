@@ -12,6 +12,7 @@ import {
   getSettings_DEPRECATED,
   getSettingsForSource,
 } from './settings/settings.js'
+import { getTextModelConfig } from './model/textModelConfig.js'
 
 function normalizeUrl(value: string | undefined): string | undefined {
   if (!value) return value
@@ -88,6 +89,30 @@ function normalizeSettingsEnv(
     }
   }
   return out
+}
+
+function applyTextModelConfigEnvironmentFallback(): void {
+  if (process.env.MOSS_MODEL_BASE_URL?.trim()) return
+
+  let textModelConfig: ReturnType<typeof getTextModelConfig> | null = null
+  for (const source of TRUSTED_SETTING_SOURCES) {
+    if (!isSettingSourceEnabled(source)) continue
+    const candidate = getTextModelConfig(getSettingsForSource(source))
+    if (candidate.baseUrl) {
+      textModelConfig = candidate
+    }
+  }
+
+  const baseUrl = normalizeMossBaseUrl(textModelConfig?.baseUrl)
+  if (!baseUrl) return
+
+  process.env.MOSS_MODEL_BASE_URL = baseUrl
+  if (
+    !process.env.MOSS_MODEL_AUTH_TOKEN?.trim() &&
+    textModelConfig?.apiKey
+  ) {
+    process.env.MOSS_MODEL_AUTH_TOKEN = textModelConfig.apiKey
+  }
 }
 
 /**
@@ -184,6 +209,8 @@ export function applySafeConfigEnvironmentVariables(): void {
       process.env[key] = value
     }
   }
+
+  applyTextModelConfigEnvironmentFallback()
 }
 
 /**

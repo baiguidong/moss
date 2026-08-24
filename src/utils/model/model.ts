@@ -20,6 +20,7 @@ import { LIGHTNING_BOLT } from '../../constants/figures.js'
 import { isModelAllowed } from './modelAllowlist.js'
 import { type ModelAlias, isModelAlias } from './aliases.js'
 import { capitalize } from '../stringUtils.js'
+import { getTextModelConfig } from './textModelConfig.js'
 
 export type ModelShortName = string
 export type ModelName = string
@@ -58,7 +59,10 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
     specifiedModel = modelOverride
   } else {
     const settings = getSettings_DEPRECATED() || {}
-    specifiedModel = process.env.ANTHROPIC_MODEL || settings.model || undefined
+    specifiedModel =
+      process.env.ANTHROPIC_MODEL ||
+      getTextModelConfig(settings).model ||
+      undefined
   }
 
   // Ignore the user-specified model if it's not in the availableModels allowlist.
