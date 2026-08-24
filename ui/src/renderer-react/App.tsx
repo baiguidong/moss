@@ -963,6 +963,7 @@ export default function App() {
     });
 
     const offState = window.agentDesktop.onState((payload) => {
+      const hasTodosPayload = Array.isArray(payload?.todos);
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
@@ -977,11 +978,20 @@ export default function App() {
               ...prev,
               ...payload.summary,
               ...(Array.isArray(nextHistory) ? { history: nextHistory } : {}),
+              ...(hasTodosPayload ? { todos: payload.todos } : {}),
             };
             activeDetailRef.current = next;
             return next;
           });
         }
+      }
+      if (!payload?.summary && hasTodosPayload && payload?.sessionId === activeSessionIdRef.current) {
+        setActiveDetail((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev, todos: payload.todos };
+          activeDetailRef.current = next;
+          return next;
+        });
       }
       if (payload?.busy === false && payload?.sessionId) {
         flushQueuedMessagesRef.current(payload.sessionId);
@@ -1042,6 +1052,7 @@ export default function App() {
             ...prev,
             ...(payload.summary || {}),
             history: nextHistory || prev.history || [],
+            ...(Array.isArray(payload.todos) ? { todos: payload.todos } : {}),
           };
           activeDetailRef.current = next;
           return next;
@@ -2187,6 +2198,7 @@ export default function App() {
                 onActivatePreview={setActivePreviewPath}
                 previewTitle={activePreview?.relativePath || '未选择文件'}
                 sessionId={activeSessionId}
+                todos={activeDetail?.todos || []}
               />
             </div>
           </>

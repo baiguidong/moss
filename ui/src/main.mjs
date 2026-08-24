@@ -2859,6 +2859,7 @@ async function runSessionPrompt({
     sessionId: sessionRecord.id,
     busy: true,
     summary: getSessionSummary(sessionRecord),
+    todos: snapshotSessionTodos(sessionRecord),
   });
 
   try {
@@ -3020,6 +3021,7 @@ async function runSessionPrompt({
       busy: false,
       summary: getSessionSummary(sessionRecord),
       history: sessionRecord.history,
+      todos: snapshotSessionTodos(sessionRecord),
     });
     emitSessionHistory(sessionRecord);
     void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
@@ -3071,6 +3073,7 @@ function emitSessionHistory(sessionRecord) {
     sessionId: sessionRecord.id,
     summary: getSessionSummary(sessionRecord),
     history: sessionRecord.history,
+    todos: snapshotSessionTodos(sessionRecord),
   });
 }
 
@@ -3659,6 +3662,8 @@ function previewPluginAppBuild(buildDir) {
 }
 
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
+const TODO_EMIT_DELAY_MS = 150;
+const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 
 function snapshotBackgroundTasks(sessionRecord) {
   try {
@@ -3713,6 +3718,102 @@ function attachBackgroundTaskWatcher(sessionRecord) {
     } catch {}
     sessionRecord.backgroundTaskWatcherRuntime = null;
     sessionRecord.backgroundTaskUnsubscribe = null;
+  };
+}
+
+function getSessionTodoKey(sessionRecord) {
+  return (
+    sessionRecord.runtime?.sessionId ||
+    sessionRecord.underlyingSessionId ||
+    sessionRecord.id
+  );
+}
+
+function normalizeSessionTodoItems(rawTodos, { clearWhenAllCompleted = false } = {}) {
+  if (!Array.isArray(rawTodos)) return [];
+  const todos = rawTodos
+    .map((todo, index) => ({
+      id: String(index + 1),
+      content: typeof todo?.content === 'string' ? todo.content : '',
+      status: TODO_STATUSES.has(todo?.status) ? todo.status : 'pending',
+      activeForm: typeof todo?.activeForm === 'string' ? todo.activeForm : '',
+    }))
+    .filter((todo) => todo.content.trim().length > 0);
+
+  if (
+    clearWhenAllCompleted &&
+    todos.length > 0 &&
+    todos.every((todo) => todo.status === 'completed')
+  ) {
+    return [];
+  }
+
+  return todos;
+}
+
+function extractSessionTodosFromHistory(history) {
+  if (!Array.isArray(history)) return [];
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message?.type !== 'assistant' || !Array.isArray(message?.message?.content)) continue;
+    const toolUse = message.message.content.find(
+      (block) => block?.type === 'tool_use' && block?.name === 'TodoWrite',
+    );
+    if (!toolUse || toolUse.type !== 'tool_use') continue;
+    return normalizeSessionTodoItems(toolUse.input?.todos, {
+      clearWhenAllCompleted: true,
+    });
+  }
+  return [];
+}
+
+function snapshotSessionTodos(sessionRecord, historyFallback = sessionRecord?.history) {
+  try {
+    const state = sessionRecord.runtime?.getAppState?.();
+    const todoBuckets = state?.todos;
+    if (todoBuckets && typeof todoBuckets === 'object') {
+      const todoKey = getSessionTodoKey(sessionRecord);
+      if (Object.prototype.hasOwnProperty.call(todoBuckets, todoKey)) {
+        return normalizeSessionTodoItems(todoBuckets[todoKey]);
+      }
+    }
+  } catch {
+    // Fall back to transcript history below.
+  }
+  return extractSessionTodosFromHistory(historyFallback);
+}
+
+function attachTodoWatcher(sessionRecord) {
+  const runtime = sessionRecord?.runtime;
+  if (!runtime || typeof runtime.subscribe !== 'function') return;
+  if (sessionRecord.todoWatcherRuntime === runtime) return;
+  sessionRecord.todoUnsubscribe?.();
+
+  let lastJson = JSON.stringify(snapshotSessionTodos(sessionRecord));
+  let timer = null;
+  const emitSnapshot = () => {
+    timer = null;
+    if (sessionRecord.runtime !== runtime) return;
+    const todos = snapshotSessionTodos(sessionRecord);
+    const json = JSON.stringify(todos);
+    if (json === lastJson) return;
+    lastJson = json;
+    emitToRenderer('agent:state', { sessionId: sessionRecord.id, todos });
+  };
+  const unsubscribe = runtime.subscribe(() => {
+    if (!timer) {
+      timer = setTimeout(emitSnapshot, TODO_EMIT_DELAY_MS);
+    }
+  });
+  sessionRecord.todoWatcherRuntime = runtime;
+  sessionRecord.todoUnsubscribe = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    try {
+      unsubscribe?.();
+    } catch {}
+    sessionRecord.todoWatcherRuntime = null;
+    sessionRecord.todoUnsubscribe = null;
   };
 }
 
@@ -3811,6 +3912,9 @@ function disposeSessionRuntime(sessionRecord) {
   if (sessionRecord?.runtime) {
     try {
       sessionRecord.backgroundTaskUnsubscribe?.();
+    } catch {}
+    try {
+      sessionRecord.todoUnsubscribe?.();
     } catch {}
     try {
       sessionRecord.runtime.abort();
@@ -3936,6 +4040,12 @@ async function findSessionSubagentDir(underlyingSessionId) {
 
 function disposeRuntime(sessionRecord) {
   if (!sessionRecord.runtime) return;
+  try {
+    sessionRecord.backgroundTaskUnsubscribe?.();
+  } catch {}
+  try {
+    sessionRecord.todoUnsubscribe?.();
+  } catch {}
   sessionRecord.runtime.dispose();
   sessionRecord.runtime = null;
   schedulePersistSession(sessionRecord, true);
@@ -4073,9 +4183,17 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     const currentCoordinatorMode = sessionRecord.isCoordinatorMode ?? false
     const existingCoordinatorMode = sessionRecord.runtime.coordinatorMode ?? false
     if (currentCoordinatorMode !== existingCoordinatorMode) {
+      try {
+        sessionRecord.backgroundTaskUnsubscribe?.()
+      } catch {}
+      try {
+        sessionRecord.todoUnsubscribe?.()
+      } catch {}
       sessionRecord.runtime.dispose()
       sessionRecord.runtime = null
     } else {
+      attachBackgroundTaskWatcher(sessionRecord);
+      attachTodoWatcher(sessionRecord);
       return sessionRecord.runtime
     }
   }
@@ -4109,6 +4227,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
   attachBackgroundTaskWatcher(sessionRecord);
+  attachTodoWatcher(sessionRecord);
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
   // All teammate events are already routed through the main coordinator session via the SDK
@@ -4121,6 +4240,8 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
     return null;
   }
   if (sessionRecord.runtime) {
+    attachBackgroundTaskWatcher(sessionRecord);
+    attachTodoWatcher(sessionRecord);
     return {
       history: sessionRecord.history,
       metadata: {
@@ -4159,6 +4280,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
 
     sessionRecord.runtime = resumed.session;
     attachBackgroundTaskWatcher(sessionRecord);
+    attachTodoWatcher(sessionRecord);
     sessionRecord.resumeReadOnlyReason = null;
     sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
     if (!Array.isArray(sessionRecord.history) || sessionRecord.history.length === 0) {
@@ -5273,6 +5395,8 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
     detail: {
       ...getSessionSummary(sessionRecord),
       history: sessionRecord.history,
+      workerSummariesJson: sessionRecord.workerSummariesJson || null,
+      todos: snapshotSessionTodos(sessionRecord),
     },
   };
 });
@@ -5284,6 +5408,7 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
     ...getSessionSummary(sessionRecord),
     history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    todos: snapshotSessionTodos(sessionRecord, history),
   };
 });
 
@@ -5375,6 +5500,8 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
   return {
     ...getSessionSummary(sessionRecord),
     history: sessionRecord.history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    todos: snapshotSessionTodos(sessionRecord),
   };
 });
 
@@ -5451,6 +5578,8 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
     return {
       ...getSessionSummary(sessionRecord),
       history: sessionRecord.history,
+      workerSummariesJson: sessionRecord.workerSummariesJson || null,
+      todos: snapshotSessionTodos(sessionRecord),
     };
   }
   sessionRecord.workspace = normalizeWorkspace(workspace);
@@ -5462,6 +5591,8 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
   return {
     ...getSessionSummary(sessionRecord),
     history: sessionRecord.history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    todos: snapshotSessionTodos(sessionRecord),
   };
 });
 

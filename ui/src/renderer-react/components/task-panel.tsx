@@ -2,11 +2,15 @@
 
 import * as React from "react";
 import {
+  CheckCircle2,
   Cloud,
+  Circle,
+  CircleDot,
   FileClock,
   FolderOpen,
   Globe2,
   LayoutDashboard,
+  ListChecks,
   Search,
   X,
   FileText,
@@ -18,7 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { BrowserPanel, openBrowserPanelUrl } from "@/components/browser-panel";
 import { FileTree } from "@/components/file-tree";
-import type { FileTreeNode, WorkspacePreviewData } from "@/types";
+import type { FileTreeNode, SessionTodo, SessionTodoStatus, WorkspacePreviewData } from "@/types";
 
 export type PreviewTabData = WorkspacePreviewData;
 type TaskPanelView = "overview" | "files" | "browser" | "changes";
@@ -29,6 +33,39 @@ const viewMeta: Record<TaskPanelView, { label: string; title: string; icon: Reac
   browser: { label: "浏览器", title: "浏览器", icon: Globe2 },
   changes: { label: "变更", title: "变更", icon: FileClock },
 };
+
+const todoStatusMeta: Record<SessionTodoStatus, {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconClassName: string;
+  rowClassName: string;
+}> = {
+  pending: {
+    label: "待处理",
+    icon: Circle,
+    iconClassName: "text-muted-foreground",
+    rowClassName: "border-border/55 bg-background/60",
+  },
+  in_progress: {
+    label: "进行中",
+    icon: CircleDot,
+    iconClassName: "text-primary",
+    rowClassName: "border-primary/35 bg-primary/10",
+  },
+  completed: {
+    label: "已完成",
+    icon: CheckCircle2,
+    iconClassName: "text-emerald-600 dark:text-emerald-400",
+    rowClassName: "border-border/45 bg-background/45",
+  },
+};
+
+function getTodoDisplayText(todo: SessionTodo): string {
+  if (todo.status === "in_progress" && todo.activeForm?.trim()) {
+    return todo.activeForm.trim();
+  }
+  return todo.content;
+}
 
 function previewLabel(tab: WorkspacePreviewData): string {
   switch (tab.contentType) {
@@ -93,6 +130,7 @@ export function TaskPanel({
   onActivatePreview,
   previewTitle,
   sessionId,
+  todos,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -110,6 +148,7 @@ export function TaskPanel({
   onActivatePreview: (path: string) => void;
   previewTitle: string;
   sessionId?: string | null;
+  todos?: SessionTodo[];
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
@@ -120,6 +159,17 @@ export function TaskPanel({
   );
   const visibleFileCount = React.useMemo(() => countFiles(treeItems), [treeItems]);
   const dirtyPreviewCount = React.useMemo(() => previewTabs.filter(isDirtyPreview).length, [previewTabs]);
+  const todoCounts = React.useMemo(() => {
+    const counts: Record<SessionTodoStatus, number> = {
+      pending: 0,
+      in_progress: 0,
+      completed: 0,
+    };
+    for (const todo of todos || []) {
+      counts[todo.status] += 1;
+    }
+    return counts;
+  }, [todos]);
 
   React.useEffect(() => {
     const unsubscribe = window.agentDesktop.browser.onOpen((payload) => {
@@ -201,6 +251,80 @@ export function TaskPanel({
                   <div className="truncate rounded-md border border-border/60 bg-background/75 px-2 py-2 font-mono text-xs text-foreground">
                     {previewTitle || "未选择文件"}
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-border/65 bg-card/72 p-3">
+                  <div className="mb-2.5 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <ListChecks className="h-3.5 w-3.5 shrink-0" />
+                      <span>会话待办</span>
+                    </div>
+                    <Badge variant={(todos?.length || 0) > 0 ? "default" : "secondary"}>
+                      {todos?.length || 0} 项
+                    </Badge>
+                  </div>
+
+                  {(todos?.length || 0) > 0 ? (
+                    <>
+                      <div className="mb-2 grid grid-cols-3 gap-1.5 text-[11px] text-muted-foreground">
+                        <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
+                          {todoCounts.in_progress} 进行中
+                        </div>
+                        <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
+                          {todoCounts.pending} 待处理
+                        </div>
+                        <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
+                          {todoCounts.completed} 已完成
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        {todos!.map((todo) => {
+                          const meta = todoStatusMeta[todo.status];
+                          const Icon = meta.icon;
+                          const displayText = getTodoDisplayText(todo);
+                          const showOriginal =
+                            todo.status === "in_progress" &&
+                            Boolean(todo.activeForm?.trim()) &&
+                            todo.activeForm?.trim() !== todo.content.trim();
+
+                          return (
+                            <div
+                              key={todo.id}
+                              className={cn(
+                                "flex gap-2 rounded-md border px-2 py-2",
+                                meta.rowClassName,
+                              )}
+                            >
+                              <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", meta.iconClassName)} />
+                              <div className="min-w-0 flex-1">
+                                <div
+                                  className={cn(
+                                    "break-words text-xs leading-snug text-foreground",
+                                    todo.status === "in_progress" && "font-medium",
+                                    todo.status === "completed" && "text-muted-foreground line-through",
+                                  )}
+                                >
+                                  {displayText}
+                                </div>
+                                {showOriginal ? (
+                                  <div className="mt-1 break-words text-[11px] leading-snug text-muted-foreground">
+                                    {todo.content}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <span className="shrink-0 self-start rounded border border-border/55 bg-background/55 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {meta.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border/65 bg-background/45 px-2 py-2 text-xs text-muted-foreground">
+                      当前会话还没有 TodoWrite 待办。
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

@@ -25,9 +25,19 @@ export type SessionSummary = {
 export type SessionDetail = SessionSummary & {
   history: AgentEvent[];
   workerSummariesJson: string | null;
+  todos?: SessionTodo[];
 };
 
 export type AgentEvent = Record<string, any>;
+
+export type SessionTodoStatus = 'pending' | 'in_progress' | 'completed';
+
+export type SessionTodo = {
+  id: string;
+  content: string;
+  status: SessionTodoStatus;
+  activeForm?: string;
+};
 
 export type AskUserQuestionOption = {
   label: string;
@@ -454,6 +464,7 @@ declare global {
         sessionId: string;
         summary?: SessionSummary;
         history?: AgentEvent[];
+        todos?: SessionTodo[];
       }) => void) => () => void;
       onSessionRemoved: (callback: (payload: { sessionId: string }) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
