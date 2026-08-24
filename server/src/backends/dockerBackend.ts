@@ -1,11 +1,13 @@
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
-import { dirname, join } from 'path'
-import { MOSS_HOME, MOSS_SERVER_HOME } from '../lib/env.js'
+import { dirname, isAbsolute, join, relative, resolve } from 'path'
+import { MOSS_SERVER_HOME } from '../lib/env.js'
+import { getSystemSettings } from '../systemSettings.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
+  BackendSystemSettings,
   SessionBackend,
   SessionRuntimeInfo,
 } from '../backendTypes.js'
@@ -19,8 +21,99 @@ type DockerBackendDefaults = {
   labels?: Record<string, string>
 }
 
-function uniqueMounts(paths: string[]): string[] {
-  return [...new Set(paths)]
+export type DockerMount = {
+  source: string
+  target?: string
+  readOnly?: boolean
+}
+
+function normalizeMountPath(input: string): string {
+  return resolve(input).normalize('NFC')
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const rel = relative(normalizeMountPath(parent), normalizeMountPath(child))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function addWritableMount(mounts: DockerMount[], source: string | undefined): void {
+  if (!source?.trim()) {
+    return
+  }
+  const normalized = normalizeMountPath(source)
+  if (
+    mounts.some(
+      mount => !mount.readOnly && containsPath(mount.source, normalized),
+    )
+  ) {
+    return
+  }
+  for (let index = mounts.length - 1; index >= 0; index -= 1) {
+    const mount = mounts[index]
+    if (!mount?.readOnly && containsPath(normalized, mount.source)) {
+      mounts.splice(index, 1)
+    }
+  }
+  mounts.push({ source: normalized })
+}
+
+function addReadOnlyMount(
+  mounts: DockerMount[],
+  source: string | undefined,
+): void {
+  if (!source?.trim()) {
+    return
+  }
+  const normalized = normalizeMountPath(source)
+  if (
+    mounts.some(
+      mount =>
+        mount.source === normalized &&
+        (mount.target || mount.source) === normalized,
+    )
+  ) {
+    return
+  }
+  mounts.push({ source: normalized, readOnly: true })
+}
+
+export function formatMount(mount: DockerMount): string {
+  const target = mount.target || mount.source
+  return `${mount.source}:${target}${mount.readOnly ? ':ro' : ''}`
+}
+
+export function buildDockerMounts(
+  options: BackendSpawnOptions,
+  sessionRunnerPath: string,
+): DockerMount[] {
+  if (!options.backendManifestPath) {
+    throw new Error('Docker runtime requested without backend manifest path')
+  }
+
+  const mounts: DockerMount[] = []
+  for (const dir of options.mountDirs || []) {
+    addWritableMount(mounts, dir)
+  }
+
+  addWritableMount(mounts, options.cwd)
+  addWritableMount(mounts, options.runtime.profileDir)
+  addWritableMount(mounts, options.runtime.transcriptDir)
+  addWritableMount(mounts, dirname(options.backendManifestPath))
+  addReadOnlyMount(mounts, dirname(sessionRunnerPath))
+  return mounts
+}
+
+function snapshotSystemSettings(): BackendSystemSettings {
+  const settings = getSystemSettings()
+  return {
+    bypassPermissions: settings.bypassPermissions,
+    model: settings.model,
+    maxTurns: settings.maxTurns,
+    thinkingMode: settings.thinkingMode,
+    thinkingBudgetTokens: settings.thinkingBudgetTokens,
+    url: settings.url,
+    apiKey: settings.apiKey,
+  }
 }
 
 function resolveDockerUser(): string | null {
@@ -69,14 +162,7 @@ export class DockerBackend implements SessionBackend {
     const backendManifestPath = options.backendManifestPath
     await mkdir(dirname(backendManifestPath), { recursive: true })
 
-    const mounts = uniqueMounts([
-      options.cwd,
-      dirname(sessionRunnerPath),
-      dirname(backendManifestPath),
-      profileDir,
-      runtime.transcriptDir,
-      MOSS_HOME,
-    ])
+    const mounts = buildDockerMounts(options, sessionRunnerPath)
 
     const containerName =
       runtime.containerName || `moss-session-${options.sessionId.slice(0, 12)}`
@@ -92,6 +178,7 @@ export class DockerBackend implements SessionBackend {
         backend: 'host',
         containerName,
       },
+      systemSettings: snapshotSystemSettings(),
     }
     await writeFile(
       backendManifestPath,
@@ -111,7 +198,7 @@ export class DockerBackend implements SessionBackend {
       args.push('--label', `${key}=${value}`)
     }
     for (const mount of mounts) {
-      args.push('-v', `${mount}:${mount}`)
+      args.push('-v', formatMount(mount))
     }
 
     args.push('-w', options.cwd)
@@ -130,8 +217,8 @@ export class DockerBackend implements SessionBackend {
       }
     }
     args.push('-e', `HOME=${profileDir}`)
-    args.push('-e', `MOSS_SERVER_HOME=${MOSS_SERVER_HOME}`)
-    args.push('-e', `MOSS_HOME=${MOSS_HOME}`)
+    args.push('-e', `MOSS_SERVER_HOME=${profileDir}`)
+    args.push('-e', `MOSS_HOME=${profileDir}`)
 
     args.push(
       image,

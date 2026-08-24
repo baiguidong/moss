@@ -4,8 +4,11 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   applyManagedRuntimeEnv,
+  DirectEmbeddedBackend,
+  registerDirectRuntimeModule,
   writeManagedSessionSettings,
 } from '../backends/directEmbeddedBackend.js'
+import type { BackendHandle } from '../backendTypes.js'
 import type { SystemSettingsPayload } from '../systemSettings.js'
 
 const originalEnv = {
@@ -90,6 +93,111 @@ describe('direct embedded backend model settings', () => {
     expect(process.env.MOSS_SERVER_URL).toBeUndefined()
     expect(process.env.MOSS_SERVER_AUTH_TOKEN).toBeUndefined()
   })
+
+  test('bridges Moss app events through control request responses', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-app-event-'))
+    const eventUrl = 'file:///tmp/welcome.html'
+
+    class FakeSession {
+      constructor(
+        private readonly options: {
+          onAppEvent?: (event: {
+            type: string
+            input?: Record<string, unknown>
+          }) => Promise<unknown>
+        },
+      ) {}
+
+      async *send(
+        _text: string | Array<{ type: string; [key: string]: unknown }>,
+      ): AsyncGenerator<unknown> {
+        const appEventResult = await this.options.onAppEvent?.({
+          type: 'browser_open',
+          input: { url: eventUrl },
+        })
+        yield {
+          type: 'result',
+          subtype: 'success',
+          appEventResult,
+        }
+      }
+
+      abort(): void {}
+      dispose(): void {}
+    }
+
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async () => null,
+    })
+
+    const backend = new DirectEmbeddedBackend()
+    const handle = await backend.spawn({
+      sessionId: 'session-app-event',
+      cwd: join(tempRoot, 'workspace'),
+      runtime: {
+        backend: 'host',
+        profileMode: 'session',
+        profileDir: join(tempRoot, 'profile'),
+        transcriptDir: join(tempRoot, 'transcripts'),
+        workspaceDir: join(tempRoot, 'workspace'),
+      },
+      systemSettings: makeSettings({}),
+    })
+
+    try {
+      const controlRequestPromise = waitForStdout(
+        handle,
+        message => message.type === 'control_request',
+      )
+      const resultPromise = waitForStdout(
+        handle,
+        message => message.type === 'result',
+      )
+
+      handle.writeStdin(
+        `${JSON.stringify({
+          type: 'user',
+          uuid: 'user-message-1',
+          message: {
+            role: 'user',
+            content: 'open welcome',
+          },
+        })}\n`,
+      )
+
+      const controlRequest = await controlRequestPromise
+      expect(controlRequest.request).toEqual({
+        subtype: 'moss_app_event',
+        event: {
+          type: 'browser_open',
+          input: { url: eventUrl },
+        },
+      })
+
+      handle.writeStdin(
+        `${JSON.stringify({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: controlRequest.request_id,
+            response: {
+              ok: true,
+              previewUrl: eventUrl,
+            },
+          },
+        })}\n`,
+      )
+
+      const result = await resultPromise
+      expect(result.appEventResult).toEqual({
+        ok: true,
+        previewUrl: eventUrl,
+      })
+    } finally {
+      handle.destroy()
+    }
+  })
 })
 
 function makeSettings(
@@ -132,4 +240,27 @@ function restoreEnv(name: string, value: string | undefined): void {
   } else {
     process.env[name] = value
   }
+}
+
+function waitForStdout(
+  handle: BackendHandle,
+  predicate: (message: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let off = () => {}
+    const timeout = setTimeout(() => {
+      off()
+      reject(new Error('Timed out waiting for stdout message.'))
+    }, 2000)
+
+    off = handle.onStdoutLine(line => {
+      const parsed = JSON.parse(line) as Record<string, unknown>
+      if (!predicate(parsed)) {
+        return
+      }
+      clearTimeout(timeout)
+      off()
+      resolve(parsed)
+    })
+  })
 }

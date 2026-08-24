@@ -5,6 +5,7 @@ import { getSystemSettings } from '../systemSettings.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
+  BackendSystemSettings,
   SessionBackend,
   SessionRuntimeInfo,
 } from '../backendTypes.js'
@@ -29,6 +30,14 @@ type DirectPermissionRequest = {
   blockedPath?: string
   toolUseId?: string
 }
+type DirectAppEvent = {
+  type: string
+  input?: JsonObject
+  [key: string]: unknown
+}
+type DirectAppEventResult =
+  | ({ ok: true } & JsonObject)
+  | { ok: false; error: string }
 type DirectSessionOptions = {
   cwd?: string
   model?: string
@@ -41,6 +50,7 @@ type DirectSessionOptions = {
     input: unknown,
     request: DirectPermissionRequest,
   ) => Promise<DirectPermissionDecision>
+  onAppEvent?: (event: DirectAppEvent) => Promise<DirectAppEventResult>
   maxTurns?: number
   thinkingConfig?: unknown
   coordinatorMode?: boolean
@@ -98,7 +108,7 @@ function canFallbackToFreshSession(error: unknown): boolean {
   )
 }
 
-function buildThinkingConfig(settings: ReturnType<typeof getSystemSettings>) {
+function buildThinkingConfig(settings: BackendSystemSettings) {
   if (settings.thinkingMode === 'disabled') {
     return { type: 'disabled' as const }
   }
@@ -112,7 +122,7 @@ function buildThinkingConfig(settings: ReturnType<typeof getSystemSettings>) {
 }
 
 function buildManagedRuntimeEnv(
-  settings: ReturnType<typeof getSystemSettings>,
+  settings: BackendSystemSettings,
 ): Record<string, string | undefined> {
   return {
     MOSS_MODEL_BASE_URL: settings.url || undefined,
@@ -135,7 +145,7 @@ function deleteManagedEndpointEnvKeys(env: JsonObject): void {
 }
 
 export function applyManagedRuntimeEnv(
-  settings: ReturnType<typeof getSystemSettings>,
+  settings: BackendSystemSettings,
 ): void {
   for (const [key, value] of Object.entries(buildManagedRuntimeEnv(settings))) {
     if (value) {
@@ -148,7 +158,7 @@ export function applyManagedRuntimeEnv(
 
 export async function writeManagedSessionSettings(
   profileDir: string | undefined,
-  settings: ReturnType<typeof getSystemSettings>,
+  settings: BackendSystemSettings,
 ): Promise<void> {
   if (!profileDir) {
     return
@@ -273,6 +283,28 @@ function toPermissionDecision(value: unknown): DirectPermissionDecision {
   }
 }
 
+function toAppEventResult(value: unknown): DirectAppEventResult {
+  if (!isJsonObject(value)) {
+    return {
+      ok: false,
+      error: 'Invalid Moss app event response.',
+    }
+  }
+  if (value.ok === true) {
+    return {
+      ...value,
+      ok: true,
+    }
+  }
+  return {
+    ok: false,
+    error:
+      typeof value.error === 'string'
+        ? value.error
+        : 'Moss app event failed.',
+  }
+}
+
 function createErrorResult(
   sessionId: string,
   startedAt: number,
@@ -315,6 +347,12 @@ class DirectEmbeddedHandle implements BackendHandle {
     string,
     {
       resolve: (decision: DirectPermissionDecision) => void
+    }
+  >()
+  #pendingAppEvents = new Map<
+    string,
+    {
+      resolve: (result: DirectAppEventResult) => void
     }
   >()
   #seenUserUuids = new Set<string>()
@@ -386,6 +424,13 @@ class DirectEmbeddedHandle implements BackendHandle {
       })
     }
     this.#pendingPermissions.clear()
+    for (const pending of this.#pendingAppEvents.values()) {
+      pending.resolve({
+        ok: false,
+        error: 'Session stopped before Moss app event response.',
+      })
+    }
+    this.#pendingAppEvents.clear()
     this.#emitExit(0, null)
   }
 
@@ -446,23 +491,64 @@ class DirectEmbeddedHandle implements BackendHandle {
     }
     const requestId =
       typeof response.request_id === 'string' ? response.request_id : ''
-    const pending = this.#pendingPermissions.get(requestId)
-    if (!pending) {
+    const pendingPermission = this.#pendingPermissions.get(requestId)
+    if (pendingPermission) {
+      this.#pendingPermissions.delete(requestId)
+      if (response.subtype === 'error') {
+        pendingPermission.resolve({
+          behavior: 'deny',
+          message:
+            typeof response.error === 'string'
+              ? response.error
+              : 'Permission response failed.',
+        })
+        return true
+      }
+      pendingPermission.resolve(toPermissionDecision(response.response))
       return true
     }
-    this.#pendingPermissions.delete(requestId)
-    if (response.subtype === 'error') {
-      pending.resolve({
-        behavior: 'deny',
-        message:
-          typeof response.error === 'string'
-            ? response.error
-            : 'Permission response failed.',
-      })
+
+    const pendingAppEvent = this.#pendingAppEvents.get(requestId)
+    if (pendingAppEvent) {
+      this.#pendingAppEvents.delete(requestId)
+      if (response.subtype === 'error') {
+        pendingAppEvent.resolve({
+          ok: false,
+          error:
+            typeof response.error === 'string'
+              ? response.error
+              : 'Moss app event response failed.',
+        })
+        return true
+      }
+      pendingAppEvent.resolve(toAppEventResult(response.response))
       return true
     }
-    pending.resolve(toPermissionDecision(response.response))
+
     return true
+  }
+
+  emitAppEvent(event: DirectAppEvent): Promise<DirectAppEventResult> {
+    if (this.#disposed) {
+      return Promise.resolve({
+        ok: false,
+        error: 'Session stopped before Moss app event request.',
+      })
+    }
+
+    const requestId = randomUUID()
+    this.#emitStdout({
+      type: 'control_request',
+      request_id: requestId,
+      request: {
+        subtype: 'moss_app_event',
+        event,
+      },
+    })
+
+    return new Promise(resolve => {
+      this.#pendingAppEvents.set(requestId, { resolve })
+    })
   }
 
   requestPermission(
@@ -525,7 +611,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
   async spawn(options: BackendSpawnOptions): Promise<BackendHandle> {
     const profileDir = options.runtime.profileDir
     await mkdir(profileDir, { recursive: true })
-    const settings = getSystemSettings()
+    const settings = options.systemSettings ?? getSystemSettings()
     await writeManagedSessionSettings(profileDir, settings)
 
     Object.assign(
@@ -569,6 +655,15 @@ export class DirectEmbeddedBackend implements SessionBackend {
           }
         }
         return handle.requestPermission(tool, input, request)
+      },
+      onAppEvent: async event => {
+        if (!handle) {
+          return {
+            ok: false,
+            error: 'Session Moss app event bridge is not ready.',
+          }
+        }
+        return handle.emitAppEvent(event)
       },
     }
 

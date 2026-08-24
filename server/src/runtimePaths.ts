@@ -28,6 +28,21 @@ export function getSessionWorkspaceDir(
   return join(getSessionDir(config, sessionId), 'workspace')
 }
 
+export function getSessionRuntimeMountDirs(
+  config: ServerConfig,
+  sessionId: string,
+  profileMode: SessionProfileMode,
+  userSessionIds: string[] = [],
+): string[] {
+  const sessionIds =
+    profileMode === 'user'
+      ? [sessionId, ...userSessionIds]
+      : [sessionId]
+  return [...new Set(sessionIds.filter(Boolean))].map(id =>
+    getSessionDir(config, id),
+  )
+}
+
 export function getUserWorkspaceDir(config: ServerConfig, userId: string): string {
   return join(config.dataDir, 'workspaces', 'users', userId)
 }
@@ -52,7 +67,7 @@ export function getSessionProfileDir(
   config: ServerConfig,
   sessionId: string,
 ): string {
-  return join(config.dataDir, 'profiles', 'sessions', sessionId)
+  return join(getSessionDir(config, sessionId), 'profile')
 }
 
 export function getUserProfileDir(config: ServerConfig, userId: string): string {
@@ -75,7 +90,7 @@ export function getAttemptDir(
   sessionId: string,
   attemptId: string,
 ): string {
-  return join(config.runDir, 'attempts', sessionId, attemptId)
+  return join(getSessionDir(config, sessionId), 'attempts', attemptId)
 }
 
 export function getAttachPath(config: ServerConfig, attemptId: string): string {
@@ -98,9 +113,6 @@ export function getAttemptManifestPath(attemptDir: string): string {
   return join(attemptDir, 'manifest.json')
 }
 
-export function getDockerBackendManifestPath(
-  config: ServerConfig,
-  attemptId: string,
-): string {
-  return join(config.runDir, 'docker', 'manifests', `${attemptId}.json`)
+export function getDockerBackendManifestPath(attemptDir: string): string {
+  return join(attemptDir, 'docker-backend.json')
 }

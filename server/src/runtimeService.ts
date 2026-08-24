@@ -24,6 +24,7 @@ import {
   getRuntimeStatusPath,
   getRuntimeStderrLogPath,
   getRuntimeStdoutLogPath,
+  getSessionRuntimeMountDirs,
   resolveSessionWorkspaceDir,
   getSessionTranscriptDir,
   getTranscriptPath,
@@ -383,14 +384,24 @@ export class RuntimeService {
     const attemptDir = getAttemptDir(this.options.config, session.sessionId, attemptId)
     const attachPath = getAttachPath(this.options.config, attemptId)
     const manifestPath = getAttemptManifestPath(attemptDir)
-    const backendManifestPath = getDockerBackendManifestPath(
-      this.options.config,
-      attemptId,
-    )
+    const backendManifestPath = getDockerBackendManifestPath(attemptDir)
     const stdoutLogPath = getRuntimeStdoutLogPath(attemptDir)
     const stderrLogPath = getRuntimeStderrLogPath(attemptDir)
     const statusPath = getRuntimeStatusPath(attemptDir)
     const settings = getSystemSettings()
+    const mountDirs =
+      session.runtime.backend === 'docker'
+        ? getSessionRuntimeMountDirs(
+            this.options.config,
+            session.sessionId,
+            session.runtime.profileMode,
+            session.runtime.profileMode === 'user'
+              ? this.store
+                  .listUserSessions(session.orgId, session.userId)
+                  .map(userSession => userSession.sessionId)
+              : [],
+          )
+        : undefined
     const dangerouslySkipPermissions =
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
@@ -428,6 +439,7 @@ export class RuntimeService {
         scopes: session.scopes,
         dangerouslySkipPermissions,
         assistantName: options.assistantName,
+        mountDirs,
         runtime: {
           ...session.runtime,
           containerName:

@@ -1,8 +1,19 @@
 import type {
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
+import type { ThinkingMode } from './systemSettings.js'
 
 export type { SessionRuntimeInfo }
+
+export type BackendSystemSettings = {
+  bypassPermissions: boolean
+  model: string
+  maxTurns: number
+  thinkingMode: ThinkingMode
+  thinkingBudgetTokens: number
+  url: string
+  apiKey: string
+}
 
 export type BackendSpawnOptions = {
   sessionId: string
@@ -15,8 +26,10 @@ export type BackendSpawnOptions = {
   orgId?: string
   role?: string
   scopes?: string[]
+  mountDirs?: string[]
   runtime: SessionRuntimeInfo
   assistantName?: string
+  systemSettings?: BackendSystemSettings
 }
 
 export type BackendHandle = {

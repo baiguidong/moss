@@ -240,6 +240,7 @@ export type RunnerManifest = {
     role: string
     scopes: string[]
     dangerouslySkipPermissions: boolean
+    mountDirs?: string[]
     runtime: SessionRuntimeInfo
     assistantName?: string
   }

@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'path'
-import { resolveSessionWorkspaceDir } from '../runtimePaths.js'
+import {
+  getAttemptDir,
+  getDockerBackendManifestPath,
+  getSessionProfileDir,
+  getSessionRuntimeMountDirs,
+  resolveSessionWorkspaceDir,
+} from '../runtimePaths.js'
 import type { ServerConfig } from '../types.js'
 
 describe('runtime service workspace layout', () => {
@@ -43,6 +49,48 @@ describe('runtime service workspace layout', () => {
     }
 
     expect(resolveSessionWorkspaceDir(config, 'session-1', 'user-1', 'session')).toBe('/work/default')
+  })
+
+  test('keeps session profile and attempt files under the session root', () => {
+    const config = makeConfig('/tmp/moss-server')
+    const attemptDir = getAttemptDir(config, 'session-1', 'attempt-1')
+
+    expect(getSessionProfileDir(config, 'session-1')).toBe(
+      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'profile'),
+    )
+    expect(attemptDir).toBe(
+      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'attempts', 'attempt-1'),
+    )
+    expect(getDockerBackendManifestPath(attemptDir)).toBe(
+      join(attemptDir, 'docker-backend.json'),
+    )
+  })
+
+  test('mounts only the current session root for session profile mode', () => {
+    const config = makeConfig('/tmp/moss-server')
+
+    expect(
+      getSessionRuntimeMountDirs(config, 'session-2', 'session', [
+        'session-1',
+        'session-2',
+      ]),
+    ).toEqual([
+      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-2'),
+    ])
+  })
+
+  test('mounts every user session root for user profile mode', () => {
+    const config = makeConfig('/tmp/moss-server')
+
+    expect(
+      getSessionRuntimeMountDirs(config, 'session-2', 'user', [
+        'session-1',
+        'session-2',
+      ]),
+    ).toEqual([
+      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-2'),
+      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1'),
+    ])
   })
 })
 

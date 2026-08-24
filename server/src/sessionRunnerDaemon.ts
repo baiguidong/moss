@@ -271,6 +271,7 @@ export class SessionRunnerDaemon {
         orgId: this.manifest.session.orgId,
         role: this.manifest.session.role,
         scopes: this.manifest.session.scopes,
+        mountDirs: this.manifest.session.mountDirs,
         runtime: this.manifest.session.runtime,
         assistantName: this.manifest.session.assistantName,
       })

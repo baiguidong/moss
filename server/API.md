@@ -47,13 +47,12 @@ prepare 会把随代码变化的运行产物复制到 server root：
 默认 session 目录结构：
 
 - `var/lib/sessions/<sessionId>/workspace/`: `profileMode=session` 的 session 工作目录；不传 `cwd` 且没有服务端默认 workspace 时 host/docker backend 都在这里执行
+- `var/lib/sessions/<sessionId>/profile/`: `profileMode=session` 的独立配置目录
 - `var/lib/workspaces/users/<userId>/`: `profileMode=user` 的用户共享工作目录；同一登录用户的 remote 会话复用该目录
 - `var/lib/sessions/<sessionId>/transcripts/`: session transcript JSONL
-- `var/lib/profiles/sessions/<sessionId>/`: `profileMode=session` 的独立配置目录
 - `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享配置目录
-- `var/run/attempts/<sessionId>/<attemptId>/`: 单次 runner attempt 的 manifest、stdout/stderr、status
+- `var/lib/sessions/<sessionId>/attempts/<attemptId>/`: 单次 runner attempt 的 manifest、stdout/stderr、status，以及 docker backend 的 stdio manifest
 - `var/run/sockets/<attemptId>.sock`: server 与 runner attach 的本机 socket
-- `var/run/docker/manifests/<attemptId>.json`: docker backend 的 stdio manifest
 
 只准备但不启动：
 
@@ -513,6 +512,11 @@ API key 登录：
 `profileMode` 选择目录：`session` 使用
 `~/.moss/server/var/lib/sessions/<sessionId>/workspace`，`user` 使用
 `~/.moss/server/var/lib/workspaces/users/<userId>`。
+
+Docker backend 不挂载整个 `~/.moss/server`。`session` profile mode 只挂载当前
+`~/.moss/server/var/lib/sessions/<sessionId>`；`user` profile mode 挂载同一用户的所有
+session 目录，并额外挂共享的 user profile/workspace 目录。显式传入且不在这些目录下的
+`cwd` 会单独挂载。
 
 示例响应：
 

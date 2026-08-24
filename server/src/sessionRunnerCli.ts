@@ -2,10 +2,53 @@ import { readFile } from 'fs/promises'
 import { SessionRunnerDaemon } from './sessionRunnerDaemon.js'
 import type { RunnerManifest } from './types.js'
 import { DirectEmbeddedBackend } from './backends/directEmbeddedBackend.js'
-import type { BackendSpawnOptions } from './backendTypes.js'
+import type {
+  BackendSpawnOptions,
+  BackendSystemSettings,
+} from './backendTypes.js'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function boundedInt(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) && parsed >= min
+    ? Math.min(parsed, max)
+    : fallback
+}
+
+function readBackendSystemSettings(
+  value: unknown,
+): BackendSystemSettings | undefined {
+  if (!isRecord(value) || typeof value.model !== 'string') {
+    return undefined
+  }
+  const thinkingMode =
+    value.thinkingMode === 'enabled' ||
+    value.thinkingMode === 'disabled' ||
+    value.thinkingMode === 'adaptive'
+      ? value.thinkingMode
+      : 'adaptive'
+  return {
+    bypassPermissions: value.bypassPermissions === true,
+    model: value.model.trim(),
+    maxTurns: boundedInt(value.maxTurns, 1, 10_000, 100),
+    thinkingMode,
+    thinkingBudgetTokens: boundedInt(
+      value.thinkingBudgetTokens,
+      1024,
+      128_000,
+      16_000,
+    ),
+    url: typeof value.url === 'string' ? value.url.trim() : '',
+    apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : '',
+  }
 }
 
 function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
@@ -54,6 +97,9 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
     scopes: Array.isArray(value.scopes)
       ? value.scopes.filter((scope): scope is string => typeof scope === 'string')
       : undefined,
+    mountDirs: Array.isArray(value.mountDirs)
+      ? value.mountDirs.filter((dir): dir is string => typeof dir === 'string')
+      : undefined,
     assistantName:
       typeof value.assistantName === 'string' ? value.assistantName : undefined,
     runtime: {
@@ -68,6 +114,7 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
       workspaceDir:
         typeof runtime.workspaceDir === 'string' ? runtime.workspaceDir : undefined,
     },
+    systemSettings: readBackendSystemSettings(value.systemSettings),
   }
 }
 

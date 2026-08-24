@@ -69,6 +69,76 @@ bun run dist:all
 
 生成的安装包将位于 `ui/dist/installers` 目录下。
 
+### 3. Docker Runtime 镜像
+
+服务端 Docker 模式使用 session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 server 挂载并执行：
+
+```bash
+node $MOSS_SERVER_HOME/bin/moss-session-runner.mjs --stdio <manifest>
+```
+
+先准备 server runtime 产物：
+
+```bash
+bun run server:prepare
+```
+
+本地 Apple Silicon / Linux arm64 测试构建：
+
+```bash
+bun run docker:build-runtime -- --tag moss-runtime:0.1.8 --platform linux/arm64 --load
+```
+
+多平台发布镜像：
+
+```bash
+bun run docker:build-runtime -- \
+  --tag your-registry/moss-runtime:0.1.8 \
+  --platform linux/arm64,linux/amd64 \
+  --push
+```
+
+默认基础镜像是 `public.ecr.aws/ubuntu/ubuntu:24.04`。如需切换镜像源：
+
+```bash
+bun run docker:build-runtime -- \
+  --tag moss-runtime:0.1.8 \
+  --platform linux/arm64 \
+  --base-image ubuntu:24.04 \
+  --load
+```
+
+配置 `~/.moss/server/settings.json`。新建 session 时，server 会读取这里的
+`serverRuntime` 来决定使用 host 还是 Docker 后端：
+
+```json
+{
+  "serverRuntime": {
+    "backend": "docker",
+    "dockerImage": "moss-runtime:0.1.8",
+    "defaultProfileMode": "session",
+    "allowedProfileModes": ["session", "user"]
+  }
+}
+```
+
+`~/.moss/server/server.json` 只保留 server 启动、存储、session 数量上限、
+Docker network/label/stop timeout 等基础配置。
+
+Docker 模式不会挂载整个 `~/.moss/server`。挂载边界按 profile mode 区分：
+`session` 只挂当前 `var/lib/sessions/<sessionId>`；`user` 挂同一用户的所有
+session 目录，并额外挂该用户共享的 profile/workspace 目录。显式传入的外部
+`cwd` 会作为工作目录单独挂载。
+
+基础验证：
+
+```bash
+docker run --rm moss-runtime:0.1.8 node --version
+docker run --rm moss-runtime:0.1.8 rg --version
+docker run --rm moss-runtime:0.1.8 node -e "const sharp=require('sharp'); console.log(sharp.versions.sharp, sharp.versions.vips)"
+docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:0.1.8 whoami
+```
+
 ## 核心功能
 
 - **可视化 Agent 对话**：直接连接本地 Agent，支持流式输出和思考过程展示。
