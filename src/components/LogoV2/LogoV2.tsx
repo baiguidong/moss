@@ -5,7 +5,7 @@ import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { stringWidth } from '../../ink/stringWidth.js';
 import { getLayoutMode, calculateLayoutDimensions, calculateOptimalLeftWidth, formatWelcomeMessage, truncatePath, getRecentActivitySync, getLogoDisplayData } from '../../utils/logoV2Utils.js';
 import { truncate } from '../../utils/format.js';
-import { Clawd } from './Clawd.js';
+import { MossMark } from './MossMark.js';
 import { FeedColumn } from './FeedColumn.js';
 import { createRecentActivityFeed, createProjectOnboardingFeed } from './feedConfigs.js';
 import { getGlobalConfig } from 'src/utils/config.js';
@@ -19,7 +19,6 @@ import { OffscreenFreeze } from '../OffscreenFreeze.js';
 import { isEnvTruthy } from 'src/utils/envUtils.js';
 import { EmergencyTip } from './EmergencyTip.js';
 import { VoiceModeNotice } from './VoiceModeNotice.js';
-import { Opus1mMergeNotice } from './Opus1mMergeNotice.js';
 import { SandboxManager } from 'src/utils/sandbox/sandbox-adapter.js';
 import { plural } from '../../utils/stringUtils.js';
 import { useAppState } from '../../state/AppState.js';
@@ -112,7 +111,7 @@ export function LogoV2() {
     if ($[15] === Symbol.for("react.memo_cache_sentinel")) {
       t11 = <CondensedLogo />;
       t12 = <VoiceModeNotice />;
-      t13 = <Opus1mMergeNotice />;
+      t13 = null;
       t14 = null;
       t15 = isDebugMode() && <Box paddingLeft={2} flexDirection="column"><Text color="warning">Debug mode enabled</Text><Text dimColor={true}>Logging to: {isDebugToStdErr() ? "stderr" : getDebugLogPath()}</Text></Box>;
       t16 = <EmergencyTip />;
@@ -204,7 +203,7 @@ export function LogoV2() {
     }
     let t12;
     if ($[34] === Symbol.for("react.memo_cache_sentinel")) {
-      t12 = <Box marginY={1}><Clawd /></Box>;
+      t12 = <Box marginY={1}><MossMark /></Box>;
       $[34] = t12;
     } else {
       t12 = $[34];
@@ -222,7 +221,7 @@ export function LogoV2() {
     let t16;
     if ($[37] === Symbol.for("react.memo_cache_sentinel")) {
       t14 = <VoiceModeNotice />;
-      t15 = <Opus1mMergeNotice />;
+      t15 = null;
       t16 = null;
       $[37] = t14;
       $[38] = t15;
@@ -251,10 +250,10 @@ export function LogoV2() {
       t18 = $[42];
       t19 = $[43];
     }
-    return <><OffscreenFreeze><Box flexDirection="column" borderStyle="round" borderColor="claude" borderText={t11} paddingX={1} paddingY={1} alignItems="center" width={columns}><Text bold={true}>{welcomeMessage}</Text>{t12}{t13}<Text dimColor={true}>{billingType}</Text><Text dimColor={true}>{agentName ? `@${agentName} · ${truncatedCwd}` : truncatedCwd}</Text></Box></OffscreenFreeze>{t14}{t15}{t16}{t17}{t18}{t19}</>;
+    return <><OffscreenFreeze><Box flexDirection="column" borderStyle="round" borderColor="claude" borderText={t11} paddingX={1} paddingY={1} alignItems="center" width={columns}><Text bold={true}>{welcomeMessage}</Text>{t12}{t13}{billingType ? <Text dimColor={true}>{billingType}</Text> : null}<Text dimColor={true}>{agentName ? `@${agentName} · ${truncatedCwd}` : truncatedCwd}</Text></Box></OffscreenFreeze>{t14}{t15}{t16}{t17}{t18}{t19}</>;
   }
   const welcomeMessage_0 = formatWelcomeMessage(username);
-  const modelLine = `${modelDisplayName} · ${billingType}`;
+  const modelLine = billingType ? `${modelDisplayName} · ${billingType}` : modelDisplayName;
   const cwdAvailableWidth_0 = agentName ? LEFT_PANEL_MAX_WIDTH - 1 - stringWidth(agentName) - 3 : LEFT_PANEL_MAX_WIDTH;
   const truncatedCwd_0 = truncatePath(cwd, Math.max(cwdAvailableWidth_0, 10));
   const cwdLine = agentName ? `@${agentName} · ${truncatedCwd_0}` : truncatedCwd_0;
@@ -295,7 +294,7 @@ export function LogoV2() {
   }
   let t19;
   if ($[48] === Symbol.for("react.memo_cache_sentinel")) {
-    t19 = <Clawd />;
+    t19 = <MossMark />;
     $[48] = t19;
   } else {
     t19 = $[48];
@@ -383,7 +382,7 @@ export function LogoV2() {
   let t34;
   if ($[75] === Symbol.for("react.memo_cache_sentinel")) {
     t29 = <VoiceModeNotice />;
-    t30 = <Opus1mMergeNotice />;
+    t30 = null;
     t31 = null;
     t32 = isDebugMode() && <Box paddingLeft={2} flexDirection="column"><Text color="warning">Debug mode enabled</Text><Text dimColor={true}>Logging to: {isDebugToStdErr() ? "stderr" : getDebugLogPath()}</Text></Box>;
     t33 = <EmergencyTip />;

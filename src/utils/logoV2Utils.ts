@@ -239,7 +239,7 @@ export function getLogoDisplayData(): {
   const cwd = serverUrl
     ? `${displayPath} in ${serverUrl.replace(/^https?:\/\//, '')}`
     : displayPath
-  const billingType = 'API Usage Billing'
+  const billingType = ''
   const agentName = getInitialSettings().agent
 
   return {
@@ -263,6 +263,14 @@ export function formatModelAndBilling(
   truncatedBilling: string
 } {
   const separator = ' · '
+  if (!billingType) {
+    return {
+      shouldSplit: false,
+      truncatedModel: truncate(modelName, availableWidth),
+      truncatedBilling: '',
+    }
+  }
+
   const combinedWidth =
     stringWidth(modelName) + separator.length + stringWidth(billingType)
   const shouldSplit = combinedWidth > availableWidth
