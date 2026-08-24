@@ -674,7 +674,7 @@ async function run(): Promise<CommanderCommand> {
     if (prompt === 'code') {
       logEvent('tengu_code_prompt_ignored', {});
       // biome-ignore lint/suspicious/noConsole:: intentional console output
-      console.warn(chalk.yellow('Tip: You can launch Claude Code with just `claude`'));
+      console.warn(chalk.yellow('Tip: You can launch Moss with just `moss`'));
       prompt = undefined;
     }
 
@@ -2279,10 +2279,10 @@ async function run(): Promise<CommanderCommand> {
     return program;
   }
 
-  // claude mcp
+  // moss mcp
 
   const mcp = program.command('mcp').description('Configure and manage MCP servers').configureHelp(createSortedHelpConfig()).enablePositionalOptions();
-  mcp.command('serve').description(`Start the Claude Code MCP server`).option('-d, --debug', 'Enable debug mode', () => true).option('--verbose', 'Override verbose mode setting from config', () => true).action(async ({
+  mcp.command('serve').description(`Start the Moss MCP server`).option('-d, --debug', 'Enable debug mode', () => true).option('--verbose', 'Override verbose mode setting from config', () => true).action(async ({
     debug,
     verbose
   }: {
@@ -2334,7 +2334,7 @@ async function run(): Promise<CommanderCommand> {
     await mcpResetChoicesHandler();
   });
 
-  // claude server
+  // moss server
   if (feature('DIRECT_CONNECT')) {
     program.command('server').description('Start the standalone Moss server').action(async () => {
       const { existsSync } = await import('fs');
@@ -2381,11 +2381,11 @@ async function run(): Promise<CommanderCommand> {
     });
   }
 
-  // claude connect — subcommand only handles -p (headless) mode.
+  // moss connect — subcommand only handles -p (headless) mode.
   // Interactive mode (without -p) is handled by early argv rewriting in main()
   // which redirects to the main command with full TUI support.
   if (feature('DIRECT_CONNECT')) {
-    program.command('open <cc-url>').description('Connect to a Claude Code server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--api-key <key>', 'API key used to get an access token').option('--user-email <email>', 'User email used to get an access token').option('--user-password <pwd>', 'User password used to get an access token').option('--profile-mode <mode>', 'Profile mode: session | user').action(async (ccUrl: string, opts: {
+    program.command('open <cc-url>').description('Connect to a Moss server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--api-key <key>', 'API key used to get an access token').option('--user-email <email>', 'User email used to get an access token').option('--user-password <pwd>', 'User password used to get an access token').option('--profile-mode <mode>', 'Profile mode: session | user').action(async (ccUrl: string, opts: {
       print?: string | boolean;
       outputFormat: string;
       apiKey?: string;

@@ -841,10 +841,7 @@ export function hasAccessToIDEExtensionDiffFeature(
   )
 }
 
-const EXTENSION_ID =
-  false
-    ? 'anthropic.claude-code-internal'
-    : 'anthropic.claude-code'
+const EXTENSION_ID = 'moss.moss'
 
 export async function isIDEExtensionInstalled(
   ideType: IdeType,
