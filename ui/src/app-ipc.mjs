@@ -347,6 +347,7 @@ const MossAppEventTypes = [
   'app_update',
   'app_extract_to_workspace',
   'app_get_versions',
+  'browser_open',
   'image_generate',
   'image_edit',
 ]

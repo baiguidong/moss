@@ -80,7 +80,7 @@ export const MossTool = buildTool({
 - app_update: Publish a new App version from buildDir.
 - app_extract_to_workspace: Extract an installed App into the current session workspace.
 - app_get_versions: Get version history of an app
-- browser_open: Open a URL or search query in the Moss right-side browser panel for the current desktop session. Use this when the user asks to open a browser, open a webpage, or search/query something in a browser, for example "打开浏览器，百度查询 今日新闻".
+- browser_open: Open a URL or search query in the Moss right-side browser panel for the current desktop session and bring that panel into view. Use this when the user asks to open a browser, open a webpage, or search/query something in a browser, for example "打开浏览器，百度查询 今日新闻".
 - image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace
 - image_edit: Edit a workspace image via the main-process image handler and write the result into the current session workspace`
   },
@@ -96,6 +96,8 @@ Parameter requirements:
 - app_extract_to_workspace requires \`name\`
 - app_get_versions requires \`name\`
 - browser_open requires either \`url\` or \`query\`; use \`query\` plus \`engine: "baidu"\` when the user says 百度查询/百度搜索 or asks in Chinese without naming another engine
+- When browser_open returns \`ok: true\`, treat the URL/query as delivered to the Moss desktop browser panel. Do not call browser_open again for the same URL just because the user says they cannot see it; instead explain that the browser panel should be visible on the right and give the exact URL/path to check.
+- In Docker or remote sessions, do not start a container-local HTTP server and open \`http://localhost:PORT\` unless that port is known to be published to the desktop host. Prefer opening the existing file URL or a host-reachable URL.
 - image_generate requires \`prompt\` and \`out_path\`; \`out_path\` must be a relative path inside the current session workspace, for example \`images/hero.png\`; optionally accepts \`aspect_ratio\` and \`subject_reference\`
 - image_edit requires \`prompt\`, \`source_path\`, and \`out_path\`; both paths must be relative paths inside the current session workspace
 - image_generate and image_edit return image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
