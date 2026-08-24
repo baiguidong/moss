@@ -13,7 +13,7 @@ import {
   unregisterTeamForSessionCleanup,
 } from '../../utils/swarm/teamHelpers.js'
 import { clearTeammateColors } from '../../utils/swarm/teammateLayoutManager.js'
-import { clearLeaderTeamName } from '../../utils/tasks.js'
+import { clearSessionTaskScope } from '../../utils/tasks.js'
 import { TEAM_DELETE_TOOL_NAME } from './constants.js'
 import { getPrompt } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
@@ -105,8 +105,9 @@ export const TeamDeleteTool: Tool<InputSchema, Output> = buildTool({
       // Clear color assignments so new teams start fresh
       clearTeammateColors()
 
-      // Clear leader team name so getTaskListId() falls back to session ID
-      clearLeaderTeamName()
+      // Clear this session's team task scope so getTaskListId() falls back to
+      // the session scope without affecting other embedded sessions.
+      clearSessionTaskScope()
 
       logEvent('tengu_team_deleted', {
         team_name:

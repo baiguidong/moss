@@ -21,18 +21,11 @@ import { count, uniq } from './array.js'
 import { getFsImplementation } from './fsOperations.js'
 import { readdir, stat } from 'fs/promises'
 import type { IDESelection } from '../hooks/useIdeSelection.js'
-import { TODO_WRITE_TOOL_NAME } from '../tools/TodoWriteTool/constants.js'
 import { TASK_CREATE_TOOL_NAME } from '../tools/TaskCreateTool/constants.js'
 import { TASK_UPDATE_TOOL_NAME } from '../tools/TaskUpdateTool/constants.js'
 import { BASH_TOOL_NAME } from '../tools/BashTool/toolName.js'
 import { SKILL_TOOL_NAME } from '../tools/SkillTool/constants.js'
-import type { TodoList } from './todo/types.js'
-import {
-  type Task,
-  listTasks,
-  getTaskListId,
-  isTodoV2Enabled,
-} from './tasks.js'
+import { type Task, listTasks, getTaskListId } from './tasks.js'
 import { getPlanFilePath, getPlan } from './plans.js'
 import { getConnectedIdeName } from './ide.js'
 import {
@@ -230,7 +223,7 @@ import { removeTeammateFromTeamFile } from './swarm/teamHelpers.js'
 import { unassignTeammateTasks } from './tasks.js'
 import { getCompanionIntroAttachment } from '../buddy/prompt.js'
 
-export const TODO_REMINDER_CONFIG = {
+export const TASK_REMINDER_CONFIG = {
   TURNS_SINCE_WRITE: 10,
   TURNS_BETWEEN_REMINDERS: 10,
 } as const
@@ -452,11 +445,6 @@ export type Attachment =
   | {
       type: 'opened_file_in_ide'
       filename: string
-    }
-  | {
-      type: 'todo_reminder'
-      content: TodoList
-      itemCount: number
     }
   | {
       type: 'task_reminder'
@@ -844,10 +832,8 @@ export async function getAttachments(
     // replaces it; see src/services/skillSearch/prefetch.ts.
     maybe('plan_mode', () => getPlanModeAttachments(messages, toolUseContext)),
     maybe('plan_mode_exit', () => getPlanModeExitAttachment(toolUseContext)),
-    maybe('todo_reminders', () =>
-      isTodoV2Enabled()
-        ? getTaskReminderAttachments(messages, toolUseContext)
-        : getTodoReminderAttachments(messages, toolUseContext),
+    maybe('task_reminders', () =>
+      getTaskReminderAttachments(messages, toolUseContext),
     ),
     ...(isAgentSwarmsEnabled()
       ? [
@@ -3002,101 +2988,6 @@ export function createAttachmentMessage(
   }
 }
 
-function getTodoReminderTurnCounts(messages: Message[]): {
-  turnsSinceLastTodoWrite: number
-  turnsSinceLastReminder: number
-} {
-  let lastTodoWriteIndex = -1
-  let lastReminderIndex = -1
-  let assistantTurnsSinceWrite = 0
-  let assistantTurnsSinceReminder = 0
-
-  // Iterate backwards to find most recent events
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
-
-    if (message?.type === 'assistant') {
-      if (isThinkingMessage(message)) {
-        // Skip thinking messages
-        continue
-      }
-
-      // Check for TodoWrite usage BEFORE incrementing counter
-      // (we don't want to count the TodoWrite message itself as "1 turn since write")
-      if (
-        lastTodoWriteIndex === -1 &&
-        'message' in message &&
-        Array.isArray(message.message?.content) &&
-        message.message.content.some(
-          block => block.type === 'tool_use' && block.name === 'TodoWrite',
-        )
-      ) {
-        lastTodoWriteIndex = i
-      }
-
-      // Count assistant turns before finding events
-      if (lastTodoWriteIndex === -1) assistantTurnsSinceWrite++
-      if (lastReminderIndex === -1) assistantTurnsSinceReminder++
-    } else if (
-      lastReminderIndex === -1 &&
-      message?.type === 'attachment' &&
-      message.attachment.type === 'todo_reminder'
-    ) {
-      lastReminderIndex = i
-    }
-
-    if (lastTodoWriteIndex !== -1 && lastReminderIndex !== -1) {
-      break
-    }
-  }
-
-  return {
-    turnsSinceLastTodoWrite: assistantTurnsSinceWrite,
-    turnsSinceLastReminder: assistantTurnsSinceReminder,
-  }
-}
-
-async function getTodoReminderAttachments(
-  messages: Message[] | undefined,
-  toolUseContext: ToolUseContext,
-): Promise<Attachment[]> {
-  // Skip if TodoWrite tool is not available
-  if (
-    !toolUseContext.options.tools.some(t =>
-      toolMatchesName(t, TODO_WRITE_TOOL_NAME),
-    )
-  ) {
-    return []
-  }
-
-  // Skip if no messages provided
-  if (!messages || messages.length === 0) {
-    return []
-  }
-
-  const { turnsSinceLastTodoWrite, turnsSinceLastReminder } =
-    getTodoReminderTurnCounts(messages)
-
-  // Check if we should show a reminder
-  if (
-    turnsSinceLastTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE &&
-    turnsSinceLastReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS
-  ) {
-    const todoKey = toolUseContext.agentId ?? getSessionId()
-    const appState = toolUseContext.getAppState()
-    const todos = appState.todos[todoKey] ?? []
-    return [
-      {
-        type: 'todo_reminder',
-        content: todos,
-        itemCount: todos.length,
-      },
-    ]
-  }
-
-  return []
-}
-
 function getTaskReminderTurnCounts(messages: Message[]): {
   turnsSinceLastTaskManagement: number
   turnsSinceLastReminder: number
@@ -3157,10 +3048,6 @@ async function getTaskReminderAttachments(
   messages: Message[] | undefined,
   toolUseContext: ToolUseContext,
 ): Promise<Attachment[]> {
-  if (!isTodoV2Enabled()) {
-    return []
-  }
-
   // Skip if TaskUpdate tool is not available
   if (
     !toolUseContext.options.tools.some(t =>
@@ -3180,8 +3067,8 @@ async function getTaskReminderAttachments(
 
   // Check if we should show a reminder
   if (
-    turnsSinceLastTaskManagement >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE &&
-    turnsSinceLastReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS
+    turnsSinceLastTaskManagement >= TASK_REMINDER_CONFIG.TURNS_SINCE_WRITE &&
+    turnsSinceLastReminder >= TASK_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS
   ) {
     const tasks = await listTasks(getTaskListId())
     return [

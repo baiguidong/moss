@@ -1350,6 +1350,9 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getEnabledDesktopMcpServers(),
+    taskScope: sessionRecord
+      ? { kind: 'session', sessionId: sessionRecord.id }
+      : undefined,
   };
 }
 
@@ -2859,7 +2862,7 @@ async function runSessionPrompt({
     sessionId: sessionRecord.id,
     busy: true,
     summary: getSessionSummary(sessionRecord),
-    todos: snapshotSessionTodos(sessionRecord),
+    tasks: snapshotSessionTasks(sessionRecord),
   });
 
   try {
@@ -3021,7 +3024,7 @@ async function runSessionPrompt({
       busy: false,
       summary: getSessionSummary(sessionRecord),
       history: sessionRecord.history,
-      todos: snapshotSessionTodos(sessionRecord),
+      tasks: snapshotSessionTasks(sessionRecord),
     });
     emitSessionHistory(sessionRecord);
     void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
@@ -3073,7 +3076,7 @@ function emitSessionHistory(sessionRecord) {
     sessionId: sessionRecord.id,
     summary: getSessionSummary(sessionRecord),
     history: sessionRecord.history,
-    todos: snapshotSessionTodos(sessionRecord),
+    tasks: snapshotSessionTasks(sessionRecord),
   });
 }
 
@@ -3662,8 +3665,8 @@ function previewPluginAppBuild(buildDir) {
 }
 
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
-const TODO_EMIT_DELAY_MS = 150;
-const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+const SESSION_TASK_EMIT_DELAY_MS = 150;
+const TASK_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 
 function snapshotBackgroundTasks(sessionRecord) {
   try {
@@ -3721,7 +3724,17 @@ function attachBackgroundTaskWatcher(sessionRecord) {
   };
 }
 
-function getSessionTodoKey(sessionRecord) {
+function sanitizeTaskPathComponent(input) {
+  return String(input || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+function getSessionTaskListId(sessionRecord) {
+  try {
+    const runtimeTaskListId = sessionRecord.runtime?.getTaskListId?.();
+    if (typeof runtimeTaskListId === 'string' && runtimeTaskListId.trim()) {
+      return runtimeTaskListId.trim();
+    }
+  } catch {}
   return (
     sessionRecord.runtime?.sessionId ||
     sessionRecord.underlyingSessionId ||
@@ -3729,91 +3742,123 @@ function getSessionTodoKey(sessionRecord) {
   );
 }
 
-function normalizeSessionTodoItems(rawTodos, { clearWhenAllCompleted = false } = {}) {
-  if (!Array.isArray(rawTodos)) return [];
-  const todos = rawTodos
-    .map((todo, index) => ({
-      id: String(index + 1),
-      content: typeof todo?.content === 'string' ? todo.content : '',
-      status: TODO_STATUSES.has(todo?.status) ? todo.status : 'pending',
-      activeForm: typeof todo?.activeForm === 'string' ? todo.activeForm : '',
-    }))
-    .filter((todo) => todo.content.trim().length > 0);
+function getSessionTasksDir(sessionRecord) {
+  return path.join(
+    MOSS_HOME,
+    'tasks',
+    sanitizeTaskPathComponent(getSessionTaskListId(sessionRecord)),
+  );
+}
 
-  if (
-    clearWhenAllCompleted &&
-    todos.length > 0 &&
-    todos.every((todo) => todo.status === 'completed')
-  ) {
+function normalizeSessionTask(rawTask) {
+  if (!rawTask || typeof rawTask !== 'object') return null;
+  const id = typeof rawTask.id === 'string' ? rawTask.id : '';
+  const subject = typeof rawTask.subject === 'string' ? rawTask.subject : '';
+  if (!id.trim() || !subject.trim()) return null;
+  return {
+    id,
+    subject,
+    description: typeof rawTask.description === 'string' ? rawTask.description : '',
+    activeForm: typeof rawTask.activeForm === 'string' ? rawTask.activeForm : '',
+    owner: typeof rawTask.owner === 'string' ? rawTask.owner : null,
+    status: TASK_STATUSES.has(rawTask.status) ? rawTask.status : 'pending',
+    blockedBy: Array.isArray(rawTask.blockedBy)
+      ? rawTask.blockedBy.filter((entry) => typeof entry === 'string')
+      : [],
+  };
+}
+
+function compareTaskIds(a, b) {
+  const left = Number.parseInt(a.id, 10);
+  const right = Number.parseInt(b.id, 10);
+  if (!Number.isNaN(left) && !Number.isNaN(right)) return left - right;
+  return String(a.id).localeCompare(String(b.id));
+}
+
+function snapshotSessionTasks(sessionRecord) {
+  const dir = getSessionTasksDir(sessionRecord);
+  let files = [];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
     return [];
   }
 
-  return todos;
-}
-
-function extractSessionTodosFromHistory(history) {
-  if (!Array.isArray(history)) return [];
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = history[index];
-    if (message?.type !== 'assistant' || !Array.isArray(message?.message?.content)) continue;
-    const toolUse = message.message.content.find(
-      (block) => block?.type === 'tool_use' && block?.name === 'TodoWrite',
-    );
-    if (!toolUse || toolUse.type !== 'tool_use') continue;
-    return normalizeSessionTodoItems(toolUse.input?.todos, {
-      clearWhenAllCompleted: true,
-    });
+  const tasks = [];
+  for (const file of files) {
+    if (!file.endsWith('.json') || file.startsWith('.')) continue;
+    const filePath = path.join(dir, file);
+    try {
+      const rawTask = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (rawTask?.metadata?._internal) continue;
+      const task = normalizeSessionTask(rawTask);
+      if (task) tasks.push(task);
+    } catch {}
   }
-  return [];
+  return tasks.sort(compareTaskIds);
 }
 
-function snapshotSessionTodos(sessionRecord, historyFallback = sessionRecord?.history) {
-  try {
-    const state = sessionRecord.runtime?.getAppState?.();
-    const todoBuckets = state?.todos;
-    if (todoBuckets && typeof todoBuckets === 'object') {
-      const todoKey = getSessionTodoKey(sessionRecord);
-      if (Object.prototype.hasOwnProperty.call(todoBuckets, todoKey)) {
-        return normalizeSessionTodoItems(todoBuckets[todoKey]);
-      }
-    }
-  } catch {
-    // Fall back to transcript history below.
-  }
-  return extractSessionTodosFromHistory(historyFallback);
-}
-
-function attachTodoWatcher(sessionRecord) {
+function attachSessionTaskWatcher(sessionRecord) {
   const runtime = sessionRecord?.runtime;
   if (!runtime || typeof runtime.subscribe !== 'function') return;
-  if (sessionRecord.todoWatcherRuntime === runtime) return;
-  sessionRecord.todoUnsubscribe?.();
+  if (sessionRecord.sessionTaskWatcherRuntime === runtime) return;
+  sessionRecord.sessionTaskUnsubscribe?.();
 
-  let lastJson = JSON.stringify(snapshotSessionTodos(sessionRecord));
+  let lastJson = JSON.stringify(snapshotSessionTasks(sessionRecord));
+  let watchedDir = null;
+  let fsWatcher = null;
   let timer = null;
-  const emitSnapshot = () => {
+
+  const scheduleSnapshot = () => {
+    if (!timer) {
+      timer = setTimeout(emitSnapshot, SESSION_TASK_EMIT_DELAY_MS);
+    }
+  };
+
+  const syncFileWatcher = () => {
+    const nextDir = getSessionTasksDir(sessionRecord);
+    if (nextDir === watchedDir && fsWatcher) return;
+    try {
+      fsWatcher?.close();
+    } catch {}
+    fsWatcher = null;
+    watchedDir = nextDir;
+    if (!fs.existsSync(nextDir)) return;
+    try {
+      fsWatcher = fs.watch(nextDir, scheduleSnapshot);
+      fsWatcher.unref?.();
+    } catch {
+      fsWatcher = null;
+    }
+  };
+
+  function emitSnapshot() {
     timer = null;
     if (sessionRecord.runtime !== runtime) return;
-    const todos = snapshotSessionTodos(sessionRecord);
-    const json = JSON.stringify(todos);
+    syncFileWatcher();
+    const tasks = snapshotSessionTasks(sessionRecord);
+    const json = JSON.stringify(tasks);
     if (json === lastJson) return;
     lastJson = json;
-    emitToRenderer('agent:state', { sessionId: sessionRecord.id, todos });
-  };
-  const unsubscribe = runtime.subscribe(() => {
-    if (!timer) {
-      timer = setTimeout(emitSnapshot, TODO_EMIT_DELAY_MS);
-    }
-  });
-  sessionRecord.todoWatcherRuntime = runtime;
-  sessionRecord.todoUnsubscribe = () => {
+    emitToRenderer('agent:state', { sessionId: sessionRecord.id, tasks });
+  }
+
+  const unsubscribe = runtime.subscribe(scheduleSnapshot);
+  syncFileWatcher();
+  sessionRecord.sessionTaskWatcherRuntime = runtime;
+  sessionRecord.sessionTaskUnsubscribe = () => {
     if (timer) clearTimeout(timer);
     timer = null;
     try {
+      fsWatcher?.close();
+    } catch {}
+    fsWatcher = null;
+    watchedDir = null;
+    try {
       unsubscribe?.();
     } catch {}
-    sessionRecord.todoWatcherRuntime = null;
-    sessionRecord.todoUnsubscribe = null;
+    sessionRecord.sessionTaskWatcherRuntime = null;
+    sessionRecord.sessionTaskUnsubscribe = null;
   };
 }
 
@@ -3914,7 +3959,7 @@ function disposeSessionRuntime(sessionRecord) {
       sessionRecord.backgroundTaskUnsubscribe?.();
     } catch {}
     try {
-      sessionRecord.todoUnsubscribe?.();
+      sessionRecord.sessionTaskUnsubscribe?.();
     } catch {}
     try {
       sessionRecord.runtime.abort();
@@ -4044,7 +4089,7 @@ function disposeRuntime(sessionRecord) {
     sessionRecord.backgroundTaskUnsubscribe?.();
   } catch {}
   try {
-    sessionRecord.todoUnsubscribe?.();
+    sessionRecord.sessionTaskUnsubscribe?.();
   } catch {}
   sessionRecord.runtime.dispose();
   sessionRecord.runtime = null;
@@ -4187,13 +4232,13 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
         sessionRecord.backgroundTaskUnsubscribe?.()
       } catch {}
       try {
-        sessionRecord.todoUnsubscribe?.()
+        sessionRecord.sessionTaskUnsubscribe?.()
       } catch {}
       sessionRecord.runtime.dispose()
       sessionRecord.runtime = null
     } else {
       attachBackgroundTaskWatcher(sessionRecord);
-      attachTodoWatcher(sessionRecord);
+      attachSessionTaskWatcher(sessionRecord);
       return sessionRecord.runtime
     }
   }
@@ -4227,7 +4272,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
   attachBackgroundTaskWatcher(sessionRecord);
-  attachTodoWatcher(sessionRecord);
+  attachSessionTaskWatcher(sessionRecord);
 
   // Coordinator mode: teammate windows disabled - all events flow through main coordinator's runtime.send() stream
   // All teammate events are already routed through the main coordinator session via the SDK
@@ -4241,7 +4286,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   }
   if (sessionRecord.runtime) {
     attachBackgroundTaskWatcher(sessionRecord);
-    attachTodoWatcher(sessionRecord);
+    attachSessionTaskWatcher(sessionRecord);
     return {
       history: sessionRecord.history,
       metadata: {
@@ -4280,7 +4325,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
 
     sessionRecord.runtime = resumed.session;
     attachBackgroundTaskWatcher(sessionRecord);
-    attachTodoWatcher(sessionRecord);
+    attachSessionTaskWatcher(sessionRecord);
     sessionRecord.resumeReadOnlyReason = null;
     sessionRecord.underlyingSessionId = resumed.metadata.sourceSessionId || resumed.metadata.sessionId;
     if (!Array.isArray(sessionRecord.history) || sessionRecord.history.length === 0) {
@@ -5396,7 +5441,7 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
       ...getSessionSummary(sessionRecord),
       history: sessionRecord.history,
       workerSummariesJson: sessionRecord.workerSummariesJson || null,
-      todos: snapshotSessionTodos(sessionRecord),
+      tasks: snapshotSessionTasks(sessionRecord),
     },
   };
 });
@@ -5408,7 +5453,7 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
     ...getSessionSummary(sessionRecord),
     history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
-    todos: snapshotSessionTodos(sessionRecord, history),
+    tasks: snapshotSessionTasks(sessionRecord),
   };
 });
 
@@ -5501,7 +5546,7 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
     ...getSessionSummary(sessionRecord),
     history: sessionRecord.history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
-    todos: snapshotSessionTodos(sessionRecord),
+    tasks: snapshotSessionTasks(sessionRecord),
   };
 });
 
@@ -5579,7 +5624,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
       ...getSessionSummary(sessionRecord),
       history: sessionRecord.history,
       workerSummariesJson: sessionRecord.workerSummariesJson || null,
-      todos: snapshotSessionTodos(sessionRecord),
+      tasks: snapshotSessionTasks(sessionRecord),
     };
   }
   sessionRecord.workspace = normalizeWorkspace(workspace);
@@ -5592,7 +5637,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
     ...getSessionSummary(sessionRecord),
     history: sessionRecord.history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
-    todos: snapshotSessionTodos(sessionRecord),
+    tasks: snapshotSessionTasks(sessionRecord),
   };
 });
 

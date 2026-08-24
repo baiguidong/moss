@@ -81,11 +81,6 @@ export const SUPPORTED_SETTINGS: Record<string, SettingConfig> = {
     type: 'boolean',
     description: 'Show OSC 9;4 progress indicator in supported terminals',
   },
-  todoFeatureEnabled: {
-    source: 'global',
-    type: 'boolean',
-    description: 'Enable todo/task tracking',
-  },
   model: {
     source: 'settings',
     type: 'string',

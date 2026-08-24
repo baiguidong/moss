@@ -26,8 +26,10 @@ import {
 import { assignTeammateColor } from '../../utils/swarm/teammateLayoutManager.js'
 import {
   ensureTasksDir,
+  getTaskListIdForScope,
   resetTaskList,
-  setLeaderTeamName,
+  setSessionTaskScope,
+  type TaskScope,
 } from '../../utils/tasks.js'
 import { generateWordSlug } from '../../utils/words.js'
 import { TEAM_CREATE_TOOL_NAME } from './constants.js'
@@ -176,16 +178,19 @@ export const TeamCreateTool: Tool<InputSchema, Output> = buildTool({
     // unless explicitly TeamDelete'd (gh-32730).
     registerTeamForSessionCleanup(finalTeamName)
 
-    // Reset and create the corresponding task list directory (Team = Project = TaskList)
+    // Reset and create the corresponding task list directory (Team = TaskList)
     // This ensures task numbering starts fresh at 1 for each new swarm
-    const taskListId = sanitizeName(finalTeamName)
+    const teamTaskScope: TaskScope = {
+      kind: 'team',
+      teamId: sanitizeName(finalTeamName),
+    }
+    const taskListId = getTaskListIdForScope(teamTaskScope)
     await resetTaskList(taskListId)
     await ensureTasksDir(taskListId)
 
-    // Register the team name so getTaskListId() returns it for the leader.
-    // Without this, the leader falls through to getSessionId() and writes tasks
-    // to a different directory than tmux/iTerm2 teammates expect.
-    setLeaderTeamName(sanitizeName(finalTeamName))
+    // Register a session-scoped task scope for the leader. This avoids a
+    // process-global team override leaking across embedded desktop sessions.
+    setSessionTaskScope(teamTaskScope)
 
     // Update AppState with team context
     setAppState(prev => ({

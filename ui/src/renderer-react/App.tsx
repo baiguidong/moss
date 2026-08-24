@@ -963,7 +963,7 @@ export default function App() {
     });
 
     const offState = window.agentDesktop.onState((payload) => {
-      const hasTodosPayload = Array.isArray(payload?.todos);
+      const hasSessionTasksPayload = Array.isArray(payload?.tasks);
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
@@ -978,17 +978,17 @@ export default function App() {
               ...prev,
               ...payload.summary,
               ...(Array.isArray(nextHistory) ? { history: nextHistory } : {}),
-              ...(hasTodosPayload ? { todos: payload.todos } : {}),
+              ...(hasSessionTasksPayload ? { tasks: payload.tasks } : {}),
             };
             activeDetailRef.current = next;
             return next;
           });
         }
       }
-      if (!payload?.summary && hasTodosPayload && payload?.sessionId === activeSessionIdRef.current) {
+      if (!payload?.summary && hasSessionTasksPayload && payload?.sessionId === activeSessionIdRef.current) {
         setActiveDetail((prev) => {
           if (!prev) return prev;
-          const next = { ...prev, todos: payload.todos };
+          const next = { ...prev, tasks: payload.tasks };
           activeDetailRef.current = next;
           return next;
         });
@@ -1052,7 +1052,7 @@ export default function App() {
             ...prev,
             ...(payload.summary || {}),
             history: nextHistory || prev.history || [],
-            ...(Array.isArray(payload.todos) ? { todos: payload.todos } : {}),
+            ...(Array.isArray(payload.tasks) ? { tasks: payload.tasks } : {}),
           };
           activeDetailRef.current = next;
           return next;
@@ -2198,7 +2198,7 @@ export default function App() {
                 onActivatePreview={setActivePreviewPath}
                 previewTitle={activePreview?.relativePath || '未选择文件'}
                 sessionId={activeSessionId}
-                todos={activeDetail?.todos || []}
+                sessionTasks={activeDetail?.tasks || []}
               />
             </div>
           </>

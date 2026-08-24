@@ -22,7 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { BrowserPanel, openBrowserPanelUrl } from "@/components/browser-panel";
 import { FileTree } from "@/components/file-tree";
-import type { FileTreeNode, SessionTodo, SessionTodoStatus, WorkspacePreviewData } from "@/types";
+import type { FileTreeNode, SessionTask, SessionTaskStatus, WorkspacePreviewData } from "@/types";
 
 export type PreviewTabData = WorkspacePreviewData;
 type TaskPanelView = "overview" | "files" | "browser" | "changes";
@@ -34,7 +34,7 @@ const viewMeta: Record<TaskPanelView, { label: string; title: string; icon: Reac
   changes: { label: "变更", title: "变更", icon: FileClock },
 };
 
-const todoStatusMeta: Record<SessionTodoStatus, {
+const taskStatusMeta: Record<SessionTaskStatus, {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   iconClassName: string;
@@ -60,11 +60,11 @@ const todoStatusMeta: Record<SessionTodoStatus, {
   },
 };
 
-function getTodoDisplayText(todo: SessionTodo): string {
-  if (todo.status === "in_progress" && todo.activeForm?.trim()) {
-    return todo.activeForm.trim();
+function getTaskDisplayText(task: SessionTask): string {
+  if (task.status === "in_progress" && task.activeForm?.trim()) {
+    return task.activeForm.trim();
   }
-  return todo.content;
+  return task.subject;
 }
 
 function previewLabel(tab: WorkspacePreviewData): string {
@@ -130,7 +130,7 @@ export function TaskPanel({
   onActivatePreview,
   previewTitle,
   sessionId,
-  todos,
+  sessionTasks,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -148,7 +148,7 @@ export function TaskPanel({
   onActivatePreview: (path: string) => void;
   previewTitle: string;
   sessionId?: string | null;
-  todos?: SessionTodo[];
+  sessionTasks?: SessionTask[];
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
@@ -159,17 +159,17 @@ export function TaskPanel({
   );
   const visibleFileCount = React.useMemo(() => countFiles(treeItems), [treeItems]);
   const dirtyPreviewCount = React.useMemo(() => previewTabs.filter(isDirtyPreview).length, [previewTabs]);
-  const todoCounts = React.useMemo(() => {
-    const counts: Record<SessionTodoStatus, number> = {
+  const taskCounts = React.useMemo(() => {
+    const counts: Record<SessionTaskStatus, number> = {
       pending: 0,
       in_progress: 0,
       completed: 0,
     };
-    for (const todo of todos || []) {
-      counts[todo.status] += 1;
+    for (const task of sessionTasks || []) {
+      counts[task.status] += 1;
     }
     return counts;
-  }, [todos]);
+  }, [sessionTasks]);
 
   React.useEffect(() => {
     const unsubscribe = window.agentDesktop.browser.onOpen((payload) => {
@@ -257,39 +257,39 @@ export function TaskPanel({
                   <div className="mb-2.5 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
                       <ListChecks className="h-3.5 w-3.5 shrink-0" />
-                      <span>会话待办</span>
+                      <span>会话任务</span>
                     </div>
-                    <Badge variant={(todos?.length || 0) > 0 ? "default" : "secondary"}>
-                      {todos?.length || 0} 项
+                    <Badge variant={(sessionTasks?.length || 0) > 0 ? "default" : "secondary"}>
+                      {sessionTasks?.length || 0} 项
                     </Badge>
                   </div>
 
-                  {(todos?.length || 0) > 0 ? (
+                  {(sessionTasks?.length || 0) > 0 ? (
                     <>
                       <div className="mb-2 grid grid-cols-3 gap-1.5 text-[11px] text-muted-foreground">
                         <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
-                          {todoCounts.in_progress} 进行中
+                          {taskCounts.in_progress} 进行中
                         </div>
                         <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
-                          {todoCounts.pending} 待处理
+                          {taskCounts.pending} 待处理
                         </div>
                         <div className="rounded-md border border-border/55 bg-background/55 px-2 py-1">
-                          {todoCounts.completed} 已完成
+                          {taskCounts.completed} 已完成
                         </div>
                       </div>
                       <div className="space-y-1.5">
-                        {todos!.map((todo) => {
-                          const meta = todoStatusMeta[todo.status];
+                        {sessionTasks!.map((task) => {
+                          const meta = taskStatusMeta[task.status];
                           const Icon = meta.icon;
-                          const displayText = getTodoDisplayText(todo);
+                          const displayText = getTaskDisplayText(task);
                           const showOriginal =
-                            todo.status === "in_progress" &&
-                            Boolean(todo.activeForm?.trim()) &&
-                            todo.activeForm?.trim() !== todo.content.trim();
+                            task.status === "in_progress" &&
+                            Boolean(task.activeForm?.trim()) &&
+                            task.activeForm?.trim() !== task.subject.trim();
 
                           return (
                             <div
-                              key={todo.id}
+                              key={task.id}
                               className={cn(
                                 "flex gap-2 rounded-md border px-2 py-2",
                                 meta.rowClassName,
@@ -300,15 +300,23 @@ export function TaskPanel({
                                 <div
                                   className={cn(
                                     "break-words text-xs leading-snug text-foreground",
-                                    todo.status === "in_progress" && "font-medium",
-                                    todo.status === "completed" && "text-muted-foreground line-through",
+                                    task.status === "in_progress" && "font-medium",
+                                    task.status === "completed" && "text-muted-foreground line-through",
                                   )}
                                 >
                                   {displayText}
                                 </div>
                                 {showOriginal ? (
                                   <div className="mt-1 break-words text-[11px] leading-snug text-muted-foreground">
-                                    {todo.content}
+                                    {task.subject}
+                                  </div>
+                                ) : null}
+                                {task.owner || task.blockedBy.length > 0 ? (
+                                  <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                                    {task.owner ? <span>@{task.owner}</span> : null}
+                                    {task.blockedBy.length > 0 ? (
+                                      <span>阻塞于 #{task.blockedBy.join(", #")}</span>
+                                    ) : null}
                                   </div>
                                 ) : null}
                               </div>
@@ -322,7 +330,7 @@ export function TaskPanel({
                     </>
                   ) : (
                     <div className="rounded-md border border-dashed border-border/65 bg-background/45 px-2 py-2 text-xs text-muted-foreground">
-                      当前会话还没有 TodoWrite 待办。
+                      当前会话还没有任务。
                     </div>
                   )}
                 </div>

@@ -6,7 +6,6 @@ import type { Task } from '../utils/tasks.js'
 import {
   getTaskListId,
   getTasksDir,
-  isTodoV2Enabled,
   listTasks,
   onTasksUpdated,
   resetTaskList,
@@ -18,7 +17,7 @@ const DEBOUNCE_MS = 50
 const FALLBACK_POLL_MS = 5000 // Fallback in case fs.watch misses events
 
 /**
- * Singleton store for the TodoV2 task list. Owns the file watcher, timers,
+ * Singleton store for the file-backed task list. Owns the file watcher, timers,
  * and cached task list. Multiple hook instances (REPL, Spinner,
  * PromptInputFooterLeftSide) subscribe to one shared store instead of each
  * setting up their own fs.watch on the same directory. The Spinner mounts/
@@ -85,7 +84,7 @@ class TasksV2Store {
   /**
    * Point the file watcher at the current tasks directory. Called on start
    * and whenever #fetch detects the task list ID has changed (e.g. when
-   * TeamCreateTool sets leaderTeamName mid-session).
+   * TeamCreateTool sets a session task scope mid-session).
    */
   #rewatch(dir: string): void {
     // Retry even on same dir if the previous watch attempt failed (dir
@@ -112,8 +111,8 @@ class TasksV2Store {
 
   #fetch = async (): Promise<void> => {
     const taskListId = getTaskListId()
-    // Task list ID can change mid-session (TeamCreateTool sets
-    // leaderTeamName) — point the watcher at the current dir.
+    // Task list ID can change mid-session (TeamCreateTool sets a session task
+    // scope) — point the watcher at the current dir.
     this.#rewatch(getTasksDir(taskListId))
     const current = (await listTasks(taskListId)).filter(
       t => !t.metadata?._internal,
@@ -211,14 +210,14 @@ const NOOP_SNAPSHOT = (): undefined => undefined
 
 /**
  * Hook to get the current task list for the persistent UI display.
- * Returns tasks when TodoV2 is enabled, otherwise returns undefined.
+ * Returns tasks for the current session/team scope.
  * All hook instances share a single file watcher via TasksV2Store.
  * Hides the list after 5 seconds if there are no open tasks.
  */
 export function useTasksV2(): Task[] | undefined {
   const teamContext = useAppState(s => s.teamContext)
 
-  const enabled = isTodoV2Enabled() && (!teamContext || isTeamLead(teamContext))
+  const enabled = !teamContext || isTeamLead(teamContext)
 
   const store = enabled ? getStore() : null
 

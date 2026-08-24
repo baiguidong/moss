@@ -362,7 +362,7 @@ Request ID: ${requestId}`,
 
     return {
       type: 'tool_result',
-      content: `User has approved your plan. You can now start coding. Start with updating your todo list if applicable
+      content: `User has approved your plan. You can now start coding. Start with updating your task list if applicable
 
 Your plan has been saved to: ${filePath}
 You can refer back to it if needed during implementation.${teamHint}

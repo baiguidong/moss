@@ -17,7 +17,10 @@ import { FILE_READ_TOOL_NAME } from '../FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../FileWriteTool/prompt.js'
 import { GLOB_TOOL_NAME } from '../GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from '../GrepTool/prompt.js'
-import { TodoWriteTool } from '../TodoWriteTool/TodoWriteTool.js'
+import { TASK_CREATE_TOOL_NAME } from '../TaskCreateTool/constants.js'
+import { TASK_GET_TOOL_NAME } from '../TaskGetTool/constants.js'
+import { TASK_LIST_TOOL_NAME } from '../TaskListTool/constants.js'
+import { TASK_UPDATE_TOOL_NAME } from '../TaskUpdateTool/constants.js'
 import { BASH_TOOL_NAME } from './toolName.js'
 
 export function getDefaultTimeoutMs(): number {
@@ -39,6 +42,12 @@ function getCommitAndPRInstructions(): string {
   if (!shouldIncludeGitInstructions()) return ''
 
   const { commit: commitAttribution, pr: prAttribution } = getAttributionTexts()
+  const taskToolNames = [
+    TASK_CREATE_TOOL_NAME,
+    TASK_GET_TOOL_NAME,
+    TASK_LIST_TOOL_NAME,
+    TASK_UPDATE_TOOL_NAME,
+  ].join(', ')
 
   return `# Committing changes with git
 
@@ -73,7 +82,7 @@ Git Safety Protocol:
 
 Important notes:
 - NEVER run additional commands to read or explore code, besides git bash commands
-- NEVER use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
+- NEVER use the ${taskToolNames} or ${AGENT_TOOL_NAME} tools
 - DO NOT push to the remote repository unless the user explicitly asks you to do so
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
@@ -115,7 +124,7 @@ EOF
 </example>
 
 Important:
-- DO NOT use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
+- DO NOT use the ${taskToolNames} or ${AGENT_TOOL_NAME} tools
 - Return the PR URL when you're done, so the user can see it
 
 # Other common operations

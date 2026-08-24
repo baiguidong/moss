@@ -262,9 +262,8 @@ export type GlobalConfig = {
   // Plan mode usage tracking
   lastPlanModeUse?: number // Timestamp of last plan mode usage
 
-  // Todo feature configuration
-  todoFeatureEnabled: boolean // Whether the todo feature is enabled
-  showExpandedTodos?: boolean // Whether to show todos expanded, even when empty
+  // Task list display configuration
+  showExpandedTodos?: boolean // Whether to show tasks expanded, even when empty
   showSpinnerTree?: boolean // Whether to show the teammate spinner tree instead of pills
 
   // First start time tracking
@@ -413,7 +412,6 @@ function createDefaultGlobalConfig(): GlobalConfig {
     memoryUsageCount: 0,
     promptQueueUseCount: 0,
     btwUseCount: 0,
-    todoFeatureEnabled: true,
     showExpandedTodos: false,
     messageIdleNotifThresholdMs: 60000,
     autoConnectIde: false,
@@ -443,7 +441,6 @@ export const GLOBAL_CONFIG_KEYS = [
   'diffTool',
   'env',
   'tipsHistory',
-  'todoFeatureEnabled',
   'showExpandedTodos',
   'messageIdleNotifThresholdMs',
   'autoConnectIde',

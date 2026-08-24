@@ -1,10 +1,10 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { z } from 'zod/v4'
-import { getIsNonInteractiveSession, getSessionId } from '../bootstrap/state.js'
+import { getSessionId } from '../bootstrap/state.js'
 import { uniq } from './array.js'
 import { logForDebugging } from './debug.js'
-import { getMossConfigHomeDir, getTeamsDir, isEnvTruthy } from './envUtils.js'
+import { getMossConfigHomeDir, getTeamsDir } from './envUtils.js'
 import { errorMessage, getErrnoCode } from './errors.js'
 import { lazySchema } from './lazySchema.js'
 import * as lockfile from './lockfile.js'
@@ -13,37 +13,64 @@ import { createSignal } from './signal.js'
 import { jsonParse, jsonStringify } from './slowOperations.js'
 import { getTeamName } from './teammate.js'
 import { getTeammateContext } from './teammateContext.js'
+import { getTaskScopeContext, type TaskScope } from './sessionIdContext.js'
 
 // Listeners for task list updates (used for immediate UI refresh in same process)
 const tasksUpdated = createSignal()
 
-/**
- * Team name set by the leader when creating a team.
- * Used by getTaskListId() so the leader's tasks are stored under the team name
- * (matching where tmux/iTerm2 teammates look), not under the session ID.
- */
-let leaderTeamName: string | undefined
+const sessionTaskScopes = new Map<string, TaskScope>()
 
-/**
- * Sets the leader's team name for task list resolution.
- * Called by TeamCreateTool when a team is created.
- */
-export function setLeaderTeamName(teamName: string): void {
-  if (leaderTeamName === teamName) return
-  leaderTeamName = teamName
-  // Changing the task list ID is a "tasks updated" event for subscribers —
-  // they're now looking at a different directory.
+export { type TaskScope }
+
+export function getTaskListIdForScope(scope: TaskScope): string {
+  switch (scope.kind) {
+    case 'project':
+      return `project-${scope.projectId}`
+    case 'team':
+      return scope.projectId
+        ? `project-${scope.projectId}__team-${sanitizeName(scope.teamId)}`
+        : sanitizeName(scope.teamId)
+    case 'session':
+    default:
+      return scope.projectId
+        ? `project-${scope.projectId}__session-${scope.sessionId}`
+        : scope.sessionId
+  }
+}
+
+export function setSessionTaskScope(scope: TaskScope): void {
+  const sessionId = getSessionId()
+  const previous = sessionTaskScopes.get(sessionId)
+  if (previous && getTaskListIdForScope(previous) === getTaskListIdForScope(scope)) {
+    return
+  }
+  sessionTaskScopes.set(sessionId, scope)
   notifyTasksUpdated()
 }
 
-/**
- * Clears the leader's team name.
- * Called when a team is deleted.
- */
-export function clearLeaderTeamName(): void {
-  if (leaderTeamName === undefined) return
-  leaderTeamName = undefined
+export function clearSessionTaskScope(): void {
+  const sessionId = getSessionId()
+  if (!sessionTaskScopes.has(sessionId)) return
+  sessionTaskScopes.delete(sessionId)
   notifyTasksUpdated()
+}
+
+export function discardSessionTaskScope(sessionId: string): void {
+  sessionTaskScopes.delete(sessionId)
+}
+
+export function getTaskListIdForSession(
+  sessionId: string,
+  fallbackScope?: TaskScope,
+): string {
+  const sessionScope = sessionTaskScopes.get(sessionId)
+  if (sessionScope) {
+    return getTaskListIdForScope(sessionScope)
+  }
+  if (fallbackScope) {
+    return getTaskListIdForScope(fallbackScope)
+  }
+  return sessionId
 }
 
 /**
@@ -130,14 +157,6 @@ async function writeHighWaterMark(
   await writeFile(path, String(value))
 }
 
-export function isTodoV2Enabled(): boolean {
-  // Force-enable tasks in non-interactive mode (e.g. SDK users who want Task tools over TodoWrite)
-  if (isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_TASKS)) {
-    return true
-  }
-  return !getIsNonInteractiveSession()
-}
-
 /**
  * Resets the task list for a new swarm - clears any existing tasks.
  * Writes a high water mark file to prevent ID reuse after reset.
@@ -188,25 +207,40 @@ export async function resetTaskList(taskListId: string): Promise<void> {
 }
 
 /**
- * Gets the task list ID based on the current context.
+ * Gets the task list ID based on the current execution scope.
  * Priority:
- * 1. CLAUDE_CODE_TASK_LIST_ID - explicit task list ID
- * 2. In-process teammate: leader's team name (so teammates share the leader's task list)
- * 3. CLAUDE_CODE_TEAM_NAME - set when running as a process-based teammate
- * 4. Leader team name - set when the leader creates a team via TeamCreate
- * 5. Session ID - fallback for standalone sessions
+ * 1. In-process teammate context: teammates always share the team list.
+ * 2. Session override: set by TeamCreate/TeamDelete for this session only.
+ * 3. AsyncLocalStorage task scope: provided by embedded ClaudeSession.
+ * 4. Dynamic team context: process-based teammate compatibility.
+ * 5. Session ID: fallback for standalone sessions.
  */
 export function getTaskListId(): string {
-  if (process.env.CLAUDE_CODE_TASK_LIST_ID) {
-    return process.env.CLAUDE_CODE_TASK_LIST_ID
-  }
-  // In-process teammates use the leader's team name so they share the same
-  // task list that tmux/iTerm2 teammates also resolve to.
   const teammateCtx = getTeammateContext()
   if (teammateCtx) {
-    return teammateCtx.teamName
+    return getTaskListIdForScope({
+      kind: 'team',
+      teamId: teammateCtx.teamName,
+    })
   }
-  return getTeamName() || leaderTeamName || getSessionId()
+
+  const sessionId = getSessionId()
+  const sessionScope = sessionTaskScopes.get(sessionId)
+  if (sessionScope) {
+    return getTaskListIdForScope(sessionScope)
+  }
+
+  const contextScope = getTaskScopeContext()
+  if (contextScope) {
+    return getTaskListIdForScope(contextScope)
+  }
+
+  const teamName = getTeamName()
+  if (teamName) {
+    return getTaskListIdForScope({ kind: 'team', teamId: teamName })
+  }
+
+  return sessionId
 }
 
 /**
@@ -743,7 +777,7 @@ async function readTeamMembers(
  * An agent is considered "idle" if they don't own any open tasks.
  * An agent is considered "busy" if they own at least one open task.
  *
- * @param teamName - The name of the team (also used as taskListId)
+ * @param teamName - The name of the team
  * @returns Array of agent statuses, or null if team not found
  */
 export async function getAgentStatuses(
@@ -754,7 +788,7 @@ export async function getAgentStatuses(
     return null
   }
 
-  const taskListId = sanitizeName(teamName)
+  const taskListId = getTaskListIdForScope({ kind: 'team', teamId: teamName })
   const allTasks = await listTasks(taskListId)
 
   // Get unresolved tasks grouped by owner (open or in_progress)
@@ -795,7 +829,7 @@ export type UnassignTasksResult = {
  * Unassigns all open tasks from a teammate and builds a notification message.
  * Used when a teammate is killed or gracefully shuts down.
  *
- * @param teamName - The team/task list name
+ * @param teamName - The team name
  * @param teammateId - The teammate's agent ID
  * @param teammateName - The teammate's display name
  * @param reason - How the teammate exited ('terminated' | 'shutdown')
@@ -807,7 +841,8 @@ export async function unassignTeammateTasks(
   teammateName: string,
   reason: 'terminated' | 'shutdown',
 ): Promise<UnassignTasksResult> {
-  const tasks = await listTasks(teamName)
+  const taskListId = getTaskListIdForScope({ kind: 'team', teamId: teamName })
+  const tasks = await listTasks(taskListId)
   const unresolvedAssignedTasks = tasks.filter(
     t =>
       t.status !== 'completed' &&
@@ -816,7 +851,10 @@ export async function unassignTeammateTasks(
 
   // Unassign each task and reset status to open
   for (const task of unresolvedAssignedTasks) {
-    await updateTask(teamName, task.id, { owner: undefined, status: 'pending' })
+    await updateTask(taskListId, task.id, {
+      owner: undefined,
+      status: 'pending',
+    })
   }
 
   if (unresolvedAssignedTasks.length > 0) {

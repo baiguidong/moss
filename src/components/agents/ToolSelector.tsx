@@ -16,9 +16,10 @@ import { GrepTool } from 'src/tools/GrepTool/GrepTool.js';
 import { ListMcpResourcesTool } from 'src/tools/ListMcpResourcesTool/ListMcpResourcesTool.js';
 import { NotebookEditTool } from 'src/tools/NotebookEditTool/NotebookEditTool.js';
 import { ReadMcpResourceTool } from 'src/tools/ReadMcpResourceTool/ReadMcpResourceTool.js';
+import { TaskGetTool } from 'src/tools/TaskGetTool/TaskGetTool.js';
+import { TaskListTool } from 'src/tools/TaskListTool/TaskListTool.js';
 import { TaskOutputTool } from 'src/tools/TaskOutputTool/TaskOutputTool.js';
 import { TaskStopTool } from 'src/tools/TaskStopTool/TaskStopTool.js';
-import { TodoWriteTool } from 'src/tools/TodoWriteTool/TodoWriteTool.js';
 import { WebFetchTool } from 'src/tools/WebFetchTool/WebFetchTool.js';
 import { WebSearchTool } from 'src/tools/WebSearchTool/WebSearchTool.js';
 import type { KeyboardEvent } from '../../ink/events/keyboard-event.js';
@@ -49,7 +50,7 @@ function getToolBuckets(): ToolBuckets {
   return {
     READ_ONLY: {
       name: 'Read-only tools',
-      toolNames: new Set([GlobTool.name, GrepTool.name, ExitPlanModeV2Tool.name, FileReadTool.name, WebFetchTool.name, TodoWriteTool.name, WebSearchTool.name, TaskStopTool.name, TaskOutputTool.name, ListMcpResourcesTool.name, ReadMcpResourceTool.name])
+      toolNames: new Set([GlobTool.name, GrepTool.name, ExitPlanModeV2Tool.name, FileReadTool.name, WebFetchTool.name, TaskGetTool.name, TaskListTool.name, WebSearchTool.name, TaskStopTool.name, TaskOutputTool.name, ListMcpResourcesTool.name, ReadMcpResourceTool.name])
     },
     EDIT: {
       name: 'Edit tools',

@@ -13,7 +13,6 @@ import {
   deleteTask,
   getTask,
   getTaskListId,
-  isTodoV2Enabled,
   listTasks,
   type TaskStatus,
   TaskStatusSchema,
@@ -106,7 +105,7 @@ export const TaskUpdateTool = buildTool({
   },
   shouldDefer: true,
   isEnabled() {
-    return isTodoV2Enabled()
+    return true
   },
   isConcurrencySafe() {
     return true
@@ -178,7 +177,7 @@ export const TaskUpdateTool = buildTool({
     }
     // Auto-set owner when a teammate marks a task as in_progress without
     // explicitly providing an owner. This ensures the task list can match
-    // todo items to teammates for showing activity status.
+    // task items to teammates for showing activity status.
     if (
       isAgentSwarmsEnabled() &&
       status === 'in_progress' &&
@@ -321,8 +320,7 @@ export const TaskUpdateTool = buildTool({
     // out a 3+ task list and none of those tasks was a verification step,
     // append a reminder to the tool result. Fires at the loop-exit moment
     // where skips happen ("when the last task closed, the loop exited").
-    // Mirrors the TodoWriteTool nudge for V1 sessions; this covers V2
-    // (interactive CLI). TaskUpdateToolOutput is @internal so this field
+    // TaskUpdateToolOutput is @internal so this field
     // does not touch the public SDK surface.
     let verificationNudgeNeeded = false
     if (

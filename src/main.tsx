@@ -1915,7 +1915,6 @@ async function run(): Promise<CommanderCommand> {
       elicitation: {
         queue: []
       },
-      todos: {},
       fileHistory: {
         snapshots: [],
         trackedFiles: new Set(),

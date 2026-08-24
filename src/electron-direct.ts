@@ -61,7 +61,15 @@ import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
 import { asSessionId, type SessionId } from './types/ids.js'
-import { runWithSessionIdContext, runWithSessionIdContextGenerator } from './utils/sessionIdContext.js'
+import {
+  runWithSessionIdContext,
+  runWithSessionIdContextGenerator,
+  type TaskScope,
+} from './utils/sessionIdContext.js'
+import {
+  discardSessionTaskScope,
+  getTaskListIdForSession,
+} from './utils/tasks.js'
 import {
   runWithSessionApiOverrides,
   runWithSessionApiOverridesGenerator,
@@ -234,6 +242,8 @@ export interface ClaudeSessionOptions {
   resumeState?: PreparedSessionResume
   /** Desktop-provided MCP servers. These come from ~/.moss/settings.json. */
   mcpServers?: Record<string, McpServerConfig>
+  /** Explicit task-list scope for file-backed task tools. */
+  taskScope?: TaskScope
 }
 
 type ResolvedClaudeSessionOptions = {
@@ -257,6 +267,7 @@ type ResolvedClaudeSessionOptions = {
   projectDir?: string | null
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
+  taskScope: TaskScope
 }
 
 function addDynamicMcpScope(
@@ -457,6 +468,10 @@ export class ClaudeSession {
       setGlobalAppEventBridge(opts.onAppEvent, this.sessionId)
     }
     const cwd = opts.cwd ?? process.cwd()
+    const taskScope = opts.taskScope ?? {
+      kind: 'session' as const,
+      sessionId: this.sessionId,
+    }
     this.#opts = {
       cwd,
       model: opts.model ?? 'claude-sonnet-4-6',
@@ -476,6 +491,7 @@ export class ClaudeSession {
       projectDir: opts.projectDir ?? getProjectDir(cwd),
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
+      taskScope,
     }
   }
 
@@ -771,6 +787,7 @@ export class ClaudeSession {
       const runInSessionContext = <T>(fn: () => T): T =>
         runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
+          this.#opts.taskScope,
         )
 
       // Resolve the project root before entering the ALS wrappers so even
@@ -867,85 +884,101 @@ export class ClaudeSession {
       // QueryEngine.submitMessage 是 AsyncGenerator
       yield* runWithSessionApiOverridesGenerator(this.#sessionApiOverrides, () =>
         runWithCwdOverrideGenerator(effectiveCwd(), () =>
-          runWithSessionIdContextGenerator(sessionId, projectDir, () =>
-            (async function* () {
-            const runTurn = async function* (
-              turnPrompt: string | Array<{ type: string; [k: string]: unknown }>,
-              mode: 'prompt' | 'task-notification' | 'orphaned-permission',
-              uuid?: string,
-            ): AsyncGenerator<SDKMessage> {
-              const iterator = engine.submitMessage(turnPrompt, { uuid, mode })
-
-              try {
-                while (true) {
-                  const result = await iterator.next()
-                  if (result.done) {
-                    return
-                  }
-                  if (result.value.type === 'result') {
-                    finalResult = result.value
-                    continue
-                  }
-                  yield result.value
-                }
-              } finally {
-                if (typeof iterator.return === 'function') {
-                  await iterator.return()
-                }
-              }
-            }
-
-            let nextTurn:
-              | {
-                  value: string | Array<{ type: string; [k: string]: unknown }>
-                  mode: 'prompt' | 'task-notification' | 'orphaned-permission'
-                  uuid?: string
-                }
-              | undefined = {
-              value: prompt,
-              mode: 'prompt',
-            }
-
-            // Mirror CLI coordinator semantics: keep the foreground send alive
-            // while background tasks are still running so task notifications
-            // can trigger follow-up turns without waiting for new user input.
-            do {
-              if (waitSignal?.aborted) {
-                break
-              }
-
-              if (nextTurn) {
-                yield* runTurn(nextTurn.value, nextTurn.mode, nextTurn.uuid)
-                nextTurn = undefined
-              }
-
-              const queuedCmd = dequeueMainThreadTaskNotification()
-              if (queuedCmd) {
-                nextTurn = {
-                  value: queuedCmd.value as
+          runWithSessionIdContextGenerator(
+            sessionId,
+            projectDir,
+            () =>
+              (async function* () {
+                const runTurn = async function* (
+                  turnPrompt:
                     | string
                     | Array<{ type: string; [k: string]: unknown }>,
-                  mode: queuedCmd.mode as 'task-notification' | 'orphaned-permission',
-                  uuid: queuedCmd.uuid,
+                  mode: 'prompt' | 'task-notification' | 'orphaned-permission',
+                  uuid?: string,
+                ): AsyncGenerator<SDKMessage> {
+                  const iterator = engine.submitMessage(turnPrompt, {
+                    uuid,
+                    mode,
+                  })
+
+                  try {
+                    while (true) {
+                      const result = await iterator.next()
+                      if (result.done) {
+                        return
+                      }
+                      if (result.value.type === 'result') {
+                        finalResult = result.value
+                        continue
+                      }
+                      yield result.value
+                    }
+                  } finally {
+                    if (typeof iterator.return === 'function') {
+                      await iterator.return()
+                    }
+                  }
                 }
-                continue
-              }
 
-              if (!hasRunningBackgroundTasks()) {
-                break
-              }
+                let nextTurn:
+                  | {
+                      value:
+                        | string
+                        | Array<{ type: string; [k: string]: unknown }>
+                      mode:
+                        | 'prompt'
+                        | 'task-notification'
+                        | 'orphaned-permission'
+                      uuid?: string
+                    }
+                  | undefined = {
+                  value: prompt,
+                  mode: 'prompt',
+                }
 
-              await sleep(100, waitSignal, { unref: true })
-            } while (
-              nextTurn !== undefined ||
-              hasQueuedMainThreadTaskNotification() ||
-              hasRunningBackgroundTasks()
-            )
+                // Mirror CLI coordinator semantics: keep the foreground send alive
+                // while background tasks are still running so task notifications
+                // can trigger follow-up turns without waiting for new user input.
+                do {
+                  if (waitSignal?.aborted) {
+                    break
+                  }
 
-            if (finalResult) {
-              yield finalResult
-            }
-            })(),
+                  if (nextTurn) {
+                    yield* runTurn(nextTurn.value, nextTurn.mode, nextTurn.uuid)
+                    nextTurn = undefined
+                  }
+
+                  const queuedCmd = dequeueMainThreadTaskNotification()
+                  if (queuedCmd) {
+                    nextTurn = {
+                      value: queuedCmd.value as
+                        | string
+                        | Array<{ type: string; [k: string]: unknown }>,
+                      mode: queuedCmd.mode as
+                        | 'task-notification'
+                        | 'orphaned-permission',
+                      uuid: queuedCmd.uuid,
+                    }
+                    continue
+                  }
+
+                  if (!hasRunningBackgroundTasks()) {
+                    break
+                  }
+
+                  await sleep(100, waitSignal, { unref: true })
+                } while (
+                  nextTurn !== undefined ||
+                  hasQueuedMainThreadTaskNotification() ||
+                  hasRunningBackgroundTasks()
+                )
+
+                if (finalResult) {
+                  yield finalResult
+                }
+              })(),
+            this.#opts.taskScope,
           ),
         ),
       )
@@ -989,6 +1022,7 @@ export class ClaudeSession {
     discardSessionEnvCache(this.sessionId)
     void discardSessionLspServerManager(this.sessionId)
     discardWorktreeSessionState(this.sessionId)
+    discardSessionTaskScope(this.sessionId)
     this.#storageActivated = false
   }
 
@@ -1019,6 +1053,10 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
+  }
+
+  getTaskListId() {
+    return getTaskListIdForSession(this.sessionId, this.#opts.taskScope)
   }
 }
 

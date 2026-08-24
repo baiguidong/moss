@@ -218,9 +218,9 @@ const externalTips: Tip[] = [
     isRelevant: async () => true,
   },
   {
-    id: 'todo-list',
+    id: 'task-list',
     content: async () =>
-      'Ask Moss to create a todo list when working on complex tasks to track progress and remain on track',
+      'Ask Moss to create a task list when working on complex tasks to track progress and remain on track',
     cooldownSessions: 20,
     isRelevant: async () => true,
   },

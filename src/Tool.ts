@@ -703,8 +703,8 @@ export type Tool<
   ): ToolResultBlockParam
   /**
    * Optional. When omitted, the tool result renders nothing (same as returning
-   * null). Omit for tools whose results are surfaced elsewhere (e.g., TodoWrite
-   * updates the todo panel, not the transcript).
+   * null). Omit for tools whose results are surfaced elsewhere (e.g., TaskUpdate
+   * updates the task panel, not the transcript).
    */
   renderToolResultMessage?(
     content: Output,

@@ -1,5 +1,4 @@
 import type { Notification } from 'src/context/notifications.js'
-import type { TodoList } from 'src/utils/todo/types.js'
 import type { Command } from '../commands.js'
 import type { ElicitationRequestEvent } from '../services/mcp/elicitationHandler.js'
 import type {
@@ -128,7 +127,6 @@ export type AppState = DeepImmutable<{
   agentDefinitions: AgentDefinitionsResult
   fileHistory: FileHistoryState
   attribution: AttributionState
-  todos: { [agentId: string]: TodoList }
   notifications: {
     current: Notification | null
     queue: Notification[]
@@ -312,7 +310,6 @@ export function getDefaultAppState(): AppState {
       commands: [],
       resources: {},
     },
-    todos: {},
     notifications: {
       current: null,
       queue: [],

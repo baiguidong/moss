@@ -158,7 +158,6 @@ import {
   isPlanModeInterviewPhaseEnabled,
 } from './planModeV2.js'
 import { escapeRegExp } from './stringUtils.js'
-import { isTodoV2Enabled } from './tasks.js'
 
 // Lazy import to avoid circular dependency (teammateMailbox -> teammate -> ... -> messages)
 function getTeammateMailbox(): typeof import('./teammateMailbox.js') {
@@ -3462,27 +3461,7 @@ Read the team config to discover your teammates' names. Check the task list peri
         }),
       ])
     }
-    case 'todo_reminder': {
-      const todoItems = attachment.content
-        .map((todo, index) => `${index + 1}. [${todo.status}] ${todo.content}`)
-        .join('\n')
-
-      let message = `The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Also consider cleaning up the todo list if has become stale and no longer matches what you are working on. Only use it if it's relevant to the current work. This is just a gentle reminder - ignore if not applicable. Make sure that you NEVER mention this reminder to the user\n`
-      if (todoItems.length > 0) {
-        message += `\n\nHere are the existing contents of your todo list:\n\n[${todoItems}]`
-      }
-
-      return wrapMessagesInSystemReminder([
-        createUserMessage({
-          content: message,
-          isMeta: true,
-        }),
-      ])
-    }
     case 'task_reminder': {
-      if (!isTodoV2Enabled()) {
-        return []
-      }
       const taskItems = attachment.content
         .map(task => `#${task.id}. [${task.status}] ${task.subject}`)
         .join('\n')
