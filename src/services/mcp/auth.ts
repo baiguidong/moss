@@ -959,7 +959,7 @@ export async function performMCPOAuthFlow(
     // Use configured callback port for pre-configured OAuth, otherwise find an available port
     const configuredCallbackPort = serverConfig.oauth?.callbackPort
     const port = configuredCallbackPort ?? (await findAvailablePort())
-    const redirectUri = buildRedirectUri(port)
+    const redirectUri = buildRedirectUri(port, '127.0.0.1')
     logMCPDebug(
       serverName,
       `Using redirect port: ${port}${configuredCallbackPort ? ' (from config)' : ''}`,
@@ -1057,13 +1057,20 @@ export async function performMCPOAuthFlow(
         options.onWaitingForCallback((callbackUrl: string) => {
           try {
             const parsed = new URL(callbackUrl)
-            const code = parsed.searchParams.get('code')
-            const state = parsed.searchParams.get('state')
-            const error = parsed.searchParams.get('error')
+            const hash = parsed.hash.replace(/^#/, '')
+            const hashQuery = hash.includes('?')
+              ? hash.slice(hash.indexOf('?') + 1)
+              : hash
+            const hashParams = new URLSearchParams(hashQuery)
+            const getCallbackParam = (name: string) =>
+              parsed.searchParams.get(name) || hashParams.get(name)
+            const code = getCallbackParam('code')
+            const state = getCallbackParam('state')
+            const error = getCallbackParam('error')
 
             if (error) {
               const errorDescription =
-                parsed.searchParams.get('error_description') || ''
+                getCallbackParam('error_description') || ''
               cleanup()
               rejectOnce(
                 new Error(`OAuth error: ${error} - ${errorDescription}`),
@@ -1142,7 +1149,7 @@ export async function performMCPOAuthFlow(
           if (code) {
             res.writeHead(200, { 'Content-Type': 'text/html' })
             res.end(
-              `<h1>Authentication Successful</h1><p>You can close this window. Return to Moss.</p>`,
+              `<!doctype html><html><head><meta charset="utf-8"><title>Moss 连接器授权已完成</title></head><body><h1>Moss 连接器授权已完成</h1><p>可以关闭此窗口，返回 Moss 继续使用连接器。</p></body></html>`,
             )
             cleanup()
             resolveOnce(code)

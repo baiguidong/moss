@@ -348,6 +348,8 @@ const MossAppEventTypes = [
   'app_extract_to_workspace',
   'app_get_versions',
   'browser_open',
+  'connector_cli_setup',
+  'connector_mcp_authenticate',
   'image_generate',
   'image_edit',
 ]
@@ -369,6 +371,12 @@ export function createMossAppEventHandler(windows, events, options = {}) {
   const allowMediaRoot = typeof options.allowMediaRoot === 'function'
     ? options.allowMediaRoot
     : () => {}
+  const setupConnectorCli = typeof options.setupConnectorCli === 'function'
+    ? options.setupConnectorCli
+    : null
+  const authenticateConnectorMcp = typeof options.authenticateConnectorMcp === 'function'
+    ? options.authenticateConnectorMcp
+    : null
 
   const requireWorkspaceBuildDir = (sessionRecord, input = {}) => {
     if (!sessionRecord?.workspace) {
@@ -500,6 +508,51 @@ export function createMossAppEventHandler(windows, events, options = {}) {
             sessionId: sessionRecord?.id || null,
           })
           return { ok: true, previewUrl: url }
+        }
+
+        case 'connector_cli_setup': {
+          const connectorId = typeof event.input?.connector_id === 'string'
+            ? event.input.connector_id.trim()
+            : ''
+          if (!connectorId) {
+            throw new Error('connector_cli_setup requires connector_id')
+          }
+          if (!setupConnectorCli) {
+            throw new Error('Connector CLI setup is not available in this context')
+          }
+          const result = await setupConnectorCli(connectorId, {
+            sessionId: sessionRecord?.id || null,
+          })
+          return {
+            ok: true,
+            ...result,
+          }
+        }
+
+        case 'connector_mcp_authenticate': {
+          const connectorId = typeof event.input?.connector_id === 'string'
+            ? event.input.connector_id.trim()
+            : ''
+          const serverName = typeof event.input?.server_name === 'string'
+            ? event.input.server_name.trim()
+            : ''
+          const target = serverName || connectorId
+          if (!target) {
+            throw new Error('connector_mcp_authenticate requires connector_id or server_name')
+          }
+          if (!authenticateConnectorMcp) {
+            throw new Error('Connector MCP authentication is not available in this context')
+          }
+          const result = await authenticateConnectorMcp(target, {
+            sessionId: sessionRecord?.id || null,
+          })
+          return {
+            ok: true,
+            auth: result?.auth || result,
+            message: result?.auth?.authorizationUrl
+              ? '连接器授权页已在 Moss 浏览器打开，请完成授权。'
+              : '连接器 MCP 授权流程已处理。',
+          }
         }
 
         case 'image_generate':

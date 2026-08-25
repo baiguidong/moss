@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   removeMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-remove', payload),
   setMcpServerEnabled: (payload) => ipcRenderer.invoke('agent:mcp-set-enabled', payload),
   authenticateMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-authenticate', payload),
+  submitMcpAuthCallback: (payload) => ipcRenderer.invoke('agent:mcp-submit-auth-callback', payload),
   clearMcpServerAuth: (payload) => ipcRenderer.invoke('agent:mcp-clear-auth', payload),
   getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
   updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
@@ -60,6 +61,12 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
+  setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
+  listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
+  getInstalledConnectors: () => ipcRenderer.invoke('connector-hub:get-installed'),
+  installConnector: (payload) => ipcRenderer.invoke('connector-hub:install', payload),
+  uninstallConnector: (payload) => ipcRenderer.invoke('connector-hub:uninstall', payload),
+  saveConnectorMcpToken: (payload) => ipcRenderer.invoke('connector-hub:save-mcp-token', payload),
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
   pickFiles: () => ipcRenderer.invoke('agent:pick-files'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
@@ -123,6 +130,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('browser:open', handler);
       return () => ipcRenderer.off('browser:open', handler);
+    },
+    onExternalUrl: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('browser:external-url', handler);
+      return () => ipcRenderer.off('browser:external-url', handler);
     },
   },
   workspace: {

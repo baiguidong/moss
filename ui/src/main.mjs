@@ -15,6 +15,18 @@ import {
   migrateLegacyExpertInstallations,
   registerPublicExpertHubIpcHandlers,
 } from './public-experthub-ipc.mjs';
+import {
+  getConnectorAddDirs,
+  getConnectorMcpServers,
+  findConnectorMcpServer,
+  initializeBundledConnectorCatalog,
+  getConnectorProviderAuthUrl,
+  getConnectorProviderAuthContext,
+  clearConnectorMcpAccessToken,
+  registerConnectorHubIpcHandlers,
+  setupConnectorCli,
+  updateConnectorMcpAuthState,
+} from './connector-hub-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
@@ -126,6 +138,7 @@ const MAX_FILE_BYTES = 200 * 1024;
 // 通用 fs IPC 读取上限, 防止指向超大文件时把主进程内存撑爆。
 const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
+const WORKSPACE_WATCH_DIRECTORY_LIMIT = 512;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
 const MOSS_APP_PROJECTS_DIR = path.join(MOSS_HOME, 'app-projects');
@@ -138,6 +151,7 @@ const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
 const MOSS_REPO_APPS_DIR = path.join(repoRoot, 'apps');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
+const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
@@ -426,6 +440,7 @@ const pendingEmbeddedPluginApps = new Map();
 const pendingEmbeddedPluginAppsByToken = new Map();
 const pendingEmbeddedWebviewAttachTokens = [];
 const debugWindows = new Map();
+const pendingMcpAuthCallbacks = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_PROJECTS_DIR, { recursive: true });
@@ -479,6 +494,11 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN connector_ids_json TEXT NOT NULL DEFAULT '[]'`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -496,14 +516,15 @@ const persistSessionStmt = (() => {
       is_sub_agent INTEGER NOT NULL DEFAULT 0,
       worker_summaries_json TEXT,
       assistant_name TEXT,
-      project_id TEXT
+      project_id TEXT,
+      connector_ids_json TEXT NOT NULL DEFAULT '[]'
     )
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, connector_ids_json
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -520,7 +541,8 @@ const persistSessionStmt = (() => {
       is_sub_agent = excluded.is_sub_agent,
       worker_summaries_json = excluded.worker_summaries_json,
       assistant_name = excluded.assistant_name,
-      project_id = excluded.project_id
+      project_id = excluded.project_id,
+      connector_ids_json = excluded.connector_ids_json
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -541,7 +563,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     is_sub_agent,
     worker_summaries_json,
     assistant_name,
-    project_id
+    project_id,
+    connector_ids_json
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -562,7 +585,8 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     history_json,
     is_sub_agent,
     worker_summaries_json,
-    project_id
+    project_id,
+    connector_ids_json
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -584,7 +608,8 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     history_json,
     is_sub_agent,
     worker_summaries_json,
-    project_id
+    project_id,
+    connector_ids_json
   FROM sessions
   WHERE is_sub_agent = 1 AND underlying_session_id = ?
   ORDER BY created_at ASC
@@ -2071,12 +2096,23 @@ function assertStringRecord(value, label) {
   return result;
 }
 
+function normalizeMcpServerType(value) {
+  if (value === undefined || value === null || value === '') return 'stdio';
+  if (typeof value !== 'string') return value;
+  const type = value.trim().toLowerCase();
+  if (!type) return 'stdio';
+  if (type === 'streamable-http' || type === 'streamable_http' || type === 'streamablehttp') {
+    return 'http';
+  }
+  return type;
+}
+
 function validateMcpServerConfig(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('MCP server config must be an object.');
   }
 
-  const type = input.type || 'stdio';
+  const type = normalizeMcpServerType(input.type);
   if (type === 'stdio') {
     if (typeof input.command !== 'string' || !input.command.trim()) {
       throw new Error('stdio MCP server requires command.');
@@ -2112,7 +2148,7 @@ function validateMcpServerConfig(input) {
     };
   }
 
-  throw new Error('MCP server type must be stdio, http, or sse.');
+  throw new Error('MCP server type must be stdio, http, streamable-http, or sse.');
 }
 
 function resetLocalRuntimesForMcpReload() {
@@ -2157,6 +2193,31 @@ function getEnabledDesktopMcpServers(settings = desktopSettings) {
     }
   }
   return enabled;
+}
+
+function getSessionConnectorIds(sessionRecord) {
+  return normalizeStringList(sessionRecord?.connectorIds);
+}
+
+function getSessionMcpServers(sessionRecord) {
+  return {
+    ...getEnabledDesktopMcpServers(),
+    ...getConnectorMcpServers(getSessionConnectorIds(sessionRecord)),
+  };
+}
+
+function getSessionAddDirs(sessionRecord) {
+  const dirs = [
+    ...(Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : []),
+    ...getConnectorAddDirs(getSessionConnectorIds(sessionRecord)),
+  ];
+  const seen = new Set();
+  return dirs.filter((dir) => {
+    const text = typeof dir === 'string' ? dir.trim() : '';
+    if (!text || seen.has(text)) return false;
+    seen.add(text);
+    return true;
+  });
 }
 
 function buildThinkingConfig() {
@@ -2214,6 +2275,25 @@ function buildBoundAppSystemPrompt(appName) {
   ].join('\n');
 }
 
+function buildConnectorSystemPrompt(sessionRecord) {
+  const connectorIds = getSessionConnectorIds(sessionRecord);
+  if (connectorIds.length === 0) return '';
+  const serverNames = Object.keys(getConnectorMcpServers(connectorIds));
+  const lines = [
+    '[Moss connector runtime]',
+    `Enabled connector ids: ${connectorIds.join(', ')}`,
+  ];
+  if (serverNames.length > 0) {
+    lines.push(`Connector MCP servers: ${serverNames.join(', ')}`);
+  }
+  lines.push(
+    'When a marketplace connector MCP server is missing tools, returns no tools, reports auth is required, or otherwise needs authorization, call moss with action "connector_mcp_authenticate" and the connector_id or server_name.',
+    'Do not ask the user to type /mcp for marketplace connector authorization in Moss desktop.',
+    'Do not reveal access tokens, OAuth codes, full authorization URLs, passwords, or other credentials in the conversation.',
+  );
+  return lines.join('\n');
+}
+
 function buildProjectSystemPrompt(sessionRecord) {
   if (!sessionRecord?.projectId) return '';
   const project = readProjectSync(sessionRecord.projectId);
@@ -2241,12 +2321,14 @@ function buildProjectSystemPrompt(sessionRecord) {
 function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
+  const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
     ? sessionRecord.assistantSystemPrompt.trim()
     : '';
   const appendSystemPrompt = [
     desktopSettings.appendSystemPrompt,
     projectContextPrompt,
+    connectorSystemPrompt,
     runtimeSystemPrompt,
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
@@ -2263,8 +2345,8 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
-    mcpServers: getEnabledDesktopMcpServers(),
-    addDirs: Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : [],
+    mcpServers: getSessionMcpServers(sessionRecord),
+    addDirs: getSessionAddDirs(sessionRecord),
     projectDir: sessionRecord?.id ? getLocalSessionDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
@@ -2982,6 +3064,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.workerSummariesJson || null,
     sessionRecord.assistantName || null,
     sessionRecord.projectId || null,
+    JSON.stringify(normalizeStringList(sessionRecord.connectorIds)),
   ];
 }
 
@@ -3003,6 +3086,16 @@ function parsePersistedSessionHistory(value) {
   }
 }
 
+function parsePersistedStringList(value) {
+  if (Array.isArray(value)) return normalizeStringList(value);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    return normalizeStringList(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
 function toSessionManifest(sessionRecord, isSubAgent = false) {
   return {
     id: sessionRecord.id,
@@ -3019,6 +3112,7 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     isSubAgent: Boolean(isSubAgent),
     assistantName: sessionRecord.assistantName || null,
     projectId: sessionRecord.projectId || null,
+    connectorIds: normalizeStringList(sessionRecord.connectorIds),
   };
 }
 
@@ -3129,6 +3223,7 @@ function hydratePersistedSessions() {
       assistantName: row.assistant_name || null,
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
+      connectorIds: parsePersistedStringList(row.connector_ids_json),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3174,6 +3269,7 @@ function hydratePersistedSessions() {
       assistantName: null,
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
+      connectorIds: parsePersistedStringList(row.connector_ids_json),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3376,6 +3472,7 @@ function getSessionSummary(sessionRecord) {
     assistantName: sessionRecord.assistantName || null,
     projectId: sessionRecord.projectId || null,
     projectName: getProjectName(sessionRecord.projectId),
+    connectorIds: normalizeStringList(sessionRecord.connectorIds),
   };
 }
 
@@ -4129,13 +4226,6 @@ function requestAskUserQuestion(sessionRecord, input) {
 async function requestToolPermission(sessionRecord, toolName, input, request = {}) {
   if (toolName === ASK_USER_QUESTION_TOOL_NAME) {
     emitSessionHistory(sessionRecord);
-    emitToRenderer('agent:permission', {
-      sessionId: sessionRecord.id,
-      request: {
-        tool_name: toolName,
-        input,
-      },
-    });
     return requestAskUserQuestion(sessionRecord, input);
   }
 
@@ -4527,6 +4617,95 @@ function preparePluginAppEntry(appEntry) {
     bundleToken,
     entryUrl,
   };
+}
+
+function openExternalHttpUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    void shell.openExternal(parsed.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function openExternalNavigationUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  const trimmed = url.trim();
+  if (/^https?:\/\//i.test(trimmed) || /^mailto:/i.test(trimmed)) {
+    void shell.openExternal(trimmed);
+    return true;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !/^(?:file|javascript|data|about):/i.test(trimmed)) {
+    void shell.openExternal(trimmed);
+    return true;
+  }
+  return false;
+}
+
+function isRightBrowserPopupUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return true;
+  const trimmed = url.trim();
+  return trimmed === 'about:blank' || /^https?:\/\//i.test(trimmed);
+}
+
+function getRightBrowserPopupWindowOptions() {
+  return {
+    width: 560,
+    height: 720,
+    minWidth: 360,
+    minHeight: 480,
+    title: 'Moss 浏览器',
+    backgroundColor: '#ffffff',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  };
+}
+
+function configureRightBrowserPopupWebContents(targetWebContents) {
+  targetWebContents.setWindowOpenHandler(({ url }) => {
+    emitToRenderer('browser:external-url', { url });
+    if (isRightBrowserPopupUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: getRightBrowserPopupWindowOptions(),
+      };
+    }
+    openExternalNavigationUrl(url);
+    return { action: 'deny' };
+  });
+
+  targetWebContents.on('will-navigate', (event, url) => {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^https?:\/\//i.test(url)) {
+      emitToRenderer('browser:external-url', { url });
+      if (openExternalNavigationUrl(url)) {
+        event.preventDefault();
+      }
+    }
+  });
+
+  targetWebContents.on('did-create-window', (childWindow) => {
+    try {
+      configureRightBrowserPopupWebContents(childWindow.webContents);
+    } catch (error) {
+      console.warn('[browser] failed to configure popup webContents:', error?.message || error);
+    }
+  });
+}
+
+function redactAuthFailureText(value) {
+  return String(value || '')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>')
+    .replace(/\b((?:access|refresh|id)?_?token|password|passwd|secret|credential|authorization|code)=([^&\s]+)/gi, '$1=<redacted>')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '<redacted-url>');
 }
 
 function configurePluginAppWebContents(targetWebContents, bundleToken) {
@@ -4978,7 +5157,7 @@ function isAccessibleDirectory(dirPath) {
   }
 }
 
-function createSessionRecord({ workspace, isSubAgent = false, title, assistantName, projectId } = {}) {
+function createSessionRecord({ workspace, isSubAgent = false, title, assistantName, projectId, connectorIds } = {}) {
   const now = Date.now();
   const id = randomUUID();
   const sessionDir = getLocalSessionDir(id);
@@ -5014,6 +5193,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
     assistantName: assistantName || null,
     assistantSystemPrompt: '',
     projectId: normalizedProjectId,
+    connectorIds: normalizeStringList(connectorIds),
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -5033,6 +5213,34 @@ function getSessionRecord(sessionId) {
     throw new Error(`Unknown session: ${sessionId}`);
   }
   return sessionRecord;
+}
+
+function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
+  return {
+    ...getSessionSummary(sessionRecord),
+    history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    tasks: snapshotSessionTasks(sessionRecord),
+  };
+}
+
+async function updateSessionConnectors(sessionRecord, connectorIds) {
+  sessionRecord.connectorIds = normalizeStringList(connectorIds);
+  sessionRecord.updatedAt = Date.now();
+  let skippedBusyRuntime = false;
+  if (sessionRecord.runtime) {
+    if (sessionRecord.busy) {
+      skippedBusyRuntime = true;
+    } else {
+      disposeRuntime(sessionRecord);
+    }
+  }
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  return {
+    ...getSessionDetailPayload(sessionRecord),
+    skippedBusyRuntime,
+  };
 }
 
 // SDK writes task-notification queue-operation events directly to its .jsonl transcript file,
@@ -5082,10 +5290,15 @@ function closeWorkspaceWatcher(sessionRecord) {
   }
 }
 
-async function collectDirectories(rootPath) {
+async function collectDirectories(rootPath, limit = WORKSPACE_WATCH_DIRECTORY_LIMIT) {
   const directories = [];
   const pending = [rootPath];
+  let truncated = false;
   while (pending.length > 0) {
+    if (directories.length >= limit) {
+      truncated = true;
+      break;
+    }
     const current = pending.pop();
     directories.push(current);
     let dirents = [];
@@ -5099,8 +5312,15 @@ async function collectDirectories(rootPath) {
       if (entry.name === '.' || entry.name === '..') continue;
       pending.push(path.join(current, entry.name));
     }
+    if (directories.length + pending.length > limit) {
+      truncated = true;
+      break;
+    }
   }
-  return directories;
+  return {
+    directories: truncated ? [rootPath] : directories,
+    truncated,
+  };
 }
 
 function emitWorkspaceChanged(sessionRecord, eventType, changedPath) {
@@ -5121,8 +5341,16 @@ async function syncWorkspaceWatcher(sessionRecord) {
   const root = getSessionWorkspaceRoot(sessionRecord);
   if (!isAccessibleDirectory(root)) return;
 
-  const directories = await collectDirectories(root);
+  const { directories, truncated } = await collectDirectories(root);
   if (watcherState.closed) return;
+  if (truncated && !watcherState.truncated) {
+    mossLog('warn', 'workspace', 'Workspace watcher limited to root directory', {
+      sessionId: sessionRecord.id,
+      root,
+      limit: WORKSPACE_WATCH_DIRECTORY_LIMIT,
+    });
+  }
+  watcherState.truncated = truncated;
   const nextPaths = new Set(directories);
 
   for (const watchedPath of watcherState.watchers.keys()) {
@@ -5147,6 +5375,7 @@ async function syncWorkspaceWatcher(sessionRecord) {
           void syncWorkspaceWatcher(sessionRecord);
         }, 150);
       });
+      watcher.unref?.();
       watcherState.watchers.set(dirPath, watcher);
     } catch {}
   }
@@ -5172,6 +5401,20 @@ const mossAppEventHandler = createMossAppEventHandler(
   {
     getSettings: () => desktopSettings,
     allowMediaRoot,
+    setupConnectorCli: (connectorId, context = {}) => setupConnectorCli(connectorId, {
+      sessionId: context.sessionId || null,
+      openBrowser: ({ url, sessionId }) => {
+        openExternalHttpUrl(url);
+        emitToRenderer('browser:open', {
+          url,
+          sessionId: sessionId || null,
+        });
+      },
+      emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
+    }),
+    authenticateConnectorMcp: (name, context = {}) => authenticateMcpServerByName(name, {
+      sessionId: context.sessionId || null,
+    }),
   },
 )
 
@@ -5179,6 +5422,7 @@ async function startWorkspaceWatcher(sessionRecord) {
   closeWorkspaceWatcher(sessionRecord);
   sessionRecord.workspaceWatcher = {
     closed: false,
+    truncated: false,
     watchers: new Map(),
   };
   await syncWorkspaceWatcher(sessionRecord);
@@ -5362,7 +5606,14 @@ function createWindow() {
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getPluginAppTokenFromUrl(params?.src || '');
-    if (!token) return;
+    if (!token) {
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = false;
+      return;
+    }
 
     const pending = pendingEmbeddedPluginAppsByToken.get(token);
     if (!pending) {
@@ -5387,7 +5638,10 @@ function createWindow() {
     } else {
       token = pendingEmbeddedWebviewAttachTokens.shift() || '';
     }
-    if (!token) return;
+    if (!token) {
+      configureRightBrowserPopupWebContents(targetWebContents);
+      return;
+    }
 
     const pending = pendingEmbeddedPluginAppsByToken.get(token);
     if (!pending) return;
@@ -6182,6 +6436,12 @@ app.whenReady().then(async () => {
   await initializeBundledAssistants();
   await migrateLegacyExpertInstallations();
 
+  await initializeBundledConnectorCatalog({
+    bundledCatalogPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'workbuddy-connectors-config.zip'),
+    bundledCloudAuthPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'cloud-auth-providers.json'),
+    log: mossLog,
+  });
+
   // Initialize bundled apps from repo apps to ~/.moss/apps
   await initializeBundledApps();
 
@@ -6192,6 +6452,12 @@ app.whenReady().then(async () => {
   registerPublicExpertHubIpcHandlers({
     getDesktopSettings: () => desktopSettings,
     notifyAssistantsChanged: (payload) => emitToRenderer('agent:assistants-changed', payload),
+  });
+  registerConnectorHubIpcHandlers({
+    getSessionRecord,
+    updateSessionConnectors,
+    emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
+    onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
@@ -6221,9 +6487,6 @@ app.whenReady().then(async () => {
 
   createWindow();
   initializeAutoUpdater();
-  for (const sessionRecord of sessions.values()) {
-    void startWorkspaceWatcher(sessionRecord);
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -6324,64 +6587,237 @@ ipcMain.handle('agent:mcp-set-enabled', (_event, payload = {}) => {
   return getDesktopMcpPayload(reload);
 });
 
-ipcMain.handle('agent:mcp-authenticate', async (_event, payload = {}) => {
-  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
-  if (!isValidMcpServerName(name)) {
+function getConnectorMcpAuthFailureMessage(connectorServer, error, { authorizationUrlOpened = false } = {}) {
+  const connectorName = connectorServer?.connectorName || connectorServer?.connectorId || '连接器';
+  const detail = redactAuthFailureText(error?.message || String(error));
+  if (authorizationUrlOpened) {
+    return `${connectorName} 标准 MCP OAuth 授权未完成：${detail}`;
+  }
+  const authMode = String(connectorServer?.authMode || '').trim();
+  if (authMode === 'server-side') {
+    return `${connectorName} 当前连接器包没有提供 Moss 可直接打开的授权入口，请在连接器管理中重新连接或等待连接器包补充授权元数据。`;
+  }
+  return detail;
+}
+
+async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
+  if (!isValidMcpServerName(name) && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
     throw new Error('Invalid MCP server name.');
   }
 
   const store = readDesktopMcpStore();
   const entry = store.servers[name];
-  if (!entry) {
+  const connectorServer = entry ? null : findConnectorMcpServer(name);
+  if (!entry && !connectorServer) {
     throw new Error(`Unknown MCP server: ${name}`);
   }
-  if (entry.config.type !== 'http' && entry.config.type !== 'sse') {
+
+  const serverName = entry ? name : connectorServer.serverName;
+  const serverConfig = entry ? entry.config : connectorServer.config;
+  if (serverConfig.type !== 'http' && serverConfig.type !== 'sse') {
     throw new Error('Only http and sse MCP servers support browser authentication.');
   }
 
-  if (!entry.enabled) {
+  if (entry && !entry.enabled) {
     entry.enabled = true;
     entry.updatedAt = Date.now();
     saveDesktopMcpStore(store);
   }
 
   const authenticateDesktopMcpServer = await getAuthenticateDesktopMcpServerFn();
-  const authResult = await authenticateDesktopMcpServer(name, entry.config);
+  if (connectorServer) {
+    await updateConnectorMcpAuthState(connectorServer.connectorId, {
+      connected: false,
+      setupStatus: 'authenticating',
+      setupMessage: '正在等待浏览器授权',
+    });
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-auth-state',
+      connectorId: connectorServer.connectorId,
+    });
+  }
+
+  let authResult;
+  let authorizationUrlOpened = false;
+  try {
+    authResult = await authenticateDesktopMcpServer(serverName, serverConfig, {
+      onWaitingForCallback: (submit) => {
+        pendingMcpAuthCallbacks.set(serverName, {
+          submit,
+          createdAt: Date.now(),
+          sessionId,
+          displayName: connectorServer?.connectorName || serverName,
+        });
+      },
+      onAuthorizationUrl: (url) => {
+        authorizationUrlOpened = true;
+        emitToRenderer('browser:open', {
+          url,
+          sessionId,
+          mcpAuth: {
+            serverName,
+            displayName: connectorServer?.connectorName || serverName,
+          },
+        });
+      },
+    });
+  } catch (error) {
+    const metadataAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';
+    if (metadataAuthUrl) {
+      const metadataAuthContext = getConnectorProviderAuthContext(connectorServer);
+      emitToRenderer('browser:open', {
+        url: metadataAuthUrl,
+        sessionId,
+        connectorAuth: {
+          connectorId: connectorServer.connectorId,
+          serverName,
+          displayName: connectorServer.connectorName,
+          ...(metadataAuthContext || {}),
+        },
+      });
+      await updateConnectorMcpAuthState(connectorServer.connectorId, {
+        connected: false,
+        setupStatus: 'awaiting-token',
+        setupMessage: '授权页已打开，请在浏览器完成授权',
+      });
+      emitToRenderer('connector-hub:changed', {
+        reason: 'mcp-provider-auth-opened',
+        connectorId: connectorServer.connectorId,
+      });
+      const reload = resetLocalRuntimesForMcpReload();
+      mossLog('info', 'mcp', 'Connector MCP provider auth opened', {
+        name: serverName,
+        connectorId: connectorServer.connectorId,
+        providerId: connectorServer.providerId,
+        ...reload,
+      });
+      return getDesktopMcpPayload({
+        ...reload,
+        auth: {
+          name: serverName,
+          connectorId: connectorServer.connectorId,
+          status: 'authorization_url_opened',
+          authorizationUrl: metadataAuthUrl,
+        },
+      });
+    }
+    if (connectorServer) {
+      const message = getConnectorMcpAuthFailureMessage(connectorServer, error, {
+        authorizationUrlOpened,
+      });
+      await updateConnectorMcpAuthState(connectorServer.connectorId, {
+        connected: false,
+        setupStatus: 'failed',
+        setupMessage: message,
+      });
+      emitToRenderer('connector-hub:changed', {
+        reason: 'mcp-auth-failed',
+        connectorId: connectorServer.connectorId,
+      });
+      throw new Error(message);
+    }
+    throw error;
+  } finally {
+    pendingMcpAuthCallbacks.delete(serverName);
+  }
+
   const reload = resetLocalRuntimesForMcpReload();
-  mossLog('info', 'mcp', 'Desktop MCP server authenticated', { name, ...reload });
+  if (connectorServer) {
+    await updateConnectorMcpAuthState(connectorServer.connectorId, {
+      connected: true,
+      setupStatus: 'connected',
+      setupMessage: '连接器已授权',
+    });
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-authenticated',
+      connectorId: connectorServer.connectorId,
+      ...reload,
+    });
+  }
+  mossLog('info', 'mcp', 'Desktop MCP server authenticated', {
+    name: serverName,
+    connectorId: connectorServer?.connectorId,
+    ...reload,
+  });
   return getDesktopMcpPayload({
     ...reload,
     auth: {
-      name,
+      name: serverName,
+      connectorId: connectorServer?.connectorId || null,
       status: 'authenticated',
       authorizationUrl: authResult?.authorizationUrl || null,
     },
   });
+}
+
+ipcMain.handle('agent:mcp-authenticate', async (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  return authenticateMcpServerByName(name, {
+    sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : null,
+  });
+});
+
+ipcMain.handle('agent:mcp-submit-auth-callback', async (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  const callbackUrl = typeof payload.callbackUrl === 'string' ? payload.callbackUrl.trim() : '';
+  if (!isValidMcpServerName(name) && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
+    throw new Error('Invalid MCP server name.');
+  }
+  if (!callbackUrl || callbackUrl.length > 8192) {
+    throw new Error('Invalid OAuth callback URL.');
+  }
+  const pending = pendingMcpAuthCallbacks.get(name);
+  if (!pending) {
+    throw new Error(`No pending OAuth callback for MCP server: ${name}`);
+  }
+  pending.submit(callbackUrl);
+  mossLog('info', 'mcp', 'Submitted MCP OAuth callback URL', {
+    name,
+    ageMs: Date.now() - pending.createdAt,
+  });
+  return { ok: true };
 });
 
 ipcMain.handle('agent:mcp-clear-auth', async (_event, payload = {}) => {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
-  if (!isValidMcpServerName(name)) {
+  if (!isValidMcpServerName(name) && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
     throw new Error('Invalid MCP server name.');
   }
 
   const store = readDesktopMcpStore();
   const entry = store.servers[name];
-  if (!entry) {
+  const connectorServer = entry ? null : findConnectorMcpServer(name);
+  if (!entry && !connectorServer) {
     throw new Error(`Unknown MCP server: ${name}`);
   }
-  if (entry.config.type !== 'http' && entry.config.type !== 'sse') {
+
+  const serverName = entry ? name : connectorServer.serverName;
+  const serverConfig = entry ? entry.config : connectorServer.config;
+  if (serverConfig.type !== 'http' && serverConfig.type !== 'sse') {
     throw new Error('Only http and sse MCP servers support browser authentication.');
   }
 
   const clearDesktopMcpServerAuth = await getClearDesktopMcpServerAuthFn();
-  await clearDesktopMcpServerAuth(name, entry.config);
+  await clearDesktopMcpServerAuth(serverName, serverConfig);
   const reload = resetLocalRuntimesForMcpReload();
-  mossLog('info', 'mcp', 'Desktop MCP server authentication cleared', { name, ...reload });
+  if (connectorServer) {
+    await clearConnectorMcpAccessToken(connectorServer.connectorId, serverName);
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-auth-cleared',
+      connectorId: connectorServer.connectorId,
+      ...reload,
+    });
+  }
+  mossLog('info', 'mcp', 'Desktop MCP server authentication cleared', {
+    name: serverName,
+    connectorId: connectorServer?.connectorId,
+    ...reload,
+  });
   return getDesktopMcpPayload({
     ...reload,
     auth: {
-      name,
+      name: serverName,
+      connectorId: connectorServer?.connectorId || null,
       status: 'cleared',
     },
   });
@@ -6587,6 +7023,7 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
     title: payload.title,
     assistantName: payload.assistant_name,
     projectId,
+    connectorIds: payload.connectorIds,
   });
   if (projectId) {
     await linkSessionToProject(projectId, sessionRecord);
@@ -6606,6 +7043,9 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
 ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   const history = await loadSessionHistoryFromSource(sessionRecord);
+  if (!sessionRecord.workspaceWatcher) {
+    void startWorkspaceWatcher(sessionRecord);
+  }
   return {
     ...getSessionSummary(sessionRecord),
     history,

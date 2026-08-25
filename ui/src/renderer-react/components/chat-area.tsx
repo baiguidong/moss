@@ -32,8 +32,9 @@ import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage, WorkerThread } from "@/lib/agent-transcript";
-import type { BackgroundTaskInfo } from "../types";
+import type { BackgroundTaskInfo, InstalledConnector } from "../types";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
+import { ConnectorSelectionArea } from "@/components/connector-selection-area";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 
 type ComposerIntent = "chat" | "plan" | "coordinator";
@@ -1158,6 +1159,9 @@ function HomeLanding({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
+  installedConnectors,
+  selectedConnectorIds,
+  onToggleConnector,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1178,6 +1182,9 @@ function HomeLanding({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
+  installedConnectors?: InstalledConnector[];
+  selectedConnectorIds?: string[];
+  onToggleConnector?: (connector: InstalledConnector) => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1246,6 +1253,15 @@ function HomeLanding({
             assistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
             onSelectAssistant={onSelectAssistant}
+          />
+        </div>
+      )}
+      {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
+        <div className="mx-auto mt-3 w-full max-w-[720px] min-w-0">
+          <ConnectorSelectionArea
+            connectors={installedConnectors}
+            selectedConnectorIds={selectedConnectorIds ?? []}
+            onToggleConnector={onToggleConnector}
           />
         </div>
       )}
@@ -1680,6 +1696,9 @@ export function ChatArea({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
+  installedConnectors,
+  selectedConnectorIds,
+  onToggleConnector,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1721,6 +1740,9 @@ export function ChatArea({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
+  installedConnectors?: InstalledConnector[];
+  selectedConnectorIds?: string[];
+  onToggleConnector?: (connector: InstalledConnector) => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1808,6 +1830,9 @@ export function ChatArea({
           selectedAssistant={selectedAssistant ?? null}
           onSelectAssistant={onSelectAssistant}
           onClearAssistant={onClearAssistant ?? (() => {})}
+          installedConnectors={installedConnectors}
+          selectedConnectorIds={selectedConnectorIds}
+          onToggleConnector={onToggleConnector}
           remoteEnabled={remoteEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
@@ -1865,6 +1890,15 @@ export function ChatArea({
           )}
           {loading && composerActivity && busyStartRef.current !== null && (
             <ActivityStrip label={composerActivity.label} startTime={busyStartRef.current} />
+          )}
+          {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
+            <div className="mb-2 flex justify-center">
+              <ConnectorSelectionArea
+                connectors={installedConnectors}
+                selectedConnectorIds={selectedConnectorIds ?? []}
+                onToggleConnector={onToggleConnector}
+              />
+            </div>
           )}
           {queuedMessages && queuedMessages.length > 0 && (
             <div className="mb-2 space-y-1">

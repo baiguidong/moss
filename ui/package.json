@@ -90,6 +90,13 @@
         ]
       },
       {
+        "from": "resources/connectors",
+        "to": "connectors",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "resources/runtimes",
         "to": "runtimes",
         "filter": [

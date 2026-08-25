@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { BrowserPanel, openBrowserPanelUrl } from "@/components/browser-panel";
+import { BrowserPanel } from "@/components/browser-panel";
 import { FileTree } from "@/components/file-tree";
 import type { FileTreeNode, SessionTask, SessionTaskStatus, WorkspacePreviewData } from "@/types";
 
@@ -132,6 +132,7 @@ export function TaskPanel({
   sessionId,
   sessionTasks,
   projectName,
+  browserOpenSignal,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -151,6 +152,7 @@ export function TaskPanel({
   sessionId?: string | null;
   sessionTasks?: SessionTask[];
   projectName?: string | null;
+  browserOpenSignal?: number;
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
@@ -174,15 +176,9 @@ export function TaskPanel({
   }, [sessionTasks]);
 
   React.useEffect(() => {
-    const unsubscribe = window.agentDesktop.browser.onOpen((payload) => {
-      if (!payload?.url) return;
-      if (payload.sessionId && sessionId && payload.sessionId !== sessionId) return;
-      if (payload.sessionId && !sessionId) return;
-      openBrowserPanelUrl(payload.sessionId || sessionId, payload.url);
-      setActiveView("browser");
-    });
-    return unsubscribe;
-  }, [sessionId]);
+    if (!browserOpenSignal) return;
+    setActiveView("browser");
+  }, [browserOpenSignal]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

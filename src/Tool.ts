@@ -309,6 +309,8 @@ export type MossAppEvent =
   | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
   | { type: 'browser_open'; input: MossBrowserOpenInput }
+  | { type: 'connector_cli_setup'; input: MossConnectorCliSetupInput }
+  | { type: 'connector_mcp_authenticate'; input: MossConnectorMcpAuthenticateInput }
   | { type: 'image_generate'; input: MossImageGenerateInput }
   | { type: 'image_edit'; input: MossImageEditInput }
 
@@ -372,6 +374,15 @@ export type MossBrowserOpenInput = {
   engine?: 'baidu' | 'google' | 'bing'
 }
 
+export type MossConnectorCliSetupInput = {
+  connector_id: string
+}
+
+export type MossConnectorMcpAuthenticateInput = {
+  connector_id?: string
+  server_name?: string
+}
+
 export type MossImageEditInput = {
   prompt: string
   source_path: string
@@ -394,6 +405,15 @@ export type MossAppEventResult =
       mediaType?: string
       metadataPath?: string
       htmlPath?: string
+      connector?: unknown
+      connected?: boolean
+      setupStatus?: string
+      version?: string
+      authorizationUrlOpened?: boolean
+      authorizationHost?: string
+      auth?: unknown
+      steps?: unknown[]
+      message?: string
     }
   | { ok: false; error: string }
 

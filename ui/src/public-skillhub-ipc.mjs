@@ -57,6 +57,106 @@ function normalizeVersion(version) {
   return text;
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cleanText(value) {
+  const text = String(value ?? '').trim();
+  return text && text !== '[object Object]' ? text : '';
+}
+
+function textValue(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return cleanText(value);
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const text = textValue(entry);
+      if (text) return text;
+    }
+    return '';
+  }
+  if (!isRecord(value)) return '';
+
+  const keys = [
+    'zh',
+    'zhCN',
+    'zh-CN',
+    'nameZh',
+    'displayNameZh',
+    'titleZh',
+    'labelZh',
+    'displayName',
+    'display_name',
+    'name',
+    'title',
+    'label',
+    'value',
+    'en',
+    'enUS',
+    'en-US',
+    'key',
+    'id',
+    'slug',
+  ];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    const text = textValue(value[key]);
+    if (text) return text;
+  }
+  for (const entry of Object.values(value)) {
+    if (entry !== null && typeof entry === 'object') continue;
+    const text = textValue(entry);
+    if (text) return text;
+  }
+  return '';
+}
+
+function normalizeNamespace(namespace) {
+  if (!isRecord(namespace)) return null;
+  const handle = textValue(namespace.handle);
+  const publicSlug = textValue(namespace.publicSlug);
+  const canonicalName = textValue(namespace.canonicalName)
+    || (handle && publicSlug ? `@${handle}/${publicSlug}` : '');
+  const displayName = textValue(namespace.displayName) || textValue(namespace.name) || handle;
+  if (!canonicalName && !displayName && !handle && !publicSlug) return null;
+  return {
+    canonicalName,
+    displayName,
+    handle,
+    publicSlug,
+  };
+}
+
+function categoryKey(category) {
+  if (!isRecord(category)) return textValue(category);
+  return textValue(category.key) || textValue(category.id) || textValue(category.slug) || textValue(category.name);
+}
+
+function categoryDisplayName(category) {
+  if (!isRecord(category)) return textValue(category);
+  return textValue(category.name)
+    || textValue(category.nameZh)
+    || textValue(category.displayName)
+    || textValue(category.title)
+    || categoryKey(category);
+}
+
+function normalizeCategoryLabels(value) {
+  const source = Array.isArray(value) ? value : value ? [value] : [];
+  const labels = [];
+  const seen = new Set();
+  for (const entry of source) {
+    const label = categoryDisplayName(entry);
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+
 function sanitizeSkillDirName(name) {
   if (!name || typeof name !== 'string') return null;
   const trimmed = name.trim();
@@ -161,34 +261,34 @@ async function readSkillVersion(skillDir) {
 }
 
 function normalizeSkillCoordinate(skill) {
-  const namespace = skill?.namespace && typeof skill.namespace === 'object' ? skill.namespace : null;
-  const slug = String(skill?.slug || skill?.name || '').trim();
-  return String(namespace?.canonicalName || (namespace?.handle && slug ? `@${namespace.handle}/${slug}` : '') || slug).trim();
+  const namespace = normalizeNamespace(skill?.namespace);
+  const slug = textValue(skill?.slug) || textValue(skill?.name);
+  return cleanText(namespace?.canonicalName || (namespace?.handle && slug ? `@${namespace.handle}/${slug}` : '') || slug);
 }
 
 function normalizeRemoteSkill(skill) {
-  if (!skill || typeof skill !== 'object') return null;
-  const namespace = skill.namespace && typeof skill.namespace === 'object' ? skill.namespace : null;
-  const slug = String(skill.slug || skill.name || skill.id || '').trim();
-  const displayName = String(skill.displayName || skill.display_name || skill.name || slug).trim();
+  if (!isRecord(skill)) return null;
+  const namespace = normalizeNamespace(skill.namespace);
+  const slug = textValue(skill.slug) || textValue(skill.name) || textValue(skill.id);
+  const displayName = textValue(skill.displayName) || textValue(skill.display_name) || textValue(skill.name) || slug;
   if (!slug && !displayName) return null;
-  const category = String(skill.category || '').trim();
-  const subCategories = Array.isArray(skill.subCategories) ? skill.subCategories.filter(Boolean) : [];
-  const categories = Array.from(new Set([category, ...subCategories].map((entry) => String(entry || '').trim()).filter(Boolean)));
+  const category = categoryKey(skill.category);
+  const subCategories = normalizeCategoryLabels(skill.subCategories);
+  const categories = Array.from(new Set([category, ...subCategories].filter(Boolean)));
   return {
     id: normalizeSkillCoordinate({ ...skill, slug, namespace }) || displayName,
     slug,
     name: slug || displayName,
     displayName,
-    description: skill.summary_zh || skill.description_zh || skill.summary || skill.description || '',
-    version: normalizeVersion(skill.version || skill.latestVersion?.version || ''),
-    icon: skill.iconUrl || skill.icon || '',
+    description: textValue(skill.summary_zh) || textValue(skill.description_zh) || textValue(skill.summary) || textValue(skill.description) || '',
+    version: normalizeVersion(textValue(skill.version) || textValue(skill.latestVersion?.version)),
+    icon: textValue(skill.iconUrl) || textValue(skill.icon),
     category,
     categories,
     namespace,
-    ownerName: skill.ownerName || skill.owner?.displayName || namespace?.displayName || namespace?.handle || '',
-    source: skill.source || 'skillhub',
-    homepage: skill.homepage || '',
+    ownerName: textValue(skill.ownerName) || textValue(skill.owner?.displayName) || textValue(skill.owner?.name) || textValue(namespace?.displayName) || textValue(namespace?.handle),
+    source: textValue(skill.source) || 'skillhub',
+    homepage: textValue(skill.homepage),
     stars: Number(skill.stars ?? skill.stats?.stars ?? 0) || 0,
     downloads: Number(skill.downloads ?? skill.stats?.downloads ?? 0) || 0,
     installs: Number(skill.installs ?? skill.stats?.installs ?? 0) || 0,
@@ -199,9 +299,9 @@ function normalizeRemoteSkill(skill) {
 
 function normalizeCategory(category) {
   if (typeof category === 'string') return { key: category, name: category };
-  if (!category || typeof category !== 'object') return null;
-  const key = String(category.key || category.id || category.name || '').trim();
-  const name = String(category.name || category.nameZh || category.title || key).trim();
+  if (!isRecord(category)) return null;
+  const key = categoryKey(category);
+  const name = categoryDisplayName(category);
   if (!key && !name) return null;
   return {
     key: key || name,
@@ -212,24 +312,25 @@ function normalizeCategory(category) {
 }
 
 function normalizeInstalledSkill(meta, entryName, skillDir, version) {
+  const namespace = normalizeNamespace(meta?.namespace);
   return {
-    id: meta?.id || '',
-    slug: meta?.slug || '',
-    name: meta?.name || entryName,
-    displayName: meta?.display_name || meta?.name || entryName,
-    description: meta?.description || '',
+    id: textValue(meta?.id),
+    slug: textValue(meta?.slug),
+    name: textValue(meta?.name) || entryName,
+    displayName: textValue(meta?.display_name) || textValue(meta?.displayName) || textValue(meta?.name) || entryName,
+    description: textValue(meta?.description),
     version: meta?.installed_version || version || '',
-    icon: meta?.icon || '',
-    emoji: meta?.emoji || '',
-    category: meta?.category || '',
-    categories: Array.isArray(meta?.categories) ? meta.categories : [],
+    icon: textValue(meta?.icon),
+    emoji: textValue(meta?.emoji),
+    category: categoryKey(meta?.category),
+    categories: normalizeCategoryLabels(meta?.categories),
     isBuiltin: false,
     isHubInstalled: meta?.source_type === 'skillhub' || meta?.source_type === 'hub',
     isUploaded: meta?.source_type === 'upload',
     enabled: meta?.enabled !== false,
-    namespace: meta?.namespace || null,
-    ownerName: meta?.owner_name || '',
-    homepage: meta?.homepage || '',
+    namespace,
+    ownerName: textValue(meta?.owner_name) || textValue(namespace?.displayName) || textValue(namespace?.handle),
+    homepage: textValue(meta?.homepage),
     source: skillDir,
   };
 }

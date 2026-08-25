@@ -174,11 +174,20 @@ function assertRemoteMcpConfig(
 export async function authenticateDesktopMcpServer(
   serverName: string,
   config: McpServerConfig,
+  options: {
+    onAuthorizationUrl?: (url: string) => void
+    onWaitingForCallback?: (submit: (callbackUrl: string) => void) => void
+    skipBrowserOpen?: boolean
+  } = {},
 ): Promise<{ authorizationUrl?: string }> {
   const remoteConfig = assertRemoteMcpConfig(serverName, config)
   let authorizationUrl: string | undefined
   await performMCPOAuthFlow(serverName, remoteConfig, url => {
     authorizationUrl = url
+    options.onAuthorizationUrl?.(url)
+  }, undefined, {
+    onWaitingForCallback: options.onWaitingForCallback,
+    skipBrowserOpen: options.skipBrowserOpen,
   })
   return { authorizationUrl }
 }

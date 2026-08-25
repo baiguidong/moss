@@ -22,6 +22,7 @@ export type SessionSummary = {
   assistantName?: string | null;
   projectId?: string | null;
   projectName?: string | null;
+  connectorIds?: string[];
 };
 
 export type SessionDetail = SessionSummary & {
@@ -77,6 +78,43 @@ export type Project = {
   taskCount?: number;
   sessionCount?: number;
   teamRunCount?: number;
+};
+
+export type ConnectorType = 'mcp' | 'cli' | 'unknown';
+
+export type ConnectorCatalogItem = {
+  id: string;
+  source: string;
+  name: string;
+  nameEn?: string;
+  icon?: string;
+  description?: string;
+  descriptionEn?: string;
+  type: ConnectorType;
+  authMode?: string;
+  providerId?: string;
+  minWorkbuddyVersion?: string;
+  visibleIn?: string[];
+  examples?: string[];
+  hasMcp?: boolean;
+  hasCli?: boolean;
+  hasSkills?: boolean;
+  installed?: boolean;
+  enabled?: boolean;
+  connected?: boolean;
+  setupStatus?: string;
+  setupMessage?: string;
+  setupUpdatedAt?: string;
+  installedAt?: string | null;
+  mcpServerNames?: string[];
+  path?: string;
+  skillRoot?: string;
+  skillName?: string;
+};
+
+export type InstalledConnector = ConnectorCatalogItem & {
+  installedAt: string;
+  path: string;
 };
 
 export type ProjectAsset = {
@@ -437,7 +475,7 @@ declare global {
     agentDesktop: {
       // 通用 IPC 方法
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
-      ipcOn: (channel: string, callback: (payload: any) => void) => void;
+      ipcOn: (channel: string, callback: (payload: any) => void) => any;
       ipcOff: (channel: string, handler: any) => void;
 
       getStatus: () => Promise<any>;
@@ -450,7 +488,8 @@ declare global {
       upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
       removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
       setMcpServerEnabled: (payload: { name: string; enabled: boolean }) => Promise<McpSettingsPayload>;
-      authenticateMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
+      authenticateMcpServer: (payload: { name: string; sessionId?: string | null }) => Promise<McpSettingsPayload>;
+      submitMcpAuthCallback: (payload: { name: string; callbackUrl: string }) => Promise<{ ok: boolean }>;
       clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
@@ -487,10 +526,16 @@ declare global {
       startProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string }) => Promise<ProjectTeamRun>;
       closeProjectTeamRun: (payload: { projectId: string; runId: string }) => Promise<ProjectTeamRun>;
       listSessions: () => Promise<SessionSummary[]>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; projectId?: string | null }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; projectId?: string | null; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
+      listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;
+      getInstalledConnectors: () => Promise<{ success?: boolean; data?: InstalledConnector[]; error?: string }>;
+      installConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector?: InstalledConnector; cli?: Record<string, any> | null }; error?: string }>;
+      uninstallConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { ok: boolean; id: string }; error?: string }>;
+      saveConnectorMcpToken: (payload: { connectorId: string; serverName: string; token?: string; url?: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; serverName: string }; error?: string }>;
       pickDirectory: () => Promise<string | null>;
       pickFiles: () => Promise<Array<{ name: string; path: string }>>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
@@ -568,7 +613,22 @@ declare global {
         onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) => () => void;
       };
       browser: {
-        onOpen: (callback: (payload: { url: string; sessionId?: string | null }) => void) => () => void;
+        onOpen: (callback: (payload: {
+          url: string;
+          sessionId?: string | null;
+          connectorAuth?: {
+            connectorId: string;
+            serverName: string;
+            displayName?: string;
+            tokenParam?: string;
+            allowedHosts?: string[];
+          } | null;
+          mcpAuth?: {
+            serverName: string;
+            displayName?: string;
+          } | null;
+        }) => void) => () => void;
+        onExternalUrl: (callback: (payload: { url: string }) => void) => () => void;
       };
       workspace: {
         writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;

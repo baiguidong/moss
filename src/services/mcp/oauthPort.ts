@@ -20,8 +20,9 @@ const REDIRECT_PORT_FALLBACK = 3118
  */
 export function buildRedirectUri(
   port: number = REDIRECT_PORT_FALLBACK,
+  host = 'localhost',
 ): string {
-  return `http://localhost:${port}/callback`
+  return `http://${host}:${port}/callback`
 }
 
 function getMcpOAuthCallbackPort(): number | undefined {

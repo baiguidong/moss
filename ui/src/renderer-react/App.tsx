@@ -6,6 +6,7 @@ import { ChatArea } from '@/components/chat-area';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { SkillHubView } from '@/components/skill-hub-view';
 import { ExpertHubView } from '@/components/expert-hub-view';
+import { ConnectorHubView } from '@/components/connector-hub-view';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -14,6 +15,7 @@ import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
+import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
@@ -34,6 +36,7 @@ import type {
   CoordinatorTask,
   DesktopSettings,
   FileTreeNode,
+  InstalledConnector,
   InstalledAssistant,
   Project,
   ProjectTemplate,
@@ -258,6 +261,26 @@ function restoreComposerIntent(session?: Pick<SessionSummary, 'composerIntent'> 
   return session?.composerIntent === 'coordinator' ? 'coordinator' : 'chat';
 }
 
+function buildCliConnectorSetupPrompt(connector: InstalledConnector, _cli: Record<string, any> | null) {
+  return [
+    `请帮我完成 Moss 连接器「${connector.name}」的本机 CLI 安装、版本检查和认证。`,
+    '',
+    '执行方式：直接调用 Moss 工具，不要使用 Bash/Shell/终端手动执行连接器命令。',
+    '',
+    '请调用：',
+    '```json',
+    JSON.stringify({ action: 'connector_cli_setup', connector_id: connector.id }, null, 2),
+    '```',
+    '',
+    'Moss 工具会读取已安装连接器的 cli.json，根据当前系统执行 init/versionCheck/auth/status，自动打开 OAuth 地址到右侧浏览器，并等待认证完成。',
+    '',
+    '要求：',
+    '1. 不要修改连接器目录内部文件，包括 cli.json、mcp.json、SKILL.md、references 或图标。',
+    '2. 不要在对话、日志或输出文件中展示 token、密码、完整授权 URL 或完整敏感凭据。',
+    '3. 工具返回后，用简短中文说明安装、认证和 status 检查结果。',
+  ].join('\n');
+}
+
 function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>, expandedDirs: Set<string>): FileTreeNode[] {
   const lower = query.trim().toLowerCase();
   return items
@@ -331,6 +354,7 @@ export default function App() {
   const appearanceRef = React.useRef<DesktopSettings['appearance']>({ themeMode, cssThemeId });
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
+  const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [projectTemplates, setProjectTemplates] = React.useState<ProjectTemplate[]>([]);
@@ -352,6 +376,8 @@ export default function App() {
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
+  const [installedConnectors, setInstalledConnectors] = React.useState<InstalledConnector[]>([]);
+  const [draftConnectorIds, setDraftConnectorIds] = React.useState<string[]>([]);
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
@@ -406,6 +432,7 @@ export default function App() {
   const [previewTabs, setPreviewTabs] = React.useState<PreviewTabData[]>([]);
   const [activePreviewPath, setActivePreviewPath] = React.useState<string | null>(null);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
+  const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
@@ -499,14 +526,21 @@ export default function App() {
   }, []);
 
   const refreshAssistants = React.useCallback(async (mode?: 'local' | 'remote-direct') => {
-    const agentMode = mode ?? desktopSettings?.agentMode ?? 'local';
+    const agentMode = mode ?? desktopSettingsRef.current?.agentMode ?? 'local';
     const result = agentMode === 'remote-direct'
       ? await window.agentDesktop.getRemoteInstalledAssistants()
       : await window.agentDesktop.getInstalledAssistants();
     const assistants = result?.data ?? result ?? [];
     setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
     return assistants;
-  }, [desktopSettings?.agentMode]);
+  }, []);
+
+  const refreshConnectors = React.useCallback(async () => {
+    const result = await window.agentDesktop.getInstalledConnectors();
+    const connectors = result?.data ?? [];
+    setInstalledConnectors(Array.isArray(connectors) ? connectors : []);
+    return connectors;
+  }, []);
 
   React.useEffect(() => {
     if (!activeSessionId) return;
@@ -533,7 +567,11 @@ export default function App() {
   }, []);
 
   const applyDesktopSettings = React.useCallback((next: DesktopSettings) => {
-    setDesktopSettings((prev) => (prev ? { ...prev, ...next } : next));
+    setDesktopSettings((prev) => {
+      const merged = prev ? { ...prev, ...next } : next;
+      desktopSettingsRef.current = merged;
+      return merged;
+    });
     setSettingsDraft((prev) => (prev ? { ...prev, ...next } : next));
     if (next.appearance) applyAppearance(next.appearance);
   }, [applyAppearance]);
@@ -638,12 +676,19 @@ export default function App() {
     return true;
   }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
-  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string, assistantName?: string, projectId?: string | null) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; projectId?: string | null } = {};
+  const createAndOpenSession = React.useCallback(async (
+    title?: string,
+    workspace?: string,
+    assistantName?: string,
+    projectId?: string | null,
+    connectorIds?: string[],
+  ) => {
+    const payload: { title?: string; workspace?: string; assistant_name?: string; projectId?: string | null; connectorIds?: string[] } = {};
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
     if (projectId) payload.projectId = projectId;
+    if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
     activeSessionIdRef.current = created.summary.id;
@@ -966,11 +1011,14 @@ export default function App() {
           setBootError('缺少 cli-node.js。先在仓库根目录执行 bun run build:node。');
         }
         applyDesktopSettings(nextSettings);
-        await refreshApps();
-        await refreshSummaries();
-        await refreshProjects();
-        await refreshProjectTemplates();
-        await refreshAssistants(nextSettings.agentMode ?? 'local');
+        await Promise.all([
+          refreshApps(),
+          refreshSummaries(),
+          refreshProjects(),
+          refreshProjectTemplates(),
+          refreshAssistants(nextSettings.agentMode ?? 'local'),
+        ]);
+        void refreshConnectors().catch(() => {});
         if (cancelled) return;
         setActiveSessionId(null);
         setActiveDetail(null);
@@ -984,7 +1032,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshProjectTemplates, refreshAssistants]);
+  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshProjectTemplates, refreshAssistants, refreshConnectors]);
 
   React.useEffect(() => {
 
@@ -1138,6 +1186,10 @@ export default function App() {
       void refreshAssistants();
     });
 
+    const connectorChangedHandler = window.agentDesktop.ipcOn('connector-hub:changed', () => {
+      void refreshConnectors();
+    });
+
     return () => {
       if (workspaceRefreshTimerRef.current) {
         window.clearTimeout(workspaceRefreshTimerRef.current);
@@ -1156,8 +1208,9 @@ export default function App() {
       offSettingsChanged();
       offProjectsChanged();
       offAssistantsChanged();
+      window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1499,6 +1552,51 @@ export default function App() {
     handleClosePreviewDrawer();
   }, [handleClosePreviewDrawer]);
 
+  const openRightBrowser = React.useCallback(async (payload: {
+    url?: string;
+    sessionId?: string | null;
+    connectorAuth?: {
+      connectorId: string;
+      serverName: string;
+      displayName?: string;
+      tokenParam?: string;
+      allowedHosts?: string[];
+    } | null;
+    mcpAuth?: {
+      serverName: string;
+      displayName?: string;
+    } | null;
+  }) => {
+    if (!payload?.url) return;
+    const payloadSessionId = typeof payload.sessionId === 'string' && payload.sessionId
+      ? payload.sessionId
+      : null;
+    let targetSessionId = payloadSessionId || activeSessionIdRef.current;
+    if (payloadSessionId && payloadSessionId !== activeSessionIdRef.current) {
+      const opened = await openSession(payloadSessionId);
+      if (!opened) return;
+      targetSessionId = payloadSessionId;
+    }
+
+    openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null);
+    if (targetSessionId) {
+      setActiveView('chat');
+      setLayout((prev) => ({
+        ...prev,
+        rightCollapsed: false,
+        rightWidth: clamp(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+      }));
+      setBrowserOpenSignal((value) => value + 1);
+    }
+  }, [openSession]);
+
+  React.useEffect(() => {
+    const unsubscribe = window.agentDesktop.browser.onOpen((payload) => {
+      void openRightBrowser(payload);
+    });
+    return unsubscribe;
+  }, [openRightBrowser]);
+
   React.useEffect(() => {
     if (previewTabs.length === 0) {
       setActivePreviewPath(null);
@@ -1665,6 +1763,48 @@ export default function App() {
     });
   }, [selectedAppName, selectedAssistant]);
 
+  const handleRunCliConnectorSetup = React.useCallback(async (
+    connector: InstalledConnector,
+    cli: Record<string, any> | null,
+  ) => {
+    const sessionId = await createAndOpenSession(
+      `设置 ${connector.name} 连接器`,
+      undefined,
+      undefined,
+      undefined,
+      [connector.id],
+    );
+    setActiveView('chat');
+    await dispatchToSession(sessionId, buildCliConnectorSetupPrompt(connector, cli), 'chat');
+  }, [createAndOpenSession, dispatchToSession]);
+
+  const handleAuthenticateMcpConnector = React.useCallback(async (connector: InstalledConnector) => {
+    const serverName = connector.mcpServerNames?.[0] || connector.id;
+    const sessionId = await createAndOpenSession(
+      `授权 ${connector.name} 连接器`,
+      undefined,
+      undefined,
+      undefined,
+      [connector.id],
+    );
+    setActiveView('chat');
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    try {
+      const result = await window.agentDesktop.authenticateMcpServer({ name: serverName, sessionId });
+      await refreshConnectors();
+      const openedAuthUrl = (result as any)?.auth?.status === 'authorization_url_opened';
+      const notice = openedAuthUrl
+        ? `${connector.name} 授权页已打开，请在右侧浏览器完成授权`
+        : `${connector.name} 授权已完成`;
+      setPermissionNotice(notice);
+      window.setTimeout(() => {
+        setPermissionNotice((current) => (current === notice ? '' : current));
+      }, 2500);
+    } catch (err) {
+      setPermissionNotice(err instanceof Error ? err.message : String(err));
+    }
+  }, [createAndOpenSession, refreshConnectors]);
+
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
   const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
@@ -1722,6 +1862,8 @@ export default function App() {
           undefined,
           workspace,
           selectedAssistant?.name,
+          undefined,
+          draftConnectorIds,
         ).finally(() => {
           creatingSessionRef.current = null;
         });
@@ -1749,7 +1891,7 @@ export default function App() {
     }
 
     await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, input, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: Array<{ name: string; path: string }>,
@@ -1927,6 +2069,41 @@ export default function App() {
   const handleClearAssistant = React.useCallback(() => {
     setSelectedAssistant(null);
   }, []);
+
+  const selectedConnectorIds = React.useMemo(
+    () => activeSessionId ? (activeDetail?.connectorIds ?? []) : draftConnectorIds,
+    [activeDetail?.connectorIds, activeSessionId, draftConnectorIds],
+  );
+
+  React.useEffect(() => {
+    const installedIds = new Set(installedConnectors.map((connector) => connector.id));
+    setDraftConnectorIds((prev) => prev.filter((id) => installedIds.has(id)));
+  }, [installedConnectors]);
+
+  const handleToggleConnector = React.useCallback(async (connector: InstalledConnector) => {
+    const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
+    const next = current.includes(connector.id)
+      ? current.filter((id) => id !== connector.id)
+      : [...current, connector.id];
+
+    if (!activeSessionId) {
+      setDraftConnectorIds(next);
+      return;
+    }
+
+    const res = await window.agentDesktop.setSessionConnectors({
+      sessionId: activeSessionId,
+      connectorIds: next,
+    });
+    if (!res?.success || !res.data) {
+      setPermissionNotice(res?.error || '更新连接器失败');
+      return;
+    }
+    const detail = res.data;
+    setActiveDetail(detail);
+    activeDetailRef.current = detail;
+    setSummaries((prev) => upsertSummary(prev, detail));
+  }, [activeSessionId, draftConnectorIds]);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
@@ -2117,6 +2294,9 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
+                installedConnectors={installedConnectors}
+                selectedConnectorIds={selectedConnectorIds}
+                onToggleConnector={handleToggleConnector}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
@@ -2158,6 +2338,9 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
+                installedConnectors={installedConnectors}
+                selectedConnectorIds={selectedConnectorIds}
+                onToggleConnector={handleToggleConnector}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
@@ -2167,6 +2350,12 @@ export default function App() {
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'skills' ? (
             <SkillHubView />
+          ) : activeView === 'connectors' ? (
+            <ConnectorHubView
+              onConnectorsChanged={refreshConnectors}
+              onRunCliSetup={handleRunCliConnectorSetup}
+              onAuthenticateMcp={handleAuthenticateMcpConnector}
+            />
           ) : activeView === 'experts' ? (
             <ExpertHubView />
           ) : activeView === 'projects' ? (
@@ -2276,6 +2465,7 @@ export default function App() {
                 sessionId={activeSessionId}
                 sessionTasks={activeDetail?.tasks || []}
                 projectName={activeDetail?.projectName || null}
+                browserOpenSignal={browserOpenSignal}
               />
             </div>
           </>

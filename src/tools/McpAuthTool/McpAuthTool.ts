@@ -56,7 +56,7 @@ export function createMcpAuthTool(
 
   const description =
     `The \`${serverName}\` MCP server (${location}) is installed but requires authentication. ` +
-    `Call this tool to start the OAuth flow — you'll receive an authorization URL to share with the user. ` +
+    `Call this tool to start the OAuth flow. In Moss desktop, the authorization URL is opened automatically in the browser panel; otherwise you'll receive an authorization URL to share with the user. ` +
     `Once the user completes authorization in their browser, the server's real tools will become available automatically.`
 
   return {
@@ -89,7 +89,7 @@ export function createMcpAuthTool(
         return {
           data: {
             status: 'unsupported' as const,
-            message: `Server "${serverName}" uses ${transport} transport which does not support OAuth from this tool. Ask the user to run /mcp and authenticate manually.`,
+            message: `Server "${serverName}" uses ${transport} transport which does not support OAuth from this tool. Ask the user to open Moss connector management and reconnect this connector.`,
           },
         }
       }
@@ -167,11 +167,27 @@ export function createMcpAuthTool(
         ])
 
         if (authUrl) {
+          let openedInMossBrowser = false
+          try {
+            const result = await context.emitAppEvent?.({
+              type: 'browser_open',
+              input: { url: authUrl },
+            })
+            openedInMossBrowser = Boolean(result?.ok)
+          } catch (err) {
+            logMCPDebug(
+              serverName,
+              `Failed to open MCP authorization URL in Moss browser: ${errorMessage(err)}`,
+            )
+          }
+
           return {
             data: {
               status: 'auth_url' as const,
               authUrl,
-              message: `Ask the user to open this URL in their browser to authorize the ${serverName} MCP server:\n\n${authUrl}\n\nOnce they complete the flow, the server's tools will become available automatically.`,
+              message: openedInMossBrowser
+                ? `Authorization page for ${serverName} has been opened in the Moss browser panel. Ask the user to complete authorization there. Once complete, the server's tools will become available automatically.`
+                : `Ask the user to open this URL in their browser to authorize the ${serverName} MCP server:\n\n${authUrl}\n\nOnce they complete the flow, the server's tools will become available automatically.`,
             },
           }
         }
@@ -186,7 +202,7 @@ export function createMcpAuthTool(
         return {
           data: {
             status: 'error' as const,
-            message: `Failed to start OAuth flow for ${serverName}: ${errorMessage(err)}. Ask the user to run /mcp and authenticate manually.`,
+            message: `Failed to start OAuth flow for ${serverName}: ${errorMessage(err)}. Ask the user to open Moss connector management and reconnect this connector.`,
           },
         }
       }

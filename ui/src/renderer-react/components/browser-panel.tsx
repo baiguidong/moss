@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ExternalLink,
   Globe2,
+  KeyRound,
   Loader2,
   Plus,
   RefreshCw,
@@ -17,11 +18,26 @@ type BrowserTab = {
   id: string;
   title: string;
   url: string;
+  connectorAuth?: ConnectorAuthContext | null;
+  mcpAuth?: McpAuthContext | null;
 };
 
 type BrowserState = {
   tabs: BrowserTab[];
   activeTabId: string;
+};
+
+type ConnectorAuthContext = {
+  connectorId: string;
+  serverName: string;
+  displayName?: string;
+  tokenParam?: string;
+  allowedHosts?: string[];
+};
+
+type McpAuthContext = {
+  serverName: string;
+  displayName?: string;
 };
 
 type WebviewLike = HTMLElement & {
@@ -41,16 +57,24 @@ const PARTITION = "persist:moss-right-browser";
 const FALLBACK_SESSION_KEY = "__global__";
 const browserStates = new Map<string, BrowserState>();
 const browserListeners = new Set<() => void>();
+const capturedConnectorAuthUrls = new Set<string>();
+const submittedMcpAuthUrls = new Set<string>();
 
 function emitBrowserChange() {
   for (const listener of browserListeners) listener();
 }
 
-function createTab(url = DEFAULT_URL): BrowserTab {
+function createTab(
+  url = DEFAULT_URL,
+  connectorAuth?: ConnectorAuthContext | null,
+  mcpAuth?: McpAuthContext | null,
+): BrowserTab {
   return {
     id: `browser-tab-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title: url === DEFAULT_URL ? "新标签页" : url,
     url,
+    connectorAuth: connectorAuth || null,
+    mcpAuth: mcpAuth || null,
   };
 }
 
@@ -74,11 +98,16 @@ function normalizeBrowserUrl(value: string): string {
   return `https://${raw}`;
 }
 
-export function openBrowserPanelUrl(sessionId: string | null | undefined, rawUrl: string) {
+export function openBrowserPanelUrl(
+  sessionId: string | null | undefined,
+  rawUrl: string,
+  connectorAuth?: ConnectorAuthContext | null,
+  mcpAuth?: McpAuthContext | null,
+) {
   const nextUrl = normalizeBrowserUrl(rawUrl);
   const sessionKey = sessionId || FALLBACK_SESSION_KEY;
   const state = getBrowserState(sessionKey);
-  const tab = createTab(nextUrl);
+  const tab = createTab(nextUrl, connectorAuth, mcpAuth);
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tab.id;
   emitBrowserChange();
@@ -86,6 +115,57 @@ export function openBrowserPanelUrl(sessionId: string | null | undefined, rawUrl
 
 function displayUrl(url: string): string {
   return url === DEFAULT_URL ? "" : url;
+}
+
+function getUrlParam(url: URL, paramName: string): string {
+  const normalizedParam = paramName || "access_token";
+  const direct = url.searchParams.get(normalizedParam);
+  if (direct) return direct;
+  const hash = url.hash.replace(/^#/, "");
+  const hashQuery = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : hash;
+  const hashParams = new URLSearchParams(hashQuery);
+  return hashParams.get(normalizedParam) || "";
+}
+
+function isHostAllowed(hostname: string, allowedHosts?: string[]): boolean {
+  if (!allowedHosts || allowedHosts.length === 0) return true;
+  const normalizedHost = hostname.toLowerCase();
+  return allowedHosts.some((host) => {
+    const normalized = String(host || "").trim().toLowerCase();
+    return Boolean(normalized) && (normalizedHost === normalized || normalizedHost.endsWith(`.${normalized}`));
+  });
+}
+
+function extractConnectorAuthToken(rawUrl: string, context?: ConnectorAuthContext | null): string {
+  if (!context) return "";
+  try {
+    const url = new URL(rawUrl);
+    if (!isHostAllowed(url.hostname, context.allowedHosts)) return "";
+    return getUrlParam(url, context.tokenParam || "access_token");
+  } catch {
+    return "";
+  }
+}
+
+function getOAuthUrlParam(url: URL, paramName: string): string {
+  const direct = url.searchParams.get(paramName);
+  if (direct) return direct;
+  const hash = url.hash.replace(/^#/, "");
+  const hashQuery = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : hash;
+  const hashParams = new URLSearchParams(hashQuery);
+  return hashParams.get(paramName) || "";
+}
+
+function isMcpOAuthCallbackUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const state = getOAuthUrlParam(url, "state");
+    const code = getOAuthUrlParam(url, "code");
+    const error = getOAuthUrlParam(url, "error");
+    return Boolean(state && (code || error));
+  } catch {
+    return false;
+  }
 }
 
 export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
@@ -99,6 +179,8 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
   const [isLoading, setIsLoading] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
   const [canGoForward, setCanGoForward] = React.useState(false);
+  const [mcpCallbackUrl, setMcpCallbackUrl] = React.useState("");
+  const [mcpCallbackError, setMcpCallbackError] = React.useState("");
 
   React.useEffect(() => {
     browserListeners.add(forceUpdate);
@@ -111,6 +193,8 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     setInputUrl(displayUrl(activeTab.url));
     setCanGoBack(false);
     setCanGoForward(false);
+    setMcpCallbackUrl("");
+    setMcpCallbackError("");
   }, [activeTab.id, activeTab.url]);
 
   const updateActiveTab = React.useCallback(
@@ -139,6 +223,57 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     setCanGoBack(Boolean(webview?.canGoBack?.()));
     setCanGoForward(Boolean(webview?.canGoForward?.()));
   }, []);
+
+  const captureConnectorAuth = React.useCallback((currentUrl: string) => {
+    const context = activeTab.connectorAuth;
+    const token = extractConnectorAuthToken(currentUrl, context);
+    if (!context || !token || capturedConnectorAuthUrls.has(currentUrl)) {
+      return false;
+    }
+    capturedConnectorAuthUrls.add(currentUrl);
+    void window.agentDesktop.saveConnectorMcpToken({
+      connectorId: context.connectorId,
+      serverName: context.serverName,
+      token,
+    });
+    updateActiveTab({
+      url: DEFAULT_URL,
+      title: `${context.displayName || "连接器"}授权已完成`,
+      connectorAuth: null,
+    });
+    setInputUrl("");
+    return true;
+  }, [activeTab.connectorAuth, updateActiveTab]);
+
+  const submitMcpAuthCallback = React.useCallback((currentUrl: string) => {
+    const context = activeTab.mcpAuth;
+    if (!context || !isMcpOAuthCallbackUrl(currentUrl)) {
+      return false;
+    }
+    const key = `${context.serverName}:${currentUrl}`;
+    if (submittedMcpAuthUrls.has(key)) {
+      return true;
+    }
+    submittedMcpAuthUrls.add(key);
+    setMcpCallbackError("");
+    void window.agentDesktop.submitMcpAuthCallback({
+      name: context.serverName,
+      callbackUrl: currentUrl,
+    }).then(() => {
+      updateActiveTab({
+        url: DEFAULT_URL,
+        title: `${context.displayName || "连接器"}授权回调已提交`,
+        mcpAuth: null,
+      });
+      setInputUrl("");
+      setMcpCallbackUrl("");
+    }).catch((error: unknown) => {
+      submittedMcpAuthUrls.delete(key);
+      const message = error instanceof Error ? error.message : String(error || "授权回调提交失败");
+      setMcpCallbackError(message);
+    });
+    return true;
+  }, [activeTab.mcpAuth, updateActiveTab]);
 
   const selectTab = React.useCallback(
     (tabId: string) => {
@@ -190,6 +325,8 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     };
     const handleNavigate = () => {
       const currentUrl = webview.getURL?.() || webview.src || activeTab.url;
+      if (captureConnectorAuth(currentUrl)) return;
+      if (submitMcpAuthCallback(currentUrl)) return;
       updateActiveTab({
         url: currentUrl,
         title: webview.getTitle?.() || currentUrl,
@@ -206,6 +343,7 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     webview.addEventListener("did-stop-loading", handleStopLoading);
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("did-redirect-navigation", handleNavigate);
     webview.addEventListener("page-title-updated", handleTitleUpdated as EventListener);
     webview.addEventListener("did-finish-load", handleNavigate);
 
@@ -214,10 +352,30 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       webview.removeEventListener("did-stop-loading", handleStopLoading);
       webview.removeEventListener("did-navigate", handleNavigate);
       webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("did-redirect-navigation", handleNavigate);
       webview.removeEventListener("page-title-updated", handleTitleUpdated as EventListener);
       webview.removeEventListener("did-finish-load", handleNavigate);
     };
-  }, [activeTab.id, activeTab.url, syncNavigation, updateActiveTab]);
+  }, [activeTab.id, activeTab.url, captureConnectorAuth, submitMcpAuthCallback, syncNavigation, updateActiveTab]);
+
+  React.useEffect(() => {
+    const unsubscribe = window.agentDesktop.browser.onExternalUrl((payload) => {
+      if (!payload?.url) return;
+      submitMcpAuthCallback(payload.url);
+    });
+    return unsubscribe;
+  }, [submitMcpAuthCallback]);
+
+  const handleManualMcpCallbackSubmit = React.useCallback((event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const rawUrl = mcpCallbackUrl.trim();
+    if (!rawUrl) return;
+    if (!isMcpOAuthCallbackUrl(rawUrl)) {
+      setMcpCallbackError("回调地址里没有 code/state。");
+      return;
+    }
+    submitMcpAuthCallback(rawUrl);
+  }, [mcpCallbackUrl, submitMcpAuthCallback]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -314,6 +472,37 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
           <ExternalLink className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      {activeTab.mcpAuth ? (
+        <form
+          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/80 bg-muted/20 px-2"
+          onSubmit={handleManualMcpCallbackSubmit}
+        >
+          <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <input
+            value={mcpCallbackUrl}
+            onChange={(event) => {
+              setMcpCallbackUrl(event.target.value);
+              setMcpCallbackError("");
+            }}
+            placeholder="粘贴授权完成后的回调地址"
+            className="h-7 min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55"
+          />
+          {mcpCallbackError ? (
+            <span className="max-w-[180px] truncate text-[11px] text-destructive" title={mcpCallbackError}>
+              {mcpCallbackError}
+            </span>
+          ) : null}
+          <button
+            type="submit"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground transition-colors hover:bg-muted"
+            title="提交授权回调"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            提交
+          </button>
+        </form>
+      ) : null}
 
       <div className="relative min-h-0 flex-1 bg-white">
         {activeTab.url === DEFAULT_URL ? (
