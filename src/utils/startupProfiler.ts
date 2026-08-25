@@ -10,7 +10,7 @@
  */
 
 import { dirname, join } from 'path'
-import { getSessionId } from 'src/bootstrap/state.js'
+import { getSessionId, getSessionProjectDir } from 'src/bootstrap/state.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -132,7 +132,7 @@ export function profileReport(): void {
     const path = getStartupPerfLogPath()
     const dir = dirname(path)
     const fs = getFsImplementation()
-    fs.mkdirSync(dir)
+    fs.mkdirSync(dir, { recursive: true })
     writeFileSync_DEPRECATED(path, getReport(), {
       encoding: 'utf8',
       flush: true,
@@ -148,7 +148,10 @@ export function isDetailedProfilingEnabled(): boolean {
 }
 
 export function getStartupPerfLogPath(): string {
-  return join(getMossConfigHomeDir(), 'startup-perf', `${getSessionId()}.txt`)
+  const sessionProjectDir = getSessionProjectDir()
+  return sessionProjectDir
+    ? join(sessionProjectDir, getSessionId(), 'logs', 'startup-perf.txt')
+    : join(getMossConfigHomeDir(), 'startup-perf', `${getSessionId()}.txt`)
 }
 
 /**

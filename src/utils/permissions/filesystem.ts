@@ -13,7 +13,11 @@ import {
   MOSS_FOLDER_PERMISSION_PATTERN,
 } from 'src/tools/FileEditTool/constants.js'
 import type { z } from 'zod/v4'
-import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getSessionId,
+  getSessionProjectDir,
+} from '../../bootstrap/state.js'
 import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -251,15 +255,21 @@ function isSessionPlanFile(absolutePath: string): boolean {
 
 /**
  * Returns the session memory directory path for the current session with trailing separator.
- * Path format: {projectDir}/{sessionId}/session-memory/
+ * Path format: {sessionStorageRoot}/{sessionId}/session-memory/
  */
 export function getSessionMemoryDir(): string {
-  return join(getProjectDir(getCwd()), getSessionId(), 'session-memory') + sep
+  return (
+    join(
+      getSessionProjectDir() ?? getProjectDir(getCwd()),
+      getSessionId(),
+      'session-memory',
+    ) + sep
+  )
 }
 
 /**
  * Returns the session memory file path for the current session.
- * Path format: {projectDir}/{sessionId}/session-memory/summary.md
+ * Path format: {sessionStorageRoot}/{sessionId}/session-memory/summary.md
  */
 export function getSessionMemoryPath(): string {
   return join(getSessionMemoryDir(), 'summary.md')
@@ -273,11 +283,12 @@ function isSessionMemoryPath(absolutePath: string): boolean {
 }
 
 /**
- * Check if file is within the current project's directory.
- * Path format: ~/.moss/projects/{sanitized-cwd}/...
+ * Check if file is within the current session storage directory.
+ * Path format: sessionProjectDir when present, otherwise
+ * ~/.moss/projects/{sanitized-cwd}/...
  */
 function isProjectDirPath(absolutePath: string): boolean {
-  const projectDir = getProjectDir(getCwd())
+  const projectDir = getSessionProjectDir() ?? getProjectDir(getCwd())
   // SECURITY: Normalize to prevent path traversal bypasses via .. segments
   const normalizedPath = normalize(absolutePath)
   return (
@@ -1619,15 +1630,14 @@ export function checkReadableInternalPath(
     }
   }
 
-  // Project directory (for reading past session memories)
-  // Path format: ~/.moss/projects/{sanitized-cwd}/...
+  // Current session storage directory (for session memory, transcripts, etc.)
   if (isProjectDirPath(normalizedPath)) {
     return {
       behavior: 'allow',
       updatedInput: input,
       decisionReason: {
         type: 'other',
-        reason: 'Project directory files are allowed for reading',
+        reason: 'Session storage files are allowed for reading',
       },
     }
   }

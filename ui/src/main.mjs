@@ -125,8 +125,7 @@ const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
 const MOSS_APP_PROJECTS_DIR = path.join(MOSS_HOME, 'app-projects');
-const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
-const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
+const MOSS_SESSIONS_DIR = path.join(MOSS_HOME, 'sessions');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
 const MOSS_BUNDLED_APPS_WORKSPACE_DIR = path.join(MOSS_HOME, 'bundled-apps-workspace');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
@@ -191,7 +190,6 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
 });
 
 const APP_STORAGE_FILENAME = 'storage.json';
-const MAX_SANITIZED_PATH_LENGTH = 200;
 const PROJECT_FILE_NAME = 'project.json';
 const PROJECT_ASSET_INDEX_NAME = 'assets.json';
 const PROJECT_TEAM_RUN_INDEX_NAME = 'team-runs.json';
@@ -282,29 +280,23 @@ function normalizeRemoteDirectProfileMode(value) {
   return value === 'user' ? 'user' : 'session';
 }
 
-function djb2Hash(value) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+function normalizeSessionDirName(sessionId) {
+  const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!/^[a-zA-Z0-9_-]{1,120}$/.test(id)) {
+    throw new Error('Invalid session id.');
   }
-  return hash;
+  return id;
 }
 
-function sanitizeWorkspacePath(value) {
-  const sanitized = String(value || '').replace(/[^a-zA-Z0-9]/g, '-');
-  if (sanitized.length <= MAX_SANITIZED_PATH_LENGTH) {
-    return sanitized;
-  }
-  const hash = Math.abs(djb2Hash(String(value || ''))).toString(36);
-  return `${sanitized.slice(0, MAX_SANITIZED_PATH_LENGTH)}-${hash}`;
+function getLocalSessionDir(sessionId) {
+  return path.join(MOSS_SESSIONS_DIR, normalizeSessionDirName(sessionId));
 }
 
-function getTranscriptPathForWorkspace(workspace, sessionId) {
-  if (!workspace || !sessionId) return null;
+function getLocalSessionTranscriptPath(sessionRecord) {
+  if (!sessionRecord?.id || !sessionRecord?.underlyingSessionId) return null;
   return path.join(
-    MOSS_PROJECTS_DIR,
-    sanitizeWorkspacePath(workspace),
-    `${sessionId}.jsonl`,
+    getLocalSessionDir(sessionRecord.id),
+    `${sessionRecord.underlyingSessionId}.jsonl`,
   );
 }
 
@@ -377,10 +369,7 @@ function sleepMs(ms) {
 }
 
 async function loadDisplayHistoryFromLocalTranscript(sessionRecord) {
-  const transcriptPath = getTranscriptPathForWorkspace(
-    sessionRecord?.workspace,
-    sessionRecord?.underlyingSessionId,
-  );
+  const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
   if (!transcriptPath) return null;
 
   let raw;
@@ -431,14 +420,12 @@ const pendingEmbeddedPluginAppsByToken = new Map();
 const pendingEmbeddedWebviewAttachTokens = [];
 const debugWindows = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
-fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
+fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_PROJECTS_DIR, { recursive: true });
-fs.mkdirSync(USER_TMP_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_APP_PROJECTS_DIR);
-allowMediaRoot(MOSS_WORKSPACES_DIR);
-allowMediaRoot(USER_TMP_DIR);
+allowMediaRoot(MOSS_SESSIONS_DIR);
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 try { sessionDb.exec('PRAGMA journal_mode=WAL'); } catch {}
 try { sessionDb.exec('PRAGMA synchronous=NORMAL'); } catch {}
@@ -2250,6 +2237,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getEnabledDesktopMcpServers(),
+    projectDir: sessionRecord?.id ? getLocalSessionDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
         ? { kind: 'project', projectId: sessionRecord.projectId }
@@ -2987,8 +2975,45 @@ function parsePersistedSessionHistory(value) {
   }
 }
 
+function toSessionManifest(sessionRecord, isSubAgent = false) {
+  return {
+    id: sessionRecord.id,
+    title: sessionRecord.title,
+    workspace: sessionRecord.workspace,
+    remoteWorkspace: sessionRecord.remoteWorkspace || null,
+    agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    isCoordinatorMode: Boolean(sessionRecord.isCoordinatorMode),
+    createdAt: sessionRecord.createdAt,
+    updatedAt: sessionRecord.updatedAt,
+    messageCount: sessionRecord.messageCount,
+    preview: sessionRecord.preview || '',
+    underlyingSessionId: sessionRecord.underlyingSessionId || null,
+    isSubAgent: Boolean(isSubAgent),
+    assistantName: sessionRecord.assistantName || null,
+    projectId: sessionRecord.projectId || null,
+  };
+}
+
+function persistSessionManifest(sessionRecord, isSubAgent = false) {
+  try {
+    const sessionDir = getLocalSessionDir(sessionRecord.id);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, 'session.json'),
+      `${JSON.stringify(toSessionManifest(sessionRecord, isSubAgent), null, 2)}\n`,
+      'utf8',
+    );
+  } catch (error) {
+    mossLog('warn', 'session', 'Failed to persist session manifest', {
+      sessionId: sessionRecord?.id,
+      error: error?.message || String(error),
+    });
+  }
+}
+
 function persistSessionRecord(sessionRecord, isSubAgent = false) {
   persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
+  persistSessionManifest(sessionRecord, isSubAgent);
 }
 
 function flushPendingSessionPersist(sessionRecord) {
@@ -3026,15 +3051,15 @@ function inferPersistedSessionAgentMode(row) {
     return 'local';
   }
 
-  const workspace = typeof row?.workspace === 'string' ? row.workspace.trim() : '';
   const sessionId = typeof row?.underlying_session_id === 'string'
     ? row.underlying_session_id.trim()
     : '';
-  if (!workspace || !sessionId) {
+  const uiSessionId = typeof row?.id === 'string' ? row.id.trim() : '';
+  if (!uiSessionId || !sessionId) {
     return 'local';
   }
 
-  const transcriptPath = getTranscriptPathForWorkspace(workspace, sessionId);
+  const transcriptPath = path.join(getLocalSessionDir(uiSessionId), `${sessionId}.jsonl`);
   return transcriptPath && hasFile(transcriptPath) ? 'local' : 'remote-direct';
 }
 
@@ -3055,6 +3080,7 @@ function hydratePersistedSessions() {
           : getRemoteDirectWorkspace() || null)
         : null,
       agentMode,
+      sessionDir: getLocalSessionDir(row.id),
       isCoordinatorMode: Boolean(row.is_coordinator_mode),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -3099,6 +3125,7 @@ function hydratePersistedSessions() {
           : getRemoteDirectWorkspace() || null)
         : null,
       agentMode,
+      sessionDir: getLocalSessionDir(row.id),
       isCoordinatorMode: Boolean(row.is_coordinator_mode),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -3272,21 +3299,8 @@ function formatAuthDebug(authDebug) {
   return parts.join(', ');
 }
 
-function createDefaultWorkspacePath() {
-  const workspaceName = `claude-code-ui-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const candidatePaths = [
-    path.join(USER_TMP_DIR, workspaceName),
-    path.join(MOSS_WORKSPACES_DIR, workspaceName),
-  ];
-
-  for (const candidate of candidatePaths) {
-    try {
-      fs.mkdirSync(candidate, { recursive: true });
-      return candidate;
-    } catch {}
-  }
-
-  return repoRoot;
+function createDefaultWorkspacePath(sessionId) {
+  return path.join(getLocalSessionDir(sessionId), 'workspace');
 }
 
 function hasFile(filePath) {
@@ -3610,6 +3624,7 @@ async function loadSessionHistoryFromSource(sessionRecord) {
 
   const loadClaudeSessionSnapshot = await getLoadClaudeSessionSnapshotFn();
   const snapshot = await loadClaudeSessionSnapshot(sessionRecord.underlyingSessionId, {
+    sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
     cwdHint: sessionRecord.workspace,
   });
   if (!snapshot) {
@@ -3632,10 +3647,7 @@ async function refreshSessionDisplayMetricsFromTranscript(sessionRecord) {
   if (sessionRecord.runtime || sessionRecord.busy) return;
   if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return;
 
-  const transcriptPath = getTranscriptPathForWorkspace(
-    sessionRecord.workspace,
-    sessionRecord.underlyingSessionId,
-  );
+  const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
   if (!transcriptPath) return;
 
   let stat;
@@ -3952,7 +3964,7 @@ function getBootStatus() {
     sdkReady: hasFile(sdkPath),
     sessionsCount: sessions.size,
     defaultBypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
-    defaultWorkspaceRoot: USER_TMP_DIR,
+    defaultWorkspaceRoot: MOSS_SESSIONS_DIR,
     appsDir: APPS_DIR,
     appRegistryPath: APP_REGISTRY_PATH,
     bundledAppsWorkspaceDir: MOSS_BUNDLED_APPS_WORKSPACE_DIR,
@@ -4176,8 +4188,8 @@ async function copyBundledDirectoryEntries({
   }
 }
 
-function normalizeWorkspace(workspace) {
-  const normalized = workspace && String(workspace).trim() ? String(workspace).trim() : createDefaultWorkspacePath();
+function normalizeWorkspace(workspace, sessionId) {
+  const normalized = workspace && String(workspace).trim() ? String(workspace).trim() : createDefaultWorkspacePath(sessionId);
   return path.resolve(normalized);
 }
 
@@ -4921,16 +4933,21 @@ function isAccessibleDirectory(dirPath) {
 
 function createSessionRecord({ workspace, isSubAgent = false, title, assistantName, projectId } = {}) {
   const now = Date.now();
-  const normalizedWorkspace = normalizeWorkspace(workspace);
+  const id = randomUUID();
+  const sessionDir = getLocalSessionDir(id);
+  const normalizedWorkspace = normalizeWorkspace(workspace, id);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
   const normalizedProjectId = normalizeOptionalProjectId(projectId);
+  const agentMode = getDesktopAgentMode();
 
   const sessionRecord = {
-    id: randomUUID(),
+    id,
     title: title || 'New Session',
     workspace: normalizedWorkspace,
     remoteWorkspace: getRemoteDirectWorkspace() || null,
-    agentMode: getDesktopAgentMode(),
+    agentMode,
+    sessionDir,
     isCoordinatorMode: false,
     createdAt: now,
     updatedAt: now,
@@ -4974,23 +4991,13 @@ function getSessionRecord(sessionId) {
 // SDK writes task-notification queue-operation events directly to its .jsonl transcript file,
 // bypassing the runtime.send() stream. This helper reads those events so the UI can display
 // async worker results even when the coordinator never ran a second turn.
-// Find the subagents directory for a session.
-// The SDK stores sub-agent files under:
-//   MOSS_PROJECTS_DIR/{sanitized_cwd}/{sessionId}/subagents/
-// The CWD used by the SDK runtime may differ from sessionRecord.workspace
-// (e.g. in coordinator mode the runtime runs inside an execution window workspace),
-// so we search all workspace subdirectories for the matching sessionId directory.
-async function findSessionSubagentDir(underlyingSessionId) {
-  if (!underlyingSessionId) return null;
+async function findSessionSubagentDir(sessionRecord) {
+  const underlyingSessionId = sessionRecord?.underlyingSessionId;
+  if (!sessionRecord?.id || !underlyingSessionId) return null;
+  const candidate = path.join(getLocalSessionDir(sessionRecord.id), underlyingSessionId, 'subagents');
   try {
-    const workspaceDirs = await fsp.readdir(MOSS_PROJECTS_DIR);
-    for (const dir of workspaceDirs) {
-      const candidate = path.join(MOSS_PROJECTS_DIR, dir, underlyingSessionId, 'subagents');
-      try {
-        await fsp.access(candidate);
-        return candidate;
-      } catch {}
-    }
+    await fsp.access(candidate);
+    return candidate;
   } catch {}
   return null;
 }
@@ -5223,6 +5230,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
+      sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
       onPermissionRequest: async (toolName, input, request) => {
         return requestToolPermission(sessionRecord, toolName, input, request);
       },
@@ -6500,11 +6508,11 @@ ipcMain.handle('agent:set-worker-summaries', (_event, { sessionId, workerSummari
 
 // Read worker (sub-agent) results directly from the SDK's subagents directory.
 // Each async worker has its own .jsonl file under:
-//   MOSS_PROJECTS_DIR/{encoded_workspace}/{sessionId}/subagents/agent-{agentId}.jsonl
+//   ~/.moss/sessions/{uiSessionId}/{engineSessionId}/subagents/agent-{agentId}.jsonl
 // This is the authoritative source for worker output, not the coordinator's event stream.
 ipcMain.handle('agent:get-worker-results', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
-  const subagentDir = await findSessionSubagentDir(sessionRecord.underlyingSessionId);
+  const subagentDir = await findSessionSubagentDir(sessionRecord);
   if (!subagentDir) return { results: {} };
 
   const extractEventText = (event) => {
@@ -6608,6 +6616,11 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
   }
   sessions.delete(sessionId);
   deletePersistedSession(sessionId);
+  try {
+    await fsp.rm(getLocalSessionDir(sessionRecord.id), { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[session] failed to remove session directory:', err?.message || err);
+  }
   emitToRenderer('agent:session-removed', { sessionId });
   return {
     ok: true,
@@ -6668,7 +6681,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
       tasks: snapshotSessionTasks(sessionRecord),
     };
   }
-  sessionRecord.workspace = normalizeWorkspace(workspace);
+  sessionRecord.workspace = normalizeWorkspace(workspace, sessionRecord.id);
   await fsp.mkdir(sessionRecord.workspace, { recursive: true });
   await startWorkspaceWatcher(sessionRecord);
   sessionRecord.updatedAt = Date.now();

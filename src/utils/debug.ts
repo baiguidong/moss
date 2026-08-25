@@ -1,7 +1,7 @@
 import { appendFile, mkdir, symlink, unlink } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
 import { dirname, join } from 'path'
-import { getSessionId } from 'src/bootstrap/state.js'
+import { getSessionId, getSessionProjectDir } from 'src/bootstrap/state.js'
 
 import { type BufferedWriter, createBufferedWriter } from './bufferedWriter.js'
 import { registerCleanup } from './cleanupRegistry.js'
@@ -226,26 +226,34 @@ export function logForDebugging(
 }
 
 export function getDebugLogPath(): string {
-  return (
-    getDebugFilePath() ??
-    process.env.CLAUDE_CODE_DEBUG_LOGS_DIR ??
-    join(getMossConfigHomeDir(), 'debug', `${getSessionId()}.txt`)
-  )
+  const explicitPath =
+    getDebugFilePath() ?? process.env.CLAUDE_CODE_DEBUG_LOGS_DIR
+  if (explicitPath) {
+    return explicitPath
+  }
+
+  const sessionProjectDir = getSessionProjectDir()
+  return sessionProjectDir
+    ? join(sessionProjectDir, getSessionId(), 'logs', 'debug.txt')
+    : join(getMossConfigHomeDir(), 'debug', `${getSessionId()}.txt`)
 }
 
 /**
  * Updates the latest debug log symlink to point to the current debug log file.
  * Creates or updates a symlink at ~/.moss/debug/latest
  */
-const updateLatestDebugLogSymlink = memoize(async (): Promise<void> => {
-  try {
-    const debugLogPath = getDebugLogPath()
-    const debugLogsDir = dirname(debugLogPath)
-    const latestSymlinkPath = join(debugLogsDir, 'latest')
+const updateLatestDebugLogSymlink = memoize(
+  async (): Promise<void> => {
+    try {
+      const debugLogPath = getDebugLogPath()
+      const debugLogsDir = dirname(debugLogPath)
+      const latestSymlinkPath = join(debugLogsDir, 'latest')
 
-    await unlink(latestSymlinkPath).catch(() => {})
-    await symlink(debugLogPath, latestSymlinkPath)
-  } catch {
-    // Silently fail if symlink creation fails
-  }
-})
+      await unlink(latestSymlinkPath).catch(() => {})
+      await symlink(debugLogPath, latestSymlinkPath)
+    } catch {
+      // Silently fail if symlink creation fails
+    }
+  },
+  () => getDebugLogPath(),
+)

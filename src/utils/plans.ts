@@ -10,7 +10,11 @@ import type {
   SystemFileSnapshotMessage,
   UserMessage,
 } from 'src/types/message.js'
-import { getPlanSlugCache, getSessionId } from '../bootstrap/state.js'
+import {
+  getPlanSlugCache,
+  getSessionId,
+  getSessionProjectDir,
+} from '../bootstrap/state.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
@@ -80,39 +84,55 @@ export function clearAllPlanSlugs(): void {
 // and permission checks. Inputs (initial settings + cwd) are fixed at startup, so the
 // mkdirSync result is stable for the session. Without memoization, each rendered tool
 // message triggers a mkdirSync syscall (regressed in #20005).
-export const getPlansDirectory = memoize(function getPlansDirectory(): string {
-  const settings = getInitialSettings()
-  const settingsDir = settings.plansDirectory
-  let plansPath: string
+export const getPlansDirectory = memoize(
+  function getPlansDirectory(): string {
+    const settings = getInitialSettings()
+    const settingsDir = settings.plansDirectory
+    let plansPath: string
 
-  if (settingsDir) {
-    // Settings.json (relative to project root)
-    const cwd = getCwd()
-    const resolved = resolve(cwd, settingsDir)
+    if (settingsDir) {
+      // Settings.json (relative to project root)
+      const cwd = getCwd()
+      const resolved = resolve(cwd, settingsDir)
 
-    // Validate path stays within project root to prevent path traversal
-    if (!resolved.startsWith(cwd + sep) && resolved !== cwd) {
-      logError(
-        new Error(`plansDirectory must be within project root: ${settingsDir}`),
-      )
-      plansPath = join(getMossConfigHomeDir(), 'plans')
+      // Validate path stays within project root to prevent path traversal
+      if (!resolved.startsWith(cwd + sep) && resolved !== cwd) {
+        logError(
+          new Error(
+            `plansDirectory must be within project root: ${settingsDir}`,
+          ),
+        )
+        plansPath = join(getMossConfigHomeDir(), 'plans')
+      } else {
+        plansPath = resolved
+      }
     } else {
-      plansPath = resolved
+      // Default
+      const sessionProjectDir = getSessionProjectDir()
+      plansPath = sessionProjectDir
+        ? join(sessionProjectDir, getSessionId(), 'plans')
+        : join(getMossConfigHomeDir(), 'plans')
     }
-  } else {
-    // Default
-    plansPath = join(getMossConfigHomeDir(), 'plans')
-  }
 
-  // Ensure directory exists (mkdirSync with recursive: true is a no-op if it exists)
-  try {
-    getFsImplementation().mkdirSync(plansPath)
-  } catch (error) {
-    logError(error)
-  }
+    // Ensure directory exists (mkdirSync with recursive: true is a no-op if it exists)
+    try {
+      getFsImplementation().mkdirSync(plansPath)
+    } catch (error) {
+      logError(error)
+    }
 
-  return plansPath
-})
+    return plansPath
+  },
+  () => {
+    const settings = getInitialSettings()
+    return [
+      settings.plansDirectory ?? '',
+      getSessionProjectDir() ?? '',
+      getSessionId(),
+      getCwd(),
+    ].join('\0')
+  },
+)
 
 /**
  * Get the file path for a session's plan

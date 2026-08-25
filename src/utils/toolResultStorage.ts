@@ -5,7 +5,11 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { getOriginalCwd, getSessionId } from '../bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getSessionId,
+  getSessionProjectDir,
+} from '../bootstrap/state.js'
 import {
   BYTES_PER_TOKEN,
   DEFAULT_MAX_RESULT_SIZE_CHARS,
@@ -95,7 +99,10 @@ export type PersistToolResultError = {
  * Get the session directory (projectDir/sessionId)
  */
 function getSessionDir(): string {
-  return join(getProjectDir(getOriginalCwd()), getSessionId())
+  return join(
+    getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+    getSessionId(),
+  )
 }
 
 /**

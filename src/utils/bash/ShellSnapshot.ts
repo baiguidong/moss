@@ -4,6 +4,7 @@ import { mkdir, stat } from 'fs/promises'
 import * as os from 'os'
 import { join } from 'path'
 import { logEvent } from 'src/services/analytics/index.js'
+import { getSessionId, getSessionProjectDir } from '../../bootstrap/state.js'
 import { registerCleanup } from '../cleanupRegistry.js'
 import { getCwd } from '../cwd.js'
 import { logForDebugging } from '../debug.js'
@@ -436,7 +437,10 @@ export const createAndSaveSnapshot = async (
       // Create unique snapshot path with timestamp and random ID
       const timestamp = Date.now()
       const randomId = Math.random().toString(36).substring(2, 8)
-      const snapshotsDir = join(getMossConfigHomeDir(), 'shell-snapshots')
+      const sessionProjectDir = getSessionProjectDir()
+      const snapshotsDir = sessionProjectDir
+        ? join(sessionProjectDir, getSessionId(), 'shell-snapshots')
+        : join(getMossConfigHomeDir(), 'shell-snapshots')
       logForDebugging(`Snapshots directory: ${snapshotsDir}`)
       const shellSnapshotPath = join(
         snapshotsDir,
