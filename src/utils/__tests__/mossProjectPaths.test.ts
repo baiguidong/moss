@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { join } from 'path'
-import { getOriginalCwd, setOriginalCwd } from '../../bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getSessionId,
+  getSessionProjectDir,
+  setOriginalCwd,
+  switchSession,
+} from '../../bootstrap/state.js'
 import statusline from '../../commands/statusline.js'
 import {
   getGlobalMossFolderPermissionPattern,
   GLOBAL_MOSS_FOLDER_PERMISSION_PATTERN,
   MOSS_FOLDER_PERMISSION_PATTERN,
 } from '../../tools/FileEditTool/constants.js'
+import { asSessionId } from '../../types/ids.js'
 import { getMossConfigHomeDir } from '../envUtils.js'
 import { getMemoryPath } from '../config.js'
 import { isMemoryFilePath } from '../mossmd.js'
@@ -26,10 +33,13 @@ const { checkPathSafetyForAutoEdit } =
 
 const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
 const originalCwd = getOriginalCwd()
+const originalSessionId = getSessionId()
+const originalSessionProjectDir = getSessionProjectDir()
 
 afterEach(() => {
   restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
   setOriginalCwd(originalCwd)
+  switchSession(originalSessionId, originalSessionProjectDir)
 })
 
 describe('Moss project paths', () => {
@@ -90,6 +100,36 @@ describe('Moss project paths', () => {
     expect(checkPathSafetyForAutoEdit(adjacentPath, [adjacentPath])).toEqual({
       safe: true,
     })
+  })
+
+  test('allows managed session workspace files under the global Moss config directory', () => {
+    process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
+    const sessionDir = '/tmp/custom-moss/sessions/moss-session'
+    const workspaceDir = join(sessionDir, 'workspace')
+    setOriginalCwd(workspaceDir)
+    switchSession(asSessionId('underlying-session'), sessionDir)
+
+    const workspaceFile = join(workspaceDir, 'welcome.txt')
+    const sessionMetadataFile = join(sessionDir, 'session.json')
+    const nestedProjectConfigFile = join(
+      workspaceDir,
+      '.moss',
+      'agents',
+      'reviewer.md',
+    )
+
+    expect(checkPathSafetyForAutoEdit(workspaceFile, [workspaceFile])).toEqual({
+      safe: true,
+    })
+    expect(
+      checkPathSafetyForAutoEdit(sessionMetadataFile, [sessionMetadataFile])
+        .safe,
+    ).toBe(false)
+    expect(
+      checkPathSafetyForAutoEdit(nestedProjectConfigFile, [
+        nestedProjectConfigFile,
+      ]).safe,
+    ).toBe(false)
   })
 
   test('allows statusline to edit only the Moss global config', () => {

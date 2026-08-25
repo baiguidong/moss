@@ -226,18 +226,50 @@ export function isMossSettingsPath(filePath: string): boolean {
   )
 }
 
+function isManagedSessionWorkspacePath(filePath: string): boolean {
+  const sessionProjectDir = getSessionProjectDir()
+  if (!sessionProjectDir) {
+    return false
+  }
+
+  return pathInWorkingPath(filePath, join(sessionProjectDir, 'workspace'))
+}
+
+function pathsAreSameForSecurityComparison(
+  pathA: string,
+  pathB: string,
+): boolean {
+  return pathInWorkingPath(pathA, pathB) && pathInWorkingPath(pathB, pathA)
+}
+
+function isGlobalMossConfigDirSegment(
+  pathSegments: readonly string[],
+  segmentIndex: number,
+): boolean {
+  const segmentPath = pathSegments.slice(0, segmentIndex + 1).join(sep)
+  return pathsAreSameForSecurityComparison(segmentPath, getMossConfigHomeDir())
+}
+
 // Always ask when Moss tries to edit its own config files
 function isMossConfigFilePath(filePath: string): boolean {
   if (isMossSettingsPath(filePath)) {
     return true
   }
 
+  if (pathInWorkingPath(filePath, join(getOriginalCwd(), '.moss'))) {
+    return true
+  }
+
+  // Desktop-managed sessions keep their editable workspace under the global
+  // Moss session directory; that container should not make normal workspace
+  // files look like Moss config.
+  if (isManagedSessionWorkspacePath(filePath)) {
+    return false
+  }
+
   // Protect the entire global config root even when MOSS_CONFIG_DIR does not
-  // end in `.moss`. Project `.moss` paths are also protected as one unit.
-  return [
-    join(getOriginalCwd(), '.moss'),
-    getMossConfigHomeDir(),
-  ].some(configRoot => pathInWorkingPath(filePath, configRoot))
+  // end in `.moss`.
+  return pathInWorkingPath(filePath, getMossConfigHomeDir())
 }
 
 // Check if file is the plan file for the current session
@@ -464,6 +496,15 @@ function isDangerousFilePathToAutoEdit(path: string): boolean {
       // segment when it's followed by 'worktrees'. Any nested .moss directories
       // within the worktree (not followed by 'worktrees') are still blocked.
       if (dir === '.moss') {
+        // Skip only the outer global .moss segment for desktop-managed
+        // session workspaces; nested .moss directories are still blocked.
+        if (
+          isManagedSessionWorkspacePath(path) &&
+          isGlobalMossConfigDirSegment(pathSegments, i)
+        ) {
+          break
+        }
+
         const nextSegment = pathSegments[i + 1]
         if (
           nextSegment &&
