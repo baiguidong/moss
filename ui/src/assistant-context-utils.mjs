@@ -3,20 +3,7 @@ import path from 'node:path';
 
 export const ASSISTANT_META_FILE = '_moss_meta.json';
 
-const COMMON_RULE_FILE_NAMES = [
-  'system.md',
-  'prompt.md',
-  'assistant.md',
-  'instructions.md',
-  'rules.md',
-];
-
-const DOCUMENTATION_MARKDOWN_PATTERNS = [
-  /^readme(?:\.[^.]+)?$/i,
-  /^changelog(?:\.[^.]+)?$/i,
-  /^license(?:\.[^.]+)?$/i,
-  /^contributing(?:\.[^.]+)?$/i,
-];
+const DEFAULT_ASSISTANT_PROMPT_FILE = 'assistant.md';
 
 function normalizeAssistantRelativePath(filePath) {
   if (typeof filePath !== 'string') return '';
@@ -28,10 +15,6 @@ function normalizeAssistantRelativePath(filePath) {
   const safePath = path.posix.normalize(normalized);
   if (safePath === '.' || safePath === '..' || safePath.startsWith('../')) return '';
   return safePath;
-}
-
-function isDocumentationMarkdownFile(fileName) {
-  return DOCUMENTATION_MARKDOWN_PATTERNS.some((pattern) => pattern.test(fileName));
 }
 
 async function fileExists(filePath) {
@@ -116,59 +99,30 @@ export function getAssistantEnabledSkillIdentifiers(meta) {
   return Array.isArray(meta?.skills) ? meta.skills : [];
 }
 
-export async function resolveAssistantRuleFile(assistantDir, assistantName, preferredRuleFile) {
-  const candidateFiles = [];
-  const seenCandidates = new Set();
+function getAssistantPromptFileFromMeta(meta) {
+  const promptFile = typeof meta?.prompt_file === 'string' ? meta.prompt_file.trim() : '';
+  return promptFile || DEFAULT_ASSISTANT_PROMPT_FILE;
+}
 
-  const addCandidate = (candidate) => {
-    const normalized = normalizeAssistantRelativePath(candidate);
-    if (!normalized) return;
-    const lookupKey = normalized.toLowerCase();
-    if (seenCandidates.has(lookupKey)) return;
-    seenCandidates.add(lookupKey);
-    candidateFiles.push(normalized);
-  };
-
-  addCandidate(preferredRuleFile);
-  if (assistantName) {
-    addCandidate(`${assistantName}.md`);
-  }
-  for (const candidate of COMMON_RULE_FILE_NAMES) {
-    addCandidate(candidate);
-  }
-
-  for (const candidate of candidateFiles) {
-    if (!candidate.toLowerCase().endsWith('.md')) continue;
-    const fullPath = path.resolve(assistantDir, candidate);
-    if (await fileExists(fullPath)) {
-      return candidate;
-    }
-  }
-
-  let markdownFiles = [];
-  try {
-    const entries = await fsp.readdir(assistantDir, { withFileTypes: true });
-    markdownFiles = entries
-      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
-      .map((entry) => entry.name);
-  } catch {
+export async function resolveAssistantRuleFile(assistantDir, _assistantName, preferredRuleFile = DEFAULT_ASSISTANT_PROMPT_FILE) {
+  const candidate = normalizeAssistantRelativePath(preferredRuleFile || DEFAULT_ASSISTANT_PROMPT_FILE);
+  if (!candidate || !candidate.toLowerCase().endsWith('.md')) {
     return undefined;
   }
-
-  const nonDocumentationMarkdownFiles = markdownFiles.filter(
-    (fileName) => !isDocumentationMarkdownFile(fileName),
-  );
-
-  if (nonDocumentationMarkdownFiles.length === 1) {
-    return nonDocumentationMarkdownFiles[0];
+  const fullPath = path.resolve(assistantDir, candidate);
+  if (await fileExists(fullPath)) {
+    return candidate;
   }
-
   return undefined;
 }
 
 export async function readAssistantContext(assistantDir, assistantName) {
   const meta = await readAssistantMeta(assistantDir);
-  const ruleFile = await resolveAssistantRuleFile(assistantDir, assistantName, meta?.ruleFile);
+  const ruleFile = await resolveAssistantRuleFile(
+    assistantDir,
+    assistantName,
+    getAssistantPromptFileFromMeta(meta),
+  );
 
   let rules = '';
   if (ruleFile) {

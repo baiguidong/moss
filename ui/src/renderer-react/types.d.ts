@@ -270,6 +270,9 @@ export type DesktopSettings = {
   skillHub?: {
     apiBaseUrl?: string;
   };
+  expertHub?: {
+    baseUrl?: string;
+  };
   remoteDirect?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
@@ -447,6 +450,8 @@ declare global {
       upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
       removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
       setMcpServerEnabled: (payload: { name: string; enabled: boolean }) => Promise<McpSettingsPayload>;
+      authenticateMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
+      clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
       listProjectTemplates: () => Promise<ProjectTemplate[]>;
@@ -602,6 +607,7 @@ declare global {
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
       onProjectsChanged: (callback: (payload: { projectId?: string; reason?: string }) => void) => () => void;
+      onAssistantsChanged: (callback: (payload: { reason?: string; expertId?: string; sourcePath?: string }) => void) => () => void;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
       getWorkerResults: (payload: { sessionId: string }) => Promise<{ results: Record<string, WorkerSubagentResult> }>;
       setWorkerSummaries: (payload: { sessionId: string; workerSummariesJson: string | null }) => Promise<{ ok: boolean }>;

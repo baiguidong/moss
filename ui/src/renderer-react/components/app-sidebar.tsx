@@ -17,6 +17,7 @@ import {
   AlarmClock,
   FolderKanban,
   Hammer,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,7 @@ export interface SidebarSession {
   projectName?: string | null;
 }
 
-export type MainView = "chat" | "projects" | "skills" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -474,6 +475,15 @@ export function AppSidebar({
           >
             <Hammer className="h-4 w-4" />
             {!collapsed && "技能"}
+          </Button>
+          <Button
+            variant={activeView === "experts" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
+            onClick={() => onChangeView("experts")}
+            title="专家"
+          >
+            <UsersRound className="h-4 w-4" />
+            {!collapsed && "专家"}
           </Button>
           {apps.map((app) => (
             collapsed ? (

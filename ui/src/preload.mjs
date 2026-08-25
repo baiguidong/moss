@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   upsertMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-upsert', payload),
   removeMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-remove', payload),
   setMcpServerEnabled: (payload) => ipcRenderer.invoke('agent:mcp-set-enabled', payload),
+  authenticateMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-authenticate', payload),
+  clearMcpServerAuth: (payload) => ipcRenderer.invoke('agent:mcp-clear-auth', payload),
   getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
   updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
   listProjectTemplates: () => ipcRenderer.invoke('project:list-templates'),
@@ -202,6 +204,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('project:changed', handler);
     return () => ipcRenderer.off('project:changed', handler);
+  },
+  onAssistantsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:assistants-changed', handler);
+    return () => ipcRenderer.off('agent:assistants-changed', handler);
   },
   listCoordinatorTasks: (sessionId) => ipcRenderer.invoke('coordinator:list-tasks', { sessionId }),
   // Worker (sub-agent) results from SDK subagents directory

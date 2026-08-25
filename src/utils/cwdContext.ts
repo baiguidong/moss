@@ -10,6 +10,7 @@ export type CwdOverrideContext = {
   // Per-session project root for the embedded multi-session runtime.
   // Optional: CLI paths run without it and fall back to the global state.
   projectRoot?: string
+  additionalDirectories?: string[]
 }
 
 export const cwdOverrideStorage = new AsyncLocalStorage<CwdOverrideContext>()
@@ -20,6 +21,21 @@ export function getProjectRootOverride(): string | undefined {
 
 export function getOriginalCwdOverride(): string | undefined {
   return cwdOverrideStorage.getStore()?.originalCwd
+}
+
+export function getAdditionalDirectoriesOverride(): string[] | undefined {
+  return cwdOverrideStorage.getStore()?.additionalDirectories
+}
+
+export function setCurrentAdditionalDirectoriesOverride(
+  directories: string[],
+): boolean {
+  const context = cwdOverrideStorage.getStore()
+  if (!context) {
+    return false
+  }
+  context.additionalDirectories = directories
+  return true
 }
 
 export function setCurrentProjectRootOverride(root: string): boolean {

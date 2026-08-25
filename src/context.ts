@@ -195,7 +195,7 @@ export const getUserContext = memoize(
       currentDate: `Today's date is ${getLocalISODate()}.`,
     }
   },
-  // Keyed by cwd: instruction discovery walks from the session's cwd, so
-  // concurrent embedded sessions must not share one cached result.
-  () => getCwd(),
+  // Keyed by cwd + explicit addDirs: instruction discovery can include
+  // session-scoped assistant/project directories in embedded mode.
+  () => `${getCwd()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )

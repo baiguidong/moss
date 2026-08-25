@@ -8,7 +8,10 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from 'src/services/analytics/index.js'
-import { getProjectRoot } from '../bootstrap/state.js'
+import {
+  getAdditionalDirectoriesForMossMd,
+  getProjectRoot,
+} from '../bootstrap/state.js'
 import { logForDebugging } from './debug.js'
 import { getMossConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { isFsInaccessible } from './errors.js'
@@ -302,6 +305,7 @@ export const loadMarkdownFilesForSubdir = memoize(
     const userDir = join(getMossConfigHomeDir(), subdir)
     const managedDir = join(getManagedFilePath(), '.moss', subdir)
     const projectDirs = getProjectDirsUpToHome(subdir, cwd)
+    const additionalDirs = getAdditionalDirectoriesForMossMd()
 
     // For git worktrees where the worktree does NOT have .moss/<subdir> checked
     // out (e.g. sparse-checkout), fall back to the main repository's copy.
@@ -333,7 +337,7 @@ export const loadMarkdownFilesForSubdir = memoize(
       }
     }
 
-    const [managedFiles, userFiles, projectFilesNested] = await Promise.all([
+    const [managedFiles, userFiles, projectFilesNested, additionalFilesNested] = await Promise.all([
       // Always load managed (policy settings)
       loadMarkdownFiles(managedDir).then(_ =>
         _.map(file => ({
@@ -366,13 +370,27 @@ export const loadMarkdownFilesForSubdir = memoize(
             ),
           )
         : Promise.resolve([]),
+      isSettingSourceEnabled('projectSettings')
+        ? Promise.all(
+            additionalDirs.map(dir =>
+              loadMarkdownFiles(join(dir, '.moss', subdir)).then(_ =>
+                _.map(file => ({
+                  ...file,
+                  baseDir: join(dir, '.moss', subdir),
+                  source: 'projectSettings' as const,
+                })),
+              ),
+            ),
+          )
+        : Promise.resolve([]),
     ])
 
     // Flatten nested project files array
     const projectFiles = projectFilesNested.flat()
+    const additionalFiles = additionalFilesNested.flat()
 
     // Combine all files with priority: managed > user > project
-    const allFiles = [...managedFiles, ...userFiles, ...projectFiles]
+    const allFiles = [...managedFiles, ...userFiles, ...projectFiles, ...additionalFiles]
 
     // Deduplicate files that resolve to the same physical file (same inode).
     // This prevents the same file from appearing multiple times when ~/.moss is
@@ -415,6 +433,7 @@ export const loadMarkdownFilesForSubdir = memoize(
       managedFilesFound: managedFiles.length,
       userFilesFound: userFiles.length,
       projectFilesFound: projectFiles.length,
+      additionalFilesFound: additionalFiles.length,
       projectDirsSearched: projectDirs.length,
       subdir:
         subdir as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -422,8 +441,8 @@ export const loadMarkdownFilesForSubdir = memoize(
 
     return deduplicatedFiles
   },
-  // Custom resolver creates cache key from both subdir and cwd parameters
-  (subdir: MossConfigDirectory, cwd: string) => `${subdir}:${cwd}`,
+  (subdir: MossConfigDirectory, cwd: string) =>
+    `${subdir}:${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 /**

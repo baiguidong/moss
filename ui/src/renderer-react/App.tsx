@@ -5,6 +5,7 @@ import { CronView } from '@/components/cron-view';
 import { ChatArea } from '@/components/chat-area';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { SkillHubView } from '@/components/skill-hub-view';
+import { ExpertHubView } from '@/components/expert-hub-view';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -506,6 +507,18 @@ export default function App() {
     setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
     return assistants;
   }, [desktopSettings?.agentMode]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+    const assistantName = activeDetail?.assistantName?.trim();
+    if (!assistantName) {
+      setSelectedAssistant(null);
+      return;
+    }
+    setSelectedAssistant(
+      installedAssistants.find((assistant) => assistant.name === assistantName) ?? null,
+    );
+  }, [activeDetail?.assistantName, activeSessionId, installedAssistants]);
 
   const loadAppVersions = React.useCallback(async (name: string) => {
     const versions = await window.agentDesktop.listAppVersions({ name });
@@ -1121,6 +1134,10 @@ export default function App() {
       void refreshSummaries();
     });
 
+    const offAssistantsChanged = window.agentDesktop.onAssistantsChanged(() => {
+      void refreshAssistants();
+    });
+
     return () => {
       if (workspaceRefreshTimerRef.current) {
         window.clearTimeout(workspaceRefreshTimerRef.current);
@@ -1138,8 +1155,9 @@ export default function App() {
       offWorkspaceChanged();
       offSettingsChanged();
       offProjectsChanged();
+      offAssistantsChanged();
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -2149,6 +2167,8 @@ export default function App() {
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'skills' ? (
             <SkillHubView />
+          ) : activeView === 'experts' ? (
+            <ExpertHubView />
           ) : activeView === 'projects' ? (
             <ProjectWorkspace
               projects={projects}

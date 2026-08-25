@@ -11,6 +11,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerPublicSkillHubIpcHandlers } from './public-skillhub-ipc.mjs';
+import {
+  migrateLegacyExpertInstallations,
+  registerPublicExpertHubIpcHandlers,
+} from './public-experthub-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
@@ -176,6 +180,9 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   },
   skillHub: {
     apiBaseUrl: 'https://api.skillhub.cn',
+  },
+  expertHub: {
+    baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
@@ -948,6 +955,23 @@ function normalizeDesktopSettings(input, existing = {}) {
   result.skillHub = {
     ...existingSkillHub,
     apiBaseUrl: configuredSkillHubApiBaseUrl || DEFAULT_DESKTOP_SETTINGS.skillHub.apiBaseUrl,
+  };
+
+  const sourceExpertHub = source.expertHub && typeof source.expertHub === 'object' ? source.expertHub : {};
+  const existingExpertHub = result.expertHub && typeof result.expertHub === 'object'
+    ? result.expertHub
+    : {};
+  const configuredExpertHubBaseUrl =
+    typeof sourceExpertHub.baseUrl === 'string'
+      ? sourceExpertHub.baseUrl.trim()
+      : typeof source.expertHubBaseUrl === 'string'
+        ? source.expertHubBaseUrl.trim()
+        : typeof existingExpertHub.baseUrl === 'string'
+          ? existingExpertHub.baseUrl
+          : DEFAULT_DESKTOP_SETTINGS.expertHub.baseUrl;
+  result.expertHub = {
+    ...existingExpertHub,
+    baseUrl: configuredExpertHubBaseUrl || DEFAULT_DESKTOP_SETTINGS.expertHub.baseUrl,
   };
 
   deleteLegacyServerSettings(result);
@@ -2217,10 +2241,12 @@ function buildProjectSystemPrompt(sessionRecord) {
 function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
+  const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
+    ? sessionRecord.assistantSystemPrompt.trim()
+    : '';
   const appendSystemPrompt = [
     desktopSettings.appendSystemPrompt,
     projectContextPrompt,
-    sessionRecord?.assistantSystemPrompt,
     runtimeSystemPrompt,
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
@@ -2230,6 +2256,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
   return {
     cwd,
     model: desktopSettings.model,
+    customSystemPrompt: customSystemPrompt || undefined,
     appendSystemPrompt: appendSystemPrompt || undefined,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(),
@@ -2237,6 +2264,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getEnabledDesktopMcpServers(),
+    addDirs: Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : [],
     projectDir: sessionRecord?.id ? getLocalSessionDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
@@ -2911,7 +2939,7 @@ function refreshDesktopSettings(payload = {}) {
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
 
   let skippedSessionCount = 0;
-  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub');
+  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
   if (affectsAgentRuntime) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
@@ -3250,6 +3278,22 @@ async function getLoadClaudeSessionSnapshotFn() {
     throw new Error('electron-direct.mjs did not export loadClaudeSessionSnapshot.');
   }
   return mod.loadClaudeSessionSnapshot;
+}
+
+async function getAuthenticateDesktopMcpServerFn() {
+  const mod = await getClaudeRuntimeModule();
+  if (typeof mod.authenticateDesktopMcpServer !== 'function') {
+    throw new Error('electron-direct.mjs did not export authenticateDesktopMcpServer.');
+  }
+  return mod.authenticateDesktopMcpServer;
+}
+
+async function getClearDesktopMcpServerAuthFn() {
+  const mod = await getClaudeRuntimeModule();
+  if (typeof mod.clearDesktopMcpServerAuth !== 'function') {
+    throw new Error('electron-direct.mjs did not export clearDesktopMcpServerAuth.');
+  }
+  return mod.clearDesktopMcpServerAuth;
 }
 
 async function getAuthDebugSnapshot() {
@@ -4198,6 +4242,7 @@ async function prepareAssistantContextForSessionStart(sessionRecord) {
     ? sessionRecord.assistantName.trim()
     : '';
   let assistantRules = '';
+  const assistantAddDirs = [];
 
   if (normalizedAssistantName) {
     try {
@@ -4208,6 +4253,7 @@ async function prepareAssistantContextForSessionStart(sessionRecord) {
         ? await readAssistantContext(assistantDir, normalizedAssistantName)
         : null;
       assistantRules = String(assistantContext?.rules || '').trim();
+      if (assistantDir) assistantAddDirs.push(assistantDir);
     } catch (err) {
       console.error('[assistant] Failed to load assistant context:', err);
     }
@@ -4215,6 +4261,7 @@ async function prepareAssistantContextForSessionStart(sessionRecord) {
 
   sessionRecord.assistantName = normalizedAssistantName || null;
   sessionRecord.assistantSystemPrompt = assistantRules || '';
+  sessionRecord.runtimeAddDirs = assistantAddDirs;
 
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
@@ -6133,6 +6180,7 @@ app.whenReady().then(async () => {
 
   // Initialize bundled assistants from repo assistants to ~/.moss/assistants
   await initializeBundledAssistants();
+  await migrateLegacyExpertInstallations();
 
   // Initialize bundled apps from repo apps to ~/.moss/apps
   await initializeBundledApps();
@@ -6141,6 +6189,10 @@ app.whenReady().then(async () => {
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerSkillStoreIpcHandlers();
   registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings });
+  registerPublicExpertHubIpcHandlers({
+    getDesktopSettings: () => desktopSettings,
+    notifyAssistantsChanged: (payload) => emitToRenderer('agent:assistants-changed', payload),
+  });
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
   startMossCronScheduler();
@@ -6270,6 +6322,69 @@ ipcMain.handle('agent:mcp-set-enabled', (_event, payload = {}) => {
   const reload = resetLocalRuntimesForMcpReload();
   mossLog('info', 'mcp', 'Desktop MCP server toggled', { name, enabled: entry.enabled, ...reload });
   return getDesktopMcpPayload(reload);
+});
+
+ipcMain.handle('agent:mcp-authenticate', async (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!isValidMcpServerName(name)) {
+    throw new Error('Invalid MCP server name.');
+  }
+
+  const store = readDesktopMcpStore();
+  const entry = store.servers[name];
+  if (!entry) {
+    throw new Error(`Unknown MCP server: ${name}`);
+  }
+  if (entry.config.type !== 'http' && entry.config.type !== 'sse') {
+    throw new Error('Only http and sse MCP servers support browser authentication.');
+  }
+
+  if (!entry.enabled) {
+    entry.enabled = true;
+    entry.updatedAt = Date.now();
+    saveDesktopMcpStore(store);
+  }
+
+  const authenticateDesktopMcpServer = await getAuthenticateDesktopMcpServerFn();
+  const authResult = await authenticateDesktopMcpServer(name, entry.config);
+  const reload = resetLocalRuntimesForMcpReload();
+  mossLog('info', 'mcp', 'Desktop MCP server authenticated', { name, ...reload });
+  return getDesktopMcpPayload({
+    ...reload,
+    auth: {
+      name,
+      status: 'authenticated',
+      authorizationUrl: authResult?.authorizationUrl || null,
+    },
+  });
+});
+
+ipcMain.handle('agent:mcp-clear-auth', async (_event, payload = {}) => {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!isValidMcpServerName(name)) {
+    throw new Error('Invalid MCP server name.');
+  }
+
+  const store = readDesktopMcpStore();
+  const entry = store.servers[name];
+  if (!entry) {
+    throw new Error(`Unknown MCP server: ${name}`);
+  }
+  if (entry.config.type !== 'http' && entry.config.type !== 'sse') {
+    throw new Error('Only http and sse MCP servers support browser authentication.');
+  }
+
+  const clearDesktopMcpServerAuth = await getClearDesktopMcpServerAuthFn();
+  await clearDesktopMcpServerAuth(name, entry.config);
+  const reload = resetLocalRuntimesForMcpReload();
+  mossLog('info', 'mcp', 'Desktop MCP server authentication cleared', { name, ...reload });
+  return getDesktopMcpPayload({
+    ...reload,
+    auth: {
+      name,
+      status: 'cleared',
+    },
+  });
 });
 
 ipcMain.handle('agent:getRemoteInstalledAssistants', async () => {

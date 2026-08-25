@@ -969,13 +969,6 @@ function ComposerPanel({
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
                   <Bot className="h-3 w-3" />
                   <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
-                  <button
-                    type="button"
-                    onClick={onClearAssistant}
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
                 </span>
               )}
 

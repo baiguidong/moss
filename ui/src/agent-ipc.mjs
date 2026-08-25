@@ -429,7 +429,10 @@ export function registerAgentIpcHandlers() {
 
       await extractAssistantZip(zipBuffer, assistantDir);
 
-      const ruleFile = await resolveAssistantRuleFile(assistantDir, assistantName);
+      const promptFile = await resolveAssistantRuleFile(assistantDir, assistantName);
+      if (!promptFile) {
+        return { success: false, error: 'Assistant package is missing assistant.md' };
+      }
 
       // Install associated skills
       const installedSkillNames = [];
@@ -522,7 +525,7 @@ export function registerAgentIpcHandlers() {
         enabled: true,
         installed_version: version,
         installed_at: new Date().toISOString(),
-        ruleFile: ruleFile,
+        prompt_file: promptFile,
         skills: allAssociatedSkillIds,
         enabledSkills: Array.from(enabledSkillNames),
       };

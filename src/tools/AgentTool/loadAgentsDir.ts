@@ -3,6 +3,7 @@ import memoize from 'lodash-es/memoize.js'
 import { basename } from 'path'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { z } from 'zod/v4'
+import { getAdditionalDirectoriesForMossMd } from '../../bootstrap/state.js'
 import { isAutoMemoryEnabled } from '../../memdir/paths.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -354,6 +355,8 @@ export const getAgentDefinitionsWithOverrides = memoize(
       }
     }
   },
+  (cwd: string) =>
+    `${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 export function clearAgentDefinitionsCache(): void {

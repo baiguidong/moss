@@ -825,6 +825,8 @@ export const getSkillDirCommands = memoize(
 
     return unconditionalSkills
   },
+  (cwd: string) =>
+    `${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 export function clearSkillCaches() {

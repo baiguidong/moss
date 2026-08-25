@@ -13,6 +13,7 @@ import { randomUUID } from 'src/utils/crypto.js'
 import type { ModelSetting } from 'src/utils/model/model.js'
 import type { ModelStrings } from 'src/utils/model/modelStrings.js'
 import {
+  getAdditionalDirectoriesOverride,
   getOriginalCwdOverride,
   getProjectRootOverride,
 } from 'src/utils/cwdContext.js'
@@ -1558,7 +1559,7 @@ export function setLastEmittedDate(date: string | null): void {
 }
 
 export function getAdditionalDirectoriesForMossMd(): string[] {
-  return STATE.additionalDirectoriesForMossMd
+  return getAdditionalDirectoriesOverride() ?? STATE.additionalDirectoriesForMossMd
 }
 
 export function setAdditionalDirectoriesForMossMd(

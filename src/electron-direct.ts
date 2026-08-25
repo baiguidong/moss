@@ -115,6 +115,10 @@ import {
   discardSessionMemoryRuntimeState,
   initSessionMemory,
 } from './services/SessionMemory/sessionMemory.js'
+import {
+  performMCPOAuthFlow,
+  revokeServerTokens,
+} from './services/mcp/auth.js'
 import { discardSessionMemoryState } from './services/SessionMemory/sessionMemoryUtils.js'
 
 // Bundled skills 必须在模块初始化阶段注册，不能等到 bootstrapHeadless()，
@@ -153,6 +157,38 @@ function initLocalAgentRuntimeOnce(): void {
 export async function prewarmHeadlessGlobalInit(): Promise<void> {
   initLocalAgentRuntimeOnce()
   await prewarmHeadlessGlobalInitBase()
+}
+
+function assertRemoteMcpConfig(
+  serverName: string,
+  config: McpServerConfig,
+): Extract<McpServerConfig, { type: 'http' | 'sse' }> {
+  if (config.type !== 'http' && config.type !== 'sse') {
+    throw new Error(
+      `MCP server "${serverName}" uses ${config.type ?? 'stdio'} transport, which does not support browser OAuth.`,
+    )
+  }
+  return config as Extract<McpServerConfig, { type: 'http' | 'sse' }>
+}
+
+export async function authenticateDesktopMcpServer(
+  serverName: string,
+  config: McpServerConfig,
+): Promise<{ authorizationUrl?: string }> {
+  const remoteConfig = assertRemoteMcpConfig(serverName, config)
+  let authorizationUrl: string | undefined
+  await performMCPOAuthFlow(serverName, remoteConfig, url => {
+    authorizationUrl = url
+  })
+  return { authorizationUrl }
+}
+
+export async function clearDesktopMcpServerAuth(
+  serverName: string,
+  config: McpServerConfig,
+): Promise<void> {
+  const remoteConfig = assertRemoteMcpConfig(serverName, config)
+  await revokeServerTokens(serverName, remoteConfig)
 }
 
 // 全局初始化，只执行一次
@@ -214,7 +250,9 @@ export interface ClaudeSessionOptions {
   url?: string
   /** 覆盖默认 API token（仅应用于当前 embedded session） */
   apiKey?: string
-  /** 系统提示词（追加到默认之后） */
+  /** 系统提示词（替代默认主身份） */
+  customSystemPrompt?: string
+  /** 系统提示词补充内容（追加到主系统提示词之后） */
   appendSystemPrompt?: string
   /** 权限模式：'allow-all' 映射 CLI bypassPermissions，'default' 遵循 CLI settings */
   permissionMode?: PermissionMode
@@ -242,6 +280,8 @@ export interface ClaudeSessionOptions {
   resumeState?: PreparedSessionResume
   /** Desktop-provided MCP servers. These come from ~/.moss/settings.json. */
   mcpServers?: Record<string, McpServerConfig>
+  /** Additional directories to load .moss/agents and .moss/skills from for this embedded session. */
+  addDirs?: string[]
   /** Explicit task-list scope for file-backed task tools. */
   taskScope?: TaskScope
 }
@@ -251,6 +291,7 @@ type ResolvedClaudeSessionOptions = {
   model: string
   url?: string
   apiKey?: string
+  customSystemPrompt?: string
   appendSystemPrompt: string
   permissionMode: PermissionMode
   onPermissionRequest: (
@@ -267,6 +308,7 @@ type ResolvedClaudeSessionOptions = {
   projectDir?: string | null
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
+  addDirs: string[]
   taskScope: TaskScope
 }
 
@@ -477,6 +519,7 @@ export class ClaudeSession {
       model: opts.model ?? 'claude-sonnet-4-6',
       url: opts.url,
       apiKey: opts.apiKey,
+      customSystemPrompt: opts.customSystemPrompt,
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
@@ -491,6 +534,7 @@ export class ClaudeSession {
       projectDir: opts.projectDir ?? getProjectDir(cwd),
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
+      addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
       taskScope,
     }
   }
@@ -552,6 +596,7 @@ export class ClaudeSession {
 
     const {
       model,
+      customSystemPrompt,
       appendSystemPrompt,
       permissionMode,
       onPermissionRequest,
@@ -577,6 +622,7 @@ export class ClaudeSession {
     const bootstrapResult = await bootstrapHeadless(
       cwd,
       dynamicMcpServers,
+      this.#opts.addDirs,
     )
     logForDiagnosticsNoPII('info', 'local_agent_engine_bootstrap_completed', {
       duration_ms: Date.now() - bootstrapStart,
@@ -600,7 +646,7 @@ export class ClaudeSession {
       permissionMode:
         permissionMode === 'allow-all' ? 'bypassPermissions' : 'default',
       allowDangerouslySkipPermissions: permissionMode === 'allow-all',
-      addDirs: [],
+      addDirs: this.#opts.addDirs,
     })
     const permissionContext = permissionInit.toolPermissionContext
     for (const warning of permissionInit.warnings) {
@@ -721,6 +767,12 @@ export class ClaudeSession {
     const coordinatorSystemPrompt = this.#opts.coordinatorMode
       ? getCoordinatorSystemPrompt()
       : undefined
+    const effectiveCustomSystemPrompt = coordinatorSystemPrompt
+      ? [
+          coordinatorSystemPrompt,
+          customSystemPrompt,
+        ].filter((entry): entry is string => Boolean(entry?.trim())).join('\n\n')
+      : customSystemPrompt
 
     const queryEngineStart = Date.now()
     this.#engine = new QueryEngine({
@@ -734,7 +786,7 @@ export class ClaudeSession {
       setAppState: f => store.setState(f),
       readFileCache: fileCache,
       userSpecifiedModel: model,
-      customSystemPrompt: coordinatorSystemPrompt,
+      customSystemPrompt: effectiveCustomSystemPrompt,
       appendSystemPrompt: appendSystemPrompt || undefined,
       thinkingConfig,
       maxTurns,
@@ -817,7 +869,10 @@ export class ClaudeSession {
         runWithCwdOverride(
           effectiveCwd(),
           () => runInSessionContext(() => this.#activateSessionStorage()),
-          this.#projectRoot,
+          {
+            projectRoot: this.#projectRoot,
+            additionalDirectories: this.#opts.addDirs,
+          },
         ),
       )
       logForDiagnosticsNoPII('info', 'local_agent_send_storage_activated', {
@@ -831,7 +886,10 @@ export class ClaudeSession {
         runWithCwdOverride(
           effectiveCwd(),
           () => runInSessionContext(() => this.#getEngine()),
-          this.#projectRoot,
+          {
+            projectRoot: this.#projectRoot,
+            additionalDirectories: this.#opts.addDirs,
+          },
         ),
       )
       logForDiagnosticsNoPII('info', 'local_agent_send_engine_ready', {
@@ -883,12 +941,14 @@ export class ClaudeSession {
 
       // QueryEngine.submitMessage 是 AsyncGenerator
       yield* runWithSessionApiOverridesGenerator(this.#sessionApiOverrides, () =>
-        runWithCwdOverrideGenerator(effectiveCwd(), () =>
-          runWithSessionIdContextGenerator(
-            sessionId,
-            projectDir,
-            () =>
-              (async function* () {
+        runWithCwdOverrideGenerator(
+          effectiveCwd(),
+          () =>
+            runWithSessionIdContextGenerator(
+              sessionId,
+              projectDir,
+              () =>
+                (async function* () {
                 const runTurn = async function* (
                   turnPrompt:
                     | string
@@ -977,9 +1037,13 @@ export class ClaudeSession {
                 if (finalResult) {
                   yield finalResult
                 }
-              })(),
-            this.#opts.taskScope,
-          ),
+                })(),
+              this.#opts.taskScope,
+            ),
+          {
+            projectRoot: this.#projectRoot,
+            additionalDirectories: this.#opts.addDirs,
+          },
         ),
       )
     } finally {

@@ -17,11 +17,22 @@ function normalizeCwd(cwd: string): string {
 export function runWithCwdOverride<T>(
   cwd: string,
   fn: () => T,
-  projectRoot?: string,
+  projectRootOrOptions?: string | {
+    projectRoot?: string
+    additionalDirectories?: string[]
+  },
 ): T {
   const normalized = normalizeCwd(cwd)
+  const projectRoot =
+    typeof projectRootOrOptions === 'string'
+      ? projectRootOrOptions
+      : projectRootOrOptions?.projectRoot
+  const additionalDirectories =
+    typeof projectRootOrOptions === 'string'
+      ? undefined
+      : projectRootOrOptions?.additionalDirectories
   return cwdOverrideStorage.run(
-    { cwd: normalized, originalCwd: normalized, projectRoot },
+    { cwd: normalized, originalCwd: normalized, projectRoot, additionalDirectories },
     fn,
   )
 }
@@ -45,13 +56,25 @@ export function setCurrentCwdOverride(cwd: string): boolean {
 export async function* runWithCwdOverrideGenerator<T, TReturn = void>(
   cwd: string,
   fn: () => AsyncGenerator<T, TReturn, unknown>,
-  projectRoot?: string,
+  projectRootOrOptions?: string | {
+    projectRoot?: string
+    additionalDirectories?: string[]
+  },
 ): AsyncGenerator<T, TReturn, unknown> {
   const normalized = normalizeCwd(cwd)
+  const projectRoot =
+    typeof projectRootOrOptions === 'string'
+      ? projectRootOrOptions
+      : projectRootOrOptions?.projectRoot
+  const additionalDirectories =
+    typeof projectRootOrOptions === 'string'
+      ? undefined
+      : projectRootOrOptions?.additionalDirectories
   const context: CwdOverrideContext = {
     cwd: normalized,
     originalCwd: normalized,
     projectRoot,
+    additionalDirectories,
   }
   const iterator = runWithExistingCwdOverride(context, fn)
 

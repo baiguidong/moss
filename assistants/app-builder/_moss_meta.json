@@ -2,6 +2,7 @@
   "name": "app-builder-assistant",
   "display_name": "App 构建助手",
   "description": "帮助你创建和迭代桌面 App。支持 App 项目模式，适合精美 UI、游戏、数据持久化、扩展能力、构建预览发布和自动版本管理。",
+  "prompt_file": "assistant.md",
   "emoji": "🚀",
   "category": "系统",
   "categories": ["系统", "应用创建"],

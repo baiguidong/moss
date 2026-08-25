@@ -1054,6 +1054,8 @@ export const getMemoryFiles = memoize(
 
     return result
   },
+  (forceIncludeExternal: boolean = false) =>
+    `${forceIncludeExternal}:${getOriginalCwd()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 function isInstructionsMemoryType(

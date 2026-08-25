@@ -31,7 +31,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -170,6 +170,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Store,
     iconGradientClassName: 'from-indigo-400 to-sky-600',
     keywords: ['skillhub', 'skill', '技能', 'market', 'hub', 'api', '公网'],
+  },
+  {
+    id: 'expert-hub',
+    title: '专家中心',
+    icon: Bot,
+    iconGradientClassName: 'from-rose-400 to-orange-600',
+    keywords: ['expert', 'experthub', '专家', '专家中心', 'agent', 'team', 'prompt', '清单'],
   },
   {
     id: 'text-model',
@@ -1078,6 +1085,7 @@ export function SettingsView({
     memory: null,
     mcp: null,
     'skill-hub': null,
+    'expert-hub': null,
     'text-model': null,
     'image-model': null,
     prompt: null,
@@ -1722,6 +1730,36 @@ export function SettingsView({
                             });
                           }}
                           placeholder="https://api.skillhub.cn"
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'expert-hub') ? (
+                  <SettingsSection
+                    id="expert-hub"
+                    title="专家中心"
+                    sectionRef={(element) => {
+                      sectionRefs.current['expert-hub'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="清单根地址"
+                        description="专家列表从这个目录读取 expert_center.json，失败时回退到本地缓存。"
+                        controlClassName="sm:w-[520px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={settingsDraft.expertHub?.baseUrl || 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace'}
+                          onChange={(event) => {
+                            updateSetting('expertHub', {
+                              ...(settingsDraft.expertHub || {}),
+                              baseUrl: event.target.value,
+                            });
+                          }}
+                          placeholder="https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace"
                         />
                       </SettingsRow>
                     </SettingsGroup>

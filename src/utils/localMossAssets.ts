@@ -8,13 +8,7 @@ const ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants')
 const SKILLS_DIR = path.join(MOSS_HOME, 'skills')
 const ASSISTANT_META_FILE = '_moss_meta.json'
 const SKILL_META_FILE = '_moss_meta.json'
-const ASSISTANT_RULE_FILES = [
-  'system.md',
-  'prompt.md',
-  'assistant.md',
-  'instructions.md',
-  'rules.md',
-] as const
+const DEFAULT_ASSISTANT_PROMPT_FILE = 'assistant.md'
 
 type LocalMeta = Record<string, unknown>
 
@@ -42,6 +36,25 @@ async function isFile(filePath: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function normalizeAssistantRelativePath(filePath: unknown): string {
+  if (typeof filePath !== 'string') return ''
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\.\/+/, '').trim()
+  if (!normalized) return ''
+  if (/^[a-zA-Z]:\//.test(normalized)) return ''
+  if (normalized.startsWith('/')) return ''
+
+  const safePath = path.posix.normalize(normalized)
+  if (safePath === '.' || safePath === '..' || safePath.startsWith('../')) {
+    return ''
+  }
+  return safePath
+}
+
+function getAssistantPromptFileFromMeta(meta: LocalMeta | null): string {
+  const promptFile = typeof meta?.prompt_file === 'string' ? meta.prompt_file.trim() : ''
+  return promptFile || DEFAULT_ASSISTANT_PROMPT_FILE
 }
 
 async function findAssistantDir(assistantName: string): Promise<string | null> {
@@ -91,21 +104,14 @@ export async function getAssistantSystemPrompt(
   const assistantDir = await findAssistantDir(assistantName)
   if (!assistantDir) return null
   const meta = await readJsonObject(path.join(assistantDir, ASSISTANT_META_FILE))
-  const candidates = [
-    typeof meta?.ruleFile === 'string' ? meta.ruleFile : '',
-    `${assistantName}.md`,
-    ...ASSISTANT_RULE_FILES,
-  ].filter(candidate => candidate && path.basename(candidate) === candidate)
-
-  for (const candidate of candidates) {
-    const fullPath = path.join(assistantDir, candidate)
-    if (!candidate.toLowerCase().endsWith('.md') || !(await isFile(fullPath))) {
-      continue
-    }
-    const content = (await readFile(fullPath, 'utf8')).trim()
-    if (content) return content
+  const promptFile = normalizeAssistantRelativePath(getAssistantPromptFileFromMeta(meta))
+  if (!promptFile || !promptFile.toLowerCase().endsWith('.md')) {
+    return null
   }
-  return null
+  const fullPath = path.join(assistantDir, promptFile)
+  if (!(await isFile(fullPath))) return null
+  const content = (await readFile(fullPath, 'utf8')).trim()
+  return content || null
 }
 
 export async function getLocalInstalledSkills(): Promise<LocalInstalledSkill[]> {

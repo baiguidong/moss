@@ -32,21 +32,7 @@ const ASSISTANT_SEARCH_DIRS = [
 ]
 
 export const ASSISTANT_META_FILE = '_moss_meta.json'
-
-const COMMON_RULE_FILE_NAMES = [
-  'system.md',
-  'prompt.md',
-  'assistant.md',
-  'instructions.md',
-  'rules.md',
-]
-
-const DOCUMENTATION_MARKDOWN_PATTERNS = [
-  /^readme(?:\.[^.]+)?$/i,
-  /^changelog(?:\.[^.]+)?$/i,
-  /^license(?:\.[^.]+)?$/i,
-  /^contributing(?:\.[^.]+)?$/i,
-]
+const DEFAULT_ASSISTANT_PROMPT_FILE = 'assistant.md'
 
 function normalizeHubApiBaseUrl(rawValue: unknown): string {
   const trimmed = String(rawValue || '')
@@ -112,7 +98,7 @@ export type AssistantStoreMeta = {
   enabled?: boolean
   installed_version?: string
   installed_at?: string
-  ruleFile?: string
+  prompt_file?: string
   skills?: string[]
   enabledSkills?: string[]
   [key: string]: unknown
@@ -237,10 +223,6 @@ function normalizeAssistantRelativePath(filePath: unknown): string {
     return ''
   }
   return safePath
-}
-
-function isDocumentationMarkdownFile(fileName: string): boolean {
-  return DOCUMENTATION_MARKDOWN_PATTERNS.some(pattern => pattern.test(fileName))
 }
 
 function normalizeZipEntryPath(entryPath: string): string {
@@ -495,55 +477,18 @@ async function writeAssistantMeta(
 
 async function resolveAssistantRuleFile(
   assistantDir: string,
-  assistantName: string,
-  preferredRuleFile?: unknown,
+  preferredRuleFile: unknown = DEFAULT_ASSISTANT_PROMPT_FILE,
 ): Promise<string | undefined> {
-  const candidateFiles: string[] = []
-  const seenCandidates = new Set<string>()
-
-  const addCandidate = (candidate: unknown) => {
-    const normalized = normalizeAssistantRelativePath(candidate)
-    if (!normalized) return
-    const lookupKey = normalized.toLowerCase()
-    if (seenCandidates.has(lookupKey)) return
-    seenCandidates.add(lookupKey)
-    candidateFiles.push(normalized)
-  }
-
-  addCandidate(preferredRuleFile)
-  if (assistantName) {
-    addCandidate(`${assistantName}.md`)
-  }
-  for (const candidate of COMMON_RULE_FILE_NAMES) {
-    addCandidate(candidate)
-  }
-
-  for (const candidate of candidateFiles) {
-    if (!candidate.toLowerCase().endsWith('.md')) continue
-    const fullPath = path.resolve(assistantDir, candidate)
-    if (await fileExists(fullPath)) {
-      return candidate
-    }
-  }
-
-  let markdownFiles: string[] = []
-  try {
-    const entries = await readdir(assistantDir, { withFileTypes: true })
-    markdownFiles = entries
-      .filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
-      .map(entry => entry.name)
-  } catch {
+  const candidate = normalizeAssistantRelativePath(
+    preferredRuleFile || DEFAULT_ASSISTANT_PROMPT_FILE,
+  )
+  if (!candidate || !candidate.toLowerCase().endsWith('.md')) {
     return undefined
   }
-
-  const nonDocumentationMarkdownFiles = markdownFiles.filter(
-    fileName => !isDocumentationMarkdownFile(fileName),
-  )
-
-  if (nonDocumentationMarkdownFiles.length === 1) {
-    return nonDocumentationMarkdownFiles[0]
+  const fullPath = path.resolve(assistantDir, candidate)
+  if (await fileExists(fullPath)) {
+    return candidate
   }
-
   return undefined
 }
 
@@ -848,11 +793,10 @@ export async function installHubAssistant(params: {
     params.assistantMeta && isRecord(params.assistantMeta)
       ? normalizeAgentHubAssistant(params.assistantMeta)
       : null
-  const ruleFile = await resolveAssistantRuleFile(
-    assistantDir,
-    assistantName,
-    normalizedAssistant?.ruleFile,
-  )
+  const promptFile = await resolveAssistantRuleFile(assistantDir)
+  if (!promptFile) {
+    throw new Error('Assistant package is missing assistant.md')
+  }
 
   const installedSkills = await getInstalledSkills()
   const installedSkillLookup = buildInstalledSkillLookup(installedSkills)
@@ -952,7 +896,7 @@ export async function installHubAssistant(params: {
     enabled: true,
     installed_version: installedVersion,
     installed_at: new Date().toISOString(),
-    ruleFile,
+    prompt_file: promptFile,
     skills: selectedSkillIds,
     enabledSkills: Array.from(enabledSkillNames),
   }
@@ -1021,27 +965,26 @@ export async function updateInstalledAssistantMeta(params: {
 
 export async function getAssistantContextSummary(
   assistantName: string,
-): Promise<{ ruleFile?: string; skills: string[] } | null> {
+): Promise<{ promptFile?: string; skills: string[] } | null> {
   const result = await findAssistantDir(assistantName)
   if (!result) {
     return null
   }
 
   const meta = await readAssistantMeta(result.dir)
-  const ruleFile = await resolveAssistantRuleFile(
+  const promptFile = await resolveAssistantRuleFile(
     result.dir,
-    assistantName,
-    meta?.ruleFile,
+    meta?.prompt_file,
   )
   return {
-    ruleFile,
+    promptFile,
     skills: parseStringArray(meta?.skills),
   }
 }
 
 /**
  * Get assistant system prompt content for MOSS_ASSISTANT_NAME env var handling.
- * Reads the rule file content from the assistant directory.
+ * Reads the assistant prompt file content from the assistant directory.
  */
 export async function getAssistantSystemPrompt(
   assistantName: string,
@@ -1052,17 +995,16 @@ export async function getAssistantSystemPrompt(
   }
 
   const meta = await readAssistantMeta(result.dir)
-  const ruleFile = await resolveAssistantRuleFile(
+  const promptFile = await resolveAssistantRuleFile(
     result.dir,
-    assistantName,
-    meta?.ruleFile,
+    meta?.prompt_file,
   )
 
-  if (!ruleFile) {
+  if (!promptFile) {
     return null
   }
 
-  const fullPath = path.resolve(result.dir, ruleFile)
+  const fullPath = path.resolve(result.dir, promptFile)
   try {
     const content = await readFile(fullPath, 'utf-8')
     return content.trim() || null

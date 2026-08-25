@@ -1,10 +1,16 @@
 import { init } from '../entrypoints/init.js'
-import { setProjectRoot, setOriginalCwd, setCwdState } from './state.js'
+import {
+  setAdditionalDirectoriesForMossMd,
+  setProjectRoot,
+  setOriginalCwd,
+  setCwdState,
+} from './state.js'
 import { findGitRoot } from '../utils/git.js'
 import { processSessionStartHooks } from '../utils/sessionStart.js'
 import type { Message } from '../types/message.js'
 import {
   hasCwdOverrideContext,
+  setCurrentAdditionalDirectoriesOverride,
   setCurrentOriginalCwdOverride,
   setCurrentProjectRootOverride,
 } from '../utils/cwdContext.js'
@@ -84,6 +90,7 @@ export interface BootstrapResult {
 export async function bootstrapHeadless(
   cwd: string,
   dynamicMcpConfig: Record<string, ScopedMcpServerConfig> = {},
+  addDirs: string[] = [],
 ): Promise<BootstrapResult> {
   const bootstrapStart = Date.now()
   let globalInitRan = false
@@ -116,11 +123,13 @@ export async function bootstrapHeadless(
     setCwd(cwd)
     setCurrentOriginalCwdOverride(cwd)
     setCurrentProjectRootOverride(projectRoot)
+    setCurrentAdditionalDirectoriesOverride(addDirs)
   } else {
     setCwd(cwd)
     setOriginalCwd(cwd)
     setCwdState(cwd)
     setProjectRoot(projectRoot)
+    setAdditionalDirectoriesForMossMd(addDirs)
   }
 
   // 3. Load MCP configurations and prefetch resources
