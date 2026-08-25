@@ -11,6 +11,7 @@ import {
   Search,
   Trash2,
   UsersRound,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -23,8 +24,10 @@ type ExpertTypeFilter = "all" | "agent" | "team";
 type ExpertSortMode = "comprehensive" | "latest" | "hot";
 
 const FEATURED_EXPERT_PAGE_SIZE = 12;
+const FEATURED_SCENE_PAGE_SIZE = 100;
 const HUB_EXPERT_PAGE_SIZE = 24;
 const EXPERT_INSTALL_UI_TIMEOUT_MS = 180_000;
+const LOAD_MORE_ROOT_MARGIN = "520px 0px";
 
 type ExpertCategory = {
   id: string;
@@ -61,6 +64,8 @@ type RemoteExpert = {
   plugin?: string;
   agentName?: string;
   tags?: string[];
+  quickPrompts?: string[];
+  usageCount?: number;
   members?: ExpertMember[];
   updatedAt?: string;
   sourceManifest?: string;
@@ -110,6 +115,14 @@ type OperationDialogState = {
   message: string;
 };
 
+type ExpertDetailState = {
+  expertId: string;
+  scene?: FeaturedScene | null;
+  expert?: RemoteExpert | null;
+  loading: boolean;
+  error?: string;
+};
+
 function expertKey(expert: Pick<RemoteExpert | InstalledExpert, "id" | "name" | "displayName" | "agentName" | "plugin">) {
   return expert.id || expert.agentName || expert.plugin || expert.name || expert.displayName;
 }
@@ -122,6 +135,18 @@ function installedKeys(expert: InstalledExpert) {
     expert.agentName,
     expert.plugin,
   ].map((entry) => String(entry || "").trim()).filter(Boolean);
+}
+
+function mergeExpertPages<T extends RemoteExpert>(current: T[], next: T[]) {
+  const merged = [...current];
+  const seen = new Set(current.map((expert) => expertKey(expert)));
+  for (const expert of next) {
+    const key = expertKey(expert);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(expert);
+  }
+  return merged;
 }
 
 function formatCount(value?: number) {
@@ -152,49 +177,35 @@ function ExpertAvatar({ expert }: { expert: Pick<RemoteExpert | InstalledExpert,
   );
 }
 
-function MiniExpertAvatar({ expert }: { expert: FeaturedSceneExpert }) {
-  const [failed, setFailed] = React.useState(false);
-  if (expert.avatar && !failed) {
-    return (
-      <img
-        src={expert.avatar}
-        alt=""
-        className="h-6 w-6 shrink-0 rounded-full object-cover"
-        onError={() => setFailed(true)}
-      />
-    );
-  }
-  return (
-    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-background/85 text-foreground shadow-sm">
-      {expert.type === "team" ? <UsersRound className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
-    </span>
-  );
-}
-
-function SceneCard({ scene }: { scene: FeaturedScene }) {
+function SceneCard({
+  scene,
+  onOpenExpert,
+}: {
+  scene: FeaturedScene;
+  onOpenExpert: (expertId: string, scene: FeaturedScene) => void;
+}) {
   const experts = scene.experts || [];
   return (
     <div
-      className="relative h-[148px] min-w-0 overflow-hidden rounded-lg border border-border/70 bg-muted"
+      className="relative aspect-square w-[166px] shrink-0 overflow-hidden rounded-lg border border-border/70 bg-muted"
       style={scene.image ? { backgroundImage: `url(${scene.image})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
     >
-      <div className="absolute inset-0 bg-background/72" />
-      <div className="relative flex h-full flex-col p-2.5">
-        <div className="truncate text-sm font-semibold leading-5 text-foreground">{scene.name}</div>
-        <div className="mt-0.5 line-clamp-1 text-[11px] leading-4 text-muted-foreground">
-          {scene.description || "精选协作场景"}
+      <div className="absolute inset-0 bg-background/78" />
+      <div className="relative flex h-full flex-col p-3">
+        <div className="truncate text-sm font-semibold leading-5 text-foreground" title={scene.name}>
+          {scene.name}
         </div>
-        <div className="mt-auto space-y-1">
-          {experts.slice(0, 2).map((expert) => (
-            <div key={expert.id} className="flex min-w-0 items-center gap-2">
-              <MiniExpertAvatar expert={expert} />
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-foreground">{expert.displayName}</div>
-                {expert.profession ? (
-                  <div className="truncate text-[11px] text-muted-foreground">{expert.profession}</div>
-                ) : null}
-              </div>
-            </div>
+        <div className="mt-auto space-y-1.5">
+          {experts.slice(0, 3).map((expert) => (
+            <button
+              key={expert.id}
+              type="button"
+              className="block h-7 w-full min-w-0 rounded-md px-2 text-left text-xs font-medium leading-7 text-foreground transition-colors hover:bg-background/65"
+              onClick={() => onOpenExpert(expert.id, scene)}
+              title={expert.displayName}
+            >
+              <span className="block truncate">{expert.displayName}</span>
+            </button>
           ))}
         </div>
       </div>
@@ -265,7 +276,7 @@ function OperationDialog({
 }) {
   if (!dialog) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
@@ -281,6 +292,150 @@ function OperationDialog({
         <div className="mt-4 flex justify-end">
           <Button size="sm" className="h-8 rounded-lg px-3 text-xs" onClick={onClose}>
             知道了
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExpertDetailDialog({
+  detail,
+  installed,
+  installing,
+  installingElapsedSeconds,
+  onInstall,
+  onClose,
+}: {
+  detail: ExpertDetailState | null;
+  installed?: InstalledExpert;
+  installing: boolean;
+  installingElapsedSeconds?: number;
+  onInstall: (expert: RemoteExpert) => void;
+  onClose: () => void;
+}) {
+  if (!detail) return null;
+  const expert = detail.expert || null;
+  const title = expert?.displayName || detail.scene?.name || "专家详情";
+  const subtitle = expert?.profession || expert?.categoryName || "";
+  const tags = expert?.tags || [];
+  const quickPrompts = expert?.quickPrompts || [];
+  const installDisabled = !expert || Boolean(installed) || installing || !expert.promptFile;
+  const installLabel = installing
+    ? `安装中 ${formatElapsed(installingElapsedSeconds || 0)}`
+    : installed
+      ? "已安装"
+      : "召唤专家";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4">
+      <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+        <div className="flex min-w-0 items-start gap-3 border-b border-border/70 p-4">
+          {expert ? <ExpertAvatar expert={expert} /> : (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <Bot className="h-4 w-4" />
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {detail.scene?.name ? (
+                <Badge variant="secondary" className="rounded-md text-[11px]">{detail.scene.name}</Badge>
+              ) : null}
+              {expert?.type ? <ExpertTypeBadge type={expert.type} membersCount={expert.members?.length} /> : null}
+            </div>
+            <div className="mt-2 truncate text-lg font-semibold leading-6 text-foreground" title={title}>
+              {title}
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {subtitle ? <span>{subtitle}</span> : null}
+              {expert?.usageCount ? <span>{formatCount(expert.usageCount)}次使用</span> : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={onClose}
+            title="关闭"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {detail.loading && !expert ? (
+            <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              加载专家详情
+            </div>
+          ) : detail.error ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {detail.error}
+            </div>
+          ) : null}
+
+          {expert ? (
+            <div className="space-y-4">
+              <p className="text-sm leading-6 text-muted-foreground">
+                {expert.description || "暂无描述"}
+              </p>
+
+              {tags.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="rounded-md text-[11px]">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+
+              {quickPrompts.length > 0 ? (
+                <div>
+                  <div className="mb-2 text-sm font-semibold text-foreground">专家帮你做</div>
+                  <div className="space-y-2">
+                    {quickPrompts.slice(0, 6).map((prompt, index) => (
+                      <div
+                        key={`${index}-${prompt}`}
+                        className="rounded-lg border border-border/70 bg-muted/35 px-3 py-2 text-sm leading-6 text-foreground"
+                      >
+                        “{prompt}”
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {expert.type === "team" && expert.members?.length ? (
+                <div>
+                  <div className="mb-2 text-sm font-semibold text-foreground">成员</div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {expert.members.slice(0, 6).map((member) => (
+                      <div key={member.id} className="min-w-0 rounded-lg border border-border/70 bg-muted/25 px-3 py-2">
+                        <div className="truncate text-sm font-medium text-foreground">{member.displayName || member.name}</div>
+                        {member.profession ? (
+                          <div className="truncate text-xs text-muted-foreground">{member.profession}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border/70 p-3">
+          <Button variant="outline" size="sm" className="h-8 rounded-lg px-3 text-xs" onClick={onClose}>
+            关闭
+          </Button>
+          <Button
+            size="sm"
+            className="h-8 rounded-lg px-3 text-xs"
+            disabled={installDisabled}
+            onClick={() => expert && onInstall(expert)}
+          >
+            {installing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : installed ? <Check className="mr-2 h-4 w-4" /> : <Download className="mr-2 h-4 w-4" />}
+            {installLabel}
           </Button>
         </div>
       </div>
@@ -433,22 +588,22 @@ export function ExpertHubView() {
   const [featuredExperts, setFeaturedExperts] = React.useState<RemoteExpert[]>([]);
   const [featuredScenes, setFeaturedScenes] = React.useState<FeaturedScene[]>([]);
   const [featuredPage, setFeaturedPage] = React.useState(1);
-  const [featuredTotal, setFeaturedTotal] = React.useState(0);
   const [featuredHasMore, setFeaturedHasMore] = React.useState(false);
   const [featuredLoading, setFeaturedLoading] = React.useState(false);
   const [scenesLoading, setScenesLoading] = React.useState(false);
   const [installedExperts, setInstalledExperts] = React.useState<InstalledExpert[]>([]);
   const [page, setPage] = React.useState(1);
-  const [total, setTotal] = React.useState(0);
   const [hasMore, setHasMore] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [installedLoading, setInstalledLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [operationDialog, setOperationDialog] = React.useState<OperationDialogState | null>(null);
+  const [detail, setDetail] = React.useState<ExpertDetailState | null>(null);
   const [notice, setNotice] = React.useState("");
   const [busyKeys, setBusyKeys] = React.useState<Set<string>>(() => new Set());
   const [busyStartedAt, setBusyStartedAt] = React.useState<Record<string, number>>({});
   const [now, setNow] = React.useState(() => Date.now());
+  const loadMoreRef = React.useRef<HTMLDivElement | null>(null);
 
   const installedLookup = React.useMemo(() => {
     const map = new Map<string, InstalledExpert>();
@@ -498,15 +653,18 @@ export function ExpertHubView() {
         forceRefresh,
       }) as { success?: boolean; data?: { experts?: RemoteExpert[]; total?: number; hasMore?: boolean }; error?: string };
       if (!res?.success) throw new Error(res?.error || "获取专家列表失败");
-      setRemoteExperts(Array.isArray(res.data?.experts) ? res.data.experts : []);
-      setTotal(Number(res.data?.total || 0));
+      const experts = Array.isArray(res.data?.experts) ? res.data.experts : [];
+      setRemoteExperts((current) => (
+        nextPage > 1 && !forceRefresh ? mergeExpertPages(current, experts) : experts
+      ));
       setHasMore(Boolean(res.data?.hasMore));
-      setPage(nextPage);
+      if (experts.length > 0 || nextPage === 1) setPage(nextPage);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setRemoteExperts([]);
-      setTotal(0);
-      setHasMore(false);
+      if (nextPage === 1) {
+        setRemoteExperts([]);
+        setHasMore(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -527,18 +685,20 @@ export function ExpertHubView() {
       }) as { success?: boolean; data?: { experts?: RemoteExpert[]; total?: number; hasMore?: boolean }; error?: string };
       if (!res?.success) throw new Error(res?.error || "获取推荐专家失败");
       const experts = Array.isArray(res.data?.experts) ? res.data.experts : [];
-      setFeaturedExperts(experts);
-      setFeaturedTotal(Number(res.data?.total || 0));
+      setFeaturedExperts((current) => (
+        nextPage > 1 && !forceRefresh ? mergeExpertPages(current, experts) : experts
+      ));
       setFeaturedHasMore(Boolean(res.data?.hasMore));
-      setFeaturedPage(experts.length > 0 ? nextPage : 1);
+      if (experts.length > 0 || nextPage === 1) setFeaturedPage(nextPage);
       if (experts.length === 0 && nextPage !== 1) {
-        void loadFeatured(1, forceRefresh);
+        setFeaturedHasMore(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setFeaturedExperts([]);
-      setFeaturedTotal(0);
-      setFeaturedHasMore(false);
+      if (nextPage === 1) {
+        setFeaturedExperts([]);
+        setFeaturedHasMore(false);
+      }
     } finally {
       setFeaturedLoading(false);
     }
@@ -549,7 +709,7 @@ export function ExpertHubView() {
     try {
       const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-scenes", {
         page: 1,
-        pageSize: 8,
+        pageSize: FEATURED_SCENE_PAGE_SIZE,
         forceRefresh,
       }) as { success?: boolean; data?: { scenes?: FeaturedScene[] }; error?: string };
       if (!res?.success) throw new Error(res?.error || "获取精选场景失败");
@@ -589,6 +749,34 @@ export function ExpertHubView() {
   const showOperationDialog = React.useCallback((title: string, message: string) => {
     setOperationDialog({ title, message });
   }, []);
+
+  const openExpertDetail = React.useCallback(async (expertId: string, scene?: FeaturedScene | null) => {
+    const id = String(expertId || "").trim();
+    if (!id) return;
+    const cachedExpert = [...featuredExperts, ...remoteExperts].find((expert) => expert.id === id) || null;
+    setDetail({
+      expertId: id,
+      scene: scene || null,
+      expert: cachedExpert,
+      loading: true,
+      error: "",
+    });
+    try {
+      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-detail", { expertId: id }) as { success?: boolean; data?: RemoteExpert; error?: string };
+      if (!res?.success || !res.data) throw new Error(res?.error || "获取专家详情失败");
+      setDetail((current) => (
+        current?.expertId === id
+          ? { ...current, expert: res.data || cachedExpert, loading: false, error: "" }
+          : current
+      ));
+    } catch (err) {
+      setDetail((current) => (
+        current?.expertId === id
+          ? { ...current, loading: false, error: err instanceof Error ? err.message : String(err) }
+          : current
+      ));
+    }
+  }, [featuredExperts, remoteExperts]);
 
   const setBusy = React.useCallback((key: string, busy: boolean) => {
     setBusyKeys((current) => {
@@ -675,14 +863,30 @@ export function ExpertHubView() {
     { id: "hot", label: "最热" },
   ];
   const displayedExperts = tab === "recommend" ? featuredExperts : remoteExperts;
-  const displayedTotal = tab === "recommend" ? featuredTotal : total;
   const displayedPage = tab === "recommend" ? featuredPage : page;
   const displayedLoading = tab === "recommend" ? featuredLoading : loading;
   const displayedHasMore = tab === "recommend" ? featuredHasMore : hasMore;
+  const detailExpert = detail?.expert || null;
+  const detailInstalled = detailExpert ? installedLookup.get(expertKey(detailExpert)) : undefined;
+  const detailInstallingKey = detailExpert ? expertKey(detailExpert) : "";
+  const detailInstalling = detailInstallingKey ? busyKeys.has(detailInstallingKey) : false;
   const loadDisplayedPage = React.useCallback((nextPage: number) => {
     if (tab === "recommend") void loadFeatured(nextPage);
     else if (tab === "hub") void loadRemote(nextPage);
   }, [loadFeatured, loadRemote, tab]);
+
+  React.useEffect(() => {
+    if (tab === "installed" || !displayedHasMore || displayedLoading) return undefined;
+    const node = loadMoreRef.current;
+    if (!node) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadDisplayedPage(displayedPage + 1);
+      }
+    }, { root: null, rootMargin: LOAD_MORE_ROOT_MARGIN });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [displayedHasMore, displayedLoading, displayedPage, loadDisplayedPage, tab]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -712,7 +916,7 @@ export function ExpertHubView() {
             <div className="min-w-[120px] flex-1 truncate text-xs text-muted-foreground">{notice}</div>
           ) : (
             <div className="hidden min-w-[80px] flex-1 truncate text-xs text-muted-foreground sm:block">
-              {tab === "installed" ? `${visibleInstalledExperts.length} 个已安装` : `${formatCount(displayedTotal)} 个专家`}
+              {tab === "installed" ? `${visibleInstalledExperts.length} 个已安装` : `已加载 ${formatCount(displayedExperts.length)} 个`}
             </div>
           )}
           <div className="relative ml-auto w-full sm:w-[300px]">
@@ -732,12 +936,14 @@ export function ExpertHubView() {
               if (tab === "installed") {
                 void loadInstalled();
               } else if (tab === "recommend") {
+                setFeaturedPage(1);
                 void loadCategories(true);
                 void loadScenes(true);
-                void loadFeatured(featuredPage, true);
+                void loadFeatured(1, true);
               } else {
+                setPage(1);
                 void loadCategories(true);
-                void loadRemote(page, true);
+                void loadRemote(1, true);
               }
             }}
             disabled={tab === "installed" ? installedLoading : displayedLoading}
@@ -752,13 +958,23 @@ export function ExpertHubView() {
         <div className="mx-auto w-full max-w-[1180px] px-4 py-2.5 sm:px-5">
           {tab === "recommend" ? (
             <section className="mb-2.5">
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="w-full overflow-x-auto pb-1">
                 {scenesLoading ? (
-                  Array.from({ length: 3 }).map((_, index) => (
-                    <div key={index} className="h-[148px] animate-pulse rounded-lg bg-muted" />
-                  ))
+                  <div className="flex w-max gap-2.5">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div key={index} className="aspect-square w-[166px] shrink-0 animate-pulse rounded-lg bg-muted" />
+                    ))}
+                  </div>
                 ) : featuredScenes.length > 0 ? (
-                  featuredScenes.slice(0, 3).map((scene) => <SceneCard key={scene.id} scene={scene} />)
+                  <div className="flex w-max gap-2.5">
+                    {featuredScenes.map((scene) => (
+                      <SceneCard
+                        key={scene.id}
+                        scene={scene}
+                        onOpenExpert={openExpertDetail}
+                      />
+                    ))}
+                  </div>
                 ) : (
                   <div className="flex h-[104px] flex-1 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
                     暂无精选场景
@@ -842,27 +1058,7 @@ export function ExpertHubView() {
           {tab !== "installed" ? (
             <div className="mt-2 flex items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
-                第 {displayedPage} 页，共 {formatCount(displayedTotal)} 个，本页 {displayedExperts.length} 个
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-lg px-2.5 text-xs"
-                  disabled={displayedLoading || displayedPage <= 1}
-                  onClick={() => loadDisplayedPage(Math.max(1, displayedPage - 1))}
-                >
-                  上一页
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-lg px-2.5 text-xs"
-                  disabled={displayedLoading || !displayedHasMore}
-                  onClick={() => loadDisplayedPage(displayedPage + 1)}
-                >
-                  下一页
-                </Button>
+                已加载 {formatCount(displayedExperts.length)} 个{displayedHasMore ? "，继续下滑加载更多" : displayedExperts.length > 0 ? "，已加载全部" : ""}
               </div>
             </div>
           ) : null}
@@ -894,7 +1090,7 @@ export function ExpertHubView() {
           ) : (
             <>
               <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-                {displayedLoading ? (
+                {displayedLoading && displayedExperts.length === 0 ? (
                   <div className="col-span-full flex h-44 items-center justify-center text-sm text-muted-foreground">
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     加载专家列表
@@ -923,6 +1119,27 @@ export function ExpertHubView() {
                   })
                 )}
               </div>
+              {displayedExperts.length > 0 ? (
+                <div ref={loadMoreRef} className="flex h-16 items-center justify-center">
+                  {displayedLoading ? (
+                    <div className="flex items-center text-xs text-muted-foreground">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      加载更多
+                    </div>
+                  ) : displayedHasMore ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 rounded-lg px-3 text-xs text-muted-foreground"
+                      onClick={() => loadDisplayedPage(displayedPage + 1)}
+                    >
+                      加载更多
+                    </Button>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">已加载全部</div>
+                  )}
+                </div>
+              ) : null}
 
             </>
           )}
@@ -931,6 +1148,16 @@ export function ExpertHubView() {
       <OperationDialog
         dialog={operationDialog}
         onClose={() => setOperationDialog(null)}
+      />
+      <ExpertDetailDialog
+        detail={detail}
+        installed={detailInstalled}
+        installing={detailInstalling}
+        installingElapsedSeconds={
+          detailInstalling ? Math.floor((now - (busyStartedAt[detailInstallingKey] || now)) / 1000) : undefined
+        }
+        onInstall={(expert) => void installExpert(expert)}
+        onClose={() => setDetail(null)}
       />
     </div>
   );

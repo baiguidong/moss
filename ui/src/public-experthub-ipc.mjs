@@ -23,6 +23,10 @@ const FEATURED_SCENES_FILE = 'featuredScenes.json';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30000;
 const expertInstallPromises = new Map();
+const expertBundleCache = new Map();
+const expertBundlePromises = new Map();
+const featuredExpertIdsCache = new Map();
+const featuredExpertIdsPromises = new Map();
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -191,6 +195,10 @@ async function tryStat(filePath) {
 
 function isFresh(stat, maxAgeMs = CACHE_TTL_MS) {
   return Boolean(stat && Date.now() - stat.mtimeMs < maxAgeMs);
+}
+
+function isMemoryCacheFresh(entry, maxAgeMs = CACHE_TTL_MS) {
+  return Boolean(entry && Date.now() - entry.cachedAt < maxAgeMs);
 }
 
 async function fetchBuffer(url) {
@@ -631,6 +639,74 @@ function normalizeTagList(value) {
   return Array.from(new Set(value.map((entry) => textValue(entry) || String(entry || '').trim()).filter(Boolean)));
 }
 
+function normalizeQuickPrompts(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => textValue(entry) || String(entry || '').trim()).filter(Boolean);
+}
+
+function normalizeUsageCount(expert) {
+  for (const key of ['usageCount', 'useCount', 'callCount', 'invokeCount', 'runCount', 'installCount']) {
+    const value = numberValue(expert?.[key], 0);
+    if (value > 0) return value;
+  }
+  return 0;
+}
+
+function basenameWithoutExtension(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  let pathname = text;
+  try {
+    pathname = new URL(text, 'https://moss.local').pathname;
+  } catch {
+    // Use the raw path when URL parsing fails.
+  }
+  const basename = path.posix.basename(pathname);
+  return basename.replace(/\.[^.]+$/, '');
+}
+
+function lookupKeys(value) {
+  const text = textValue(value) || (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value).trim()
+    : '');
+  if (!text) return [];
+  const compact = text.replace(/[\s._:/\\-]+/g, '');
+  return Array.from(new Set([text, compact]
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)));
+}
+
+function addExpertLookupValue(lookup, value, expert) {
+  for (const key of lookupKeys(value)) {
+    if (!lookup.has(key)) lookup.set(key, expert);
+  }
+}
+
+function buildExpertLookup(experts) {
+  const lookup = new Map();
+  for (const expert of experts || []) {
+    addExpertLookupValue(lookup, expert.id, expert);
+    addExpertLookupValue(lookup, expert.name, expert);
+    addExpertLookupValue(lookup, expert.displayName, expert);
+    addExpertLookupValue(lookup, expert.profession, expert);
+    addExpertLookupValue(lookup, expert.agentName, expert);
+    addExpertLookupValue(lookup, expert.plugin, expert);
+    addExpertLookupValue(lookup, basenameWithoutExtension(expert.avatar), expert);
+    addExpertLookupValue(lookup, basenameWithoutExtension(expert.promptFile), expert);
+  }
+  return lookup;
+}
+
+function findExpertByLookup(lookup, ...values) {
+  for (const value of values) {
+    for (const key of lookupKeys(value)) {
+      const expert = lookup.get(key);
+      if (expert) return expert;
+    }
+  }
+  return null;
+}
+
 function normalizeVisibility(value) {
   if (Array.isArray(value)) return value.map((entry) => String(entry || '').trim()).filter(Boolean);
   const text = String(value || '').trim();
@@ -712,7 +788,8 @@ function normalizeExpert(expert, categoryMap, baseUrl, sourceManifest, manifestU
     plugin: String(expert.plugin || '').trim(),
     agentName: String(expert.agentName || '').trim(),
     tags: normalizeTagList(expert.tags),
-    quickPrompts: Array.isArray(expert.quickPrompts) ? expert.quickPrompts : [],
+    quickPrompts: normalizeQuickPrompts(expert.quickPrompts),
+    usageCount: normalizeUsageCount(expert),
     members,
     isOPC: Boolean(expert.isOPC),
     sourceManifest,
@@ -740,30 +817,74 @@ function getSceneExpertIds(scene) {
   return Array.from(new Set(ids));
 }
 
-function normalizeScene(scene, baseUrl, expertById) {
+function findSceneExpertRecord(scene, expertId) {
+  const experts = Array.isArray(scene?.experts) ? scene.experts : [];
+  return experts.find((expert) => {
+    if (typeof expert === 'string') return expert === expertId;
+    return String(expert?.expertId || expert?.id || '').trim() === expertId;
+  });
+}
+
+function getSceneExpertDisplayName(scene, expertId) {
+  const record = findSceneExpertRecord(scene, expertId);
+  const displayNames = isRecord(scene?.expertDisplayNames) ? scene.expertDisplayNames : {};
+  return textValue(record?.displayName) || textValue(record?.name) || textValue(displayNames[expertId]);
+}
+
+function getSceneExpertProfession(scene, expertId) {
+  const record = findSceneExpertRecord(scene, expertId);
+  return textValue(record?.profession) || textValue(record?.title);
+}
+
+function getSceneExpertAvatar(scene, expertId) {
+  const record = findSceneExpertRecord(scene, expertId);
+  const avatars = isRecord(scene?.expertAvatars) ? scene.expertAvatars : {};
+  return String(record?.avatar || avatars[expertId] || '').trim();
+}
+
+function resolveSceneExpert(expertLookup, scene, expertId) {
+  const record = findSceneExpertRecord(scene, expertId);
+  const displayName = getSceneExpertDisplayName(scene, expertId);
+  const profession = getSceneExpertProfession(scene, expertId);
+  const avatar = getSceneExpertAvatar(scene, expertId);
+  return findExpertByLookup(
+    expertLookup,
+    expertId,
+    displayName,
+    profession,
+    basenameWithoutExtension(avatar),
+    record && typeof record !== 'string' ? record.agentName : '',
+    record && typeof record !== 'string' ? record.plugin : '',
+  );
+}
+
+function normalizeScene(scene, baseUrl, expertLookup) {
   if (!isRecord(scene)) return null;
   const id = String(scene.id || scene.sceneId || '').trim();
   const name = textValue(scene.displayName) || textValue(scene.name) || id;
   if (!id && !name) return null;
   const expertIds = getSceneExpertIds(scene);
-  const expertDisplayNames = isRecord(scene.expertDisplayNames) ? scene.expertDisplayNames : {};
-  const expertAvatars = isRecord(scene.expertAvatars) ? scene.expertAvatars : {};
   const experts = expertIds.map((expertId) => {
-    const expert = expertById.get(expertId);
+    const sceneDisplayName = getSceneExpertDisplayName(scene, expertId);
+    const sceneProfession = getSceneExpertProfession(scene, expertId);
+    const sceneAvatar = getSceneExpertAvatar(scene, expertId);
+    const expert = resolveSceneExpert(expertLookup, scene, expertId);
     if (expert) {
       return {
         id: expert.id,
-        displayName: expert.displayName,
-        profession: expert.profession,
-        avatar: expert.avatar,
+        sourceId: expertId,
+        displayName: sceneDisplayName || expert.displayName,
+        profession: sceneProfession || (sceneDisplayName && sceneDisplayName !== expert.displayName ? expert.displayName : expert.profession),
+        avatar: sceneAvatar ? buildHubUrl(baseUrl, sceneAvatar) : expert.avatar,
         type: expert.type,
       };
     }
     return {
       id: expertId,
-      displayName: textValue(expertDisplayNames[expertId]) || expertId,
-      profession: '',
-      avatar: expertAvatars[expertId] ? buildHubUrl(baseUrl, expertAvatars[expertId]) : '',
+      sourceId: expertId,
+      displayName: sceneDisplayName || expertId,
+      profession: sceneProfession || '',
+      avatar: sceneAvatar ? buildHubUrl(baseUrl, sceneAvatar) : '',
       type: 'agent',
     };
   });
@@ -829,6 +950,21 @@ function filterExperts(experts, { query = '', category = '', type = 'all', sortB
   }), sortBy);
 }
 
+function prioritizeFeaturedExperts(experts, featuredIds) {
+  if (!Array.isArray(featuredIds) || featuredIds.length === 0) return experts;
+  const featuredRank = new Map();
+  featuredIds.forEach((id, index) => {
+    if (id && !featuredRank.has(id)) featuredRank.set(id, index);
+  });
+  if (featuredRank.size === 0) return experts;
+  const fallbackRank = Number.MAX_SAFE_INTEGER;
+  return [...experts].sort((a, b) => {
+    const rankDiff = (featuredRank.get(a.id) ?? fallbackRank) - (featuredRank.get(b.id) ?? fallbackRank);
+    if (rankDiff) return rankDiff;
+    return 0;
+  });
+}
+
 function paginate(items, page, pageSize) {
   const safePage = Math.max(1, Number.parseInt(String(page || 1), 10) || 1);
   const safePageSize = Math.min(100, Math.max(1, Number.parseInt(String(pageSize || 20), 10) || 20));
@@ -851,11 +987,41 @@ function getManifestExperts(manifest) {
 }
 
 async function loadExpertBundle(baseUrl, { forceRefresh = false } = {}) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const cached = expertBundleCache.get(normalizedBaseUrl);
+  if (!forceRefresh && isMemoryCacheFresh(cached)) {
+    return cached.value;
+  }
+
+  const promiseKey = `${normalizedBaseUrl}:${forceRefresh ? 'force' : 'normal'}`;
+  if (expertBundlePromises.has(promiseKey)) {
+    return expertBundlePromises.get(promiseKey);
+  }
+
+  const promise = buildExpertBundle(normalizedBaseUrl, { forceRefresh })
+    .then((value) => {
+      expertBundleCache.set(normalizedBaseUrl, {
+        value,
+        cachedAt: Date.now(),
+      });
+      return value;
+    });
+
+  expertBundlePromises.set(promiseKey, promise);
+  try {
+    return await promise;
+  } finally {
+    expertBundlePromises.delete(promiseKey);
+  }
+}
+
+async function buildExpertBundle(baseUrl, { forceRefresh = false } = {}) {
   const manifests = [];
   for (const fileName of PUBLIC_MANIFEST_FILES) {
     try {
       const loaded = await fetchCachedJson(baseUrl, fileName, {
         forceRefresh,
+        maxAgeMs: forceRefresh ? CACHE_TTL_MS : Number.POSITIVE_INFINITY,
         optional: fileName !== 'expert_center.json',
       });
       if (loaded.data) manifests.push({ fileName, ...loaded });
@@ -905,9 +1071,12 @@ async function loadExpertBundle(baseUrl, { forceRefresh = false } = {}) {
     .filter((category) => category.count > 0)
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'));
 
+  const sortedExperts = sortExperts(expertList);
+
   return {
     categories,
-    experts: sortExperts(expertList),
+    experts: sortedExperts,
+    expertLookup: buildExpertLookup(sortedExperts),
     rawExperts,
     sourceById,
     manifestUpdatedById,
@@ -921,18 +1090,74 @@ async function loadExpertBundle(baseUrl, { forceRefresh = false } = {}) {
   };
 }
 
-async function getFeaturedExpertIds(baseUrl, { forceRefresh = false } = {}) {
+async function getFeaturedExpertIds(baseUrl, { forceRefresh = false, expertLookup = null } = {}) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const cacheKey = `${normalizedBaseUrl}:${expertLookup ? 'resolved' : 'raw'}`;
+  const cached = featuredExpertIdsCache.get(cacheKey);
+  if (!forceRefresh && isMemoryCacheFresh(cached)) {
+    return cached.value;
+  }
+
+  const promiseKey = `${cacheKey}:${forceRefresh ? 'force' : 'normal'}`;
+  if (featuredExpertIdsPromises.has(promiseKey)) {
+    return featuredExpertIdsPromises.get(promiseKey);
+  }
+
+  const promise = loadFeaturedExpertIds(normalizedBaseUrl, { forceRefresh, expertLookup })
+    .then((value) => {
+      featuredExpertIdsCache.set(cacheKey, {
+        value,
+        cachedAt: Date.now(),
+      });
+      return value;
+    });
+
+  featuredExpertIdsPromises.set(promiseKey, promise);
   try {
-    const loaded = await fetchCachedJson(baseUrl, FEATURED_SCENES_FILE, { forceRefresh, optional: true });
-    const scenes = Array.isArray(loaded.data) ? loaded.data : extractArray(loaded.data, ['scenes', 'items', 'featuredScenes']);
+    return await promise;
+  } finally {
+    featuredExpertIdsPromises.delete(promiseKey);
+  }
+}
+
+async function loadFeaturedScenes(baseUrl, { forceRefresh = false } = {}) {
+  const loaded = await fetchCachedJson(baseUrl, FEATURED_SCENES_FILE, {
+    forceRefresh,
+    maxAgeMs: forceRefresh ? CACHE_TTL_MS : Number.POSITIVE_INFINITY,
+    optional: true,
+  });
+  return Array.isArray(loaded.data) ? loaded.data : extractArray(loaded.data, ['scenes', 'items', 'featuredScenes']);
+}
+
+async function loadFeaturedExpertIds(baseUrl, { forceRefresh = false, expertLookup = null } = {}) {
+  try {
+    const scenes = await loadFeaturedScenes(baseUrl, { forceRefresh });
     const ids = [];
     for (const scene of scenes) {
-      ids.push(...getSceneExpertIds(scene));
+      for (const expertId of getSceneExpertIds(scene)) {
+        const expert = expertLookup ? resolveSceneExpert(expertLookup, scene, expertId) : null;
+        ids.push(expert?.id || expertId);
+      }
     }
     return Array.from(new Set(ids));
   } catch {
     return [];
   }
+}
+
+async function findExpertBySceneAlias(baseUrl, bundle, expertId, { forceRefresh = false } = {}) {
+  try {
+    const scenes = await loadFeaturedScenes(baseUrl, { forceRefresh });
+    const expertLookup = bundle.expertLookup || buildExpertLookup(bundle.experts);
+    for (const scene of scenes) {
+      if (!getSceneExpertIds(scene).includes(expertId)) continue;
+      const expert = resolveSceneExpert(expertLookup, scene, expertId);
+      if (expert) return expert;
+    }
+  } catch {
+    // Ignore scene alias lookup failures and let the caller report not found.
+  }
+  return null;
 }
 
 async function readExpertMeta(expertDir) {
@@ -1452,18 +1677,20 @@ export function registerPublicExpertHubIpcHandlers({ getDesktopSettings, notifyA
 
   ipcMain.handle('public-experthub:fetch-featured-experts', async (_event, payload = {}) => {
     try {
-      const bundle = await loadExpertBundle(getBaseUrl(), { forceRefresh: Boolean(payload.forceRefresh) });
-      const featuredIds = await getFeaturedExpertIds(getBaseUrl(), { forceRefresh: Boolean(payload.forceRefresh) });
-      const idSet = new Set(featuredIds);
-      const featuredExperts = idSet.size > 0 ? bundle.experts.filter((expert) => idSet.has(expert.id)) : [];
-      const source = featuredExperts.length > 0 ? featuredExperts : bundle.experts;
-      const filtered = filterExperts(source, {
+      const forceRefresh = Boolean(payload.forceRefresh);
+      const bundle = await loadExpertBundle(getBaseUrl(), { forceRefresh });
+      const featuredIds = await getFeaturedExpertIds(getBaseUrl(), {
+        forceRefresh,
+        expertLookup: bundle.expertLookup || buildExpertLookup(bundle.experts),
+      });
+      const filtered = filterExperts(bundle.experts, {
         query: payload.query,
         category: payload.category,
         type: payload.type,
         sortBy: payload.sortBy || 'updated',
       });
-      const pageData = paginate(filtered, payload.page, payload.pageSize);
+      const recommended = prioritizeFeaturedExperts(filtered, featuredIds);
+      const pageData = paginate(recommended, payload.page, payload.pageSize);
       return {
         success: true,
         data: {
@@ -1482,14 +1709,11 @@ export function registerPublicExpertHubIpcHandlers({ getDesktopSettings, notifyA
 
   ipcMain.handle('public-experthub:fetch-scenes', async (_event, payload = {}) => {
     try {
-      const bundle = await loadExpertBundle(getBaseUrl(), { forceRefresh: Boolean(payload.forceRefresh) });
-      const loaded = await fetchCachedJson(getBaseUrl(), FEATURED_SCENES_FILE, {
-        forceRefresh: Boolean(payload.forceRefresh),
-        optional: true,
-      });
-      const rawScenes = Array.isArray(loaded.data) ? loaded.data : extractArray(loaded.data, ['scenes', 'items', 'featuredScenes']);
-      const expertById = new Map(bundle.experts.map((expert) => [expert.id, expert]));
-      const scenes = rawScenes.map((scene) => normalizeScene(scene, getBaseUrl(), expertById)).filter(Boolean);
+      const forceRefresh = Boolean(payload.forceRefresh);
+      const bundle = await loadExpertBundle(getBaseUrl(), { forceRefresh });
+      const rawScenes = await loadFeaturedScenes(getBaseUrl(), { forceRefresh });
+      const expertLookup = bundle.expertLookup || buildExpertLookup(bundle.experts);
+      const scenes = rawScenes.map((scene) => normalizeScene(scene, getBaseUrl(), expertLookup)).filter(Boolean);
       const pageData = paginate(scenes, payload.page, payload.pageSize);
       return {
         success: true,
@@ -1510,8 +1734,12 @@ export function registerPublicExpertHubIpcHandlers({ getDesktopSettings, notifyA
     try {
       const expertId = String(payload.expertId || payload.id || '').trim();
       if (!expertId) return { success: false, error: 'Missing expert id' };
-      const bundle = await loadExpertBundle(getBaseUrl(), { forceRefresh: Boolean(payload.forceRefresh) });
-      const expert = bundle.experts.find((entry) => entry.id === expertId);
+      const forceRefresh = Boolean(payload.forceRefresh);
+      const baseUrl = getBaseUrl();
+      const bundle = await loadExpertBundle(baseUrl, { forceRefresh });
+      const expertLookup = bundle.expertLookup || buildExpertLookup(bundle.experts);
+      const expert = findExpertByLookup(expertLookup, expertId)
+        || await findExpertBySceneAlias(baseUrl, bundle, expertId, { forceRefresh });
       if (!expert) return { success: false, error: 'Expert not found' };
       return { success: true, data: expert };
     } catch (error) {
