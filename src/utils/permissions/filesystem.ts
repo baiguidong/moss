@@ -226,13 +226,32 @@ export function isMossSettingsPath(filePath: string): boolean {
   )
 }
 
-function isManagedSessionWorkspacePath(filePath: string): boolean {
+function getManagedSessionWorkspaceDir(): string | null {
   const sessionProjectDir = getSessionProjectDir()
   if (!sessionProjectDir) {
-    return false
+    return null
   }
 
-  return pathInWorkingPath(filePath, join(sessionProjectDir, 'workspace'))
+  const sessionsDir = join(getMossConfigHomeDir(), 'sessions')
+  const relativeSessionDir = relativePath(
+    normalizeCaseForComparison(expandPath(sessionsDir)),
+    normalizeCaseForComparison(expandPath(sessionProjectDir)),
+  )
+  if (
+    !relativeSessionDir ||
+    containsPathTraversal(relativeSessionDir) ||
+    posix.isAbsolute(relativeSessionDir) ||
+    relativeSessionDir.includes(DIR_SEP)
+  ) {
+    return null
+  }
+
+  return join(sessionProjectDir, 'workspace')
+}
+
+function isManagedSessionWorkspacePath(filePath: string): boolean {
+  const workspaceDir = getManagedSessionWorkspaceDir()
+  return workspaceDir !== null && pathInWorkingPath(filePath, workspaceDir)
 }
 
 function pathsAreSameForSecurityComparison(
@@ -711,8 +730,10 @@ export function checkPathSafetyForAutoEdit(
 export function allWorkingDirectories(
   context: ToolPermissionContext,
 ): Set<string> {
+  const managedSessionWorkspaceDir = getManagedSessionWorkspaceDir()
   return new Set([
     getOriginalCwd(),
+    ...(managedSessionWorkspaceDir ? [managedSessionWorkspaceDir] : []),
     ...context.additionalWorkingDirectories.keys(),
   ])
 }

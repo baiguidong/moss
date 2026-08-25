@@ -8,6 +8,7 @@ import {
   switchSession,
 } from '../../bootstrap/state.js'
 import statusline from '../../commands/statusline.js'
+import { getEmptyToolPermissionContext } from '../../Tool.js'
 import {
   getGlobalMossFolderPermissionPattern,
   GLOBAL_MOSS_FOLDER_PERMISSION_PATTERN,
@@ -28,7 +29,7 @@ mock.module('color-diff-napi', () => ({
   getSyntaxTheme: () => ({}),
 }))
 
-const { checkPathSafetyForAutoEdit } =
+const { checkPathSafetyForAutoEdit, pathInAllowedWorkingPath } =
   await import('../permissions/filesystem.js')
 
 const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
@@ -102,15 +103,23 @@ describe('Moss project paths', () => {
     })
   })
 
-  test('allows managed session workspace files under the global Moss config directory', () => {
+  test('allows managed session workspace files when cwd context is unavailable', () => {
     process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
     const sessionDir = '/tmp/custom-moss/sessions/moss-session'
     const workspaceDir = join(sessionDir, 'workspace')
-    setOriginalCwd(workspaceDir)
+    setOriginalCwd('/tmp/unrelated-project')
     switchSession(asSessionId('underlying-session'), sessionDir)
 
     const workspaceFile = join(workspaceDir, 'welcome.txt')
     const sessionMetadataFile = join(sessionDir, 'session.json')
+    const otherSessionWorkspaceFile = join(
+      '/tmp/custom-moss/sessions/other-session/workspace',
+      'welcome.txt',
+    )
+    const nestedSessionWorkspaceFile = join(
+      '/tmp/custom-moss/sessions/group/moss-session/workspace',
+      'welcome.txt',
+    )
     const nestedProjectConfigFile = join(
       workspaceDir,
       '.moss',
@@ -121,6 +130,34 @@ describe('Moss project paths', () => {
     expect(checkPathSafetyForAutoEdit(workspaceFile, [workspaceFile])).toEqual({
       safe: true,
     })
+    expect(
+      pathInAllowedWorkingPath(
+        workspaceFile,
+        getEmptyToolPermissionContext(),
+        [workspaceFile],
+      ),
+    ).toBe(true)
+    expect(
+      pathInAllowedWorkingPath(
+        sessionMetadataFile,
+        getEmptyToolPermissionContext(),
+        [sessionMetadataFile],
+      ),
+    ).toBe(false)
+    expect(
+      pathInAllowedWorkingPath(
+        otherSessionWorkspaceFile,
+        getEmptyToolPermissionContext(),
+        [otherSessionWorkspaceFile],
+      ),
+    ).toBe(false)
+    expect(
+      pathInAllowedWorkingPath(
+        nestedSessionWorkspaceFile,
+        getEmptyToolPermissionContext(),
+        [nestedSessionWorkspaceFile],
+      ),
+    ).toBe(false)
     expect(
       checkPathSafetyForAutoEdit(sessionMetadataFile, [sessionMetadataFile])
         .safe,
