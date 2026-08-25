@@ -16,6 +16,7 @@ const CONNECTOR_STATE_DIR = path.join(MOSS_CONNECTORS_DIR, 'state');
 const CONNECTOR_CREDENTIALS_FILE = path.join(MOSS_CONNECTORS_DIR, 'credentials.json');
 const CONNECTOR_CATALOG_ZIP_NAME = 'workbuddy-connectors-config.zip';
 const CONNECTOR_CLOUD_AUTH_PROVIDERS_FILE_NAME = 'cloud-auth-providers.json';
+const CONNECTOR_MCP_OVERRIDES_FILE_NAME = 'connector-mcp-overrides.json';
 const CONNECTOR_META_FILE = 'connector.json';
 const CONNECTOR_STATE_FILE = 'state.json';
 const CONNECTOR_AUTH_FILE = 'auth.json';
@@ -147,23 +148,43 @@ function assertStringRecord(value, label) {
   return result;
 }
 
-function normalizeMcpServerType(value) {
-  if (value === undefined || value === null || value === '') return 'stdio';
+function normalizeMcpOAuthConfig(value) {
+  if (!isPlainObject(value)) return undefined;
+  const result = {};
+  for (const key of ['clientName', 'clientId', 'authServerMetadataUrl']) {
+    const text = normalizeString(value[key]);
+    if (text) result[key] = text;
+  }
+  if (Number.isInteger(value.callbackPort) && value.callbackPort > 0) {
+    result.callbackPort = value.callbackPort;
+  }
+  if (typeof value.xaa === 'boolean') {
+    result.xaa = value.xaa;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeMcpServerType(value, config) {
+  if (value === undefined || value === null || value === '') {
+    if (normalizeString(config?.command)) return 'stdio';
+    if (normalizeString(config?.url)) return 'http';
+    return 'stdio';
+  }
   if (typeof value !== 'string') return value;
   const type = value.trim().toLowerCase();
-  if (!type) return 'stdio';
+  if (!type) return normalizeMcpServerType(undefined, config);
   if (type === 'streamable-http' || type === 'streamable_http' || type === 'streamablehttp') {
     return 'http';
   }
   return type;
 }
 
-function validateMcpServerConfig(input) {
+export function validateMcpServerConfig(input) {
   if (!isPlainObject(input)) {
     throw new Error('MCP server config must be an object.');
   }
 
-  const type = normalizeMcpServerType(input.type);
+  const type = normalizeMcpServerType(input.type, input);
   if (type === 'stdio') {
     if (typeof input.command !== 'string' || !input.command.trim()) {
       throw new Error('stdio MCP server requires command.');
@@ -192,17 +213,19 @@ function validateMcpServerConfig(input) {
     } catch (error) {
       throw new Error(error?.message || 'Invalid MCP server url.');
     }
+    const oauth = normalizeMcpOAuthConfig(input.oauth);
     return {
       type,
       url: input.url.trim(),
       ...(input.headers ? { headers: assertStringRecord(input.headers, 'headers') } : {}),
+      ...(oauth ? { oauth } : {}),
     };
   }
 
   throw new Error('MCP server type must be stdio, http, streamable-http, or sse.');
 }
 
-function normalizeMcpConfig(input) {
+export function normalizeMcpConfig(input) {
   const sourceServers = isPlainObject(input?.mcpServers)
     ? input.mcpServers
     : isPlainObject(input)
@@ -214,6 +237,60 @@ function normalizeMcpConfig(input) {
     mcpServers[serverName] = validateMcpServerConfig(config);
   }
   return { mcpServers };
+}
+
+function normalizeConnectorMcpOverrides(input) {
+  const connectors = isPlainObject(input?.connectors) ? input.connectors : {};
+  return { connectors };
+}
+
+function readConnectorMcpOverrides() {
+  return normalizeConnectorMcpOverrides(readJsonFile(localMcpOverridesPath(), {}));
+}
+
+function getConnectorMcpOverride(overrides, connectorId) {
+  const connectors = isPlainObject(overrides?.connectors) ? overrides.connectors : {};
+  const id = normalizeString(connectorId);
+  const override = connectors[id];
+  return isPlainObject(override) ? override : null;
+}
+
+function mergeMcpServerOAuthOverride(config, override) {
+  if (!isPlainObject(override?.oauth)) return config;
+  return validateMcpServerConfig({
+    ...config,
+    oauth: {
+      ...(isPlainObject(config.oauth) ? config.oauth : {}),
+      ...override.oauth,
+    },
+  });
+}
+
+export function normalizeConnectorMcpConfig(connectorId, input, overrides = readConnectorMcpOverrides()) {
+  const normalized = normalizeMcpConfig(input);
+  const connectorOverride = getConnectorMcpOverride(overrides, connectorId);
+  if (!connectorOverride) return normalized;
+
+  const defaultServerOverride = isPlainObject(connectorOverride.mcp)
+    ? connectorOverride.mcp
+    : isPlainObject(connectorOverride.defaults)
+      ? connectorOverride.defaults
+      : null;
+  const serverOverrides = isPlainObject(connectorOverride.servers) ? connectorOverride.servers : {};
+
+  return {
+    mcpServers: Object.fromEntries(
+      Object.entries(normalized.mcpServers).map(([serverName, config]) => [
+        serverName,
+        config.type === 'http' || config.type === 'sse'
+          ? mergeMcpServerOAuthOverride(
+              mergeMcpServerOAuthOverride(config, defaultServerOverride),
+              serverOverrides[serverName],
+            )
+          : config,
+      ]),
+    ),
+  };
 }
 
 function connectorDir(connectorId) {
@@ -232,6 +309,10 @@ function localCloudAuthProvidersPath() {
   return path.join(CONNECTOR_CATALOG_DIR, CONNECTOR_CLOUD_AUTH_PROVIDERS_FILE_NAME);
 }
 
+function localMcpOverridesPath() {
+  return path.join(CONNECTOR_CATALOG_DIR, CONNECTOR_MCP_OVERRIDES_FILE_NAME);
+}
+
 async function ensureConnectorDirs() {
   await Promise.all([
     fsp.mkdir(CONNECTOR_CATALOG_DIR, { recursive: true }),
@@ -240,7 +321,12 @@ async function ensureConnectorDirs() {
   ]);
 }
 
-export async function initializeBundledConnectorCatalog({ bundledCatalogPath, bundledCloudAuthPath, log } = {}) {
+export async function initializeBundledConnectorCatalog({
+  bundledCatalogPath,
+  bundledCloudAuthPath,
+  bundledMcpOverridesPath,
+  log,
+} = {}) {
   await ensureConnectorDirs();
   const sourcePath = normalizeString(bundledCatalogPath);
   let catalogCopied = false;
@@ -279,11 +365,29 @@ export async function initializeBundledConnectorCatalog({ bundledCatalogPath, bu
     }
   }
 
+  const mcpOverridesSourcePath = normalizeString(bundledMcpOverridesPath);
+  let mcpOverridesCopied = false;
+  if (mcpOverridesSourcePath && fs.existsSync(mcpOverridesSourcePath)) {
+    const overridesStat = await fsp.stat(mcpOverridesSourcePath);
+    if (overridesStat.isFile()) {
+      const targetOverridesPath = localMcpOverridesPath();
+      await fsp.copyFile(mcpOverridesSourcePath, targetOverridesPath);
+      mcpOverridesCopied = true;
+      log?.('info', 'connector', 'Bundled connector MCP overrides initialized', {
+        source: mcpOverridesSourcePath,
+        target: targetOverridesPath,
+        size: overridesStat.size,
+      });
+    }
+  }
+
   return {
     copied: catalogCopied,
     catalogPath: targetPath,
     cloudAuthCopied,
     cloudAuthPath: localCloudAuthProvidersPath(),
+    mcpOverridesCopied,
+    mcpOverridesPath: localMcpOverridesPath(),
   };
 }
 
@@ -1256,7 +1360,7 @@ export async function installConnector(connectorId) {
   let mcpServerNames = [];
   if (connector.hasMcp) {
     const rawMcp = await readZipJson(zip, `connectors/${connector.source}/mcp.json`, null);
-    const mcp = normalizeMcpConfig(rawMcp);
+    const mcp = normalizeConnectorMcpConfig(id, rawMcp);
     mcpServerNames = Object.keys(mcp.mcpServers);
     await writeJsonFileAsync(path.join(baseDir, 'mcp.json'), mcp);
   }
@@ -1314,7 +1418,7 @@ export function getConnectorMcpServers(connectorIds) {
     const rawMcp = readJsonFile(path.join(baseDir, 'mcp.json'), null);
     if (!isPlainObject(rawMcp)) continue;
     try {
-      const normalized = normalizeMcpConfig(rawMcp);
+      const normalized = normalizeConnectorMcpConfig(item, rawMcp);
       for (const [serverName, config] of Object.entries(normalized.mcpServers)) {
         const accessToken = readConnectorMcpAccessToken(item, serverName);
         result[serverName] = withMcpAccessToken(config, accessToken);
@@ -1347,7 +1451,7 @@ export function findConnectorMcpServer(nameOrConnectorId) {
 
     let normalized;
     try {
-      normalized = normalizeMcpConfig(rawMcp);
+      normalized = normalizeConnectorMcpConfig(connectorId, rawMcp);
     } catch {
       continue;
     }

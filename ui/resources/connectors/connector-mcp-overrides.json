@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "connectors": {
+    "qq-mail": {
+      "servers": {
+        "qq-mail": {
+          "oauth": {
+            "clientName": "WorkBuddy"
+          }
+        }
+      }
+    }
+  }
+}

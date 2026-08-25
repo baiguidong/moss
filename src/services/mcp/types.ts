@@ -41,6 +41,7 @@ const McpXaaConfigSchema = lazySchema(() => z.boolean())
 
 const McpOAuthConfigSchema = lazySchema(() =>
   z.object({
+    clientName: z.string().min(1).optional(),
     clientId: z.string().optional(),
     callbackPort: z.number().int().positive().optional(),
     authServerMetadataUrl: z

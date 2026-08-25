@@ -6,7 +6,6 @@ import {
   ArrowRight,
   ExternalLink,
   Globe2,
-  KeyRound,
   Loader2,
   Plus,
   RefreshCw,
@@ -179,8 +178,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
   const [isLoading, setIsLoading] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
   const [canGoForward, setCanGoForward] = React.useState(false);
-  const [mcpCallbackUrl, setMcpCallbackUrl] = React.useState("");
-  const [mcpCallbackError, setMcpCallbackError] = React.useState("");
 
   React.useEffect(() => {
     browserListeners.add(forceUpdate);
@@ -193,8 +190,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     setInputUrl(displayUrl(activeTab.url));
     setCanGoBack(false);
     setCanGoForward(false);
-    setMcpCallbackUrl("");
-    setMcpCallbackError("");
   }, [activeTab.id, activeTab.url]);
 
   const updateActiveTab = React.useCallback(
@@ -255,7 +250,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       return true;
     }
     submittedMcpAuthUrls.add(key);
-    setMcpCallbackError("");
     void window.agentDesktop.submitMcpAuthCallback({
       name: context.serverName,
       callbackUrl: currentUrl,
@@ -266,11 +260,9 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
         mcpAuth: null,
       });
       setInputUrl("");
-      setMcpCallbackUrl("");
     }).catch((error: unknown) => {
       submittedMcpAuthUrls.delete(key);
-      const message = error instanceof Error ? error.message : String(error || "授权回调提交失败");
-      setMcpCallbackError(message);
+      console.warn("[browser] failed to submit MCP auth callback:", error instanceof Error ? error.message : error);
     });
     return true;
   }, [activeTab.mcpAuth, updateActiveTab]);
@@ -365,17 +357,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     });
     return unsubscribe;
   }, [submitMcpAuthCallback]);
-
-  const handleManualMcpCallbackSubmit = React.useCallback((event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const rawUrl = mcpCallbackUrl.trim();
-    if (!rawUrl) return;
-    if (!isMcpOAuthCallbackUrl(rawUrl)) {
-      setMcpCallbackError("回调地址里没有 code/state。");
-      return;
-    }
-    submitMcpAuthCallback(rawUrl);
-  }, [mcpCallbackUrl, submitMcpAuthCallback]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -473,37 +454,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
         </button>
       </div>
 
-      {activeTab.mcpAuth ? (
-        <form
-          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/80 bg-muted/20 px-2"
-          onSubmit={handleManualMcpCallbackSubmit}
-        >
-          <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <input
-            value={mcpCallbackUrl}
-            onChange={(event) => {
-              setMcpCallbackUrl(event.target.value);
-              setMcpCallbackError("");
-            }}
-            placeholder="粘贴授权完成后的回调地址"
-            className="h-7 min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55"
-          />
-          {mcpCallbackError ? (
-            <span className="max-w-[180px] truncate text-[11px] text-destructive" title={mcpCallbackError}>
-              {mcpCallbackError}
-            </span>
-          ) : null}
-          <button
-            type="submit"
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground transition-colors hover:bg-muted"
-            title="提交授权回调"
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-            提交
-          </button>
-        </form>
-      ) : null}
-
       <div className="relative min-h-0 flex-1 bg-white">
         {activeTab.url === DEFAULT_URL ? (
           <div className="flex h-full items-center justify-center bg-background px-5 text-center text-xs text-muted-foreground">
@@ -513,11 +463,12 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
           <webview
             key={activeTab.id}
             ref={(node) => {
+              node?.setAttribute?.("allowpopups", "true");
               webviewRef.current = node as unknown as WebviewLike | null;
             }}
             src={activeTab.url}
             partition={PARTITION}
-            allowpopups
+            allowpopups={true}
             className="h-full w-full"
           />
         )}

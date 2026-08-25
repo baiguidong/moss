@@ -1422,8 +1422,9 @@ export class McpAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
+    const configuredClientName = this.serverConfig.oauth?.clientName?.trim()
     const metadata: OAuthClientMetadata = {
-      client_name: `Moss (${this.serverName})`,
+      client_name: configuredClientName || `Moss (${this.serverName})`,
       redirect_uris: [this.redirectUri],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],

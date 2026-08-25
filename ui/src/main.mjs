@@ -27,6 +27,10 @@ import {
   setupConnectorCli,
   updateConnectorMcpAuthState,
 } from './connector-hub-ipc.mjs';
+import {
+  applyPendingMcpRuntimeReload,
+  scheduleMcpRuntimeReload,
+} from './mcp-runtime-reload.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
@@ -438,7 +442,8 @@ const pluginAppWindows = new Map();
 const pluginAppWindowStates = new Map();
 const pendingEmbeddedPluginApps = new Map();
 const pendingEmbeddedPluginAppsByToken = new Map();
-const pendingEmbeddedWebviewAttachTokens = [];
+const pendingWebviewAttachments = [];
+const configuredRightBrowserContents = new WeakSet();
 const debugWindows = new Map();
 const pendingMcpAuthCallbacks = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
@@ -2096,11 +2101,31 @@ function assertStringRecord(value, label) {
   return result;
 }
 
-function normalizeMcpServerType(value) {
-  if (value === undefined || value === null || value === '') return 'stdio';
+function normalizeMcpOAuthConfig(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const result = {};
+  for (const key of ['clientName', 'clientId', 'authServerMetadataUrl']) {
+    const text = typeof value[key] === 'string' ? value[key].trim() : '';
+    if (text) result[key] = text;
+  }
+  if (Number.isInteger(value.callbackPort) && value.callbackPort > 0) {
+    result.callbackPort = value.callbackPort;
+  }
+  if (typeof value.xaa === 'boolean') {
+    result.xaa = value.xaa;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeMcpServerType(value, config) {
+  if (value === undefined || value === null || value === '') {
+    if (typeof config?.command === 'string' && config.command.trim()) return 'stdio';
+    if (typeof config?.url === 'string' && config.url.trim()) return 'http';
+    return 'stdio';
+  }
   if (typeof value !== 'string') return value;
   const type = value.trim().toLowerCase();
-  if (!type) return 'stdio';
+  if (!type) return normalizeMcpServerType(undefined, config);
   if (type === 'streamable-http' || type === 'streamable_http' || type === 'streamablehttp') {
     return 'http';
   }
@@ -2112,7 +2137,7 @@ function validateMcpServerConfig(input) {
     throw new Error('MCP server config must be an object.');
   }
 
-  const type = normalizeMcpServerType(input.type);
+  const type = normalizeMcpServerType(input.type, input);
   if (type === 'stdio') {
     if (typeof input.command !== 'string' || !input.command.trim()) {
       throw new Error('stdio MCP server requires command.');
@@ -2141,10 +2166,12 @@ function validateMcpServerConfig(input) {
     } catch (error) {
       throw new Error(error?.message || 'Invalid MCP server url.');
     }
+    const oauth = normalizeMcpOAuthConfig(input.oauth);
     return {
       type,
       url: input.url.trim(),
       ...(input.headers ? { headers: assertStringRecord(input.headers, 'headers') } : {}),
+      ...(oauth ? { oauth } : {}),
     };
   }
 
@@ -2152,21 +2179,7 @@ function validateMcpServerConfig(input) {
 }
 
 function resetLocalRuntimesForMcpReload() {
-  let resetSessionCount = 0;
-  let skippedBusySessionCount = 0;
-
-  for (const sessionRecord of sessions.values()) {
-    if (sessionRecord.agentMode === 'remote-direct') continue;
-    if (!sessionRecord.runtime) continue;
-    if (sessionRecord.busy) {
-      skippedBusySessionCount += 1;
-      continue;
-    }
-    disposeRuntime(sessionRecord);
-    resetSessionCount += 1;
-  }
-
-  return { resetSessionCount, skippedBusySessionCount };
+  return scheduleMcpRuntimeReload(sessions.values(), disposeRuntime);
 }
 
 function getDesktopMcpPayload(extra = {}) {
@@ -2288,6 +2301,7 @@ function buildConnectorSystemPrompt(sessionRecord) {
   }
   lines.push(
     'When a marketplace connector MCP server is missing tools, returns no tools, reports auth is required, or otherwise needs authorization, call moss with action "connector_mcp_authenticate" and the connector_id or server_name.',
+    'When connector_mcp_authenticate returns status "authenticated", authorization is complete. Do not authenticate again; tell the user to continue the original request in their next message so the refreshed MCP tools can load.',
     'Do not ask the user to type /mcp for marketplace connector authorization in Moss desktop.',
     'Do not reveal access tokens, OAuth codes, full authorization URLs, passwords, or other credentials in the conversation.',
   );
@@ -3215,6 +3229,7 @@ function hydratePersistedSessions() {
       historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
+      pendingMcpRuntimeReload: false,
       resumeReadOnlyReason: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
@@ -3261,6 +3276,7 @@ function hydratePersistedSessions() {
       historyLoadedFromSource: false,
       workerSummariesJson: row.worker_summaries_json || null,
       runtime: null,
+      pendingMcpRuntimeReload: false,
       resumeReadOnlyReason: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
@@ -4090,6 +4106,11 @@ async function runSessionPrompt({
       tasks: snapshotSessionTasks(sessionRecord),
     });
     emitSessionHistory(sessionRecord);
+    if (applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime)) {
+      mossLog('info', 'mcp', 'Reloaded session runtime after deferred MCP update', {
+        sessionId: sessionRecord.id,
+      });
+    }
     void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
   }
 }
@@ -4619,84 +4640,61 @@ function preparePluginAppEntry(appEntry) {
   };
 }
 
-function openExternalHttpUrl(url) {
-  if (typeof url !== 'string' || !url.trim()) return false;
+async function openExternalUrl(href) {
   try {
-    const parsed = new URL(url.trim());
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    void shell.openExternal(parsed.href);
+    await shell.openExternal(href);
     return true;
   } catch {
     return false;
   }
 }
 
-function openExternalNavigationUrl(url) {
+async function openExternalHttpUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return openExternalUrl(parsed.href);
+  } catch {
+    return false;
+  }
+}
+
+function getExternalNavigationHref(url) {
   if (typeof url !== 'string' || !url.trim()) return false;
   const trimmed = url.trim();
   if (/^https?:\/\//i.test(trimmed) || /^mailto:/i.test(trimmed)) {
-    void shell.openExternal(trimmed);
-    return true;
+    return trimmed;
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !/^(?:file|javascript|data|about):/i.test(trimmed)) {
-    void shell.openExternal(trimmed);
-    return true;
+    return trimmed;
   }
   return false;
 }
 
-function isRightBrowserPopupUrl(url) {
-  if (typeof url !== 'string' || !url.trim()) return true;
-  const trimmed = url.trim();
-  return trimmed === 'about:blank' || /^https?:\/\//i.test(trimmed);
+async function openExternalNavigationUrl(url) {
+  const href = getExternalNavigationHref(url);
+  if (!href) return false;
+  return openExternalUrl(href);
 }
 
-function getRightBrowserPopupWindowOptions() {
-  return {
-    width: 560,
-    height: 720,
-    minWidth: 360,
-    minHeight: 480,
-    title: 'Moss 浏览器',
-    backgroundColor: '#ffffff',
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  };
-}
+function configureRightBrowserWebContents(targetWebContents) {
+  if (!targetWebContents || targetWebContents.isDestroyed() || configuredRightBrowserContents.has(targetWebContents)) {
+    return;
+  }
+  configuredRightBrowserContents.add(targetWebContents);
 
-function configureRightBrowserPopupWebContents(targetWebContents) {
   targetWebContents.setWindowOpenHandler(({ url }) => {
     emitToRenderer('browser:external-url', { url });
-    if (isRightBrowserPopupUrl(url)) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: getRightBrowserPopupWindowOptions(),
-      };
-    }
-    openExternalNavigationUrl(url);
+    void openExternalNavigationUrl(url);
     return { action: 'deny' };
   });
 
   targetWebContents.on('will-navigate', (event, url) => {
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^https?:\/\//i.test(url)) {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^https?:\/\//i.test(url) && getExternalNavigationHref(url)) {
       emitToRenderer('browser:external-url', { url });
-      if (openExternalNavigationUrl(url)) {
-        event.preventDefault();
-      }
-    }
-  });
-
-  targetWebContents.on('did-create-window', (childWindow) => {
-    try {
-      configureRightBrowserPopupWebContents(childWindow.webContents);
-    } catch (error) {
-      console.warn('[browser] failed to configure popup webContents:', error?.message || error);
+      void openExternalNavigationUrl(url);
+      event.preventDefault();
     }
   });
 }
@@ -5185,6 +5183,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
     history: [],
     historyLoadedFromSource: false,
     runtime: null,
+    pendingMcpRuntimeReload: false,
     resumeReadOnlyReason: null,
     workspaceWatcher: null,
     workspaceWatcherSyncTimer: null,
@@ -5230,6 +5229,7 @@ async function updateSessionConnectors(sessionRecord, connectorIds) {
   let skippedBusyRuntime = false;
   if (sessionRecord.runtime) {
     if (sessionRecord.busy) {
+      sessionRecord.pendingMcpRuntimeReload = true;
       skippedBusyRuntime = true;
     } else {
       disposeRuntime(sessionRecord);
@@ -5258,6 +5258,7 @@ async function findSessionSubagentDir(sessionRecord) {
 }
 
 function disposeRuntime(sessionRecord) {
+  sessionRecord.pendingMcpRuntimeReload = false;
   if (!sessionRecord.runtime) return;
   try {
     sessionRecord.backgroundTaskUnsubscribe?.();
@@ -5404,11 +5405,15 @@ const mossAppEventHandler = createMossAppEventHandler(
     setupConnectorCli: (connectorId, context = {}) => setupConnectorCli(connectorId, {
       sessionId: context.sessionId || null,
       openBrowser: ({ url, sessionId }) => {
-        openExternalHttpUrl(url);
-        emitToRenderer('browser:open', {
-          url,
-          sessionId: sessionId || null,
-        });
+        void (async () => {
+          const openedInSystemBrowser = await openExternalHttpUrl(url);
+          if (!openedInSystemBrowser) {
+            emitToRenderer('browser:open', {
+              url,
+              sessionId: sessionId || null,
+            });
+          }
+        })();
       },
       emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
     }),
@@ -5607,6 +5612,8 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getPluginAppTokenFromUrl(params?.src || '');
     if (!token) {
+      pendingWebviewAttachments.push({ kind: 'right-browser' });
+      params.allowpopups = 'true';
       webPreferences.nodeIntegration = false;
       webPreferences.contextIsolation = true;
       webPreferences.sandbox = true;
@@ -5621,7 +5628,7 @@ function createWindow() {
       return;
     }
 
-    pendingEmbeddedWebviewAttachTokens.push(token);
+    pendingWebviewAttachments.push({ kind: 'plugin-app', token });
     webPreferences.preload = path.join(__dirname, 'plugin-app-preload.mjs');
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
@@ -5631,15 +5638,19 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('did-attach-webview', (_event, targetWebContents) => {
-    let token = getPluginAppTokenFromUrl(targetWebContents.getURL());
-    if (token) {
-      const index = pendingEmbeddedWebviewAttachTokens.indexOf(token);
-      if (index >= 0) pendingEmbeddedWebviewAttachTokens.splice(index, 1);
-    } else {
-      token = pendingEmbeddedWebviewAttachTokens.shift() || '';
+    const tokenFromUrl = getPluginAppTokenFromUrl(targetWebContents.getURL());
+    let token = tokenFromUrl;
+    const pendingAttachment = pendingWebviewAttachments.shift() || null;
+    if (tokenFromUrl) {
+      const staleIndex = pendingWebviewAttachments.findIndex(
+        (entry) => entry?.kind === 'plugin-app' && entry.token === tokenFromUrl,
+      );
+      if (staleIndex >= 0) pendingWebviewAttachments.splice(staleIndex, 1);
+    } else if (pendingAttachment?.kind === 'plugin-app') {
+      token = pendingAttachment.token || '';
     }
-    if (!token) {
-      configureRightBrowserPopupWebContents(targetWebContents);
+    if (!token || (!tokenFromUrl && pendingAttachment?.kind === 'right-browser')) {
+      configureRightBrowserWebContents(targetWebContents);
       return;
     }
 
@@ -6439,6 +6450,7 @@ app.whenReady().then(async () => {
   await initializeBundledConnectorCatalog({
     bundledCatalogPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'workbuddy-connectors-config.zip'),
     bundledCloudAuthPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'cloud-auth-providers.json'),
+    bundledMcpOverridesPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'connector-mcp-overrides.json'),
     log: mossLog,
   });
 
@@ -6651,15 +6663,21 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
       },
       onAuthorizationUrl: (url) => {
         authorizationUrlOpened = true;
-        emitToRenderer('browser:open', {
-          url,
-          sessionId,
-          mcpAuth: {
-            serverName,
-            displayName: connectorServer?.connectorName || serverName,
-          },
-        });
+        void (async () => {
+          const openedInSystemBrowser = await openExternalHttpUrl(url);
+          if (!openedInSystemBrowser) {
+            emitToRenderer('browser:open', {
+              url,
+              sessionId,
+              mcpAuth: {
+                serverName,
+                displayName: connectorServer?.connectorName || serverName,
+              },
+            });
+          }
+        })();
       },
+      skipBrowserOpen: true,
     });
   } catch (error) {
     const metadataAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';

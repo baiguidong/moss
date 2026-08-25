@@ -354,6 +354,33 @@ const MossAppEventTypes = [
   'image_edit',
 ]
 
+export function buildConnectorMcpAuthToolResult(result) {
+  const sourceAuth = result?.auth || result
+  const auth = sourceAuth && typeof sourceAuth === 'object' && !Array.isArray(sourceAuth)
+    ? Object.fromEntries(
+      Object.entries(sourceAuth).filter(([key]) => key !== 'authorizationUrl'),
+    )
+    : sourceAuth
+  const status = typeof sourceAuth?.status === 'string' ? sourceAuth.status : ''
+
+  if (status === 'authenticated') {
+    return {
+      auth,
+      message: '连接器授权已完成。当前会话将在本轮结束后刷新 MCP 工具；不要再次发起授权，请让用户在下一条消息继续原请求。',
+    }
+  }
+  if (status === 'authorization_url_opened') {
+    return {
+      auth,
+      message: '连接器授权页已打开，请等待用户完成授权；不要重复发起授权。',
+    }
+  }
+  return {
+    auth,
+    message: '连接器 MCP 授权流程已处理。',
+  }
+}
+
 /**
  * @typedef {Object} MossAppEventResult
  * @property {boolean} ok
@@ -546,12 +573,10 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           const result = await authenticateConnectorMcp(target, {
             sessionId: sessionRecord?.id || null,
           })
+          const toolResult = buildConnectorMcpAuthToolResult(result)
           return {
             ok: true,
-            auth: result?.auth || result,
-            message: result?.auth?.authorizationUrl
-              ? '连接器授权页已在 Moss 浏览器打开，请完成授权。'
-              : '连接器 MCP 授权流程已处理。',
+            ...toolResult,
           }
         }
 
