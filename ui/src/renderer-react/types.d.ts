@@ -20,6 +20,8 @@ export type SessionSummary = {
   pendingPlanApproval?: PendingPlanApproval | null;
   resumeReadOnlyReason?: string | null;
   assistantName?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -40,6 +42,97 @@ export type SessionTask = {
   activeForm?: string;
   owner?: string | null;
   blockedBy: string[];
+};
+
+export type ProjectTask = SessionTask & {
+  blocks?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type ProjectTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  nameSuggestion?: string;
+  instructions?: string;
+  connectorIds?: string[];
+  expertIds?: string[];
+  skillIds?: string[];
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  instructions: string;
+  templateId?: string | null;
+  connectorIds: string[];
+  expertIds: string[];
+  skillIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number | null;
+  taskListId?: string;
+  path?: string;
+  assetCount?: number;
+  taskCount?: number;
+  sessionCount?: number;
+  teamRunCount?: number;
+};
+
+export type ProjectAsset = {
+  id: string;
+  name: string;
+  fileName: string;
+  path: string;
+  relativePath: string;
+  size: number;
+  mimeType?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ProjectTeamMemberStatus =
+  | 'planned'
+  | 'starting'
+  | 'running'
+  | 'idle'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'stopped';
+
+export type ProjectTeamMember = {
+  id: string;
+  name: string;
+  expertId?: string | null;
+  role: string;
+  subagentType?: string | null;
+  model?: string | null;
+  mode: 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+  prompt: string;
+  autoStart: boolean;
+  status: ProjectTeamMemberStatus;
+  taskIds: string[];
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number | null;
+  stoppedAt?: number | null;
+};
+
+export type ProjectTeamRun = {
+  id: string;
+  projectId?: string | null;
+  sessionId?: string | null;
+  name: string;
+  description?: string;
+  status: 'draft' | 'running' | 'completed' | 'failed' | 'closed';
+  taskListId: string;
+  plannedMembers: ProjectTeamMember[];
+  activeMembers: Array<Record<string, unknown>>;
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number | null;
 };
 
 export type AskUserQuestionOption = {
@@ -173,6 +266,9 @@ export type DesktopSettings = {
       config?: McpServerConfig;
       updatedAt?: number;
     }>;
+  };
+  skillHub?: {
+    apiBaseUrl?: string;
   };
   remoteDirect?: {
     serverUrl: string;
@@ -353,8 +449,40 @@ declare global {
       setMcpServerEnabled: (payload: { name: string; enabled: boolean }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
+      listProjectTemplates: () => Promise<ProjectTemplate[]>;
+      listProjects: (payload?: { includeArchived?: boolean }) => Promise<Project[]>;
+      getProject: (payload: { projectId: string }) => Promise<Project>;
+      createProject: (payload: {
+        name: string;
+        instructions?: string;
+        templateId?: string | null;
+        connectorIds?: string[];
+        expertIds?: string[];
+        skillIds?: string[];
+      }) => Promise<Project>;
+      updateProject: (payload: { projectId: string; updates: Partial<Project> }) => Promise<Project>;
+      archiveProject: (payload: { projectId: string }) => Promise<Project>;
+      listProjectAssets: (payload: { projectId: string }) => Promise<ProjectAsset[]>;
+      addProjectAsset: (payload: { projectId: string; sourcePath: string; fileName?: string; name?: string }) => Promise<ProjectAsset>;
+      removeProjectAsset: (payload: { projectId: string; assetId: string }) => Promise<{ ok: boolean }>;
+      listProjectSessions: (payload: { projectId: string }) => Promise<SessionSummary[]>;
+      bindSessionToProject: (payload: { sessionId: string; projectId: string }) => Promise<SessionDetail>;
+      unbindSessionFromProject: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      listProjectTasks: (payload: { projectId: string }) => Promise<ProjectTask[]>;
+      createProjectTask: (payload: { projectId: string; task: Partial<ProjectTask> }) => Promise<ProjectTask>;
+      updateProjectTask: (payload: { projectId: string; taskId: string; updates: Partial<ProjectTask> }) => Promise<ProjectTask>;
+      getProjectTask: (payload: { projectId: string; taskId: string }) => Promise<ProjectTask | null>;
+      listProjectTeamRuns: (payload: { projectId: string }) => Promise<ProjectTeamRun[]>;
+      getProjectTeamRun: (payload: { projectId: string; runId: string }) => Promise<ProjectTeamRun | null>;
+      createProjectTeamRun: (payload: { projectId: string; teamRun: Partial<ProjectTeamRun> }) => Promise<ProjectTeamRun>;
+      updateProjectTeamRun: (payload: { projectId: string; runId: string; updates: Partial<ProjectTeamRun> }) => Promise<ProjectTeamRun>;
+      addProjectTeamMember: (payload: { projectId: string; runId: string; member: Partial<ProjectTeamMember> }) => Promise<ProjectTeamRun>;
+      updateProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string; updates: Partial<ProjectTeamMember> }) => Promise<ProjectTeamRun>;
+      removeProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string }) => Promise<ProjectTeamRun>;
+      startProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string }) => Promise<ProjectTeamRun>;
+      closeProjectTeamRun: (payload: { projectId: string; runId: string }) => Promise<ProjectTeamRun>;
       listSessions: () => Promise<SessionSummary[]>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; projectId?: string | null }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
@@ -473,6 +601,7 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
+      onProjectsChanged: (callback: (payload: { projectId?: string; reason?: string }) => void) => () => void;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
       getWorkerResults: (payload: { sessionId: string }) => Promise<{ results: Record<string, WorkerSubagentResult> }>;
       setWorkerSummaries: (payload: { sessionId: string; workerSummariesJson: string | null }) => Promise<{ ok: boolean }>;

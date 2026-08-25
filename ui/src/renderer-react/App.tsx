@@ -4,6 +4,7 @@ import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { ChatArea } from '@/components/chat-area';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
+import { SkillHubView } from '@/components/skill-hub-view';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -11,6 +12,7 @@ import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
 import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
+import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
@@ -32,6 +34,8 @@ import type {
   DesktopSettings,
   FileTreeNode,
   InstalledAssistant,
+  Project,
+  ProjectTemplate,
   SessionDetail,
   SessionSummary,
   StoredApp,
@@ -327,6 +331,10 @@ export default function App() {
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
+  const [projects, setProjects] = React.useState<Project[]>([]);
+  const [projectTemplates, setProjectTemplates] = React.useState<ProjectTemplate[]>([]);
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+  const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
   const [appsLoaded, setAppsLoaded] = React.useState(false);
   const [appShortcutIds, setAppShortcutIds] = React.useState<Set<string>>(() => {
@@ -470,6 +478,18 @@ export default function App() {
     return list;
   }, []);
 
+  const refreshProjects = React.useCallback(async () => {
+    const list = await window.agentDesktop.listProjects();
+    setProjects(list);
+    return list;
+  }, []);
+
+  const refreshProjectTemplates = React.useCallback(async () => {
+    const list = await window.agentDesktop.listProjectTemplates();
+    setProjectTemplates(Array.isArray(list) ? list : []);
+    return list;
+  }, []);
+
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
@@ -605,11 +625,12 @@ export default function App() {
     return true;
   }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
 
-  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string, assistantName?: string) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string } = {};
+  const createAndOpenSession = React.useCallback(async (title?: string, workspace?: string, assistantName?: string, projectId?: string | null) => {
+    const payload: { title?: string; workspace?: string; assistant_name?: string; projectId?: string | null } = {};
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
+    if (projectId) payload.projectId = projectId;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
     activeSessionIdRef.current = created.summary.id;
@@ -934,6 +955,8 @@ export default function App() {
         applyDesktopSettings(nextSettings);
         await refreshApps();
         await refreshSummaries();
+        await refreshProjects();
+        await refreshProjectTemplates();
         await refreshAssistants(nextSettings.agentMode ?? 'local');
         if (cancelled) return;
         setActiveSessionId(null);
@@ -948,7 +971,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshAssistants]);
+  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshProjectTemplates, refreshAssistants]);
 
   React.useEffect(() => {
 
@@ -1092,6 +1115,12 @@ export default function App() {
       applyDesktopSettings(payload);
     });
 
+    const offProjectsChanged = window.agentDesktop.onProjectsChanged(() => {
+      setProjectRefreshSignal((value) => value + 1);
+      void refreshProjects();
+      void refreshSummaries();
+    });
+
     return () => {
       if (workspaceRefreshTimerRef.current) {
         window.clearTimeout(workspaceRefreshTimerRef.current);
@@ -1108,8 +1137,9 @@ export default function App() {
       offAppsChanged();
       offWorkspaceChanged();
       offSettingsChanged();
+      offProjectsChanged();
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1530,6 +1560,14 @@ export default function App() {
     if (!opened) return;
     setActiveView('chat');
   }, [openSession]);
+
+  const handleCreateProjectSession = React.useCallback(async (project: Project) => {
+    const sessionId = await createAndOpenSession(project.name, undefined, selectedAssistant?.name, project.id);
+    if (!sessionId) return;
+    await refreshSummaries();
+    await refreshProjects();
+    setActiveView('chat');
+  }, [createAndOpenSession, refreshProjects, refreshSummaries, selectedAssistant?.name]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
     const result = await window.agentDesktop.deleteSession({ sessionId }) as
@@ -1988,6 +2026,7 @@ export default function App() {
             activeSessionId={activeSessionId}
             activeView={activeView}
             appsCount={apps.length}
+            projectsCount={projects.length}
             themeMode={themeMode}
             collapsed={layout.leftCollapsed}
             searchQuery={sessionSearchQuery}
@@ -2108,6 +2147,23 @@ export default function App() {
             )
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
+          ) : activeView === 'skills' ? (
+            <SkillHubView />
+          ) : activeView === 'projects' ? (
+            <ProjectWorkspace
+              projects={projects}
+              templates={projectTemplates}
+              sessions={summaries}
+              activeProjectId={activeProjectId}
+              refreshSignal={projectRefreshSignal}
+              onActiveProjectChange={setActiveProjectId}
+              onProjectsChange={async () => {
+                await refreshProjects();
+                await refreshSummaries();
+              }}
+              onOpenSession={handleSelectSession}
+              onCreateProjectSession={handleCreateProjectSession}
+            />
           ) : activeView === 'embedded-app' && embeddedAppName ? (
             <EmbeddedAppView
               appName={embeddedAppName}
@@ -2199,6 +2255,7 @@ export default function App() {
                 previewTitle={activePreview?.relativePath || '未选择文件'}
                 sessionId={activeSessionId}
                 sessionTasks={activeDetail?.tasks || []}
+                projectName={activeDetail?.projectName || null}
               />
             </div>
           </>

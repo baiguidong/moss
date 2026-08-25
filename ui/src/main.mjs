@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
+import { registerPublicSkillHubIpcHandlers } from './public-skillhub-ipc.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
   createMossAppEventHandler,
@@ -123,6 +124,7 @@ const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_PROJECTS_DIR = path.join(MOSS_HOME, 'projects');
+const MOSS_APP_PROJECTS_DIR = path.join(MOSS_HOME, 'app-projects');
 const MOSS_WORKSPACES_DIR = path.join(MOSS_HOME, 'workspaces');
 const USER_TMP_DIR = path.join(MOSS_HOME, 'workspace');
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
@@ -173,6 +175,9 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     version: 1,
     servers: {},
   },
+  skillHub: {
+    apiBaseUrl: 'https://api.skillhub.cn',
+  },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserEmail: '',
@@ -187,6 +192,14 @@ const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
 
 const APP_STORAGE_FILENAME = 'storage.json';
 const MAX_SANITIZED_PATH_LENGTH = 200;
+const PROJECT_FILE_NAME = 'project.json';
+const PROJECT_ASSET_INDEX_NAME = 'assets.json';
+const PROJECT_TEAM_RUN_INDEX_NAME = 'team-runs.json';
+const PROJECT_TASK_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+const PROJECT_TEAM_RUN_STATUSES = new Set(['draft', 'running', 'completed', 'failed', 'closed']);
+const PROJECT_TEAM_MEMBER_STATUSES = new Set(['planned', 'starting', 'running', 'idle', 'blocked', 'completed', 'failed', 'stopped']);
+const PROJECT_TEAM_MEMBER_MODES = new Set(['default', 'plan', 'acceptEdits', 'bypassPermissions']);
+const PROJECT_TEMPLATES = Object.freeze([]);
 
 // Desktop sessions resolve user-scoped settings/data from ~/.moss/settings.json.
 process.env.MOSS_HOME = MOSS_HOME;
@@ -419,9 +432,11 @@ const pendingEmbeddedWebviewAttachTokens = [];
 const debugWindows = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_WORKSPACES_DIR, { recursive: true });
+fs.mkdirSync(MOSS_APP_PROJECTS_DIR, { recursive: true });
 fs.mkdirSync(USER_TMP_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
+allowMediaRoot(MOSS_APP_PROJECTS_DIR);
 allowMediaRoot(MOSS_WORKSPACES_DIR);
 allowMediaRoot(USER_TMP_DIR);
 const sessionDb = new DatabaseSync(SESSION_DB_PATH);
@@ -465,6 +480,11 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -481,14 +501,15 @@ const persistSessionStmt = (() => {
       history_json TEXT NOT NULL DEFAULT '[]',
       is_sub_agent INTEGER NOT NULL DEFAULT 0,
       worker_summaries_json TEXT,
-      assistant_name TEXT
+      assistant_name TEXT,
+      project_id TEXT
     )
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -504,7 +525,8 @@ const persistSessionStmt = (() => {
       history_json = excluded.history_json,
       is_sub_agent = excluded.is_sub_agent,
       worker_summaries_json = excluded.worker_summaries_json,
-      assistant_name = excluded.assistant_name
+      assistant_name = excluded.assistant_name,
+      project_id = excluded.project_id
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -524,7 +546,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     history_json,
     is_sub_agent,
     worker_summaries_json,
-    assistant_name
+    assistant_name,
+    project_id
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -544,7 +567,8 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     underlying_session_id,
     history_json,
     is_sub_agent,
-    worker_summaries_json
+    worker_summaries_json,
+    project_id
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -565,7 +589,8 @@ const loadSubAgentSessionsByParentStmt = sessionDb.prepare(`
     underlying_session_id,
     history_json,
     is_sub_agent,
-    worker_summaries_json
+    worker_summaries_json,
+    project_id
   FROM sessions
   WHERE is_sub_agent = 1 AND underlying_session_id = ?
   ORDER BY created_at ASC
@@ -921,6 +946,23 @@ function normalizeDesktopSettings(input, existing = {}) {
     result.mcp = normalizeMcpStore(DEFAULT_DESKTOP_SETTINGS.mcp);
   }
 
+  const sourceSkillHub = source.skillHub && typeof source.skillHub === 'object' ? source.skillHub : {};
+  const existingSkillHub = result.skillHub && typeof result.skillHub === 'object'
+    ? result.skillHub
+    : {};
+  const configuredSkillHubApiBaseUrl =
+    typeof sourceSkillHub.apiBaseUrl === 'string'
+      ? sourceSkillHub.apiBaseUrl.trim()
+      : typeof source.skillHubApiBaseUrl === 'string'
+        ? source.skillHubApiBaseUrl.trim()
+        : typeof existingSkillHub.apiBaseUrl === 'string'
+          ? existingSkillHub.apiBaseUrl
+          : DEFAULT_DESKTOP_SETTINGS.skillHub.apiBaseUrl;
+  result.skillHub = {
+    ...existingSkillHub,
+    apiBaseUrl: configuredSkillHubApiBaseUrl || DEFAULT_DESKTOP_SETTINGS.skillHub.apiBaseUrl,
+  };
+
   deleteLegacyServerSettings(result);
   return result;
 }
@@ -1132,6 +1174,838 @@ function readJsonFile(filePath, fallbackValue) {
   }
 }
 
+async function readJsonFileAsync(filePath, fallbackValue) {
+  try {
+    const raw = await fsp.readFile(filePath, 'utf8');
+    if (!raw.trim()) return fallbackValue;
+    return JSON.parse(raw);
+  } catch {
+    return fallbackValue;
+  }
+}
+
+async function writeJsonFileAsync(filePath, value) {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const entry of value) {
+    const text = typeof entry === 'string' ? entry.trim() : '';
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function normalizeProjectId(projectId) {
+  const id = typeof projectId === 'string' ? projectId.trim() : '';
+  if (!/^[a-zA-Z0-9_-]{1,120}$/.test(id)) {
+    throw new Error('Invalid project id.');
+  }
+  return id;
+}
+
+function normalizeOptionalProjectId(projectId) {
+  if (projectId === null || projectId === undefined || projectId === '') return null;
+  try {
+    return normalizeProjectId(projectId);
+  } catch {
+    return null;
+  }
+}
+
+function slugifyProjectName(name) {
+  const slug = String(name || 'project')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return slug || 'project';
+}
+
+function createProjectId(name) {
+  return `${slugifyProjectName(name)}-${randomUUID().slice(0, 8)}`;
+}
+
+function getProjectDir(projectId) {
+  return path.join(MOSS_APP_PROJECTS_DIR, normalizeProjectId(projectId));
+}
+
+function getProjectFilePath(projectId) {
+  return path.join(getProjectDir(projectId), PROJECT_FILE_NAME);
+}
+
+function getProjectAssetsDir(projectId) {
+  return path.join(getProjectDir(projectId), 'assets');
+}
+
+function getProjectAssetIndexPath(projectId) {
+  return path.join(getProjectDir(projectId), PROJECT_ASSET_INDEX_NAME);
+}
+
+function getProjectSessionsDir(projectId) {
+  return path.join(getProjectDir(projectId), 'sessions');
+}
+
+function getProjectTeamRunIndexPath(projectId) {
+  return path.join(getProjectDir(projectId), PROJECT_TEAM_RUN_INDEX_NAME);
+}
+
+function getProjectTaskListId(projectId) {
+  return `project-${normalizeProjectId(projectId)}`;
+}
+
+function getProjectTasksDir(projectId) {
+  return path.join(MOSS_HOME, 'tasks', sanitizeTaskPathComponent(getProjectTaskListId(projectId)));
+}
+
+function normalizeProjectRecord(raw, fallbackId = '') {
+  if (!raw || typeof raw !== 'object') return null;
+  let id;
+  try {
+    id = normalizeProjectId(raw.id || fallbackId);
+  } catch {
+    return null;
+  }
+  const name = typeof raw.name === 'string' && raw.name.trim()
+    ? raw.name.trim()
+    : '未命名项目';
+  const now = Date.now();
+  return {
+    id,
+    name,
+    instructions: typeof raw.instructions === 'string' ? raw.instructions : '',
+    templateId: typeof raw.templateId === 'string' && raw.templateId.trim() ? raw.templateId.trim() : null,
+    connectorIds: normalizeStringList(raw.connectorIds),
+    expertIds: normalizeStringList(raw.expertIds),
+    skillIds: normalizeStringList(raw.skillIds),
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
+    archivedAt: Number.isFinite(raw.archivedAt) ? raw.archivedAt : null,
+  };
+}
+
+function readProjectSync(projectId) {
+  try {
+    const id = normalizeProjectId(projectId);
+    return normalizeProjectRecord(readJsonFile(getProjectFilePath(id), null), id);
+  } catch {
+    return null;
+  }
+}
+
+async function readProject(projectId) {
+  const id = normalizeProjectId(projectId);
+  return normalizeProjectRecord(await readJsonFileAsync(getProjectFilePath(id), null), id);
+}
+
+async function writeProject(project) {
+  await writeJsonFileAsync(getProjectFilePath(project.id), project);
+  return project;
+}
+
+function getProjectName(projectId) {
+  if (!projectId) return null;
+  return readProjectSync(projectId)?.name || null;
+}
+
+async function ensureProjectStructure(projectId) {
+  const projectDir = getProjectDir(projectId);
+  await Promise.all([
+    fsp.mkdir(projectDir, { recursive: true }),
+    fsp.mkdir(path.join(projectDir, 'memory'), { recursive: true }),
+    fsp.mkdir(getProjectAssetsDir(projectId), { recursive: true }),
+    fsp.mkdir(getProjectSessionsDir(projectId), { recursive: true }),
+    fsp.mkdir(path.join(projectDir, 'runs'), { recursive: true }),
+    fsp.mkdir(path.join(projectDir, 'deliverables'), { recursive: true }),
+  ]);
+}
+
+async function listProjects({ includeArchived = false } = {}) {
+  let entries = [];
+  try {
+    entries = await fsp.readdir(MOSS_APP_PROJECTS_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const projects = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    let project = null;
+    try {
+      project = await readProject(entry.name);
+    } catch {
+      project = null;
+    }
+    if (!project) continue;
+    if (!includeArchived && project.archivedAt) continue;
+    projects.push(await enrichProject(project));
+  }
+  return projects.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+async function enrichProject(project) {
+  const [assets, tasks, teamRuns] = await Promise.all([
+    listProjectAssets(project.id),
+    listProjectTasks(project.id),
+    listProjectTeamRuns(project.id),
+  ]);
+  const sessionCount = Array.from(sessions.values()).filter((entry) => entry.projectId === project.id).length;
+  return {
+    ...project,
+    taskListId: getProjectTaskListId(project.id),
+    path: getProjectDir(project.id),
+    assetCount: assets.length,
+    taskCount: tasks.length,
+    sessionCount,
+    teamRunCount: teamRuns.length,
+  };
+}
+
+async function createProject(payload = {}) {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  if (!name) {
+    throw new Error('Project name is required.');
+  }
+  const now = Date.now();
+  const project = {
+    id: createProjectId(name),
+    name,
+    instructions: typeof payload.instructions === 'string' ? payload.instructions : '',
+    templateId: typeof payload.templateId === 'string' && payload.templateId.trim() ? payload.templateId.trim() : null,
+    connectorIds: normalizeStringList(payload.connectorIds),
+    expertIds: normalizeStringList(payload.expertIds),
+    skillIds: normalizeStringList(payload.skillIds),
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+  };
+  await ensureProjectStructure(project.id);
+  await writeProject(project);
+  await writeJsonFileAsync(getProjectAssetIndexPath(project.id), []);
+  await writeJsonFileAsync(getProjectTeamRunIndexPath(project.id), []);
+  return enrichProject(project);
+}
+
+async function updateProject(projectId, updates = {}) {
+  const existing = await readProject(projectId);
+  if (!existing) {
+    throw new Error('Project not found.');
+  }
+  const next = {
+    ...existing,
+    ...(typeof updates.name === 'string' && updates.name.trim() ? { name: updates.name.trim() } : {}),
+    ...(typeof updates.instructions === 'string' ? { instructions: updates.instructions } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'templateId') ? {
+      templateId: typeof updates.templateId === 'string' && updates.templateId.trim() ? updates.templateId.trim() : null,
+    } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'connectorIds') ? { connectorIds: normalizeStringList(updates.connectorIds) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'expertIds') ? { expertIds: normalizeStringList(updates.expertIds) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'skillIds') ? { skillIds: normalizeStringList(updates.skillIds) } : {}),
+    updatedAt: Date.now(),
+  };
+  await writeProject(next);
+  for (const sessionRecord of sessions.values()) {
+    if (sessionRecord.projectId !== next.id || !sessionRecord.runtime || sessionRecord.busy) continue;
+    disposeRuntime(sessionRecord);
+  }
+  return enrichProject(next);
+}
+
+async function archiveProject(projectId) {
+  const existing = await readProject(projectId);
+  if (!existing) {
+    throw new Error('Project not found.');
+  }
+  const now = Date.now();
+  const next = {
+    ...existing,
+    archivedAt: existing.archivedAt || now,
+    updatedAt: now,
+  };
+  await writeProject(next);
+  for (const sessionRecord of sessions.values()) {
+    if (sessionRecord.projectId !== next.id) continue;
+    sessionRecord.projectId = null;
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+  }
+  return enrichProject(next);
+}
+
+function normalizeProjectAsset(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
+  const filePath = typeof raw.path === 'string' && raw.path.trim() ? raw.path.trim() : '';
+  if (!id || !name || !filePath) return null;
+  return {
+    id,
+    name,
+    fileName: typeof raw.fileName === 'string' && raw.fileName.trim() ? raw.fileName.trim() : name,
+    path: filePath,
+    relativePath: typeof raw.relativePath === 'string' ? raw.relativePath : '',
+    size: Number.isFinite(raw.size) ? raw.size : 0,
+    mimeType: typeof raw.mimeType === 'string' ? raw.mimeType : '',
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : Date.now(),
+  };
+}
+
+async function listProjectAssets(projectId) {
+  const id = normalizeProjectId(projectId);
+  const raw = await readJsonFileAsync(getProjectAssetIndexPath(id), []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map(normalizeProjectAsset).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+async function writeProjectAssets(projectId, assets) {
+  await writeJsonFileAsync(getProjectAssetIndexPath(projectId), assets);
+}
+
+async function createUniqueAssetPath(projectId, fileName) {
+  const safeName = String(fileName || 'asset').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'asset';
+  const parsed = path.parse(safeName);
+  let candidate = path.join(getProjectAssetsDir(projectId), safeName);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    const nextName = `${parsed.name || 'asset'}-${index}${parsed.ext || ''}`;
+    candidate = path.join(getProjectAssetsDir(projectId), nextName);
+    index += 1;
+  }
+  return candidate;
+}
+
+async function addProjectAsset(projectId, payload = {}) {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  const sourcePath = typeof payload.sourcePath === 'string' ? payload.sourcePath.trim() : '';
+  if (!sourcePath) {
+    throw new Error('Asset source path is required.');
+  }
+  const stat = await fsp.stat(sourcePath);
+  if (!stat.isFile()) {
+    throw new Error('Asset source must be a file.');
+  }
+  await ensureProjectStructure(project.id);
+  const destPath = await createUniqueAssetPath(project.id, payload.fileName || path.basename(sourcePath));
+  await fsp.copyFile(sourcePath, destPath);
+  const destStat = await fsp.stat(destPath);
+  const now = Date.now();
+  const asset = {
+    id: `asset-${randomUUID().slice(0, 12)}`,
+    name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : path.basename(destPath),
+    fileName: path.basename(destPath),
+    path: destPath,
+    relativePath: path.relative(getProjectDir(project.id), destPath),
+    size: destStat.size,
+    mimeType: '',
+    createdAt: now,
+    updatedAt: now,
+  };
+  const assets = await listProjectAssets(project.id);
+  await writeProjectAssets(project.id, [asset, ...assets]);
+  await writeProject({ ...project, updatedAt: now });
+  emitToRenderer('project:changed', { projectId: project.id, reason: 'assets' });
+  return asset;
+}
+
+async function removeProjectAsset(projectId, assetId) {
+  const id = normalizeProjectId(projectId);
+  const assets = await listProjectAssets(id);
+  const asset = assets.find((entry) => entry.id === assetId);
+  const next = assets.filter((entry) => entry.id !== assetId);
+  await writeProjectAssets(id, next);
+  if (asset?.path) {
+    try {
+      await fsp.unlink(asset.path);
+    } catch {}
+  }
+  const project = await readProject(id);
+  if (project) {
+    await writeProject({ ...project, updatedAt: Date.now() });
+  }
+  emitToRenderer('project:changed', { projectId: id, reason: 'assets' });
+  return { ok: true };
+}
+
+function normalizeProjectTask(rawTask) {
+  const task = normalizeSessionTask(rawTask);
+  if (!task) return null;
+  return {
+    ...task,
+    blocks: Array.isArray(rawTask?.blocks)
+      ? rawTask.blocks.filter((entry) => typeof entry === 'string')
+      : [],
+    metadata: rawTask?.metadata && typeof rawTask.metadata === 'object' ? rawTask.metadata : {},
+  };
+}
+
+async function listProjectTasks(projectId) {
+  const dir = getProjectTasksDir(projectId);
+  let files = [];
+  try {
+    files = await fsp.readdir(dir);
+  } catch {
+    return [];
+  }
+  const tasks = [];
+  for (const file of files) {
+    if (!file.endsWith('.json') || file.startsWith('.')) continue;
+    try {
+      const raw = JSON.parse(await fsp.readFile(path.join(dir, file), 'utf8'));
+      if (raw?.metadata?._internal) continue;
+      const task = normalizeProjectTask(raw);
+      if (task) tasks.push(task);
+    } catch {}
+  }
+  return tasks.sort(compareTaskIds);
+}
+
+async function getProjectTask(projectId, taskId) {
+  const safeTaskId = sanitizeTaskPathComponent(String(taskId || ''));
+  if (!safeTaskId) return null;
+  try {
+    const raw = JSON.parse(await fsp.readFile(path.join(getProjectTasksDir(projectId), `${safeTaskId}.json`), 'utf8'));
+    if (raw?.metadata?._internal) return null;
+    return normalizeProjectTask(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeProjectTask(projectId, task) {
+  await fsp.mkdir(getProjectTasksDir(projectId), { recursive: true });
+  await fsp.writeFile(
+    path.join(getProjectTasksDir(projectId), `${sanitizeTaskPathComponent(task.id)}.json`),
+    `${JSON.stringify(task, null, 2)}\n`,
+    'utf8',
+  );
+  const project = await readProject(projectId);
+  if (project) {
+    await writeProject({ ...project, updatedAt: Date.now() });
+  }
+  emitProjectTaskSnapshots(projectId);
+  emitToRenderer('project:changed', { projectId, reason: 'tasks' });
+}
+
+async function createProjectTask(projectId, payload = {}) {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  const subject = typeof payload.subject === 'string' ? payload.subject.trim() : '';
+  if (!subject) {
+    throw new Error('Task subject is required.');
+  }
+  const now = Date.now();
+  const task = {
+    id: `ui-${randomUUID().slice(0, 8)}`,
+    subject,
+    description: typeof payload.description === 'string' ? payload.description : '',
+    activeForm: typeof payload.activeForm === 'string' ? payload.activeForm : '',
+    owner: typeof payload.owner === 'string' && payload.owner.trim() ? payload.owner.trim() : undefined,
+    status: PROJECT_TASK_STATUSES.has(payload.status) ? payload.status : 'pending',
+    blocks: normalizeStringList(payload.blocks),
+    blockedBy: normalizeStringList(payload.blockedBy),
+    metadata: {
+      ...(payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}),
+      createdBy: 'desktop-ui',
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+  await writeProjectTask(project.id, task);
+  return normalizeProjectTask(task);
+}
+
+async function updateProjectTask(projectId, taskId, updates = {}) {
+  const existing = await getProjectTask(projectId, taskId);
+  if (!existing) {
+    throw new Error('Task not found.');
+  }
+  const next = {
+    id: existing.id,
+    subject: typeof updates.subject === 'string' && updates.subject.trim() ? updates.subject.trim() : existing.subject,
+    description: typeof updates.description === 'string' ? updates.description : existing.description,
+    activeForm: typeof updates.activeForm === 'string' ? updates.activeForm : existing.activeForm,
+    owner: Object.prototype.hasOwnProperty.call(updates, 'owner')
+      ? (typeof updates.owner === 'string' && updates.owner.trim() ? updates.owner.trim() : undefined)
+      : (existing.owner || undefined),
+    status: PROJECT_TASK_STATUSES.has(updates.status) ? updates.status : existing.status,
+    blocks: Object.prototype.hasOwnProperty.call(updates, 'blocks') ? normalizeStringList(updates.blocks) : existing.blocks,
+    blockedBy: Object.prototype.hasOwnProperty.call(updates, 'blockedBy') ? normalizeStringList(updates.blockedBy) : existing.blockedBy,
+    metadata: {
+      ...(existing.metadata || {}),
+      ...(updates.metadata && typeof updates.metadata === 'object' ? updates.metadata : {}),
+      updatedAt: Date.now(),
+    },
+  };
+  await writeProjectTask(projectId, next);
+  return normalizeProjectTask(next);
+}
+
+function normalizeProjectTeamMember(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
+  if (!name) return null;
+  const now = Date.now();
+  const id = typeof raw.id === 'string' && raw.id.trim()
+    ? raw.id.trim()
+    : `member-${randomUUID().slice(0, 10)}`;
+  return {
+    id,
+    name,
+    expertId: typeof raw.expertId === 'string' && raw.expertId.trim() ? raw.expertId.trim() : null,
+    role: typeof raw.role === 'string' && raw.role.trim() ? raw.role.trim() : name,
+    subagentType: typeof raw.subagentType === 'string' && raw.subagentType.trim() ? raw.subagentType.trim() : null,
+    model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : null,
+    mode: PROJECT_TEAM_MEMBER_MODES.has(raw.mode) ? raw.mode : 'default',
+    prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+    autoStart: Boolean(raw.autoStart),
+    status: PROJECT_TEAM_MEMBER_STATUSES.has(raw.status) ? raw.status : 'planned',
+    taskIds: normalizeStringList(raw.taskIds),
+    error: typeof raw.error === 'string' ? raw.error : '',
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
+    startedAt: Number.isFinite(raw.startedAt) ? raw.startedAt : null,
+    stoppedAt: Number.isFinite(raw.stoppedAt) ? raw.stoppedAt : null,
+  };
+}
+
+function normalizeProjectTeamMemberForProject(project, raw) {
+  const member = normalizeProjectTeamMember(raw);
+  if (!member) return null;
+  const experts = normalizeStringList(project?.expertIds);
+  if (experts.length === 0) {
+    throw new Error('Project has no experts. Add experts in project configuration first.');
+  }
+  const requestedExpert = member.expertId || member.name;
+  const matchedExpert = experts.find((expert) => expert.toLowerCase() === requestedExpert.toLowerCase());
+  if (!matchedExpert) {
+    throw new Error('Team members must be selected from project experts.');
+  }
+  return {
+    ...member,
+    expertId: matchedExpert,
+    name: matchedExpert,
+    role: typeof raw?.role === 'string' && raw.role.trim() ? raw.role.trim() : matchedExpert,
+  };
+}
+
+function normalizeProjectTeamRun(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
+  if (!id || !name) return null;
+  const plannedMembers = Array.isArray(raw.plannedMembers)
+    ? raw.plannedMembers.map(normalizeProjectTeamMember).filter(Boolean)
+    : [];
+  return {
+    id,
+    projectId: typeof raw.projectId === 'string' ? raw.projectId : null,
+    sessionId: typeof raw.sessionId === 'string' ? raw.sessionId : null,
+    name,
+    description: typeof raw.description === 'string' ? raw.description : '',
+    status: PROJECT_TEAM_RUN_STATUSES.has(raw.status) ? raw.status : 'draft',
+    taskListId: typeof raw.taskListId === 'string' ? raw.taskListId : '',
+    plannedMembers,
+    activeMembers: Array.isArray(raw.activeMembers) ? raw.activeMembers : [],
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : Date.now(),
+    closedAt: Number.isFinite(raw.closedAt) ? raw.closedAt : null,
+  };
+}
+
+async function listProjectTeamRuns(projectId) {
+  const id = normalizeProjectId(projectId);
+  const raw = await readJsonFileAsync(getProjectTeamRunIndexPath(id), []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map(normalizeProjectTeamRun).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+async function writeProjectTeamRuns(projectId, runs) {
+  await writeJsonFileAsync(getProjectTeamRunIndexPath(projectId), runs.map(normalizeProjectTeamRun).filter(Boolean));
+}
+
+async function saveProjectTeamRun(projectId, run) {
+  const id = normalizeProjectId(projectId);
+  const normalized = normalizeProjectTeamRun(run);
+  if (!normalized) {
+    throw new Error('Invalid team run.');
+  }
+  const runs = await listProjectTeamRuns(id);
+  const nextRuns = runs.some((entry) => entry.id === normalized.id)
+    ? runs.map((entry) => (entry.id === normalized.id ? normalized : entry))
+    : [normalized, ...runs];
+  await writeProjectTeamRuns(id, nextRuns);
+  const project = await readProject(id);
+  if (project) {
+    await writeProject({ ...project, updatedAt: Date.now() });
+  }
+  emitToRenderer('project:changed', { projectId: id, reason: 'team-runs' });
+  return normalized;
+}
+
+async function createProjectTeamRun(projectId, payload = {}) {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  const name = typeof payload.name === 'string' && payload.name.trim()
+    ? payload.name.trim()
+    : '新团队执行';
+  const now = Date.now();
+  const run = {
+    id: `run-${randomUUID().slice(0, 12)}`,
+    projectId: project.id,
+    sessionId: typeof payload.sessionId === 'string' && payload.sessionId.trim() ? payload.sessionId.trim() : null,
+    name,
+    description: typeof payload.description === 'string' ? payload.description : '',
+    status: 'draft',
+    taskListId: `project-${project.id}__team-${randomUUID().slice(0, 8)}`,
+    plannedMembers: Array.isArray(payload.plannedMembers)
+      ? payload.plannedMembers.map((member) => normalizeProjectTeamMemberForProject(project, member)).filter(Boolean)
+      : [],
+    activeMembers: [],
+    createdAt: now,
+    updatedAt: now,
+    closedAt: null,
+  };
+  const runs = await listProjectTeamRuns(project.id);
+  await writeProjectTeamRuns(project.id, [run, ...runs]);
+  await writeProject({ ...project, updatedAt: now });
+  return run;
+}
+
+async function getProjectTeamRun(projectId, runId) {
+  const runs = await listProjectTeamRuns(projectId);
+  return runs.find((entry) => entry.id === runId) || null;
+}
+
+async function updateProjectTeamRun(projectId, runId, updates = {}) {
+  const run = await getProjectTeamRun(projectId, runId);
+  if (!run) {
+    throw new Error('Team run not found.');
+  }
+  const next = {
+    ...run,
+    ...(typeof updates.name === 'string' && updates.name.trim() ? { name: updates.name.trim() } : {}),
+    ...(typeof updates.description === 'string' ? { description: updates.description } : {}),
+    ...(PROJECT_TEAM_RUN_STATUSES.has(updates.status) ? { status: updates.status } : {}),
+    updatedAt: Date.now(),
+  };
+  return saveProjectTeamRun(projectId, next);
+}
+
+async function addProjectTeamMember(projectId, runId, member = {}) {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  const run = await getProjectTeamRun(projectId, runId);
+  if (!run) {
+    throw new Error('Team run not found.');
+  }
+  const normalized = normalizeProjectTeamMemberForProject(project, member);
+  if (!normalized) {
+    throw new Error('Expert is required.');
+  }
+  const existingExperts = new Set(run.plannedMembers.map((entry) => String(entry.expertId || entry.name).toLowerCase()));
+  if (existingExperts.has(String(normalized.expertId || normalized.name).toLowerCase())) {
+    throw new Error('This expert is already in the team run.');
+  }
+  const next = {
+    ...run,
+    plannedMembers: [...run.plannedMembers, normalized],
+    updatedAt: Date.now(),
+  };
+  return saveProjectTeamRun(projectId, next);
+}
+
+async function updateProjectTeamMember(projectId, runId, memberId, updates = {}) {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  const run = await getProjectTeamRun(projectId, runId);
+  if (!run) {
+    throw new Error('Team run not found.');
+  }
+  const existing = run.plannedMembers.find((entry) => entry.id === memberId);
+  if (!existing) {
+    throw new Error('Team member not found.');
+  }
+  const rawMerged = {
+    ...existing,
+    ...(typeof updates.name === 'string' ? { name: updates.name } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'expertId') ? { expertId: updates.expertId } : {}),
+    ...(typeof updates.role === 'string' ? { role: updates.role } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'subagentType') ? { subagentType: updates.subagentType } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'model') ? { model: updates.model } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'mode') ? { mode: updates.mode } : {}),
+    ...(typeof updates.prompt === 'string' ? { prompt: updates.prompt } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'autoStart') ? { autoStart: Boolean(updates.autoStart) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'status') ? { status: updates.status } : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'taskIds') ? { taskIds: updates.taskIds } : {}),
+    ...(typeof updates.error === 'string' ? { error: updates.error } : {}),
+    updatedAt: Date.now(),
+  };
+  const changesExpert = Object.prototype.hasOwnProperty.call(updates, 'name') ||
+    Object.prototype.hasOwnProperty.call(updates, 'expertId');
+  const merged = changesExpert
+    ? normalizeProjectTeamMemberForProject(project, rawMerged)
+    : normalizeProjectTeamMember(rawMerged);
+  if (!merged) {
+    throw new Error('Member name is required.');
+  }
+  const next = {
+    ...run,
+    plannedMembers: run.plannedMembers.map((entry) => entry.id === memberId ? merged : entry),
+    updatedAt: Date.now(),
+  };
+  return saveProjectTeamRun(projectId, next);
+}
+
+async function removeProjectTeamMember(projectId, runId, memberId) {
+  const run = await getProjectTeamRun(projectId, runId);
+  if (!run) {
+    throw new Error('Team run not found.');
+  }
+  const nextMembers = run.plannedMembers.filter((entry) => entry.id !== memberId);
+  if (nextMembers.length === run.plannedMembers.length) {
+    throw new Error('Team member not found.');
+  }
+  const next = {
+    ...run,
+    plannedMembers: nextMembers,
+    updatedAt: Date.now(),
+  };
+  return saveProjectTeamRun(projectId, next);
+}
+
+async function closeProjectTeamRun(projectId, runId) {
+  const run = await getProjectTeamRun(projectId, runId);
+  if (!run) {
+    throw new Error('Team run not found.');
+  }
+  const now = Date.now();
+  return saveProjectTeamRun(projectId, {
+    ...run,
+    status: 'closed',
+    closedAt: now,
+    updatedAt: now,
+    plannedMembers: run.plannedMembers.map((member) => (
+      member.status === 'running' || member.status === 'idle' || member.status === 'starting'
+        ? { ...member, status: 'stopped', stoppedAt: now, updatedAt: now }
+        : member
+    )),
+  });
+}
+
+async function startProjectTeamMember(projectId, runId, memberId) {
+  await updateProjectTeamMember(projectId, runId, memberId, {
+    status: 'blocked',
+    error: 'Team member execution is not connected to ClaudeSession yet.',
+  });
+  throw new Error('Team member execution is not connected to ClaudeSession yet.');
+}
+
+async function linkSessionToProject(projectId, sessionRecord) {
+  await ensureProjectStructure(projectId);
+  await writeJsonFileAsync(path.join(getProjectSessionsDir(projectId), `${sessionRecord.id}.json`), {
+    sessionId: sessionRecord.id,
+    title: sessionRecord.title,
+    workspace: sessionRecord.workspace,
+    boundAt: Date.now(),
+  });
+}
+
+async function unlinkSessionFromProject(projectId, sessionId) {
+  try {
+    await fsp.unlink(path.join(getProjectSessionsDir(projectId), `${sessionId}.json`));
+  } catch {}
+}
+
+async function bindSessionToProject(sessionId, projectId) {
+  const sessionRecord = getSessionRecord(sessionId);
+  const id = normalizeProjectId(projectId);
+  const project = await readProject(id);
+  if (!project || project.archivedAt) {
+    throw new Error('Project not found.');
+  }
+  if (sessionRecord.busy) {
+    throw new Error('Cannot bind a busy session to a project.');
+  }
+  const previousProjectId = sessionRecord.projectId || null;
+  if (previousProjectId && previousProjectId !== id) {
+    await unlinkSessionFromProject(previousProjectId, sessionRecord.id);
+  }
+  sessionRecord.projectId = id;
+  disposeRuntime(sessionRecord);
+  await linkSessionToProject(id, sessionRecord);
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  emitToRenderer('agent:state', { sessionId: sessionRecord.id, tasks: snapshotSessionTasks(sessionRecord) });
+  emitToRenderer('project:changed', { projectId: id, reason: 'session-bound' });
+  return {
+    ...getSessionSummary(sessionRecord),
+    history: sessionRecord.history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    tasks: snapshotSessionTasks(sessionRecord),
+  };
+}
+
+async function unbindSessionFromProject(sessionId) {
+  const sessionRecord = getSessionRecord(sessionId);
+  if (sessionRecord.busy) {
+    throw new Error('Cannot unbind a busy session from a project.');
+  }
+  const previousProjectId = sessionRecord.projectId || null;
+  sessionRecord.projectId = null;
+  disposeRuntime(sessionRecord);
+  if (previousProjectId) {
+    await unlinkSessionFromProject(previousProjectId, sessionRecord.id);
+  }
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  emitToRenderer('agent:state', { sessionId: sessionRecord.id, tasks: snapshotSessionTasks(sessionRecord) });
+  if (previousProjectId) {
+    emitToRenderer('project:changed', { projectId: previousProjectId, reason: 'session-unbound' });
+  }
+  return {
+    ...getSessionSummary(sessionRecord),
+    history: sessionRecord.history,
+    workerSummariesJson: sessionRecord.workerSummariesJson || null,
+    tasks: snapshotSessionTasks(sessionRecord),
+  };
+}
+
+function listProjectSessions(projectId) {
+  const id = normalizeProjectId(projectId);
+  return Array.from(sessions.values())
+    .filter((sessionRecord) => sessionRecord.projectId === id)
+    .map(getSessionSummary)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function emitProjectTaskSnapshots(projectId) {
+  for (const sessionRecord of sessions.values()) {
+    if (sessionRecord.projectId !== projectId) continue;
+    emitToRenderer('agent:state', {
+      sessionId: sessionRecord.id,
+      tasks: snapshotSessionTasks(sessionRecord),
+    });
+  }
+}
+
 function normalizeMcpStore(raw) {
   const servers = {};
   const sourceServers = raw && typeof raw === 'object' && raw.servers && typeof raw.servers === 'object'
@@ -1329,10 +2203,36 @@ function buildBoundAppSystemPrompt(appName) {
   ].join('\n');
 }
 
+function buildProjectSystemPrompt(sessionRecord) {
+  if (!sessionRecord?.projectId) return '';
+  const project = readProjectSync(sessionRecord.projectId);
+  if (!project || project.archivedAt) return '';
+  const lines = [
+    '[Moss project context]',
+    `Project ID: ${project.id}`,
+    `Project name: ${project.name}`,
+  ];
+  if (project.instructions.trim()) {
+    lines.push('', 'Project instructions:', project.instructions.trim());
+  }
+  if (project.connectorIds.length > 0) {
+    lines.push('', `Enabled connectors: ${project.connectorIds.join(', ')}`);
+  }
+  if (project.expertIds.length > 0) {
+    lines.push(`Available experts: ${project.expertIds.join(', ')}`);
+  }
+  if (project.skillIds.length > 0) {
+    lines.push(`Available skills: ${project.skillIds.join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
 function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+  const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
   const appendSystemPrompt = [
     desktopSettings.appendSystemPrompt,
+    projectContextPrompt,
     sessionRecord?.assistantSystemPrompt,
     runtimeSystemPrompt,
   ]
@@ -1351,7 +2251,9 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getEnabledDesktopMcpServers(),
     taskScope: sessionRecord
-      ? { kind: 'session', sessionId: sessionRecord.id }
+      ? (sessionRecord.projectId
+        ? { kind: 'project', projectId: sessionRecord.projectId }
+        : { kind: 'session', sessionId: sessionRecord.id })
       : undefined,
   };
 }
@@ -2021,7 +2923,7 @@ function refreshDesktopSettings(payload = {}) {
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
 
   let skippedSessionCount = 0;
-  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance');
+  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub');
   if (affectsAgentRuntime) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
@@ -2063,6 +2965,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     isSubAgent ? 1 : 0,
     sessionRecord.workerSummariesJson || null,
     sessionRecord.assistantName || null,
+    sessionRecord.projectId || null,
   ];
 }
 
@@ -2171,6 +3074,7 @@ function hydratePersistedSessions() {
       isSubAgent: false,
       assistantName: row.assistant_name || null,
       assistantSystemPrompt: '',
+      projectId: normalizeOptionalProjectId(row.project_id),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -2214,6 +3118,7 @@ function hydratePersistedSessions() {
       isSubAgent: true,
       assistantName: null,
       assistantSystemPrompt: '',
+      projectId: normalizeOptionalProjectId(row.project_id),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -2411,6 +3316,8 @@ function getSessionSummary(sessionRecord) {
     pendingPlanApproval: sessionRecord.pendingPlanApproval || null,
     resumeReadOnlyReason: null,
     assistantName: sessionRecord.assistantName || null,
+    projectId: sessionRecord.projectId || null,
+    projectName: getProjectName(sessionRecord.projectId),
   };
 }
 
@@ -2829,6 +3736,9 @@ function setPendingPlanApproval(sessionRecord, pendingPlanApproval) {
   sessionRecord.pendingPlanApproval = pendingPlanApproval;
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
+  if (sessionRecord.projectId) {
+    void linkSessionToProject(sessionRecord.projectId, sessionRecord);
+  }
   emitSessionMeta(sessionRecord);
 }
 
@@ -4009,10 +4919,11 @@ function isAccessibleDirectory(dirPath) {
   }
 }
 
-function createSessionRecord({ workspace, isSubAgent = false, title, assistantName } = {}) {
+function createSessionRecord({ workspace, isSubAgent = false, title, assistantName, projectId } = {}) {
   const now = Date.now();
   const normalizedWorkspace = normalizeWorkspace(workspace);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
+  const normalizedProjectId = normalizeOptionalProjectId(projectId);
 
   const sessionRecord = {
     id: randomUUID(),
@@ -4038,6 +4949,7 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
     isSubAgent,
     assistantName: assistantName || null,
     assistantSystemPrompt: '',
+    projectId: normalizedProjectId,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -5220,6 +6132,7 @@ app.whenReady().then(async () => {
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerSkillStoreIpcHandlers();
+  registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
   startMossCronScheduler();
@@ -5414,6 +6327,116 @@ ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => {
   }
 });
 
+ipcMain.handle('project:list-templates', async () => PROJECT_TEMPLATES);
+
+ipcMain.handle('project:list', async (_event, payload = {}) => {
+  return listProjects({ includeArchived: Boolean(payload.includeArchived) });
+});
+
+ipcMain.handle('project:get', async (_event, { projectId } = {}) => {
+  const project = await readProject(projectId);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+  return enrichProject(project);
+});
+
+ipcMain.handle('project:create', async (_event, payload = {}) => {
+  const project = await createProject(payload);
+  emitToRenderer('project:changed', { projectId: project.id, reason: 'created' });
+  return project;
+});
+
+ipcMain.handle('project:update', async (_event, { projectId, updates } = {}) => {
+  const project = await updateProject(projectId, updates || {});
+  emitToRenderer('project:changed', { projectId: project.id, reason: 'updated' });
+  return project;
+});
+
+ipcMain.handle('project:archive', async (_event, { projectId } = {}) => {
+  const project = await archiveProject(projectId);
+  emitToRenderer('project:changed', { projectId: project.id, reason: 'archived' });
+  return project;
+});
+
+ipcMain.handle('project:list-assets', async (_event, { projectId } = {}) => {
+  return listProjectAssets(projectId);
+});
+
+ipcMain.handle('project:add-asset', async (_event, { projectId, sourcePath, fileName, name } = {}) => {
+  return addProjectAsset(projectId, { sourcePath, fileName, name });
+});
+
+ipcMain.handle('project:remove-asset', async (_event, { projectId, assetId } = {}) => {
+  return removeProjectAsset(projectId, assetId);
+});
+
+ipcMain.handle('project:list-sessions', async (_event, { projectId } = {}) => {
+  return listProjectSessions(projectId);
+});
+
+ipcMain.handle('project:bind-session', async (_event, { sessionId, projectId } = {}) => {
+  return bindSessionToProject(sessionId, projectId);
+});
+
+ipcMain.handle('project:unbind-session', async (_event, { sessionId } = {}) => {
+  return unbindSessionFromProject(sessionId);
+});
+
+ipcMain.handle('project:list-tasks', async (_event, { projectId } = {}) => {
+  return listProjectTasks(projectId);
+});
+
+ipcMain.handle('project:create-task', async (_event, { projectId, task } = {}) => {
+  return createProjectTask(projectId, task || {});
+});
+
+ipcMain.handle('project:update-task', async (_event, { projectId, taskId, updates } = {}) => {
+  return updateProjectTask(projectId, taskId, updates || {});
+});
+
+ipcMain.handle('project:get-task', async (_event, { projectId, taskId } = {}) => {
+  return getProjectTask(projectId, taskId);
+});
+
+ipcMain.handle('project:list-team-runs', async (_event, { projectId } = {}) => {
+  return listProjectTeamRuns(projectId);
+});
+
+ipcMain.handle('project:get-team-run', async (_event, { projectId, runId } = {}) => {
+  return getProjectTeamRun(projectId, runId);
+});
+
+ipcMain.handle('project:create-team-run', async (_event, { projectId, teamRun } = {}) => {
+  const run = await createProjectTeamRun(projectId, teamRun || {});
+  emitToRenderer('project:changed', { projectId, reason: 'team-run-created' });
+  return run;
+});
+
+ipcMain.handle('project:update-team-run', async (_event, { projectId, runId, updates } = {}) => {
+  return updateProjectTeamRun(projectId, runId, updates || {});
+});
+
+ipcMain.handle('project:add-team-member', async (_event, { projectId, runId, member } = {}) => {
+  return addProjectTeamMember(projectId, runId, member || {});
+});
+
+ipcMain.handle('project:update-team-member', async (_event, { projectId, runId, memberId, updates } = {}) => {
+  return updateProjectTeamMember(projectId, runId, memberId, updates || {});
+});
+
+ipcMain.handle('project:remove-team-member', async (_event, { projectId, runId, memberId } = {}) => {
+  return removeProjectTeamMember(projectId, runId, memberId);
+});
+
+ipcMain.handle('project:start-team-member', async (_event, { projectId, runId, memberId } = {}) => {
+  return startProjectTeamMember(projectId, runId, memberId);
+});
+
+ipcMain.handle('project:close-team-run', async (_event, { projectId, runId } = {}) => {
+  return closeProjectTeamRun(projectId, runId);
+});
+
 ipcMain.handle('agent:list-sessions', async () => {
   const currentMode = getDesktopAgentMode();
   const localEnabled = desktopSettings.localEnabled ?? true;
@@ -5429,11 +6452,22 @@ ipcMain.handle('agent:list-sessions', async () => {
 });
 
 ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
+  const projectId = normalizeOptionalProjectId(payload.projectId);
+  if (projectId) {
+    const project = await readProject(projectId);
+    if (!project || project.archivedAt) {
+      throw new Error('Project not found.');
+    }
+  }
   const sessionRecord = createSessionRecord({
     workspace: payload.workspace,
     title: payload.title,
     assistantName: payload.assistant_name,
+    projectId,
   });
+  if (projectId) {
+    await linkSessionToProject(projectId, sessionRecord);
+  }
   await prepareAssistantContextForSessionStart(sessionRecord);
   return {
     summary: getSessionSummary(sessionRecord),
@@ -5568,6 +6602,10 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
     'Question canceled because the session was deleted.',
   );
   disposeRuntime(sessionRecord);
+  if (sessionRecord.projectId) {
+    await unlinkSessionFromProject(sessionRecord.projectId, sessionRecord.id);
+    emitToRenderer('project:changed', { projectId: sessionRecord.projectId, reason: 'session-deleted' });
+  }
   sessions.delete(sessionId);
   deletePersistedSession(sessionId);
   emitToRenderer('agent:session-removed', { sessionId });
@@ -5619,6 +6657,9 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
     sessionRecord.remoteWorkspace = String(workspace || '').trim() || null;
     sessionRecord.updatedAt = Date.now();
     schedulePersistSession(sessionRecord, true);
+    if (sessionRecord.projectId) {
+      await linkSessionToProject(sessionRecord.projectId, sessionRecord);
+    }
     emitSessionMeta(sessionRecord);
     return {
       ...getSessionSummary(sessionRecord),
@@ -5632,6 +6673,9 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
   await startWorkspaceWatcher(sessionRecord);
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
+  if (sessionRecord.projectId) {
+    await linkSessionToProject(sessionRecord.projectId, sessionRecord);
+  }
   emitSessionMeta(sessionRecord);
   return {
     ...getSessionSummary(sessionRecord),

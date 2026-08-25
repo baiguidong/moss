@@ -15,6 +15,8 @@ import {
   Trash2,
   X,
   AlarmClock,
+  FolderKanban,
+  Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -39,9 +41,11 @@ export interface SidebarSession {
   busy: boolean;
   isPinned?: boolean;
   agentMode?: 'local' | 'remote-direct';
+  projectId?: string | null;
+  projectName?: string | null;
 }
 
-export type MainView = "chat" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "skills" | "apps" | "settings" | "cron" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -49,6 +53,7 @@ interface AppSidebarProps {
   activeSessionId: string | null;
   activeView: MainView;
   appsCount: number;
+  projectsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
   searchQuery: string;
@@ -162,6 +167,11 @@ function SessionItem({
           </span>
         )}
       </div>
+      {!isEditing && session.projectName ? (
+        <div className="mt-0.5 truncate pl-7 pr-2 text-[10px] leading-4 text-sidebar-foreground/45">
+          项目 · {session.projectName}
+        </div>
+      ) : null}
       <div className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-1">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -262,6 +272,7 @@ export function AppSidebar({
   activeSessionId,
   activeView,
   appsCount,
+  projectsCount,
   themeMode,
   collapsed,
   searchQuery,
@@ -442,6 +453,28 @@ export function AppSidebar({
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
         <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
+          <Button
+            variant={activeView === "projects" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
+            onClick={() => onChangeView("projects")}
+          >
+            <FolderKanban className="h-4 w-4" />
+            {!collapsed && (
+              <>
+                项目
+                <span className="ml-auto text-[11px] text-muted-foreground">{projectsCount}</span>
+              </>
+            )}
+          </Button>
+          <Button
+            variant={activeView === "skills" ? "secondary" : "ghost"}
+            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
+            onClick={() => onChangeView("skills")}
+            title="技能"
+          >
+            <Hammer className="h-4 w-4" />
+            {!collapsed && "技能"}
+          </Button>
           {apps.map((app) => (
             collapsed ? (
               <button

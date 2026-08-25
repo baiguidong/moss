@@ -131,6 +131,7 @@ export function TaskPanel({
   previewTitle,
   sessionId,
   sessionTasks,
+  projectName,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -149,6 +150,7 @@ export function TaskPanel({
   previewTitle: string;
   sessionId?: string | null;
   sessionTasks?: SessionTask[];
+  projectName?: string | null;
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
@@ -227,6 +229,11 @@ export function TaskPanel({
               <div className="space-y-3 p-3">
                 <div className="rounded-lg border border-border/65 bg-card/72 p-3">
                   <div className="mb-3 text-xs font-medium text-muted-foreground">当前会话</div>
+                  {projectName ? (
+                    <div className="mb-3 rounded-md border border-primary/25 bg-primary/8 px-2 py-1.5 text-xs text-primary">
+                      项目：{projectName}
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-md border border-border/60 bg-background/75 p-2">
                       <div className="text-lg font-semibold text-foreground">{visibleFileCount}</div>
@@ -257,7 +264,7 @@ export function TaskPanel({
                   <div className="mb-2.5 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
                       <ListChecks className="h-3.5 w-3.5 shrink-0" />
-                      <span>会话任务</span>
+                      <span>{projectName ? "项目任务" : "会话任务"}</span>
                     </div>
                     <Badge variant={(sessionTasks?.length || 0) > 0 ? "default" : "secondary"}>
                       {sessionTasks?.length || 0} 项

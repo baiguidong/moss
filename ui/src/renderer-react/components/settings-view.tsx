@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   Shield,
+  Store,
   Sparkles,
   SunMedium,
   Trash2,
@@ -30,7 +31,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -162,6 +163,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Wrench,
     iconGradientClassName: 'from-lime-400 to-emerald-600',
     keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
+  },
+  {
+    id: 'skill-hub',
+    title: 'SkillHub',
+    icon: Store,
+    iconGradientClassName: 'from-indigo-400 to-sky-600',
+    keywords: ['skillhub', 'skill', '技能', 'market', 'hub', 'api', '公网'],
   },
   {
     id: 'text-model',
@@ -1069,6 +1077,7 @@ export function SettingsView({
     permission: null,
     memory: null,
     mcp: null,
+    'skill-hub': null,
     'text-model': null,
     'image-model': null,
     prompt: null,
@@ -1686,6 +1695,36 @@ export function SettingsView({
                     }}
                   >
                     <McpSettings />
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'skill-hub') ? (
+                  <SettingsSection
+                    id="skill-hub"
+                    title="SkillHub"
+                    sectionRef={(element) => {
+                      sectionRefs.current['skill-hub'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="API 地址"
+                        description="技能市场只访问这个 API Base；默认使用公网 SkillHub。"
+                        controlClassName="sm:w-[360px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={settingsDraft.skillHub?.apiBaseUrl || 'https://api.skillhub.cn'}
+                          onChange={(event) => {
+                            updateSetting('skillHub', {
+                              ...(settingsDraft.skillHub || {}),
+                              apiBaseUrl: event.target.value,
+                            });
+                          }}
+                          placeholder="https://api.skillhub.cn"
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 

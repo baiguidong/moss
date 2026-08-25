@@ -28,6 +28,31 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setMcpServerEnabled: (payload) => ipcRenderer.invoke('agent:mcp-set-enabled', payload),
   getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
   updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
+  listProjectTemplates: () => ipcRenderer.invoke('project:list-templates'),
+  listProjects: (payload) => ipcRenderer.invoke('project:list', payload),
+  getProject: (payload) => ipcRenderer.invoke('project:get', payload),
+  createProject: (payload) => ipcRenderer.invoke('project:create', payload),
+  updateProject: (payload) => ipcRenderer.invoke('project:update', payload),
+  archiveProject: (payload) => ipcRenderer.invoke('project:archive', payload),
+  listProjectAssets: (payload) => ipcRenderer.invoke('project:list-assets', payload),
+  addProjectAsset: (payload) => ipcRenderer.invoke('project:add-asset', payload),
+  removeProjectAsset: (payload) => ipcRenderer.invoke('project:remove-asset', payload),
+  listProjectSessions: (payload) => ipcRenderer.invoke('project:list-sessions', payload),
+  bindSessionToProject: (payload) => ipcRenderer.invoke('project:bind-session', payload),
+  unbindSessionFromProject: (payload) => ipcRenderer.invoke('project:unbind-session', payload),
+  listProjectTasks: (payload) => ipcRenderer.invoke('project:list-tasks', payload),
+  createProjectTask: (payload) => ipcRenderer.invoke('project:create-task', payload),
+  updateProjectTask: (payload) => ipcRenderer.invoke('project:update-task', payload),
+  getProjectTask: (payload) => ipcRenderer.invoke('project:get-task', payload),
+  listProjectTeamRuns: (payload) => ipcRenderer.invoke('project:list-team-runs', payload),
+  getProjectTeamRun: (payload) => ipcRenderer.invoke('project:get-team-run', payload),
+  createProjectTeamRun: (payload) => ipcRenderer.invoke('project:create-team-run', payload),
+  updateProjectTeamRun: (payload) => ipcRenderer.invoke('project:update-team-run', payload),
+  addProjectTeamMember: (payload) => ipcRenderer.invoke('project:add-team-member', payload),
+  updateProjectTeamMember: (payload) => ipcRenderer.invoke('project:update-team-member', payload),
+  removeProjectTeamMember: (payload) => ipcRenderer.invoke('project:remove-team-member', payload),
+  startProjectTeamMember: (payload) => ipcRenderer.invoke('project:start-team-member', payload),
+  closeProjectTeamRun: (payload) => ipcRenderer.invoke('project:close-team-run', payload),
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
@@ -172,6 +197,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:settings-changed', handler);
     return () => ipcRenderer.off('agent:settings-changed', handler);
+  },
+  onProjectsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('project:changed', handler);
+    return () => ipcRenderer.off('project:changed', handler);
   },
   listCoordinatorTasks: (sessionId) => ipcRenderer.invoke('coordinator:list-tasks', { sessionId }),
   // Worker (sub-agent) results from SDK subagents directory
