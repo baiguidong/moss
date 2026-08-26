@@ -1,10 +1,10 @@
 /**
  * Files are loaded in the following order:
  *
- * 1. Managed memory (eg. /etc/moss/MOSS.md) - Global instructions for all users
- * 2. User memory (~/.moss/MOSS.md) - Private global instructions for all projects
- * 3. Project memory (MOSS.md, .moss/MOSS.md, and .moss/rules/*.md in project roots) - Instructions checked into the codebase
- * 4. Local memory (MOSS.local.md in project roots) - Private project-specific instructions
+ * 1. Managed memory (eg. /etc/moss/AGENTS.md) - Global instructions for all users
+ * 2. User memory (~/.moss/AGENTS.md) - Private global instructions for all projects
+ * 3. Project memory (AGENTS.md, legacy CLAUDE.md, and .moss/rules/*.md in project roots) - Instructions checked into the codebase
+ * 4. Local memory (AGENTS.local.md and legacy CLAUDE.local.md in project roots) - Private project-specific instructions
  *
  * Files are loaded in reverse order of priority, i.e. the latest files are highest priority
  * with the model paying more attention to them.
@@ -13,7 +13,8 @@
  * - User memory is loaded from the user's home directory
  * - Project and Local files are discovered by traversing from the current directory up to root
  * - Files closer to the current directory have higher priority (loaded later)
- * - MOSS.md, .moss/MOSS.md, and all .md files in .moss/rules/ are checked in each directory for Project memory
+ * - AGENTS.md, legacy CLAUDE.md, their .moss/ equivalents, and all .md files in .moss/rules/ are checked in each directory for Project memory
+ * - In the same directory, legacy CLAUDE.md is loaded before AGENTS.md
  *
  * Memory @include directive:
  * - Memory files can include other files using @ notation
@@ -77,6 +78,7 @@ import { pathInWorkingPath } from './permissions/filesystem.js'
 import { isSettingSourceEnabled } from './settings/constants.js'
 import { getInitialSettings } from './settings/settings.js'
 import {
+  getProjectInstructionFilePaths,
   LOCAL_INSTRUCTION_FILENAMES,
   PROJECT_INSTRUCTION_FILENAMES,
 } from './instructionFiles.js'
@@ -534,7 +536,7 @@ function extractIncludePathsFromTokens(
 const MAX_INCLUDE_DEPTH = 5
 
 /**
- * Checks whether a MOSS.md file path is excluded by the mossMdExcludes setting.
+ * Checks whether an instruction file path is excluded by mossMdExcludes.
  * Only applies to User, Project, and Local memory types.
  * Managed and AutoMem types are never excluded.
  *
@@ -556,7 +558,7 @@ function isMossMdExcluded(filePath: string, type: MemoryType): boolean {
 
   // Build an expanded pattern list that includes realpath-resolved versions of
   // absolute patterns. This handles symlinks like /tmp -> /private/tmp on macOS:
-  // the user writes "/tmp/project/MOSS.md" in their exclude, but the system
+  // the user writes "/tmp/project/AGENTS.md" in their exclude, but the system
   // resolves the CWD to "/private/tmp/project/...", so the file path uses the
   // real path. By resolving the patterns too, both sides match.
   const expandedPatterns = resolveExcludePatterns(patterns).filter(
@@ -856,10 +858,10 @@ export const getMemoryFiles = memoize(
     // When running from a git worktree nested inside its main repo (e.g.,
     // .moss/worktrees/<name>/ from `claude -w`), the upward walk passes
     // through both the worktree root and the main repo root. Both contain
-    // checked-in files like MOSS.md and .moss/rules/*.md, so the same
+    // checked-in instruction files and .moss/rules/*.md, so the same
     // content gets loaded twice. Skip Project-type (checked-in) files from
     // directories above the worktree but within the main repo — the worktree
-    // already has its own checkout. MOSS.local.md is gitignored so it only
+    // already has its own checkout. AGENTS.local.md is gitignored so it only
     // exists in the main repo and is still loaded.
     // See: https://github.com/anthropics/claude-code/issues/29599
     const gitRoot = findGitRoot(originalCwd)
@@ -882,21 +884,10 @@ export const getMemoryFiles = memoize(
 
       // Try reading project instruction files - only if projectSettings is enabled
       if (isSettingSourceEnabled('projectSettings') && !skipProject) {
-        for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
-          const projectPath = join(dir, filename)
+        for (const projectPath of getProjectInstructionFilePaths(dir)) {
           result.push(
             ...(await processMemoryFile(
               projectPath,
-              'Project',
-              processedPaths,
-              includeExternal,
-            )),
-          )
-
-          const dotMossPath = join(dir, '.moss', filename)
-          result.push(
-            ...(await processMemoryFile(
-              dotMossPath,
               'Project',
               processedPaths,
               includeExternal,
@@ -940,21 +931,10 @@ export const getMemoryFiles = memoize(
     if (isEnvTruthy(process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD)) {
       const additionalDirs = getAdditionalDirectoriesForMossMd()
       for (const dir of additionalDirs) {
-        for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
-          const projectPath = join(dir, filename)
+        for (const projectPath of getProjectInstructionFilePaths(dir)) {
           result.push(
             ...(await processMemoryFile(
               projectPath,
-              'Project',
-              processedPaths,
-              includeExternal,
-            )),
-          )
-
-          const dotMossPath = join(dir, '.moss', filename)
-          result.push(
-            ...(await processMemoryFile(
-              dotMossPath,
               'Project',
               processedPaths,
               includeExternal,
@@ -1024,7 +1004,7 @@ export const getMemoryFiles = memoize(
     // Fire InstructionsLoaded hook for each instruction file loaded
     // (fire-and-forget, audit/observability only).
     // AutoMem is intentionally excluded because it is a separate
-    // memory system, not "instructions" in the MOSS.md/rules sense.
+    // memory system, not part of project instructions or rules.
     // Gated on !forceIncludeExternal: the forceIncludeExternal=true variant
     // is only used by getExternalMossMdIncludes() for approval checks, not
     // for building context — firing the hook there would double-fire on startup.
@@ -1231,20 +1211,10 @@ export async function getMemoryFilesForNestedDirectory(
 
   // Process project instruction files
   if (isSettingSourceEnabled('projectSettings')) {
-    for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
-      const projectPath = join(dir, filename)
+    for (const projectPath of getProjectInstructionFilePaths(dir)) {
       result.push(
         ...(await processMemoryFile(
           projectPath,
-          'Project',
-          processedPaths,
-          false,
-        )),
-      )
-      const dotMossPath = join(dir, '.moss', filename)
-      result.push(
-        ...(await processMemoryFile(
-          dotMossPath,
           'Project',
           processedPaths,
           false,
@@ -1410,7 +1380,7 @@ export async function shouldShowMossMdExternalIncludesWarning(): Promise<boolean
 }
 
 /**
- * Check if a file path is a memory file (MOSS.md, MOSS.local.md, or .moss/rules/*.md)
+ * Check if a file path is an instruction file or a .moss/rules/*.md file.
  */
 export function isMemoryFilePath(filePath: string): boolean {
   const name = basename(filePath)

@@ -566,7 +566,7 @@ export async function trySessionMemoryCompaction(
       .slice(startIndex)
       .filter(m => !isCompactBoundaryMessage(m))
 
-    // Run session start hooks to restore MOSS.md and other context
+    // Run session start hooks to restore project instructions and other context
     const hookResults = await processSessionStartHooks('compact', {
       model: getMainLoopModel(),
     })

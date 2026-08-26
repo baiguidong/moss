@@ -87,7 +87,7 @@ export const EXPERIMENTAL = {
   // 定时任务（Cron）工具：让 Claude 创建和管理 cron 触发的 agent 任务
   AGENT_TRIGGERS: true,
 
-  // 模板支持：MOSS.md 中使用模板变量
+  // 模板支持：AGENTS.md 中使用模板变量
   TEMPLATES: false,
 
   // 离开摘要：长时间无操作后，回来时显示 session 摘要

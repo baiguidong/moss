@@ -75,7 +75,7 @@ export const EXPLORE_AGENT: BuiltInAgentDefinition = {
   baseDir: 'built-in',
   model: 'haiku',
   // Explore is a fast read-only search agent — it doesn't need commit/PR/lint
-  // rules from MOSS.md. The main agent has full context and interprets results.
+  // project rules. The main agent has full context and interprets results.
   omitMossMd: true,
   getSystemPrompt: () => getExploreSystemPrompt(),
 }

@@ -85,7 +85,7 @@ export const PLAN_AGENT: BuiltInAgentDefinition = {
   tools: EXPLORE_AGENT.tools,
   baseDir: 'built-in',
   model: 'inherit',
-  // Plan is read-only and can read MOSS.md directly if it needs conventions.
+  // Plan is read-only and can read AGENTS.md or legacy CLAUDE.md for conventions.
   // Dropping it from context saves tokens without blocking access.
   omitMossMd: true,
   getSystemPrompt: () => getPlanV2SystemPrompt(),

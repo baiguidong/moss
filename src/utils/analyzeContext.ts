@@ -272,7 +272,7 @@ async function countMemoryFileTokens(): Promise<{
   memoryFileDetails: MemoryFile[]
   mossMdTokens: number
 }> {
-  // Simple mode disables MOSS.md loading, so don't report tokens for them
+  // Simple mode disables project-instruction loading, so don't report its tokens
   if (isEnvTruthy(process.env.CLAUDE_CODE_SIMPLE)) {
     return { memoryFileDetails: [], mossMdTokens: 0 }
   }

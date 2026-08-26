@@ -4150,9 +4150,10 @@ export function hasInstructionsLoadedHook(): boolean {
 }
 
 /**
- * Execute InstructionsLoaded hooks when an instruction file (MOSS.md or
- * .moss/rules/*.md) is loaded into context. Fire-and-forget — this hook is
- * for observability/audit only and does not support blocking.
+ * Execute InstructionsLoaded hooks when an instruction file (AGENTS.md,
+ * legacy CLAUDE.md, or .moss/rules/*.md) is loaded into context.
+ * Fire-and-forget — this hook is for observability/audit only and does not
+ * support blocking.
  *
  * Dispatch sites:
  * - Eager load at session start (getMemoryFiles in mossmd.ts)

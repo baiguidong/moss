@@ -715,10 +715,10 @@ export const SettingsSchema = lazySchema(() =>
         .array(z.string())
         .optional()
         .describe(
-          'Glob patterns or absolute paths of MOSS.md instruction files to exclude from loading. ' +
+          'Glob patterns or absolute paths of instruction files to exclude from loading. ' +
             'Patterns are matched against absolute file paths using picomatch. ' +
             'Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). ' +
-            'Examples: "/home/user/monorepo/MOSS.md", "**/code/MOSS.md", "**/some-dir/.moss/rules/**"',
+            'Examples: "/home/user/monorepo/AGENTS.md", "**/legacy/CLAUDE.md", "**/some-dir/.moss/rules/**"',
         ),
       bypassPermissions: z
         .boolean()

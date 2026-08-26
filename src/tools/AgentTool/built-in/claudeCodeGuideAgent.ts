@@ -63,7 +63,7 @@ function getClaudeCodeGuideBasePrompt(): string {
 
 **Approach:**
 1. Determine which domain the user's question falls into
-2. Search local project files (MOSS.md, .moss/ directory, source files) using ${localSearchHint}
+2. Search local project files (AGENTS.md, legacy CLAUDE.md, .moss/ directory, source files) using ${localSearchHint}
 3. Provide clear, actionable guidance based on local documentation and source behavior
 4. Use ${WEB_SEARCH_TOOL_NAME} only if the user explicitly asks for external research
 

@@ -1640,8 +1640,8 @@ export function REPL({
   // before onQuery builds its own context, and discovery on turn N must
   // still attribute a SkillTool call on turn N+k. Cleared in clearConversation.
   const discoveredSkillNamesRef = useRef(new Set<string>());
-  // Session-level dedup for nested_memory MOSS.md attachments.
-  // readFileState is a 100-entry LRU; once it evicts a MOSS.md path,
+  // Session-level dedup for nested project-instruction attachments.
+  // readFileState is a 100-entry LRU; once it evicts an instruction path,
   // the next discovery cycle re-injects it. Cleared in clearConversation.
   const loadedNestedMemoryPathsRef = useRef(new Set<string>());
 

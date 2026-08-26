@@ -210,7 +210,7 @@ function checkMemoryBloat(
     suggestions.push({
       severity: 'info',
       title: `Memory files using ${formatTokens(totalMemoryTokens)} tokens (${memoryPercent.toFixed(0)}%)`,
-      detail: `Largest: ${largestFiles}. Review MOSS.md and memory files to prune stale entries.`,
+      detail: `Largest: ${largestFiles}. Review AGENTS.md and memory files to prune stale entries.`,
       savingsTokens: Math.floor(totalMemoryTokens * 0.3),
     })
   }

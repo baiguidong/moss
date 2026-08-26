@@ -7,10 +7,7 @@ import {
 import { getCwd } from './utils/cwd.js'
 import { isDirEmpty } from './utils/file.js'
 import { getFsImplementation } from './utils/fsOperations.js'
-import {
-  PRIMARY_PROJECT_INSTRUCTION_FILENAME,
-  PROJECT_INSTRUCTION_FILENAMES,
-} from './utils/instructionFiles.js'
+import { PRIMARY_PROJECT_INSTRUCTION_FILENAME } from './utils/instructionFiles.js'
 
 export type Step = {
   key: string
@@ -21,8 +18,8 @@ export type Step = {
 }
 
 export function getSteps(): Step[] {
-  const hasInstructionFile = PROJECT_INSTRUCTION_FILENAMES.some(filename =>
-    getFsImplementation().existsSync(join(getCwd(), filename)),
+  const hasInstructionFile = getFsImplementation().existsSync(
+    join(getCwd(), PRIMARY_PROJECT_INSTRUCTION_FILENAME),
   )
   const isWorkspaceDirEmpty = isDirEmpty(getCwd())
 

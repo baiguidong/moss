@@ -19,6 +19,12 @@ import { getMossConfigHomeDir } from '../envUtils.js'
 import { getMemoryPath } from '../config.js'
 import { isMemoryFilePath } from '../mossmd.js'
 import {
+  getProjectInstructionFilePaths,
+  isInstructionFilename,
+  LOCAL_INSTRUCTION_FILENAMES,
+  PROJECT_INSTRUCTION_FILENAMES,
+} from '../instructionFiles.js'
+import {
   getRelativeSettingsFilePathForSource,
   getSettingsFilePathForSource,
 } from '../settings/settings.js'
@@ -60,22 +66,34 @@ describe('Moss project paths', () => {
     )
   })
 
-  test('uses MOSS.md for primary instruction memory paths', () => {
+  test('uses AGENTS.md for primary instruction memory paths', () => {
     process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
     setOriginalCwd('/tmp/moss-project')
 
-    expect(getMemoryPath('User')).toBe('/tmp/custom-moss/MOSS.md')
-    expect(getMemoryPath('Project')).toBe('/tmp/moss-project/MOSS.md')
-    expect(getMemoryPath('Local')).toBe('/tmp/moss-project/MOSS.local.md')
+    expect(getMemoryPath('User')).toBe('/tmp/custom-moss/AGENTS.md')
+    expect(getMemoryPath('Project')).toBe('/tmp/moss-project/AGENTS.md')
+    expect(getMemoryPath('Local')).toBe('/tmp/moss-project/AGENTS.local.md')
   })
 
-  test('recognizes Moss instruction files as memory files', () => {
-    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.md'))).toBe(true)
-    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.local.md'))).toBe(true)
-    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.md'))).toBe(false)
-    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.local.md'))).toBe(
-      false,
-    )
+  test('recognizes supported project instruction files as memory files', () => {
+    expect(PROJECT_INSTRUCTION_FILENAMES).toEqual(['CLAUDE.md', 'AGENTS.md'])
+    expect(LOCAL_INSTRUCTION_FILENAMES).toEqual([
+      'CLAUDE.local.md',
+      'AGENTS.local.md',
+    ])
+    expect(getProjectInstructionFilePaths('/tmp/project')).toEqual([
+      '/tmp/project/CLAUDE.md',
+      '/tmp/project/.moss/CLAUDE.md',
+      '/tmp/project/AGENTS.md',
+      '/tmp/project/.moss/AGENTS.md',
+    ])
+    expect(isInstructionFilename('AGENTS.md')).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'AGENTS.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'AGENTS.local.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'CLAUDE.local.md'))).toBe(true)
+    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.md'))).toBe(false)
+    expect(isMemoryFilePath(join('/tmp/project', 'MOSS.local.md'))).toBe(false)
     expect(
       isMemoryFilePath(join('/tmp/project', '.moss', 'rules', 'testing.md')),
     ).toBe(true)

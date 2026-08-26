@@ -353,7 +353,7 @@ export async function* runAgent({
   ])
 
   // Read-only agents (Explore, Plan) don't act on commit/PR/lint rules from
-  // MOSS.md — the main agent has full context and interprets their output.
+  // Project instructions — the main agent has full context and interprets output.
   // Dropping mossMd here saves ~5-15 Gtok/week across 34M+ Explore spawns.
   // Explicit override.userContext from callers is preserved untouched.
   // Kill-switch defaults true; flip tengu_slim_subagent_mossmd=false to revert.
