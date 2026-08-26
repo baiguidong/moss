@@ -87,6 +87,7 @@ import {
   allowMediaRoot,
 } from './media-protocol.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
+import { shouldAdoptSessionHistory } from './shared/session-history-reconcile.mjs';
 import {
   DEFAULT_APPEARANCE,
   hasPersistedAppearance,
@@ -510,6 +511,21 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN session_kind TEXT NOT NULL DEFAULT 'chat'`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN source_session_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN cron_task_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -528,14 +544,22 @@ const persistSessionStmt = (() => {
       worker_summaries_json TEXT,
       assistant_name TEXT,
       project_id TEXT,
-      connector_ids_json TEXT NOT NULL DEFAULT '[]'
+      connector_ids_json TEXT NOT NULL DEFAULT '[]',
+      session_kind TEXT NOT NULL DEFAULT 'chat',
+      source_session_id TEXT,
+      cron_task_id TEXT
     )
+  `);
+  sessionDb.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_cron_task_id
+    ON sessions(cron_task_id)
+    WHERE session_kind = 'cron' AND cron_task_id IS NOT NULL
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, connector_ids_json
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, connector_ids_json, session_kind, source_session_id, cron_task_id
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -553,7 +577,10 @@ const persistSessionStmt = (() => {
       worker_summaries_json = excluded.worker_summaries_json,
       assistant_name = excluded.assistant_name,
       project_id = excluded.project_id,
-      connector_ids_json = excluded.connector_ids_json
+      connector_ids_json = excluded.connector_ids_json,
+      session_kind = excluded.session_kind,
+      source_session_id = excluded.source_session_id,
+      cron_task_id = excluded.cron_task_id
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -575,7 +602,10 @@ const loadSessionsStmt = sessionDb.prepare(`
     worker_summaries_json,
     assistant_name,
     project_id,
-    connector_ids_json
+    connector_ids_json,
+    session_kind,
+    source_session_id,
+    cron_task_id
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -597,7 +627,10 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     is_sub_agent,
     worker_summaries_json,
     project_id,
-    connector_ids_json
+    connector_ids_json,
+    session_kind,
+    source_session_id,
+    cron_task_id
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -3089,6 +3122,9 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.assistantName || null,
     sessionRecord.projectId || null,
     JSON.stringify(normalizeStringList(sessionRecord.connectorIds)),
+    sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    sessionRecord.sourceSessionId || null,
+    sessionRecord.cronTaskId || null,
   ];
 }
 
@@ -3137,6 +3173,12 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     assistantName: sessionRecord.assistantName || null,
     projectId: sessionRecord.projectId || null,
     connectorIds: normalizeStringList(sessionRecord.connectorIds),
+    sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    sourceSessionId: sessionRecord.sourceSessionId || null,
+    sourceSessionTitle: sessionRecord.sourceSessionId
+      ? sessions.get(sessionRecord.sourceSessionId)?.title || null
+      : null,
+    cronTaskId: sessionRecord.cronTaskId || null,
   };
 }
 
@@ -3215,7 +3257,7 @@ function hydratePersistedSessions() {
     const agentMode = inferPersistedSessionAgentMode(row);
     const history = parsePersistedSessionHistory(row.history_json);
     const preview = row.preview || deriveSessionPreview(history) || '';
-    const messageCount = countSessionMessages(history) || row.message_count;
+    const messageCount = Number(row.message_count) || 0;
     const sessionRecord = {
       id: row.id,
       title: row.title,
@@ -3249,6 +3291,9 @@ function hydratePersistedSessions() {
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
       connectorIds: parsePersistedStringList(row.connector_ids_json),
+      sessionKind: row.session_kind === 'cron' ? 'cron' : 'chat',
+      sourceSessionId: row.source_session_id || null,
+      cronTaskId: row.cron_task_id || null,
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3262,7 +3307,7 @@ function hydratePersistedSessions() {
     const agentMode = inferPersistedSessionAgentMode(row);
     const history = parsePersistedSessionHistory(row.history_json);
     const preview = row.preview || deriveSessionPreview(history) || '';
-    const messageCount = countSessionMessages(history) || row.message_count;
+    const messageCount = Number(row.message_count) || 0;
     const sessionRecord = {
       id: row.id,
       title: row.title,
@@ -3296,6 +3341,9 @@ function hydratePersistedSessions() {
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
       connectorIds: parsePersistedStringList(row.connector_ids_json),
+      sessionKind: row.session_kind === 'cron' ? 'cron' : 'chat',
+      sourceSessionId: row.source_session_id || null,
+      cronTaskId: row.cron_task_id || null,
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3499,6 +3547,12 @@ function getSessionSummary(sessionRecord) {
     projectId: sessionRecord.projectId || null,
     projectName: getProjectName(sessionRecord.projectId),
     connectorIds: normalizeStringList(sessionRecord.connectorIds),
+    sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    sourceSessionId: sessionRecord.sourceSessionId || null,
+    sourceSessionTitle: sessionRecord.sourceSessionId
+      ? sessions.get(sessionRecord.sourceSessionId)?.title || null
+      : null,
+    cronTaskId: sessionRecord.cronTaskId || null,
   };
 }
 
@@ -3689,6 +3743,16 @@ function derivePendingPlanApproval(history) {
 
 function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   const nextHistory = Array.isArray(history) ? history : [];
+  if (!shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
+    sessionRecord.historyLoadedFromSource = true;
+    mossLog('warn', 'session', 'Ignored non-append-only session history refresh', {
+      sessionId: sessionRecord.id,
+      currentMessageCount: countSessionMessages(sessionRecord.history),
+      candidateMessageCount: countSessionMessages(nextHistory),
+      underlyingSessionId: sessionRecord.underlyingSessionId,
+    });
+    return false;
+  }
   sessionRecord.history = nextHistory;
   sessionRecord.historyLoadedFromSource = true;
   sessionRecord.messageCount = countSessionMessages(nextHistory);
@@ -3718,6 +3782,7 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
       sessionRecord.remoteWorkspace = metadata.remoteWorkspace.trim();
     }
   }
+  return true;
 }
 
 async function loadSessionHistoryFromSource(sessionRecord) {
@@ -3809,48 +3874,6 @@ async function loadSessionHistoryFromSource(sessionRecord) {
   return sessionRecord.history;
 }
 
-async function refreshSessionDisplayMetricsFromTranscript(sessionRecord) {
-  if (!sessionRecord?.underlyingSessionId) return;
-  if (sessionRecord.runtime || sessionRecord.busy) return;
-  if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return;
-
-  const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
-  if (!transcriptPath) return;
-
-  let stat;
-  try {
-    stat = await fsp.stat(transcriptPath);
-  } catch {
-    return;
-  }
-
-  const metricsKey = `${sessionRecord.underlyingSessionId}:${stat.size}:${stat.mtimeMs}`;
-  if (sessionRecord.displayMetricsTranscriptKey === metricsKey) return;
-
-  const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
-  if (!Array.isArray(displayHistory)) return;
-
-  const nextMessageCount = countSessionMessages(displayHistory);
-  const nextPreview = deriveSessionPreview(displayHistory);
-  const changed =
-    sessionRecord.messageCount !== nextMessageCount ||
-    (nextPreview && sessionRecord.preview !== nextPreview);
-
-  sessionRecord.messageCount = nextMessageCount;
-  if (nextPreview) {
-    sessionRecord.preview = nextPreview;
-  }
-  if (sessionRecord.historyLoadedFromSource) {
-    sessionRecord.history = displayHistory;
-    sessionRecord.pendingPlanApproval = derivePendingPlanApproval(displayHistory);
-  }
-  sessionRecord.displayMetricsTranscriptKey = metricsKey;
-
-  if (changed) {
-    schedulePersistSession(sessionRecord);
-  }
-}
-
 async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
   if (!sessionRecord?.underlyingSessionId) return false;
   if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return false;
@@ -3881,7 +3904,9 @@ async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
     return false;
   }
 
-  syncSessionRecordHistory(sessionRecord, bestHistory);
+  if (!syncSessionRecordHistory(sessionRecord, bestHistory)) {
+    return false;
+  }
   schedulePersistSession(sessionRecord, true);
   return true;
 }
@@ -3908,7 +3933,19 @@ function maybeUpdateUnderlyingSessionId(target, nextSessionId) {
     return;
   }
 
-  target.underlyingSessionId = nextSessionId;
+  const normalizedSessionId = nextSessionId.trim();
+  if (target.underlyingSessionId && target.underlyingSessionId !== normalizedSessionId) {
+    if (target.ignoredUnderlyingSessionId !== normalizedSessionId) {
+      target.ignoredUnderlyingSessionId = normalizedSessionId;
+      mossLog('warn', 'session', 'Ignored runtime attempt to replace canonical session id', {
+        sessionId: target.id,
+        canonicalSessionId: target.underlyingSessionId,
+        runtimeSessionId: normalizedSessionId,
+      });
+    }
+    return;
+  }
+  target.underlyingSessionId = normalizedSessionId;
 }
 
 function setPendingPlanApproval(sessionRecord, pendingPlanApproval) {
@@ -3929,6 +3966,12 @@ async function runSessionPrompt({
   attachments = [],
   runtimeSystemPrompt = '',
 }) {
+  if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
+    const resumed = await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
+    if (!resumed && sessionRecord.resumeReadOnlyReason) {
+      throw new Error(sessionRecord.resumeReadOnlyReason);
+    }
+  }
   const runtime = await ensureRuntime(sessionRecord, runtimeSystemPrompt);
   const cronIdsBeforeTurn = await readMossCronTaskIds();
 
@@ -5165,7 +5208,18 @@ function isAccessibleDirectory(dirPath) {
   }
 }
 
-function createSessionRecord({ workspace, isSubAgent = false, title, assistantName, projectId, connectorIds } = {}) {
+function createSessionRecord({
+  workspace,
+  isSubAgent = false,
+  title,
+  assistantName,
+  projectId,
+  connectorIds,
+  agentMode: requestedAgentMode,
+  sessionKind = 'chat',
+  sourceSessionId,
+  cronTaskId,
+} = {}) {
   const now = Date.now();
   const id = randomUUID();
   const sessionDir = getLocalSessionDir(id);
@@ -5173,7 +5227,11 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
   fs.mkdirSync(sessionDir, { recursive: true });
   const normalizedProjectId = normalizeOptionalProjectId(projectId);
-  const agentMode = getDesktopAgentMode();
+  const agentMode = requestedAgentMode === 'remote-direct'
+    ? 'remote-direct'
+    : requestedAgentMode === 'local'
+      ? 'local'
+      : getDesktopAgentMode();
 
   const sessionRecord = {
     id,
@@ -5203,6 +5261,11 @@ function createSessionRecord({ workspace, isSubAgent = false, title, assistantNa
     assistantSystemPrompt: '',
     projectId: normalizedProjectId,
     connectorIds: normalizeStringList(connectorIds),
+    sessionKind: sessionKind === 'cron' ? 'cron' : 'chat',
+    sourceSessionId: typeof sourceSessionId === 'string' && sourceSessionId.trim()
+      ? sourceSessionId.trim()
+      : null,
+    cronTaskId: typeof cronTaskId === 'string' && cronTaskId.trim() ? cronTaskId.trim() : null,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -6183,6 +6246,7 @@ function findSessionForCronTask(taskId) {
   // In-memory history scan (session created the task before bindings existed).
   for (const [id, record] of sessions) {
     if (record.agentMode === 'remote-direct') continue;
+    if (record.sessionKind === 'cron') continue;
     const history = record.history;
     if (!Array.isArray(history)) continue;
     const start = Math.max(0, history.length - 500);
@@ -6202,7 +6266,7 @@ function findSessionForCronTask(taskId) {
   // persisted history_json in SQLite for the task id.
   try {
     const row = sessionDb
-      .prepare(`SELECT id FROM sessions WHERE is_sub_agent = 0 AND history_json LIKE ? ORDER BY updated_at DESC LIMIT 1`)
+      .prepare(`SELECT id FROM sessions WHERE is_sub_agent = 0 AND session_kind <> 'cron' AND history_json LIKE ? ORDER BY updated_at DESC LIMIT 1`)
       .get(`%${taskId}%`);
     if (row?.id && sessions.has(row.id)) {
       cronSessionBindings.set(taskId, row.id);
@@ -6213,6 +6277,37 @@ function findSessionForCronTask(taskId) {
     console.warn('[moss-cron] history_json scan failed:', err?.message || err);
   }
   return null;
+}
+
+function findCronExecutionSession(taskId) {
+  for (const record of sessions.values()) {
+    if (record.sessionKind === 'cron' && record.cronTaskId === taskId) {
+      return record;
+    }
+  }
+  return null;
+}
+
+async function getOrCreateCronExecutionSession(task, ownerSessionRecord) {
+  const existing = findCronExecutionSession(task.id);
+  if (existing) return existing;
+
+  const titleSuffix = normalizePreviewText(task.prompt, 42) || task.id;
+  const executionSession = createSessionRecord({
+    workspace: ownerSessionRecord.workspace,
+    title: `定时任务 · ${titleSuffix}`,
+    assistantName: ownerSessionRecord.assistantName,
+    projectId: ownerSessionRecord.projectId,
+    connectorIds: ownerSessionRecord.connectorIds,
+    agentMode: ownerSessionRecord.agentMode,
+    sessionKind: 'cron',
+    sourceSessionId: ownerSessionRecord.id,
+    cronTaskId: task.id,
+  });
+  if (executionSession.projectId) {
+    await linkSessionToProject(executionSession.projectId, executionSession);
+  }
+  return executionSession;
 }
 
 async function mossCronTick() {
@@ -6259,8 +6354,8 @@ async function mossCronTick() {
       if (!mossCronMatches(fields, now)) continue;
       if (cronFiredMinutes.get(task.id) === minuteKey) continue;
 
-      const sessionRecord = findSessionForCronTask(task.id);
-      if (!sessionRecord) {
+      const ownerSessionRecord = findSessionForCronTask(task.id);
+      if (!ownerSessionRecord) {
         const boundId = cronSessionBindings.get(task.id);
         if (boundId && !sessions.has(boundId)) {
           // Owning session was deleted — drop the orphaned task.
@@ -6286,16 +6381,17 @@ async function mossCronTick() {
         continue;
       }
       cronUnresolvableSince.delete(task.id);
-      if (sessionRecord.busy) continue; // retry on the next tick within this minute
+      const executionSession = await getOrCreateCronExecutionSession(task, ownerSessionRecord);
+      if (executionSession.busy) continue; // retry on the next tick within this minute
 
       cronFiredMinutes.set(task.id, minuteKey);
       task.lastFiredAt = nowMs;
       dirty = true;
       if (!task.recurring) removedIds.add(task.id);
 
-      console.log(`[moss-cron] firing task ${task.id} (${task.cron}) → session ${sessionRecord.id}`);
+      console.log(`[moss-cron] firing task ${task.id} (${task.cron}) → cron session ${executionSession.id}`);
       void runSessionPrompt({
-        sessionRecord,
+        sessionRecord: executionSession,
         sender: mainWindow.webContents,
         runtimePrompt: task.prompt,
         visibleUserPrompt: `⏰ 定时任务：${task.prompt}`,
@@ -6389,6 +6485,7 @@ ipcMain.handle('agent:cron-list', async () => {
     tasks: tasks.map((task) => {
       const ownerId = resolveCronOwnerSessionId(task.id);
       const ownerRecord = ownerId ? sessions.get(ownerId) : null;
+      const executionRecord = findCronExecutionSession(task.id);
       const fields = parseMossCronExpression(task.cron);
       const enabled = task.enabled !== false;
       return {
@@ -6402,6 +6499,8 @@ ipcMain.handle('agent:cron-list', async () => {
         orphaned: !ownerRecord,
         ownerSessionId: ownerRecord?.id ?? null,
         ownerSessionTitle: ownerRecord?.title ?? null,
+        executionSessionId: executionRecord?.id ?? null,
+        executionSessionTitle: executionRecord?.title ?? null,
         nextRunAt: enabled && fields ? computeNextCronRunMs(fields, nowMs) : null,
       };
     }),
@@ -6434,19 +6533,20 @@ ipcMain.handle('agent:cron-run-now', async (_event, { taskId }) => {
   if (!task) return { ok: false, error: 'Task not found.' };
   const sessionRecord = findSessionForCronTask(task.id);
   if (!sessionRecord) return { ok: false, error: '归属会话不存在（孤儿任务）' };
-  if (sessionRecord.busy) return { ok: false, error: '归属会话正在执行其他请求，请稍后再试' };
+  const executionSession = await getOrCreateCronExecutionSession(task, sessionRecord);
+  if (executionSession.busy) return { ok: false, error: '定时任务会话正在执行，请稍后再试' };
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'Window not ready.' };
   task.lastFiredAt = Date.now();
   await writeMossCronTasks(tasks);
   void runSessionPrompt({
-    sessionRecord,
+    sessionRecord: executionSession,
     sender: mainWindow.webContents,
     runtimePrompt: task.prompt,
     visibleUserPrompt: `⏰ 定时任务（手动触发）：${task.prompt}`,
   }).catch((err) => {
     console.warn('[moss-cron] manual run failed:', err?.message || err);
   });
-  return { ok: true, sessionId: sessionRecord.id };
+  return { ok: true, sessionId: executionSession.id };
 });
 
 app.whenReady().then(async () => {
@@ -7045,7 +7145,6 @@ ipcMain.handle('agent:list-sessions', async () => {
   const showAll = localEnabled && remoteEnabled;
   const visibleSessions = Array.from(sessions.values())
     .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode);
-  await Promise.all(visibleSessions.map((sessionRecord) => refreshSessionDisplayMetricsFromTranscript(sessionRecord)));
   return visibleSessions
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -7084,6 +7183,11 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
 ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   const history = await loadSessionHistoryFromSource(sessionRecord);
+  const openedMessageCount = countSessionMessages(history);
+  if (sessionRecord.messageCount !== openedMessageCount) {
+    sessionRecord.messageCount = openedMessageCount;
+    schedulePersistSession(sessionRecord);
+  }
   if (!sessionRecord.workspaceWatcher) {
     void startWorkspaceWatcher(sessionRecord);
   }

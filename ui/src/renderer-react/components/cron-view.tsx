@@ -23,6 +23,8 @@ type CronTaskInfo = {
   orphaned: boolean;
   ownerSessionId: string | null;
   ownerSessionTitle: string | null;
+  executionSessionId: string | null;
+  executionSessionTitle: string | null;
   nextRunAt: number | null;
 };
 
@@ -82,8 +84,11 @@ export function CronView({
   };
 
   const handleRunNow = async (task: CronTaskInfo) => {
-    const res = await window.agentDesktop.ipcInvoke("agent:cron-run-now", { taskId: task.id }) as { ok?: boolean; error?: string } | undefined;
-    flashNotice(res?.ok ? "已触发，请到对应会话查看" : `触发失败：${res?.error || "未知错误"}`);
+    const res = await window.agentDesktop.ipcInvoke("agent:cron-run-now", { taskId: task.id }) as { ok?: boolean; error?: string; sessionId?: string } | undefined;
+    flashNotice(res?.ok ? "已触发，请到定时任务会话查看" : `触发失败：${res?.error || "未知错误"}`);
+    if (res?.ok && res.sessionId) {
+      onOpenSession?.(res.sessionId);
+    }
     void refresh();
   };
 
@@ -181,6 +186,15 @@ export function CronView({
                       )}
                     </span>
                     <span>{task.recurring ? "循环任务" : "一次性任务"}</span>
+                    {task.executionSessionId && onOpenSession ? (
+                      <button
+                        type="button"
+                        className="text-primary underline-offset-2 transition-colors hover:underline"
+                        onClick={() => onOpenSession(task.executionSessionId!)}
+                      >
+                        打开执行会话
+                      </button>
+                    ) : null}
                     <span>下次运行：{task.enabled ? formatCronTime(task.nextRunAt) : "—"}</span>
                     <span>上次运行：{formatCronTime(task.lastFiredAt)}</span>
                     <span className="ml-auto flex items-center gap-1.5">

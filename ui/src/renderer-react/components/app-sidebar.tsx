@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   LayoutGrid,
   Monitor,
+  MessageSquareText,
   MoonStar,
   PenSquare,
   PanelLeftClose,
@@ -15,12 +16,20 @@ import {
   Trash2,
   X,
   AlarmClock,
+  ChevronDown,
+  ChevronRight,
   FolderKanban,
   Hammer,
   Plug,
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getSessionGroupPreview,
+  groupSidebarSessions,
+  SIDEBAR_SESSION_GROUP_PREVIEW_LIMIT,
+  type SessionGroupId,
+} from "@/lib/session-groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -39,12 +48,15 @@ export interface SidebarSession {
   preview: string;
   time: string;
   workspaceLabel: string;
-  messageCount: number;
   busy: boolean;
   isPinned?: boolean;
   agentMode?: 'local' | 'remote-direct';
   projectId?: string | null;
   projectName?: string | null;
+  sessionKind?: 'chat' | 'cron';
+  sourceSessionId?: string | null;
+  sourceSessionTitle?: string | null;
+  cronTaskId?: string | null;
 }
 
 export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
@@ -134,60 +146,27 @@ function SessionItem({
       onClick={onClick}
       onKeyDown={(e) => e.key === 'Enter' && onClick()}
       className={cn(
-        "group relative w-full max-w-full overflow-hidden rounded-xl border px-2 py-1 pr-14 text-left transition-colors",
+        "group relative h-8 w-full max-w-full overflow-hidden rounded-lg border px-2 text-left transition-colors",
         isActive
           ? "border-primary/25 bg-primary/10 shadow-[0_8px-24px_-24px_rgba(0,0,0,0.65)]"
           : "border-transparent bg-transparent hover:border-sidebar-border/70 hover:bg-sidebar-accent/80",
       )}
     >
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap",
-            session.busy
-              ? "bg-primary/14 text-primary"
-              : "bg-sidebar-accent text-sidebar-foreground/60",
-          )}
-        >
-          {session.messageCount}
-        </span>
-        {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={handleConfirmRename}
-            onKeyDown={handleKeyDown}
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-0 flex-1 rounded border border-primary/50 bg-background px-1 text-[13px] font-medium leading-5 text-sidebar-foreground outline-none focus:border-primary"
-          />
-        ) : (
-          <span className="block w-0 min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-sidebar-foreground">
-            {session.title}
-          </span>
-        )}
-      </div>
-      {!isEditing && session.projectName ? (
-        <div className="mt-0.5 truncate pl-7 pr-2 text-[10px] leading-4 text-sidebar-foreground/45">
-          项目 · {session.projectName}
-        </div>
-      ) : null}
-      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-1">
+      <div className="flex h-full min-w-0 items-center gap-1 overflow-hidden">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon-sm"
-              className="h-6 w-6 shrink-0 rounded-lg"
+              className="h-6 w-6 shrink-0 rounded-lg text-sidebar-foreground/60 hover:text-sidebar-foreground"
               onClick={(event) => event.stopPropagation()}
+              title="会话设置"
             >
               <Settings className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            align="end"
+            align="start"
             className="w-40"
             onClick={(event) => event.stopPropagation()}
           >
@@ -206,6 +185,23 @@ function SessionItem({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleConfirmRename}
+            onKeyDown={handleKeyDown}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-0 flex-1 rounded border border-primary/50 bg-background px-1 text-[13px] font-medium leading-5 text-sidebar-foreground outline-none focus:border-primary"
+          />
+        ) : (
+          <span className="block w-0 min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-sidebar-foreground">
+            {session.title}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -293,6 +289,18 @@ export function AppSidebar({
   onSearchChange,
 }: AppSidebarProps) {
   const showModePicker = remoteEnabled;
+  const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
+  const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
+  const [collapsedSessionGroups, setCollapsedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (searchQuery) setIsSearchOpen(true);
+  }, [searchQuery]);
+
+  React.useEffect(() => {
+    if (isSearchOpen) searchInputRef.current?.focus();
+  }, [isSearchOpen]);
 
   const filteredSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -307,13 +315,39 @@ export function AppSidebar({
     ? (newSessionMode === 'remote-direct' ? remoteSessions : localSessions)
     : filteredSessions;
 
-  const pinnedSessions = displaySessions.filter((session) => session.isPinned);
-  const recentSessions = displaySessions.filter((session) => !session.isPinned);
-  const orderedSessions = [...pinnedSessions, ...recentSessions];
+  const sessionGroups = groupSidebarSessions(displaySessions);
+  const sessionGroupIcons = {
+    chat: MessageSquareText,
+    cron: AlarmClock,
+    project: FolderKanban,
+  };
+  const visibleSessionGroups = sessionGroups.map((group) => ({
+    ...group,
+    visibleSessions: collapsedSessionGroups[group.id]
+      ? []
+      : expandedSessionGroups[group.id]
+        ? group.sessions
+        : getSessionGroupPreview(group.sessions, activeSessionId),
+  }));
+  const orderedSessions = visibleSessionGroups.flatMap((group) => group.visibleSessions);
+
+  const toggleSessionGroupCollapsed = (groupId: SessionGroupId) => {
+    setCollapsedSessionGroups((current) => ({
+      ...current,
+      [groupId]: !current[groupId],
+    }));
+  };
+
+  const toggleSessionGroupExpanded = (groupId: SessionGroupId) => {
+    setExpandedSessionGroups((current) => ({
+      ...current,
+      [groupId]: !current[groupId],
+    }));
+  };
 
   return (
     <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
-      <div className={cn("border-b border-sidebar-border/80", collapsed ? "px-2 py-3" : "px-3 py-3")}>
+      <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
         <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
           {!collapsed ? (
             <div className="min-w-0">
@@ -338,15 +372,62 @@ export function AppSidebar({
           </Button>
         </div>
 
-        <Button
-          variant="ghost"
-          className={cn("mt-3 h-8 rounded-xl", collapsed ? "w-8 justify-center px-0" : "w-full justify-start")}
-          onClick={onNewSession}
-          title="新会话"
-        >
-          <PenSquare className="h-4 w-4" />
-          {!collapsed && "新会话"}
-        </Button>
+        <div className="mt-3 grid grid-cols-1 gap-0.5">
+          <Button
+            variant="ghost"
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={onNewSession}
+            title="新会话"
+          >
+            <PenSquare className="h-4 w-4" />
+            {!collapsed && "新会话"}
+          </Button>
+          <Button
+            variant={activeView === "projects" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("projects")}
+            title="项目"
+          >
+            <FolderKanban className="h-4 w-4" />
+            {!collapsed && "项目"}
+          </Button>
+          <Button
+            variant={activeView === "skills" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("skills")}
+            title="技能"
+          >
+            <Hammer className="h-4 w-4" />
+            {!collapsed && "技能"}
+          </Button>
+          <Button
+            variant={activeView === "connectors" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("connectors")}
+            title="连接器"
+          >
+            <Plug className="h-4 w-4" />
+            {!collapsed && "连接器"}
+          </Button>
+          <Button
+            variant={activeView === "experts" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("experts")}
+            title="专家"
+          >
+            <UsersRound className="h-4 w-4" />
+            {!collapsed && "专家"}
+          </Button>
+          <Button
+            variant={activeView === "cron" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("cron")}
+            title="定时任务"
+          >
+            <AlarmClock className="h-4 w-4" />
+            {!collapsed && "定时任务"}
+          </Button>
+        </div>
       </div>
 
       {collapsed ? (
@@ -371,78 +452,139 @@ export function AppSidebar({
         </ScrollArea>
       ) : (
         <>
-          <div className="border-b border-sidebar-border px-3 py-1.5">
-            <div className="flex min-w-0 items-center gap-2.5">
+          <div className="px-3 pb-1.5 pt-0.5">
+            <div className="flex min-w-0 items-center gap-1.5">
               {showModePicker && (
-                <div className="flex h-7 shrink-0 items-center gap-2.5" role="tablist" aria-label="会话模式">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 text-[13px]" role="tablist" aria-label="会话模式">
                   <button
                     type="button"
                     role="tab"
                     aria-selected={newSessionMode !== 'remote-direct'}
                     onClick={() => onNewSessionModeChange?.('local')}
                     className={cn(
-                      "relative h-7 px-0.5 text-xs font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                      "h-7 transition-colors",
                       newSessionMode !== 'remote-direct'
-                        ? "text-sidebar-foreground after:bg-sidebar-foreground/70"
-                        : "text-sidebar-foreground/45 after:bg-transparent hover:text-sidebar-foreground/75",
+                        ? "font-medium text-sidebar-foreground"
+                        : "font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground/70",
                     )}
                   >
                     本地
                   </button>
+                  <span className="text-sidebar-foreground/25" aria-hidden="true">/</span>
                   <button
                     type="button"
                     role="tab"
                     aria-selected={newSessionMode === 'remote-direct'}
                     onClick={() => onNewSessionModeChange?.('remote-direct')}
                     className={cn(
-                      "relative h-7 px-0.5 text-xs font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                      "h-7 transition-colors",
                       newSessionMode === 'remote-direct'
-                        ? "text-sidebar-foreground after:bg-sidebar-foreground/70"
-                        : "text-sidebar-foreground/45 after:bg-transparent hover:text-sidebar-foreground/75",
+                        ? "font-medium text-sidebar-foreground"
+                        : "font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground/70",
                     )}
                   >
                     云端
                   </button>
                 </div>
               )}
-              <div className="relative min-w-0 flex-1">
+              <Button
+                variant={isSearchOpen ? "secondary" : "ghost"}
+                size="icon-sm"
+                className="h-8 w-8 shrink-0 rounded-lg"
+                onClick={() => {
+                  if (isSearchOpen) {
+                    onSearchChange("");
+                    setIsSearchOpen(false);
+                  } else {
+                    setIsSearchOpen(true);
+                  }
+                }}
+                title={isSearchOpen ? "关闭搜索" : "搜索会话"}
+                aria-label={isSearchOpen ? "关闭搜索" : "搜索会话"}
+              >
+                {isSearchOpen ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+            {isSearchOpen && (
+              <div className="relative mt-1.5">
                 <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="搜索会话"
+                  ref={searchInputRef}
+                  placeholder="搜索会话..."
                   value={searchQuery}
                   onChange={(e) => onSearchChange(e.target.value)}
-                  className="h-7 rounded-md border-sidebar-border/70 bg-transparent pl-7 pr-7 text-[11px] placeholder:text-muted-foreground/55"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return;
+                    onSearchChange("");
+                    setIsSearchOpen(false);
+                  }}
+                  className="h-7 rounded-lg border-transparent bg-sidebar-accent/45 pl-7 pr-2 text-[11px] placeholder:text-muted-foreground/55 focus-visible:border-sidebar-border"
                 />
-                {searchQuery && (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="absolute right-0 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => onSearchChange("")}
-                    title="清空搜索"
-                    aria-label="清空搜索"
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                )}
               </div>
-            </div>
+            )}
           </div>
 
           <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-1.5 p-2 max-w-full overflow-hidden">
-              {orderedSessions.length > 0 ? (
-                orderedSessions.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    isActive={activeSessionId === session.id}
-                    onClick={() => onSelectSession(session.id)}
-                    onDelete={() => onDeleteSession(session.id)}
-                    onRename={(newTitle) => onRenameSession(session.id, newTitle)}
-                    onTogglePin={() => onTogglePin(session.id)}
-                  />
-                ))
+            <div className="space-y-3 p-2 max-w-full overflow-hidden">
+              {sessionGroups.length > 0 ? (
+                visibleSessionGroups.map((group) => {
+                  const GroupIcon = sessionGroupIcons[group.id];
+                  const isCollapsed = Boolean(collapsedSessionGroups[group.id]);
+                  const isExpanded = Boolean(expandedSessionGroups[group.id]);
+                  const hasOverflow = group.sessions.length > SIDEBAR_SESSION_GROUP_PREVIEW_LIMIT;
+                  return (
+                    <section key={group.id}>
+                      <div className="mb-1 flex h-7 w-full items-center rounded-md px-1 text-[11px] font-medium text-sidebar-foreground/55">
+                        <button
+                          type="button"
+                          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+                          onClick={() => toggleSessionGroupCollapsed(group.id)}
+                          aria-expanded={!isCollapsed}
+                        >
+                          <GroupIcon className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{group.label}</span>
+                          <span className="shrink-0 tabular-nums">({group.sessions.length})</span>
+                        </button>
+                        {!isCollapsed && hasOverflow && (
+                          <button
+                            type="button"
+                            className="h-6 shrink-0 rounded-md px-1.5 text-[10px] text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+                            onClick={() => toggleSessionGroupExpanded(group.id)}
+                          >
+                            {isExpanded ? '收起' : '全部'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+                          onClick={() => toggleSessionGroupCollapsed(group.id)}
+                          aria-label={isCollapsed ? `展开${group.label}` : `折叠${group.label}`}
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                      {!isCollapsed && (
+                        <div className="space-y-0.5">
+                          {group.visibleSessions.map((session) => (
+                            <SessionItem
+                              key={session.id}
+                              session={session}
+                              isActive={activeSessionId === session.id}
+                              onClick={() => onSelectSession(session.id)}
+                              onDelete={() => onDeleteSession(session.id)}
+                              onRename={(newTitle) => onRenameSession(session.id, newTitle)}
+                              onTogglePin={() => onTogglePin(session.id)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })
               ) : (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
                   {showModePicker && newSessionMode === 'remote-direct' ? '暂无云端会话' : '还没有历史会话'}
@@ -455,41 +597,6 @@ export function AppSidebar({
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
         <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
-          <Button
-            variant={activeView === "projects" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("projects")}
-          >
-            <FolderKanban className="h-4 w-4" />
-            {!collapsed && "项目"}
-          </Button>
-          <Button
-            variant={activeView === "skills" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("skills")}
-            title="技能"
-          >
-            <Hammer className="h-4 w-4" />
-            {!collapsed && "技能"}
-          </Button>
-          <Button
-            variant={activeView === "connectors" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("connectors")}
-            title="连接器"
-          >
-            <Plug className="h-4 w-4" />
-            {!collapsed && "连接器"}
-          </Button>
-          <Button
-            variant={activeView === "experts" ? "secondary" : "ghost"}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("experts")}
-            title="专家"
-          >
-            <UsersRound className="h-4 w-4" />
-            {!collapsed && "专家"}
-          </Button>
           {apps.map((app) => (
             collapsed ? (
               <button
@@ -509,14 +616,6 @@ export function AppSidebar({
               />
             )
           ))}
-          <Button
-            variant={activeView === "cron" ? "secondary" : "ghost"}
-            className={cn("rounded-xl mt-2", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("cron")}
-          >
-            <AlarmClock className="h-4 w-4" />
-            {!collapsed && "定时任务"}
-          </Button>
         </div>
 
         {/* Apps 和 设置 */}

@@ -23,6 +23,10 @@ export type SessionSummary = {
   projectId?: string | null;
   projectName?: string | null;
   connectorIds?: string[];
+  sessionKind?: 'chat' | 'cron';
+  sourceSessionId?: string | null;
+  sourceSessionTitle?: string | null;
+  cronTaskId?: string | null;
 };
 
 export type SessionDetail = SessionSummary & {

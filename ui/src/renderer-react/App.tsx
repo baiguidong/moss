@@ -107,11 +107,8 @@ function loadPanelLayout(): LayoutState {
   }
 }
 
-function toSidebarSessions(
-  summaries: SessionSummary[],
-  pinnedIds: Set<string>
-) {
-  return summaries.map((session) => ({
+function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) {
+  return summaries.map(({ messageCount: _messageCount, ...session }) => ({
     ...session,
     preview: formatSidebarPreview(session.preview),
     time: formatRelativeTime(session.updatedAt),
@@ -1541,14 +1538,11 @@ export default function App() {
       questionRequests.some((request) => request.sessionId === session.id)
         ? {
             ...session,
-            ...(session.id === activeSessionId ? { messageCount: visibleChatMessageCount } : {}),
             preview: '等待你回答问题',
           }
-        : session.id === activeSessionId
-          ? { ...session, messageCount: visibleChatMessageCount }
-          : session
+        : session
     )),
-    [activeSessionId, baseSidebarSessions, questionRequests, visibleChatMessageCount],
+    [baseSidebarSessions, questionRequests],
   );
 
   const activeQuestionRequest = React.useMemo(() => {
