@@ -4,13 +4,13 @@ import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
 import { cn } from '@/lib/utils';
 import {
-  QUICK_SELECTION_LIMIT,
   rankRecentItems,
   useRecentIds,
 } from '@/lib/recent-selection';
 import type { InstalledConnector } from '../types';
 
 const CONNECTOR_RECENTS_KEY = 'ui.recentConnectors.v1';
+const CONNECTOR_QUICK_SELECTION_LIMIT = 4;
 
 type ConnectorSelectionAreaProps = {
   connectors: InstalledConnector[];
@@ -97,7 +97,7 @@ export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
       (connector) => connector.id,
       selectedConnectorIds,
       recentIds,
-      QUICK_SELECTION_LIMIT,
+      CONNECTOR_QUICK_SELECTION_LIMIT,
     ),
     [installed, recentIds, selectedConnectorIds],
   );
@@ -146,7 +146,7 @@ export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
         >
           <ListFilter className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">选择连接器</span>
-          {installed.length > QUICK_SELECTION_LIMIT ? (
+          {installed.length > CONNECTOR_QUICK_SELECTION_LIMIT ? (
             <span className="text-[11px] text-muted-foreground/70">{installed.length}</span>
           ) : null}
         </Button>
@@ -166,6 +166,9 @@ export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
         emptyLabel="没有匹配的连接器"
         managerLabel="管理连接器"
         onOpenManager={onOpenConnectorHub}
+        managerPlacement="left"
+        confirmLabel="确定"
+        onConfirm={closePicker}
       >
         <div className="space-y-1">
           {filteredConnectors.map((connector) => {

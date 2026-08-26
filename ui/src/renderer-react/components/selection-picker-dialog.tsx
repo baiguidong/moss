@@ -17,6 +17,9 @@ type SelectionPickerDialogProps = {
   emptyLabel: string;
   managerLabel: string;
   onOpenManager?: () => void;
+  managerPlacement?: 'left' | 'right';
+  confirmLabel?: string;
+  onConfirm?: () => void;
   children: React.ReactNode;
 };
 
@@ -34,6 +37,9 @@ export function SelectionPickerDialog({
   emptyLabel,
   managerLabel,
   onOpenManager,
+  managerPlacement = 'right',
+  confirmLabel,
+  onConfirm,
   children,
 }: SelectionPickerDialogProps) {
   React.useEffect(() => {
@@ -94,24 +100,54 @@ export function SelectionPickerDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-          <span className="text-xs text-muted-foreground">
-            {query ? `${resultCount} 个结果` : `共 ${totalCount} 个`}
-          </span>
-          {onOpenManager ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                onClose();
-                onOpenManager();
-              }}
-            >
-              {managerLabel}
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          ) : null}
+        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            {onOpenManager && managerPlacement === 'left' ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onOpenManager();
+                }}
+              >
+                {managerLabel}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : null}
+            {managerPlacement !== 'left' ? (
+              <span className="text-xs text-muted-foreground">
+                {query ? `${resultCount} 个结果` : `共 ${totalCount} 个`}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {managerPlacement === 'left' ? (
+              <span className="text-xs text-muted-foreground">
+                {query ? `${resultCount} 个结果` : `共 ${totalCount} 个`}
+              </span>
+            ) : null}
+            {onOpenManager && managerPlacement === 'right' ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onOpenManager();
+                }}
+              >
+                {managerLabel}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : null}
+            {confirmLabel && onConfirm ? (
+              <Button type="button" size="sm" className="min-w-[72px]" onClick={onConfirm}>
+                {confirmLabel}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </section>
     </div>
