@@ -349,8 +349,8 @@ export function AppSidebar({
   return (
     <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
-        <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
-          {!collapsed ? (
+        <div className={cn("flex items-center", collapsed ? "justify-start" : "justify-between gap-3")}>
+          {!collapsed && (
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
@@ -359,13 +359,11 @@ export function AppSidebar({
                 </div>
               </div>
             </div>
-          ) : (
-            <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
           )}
           <Button
             variant="ghost"
             size="icon-sm"
-            className={cn("h-8 w-8 rounded-xl", collapsed ? "mt-2" : "")}
+            className="h-8 w-8 rounded-xl"
             onClick={onToggleCollapse}
             title={collapsed ? "展开侧栏" : "收起侧栏"}
           >
@@ -376,7 +374,7 @@ export function AppSidebar({
         <div className="mt-3 grid grid-cols-1 gap-0.5">
           <Button
             variant="ghost"
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={onNewSession}
             title="新会话"
           >
@@ -385,7 +383,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("projects")}
             title="项目"
           >
@@ -394,7 +392,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "skills" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("skills")}
             title="技能"
           >
@@ -403,7 +401,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "connectors" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("connectors")}
             title="连接器"
           >
@@ -412,7 +410,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "experts" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("experts")}
             title="专家"
           >
@@ -421,7 +419,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "cron" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("cron")}
             title="定时任务"
           >
@@ -430,7 +428,7 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "audit" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("audit")}
             title="审计中心"
           >
@@ -442,7 +440,7 @@ export function AppSidebar({
 
       {collapsed ? (
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col items-center gap-1.5 p-2">
+          <div className="flex flex-col items-start gap-1.5 p-2">
             {orderedSessions.map((session) => (
               <button
                 key={session.id}
