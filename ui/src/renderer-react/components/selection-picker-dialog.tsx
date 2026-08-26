@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { acquireNativeOverlayVisibility } from '@/lib/native-overlay-visibility';
 
 type SelectionPickerDialogProps = {
   open: boolean;
@@ -51,9 +53,14 @@ export function SelectionPickerDialog({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose, open]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    return acquireNativeOverlayVisibility();
+  }, [open]);
+
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
@@ -64,9 +71,9 @@ export function SelectionPickerDialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="flex max-h-[min(640px,calc(100vh-32px))] w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
+        className="flex h-[calc(100vh-32px)] min-h-0 w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl sm:max-h-[640px]"
       >
-        <div className="flex items-start gap-3 border-b border-border px-4 py-3.5">
+        <div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3.5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
             {icon}
           </span>
@@ -79,7 +86,7 @@ export function SelectionPickerDialog({
           </Button>
         </div>
 
-        <div className="border-b border-border px-4 py-3">
+        <div className="shrink-0 border-b border-border px-4 py-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -92,7 +99,7 @@ export function SelectionPickerDialog({
           </div>
         </div>
 
-        <div className="min-h-[160px] flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           {resultCount > 0 ? children : (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
               {emptyLabel}
@@ -100,7 +107,7 @@ export function SelectionPickerDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2">
             {onOpenManager && managerPlacement === 'left' ? (
               <Button
@@ -150,6 +157,7 @@ export function SelectionPickerDialog({
           </div>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

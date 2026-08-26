@@ -4719,6 +4719,17 @@ async function openExternalHttpUrl(url) {
   }
 }
 
+function openConnectorAuthorizationUrl(payload, browserMode = 'system') {
+  if (browserMode === 'moss') {
+    emitToRenderer('browser:open', payload);
+    return;
+  }
+  void (async () => {
+    const openedInSystemBrowser = await openExternalHttpUrl(payload?.url);
+    if (!openedInSystemBrowser) emitToRenderer('browser:open', payload);
+  })();
+}
+
 function getExternalNavigationHref(url) {
   if (typeof url !== 'string' || !url.trim()) return false;
   const trimmed = url.trim();
@@ -5502,15 +5513,10 @@ const mossAppEventHandler = createMossAppEventHandler(
     setupConnectorCli: (connectorId, context = {}) => setupConnectorCli(connectorId, {
       sessionId: context.sessionId || null,
       openBrowser: ({ url, sessionId }) => {
-        void (async () => {
-          const openedInSystemBrowser = await openExternalHttpUrl(url);
-          if (!openedInSystemBrowser) {
-            emitToRenderer('browser:open', {
-              url,
-              sessionId: sessionId || null,
-            });
-          }
-        })();
+        openConnectorAuthorizationUrl({
+          url,
+          sessionId: sessionId || null,
+        });
       },
       emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
       onSetupComplete: () => resetLocalRuntimesForMcpReload(),
@@ -6794,6 +6800,48 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
     saveDesktopMcpStore(store);
   }
 
+  const configuredAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';
+  if (connectorServer && configuredAuthUrl) {
+    const configuredAuthContext = getConnectorProviderAuthContext(connectorServer);
+    const { browserMode, ...captureContext } = configuredAuthContext || {};
+    openConnectorAuthorizationUrl({
+      url: configuredAuthUrl,
+      sessionId,
+      connectorAuth: {
+        connectorId: connectorServer.connectorId,
+        serverName,
+        displayName: connectorServer.connectorName,
+        ...captureContext,
+      },
+    }, browserMode);
+    await updateConnectorMcpAuthState(connectorServer.connectorId, {
+      connected: false,
+      setupStatus: 'awaiting-token',
+      setupMessage: '授权页已打开，请在浏览器完成授权',
+    });
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-provider-auth-opened',
+      connectorId: connectorServer.connectorId,
+    });
+    const reload = resetLocalRuntimesForMcpReload();
+    mossLog('info', 'mcp', 'Connector MCP configured auth opened', {
+      name: serverName,
+      connectorId: connectorServer.connectorId,
+      providerId: connectorServer.providerId,
+      browserMode,
+      ...reload,
+    });
+    return getDesktopMcpPayload({
+      ...reload,
+      auth: {
+        name: serverName,
+        connectorId: connectorServer.connectorId,
+        status: 'authorization_url_opened',
+        authorizationUrl: configuredAuthUrl,
+      },
+    });
+  }
+
   const authenticateDesktopMcpServer = await getAuthenticateDesktopMcpServerFn();
   if (connectorServer) {
     await updateConnectorMcpAuthState(connectorServer.connectorId, {
@@ -6821,62 +6869,18 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
       },
       onAuthorizationUrl: (url) => {
         authorizationUrlOpened = true;
-        void (async () => {
-          const openedInSystemBrowser = await openExternalHttpUrl(url);
-          if (!openedInSystemBrowser) {
-            emitToRenderer('browser:open', {
-              url,
-              sessionId,
-              mcpAuth: {
-                serverName,
-                displayName: connectorServer?.connectorName || serverName,
-              },
-            });
-          }
-        })();
+        openConnectorAuthorizationUrl({
+          url,
+          sessionId,
+          mcpAuth: {
+            serverName,
+            displayName: connectorServer?.connectorName || serverName,
+          },
+        });
       },
       skipBrowserOpen: true,
     });
   } catch (error) {
-    const metadataAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';
-    if (metadataAuthUrl) {
-      const metadataAuthContext = getConnectorProviderAuthContext(connectorServer);
-      emitToRenderer('browser:open', {
-        url: metadataAuthUrl,
-        sessionId,
-        connectorAuth: {
-          connectorId: connectorServer.connectorId,
-          serverName,
-          displayName: connectorServer.connectorName,
-          ...(metadataAuthContext || {}),
-        },
-      });
-      await updateConnectorMcpAuthState(connectorServer.connectorId, {
-        connected: false,
-        setupStatus: 'awaiting-token',
-        setupMessage: '授权页已打开，请在浏览器完成授权',
-      });
-      emitToRenderer('connector-hub:changed', {
-        reason: 'mcp-provider-auth-opened',
-        connectorId: connectorServer.connectorId,
-      });
-      const reload = resetLocalRuntimesForMcpReload();
-      mossLog('info', 'mcp', 'Connector MCP provider auth opened', {
-        name: serverName,
-        connectorId: connectorServer.connectorId,
-        providerId: connectorServer.providerId,
-        ...reload,
-      });
-      return getDesktopMcpPayload({
-        ...reload,
-        auth: {
-          name: serverName,
-          connectorId: connectorServer.connectorId,
-          status: 'authorization_url_opened',
-          authorizationUrl: metadataAuthUrl,
-        },
-      });
-    }
     if (connectorServer) {
       const message = getConnectorMcpAuthFailureMessage(connectorServer, error, {
         authorizationUrlOpened,

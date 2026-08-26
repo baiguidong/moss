@@ -15,6 +15,10 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  isNativeOverlayVisible,
+  onNativeOverlayVisibilityChange,
+} from "@/lib/native-overlay-visibility";
 import type {
   BrowserAuthNavigation,
   BrowserConnectorAuthContext,
@@ -93,6 +97,7 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
   const [state, setState] = React.useState<BrowserState | null>(null);
   const [inputUrl, setInputUrl] = React.useState("");
   const [commandError, setCommandError] = React.useState<string | null>(null);
+  const [nativeOverlayOpen, setNativeOverlayOpen] = React.useState(isNativeOverlayVisible);
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId) || state?.tabs[0] || null;
 
   const applyState = React.useCallback(async (request: Promise<BrowserState>) => {
@@ -127,6 +132,8 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     };
   }, [sessionKey]);
 
+  React.useEffect(() => onNativeOverlayVisibilityChange(setNativeOverlayOpen), []);
+
   React.useEffect(() => {
     if (!activeTab || editingAddressRef.current) return;
     setInputUrl(displayUrl(activeTab.url));
@@ -141,7 +148,7 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       const rect = host.getBoundingClientRect();
       window.agentDesktop.browser.setHost({
         sessionId: sessionKey,
-        visible: rect.width > 0 && rect.height > 0,
+        visible: !nativeOverlayOpen && rect.width > 0 && rect.height > 0,
         bounds: {
           x: rect.left,
           y: rect.top,
@@ -166,7 +173,7 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       window.removeEventListener("scroll", scheduleBounds, true);
       window.agentDesktop.browser.setHost({ sessionId: sessionKey, visible: false });
     };
-  }, [sessionKey]);
+  }, [nativeOverlayOpen, sessionKey]);
 
   const processAuthNavigation = React.useCallback((navigation: BrowserAuthNavigation) => {
     if (navigation.sessionId !== sessionKey || pendingAuthNavigationIds.has(navigation.id)) return;

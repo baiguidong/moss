@@ -5,6 +5,7 @@
       "provider_id": "baidu-netdisk",
       "connector_ids": ["baidu-netdisk"],
       "auth_url": "https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=QHOuRXiepJBMjtk0esLhrPoNlQyYd0mF&redirect_uri=oob&scope=basic,netdisk",
+      "browser_mode": "moss",
       "token_param": "access_token",
       "allowed_hosts": ["baidu.com"]
     }

@@ -5,6 +5,8 @@ import {
   applyConnectorCredentials,
   buildConnectorCliEnv,
   cliStatusStatePatch,
+  extractAuthorizationUrl,
+  getConnectorProviderAuthContext,
   matchesCliStatus,
   normalizeConnectorCredentialSchema,
   normalizeConnectorMcpConfig,
@@ -60,6 +62,24 @@ describe('connector catalog pruning', () => {
 });
 
 describe('connector MCP config normalization', () => {
+  it('takes the provider browser strategy from connector auth configuration', () => {
+    expect(getConnectorProviderAuthContext({
+      authConfig: {
+        authUrl: 'https://auth.example.test/authorize',
+        browserMode: 'moss',
+        tokenParam: 'access_token',
+        allowedHosts: ['example.test'],
+      },
+    })).toEqual({
+      browserMode: 'moss',
+      tokenParam: 'access_token',
+      allowedHosts: ['example.test'],
+    });
+    expect(getConnectorProviderAuthContext({
+      authConfig: { authUrl: 'https://auth.example.test/authorize' },
+    })?.browserMode).toBe('system');
+  });
+
   it('infers HTTP for remote servers that only provide a URL', () => {
     expect(normalizeMcpConfig({
       mcpServers: {
@@ -231,6 +251,12 @@ describe('connector MCP config normalization', () => {
 });
 
 describe('connector CLI compatibility', () => {
+  it('matches authorization URLs against the connector-configured domain', () => {
+    const url = 'https://accounts.feishu.cn/oauth/v1/device/verify?user_code=example';
+    expect(extractAuthorizationUrl(`Open this URL: ${url}`, 'accounts.feishu.cn')).toBe(url);
+    expect(extractAuthorizationUrl(url, 'open.feishu.cn')).toBe('');
+  });
+
   it('maps live CLI status back to connector state', () => {
     expect(cliStatusStatePatch(true)).toEqual({
       connected: true,

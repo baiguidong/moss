@@ -570,8 +570,12 @@ function normalizeConnectorAuthConfig(...sources) {
       candidate.capture_hosts,
     );
     const allowedHosts = explicitAllowedHosts.length > 0 ? explicitAllowedHosts : [parsed.hostname];
+    const configuredBrowserMode = normalizeString(
+      candidate.browserMode || candidate.browser_mode,
+    ).toLowerCase();
     return {
       authUrl,
+      browserMode: configuredBrowserMode === 'moss' ? 'moss' : 'system',
       tokenParam: normalizeString(
         candidate.tokenParam ||
         candidate.token_param ||
@@ -1121,6 +1125,7 @@ export function getConnectorProviderAuthContext(connector) {
   const authConfig = normalizeConnectorAuthConfig(connector?.authConfig, connector) || findCloudAuthProvider(connector);
   if (!authConfig?.authUrl) return null;
   return {
+    browserMode: authConfig.browserMode === 'moss' ? 'moss' : 'system',
     tokenParam: normalizeString(authConfig.tokenParam) || 'access_token',
     allowedHosts: normalizeStringList(authConfig.allowedHosts),
   };
@@ -1181,7 +1186,7 @@ function cleanUrlCandidate(value) {
   return String(value || '').replace(/[),.;\]}>"'，。；）】》]+$/g, '');
 }
 
-function extractAuthorizationUrl(text, domain) {
+export function extractAuthorizationUrl(text, domain) {
   const urls = String(text || '').match(/https?:\/\/[^\s"'<>]+/gi) || [];
   const normalizedDomain = normalizeString(domain).toLowerCase();
   for (const rawUrl of urls) {
