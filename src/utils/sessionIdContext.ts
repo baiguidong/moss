@@ -22,6 +22,7 @@ type SessionIdContext = {
   sessionId: SessionId
   projectDir?: string | null
   taskScope?: TaskScope
+  environment?: Record<string, string>
 }
 
 const sessionIdStorage = new AsyncLocalStorage<SessionIdContext>()
@@ -36,6 +37,10 @@ export function getSessionProjectDirContext(): string | null | undefined {
 
 export function getTaskScopeContext(): TaskScope | undefined {
   return sessionIdStorage.getStore()?.taskScope
+}
+
+export function getSessionEnvironmentContext(): Record<string, string> | undefined {
+  return sessionIdStorage.getStore()?.environment
 }
 
 export function setTaskScopeContext(taskScope: TaskScope | undefined): void {
@@ -53,8 +58,9 @@ export function runWithSessionIdContext<T>(
   projectDir: string | null | undefined,
   fn: () => T,
   taskScope?: TaskScope,
+  environment?: Record<string, string>,
 ): T {
-  return sessionIdStorage.run({ sessionId, projectDir, taskScope }, fn)
+  return sessionIdStorage.run({ sessionId, projectDir, taskScope, environment }, fn)
 }
 
 function runWithExistingSessionIdContext<T>(
@@ -69,8 +75,9 @@ export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
   projectDir: string | null | undefined,
   fn: () => AsyncGenerator<T, TReturn, unknown>,
   taskScope?: TaskScope,
+  environment?: Record<string, string>,
 ): AsyncGenerator<T, TReturn, unknown> {
-  const context: SessionIdContext = { sessionId, projectDir, taskScope }
+  const context: SessionIdContext = { sessionId, projectDir, taskScope, environment }
   const iterator = runWithExistingSessionIdContext(context, fn)
 
   try {

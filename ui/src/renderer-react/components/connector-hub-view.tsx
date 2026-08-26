@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Cable,
   Download,
+  ExternalLink,
   KeyRound,
   Loader2,
   Plug,
@@ -11,6 +12,7 @@ import {
   Search,
   Terminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -50,10 +52,11 @@ function connectorTypeLabel(connector: ConnectorCatalogItem) {
 function connectorStatusLabel(connector: ConnectorCatalogItem) {
   if (!connector.installed) return "";
   if (connector.connected) return "已连接";
-  if (connector.type === "cli" && connector.setupStatus === "running") return "安装中";
-  if (connector.type === "cli" && connector.setupStatus === "authenticating") return "认证中";
-  if (connector.type === "cli" && connector.setupStatus === "failed") return "设置失败";
-  if (connector.type === "cli" && connector.setupStatus === "pending") return "待设置";
+  if (connector.credentialSchema?.fields?.length && !connector.credentialsConfigured) return "待配置";
+  if (connector.hasCli && connector.setupStatus === "running") return "安装中";
+  if (connector.hasCli && connector.setupStatus === "authenticating") return "认证中";
+  if (connector.hasCli && connector.setupStatus === "failed") return "设置失败";
+  if (connector.hasCli && connector.setupStatus === "pending") return "待设置";
   if (connector.authMode) return "待授权";
   return "已安装";
 }
@@ -87,31 +90,6 @@ function ConnectorIcon({
   );
 }
 
-function CategoryChip({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "h-8 shrink-0 rounded-lg px-3 text-sm transition-colors",
-        active
-          ? "bg-foreground text-background"
-          : "bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function ConnectorCard({
   connector,
   busy,
@@ -128,13 +106,16 @@ function ConnectorCard({
   onUninstall: () => void;
 }) {
   const installed = Boolean(installedRecord || connector.installed);
-  const canAuthenticate = installed && connector.type === "mcp" && !connector.connected;
-  const examples = connector.examples || [];
+  const activeConnector = installedRecord || connector;
+  const hasCredentialFields = Boolean(activeConnector.credentialSchema?.fields?.length);
+  const canAuthenticate = installed && (
+    hasCredentialFields || (!activeConnector.connected && Boolean(activeConnector.hasMcp))
+  );
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 bg-card/82 p-4 shadow-[0_16px_48px_-40px_rgba(0,0,0,0.55)]">
-      <div className="flex min-w-0 items-start gap-3">
-        <ConnectorIcon connector={connector} className="h-10 w-10" />
-        <div className="min-w-0 flex-1">
+    <div className="h-[130px] min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5 shadow-[0_16px_48px_-40px_rgba(0,0,0,0.55)] transition-colors hover:border-border hover:bg-card">
+      <div className="flex h-full min-w-0 items-start gap-2.5">
+        <ConnectorIcon connector={connector} className="h-9 w-9" />
+        <div className="flex h-full min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 items-start gap-2">
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-foreground" title={connector.name}>
@@ -153,7 +134,7 @@ function ConnectorCard({
                     className="h-8 w-8 rounded-lg"
                     onClick={onAuthenticate}
                     disabled={busy}
-                    title="连接/授权"
+                    title={hasCredentialFields ? "配置凭据" : "连接/授权"}
                   >
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                   </Button>
@@ -182,10 +163,10 @@ function ConnectorCard({
               </Button>
             )}
           </div>
-          <p className="mt-3 h-11 overflow-hidden text-sm leading-5 text-muted-foreground">
+          <p className="mt-2 h-9 overflow-hidden text-xs leading-[18px] text-muted-foreground">
             {connector.description || "暂无描述"}
           </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="mt-auto flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
             <Badge variant="secondary" className="rounded-md text-[11px]">
               {connectorTypeLabel(connector)}
             </Badge>
@@ -196,13 +177,10 @@ function ConnectorCard({
               <Badge variant="outline" className="rounded-md text-[11px]">{connector.authMode}</Badge>
             ) : null}
             {installed ? (
-              <Badge variant="outline" className="rounded-md text-[11px]">
+              <Badge variant={activeConnector.connected ? "secondary" : "outline"} className="rounded-md text-[11px]">
                 {connectorStatusLabel(installedRecord || connector)}
               </Badge>
             ) : null}
-          </div>
-          <div className="mt-3 truncate text-xs text-muted-foreground">
-            {examples[0] || connector.source}
           </div>
         </div>
       </div>
@@ -219,6 +197,9 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
   const [error, setError] = React.useState("");
   const [notice, setNotice] = React.useState("");
   const [busyIds, setBusyIds] = React.useState<Set<string>>(() => new Set());
+  const [credentialTarget, setCredentialTarget] = React.useState<InstalledConnector | null>(null);
+  const [credentialValues, setCredentialValues] = React.useState<Record<string, string>>({});
+  const [credentialSaving, setCredentialSaving] = React.useState(false);
 
   const installedLookup = React.useMemo(() => {
     const map = new Map<string, InstalledConnector>();
@@ -270,6 +251,40 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
     });
   }, []);
 
+  const openCredentialEditor = React.useCallback((connector: InstalledConnector) => {
+    const values = Object.fromEntries(
+      (connector.credentialSchema?.fields || []).map((field) => [
+        field.key,
+        connector.configuredFields?.includes(field.key) ? "" : (field.defaultValue || ""),
+      ]),
+    );
+    setCredentialValues(values);
+    setCredentialTarget(connector);
+    setError("");
+  }, []);
+
+  const saveCredentials = React.useCallback(async () => {
+    if (!credentialTarget) return;
+    setCredentialSaving(true);
+    setError("");
+    try {
+      const res = await window.agentDesktop.saveConnectorCredentials({
+        connectorId: credentialTarget.id,
+        values: credentialValues,
+      });
+      if (!res?.success) throw new Error(res?.error || "保存连接器凭据失败");
+      setCredentialTarget(null);
+      setCredentialValues({});
+      flashNotice(`已配置 ${credentialTarget.name}`);
+      await loadConnectors();
+      await onConnectorsChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCredentialSaving(false);
+    }
+  }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onConnectorsChanged]);
+
   const installConnector = React.useCallback(async (connector: ConnectorCatalogItem) => {
     setBusy(connector.id, true);
     setError("");
@@ -279,18 +294,24 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       flashNotice(`已安装 ${connector.name}`);
       await loadConnectors();
       await onConnectorsChanged?.();
-      if (connector.type === "cli" && res.data?.connector && onRunCliSetup) {
-        onRunCliSetup(res.data.connector, res.data.cli || null);
+      const installedConnector = res.data?.connector;
+      if (installedConnector?.credentialSchema?.fields?.length) {
+        openCredentialEditor(installedConnector);
+        return;
       }
-      if (connector.type === "mcp" && connector.authMode && res.data?.connector && onAuthenticateMcp) {
-        onAuthenticateMcp(res.data.connector);
+      const needsCliSetup = connector.type === "cli" || Boolean(installedConnector?.requiresCliSetup);
+      if (needsCliSetup && installedConnector && onRunCliSetup) {
+        onRunCliSetup(installedConnector, res.data.cli || null);
+      }
+      if (!needsCliSetup && connector.type === "mcp" && connector.authMode && installedConnector && onAuthenticateMcp) {
+        onAuthenticateMcp(installedConnector);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(connector.id, false);
     }
-  }, [flashNotice, loadConnectors, onAuthenticateMcp, onConnectorsChanged, onRunCliSetup, setBusy]);
+  }, [flashNotice, loadConnectors, onAuthenticateMcp, onConnectorsChanged, onRunCliSetup, openCredentialEditor, setBusy]);
 
   const uninstallConnector = React.useCallback(async (connector: ConnectorCatalogItem) => {
     setBusy(connector.id, true);
@@ -336,31 +357,45 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/70 bg-background/92 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Plug className="h-4.5 w-4.5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-foreground">连接器</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {tab === "installed" ? `${installed.length} 个已安装` : `${connectors.length} 个可用连接器`}
-              {notice ? ` · ${notice}` : ""}
-            </div>
+      <div className="shrink-0 border-b border-border/70 bg-background/92 px-4 py-2 backdrop-blur sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-muted/70 p-0.5">
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTab(item.id)}
+                className={cn(
+                  "h-7 rounded-md px-3 text-xs font-semibold transition-colors",
+                  tab === item.id
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item.label}{item.id === "installed" ? ` ${installed.length}` : ""}
+              </button>
+            ))}
           </div>
-          <div className="relative w-full sm:w-[320px]">
+          {notice ? (
+            <div className="min-w-[120px] flex-1 truncate text-xs text-muted-foreground">{notice}</div>
+          ) : (
+            <div className="hidden min-w-[80px] flex-1 truncate text-xs text-muted-foreground sm:block">
+              {tab === "installed" ? `${installed.length} 个已安装` : `${visible.length} / ${connectors.length} 个连接器`}
+            </div>
+          )}
+          <div className="relative ml-auto w-full sm:w-[300px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              className="h-9 rounded-lg pl-9"
-              placeholder="搜索连接器名称或描述"
+              className="h-8 rounded-lg pl-9 text-sm"
+              placeholder={tab === "installed" ? "搜索已安装连接器" : "搜索连接器名称或描述"}
             />
           </div>
           <Button
             variant="outline"
             size="icon-sm"
-            className="h-9 w-9 rounded-lg"
+            className="h-8 w-8 rounded-lg"
             onClick={() => void loadConnectors()}
             disabled={loading}
             title="刷新"
@@ -371,36 +406,25 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto w-full max-w-[1180px] px-4 py-4 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2">
-            {tabs.map((item) => (
-              <CategoryChip
-                key={item.id}
-                active={tab === item.id}
-                onClick={() => setTab(item.id)}
-              >
-                {item.label}{item.id === "installed" ? ` ${installed.length}` : ""}
-              </CategoryChip>
-            ))}
-          </div>
-
+        <div className="mx-auto w-full max-w-[1180px] px-4 py-2.5 sm:px-5">
           {error ? (
-            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
             </div>
           ) : null}
 
-          <div className="mt-4">
+          <div className={cn(error && "mt-2.5")}>
             {loading && visible.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-5 py-12 text-center text-sm text-muted-foreground">
+              <div className="flex h-44 items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 加载中...
               </div>
             ) : visible.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-5 py-12 text-center text-sm text-muted-foreground">
+              <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
                 没有找到匹配的连接器
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
                 {visible.map((connector) => {
                   const installedRecord = installedLookup.get(connector.id);
                   return (
@@ -411,8 +435,12 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
                       busy={busyIds.has(connector.id)}
                       onInstall={() => void installConnector(connector)}
                       onAuthenticate={() => {
-                        const record = installedRecord || connector;
-                        if (onAuthenticateMcp) onAuthenticateMcp(record as InstalledConnector);
+                        const record = (installedRecord || connector) as InstalledConnector;
+                        if (record.credentialSchema?.fields?.length) {
+                          openCredentialEditor(record);
+                        } else if (onAuthenticateMcp) {
+                          onAuthenticateMcp(record);
+                        }
                       }}
                       onUninstall={() => void uninstallConnector(connector)}
                     />
@@ -421,14 +449,109 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
               </div>
             )}
           </div>
-
-          {payload?.catalogPath ? (
-            <div className="mt-5 truncate text-xs text-muted-foreground">
-              catalog: {payload.catalogPath}
-            </div>
-          ) : null}
         </div>
       </ScrollArea>
+
+      {credentialTarget?.credentialSchema ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target && !credentialSaving) setCredentialTarget(null);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-label={credentialTarget.credentialSchema.title}
+            className="flex max-h-[min(720px,calc(100vh-32px))] w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveCredentials();
+            }}
+          >
+            <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <KeyRound className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-foreground">
+                  {credentialTarget.credentialSchema.title}
+                </h2>
+                {credentialTarget.credentialSchema.description ? (
+                  <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                    {credentialTarget.credentialSchema.description}
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="h-8 w-8 shrink-0 rounded-lg"
+                disabled={credentialSaving}
+                onClick={() => setCredentialTarget(null)}
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {credentialTarget.credentialSchema.fields.map((field) => {
+                const configured = credentialTarget.configuredFields?.includes(field.key);
+                return (
+                  <label key={field.key} className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-foreground">
+                      {field.label}{field.required ? " *" : ""}
+                    </span>
+                    <Input
+                      type={field.type === "password" ? "password" : "text"}
+                      value={credentialValues[field.key] || ""}
+                      placeholder={configured ? "已保存" : field.placeholder}
+                      autoComplete={field.type === "password" ? "new-password" : "off"}
+                      onChange={(event) => setCredentialValues((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))}
+                    />
+                    {field.description ? (
+                      <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+                        {field.description}
+                      </span>
+                    ) : null}
+                  </label>
+                );
+              })}
+              {credentialTarget.credentialSchema.docUrl ? (
+                <a
+                  href={credentialTarget.credentialSchema.docUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                >
+                  {credentialTarget.credentialSchema.docLabel || "获取凭据"}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ) : null}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={credentialSaving}
+                onClick={() => setCredentialTarget(null)}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={credentialSaving}>
+                {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                保存
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

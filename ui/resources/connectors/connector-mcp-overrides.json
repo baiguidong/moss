@@ -9,6 +9,51 @@
           }
         }
       }
+    },
+    "mx-ds-mcp": {
+      "servers": {
+        "mx-ds-mcp": {
+          "oauth": {
+            "clientName": "WorkBuddy"
+          }
+        }
+      }
+    },
+    "tencent-health-nges": {
+      "servers": {
+        "nges": {
+          "oauth": {
+            "clientName": "WorkBuddy"
+          }
+        }
+      }
+    },
+    "pkulaw": {
+      "servers": {
+        "pkulaw": {
+          "oauth": {
+            "omitRegistrationScope": true
+          }
+        }
+      }
+    },
+    "kling-ai-plugin": {
+      "servers": {
+        "kling-ai-plugin": {
+          "oauth": {
+            "clientName": "Plugin-WorkBuddy"
+          }
+        }
+      }
+    },
+    "kling-ai-plugin-ai": {
+      "servers": {
+        "kling-ai-plugin": {
+          "oauth": {
+            "clientName": "Plugin-WorkBuddy"
+          }
+        }
+      }
     }
   }
 }

@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   installConnector: (payload) => ipcRenderer.invoke('connector-hub:install', payload),
   uninstallConnector: (payload) => ipcRenderer.invoke('connector-hub:uninstall', payload),
   saveConnectorMcpToken: (payload) => ipcRenderer.invoke('connector-hub:save-mcp-token', payload),
+  saveConnectorCredentials: (payload) => ipcRenderer.invoke('connector-hub:save-credentials', payload),
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
   pickFiles: () => ipcRenderer.invoke('agent:pick-files'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),

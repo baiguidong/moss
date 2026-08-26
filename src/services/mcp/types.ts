@@ -44,6 +44,7 @@ const McpOAuthConfigSchema = lazySchema(() =>
     clientName: z.string().min(1).optional(),
     clientId: z.string().optional(),
     callbackPort: z.number().int().positive().optional(),
+    omitRegistrationScope: z.boolean().optional(),
     authServerMetadataUrl: z
       .string()
       .url()

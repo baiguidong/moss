@@ -82,6 +82,30 @@ export type Project = {
 
 export type ConnectorType = 'mcp' | 'cli' | 'unknown';
 
+export type ConnectorCredentialField = {
+  key: string;
+  label: string;
+  labelEn?: string;
+  placeholder?: string;
+  placeholderEn?: string;
+  description?: string;
+  descriptionEn?: string;
+  type: 'text' | 'password';
+  required: boolean;
+  defaultValue?: string;
+};
+
+export type ConnectorCredentialSchema = {
+  title: string;
+  titleEn?: string;
+  description?: string;
+  descriptionEn?: string;
+  docUrl?: string;
+  docLabel?: string;
+  docLabelEn?: string;
+  fields: ConnectorCredentialField[];
+};
+
 export type ConnectorCatalogItem = {
   id: string;
   source: string;
@@ -99,6 +123,11 @@ export type ConnectorCatalogItem = {
   hasMcp?: boolean;
   hasCli?: boolean;
   hasSkills?: boolean;
+  hasCredentialSchema?: boolean;
+  requiresCliSetup?: boolean;
+  credentialSchema?: ConnectorCredentialSchema | null;
+  configuredFields?: string[];
+  credentialsConfigured?: boolean;
   installed?: boolean;
   enabled?: boolean;
   connected?: boolean;
@@ -536,6 +565,7 @@ declare global {
       installConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector?: InstalledConnector; cli?: Record<string, any> | null }; error?: string }>;
       uninstallConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { ok: boolean; id: string }; error?: string }>;
       saveConnectorMcpToken: (payload: { connectorId: string; serverName: string; token?: string; url?: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; serverName: string }; error?: string }>;
+      saveConnectorCredentials: (payload: { connectorId: string; values: Record<string, string> }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[] }; error?: string }>;
       pickDirectory: () => Promise<string | null>;
       pickFiles: () => Promise<Array<{ name: string; path: string }>>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;

@@ -291,6 +291,8 @@ export interface ClaudeSessionOptions {
   mcpServers?: Record<string, McpServerConfig>
   /** Additional directories to load .moss/agents and .moss/skills from for this embedded session. */
   addDirs?: string[]
+  /** Environment variables exposed only to subprocesses started by this embedded session. */
+  environment?: Record<string, string>
   /** Explicit task-list scope for file-backed task tools. */
   taskScope?: TaskScope
 }
@@ -318,6 +320,7 @@ type ResolvedClaudeSessionOptions = {
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
   addDirs: string[]
+  environment: Record<string, string>
   taskScope: TaskScope
 }
 
@@ -544,6 +547,7 @@ export class ClaudeSession {
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
+      environment: { ...(opts.environment ?? {}) },
       taskScope,
     }
   }
@@ -849,6 +853,7 @@ export class ClaudeSession {
         runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
           this.#opts.taskScope,
+          this.#opts.environment,
         )
 
       // Resolve the project root before entering the ALS wrappers so even
@@ -1048,6 +1053,7 @@ export class ClaudeSession {
                 }
                 })(),
               this.#opts.taskScope,
+              this.#opts.environment,
             ),
           {
             projectRoot: this.#projectRoot,

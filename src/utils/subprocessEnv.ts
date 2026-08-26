@@ -1,4 +1,5 @@
 import { isEnvTruthy } from './envUtils.js'
+import { getSessionEnvironmentContext } from './sessionIdContext.js'
 
 /**
  * Env vars to strip from subprocess environments when running inside GitHub
@@ -54,10 +55,11 @@ const GHA_SUBPROCESS_SCRUB = [
  * exposes a workflow to untrusted content (prompt injection surface).
  */
 export function subprocessEnv(): NodeJS.ProcessEnv {
+  const sessionEnvironment = getSessionEnvironmentContext()
   if (!isEnvTruthy(process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)) {
-    return process.env
+    return sessionEnvironment ? { ...process.env, ...sessionEnvironment } : process.env
   }
-  const env = { ...process.env }
+  const env = { ...process.env, ...sessionEnvironment }
   for (const k of GHA_SUBPROCESS_SCRUB) {
     delete env[k]
     // GitHub Actions auto-creates INPUT_<NAME> for `with:` inputs, duplicating

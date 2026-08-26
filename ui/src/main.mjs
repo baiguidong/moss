@@ -17,6 +17,7 @@ import {
 } from './public-experthub-ipc.mjs';
 import {
   getConnectorAddDirs,
+  getConnectorCredentialEnv,
   getConnectorMcpServers,
   findConnectorMcpServer,
   initializeBundledConnectorCatalog,
@@ -2111,6 +2112,9 @@ function normalizeMcpOAuthConfig(value) {
   if (Number.isInteger(value.callbackPort) && value.callbackPort > 0) {
     result.callbackPort = value.callbackPort;
   }
+  if (typeof value.omitRegistrationScope === 'boolean') {
+    result.omitRegistrationScope = value.omitRegistrationScope;
+  }
   if (typeof value.xaa === 'boolean') {
     result.xaa = value.xaa;
   }
@@ -2361,6 +2365,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getSessionMcpServers(sessionRecord),
     addDirs: getSessionAddDirs(sessionRecord),
+    environment: getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
     projectDir: sessionRecord?.id ? getLocalSessionDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
@@ -5416,6 +5421,7 @@ const mossAppEventHandler = createMossAppEventHandler(
         })();
       },
       emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
+      onSetupComplete: () => resetLocalRuntimesForMcpReload(),
     }),
     authenticateConnectorMcp: (name, context = {}) => authenticateMcpServerByName(name, {
       sessionId: context.sessionId || null,

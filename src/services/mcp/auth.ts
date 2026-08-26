@@ -5,6 +5,7 @@ import {
   type OAuthDiscoveryState,
   auth as sdkAuth,
   refreshAuthorization as sdkRefreshAuthorization,
+  registerClient as sdkRegisterClient,
 } from '@modelcontextprotocol/sdk/client/auth.js'
 import {
   InvalidGrantError,
@@ -234,6 +235,14 @@ function createAuthFetch(): FetchLike {
       throw error
     }
   }
+}
+
+export function withoutOAuthRegistrationScope(
+  clientMetadata: OAuthClientMetadata,
+): OAuthClientMetadata {
+  const result = { ...clientMetadata }
+  delete result.scope
+  return result
 }
 
 /**
@@ -975,6 +984,9 @@ export async function performMCPOAuthFlow(
     )
 
     // Fetch and store OAuth metadata for scope information
+    let authServerMetadata: Awaited<
+      ReturnType<typeof fetchAuthServerMetadata>
+    > = undefined
     try {
       const metadata = await fetchAuthServerMetadata(
         serverName,
@@ -984,6 +996,7 @@ export async function performMCPOAuthFlow(
         wwwAuthParams.resourceMetadataUrl,
       )
       if (metadata) {
+        authServerMetadata = metadata
         // Store metadata in provider for scope information
         provider.setMetadata(metadata)
         logMCPDebug(
@@ -996,6 +1009,27 @@ export async function performMCPOAuthFlow(
         serverName,
         `Failed to fetch OAuth metadata: ${errorMessage(error)}`,
       )
+    }
+
+    if (serverConfig.oauth?.omitRegistrationScope) {
+      if (!authServerMetadata) {
+        throw new Error(
+          'OAuth metadata is required for scope-free client registration',
+        )
+      }
+      if (!(await provider.clientInformation())) {
+        const clientInformation = await sdkRegisterClient(
+          authServerMetadata.issuer,
+          {
+            metadata: authServerMetadata,
+            clientMetadata: withoutOAuthRegistrationScope(
+              provider.clientMetadata,
+            ),
+            fetchFn: createAuthFetch(),
+          },
+        )
+        await provider.saveClientInformation(clientInformation)
+      }
     }
 
     // Get the OAuth state from the provider for validation
