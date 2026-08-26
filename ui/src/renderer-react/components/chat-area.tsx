@@ -1162,6 +1162,8 @@ function HomeLanding({
   installedConnectors,
   selectedConnectorIds,
   onToggleConnector,
+  onOpenConnectorHub,
+  onOpenExpertHub,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1185,6 +1187,8 @@ function HomeLanding({
   installedConnectors?: InstalledConnector[];
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
+  onOpenConnectorHub?: () => void;
+  onOpenExpertHub?: () => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1248,20 +1252,22 @@ function HomeLanding({
         className="w-full max-w-[720px]"
       />
       {installedAssistants && onSelectAssistant && (
-      <div className="mx-auto mt-8 w-full max-w-[720px] min-w-0">
+      <div className="mx-auto mt-5 w-full max-w-[720px] min-w-0">
           <AssistantSelectionArea
             assistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
             onSelectAssistant={onSelectAssistant}
+            onOpenExpertHub={onOpenExpertHub}
           />
         </div>
       )}
       {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
-        <div className="mx-auto mt-3 w-full max-w-[720px] min-w-0">
+        <div className="mx-auto mt-2 w-full max-w-[720px] min-w-0">
           <ConnectorSelectionArea
             connectors={installedConnectors}
             selectedConnectorIds={selectedConnectorIds ?? []}
             onToggleConnector={onToggleConnector}
+            onOpenConnectorHub={onOpenConnectorHub}
           />
         </div>
       )}
@@ -1699,6 +1705,8 @@ export function ChatArea({
   installedConnectors,
   selectedConnectorIds,
   onToggleConnector,
+  onOpenConnectorHub,
+  onOpenExpertHub,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1743,6 +1751,8 @@ export function ChatArea({
   installedConnectors?: InstalledConnector[];
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
+  onOpenConnectorHub?: () => void;
+  onOpenExpertHub?: () => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1833,6 +1843,8 @@ export function ChatArea({
           installedConnectors={installedConnectors}
           selectedConnectorIds={selectedConnectorIds}
           onToggleConnector={onToggleConnector}
+          onOpenConnectorHub={onOpenConnectorHub}
+          onOpenExpertHub={onOpenExpertHub}
           remoteEnabled={remoteEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
@@ -1897,6 +1909,7 @@ export function ChatArea({
                 connectors={installedConnectors}
                 selectedConnectorIds={selectedConnectorIds ?? []}
                 onToggleConnector={onToggleConnector}
+                onOpenConnectorHub={onOpenConnectorHub}
               />
             </div>
           )}

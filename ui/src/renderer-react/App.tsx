@@ -2297,6 +2297,8 @@ export default function App() {
                 installedConnectors={installedConnectors}
                 selectedConnectorIds={selectedConnectorIds}
                 onToggleConnector={handleToggleConnector}
+                onOpenConnectorHub={() => setActiveView('connectors')}
+                onOpenExpertHub={() => setActiveView('experts')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
@@ -2341,6 +2343,8 @@ export default function App() {
                 installedConnectors={installedConnectors}
                 selectedConnectorIds={selectedConnectorIds}
                 onToggleConnector={handleToggleConnector}
+                onOpenConnectorHub={() => setActiveView('connectors')}
+                onOpenExpertHub={() => setActiveView('experts')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
