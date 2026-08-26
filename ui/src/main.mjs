@@ -170,6 +170,7 @@ const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const AUDIT_DB_PATH = path.join(MOSS_HOME, 'audit.db');
+const LOCAL_AUDIT_SCAN_INTERVAL_MS = 30_000;
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
@@ -447,6 +448,7 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let localAuditService = null;
+let localAuditScanTimer = null;
 
 const sessions = new Map();
 const pendingQuestionRequests = new Map();
@@ -5318,8 +5320,21 @@ function getLocalAuditSessionSnapshots() {
       createdAt: sessionRecord.createdAt,
       updatedAt: sessionRecord.updatedAt,
       agentMode: 'local',
+      busy: Boolean(sessionRecord.busy),
       history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
     }));
+}
+
+function startLocalAuditScanner() {
+  if (localAuditScanTimer) clearInterval(localAuditScanTimer);
+  localAuditScanTimer = setInterval(() => {
+    if (!localAuditService || localAuditService.isRunning()) return;
+    void localAuditService.runIncrementalAudit().catch((error) => {
+      mossLog('warn', 'audit', 'Automatic incremental audit failed', {
+        error: error?.message || String(error),
+      });
+    });
+  }, LOCAL_AUDIT_SCAN_INTERVAL_MS);
 }
 
 function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
@@ -6621,6 +6636,7 @@ app.whenReady().then(async () => {
     onChanged: (payload) => emitToRenderer('audit:changed', payload),
   });
   registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
+  startLocalAuditScanner();
   startMossCronScheduler();
   initUpdateIpcHandlers();
   registerDocumentIpcHandlers();
@@ -6686,6 +6702,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (localAuditScanTimer) {
+    clearInterval(localAuditScanTimer);
+    localAuditScanTimer = null;
+  }
   localAuditService?.close?.();
   localAuditService = null;
 });

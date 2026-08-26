@@ -84,15 +84,17 @@ export function loadAppNotifications(storage?: NotificationStorage | null): AppN
 export function saveAppNotifications(
   notifications: AppNotification[],
   storage?: NotificationStorage | null,
-): void {
-  if (!storage) return;
+): boolean {
+  if (!storage) return false;
   try {
     storage.setItem(
       APP_NOTIFICATIONS_STORAGE_KEY,
       JSON.stringify(notifications.slice(0, MAX_APP_NOTIFICATIONS)),
     );
+    return true;
   } catch {
     // Diagnostics must never interrupt the operation being diagnosed.
+    return false;
   }
 }
 
@@ -102,6 +104,14 @@ export function appendAppNotification(
   options: { now?: number; id?: string } = {},
 ): AppNotification[] {
   const now = options.now ?? Date.now();
+  const id = options.id || (
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${now}-${Math.random().toString(36).slice(2, 10)}`
+  );
+  if (options.id && notifications.some((item) => item.id === options.id)) {
+    return notifications;
+  }
   const source = sanitizeDiagnosticText(input.source, MAX_SOURCE_LENGTH).trim() || 'Moss';
   const title = sanitizeDiagnosticText(input.title, MAX_TITLE_LENGTH).trim() || '应用消息';
   const message = sanitizeDiagnosticText(input.message, MAX_MESSAGE_LENGTH).trim() || '未提供错误信息';
@@ -127,11 +137,6 @@ export function appendAppNotification(
     ].slice(0, MAX_APP_NOTIFICATIONS);
   }
 
-  const id = options.id || (
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${now}-${Math.random().toString(36).slice(2, 10)}`
-  );
   return [{
     id,
     severity: input.severity,

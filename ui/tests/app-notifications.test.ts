@@ -47,6 +47,23 @@ describe('app notification history', () => {
     expect(second[0]).toMatchObject({ id: 'first', occurrences: 2, createdAt: 2_000, read: false });
   });
 
+  it('keeps audit deliveries idempotent by stable notification id', () => {
+    const first = appendAppNotification([], {
+      severity: 'warning',
+      source: '审计中心',
+      title: '检测到高危命令',
+      message: '会话 A',
+    }, { now: 1_000, id: 'audit:fingerprint-1' });
+    const retried = appendAppNotification(first, {
+      severity: 'warning',
+      source: '审计中心',
+      title: '检测到高危命令',
+      message: '会话 A',
+    }, { now: 60_000, id: 'audit:fingerprint-1' });
+
+    expect(retried).toEqual(first);
+  });
+
   it('keeps only the newest 200 entries', () => {
     const history = Array.from({ length: MAX_APP_NOTIFICATIONS }, (_, index) =>
       notification(String(index), index));
@@ -83,7 +100,7 @@ describe('app notification history', () => {
       getItem: (key: string) => key === APP_NOTIFICATIONS_STORAGE_KEY ? stored : null,
       setItem: (_key: string, value: string) => { stored = value; },
     };
-    saveAppNotifications([notification('valid', 20)], storage);
+    expect(saveAppNotifications([notification('valid', 20)], storage)).toBe(true);
     stored = JSON.stringify([...JSON.parse(stored), { id: 'broken' }]);
 
     expect(loadAppNotifications(storage).map((item) => item.id)).toEqual(['valid']);

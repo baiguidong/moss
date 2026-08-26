@@ -130,6 +130,7 @@ function mapFinding(row) {
     status: row.status,
     fingerprint: row.fingerprint,
     createdAt: row.created_at,
+    reportedAt: row.reported_at,
   };
 }
 
@@ -224,11 +225,17 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       evidence_json TEXT NOT NULL DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'open',
       fingerprint TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      reported_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_audit_findings_run ON audit_findings(run_id);
     CREATE INDEX IF NOT EXISTS idx_audit_findings_session ON audit_findings(session_id);
     CREATE INDEX IF NOT EXISTS idx_audit_findings_fingerprint ON audit_findings(fingerprint, created_at DESC);
+  `);
+  try { db.exec('ALTER TABLE audit_findings ADD COLUMN reported_at INTEGER'); } catch {}
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_audit_findings_pending_report
+    ON audit_findings(reported_at, status, severity);
   `);
   db.prepare(`
     UPDATE audit_runs
@@ -274,7 +281,8 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     );
   }
 
-  let activeRunPromise = null;
+  let auditQueue = Promise.resolve();
+  let scheduledRunCount = 0;
 
   function listRules({ enabledOnly = false } = {}) {
     const rows = db.prepare(`
@@ -321,11 +329,12 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     `).all().map(mapRun);
     const rules = listRules();
     const latestCompletedRun = runs.find((run) => run.status === 'completed');
+    const latestFullRun = runs.find((run) => run.status === 'completed' && run.scope?.kind === 'all-local');
     const latestCompletedAt = latestCompletedRun?.completedAt || 0;
     const auditedRuleVersions = new Map(
-      (latestCompletedRun?.ruleSnapshot || []).map((rule) => [rule.id, rule.version]),
+      (latestFullRun?.ruleSnapshot || []).map((rule) => [rule.id, rule.version]),
     );
-    const rulesStale = Boolean(latestCompletedRun) && rules.some((rule) => {
+    const rulesStale = Boolean(latestFullRun) && rules.some((rule) => {
       const auditedVersion = auditedRuleVersions.get(rule.id);
       return rule.enabled ? auditedVersion !== rule.version : auditedVersion != null;
     });
@@ -347,6 +356,74 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       rules,
       runs,
     };
+  }
+
+  function listPendingAlerts() {
+    return db.prepare(`
+      SELECT
+        f.id AS finding_id,
+        f.fingerprint,
+        f.severity,
+        f.title,
+        f.detail,
+        f.session_id,
+        s.title AS session_title,
+        t.tool_use_id,
+        t.tool_name,
+        r.name AS rule_name,
+        f.created_at
+      FROM audit_findings f
+      JOIN audit_sessions s
+        ON s.session_id = f.session_id
+        AND s.latest_run_id = f.run_id
+        AND s.source_present = 1
+      LEFT JOIN audit_tool_calls t ON t.id = f.tool_call_id
+      LEFT JOIN audit_rules r ON r.id = f.rule_id
+      WHERE f.reported_at IS NULL
+        AND f.status = 'open'
+        AND f.severity IN ('high', 'critical')
+      ORDER BY
+        CASE f.severity WHEN 'critical' THEN 2 ELSE 1 END DESC,
+        f.created_at ASC
+      LIMIT 200
+    `).all().map((row) => ({
+      findingId: row.finding_id,
+      fingerprint: row.fingerprint,
+      severity: row.severity,
+      title: row.title,
+      detail: row.detail,
+      sessionId: row.session_id,
+      sessionTitle: row.session_title,
+      toolUseId: row.tool_use_id || null,
+      toolName: row.tool_name || null,
+      ruleName: row.rule_name || '审计规则',
+      createdAt: row.created_at,
+    }));
+  }
+
+  function markFindingsReported(payload = {}) {
+    const fingerprints = Array.isArray(payload.fingerprints)
+      ? [...new Set(payload.fingerprints.map((entry) => String(entry).trim()).filter(Boolean))].slice(0, 500)
+      : [];
+    if (fingerprints.length === 0) return { ok: true, updatedCount: 0 };
+    const reportedAt = Date.now();
+    const update = db.prepare(`
+      UPDATE audit_findings
+      SET reported_at = COALESCE(reported_at, ?)
+      WHERE fingerprint = ?
+    `);
+    let updatedCount = 0;
+    db.exec('BEGIN');
+    try {
+      for (const fingerprint of fingerprints) {
+        updatedCount += Number(update.run(reportedAt, fingerprint).changes) || 0;
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    return { ok: true, updatedCount };
   }
 
   function updateRule(payload = {}) {
@@ -408,11 +485,15 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       : null;
     const snapshots = (await Promise.resolve(getLocalSessions()))
       .filter((session) => session && session.agentMode !== 'remote-direct')
-      .filter((session) => !requestedIds || requestedIds.has(session.id));
+      .filter((session) => !requestedIds || requestedIds.has(session.id))
+      .filter((session) => payload.scopeKind !== 'incremental'
+        || (!session.busy && Array.isArray(session.history) && session.history.length > 0));
     const rules = listRules({ enabledOnly: true });
     const runId = randomUUID();
     const startedAt = Date.now();
-    const scope = requestedIds ? { kind: 'sessions', sessionIds: [...requestedIds] } : { kind: 'all-local' };
+    const scope = requestedIds
+      ? { kind: payload.scopeKind === 'incremental' ? 'incremental' : 'sessions', sessionIds: [...requestedIds] }
+      : { kind: 'all-local' };
     db.prepare(`
       INSERT INTO audit_runs (id, status, scope_json, rule_snapshot_json, started_at)
       VALUES (?, 'running', ?, ?, ?)
@@ -456,15 +537,17 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
           const insertFinding = db.prepare(`
             INSERT INTO audit_findings (
               id, run_id, session_id, tool_call_id, rule_id, rule_version, severity,
-              title, detail, evidence_json, status, fingerprint, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              title, detail, evidence_json, status, fingerprint, created_at, reported_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           for (const finding of findings) {
             const previous = db.prepare(`
-              SELECT status FROM audit_findings
-              WHERE fingerprint = ? AND status <> 'open'
-              ORDER BY created_at DESC LIMIT 1
+              SELECT status, reported_at FROM audit_findings
+              WHERE fingerprint = ?
+              ORDER BY created_at DESC, rowid DESC LIMIT 1
             `).get(finding.fingerprint);
+            const status = previous?.status || 'open';
+            const reportedAt = previous?.reported_at || null;
             insertFinding.run(
               randomUUID(),
               runId,
@@ -476,9 +559,10 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
               finding.title,
               redactText(finding.detail, 4_000),
               safeJson(finding.evidence),
-              previous?.status || 'open',
+              status,
               finding.fingerprint,
               auditedAt,
+              reportedAt,
             );
           }
           db.prepare(`
@@ -538,24 +622,55 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
         SET status = 'completed', completed_at = ?, session_count = ?, tool_call_count = ?, finding_count = ?
         WHERE id = ?
       `).run(completedAt, snapshots.length, toolCallCount, findingCount, runId);
-      onChanged({ reason: 'run-completed', runId, scope });
+      onChanged({ reason: 'run-completed', runId, scope, alerts: listPendingAlerts() });
       return { ok: true, runId, sessionCount: snapshots.length, toolCallCount, findingCount };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       db.prepare(`
         UPDATE audit_runs SET status = 'failed', completed_at = ?, error = ? WHERE id = ?
       `).run(Date.now(), redactText(message, 4_000), runId);
-      onChanged({ reason: 'run-failed', runId, scope, error: message });
+      onChanged({ reason: 'run-failed', runId, scope, error: message, alerts: listPendingAlerts() });
       throw error;
     }
   }
 
   function runAudit(payload = {}) {
-    if (activeRunPromise) return activeRunPromise;
-    activeRunPromise = executeAudit(payload).finally(() => {
-      activeRunPromise = null;
+    scheduledRunCount += 1;
+    const queuedRun = auditQueue.then(
+      () => executeAudit(payload),
+      () => executeAudit(payload),
+    );
+    auditQueue = queuedRun.catch(() => {});
+    return queuedRun.finally(() => {
+      scheduledRunCount -= 1;
     });
-    return activeRunPromise;
+  }
+
+  async function runIncrementalAudit() {
+    if (scheduledRunCount > 0) return { ok: true, skipped: true, reason: 'busy', sessionCount: 0 };
+    const snapshots = (await Promise.resolve(getLocalSessions()))
+      .filter((session) => session && session.agentMode !== 'remote-direct')
+      .filter((session) => !session.busy && Array.isArray(session.history) && session.history.length > 0);
+    if (scheduledRunCount > 0) return { ok: true, skipped: true, reason: 'busy', sessionCount: 0 };
+
+    const getAuditedSession = db.prepare(`
+      SELECT source_updated_at, event_count
+      FROM audit_sessions
+      WHERE session_id = ?
+    `);
+    const sessionIds = snapshots
+      .filter((session) => {
+        const audited = getAuditedSession.get(session.id);
+        if (!audited) return true;
+        return Number(session.updatedAt) > Number(audited.source_updated_at)
+          || session.history.length !== Number(audited.event_count);
+      })
+      .map((session) => session.id);
+
+    if (sessionIds.length === 0) {
+      return { ok: true, skipped: true, reason: 'unchanged', sessionCount: 0 };
+    }
+    return runAudit({ sessionIds, scopeKind: 'incremental' });
   }
 
   return {
@@ -565,7 +680,11 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     updateRule,
     updateFinding,
     updateFindings,
+    listPendingAlerts,
+    markFindingsReported,
     runAudit,
+    runIncrementalAudit,
+    isRunning: () => scheduledRunCount > 0,
     close: () => db.close(),
   };
 }
@@ -576,4 +695,6 @@ export function registerLocalAuditIpcHandlers({ ipcMain, service }) {
   ipcMain.handle('audit:update-rule', (_event, payload = {}) => service.updateRule(payload));
   ipcMain.handle('audit:update-finding', (_event, payload = {}) => service.updateFinding(payload));
   ipcMain.handle('audit:update-findings', (_event, payload = {}) => service.updateFindings(payload));
+  ipcMain.handle('audit:get-pending-alerts', () => service.listPendingAlerts());
+  ipcMain.handle('audit:mark-reported', (_event, payload = {}) => service.markFindingsReported(payload));
 }

@@ -615,6 +615,21 @@ export type AuditFindingRecord = {
   status: AuditFindingStatus;
   fingerprint: string;
   createdAt: number;
+  reportedAt: number | null;
+};
+
+export type AuditAlert = {
+  findingId: string;
+  fingerprint: string;
+  severity: 'high' | 'critical';
+  title: string;
+  detail: string;
+  sessionId: string;
+  sessionTitle: string;
+  toolUseId: string | null;
+  toolName: string | null;
+  ruleName: string;
+  createdAt: number;
 };
 
 export type AuditRuleRecord = {
@@ -849,6 +864,7 @@ declare global {
       };
       audit: {
         getDashboard: () => Promise<AuditDashboardPayload>;
+        getPendingAlerts: () => Promise<AuditAlert[]>;
         run: (payload?: { sessionIds?: string[] }) => Promise<{
           ok: boolean;
           runId: string;
@@ -867,6 +883,10 @@ declare global {
           ok: boolean;
           updatedCount: number;
         }>;
+        markReported: (payload: { fingerprints: string[] }) => Promise<{
+          ok: boolean;
+          updatedCount: number;
+        }>;
         onChanged: (callback: (payload: {
           reason: string;
           runId?: string;
@@ -874,6 +894,7 @@ declare global {
           completed?: number;
           total?: number;
           error?: string;
+          alerts?: AuditAlert[];
         }) => void) => () => void;
       };
       workspace: {

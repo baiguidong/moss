@@ -165,10 +165,12 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   audit: {
     getDashboard: () => ipcRenderer.invoke('audit:get-dashboard'),
+    getPendingAlerts: () => ipcRenderer.invoke('audit:get-pending-alerts'),
     run: (payload) => ipcRenderer.invoke('audit:run', payload),
     updateRule: (payload) => ipcRenderer.invoke('audit:update-rule', payload),
     updateFinding: (payload) => ipcRenderer.invoke('audit:update-finding', payload),
     updateFindings: (payload) => ipcRenderer.invoke('audit:update-findings', payload),
+    markReported: (payload) => ipcRenderer.invoke('audit:mark-reported', payload),
     onChanged: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('audit:changed', handler);

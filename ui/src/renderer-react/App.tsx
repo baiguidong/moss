@@ -43,6 +43,7 @@ import type {
   AskUserQuestionRequest,
   AgentEvent,
   AppVersion,
+  AuditAlert,
   BackgroundTaskInfo,
   CoordinatorTask,
   DesktopSettings,
@@ -346,6 +347,7 @@ export default function App() {
       return [];
     }
   });
+  const appNotificationsRef = React.useRef(appNotifications);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
@@ -388,7 +390,42 @@ export default function App() {
   }, []);
 
   const pushAppNotification = React.useCallback((notification: NewAppNotification) => {
-    setAppNotifications((current) => appendAppNotification(current, notification));
+    const next = appendAppNotification(appNotificationsRef.current, notification);
+    appNotificationsRef.current = next;
+    setAppNotifications(next);
+  }, []);
+
+  const deliverAuditAlerts = React.useCallback(async (alerts: AuditAlert[]) => {
+    const validAlerts = Array.isArray(alerts)
+      ? alerts.filter((alert) => alert?.fingerprint && (alert.severity === 'high' || alert.severity === 'critical'))
+      : [];
+    if (validAlerts.length === 0) return;
+
+    let next = appNotificationsRef.current;
+    for (const alert of validAlerts) {
+      const context = [alert.ruleName, alert.sessionTitle, alert.toolName].filter(Boolean).join(' · ');
+      next = appendAppNotification(next, {
+        severity: alert.severity === 'critical' ? 'error' : 'warning',
+        source: '审计中心',
+        title: alert.title,
+        message: context,
+        details: alert.detail,
+      }, {
+        id: `audit:${alert.fingerprint}`,
+        now: alert.createdAt,
+      });
+    }
+
+    if (!saveAppNotifications(next, window.localStorage)) return;
+    appNotificationsRef.current = next;
+    setAppNotifications(next);
+    try {
+      await window.agentDesktop.audit.markReported({
+        fingerprints: [...new Set(validAlerts.map((alert) => alert.fingerprint))],
+      });
+    } catch {
+      // A stable notification ID makes a later delivery retry harmless.
+    }
   }, []);
 
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
@@ -783,12 +820,23 @@ export default function App() {
   }, [activeDetail]);
 
   React.useEffect(() => {
+    appNotificationsRef.current = appNotifications;
     try {
       saveAppNotifications(appNotifications, window.localStorage);
     } catch {
       // Notification persistence is best-effort.
     }
   }, [appNotifications]);
+
+  React.useEffect(() => {
+    const unsubscribe = window.agentDesktop.audit.onChanged((event) => {
+      if (event.alerts?.length) void deliverAuditAlerts(event.alerts);
+    });
+    void window.agentDesktop.audit.getPendingAlerts()
+      .then((alerts) => deliverAuditAlerts(alerts))
+      .catch(() => {});
+    return unsubscribe;
+  }, [deliverAuditAlerts]);
 
   React.useEffect(() => () => {
     if (permissionNoticeTimerRef.current) {
