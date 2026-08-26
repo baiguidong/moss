@@ -133,6 +133,7 @@ export function TaskPanel({
   sessionTasks,
   projectName,
   browserOpenSignal,
+  onBrowserOpen,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -153,6 +154,7 @@ export function TaskPanel({
   sessionTasks?: SessionTask[];
   projectName?: string | null;
   browserOpenSignal?: number;
+  onBrowserOpen?: () => void;
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
@@ -193,32 +195,69 @@ export function TaskPanel({
     <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,color-mix(in_oklab,var(--card)_96%,transparent),color-mix(in_oklab,var(--background)_94%,transparent))]">
       {collapsed ? null : (
         <>
-          <div className="border-b border-border/80 px-3 py-3">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <ActiveViewIcon className="h-4 w-4 text-primary" />
-                <span>{viewMeta[activeView].title}</span>
+          {activeView === "browser" ? (
+            <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/80 px-2">
+              <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
+                <ActiveViewIcon className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">Moss 浏览器</span>
               </div>
-              <div className="grid grid-cols-4 gap-1 rounded-md border border-border/70 bg-muted/35 p-1">
-                {(Object.keys(viewMeta) as TaskPanelView[]).map((view) => (
-                  <button
-                    key={view}
-                    type="button"
-                    title={viewMeta[view].title}
-                    onClick={() => setActiveView(view)}
-                    className={cn(
-                      "h-7 rounded px-1 text-xs font-medium transition-colors",
-                      activeView === view
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {viewMeta[view].label}
-                  </button>
-                ))}
+              <div className="flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 p-0.5">
+                {(Object.keys(viewMeta) as TaskPanelView[]).map((view) => {
+                  const Icon = viewMeta[view].icon;
+                  return (
+                    <button
+                      key={view}
+                      type="button"
+                      title={viewMeta[view].title}
+                      aria-label={viewMeta[view].title}
+                      onClick={() => {
+                        setActiveView(view);
+                        if (view === "browser") onBrowserOpen?.();
+                      }}
+                      className={cn(
+                        "inline-flex h-6 w-7 items-center justify-center rounded-sm transition-colors",
+                        activeView === view
+                          ? "bg-background text-primary shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="border-b border-border/80 px-3 py-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <ActiveViewIcon className="h-4 w-4 text-primary" />
+                  <span>{viewMeta[activeView].title}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 rounded-md border border-border/70 bg-muted/35 p-1">
+                  {(Object.keys(viewMeta) as TaskPanelView[]).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      title={viewMeta[view].title}
+                      onClick={() => {
+                        setActiveView(view);
+                        if (view === "browser") onBrowserOpen?.();
+                      }}
+                      className={cn(
+                        "h-7 rounded px-1 text-xs font-medium transition-colors",
+                        activeView === view
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {viewMeta[view].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {activeView === "overview" ? (
             <ScrollArea className="min-h-0 flex-1">
@@ -348,7 +387,10 @@ export function TaskPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setActiveView("browser")}
+                    onClick={() => {
+                      setActiveView("browser");
+                      onBrowserOpen?.();
+                    }}
                     className="rounded-lg border border-border/65 bg-card/72 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/35 hover:text-foreground"
                   >
                     打开浏览器

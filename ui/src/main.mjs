@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { app, BrowserWindow, dialog, ipcMain, screen, shell, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, screen, shell, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -77,6 +77,10 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
+import {
+  createBrowserViewManager,
+  registerBrowserViewIpcHandlers,
+} from './browser-view-manager.mjs';
 import {
   MEDIA_SCHEME,
   installMediaProtocol,
@@ -432,6 +436,7 @@ process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
 process.env.USE_BUILTIN_RIPGREP = '1';
 
 let mainWindow = null;
+let browserViewManager = null;
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
@@ -4668,7 +4673,7 @@ async function openExternalHttpUrl(url) {
 function getExternalNavigationHref(url) {
   if (typeof url !== 'string' || !url.trim()) return false;
   const trimmed = url.trim();
-  if (/^https?:\/\//i.test(trimmed) || /^mailto:/i.test(trimmed)) {
+  if (/^https?:\/\//i.test(trimmed) || /^(?:mailto|tel|sms):/i.test(trimmed)) {
     return trimmed;
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !/^(?:file|javascript|data|about):/i.test(trimmed)) {
@@ -5688,6 +5693,7 @@ function createWindow() {
         message: 'Question canceled because the desktop window was closed.',
       });
     }
+    browserViewManager?.disposeAll();
     mainWindow = null;
   });
   mossLog('info', 'app', 'Main window created');
@@ -6492,6 +6498,17 @@ app.whenReady().then(async () => {
     readWorkspaceFile,
     fsp,
   });
+  browserViewManager = createBrowserViewManager({
+    createView: (options) => new WebContentsView(options),
+    getWindow: () => mainWindow,
+    emit: emitToRenderer,
+    openExternal: openExternalNavigationUrl,
+  });
+  registerBrowserViewIpcHandlers({
+    ipcMain,
+    manager: browserViewManager,
+    getWindow: () => mainWindow,
+  });
 
   // Initialize custom protocols used by workspace media and plugin apps.
   try {
@@ -7189,6 +7206,7 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
     'Question canceled because the session was deleted.',
   );
   disposeRuntime(sessionRecord);
+  browserViewManager?.disposeSession(sessionId);
   if (sessionRecord.projectId) {
     await unlinkSessionFromProject(sessionRecord.projectId, sessionRecord.id);
     emitToRenderer('project:changed', { projectId: sessionRecord.projectId, reason: 'session-deleted' });

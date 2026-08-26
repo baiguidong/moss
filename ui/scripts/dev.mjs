@@ -14,6 +14,7 @@ const electronBin = path.join(uiRoot, 'node_modules', 'electron', 'cli.js');
 const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
+  path.join(uiRoot, 'src', 'browser-view-manager.mjs'),
   path.join(uiRoot, 'src', 'plugin-app-preload.mjs'),
   path.join(uiRoot, 'src', 'plugin-app-protocol.mjs'),
 ];

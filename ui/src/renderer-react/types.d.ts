@@ -481,6 +481,59 @@ export type PreviewSnapshotInfo = {
   filePath?: string;
 };
 
+export type BrowserConnectorAuthContext = {
+  connectorId: string;
+  serverName: string;
+  displayName?: string;
+  tokenParam?: string;
+  allowedHosts?: string[];
+};
+
+export type BrowserMcpAuthContext = {
+  serverName: string;
+  displayName?: string;
+};
+
+export type BrowserTabState = {
+  id: string;
+  title: string;
+  url: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  devToolsOpen: boolean;
+  isNativeBlank: boolean;
+  error: string | null;
+  connectorAuth?: BrowserConnectorAuthContext | null;
+  mcpAuth?: BrowserMcpAuthContext | null;
+};
+
+export type BrowserState = {
+  tabs: BrowserTabState[];
+  activeTabId: string;
+};
+
+export type BrowserAuthNavigation = {
+  id: string;
+  sessionId: string;
+  tabId: string;
+  url: string;
+  connectorAuth: BrowserConnectorAuthContext | null;
+  mcpAuth: BrowserMcpAuthContext | null;
+};
+
+export type BrowserTabTarget = {
+  sessionId?: string | null;
+  tabId?: string;
+};
+
+export type BrowserOpenTabPayload = {
+  sessionId?: string | null;
+  url?: string;
+  connectorAuth?: BrowserConnectorAuthContext | null;
+  mcpAuth?: BrowserMcpAuthContext | null;
+};
+
 declare namespace JSX {
   interface IntrinsicElements {
     webview: any;
@@ -643,6 +696,29 @@ declare global {
         onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) => () => void;
       };
       browser: {
+        getState: (payload: { sessionId?: string | null }) => Promise<BrowserState>;
+        openTab: (payload: BrowserOpenTabPayload) => Promise<BrowserState>;
+        activateTab: (payload: BrowserTabTarget & { tabId: string }) => Promise<BrowserState>;
+        closeTab: (payload: BrowserTabTarget & { tabId: string }) => Promise<BrowserState>;
+        navigate: (payload: BrowserTabTarget & { url: string }) => Promise<BrowserState>;
+        goBack: (payload: BrowserTabTarget) => Promise<BrowserState>;
+        goForward: (payload: BrowserTabTarget) => Promise<BrowserState>;
+        reload: (payload: BrowserTabTarget) => Promise<BrowserState>;
+        stop: (payload: BrowserTabTarget) => Promise<BrowserState>;
+        toggleDevTools: (payload: BrowserTabTarget) => Promise<BrowserState>;
+        completeAuth: (payload: BrowserTabTarget & {
+          title?: string;
+          authKind?: "connector" | "mcp";
+          serverName?: string;
+          eventId?: string;
+        }) => Promise<BrowserState>;
+        getPendingAuthNavigations: (payload: { sessionId?: string | null }) => Promise<BrowserAuthNavigation[]>;
+        ackAuthNavigation: (payload: { sessionId?: string | null; eventId: string }) => Promise<{ ok: boolean }>;
+        setHost: (payload: {
+          sessionId?: string | null;
+          visible: boolean;
+          bounds?: { x: number; y: number; width: number; height: number };
+        }) => void;
         onOpen: (callback: (payload: {
           url: string;
           sessionId?: string | null;
@@ -658,7 +734,9 @@ declare global {
             displayName?: string;
           } | null;
         }) => void) => () => void;
-        onExternalUrl: (callback: (payload: { url: string }) => void) => () => void;
+        onState: (callback: (payload: { sessionId: string; state: BrowserState }) => void) => () => void;
+        onAuthNavigation: (callback: (payload: BrowserAuthNavigation) => void) => () => void;
+        onExternalUrl: (callback: (payload: { sessionId?: string; tabId?: string; url: string }) => void) => () => void;
       };
       workspace: {
         writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;

@@ -127,10 +127,34 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     },
   },
   browser: {
+    getState: (payload) => ipcRenderer.invoke('browser:get-state', payload),
+    openTab: (payload) => ipcRenderer.invoke('browser:open-tab', payload),
+    activateTab: (payload) => ipcRenderer.invoke('browser:activate-tab', payload),
+    closeTab: (payload) => ipcRenderer.invoke('browser:close-tab', payload),
+    navigate: (payload) => ipcRenderer.invoke('browser:navigate', payload),
+    goBack: (payload) => ipcRenderer.invoke('browser:go-back', payload),
+    goForward: (payload) => ipcRenderer.invoke('browser:go-forward', payload),
+    reload: (payload) => ipcRenderer.invoke('browser:reload', payload),
+    stop: (payload) => ipcRenderer.invoke('browser:stop', payload),
+    toggleDevTools: (payload) => ipcRenderer.invoke('browser:toggle-devtools', payload),
+    completeAuth: (payload) => ipcRenderer.invoke('browser:complete-auth', payload),
+    getPendingAuthNavigations: (payload) => ipcRenderer.invoke('browser:get-pending-auth-navigations', payload),
+    ackAuthNavigation: (payload) => ipcRenderer.invoke('browser:ack-auth-navigation', payload),
+    setHost: (payload) => ipcRenderer.send('browser:set-host', payload),
     onOpen: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('browser:open', handler);
       return () => ipcRenderer.off('browser:open', handler);
+    },
+    onState: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('browser:state', handler);
+      return () => ipcRenderer.off('browser:state', handler);
+    },
+    onAuthNavigation: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('browser:auth-navigation', handler);
+      return () => ipcRenderer.off('browser:auth-navigation', handler);
     },
     onExternalUrl: (callback) => {
       const handler = (_event, payload) => callback(payload);

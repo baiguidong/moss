@@ -1578,13 +1578,16 @@ export default function App() {
       targetSessionId = payloadSessionId;
     }
 
-    openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null);
+    void openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null)
+      .catch((error: unknown) => {
+        console.warn('[browser] failed to open tab:', error instanceof Error ? error.message : error);
+      });
     if (targetSessionId) {
       setActiveView('chat');
       setLayout((prev) => ({
         ...prev,
         rightCollapsed: false,
-        rightWidth: clamp(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+        rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
       }));
       setBrowserOpenSignal((value) => value + 1);
     }
@@ -2470,6 +2473,13 @@ export default function App() {
                 sessionTasks={activeDetail?.tasks || []}
                 projectName={activeDetail?.projectName || null}
                 browserOpenSignal={browserOpenSignal}
+                onBrowserOpen={() => {
+                  setLayout((prev) => ({
+                    ...prev,
+                    rightCollapsed: false,
+                    rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+                  }));
+                }}
               />
             </div>
           </>
