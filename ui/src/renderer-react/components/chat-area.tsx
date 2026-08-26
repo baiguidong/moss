@@ -438,7 +438,7 @@ function ComposerPanel({
         const items = Array.isArray(res?.items) ? res.items : [];
         setMentionItems(items);
         if (res?.remote) {
-          setMentionNotice("远程模式暂不支持浏览工作区文件");
+          setMentionNotice("云端模式暂不支持浏览工作区文件");
         } else if (items.length === 0) {
           setMentionNotice(mentionDirPart ? "该目录为空" : "工作区目前没有文件");
         } else {
@@ -1228,7 +1228,7 @@ function HomeLanding({
                 : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
             )}
           >
-            远程
+            云端
           </button>
         </div>
       )}

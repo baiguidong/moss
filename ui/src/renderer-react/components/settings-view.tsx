@@ -1359,11 +1359,11 @@ export function SettingsView({
                         </SettingsRow>
                       </SettingsGroup>
 
-                      {/* 远程模式 */}
+                      {/* 云端模式 */}
                       <SettingsGroup>
                         <SettingsRow
-                          title="远程模式"
-                          description="连接到远端 Moss 服务器运行 Agent。"
+                          title="云端模式"
+                          description="连接到云端 Moss 服务器运行 Agent。"
                           controlClassName="sm:w-[56px]"
                         >
                           <div className="flex justify-start sm:justify-end">
@@ -1377,7 +1377,7 @@ export function SettingsView({
                                   updateSetting('agentMode', 'remote-direct');
                                 }
                               }}
-                              label="远程模式"
+                              label="云端模式"
                             />
                           </div>
                         </SettingsRow>
@@ -1490,7 +1490,7 @@ export function SettingsView({
 
                             <div className="px-4 py-4">
                               <div className="rounded-[18px] border border-amber-200/80 bg-amber-50/[0.85] px-4 py-3 text-xs leading-6 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
-                                当前版本会把远程登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在
+                                当前版本会把云端登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在
                                 `ui/plan.md`。
                               </div>
                             </div>

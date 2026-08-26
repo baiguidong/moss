@@ -274,7 +274,6 @@ export function AppSidebar({
   activeSessionId,
   activeView,
   appsCount,
-  projectsCount,
   themeMode,
   collapsed,
   searchQuery,
@@ -340,45 +339,14 @@ export function AppSidebar({
         </div>
 
         <Button
-          variant="outline"
-          className={cn(
-            "mt-3 h-9 rounded-xl border-sidebar-border bg-sidebar-accent/60 px-3 text-sm text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-            collapsed ? "w-full justify-center px-0" : "w-full justify-center",
-          )}
+          variant="ghost"
+          className={cn("mt-3 h-8 rounded-xl", collapsed ? "w-8 justify-center px-0" : "w-full justify-start")}
           onClick={onNewSession}
+          title="新会话"
         >
           <PenSquare className="h-4 w-4" />
           {!collapsed && "新会话"}
         </Button>
-
-        {!collapsed && showModePicker && (
-          <div className="mt-2 flex rounded-xl bg-sidebar-accent/50 p-0.5 gap-0.5">
-            <button
-              type="button"
-              onClick={() => onNewSessionModeChange?.('local')}
-              className={cn(
-                "flex-1 rounded-[10px] py-1 text-[12px] font-medium transition-colors",
-                newSessionMode !== 'remote-direct'
-                  ? "bg-sidebar text-sidebar-foreground shadow-sm"
-                  : "text-sidebar-foreground/55 hover:text-sidebar-foreground",
-              )}
-            >
-              本地
-            </button>
-            <button
-              type="button"
-              onClick={() => onNewSessionModeChange?.('remote-direct')}
-              className={cn(
-                "flex-1 rounded-[10px] py-1 text-[12px] font-medium transition-colors",
-                newSessionMode === 'remote-direct'
-                  ? "bg-sidebar text-sidebar-foreground shadow-sm"
-                  : "text-sidebar-foreground/55 hover:text-sidebar-foreground",
-              )}
-            >
-              远程
-            </button>
-          </div>
-        )}
       </div>
 
       {collapsed ? (
@@ -403,29 +371,61 @@ export function AppSidebar({
         </ScrollArea>
       ) : (
         <>
-          <div className="border-b border-sidebar-border px-3 py-2">
-            <div className="flex min-w-0 items-center justify-between text-[11px] uppercase tracking-[0.2em] text-sidebar-foreground/40">
-              <span className="truncate">会话</span>
-              <span>{orderedSessions.length}</span>
-            </div>
-            <div className="relative mt-2">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="搜索..."
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                className="h-7 rounded-lg bg-sidebar-accent/50 pl-8 pr-7 text-xs placeholder:text-muted-foreground/60"
-              />
-              {searchQuery && (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="absolute right-0 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  onClick={() => onSearchChange("")}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
+          <div className="border-b border-sidebar-border px-3 py-1.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              {showModePicker && (
+                <div className="flex h-7 shrink-0 items-center gap-2.5" role="tablist" aria-label="会话模式">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={newSessionMode !== 'remote-direct'}
+                    onClick={() => onNewSessionModeChange?.('local')}
+                    className={cn(
+                      "relative h-7 px-0.5 text-xs font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                      newSessionMode !== 'remote-direct'
+                        ? "text-sidebar-foreground after:bg-sidebar-foreground/70"
+                        : "text-sidebar-foreground/45 after:bg-transparent hover:text-sidebar-foreground/75",
+                    )}
+                  >
+                    本地
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={newSessionMode === 'remote-direct'}
+                    onClick={() => onNewSessionModeChange?.('remote-direct')}
+                    className={cn(
+                      "relative h-7 px-0.5 text-xs font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                      newSessionMode === 'remote-direct'
+                        ? "text-sidebar-foreground after:bg-sidebar-foreground/70"
+                        : "text-sidebar-foreground/45 after:bg-transparent hover:text-sidebar-foreground/75",
+                    )}
+                  >
+                    云端
+                  </button>
+                </div>
               )}
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="搜索会话"
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  className="h-7 rounded-md border-sidebar-border/70 bg-transparent pl-7 pr-7 text-[11px] placeholder:text-muted-foreground/55"
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="absolute right-0 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => onSearchChange("")}
+                    title="清空搜索"
+                    aria-label="清空搜索"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -445,7 +445,7 @@ export function AppSidebar({
                 ))
               ) : (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
-                  {showModePicker && newSessionMode === 'remote-direct' ? '暂无远程会话' : '还没有历史会话'}
+                  {showModePicker && newSessionMode === 'remote-direct' ? '暂无云端会话' : '还没有历史会话'}
                 </div>
               )}
             </div>
@@ -461,12 +461,7 @@ export function AppSidebar({
             onClick={() => onChangeView("projects")}
           >
             <FolderKanban className="h-4 w-4" />
-            {!collapsed && (
-              <>
-                项目
-                <span className="ml-auto text-[11px] text-muted-foreground">{projectsCount}</span>
-              </>
-            )}
+            {!collapsed && "项目"}
           </Button>
           <Button
             variant={activeView === "skills" ? "secondary" : "ghost"}
