@@ -2228,6 +2228,14 @@ export default function App() {
     setSummaries((prev) => upsertSummary(prev, detail));
   }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
 
+  const handleUseConnector = React.useCallback(async (connector: InstalledConnector) => {
+    const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
+    if (!current.includes(connector.id)) {
+      await handleToggleConnector(connector);
+    }
+    setActiveView('chat');
+  }, [activeSessionId, draftConnectorIds, handleToggleConnector]);
+
   const handleConnectorHubError = React.useCallback((error: {
     title: string;
     message: string;
@@ -2569,6 +2577,7 @@ export default function App() {
               onConnectorsChanged={refreshConnectors}
               onRunCliSetup={handleRunCliConnectorSetup}
               onAuthenticateMcp={handleAuthenticateMcpConnector}
+              onUseConnector={handleUseConnector}
               onError={handleConnectorHubError}
             />
           ) : activeView === 'experts' ? (

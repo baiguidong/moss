@@ -723,6 +723,7 @@ declare global {
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
       listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;
       getInstalledConnectors: () => Promise<{ success?: boolean; data?: InstalledConnector[]; error?: string }>;
+      refreshConnectorCliStatus: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector: InstalledConnector; connected: boolean; changed: boolean; connectionChanged: boolean }; error?: string }>;
       installConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector?: InstalledConnector; cli?: Record<string, any> | null }; error?: string }>;
       uninstallConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { ok: boolean; id: string }; error?: string }>;
       saveConnectorMcpToken: (payload: { connectorId: string; serverName: string; token?: string; url?: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; serverName: string }; error?: string }>;

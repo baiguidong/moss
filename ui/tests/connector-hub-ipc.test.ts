@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import {
   applyConnectorCredentials,
   buildConnectorCliEnv,
+  cliStatusStatePatch,
   matchesCliStatus,
   normalizeConnectorCredentialSchema,
   normalizeConnectorMcpConfig,
@@ -230,6 +231,19 @@ describe('connector MCP config normalization', () => {
 });
 
 describe('connector CLI compatibility', () => {
+  it('maps live CLI status back to connector state', () => {
+    expect(cliStatusStatePatch(true)).toEqual({
+      connected: true,
+      setupStatus: 'connected',
+      setupMessage: '连接器可用',
+    });
+    expect(cliStatusStatePatch(false)).toEqual({
+      connected: false,
+      setupStatus: 'needs-auth',
+      setupMessage: 'CLI 未认证',
+    });
+  });
+
   it('matches JSON status contracts without treating false values as connected', () => {
     const cli = {
       statusMatchJson: {

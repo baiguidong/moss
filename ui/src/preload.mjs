@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
   listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
   getInstalledConnectors: () => ipcRenderer.invoke('connector-hub:get-installed'),
+  refreshConnectorCliStatus: (payload) => ipcRenderer.invoke('connector-hub:refresh-cli-status', payload),
   installConnector: (payload) => ipcRenderer.invoke('connector-hub:install', payload),
   uninstallConnector: (payload) => ipcRenderer.invoke('connector-hub:uninstall', payload),
   saveConnectorMcpToken: (payload) => ipcRenderer.invoke('connector-hub:save-mcp-token', payload),

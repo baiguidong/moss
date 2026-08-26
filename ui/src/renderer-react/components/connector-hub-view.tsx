@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  ArrowRight,
   Cable,
   Download,
   ExternalLink,
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getConnectorPrimaryAction } from "@/lib/connector-primary-action";
 import type { ConnectorCatalogItem, InstalledConnector } from "../types";
 
 type ConnectorTab = "recommend" | "mcp" | "cli" | "installed";
@@ -35,6 +37,7 @@ type ConnectorHubViewProps = {
   onConnectorsChanged?: () => void;
   onRunCliSetup?: (connector: InstalledConnector, cli: Record<string, any> | null) => void;
   onAuthenticateMcp?: (connector: InstalledConnector) => void;
+  onUseConnector?: (connector: InstalledConnector) => void;
   onError?: (error: { title: string; message: string; details?: string }) => void;
 };
 
@@ -57,6 +60,7 @@ function connectorStatusLabel(connector: ConnectorCatalogItem) {
   if (connector.hasCli && connector.setupStatus === "running") return "安装中";
   if (connector.hasCli && connector.setupStatus === "authenticating") return "认证中";
   if (connector.hasCli && connector.setupStatus === "failed") return "设置失败";
+  if (connector.hasCli && connector.setupStatus === "needs-auth") return "未认证";
   if (connector.hasCli && connector.setupStatus === "pending") return "待设置";
   if (connector.authMode) return "待授权";
   return "已安装";
@@ -96,22 +100,28 @@ function ConnectorCard({
   busy,
   installedRecord,
   onInstall,
-  onAuthenticate,
+  onPrimaryAction,
   onUninstall,
 }: {
   connector: ConnectorCatalogItem;
   busy: boolean;
   installedRecord?: InstalledConnector;
   onInstall: () => void;
-  onAuthenticate: () => void;
+  onPrimaryAction: () => void;
   onUninstall: () => void;
 }) {
   const installed = Boolean(installedRecord || connector.installed);
   const activeConnector = installedRecord || connector;
-  const hasCredentialFields = Boolean(activeConnector.credentialSchema?.fields?.length);
-  const canAuthenticate = installed && (
-    hasCredentialFields || (!activeConnector.connected && Boolean(activeConnector.hasMcp))
-  );
+  const primaryAction = getConnectorPrimaryAction(activeConnector, installed);
+  const primaryActionLabel = primaryAction === 'credentials'
+    ? '配置凭据'
+    : primaryAction === 'cli-setup'
+      ? '设置/授权'
+      : primaryAction === 'mcp-auth'
+        ? '连接/授权'
+        : primaryAction === 'use'
+          ? '去使用'
+          : '';
   return (
     <div className="h-[130px] min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5 shadow-[0_16px_48px_-40px_rgba(0,0,0,0.55)] transition-colors hover:border-border hover:bg-card">
       <div className="flex h-full min-w-0 items-start gap-2.5">
@@ -128,16 +138,23 @@ function ConnectorCard({
             </div>
             {installed ? (
               <div className="flex shrink-0 items-center gap-1.5">
-                {canAuthenticate ? (
+                {primaryAction ? (
                   <Button
                     size="icon-sm"
                     variant="outline"
                     className="h-8 w-8 rounded-lg"
-                    onClick={onAuthenticate}
+                    onClick={onPrimaryAction}
                     disabled={busy}
-                    title={hasCredentialFields ? "配置凭据" : "连接/授权"}
+                    title={primaryActionLabel}
+                    aria-label={primaryActionLabel}
                   >
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                    {busy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : primaryAction === 'use' ? (
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    ) : (
+                      <KeyRound className="h-3.5 w-3.5" />
+                    )}
                   </Button>
                 ) : null}
                 <Button
@@ -189,7 +206,13 @@ function ConnectorCard({
   );
 }
 
-export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthenticateMcp, onError }: ConnectorHubViewProps) {
+export function ConnectorHubView({
+  onConnectorsChanged,
+  onRunCliSetup,
+  onAuthenticateMcp,
+  onUseConnector,
+  onError,
+}: ConnectorHubViewProps) {
   const [tab, setTab] = React.useState<ConnectorTab>("recommend");
   const [query, setQuery] = React.useState("");
   const deferredQuery = React.useDeferredValue(query.trim().toLowerCase());
@@ -201,6 +224,7 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
   const [credentialTarget, setCredentialTarget] = React.useState<InstalledConnector | null>(null);
   const [credentialValues, setCredentialValues] = React.useState<Record<string, string>>({});
   const [credentialSaving, setCredentialSaving] = React.useState(false);
+  const checkedCliIdsRef = React.useRef<Set<string>>(new Set());
 
   const reportError = React.useCallback((title: string, err: unknown, connector?: ConnectorCatalogItem | null) => {
     const message = err instanceof Error ? err.message : String(err);
@@ -246,6 +270,36 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
   React.useEffect(() => {
     void loadConnectors();
   }, [loadConnectors]);
+
+  React.useEffect(() => {
+    const candidates = (payload?.installed || []).filter((connector) => (
+      connector.hasCli && !checkedCliIdsRef.current.has(connector.id)
+    ));
+    if (candidates.length === 0) return;
+    for (const connector of candidates) checkedCliIdsRef.current.add(connector.id);
+
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const connector = candidates[cursor];
+        cursor += 1;
+        if (!connector) return;
+        try {
+          const res = await window.agentDesktop.refreshConnectorCliStatus({ id: connector.id });
+          if (!res?.success || !res.data?.connector) continue;
+          const refreshed = res.data.connector;
+          setPayload((current) => current ? {
+            ...current,
+            installed: current.installed.map((item) => item.id === refreshed.id ? refreshed : item),
+            connectors: current.connectors.map((item) => item.id === refreshed.id
+              ? { ...item, connected: refreshed.connected, setupStatus: refreshed.setupStatus }
+              : item),
+          } : current);
+        } catch {}
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, candidates.length) }, () => worker()));
+  }, [payload?.installed]);
 
   React.useEffect(() => {
     const handler = window.agentDesktop.ipcOn("connector-hub:changed", () => {
@@ -415,7 +469,10 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
             variant="outline"
             size="icon-sm"
             className="h-8 w-8 rounded-lg"
-            onClick={() => void loadConnectors()}
+            onClick={() => {
+              checkedCliIdsRef.current.clear();
+              void loadConnectors();
+            }}
             disabled={loading}
             title="刷新"
           >
@@ -462,12 +519,17 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
                       installedRecord={installedRecord}
                       busy={busyIds.has(connector.id)}
                       onInstall={() => void installConnector(connector)}
-                      onAuthenticate={() => {
+                      onPrimaryAction={() => {
                         const record = (installedRecord || connector) as InstalledConnector;
-                        if (record.credentialSchema?.fields?.length) {
+                        const action = getConnectorPrimaryAction(record, true);
+                        if (action === 'credentials') {
                           openCredentialEditor(record);
-                        } else if (onAuthenticateMcp) {
+                        } else if (action === 'cli-setup' && onRunCliSetup) {
+                          onRunCliSetup(record, null);
+                        } else if (action === 'mcp-auth' && onAuthenticateMcp) {
                           onAuthenticateMcp(record);
+                        } else if (action === 'use' && onUseConnector) {
+                          onUseConnector(record);
                         }
                       }}
                       onUninstall={() => void uninstallConnector(connector)}

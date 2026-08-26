@@ -25,6 +25,7 @@ const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_AUTH_TIMEOUT_MS = 6 * 60 * 1000;
+const CLI_STATUS_REFRESH_TIMEOUT_MS = 15 * 1000;
 const AUTH_STATUS_POLL_MS = 3000;
 const ICON_MIME_TYPES = Object.freeze({
   '.svg': 'image/svg+xml',
@@ -1362,13 +1363,13 @@ async function runCliVersionCheck(cli, baseDir, env) {
   };
 }
 
-async function runCliStatus(cli, baseDir, env) {
+async function runCliStatus(cli, baseDir, env, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS) {
   const command = getPlatformCommand(cli?.status, 'status');
   if (!command) return { checked: false, connected: false, output: '' };
   const result = await runConnectorCommand(command, {
     cwd: baseDir,
     env,
-    timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+    timeoutMs,
   });
   const output = result.output || `${result.stdout || ''}${result.stderr || ''}`;
   return {
@@ -1376,6 +1377,54 @@ async function runCliStatus(cli, baseDir, env) {
     connected: result.code === 0 && matchesCliStatus(cli, output),
     code: result.code,
     output,
+  };
+}
+
+export function cliStatusStatePatch(connected) {
+  return connected
+    ? {
+        connected: true,
+        setupStatus: 'connected',
+        setupMessage: '连接器可用',
+      }
+    : {
+        connected: false,
+        setupStatus: 'needs-auth',
+        setupMessage: 'CLI 未认证',
+      };
+}
+
+export async function refreshConnectorCliStatus(connectorId) {
+  const id = normalizeConnectorId(connectorId);
+  const connector = await readInstalledConnector(id);
+  if (!connector) throw new Error(`Connector is not installed: ${id}`);
+  const baseDir = connectorDir(id);
+  const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
+  if (!isPlainObject(cli)) throw new Error(`Connector has no cli.json: ${id}`);
+
+  const status = await runCliStatus(
+    cli,
+    baseDir,
+    {
+      ...buildConnectorCliEnv(cli, baseDir, id, connectorCommandEnv({
+        MOSS_CONNECTOR_NAME: connector.name || id,
+      })),
+      ...readConnectorCredentialValues(id),
+    },
+    CLI_STATUS_REFRESH_TIMEOUT_MS,
+  );
+  if (!status.checked) throw new Error(`Connector has no status command: ${id}`);
+
+  const patch = cliStatusStatePatch(status.connected);
+  const connectionChanged = connector.connected !== patch.connected;
+  const changed = connector.connected !== patch.connected || connector.setupStatus !== patch.setupStatus;
+  if (changed) await updateConnectorRuntimeState(id, patch);
+
+  return {
+    connector: changed ? await readInstalledConnector(id) : connector,
+    connected: status.connected,
+    changed,
+    connectionChanged,
   };
 }
 
@@ -2046,6 +2095,22 @@ export function registerConnectorHubIpcHandlers({
       return { success: true, data: await listInstalledConnectors() };
     } catch (error) {
       return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  ipcMain.handle('connector-hub:refresh-cli-status', async (_event, payload = {}) => {
+    try {
+      const result = await refreshConnectorCliStatus(payload.id);
+      if (result.connectionChanged) {
+        if (result.connected && result.connector?.hasMcp) await onMcpTokenSaved?.(result);
+        emitConnectorsChanged?.({
+          reason: 'cli-status-refreshed',
+          connectorId: result.connector?.id || payload.id,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: redactSensitiveText(error?.message || String(error)) };
     }
   });
 
