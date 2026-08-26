@@ -28,6 +28,7 @@ type Props = {
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>;
   isStreaming?: boolean;
   embedded?: boolean;
+  focusedToolUseId?: string;
 };
 
 const kindLabels: Record<ToolKind, string> = {
@@ -177,25 +178,47 @@ function summarizeStatus({
   return `运行中 ${completedCount}/${totalCount}`;
 }
 
+function toolTreeHasUseId(
+  toolCall: ToolUseRenderMessage,
+  toolUseId: string,
+  childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
+) {
+  if (toolCall.toolUseId === toolUseId) return true;
+  const pending = [...(childToolCallsByParent.get(toolCall.toolUseId) || [])];
+  while (pending.length > 0) {
+    const child = pending.shift()!;
+    if (child.toolUseId === toolUseId) return true;
+    pending.push(...(childToolCallsByParent.get(child.toolUseId) || []));
+  }
+  return false;
+}
+
 function ToolCallTree({
   toolCall,
   resultMap,
   childToolCallsByParent,
   compact = false,
+  focusedToolUseId,
 }: {
   toolCall: ToolUseRenderMessage;
   resultMap: Map<string, ToolResultRenderMessage>;
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>;
   compact?: boolean;
+  focusedToolUseId?: string;
 }) {
   const result = resultMap.get(toolCall.toolUseId);
   const children = childToolCallsByParent.get(toolCall.toolUseId) || [];
+  const containsFocusedTool = Boolean(
+    focusedToolUseId && toolTreeHasUseId(toolCall, focusedToolUseId, childToolCallsByParent),
+  );
 
   return (
     <ToolCallBlock
       toolCall={toolCall}
       result={result}
       compact={compact}
+      focused={toolCall.toolUseId === focusedToolUseId}
+      expandForFocus={containsFocusedTool}
     >
       {children.length > 0 ? (
         <div className="ml-2 border-l border-border/50 pl-2">
@@ -207,6 +230,7 @@ function ToolCallTree({
                 resultMap={resultMap}
                 childToolCallsByParent={childToolCallsByParent}
                 compact
+                focusedToolUseId={focusedToolUseId}
               />
             ))}
           </div>
@@ -222,12 +246,14 @@ function ToolTimelineRow({
   childToolCallsByParent,
   expanded,
   onToggle,
+  focusedToolUseId,
 }: {
   batch: ToolTimelineBatch;
   resultMap: Map<string, ToolResultRenderMessage>;
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>;
   expanded: boolean;
   onToggle: () => void;
+  focusedToolUseId?: string;
 }) {
   const Icon = kindIcons[batch.kind];
   const outcome = summarizeOutcome(batch.toolCalls, resultMap);
@@ -274,6 +300,7 @@ function ToolTimelineRow({
               resultMap={resultMap}
               childToolCallsByParent={childToolCallsByParent}
               compact
+              focusedToolUseId={focusedToolUseId}
             />
           ))}
         </div>
@@ -288,6 +315,7 @@ export function ToolCallGroup({
   childToolCallsByParent,
   isStreaming = false,
   embedded = false,
+  focusedToolUseId,
 }: Props) {
   const hasError = toolCalls.some((toolCall) => {
     return toolFailed(toolCall, resultMap);
@@ -307,6 +335,21 @@ export function ToolCallGroup({
     () => groupConsecutiveToolCalls(toolCalls),
     [toolCalls],
   );
+
+  React.useEffect(() => {
+    if (!focusedToolUseId) return;
+    const focusedBatch = timelineBatches.find((batch) => batch.toolCalls.some(
+      (toolCall) => toolTreeHasUseId(toolCall, focusedToolUseId, childToolCallsByParent),
+    ));
+    if (!focusedBatch) return;
+    setExpanded(true);
+    setExpandedBatches((current) => {
+      if (current.has(focusedBatch.id)) return current;
+      const next = new Set(current);
+      next.add(focusedBatch.id);
+      return next;
+    });
+  }, [childToolCallsByParent, focusedToolUseId, timelineBatches]);
 
   const StatusIcon = allCompleted
     ? hasError
@@ -368,6 +411,7 @@ export function ToolCallGroup({
             batch={batch}
             resultMap={resultMap}
             childToolCallsByParent={childToolCallsByParent}
+            focusedToolUseId={focusedToolUseId}
             expanded={expandedBatches.has(batch.id)}
             onToggle={() => {
               setExpandedBatches((current) => {

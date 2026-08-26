@@ -209,15 +209,19 @@ export function ToolCallBlock({
   result,
   children,
   compact = false,
+  focused = false,
+  expandForFocus = false,
 }: {
   toolCall: ToolUseRenderMessage;
   result?: ToolResultRenderMessage;
   children?: React.ReactNode;
   compact?: boolean;
+  focused?: boolean;
+  expandForFocus?: boolean;
 }) {
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
-  const [expanded, setExpanded] = React.useState(isRunning);
+  const [expanded, setExpanded] = React.useState(isRunning || focused || expandForFocus);
   const userToggledRef = React.useRef(false);
   const prevRunningRef = React.useRef(isRunning);
 
@@ -230,6 +234,10 @@ export function ToolCallBlock({
     prevRunningRef.current = isRunning;
   }, [isRunning]);
 
+  React.useEffect(() => {
+    if (focused || expandForFocus) setExpanded(true);
+  }, [expandForFocus, focused]);
+
   const shellResult = extractShellResult(result?.rawContent);
   const copyText = result
     ? (extractTextContent(result.rawContent ?? result.content) || result.content)
@@ -240,11 +248,15 @@ export function ToolCallBlock({
     return (
       <button
         type="button"
+        data-tool-use-id={toolCall.toolUseId}
         onClick={() => {
           userToggledRef.current = true;
           setExpanded(true);
         }}
-        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none"
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none",
+          focused && "bg-primary/10 ring-2 ring-primary/25",
+        )}
       >
         {statusDot(toolCall.status)}
         <span className="min-w-0 flex-1 truncate text-muted-foreground">
@@ -260,13 +272,15 @@ export function ToolCallBlock({
   // Expanded: show input + result inline
   return (
     <div
+      data-tool-use-id={toolCall.toolUseId}
       className={cn(
-        "rounded-xl border",
+        "rounded-xl border transition-shadow",
         toolCall.status === "error"
           ? "border-destructive/30 bg-destructive/5"
           : isRunning
             ? "border-primary/30 bg-primary/5"
             : "border-border/60 bg-card/72",
+        focused && "border-primary/60 ring-2 ring-primary/25 ring-offset-1 ring-offset-background",
       )}
     >
       {/* Header: click to collapse */}

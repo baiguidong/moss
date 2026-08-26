@@ -15,6 +15,8 @@ const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
   path.join(uiRoot, 'src', 'browser-view-manager.mjs'),
+  path.join(uiRoot, 'src', 'local-audit-engine.mjs'),
+  path.join(uiRoot, 'src', 'local-audit-service.mjs'),
   path.join(uiRoot, 'src', 'plugin-app-preload.mjs'),
   path.join(uiRoot, 'src', 'plugin-app-protocol.mjs'),
 ];

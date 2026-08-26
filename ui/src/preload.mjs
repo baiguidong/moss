@@ -162,6 +162,18 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('browser:external-url', handler);
     },
   },
+  audit: {
+    getDashboard: () => ipcRenderer.invoke('audit:get-dashboard'),
+    run: (payload) => ipcRenderer.invoke('audit:run', payload),
+    updateRule: (payload) => ipcRenderer.invoke('audit:update-rule', payload),
+    updateFinding: (payload) => ipcRenderer.invoke('audit:update-finding', payload),
+    updateFindings: (payload) => ipcRenderer.invoke('audit:update-findings', payload),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('audit:changed', handler);
+      return () => ipcRenderer.off('audit:changed', handler);
+    },
+  },
   workspace: {
     writeFile: (payload) => ipcRenderer.invoke('workspace.write-file', payload),
   },

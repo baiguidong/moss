@@ -209,6 +209,7 @@ function renderTranscriptItem(
   resultMap: Map<string, ToolResultRenderMessage>,
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
   compact = false,
+  focusedToolUseId?: string,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -225,6 +226,7 @@ function renderTranscriptItem(
             childToolCallsByParent={childToolCallsByParent}
             isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
             embedded
+            focusedToolUseId={focusedToolUseId}
           />
         </div>
       </div>
@@ -243,6 +245,7 @@ function renderTranscriptItem(
             childToolCallsByParent={childToolCallsByParent}
             isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
             embedded
+            focusedToolUseId={focusedToolUseId}
           />
         }
       />
@@ -425,7 +428,34 @@ function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
 export type VirtualMessageListHandle = {
   scrollToBottom: (behavior?: "auto" | "smooth") => void;
   scrollToMessage: (messageId: string) => void;
+  scrollToTool: (toolUseId: string) => void;
 };
+
+function toolTreeContains(
+  toolCall: ToolUseRenderMessage,
+  toolUseId: string,
+  childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
+) {
+  if (toolCall.toolUseId === toolUseId) return true;
+  const pending = [...(childToolCallsByParent.get(toolCall.toolUseId) || [])];
+  while (pending.length > 0) {
+    const child = pending.shift()!;
+    if (child.toolUseId === toolUseId) return true;
+    pending.push(...(childToolCallsByParent.get(child.toolUseId) || []));
+  }
+  return false;
+}
+
+export function findToolRenderItemIndex(
+  renderItems: RenderItem[],
+  childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
+  toolUseId: string,
+) {
+  return renderItems.findIndex((item) => {
+    if (item.kind === "message") return false;
+    return item.toolCalls.some((toolCall) => toolTreeContains(toolCall, toolUseId, childToolCallsByParent));
+  });
+}
 
 export const VirtualMessageList = React.forwardRef<
   VirtualMessageListHandle,
@@ -437,9 +467,10 @@ export const VirtualMessageList = React.forwardRef<
     emptyState?: React.ReactNode;
     onAtBottomChange?: (atBottom: boolean) => void;
     hideToolCalls?: boolean;
+    focusedToolUseId?: string;
   }
 >(function VirtualMessageList(
-  { messages, workspace, loading, footer, emptyState, onAtBottomChange, hideToolCalls },
+  { messages, workspace, loading, footer, emptyState, onAtBottomChange, hideToolCalls, focusedToolUseId },
   ref,
 ) {
   const { renderItems: allRenderItems, resultMap, childToolCallsByParent } = React.useMemo(
@@ -472,7 +503,14 @@ export const VirtualMessageList = React.forwardRef<
     }
   }, []);
 
-  React.useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage }), [scrollToBottom, scrollToMessage]);
+  const scrollToTool = React.useCallback((toolUseId: string) => {
+    const index = findToolRenderItemIndex(renderItemsRef.current, childToolCallsByParent, toolUseId);
+    if (index >= 0) {
+      virtuosoRef.current?.scrollToIndex({ index, align: "center", behavior: "smooth" });
+    }
+  }, [childToolCallsByParent]);
+
+  React.useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage, scrollToTool }), [scrollToBottom, scrollToMessage, scrollToTool]);
 
   // followOutput only reacts to item-count changes; streaming grows the last
   // item's content without adding items, so keep following manually while the
@@ -540,7 +578,7 @@ export const VirtualMessageList = React.forwardRef<
               }}
             >
               {showSeparator && ts && <TimeSeparator date={ts} />}
-              {renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls)}
+              {renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls, focusedToolUseId)}
             </div>
           );
         }}
@@ -561,6 +599,7 @@ export const MessageListPane = React.forwardRef<
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     hideToolCalls?: boolean;
+    focusedToolUseId?: string;
     className?: string;
   }
 >(function MessageListPane({ className, ...listProps }, ref) {
@@ -570,6 +609,7 @@ export const MessageListPane = React.forwardRef<
     () => ({
       scrollToBottom: (behavior) => innerRef.current?.scrollToBottom(behavior),
       scrollToMessage: (messageId) => innerRef.current?.scrollToMessage(messageId),
+      scrollToTool: (toolUseId) => innerRef.current?.scrollToTool(toolUseId),
     }),
     [],
   );

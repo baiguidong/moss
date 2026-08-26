@@ -21,6 +21,7 @@ import {
   FolderKanban,
   Hammer,
   Plug,
+  ShieldCheck,
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,7 @@ export interface SidebarSession {
   cronTaskId?: string | null;
 }
 
-export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -426,6 +427,15 @@ export function AppSidebar({
           >
             <AlarmClock className="h-4 w-4" />
             {!collapsed && "定时任务"}
+          </Button>
+          <Button
+            variant={activeView === "audit" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-0")}
+            onClick={() => onChangeView("audit")}
+            title="审计中心"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            {!collapsed && "审计中心"}
           </Button>
         </div>
       </div>

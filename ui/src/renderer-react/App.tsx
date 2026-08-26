@@ -2,6 +2,7 @@ import * as React from 'react';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
+import { LocalAuditView } from '@/components/local-audit-view';
 import { ChatArea } from '@/components/chat-area';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { SkillHubView } from '@/components/skill-hub-view';
@@ -346,6 +347,10 @@ export default function App() {
     }
   });
   const [activeView, setActiveView] = React.useState<MainView>('chat');
+  const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
+    sessionId: string;
+    toolUseId: string;
+  } | null>(null);
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -1772,6 +1777,7 @@ export default function App() {
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
+    setAuditFocusTarget(null);
     const opened = await openSession(sessionId);
     if (!opened) return;
     setActiveView('chat');
@@ -2238,6 +2244,39 @@ export default function App() {
     });
   }, [pushAppNotification, showPermissionNotice]);
 
+  const handleAuditError = React.useCallback((error: {
+    title: string;
+    message: string;
+    details?: string;
+  }) => {
+    const reason = cleanIpcErrorMessage(error.message);
+    showPermissionNotice(`${error.title}：${reason}`, 'error', 6000);
+    pushAppNotification({
+      severity: 'error',
+      source: '审计中心',
+      title: error.title,
+      message: reason,
+      details: [error.details || '', `原始错误：${error.message}`].filter(Boolean).join('\n'),
+    });
+  }, [pushAppNotification, showPermissionNotice]);
+
+  const handleAuditNotice = React.useCallback((message: string) => {
+    showPermissionNotice(message, 'info', 4500);
+  }, [showPermissionNotice]);
+
+  const handleLocateAuditTool = React.useCallback(async (sessionId: string, toolUseId: string) => {
+    const opened = await openSession(sessionId);
+    if (!opened) {
+      handleAuditError({
+        title: '定位工具调用失败',
+        message: '对应会话不存在或当前无法打开。',
+        details: `会话：${sessionId}\n工具调用：${toolUseId}`,
+      });
+      return;
+    }
+    setAuditFocusTarget({ sessionId, toolUseId });
+  }, [handleAuditError, openSession]);
+
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
     if (appBuilderAssistant) {
@@ -2441,6 +2480,7 @@ export default function App() {
                 sessionMessageCount={visibleChatMessageCount}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
+                focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
                 planDecisionBusy={planDecisionBusy}
                 leftCollapsed={layout.leftCollapsed}
@@ -2520,6 +2560,8 @@ export default function App() {
             )
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
+          ) : activeView === 'audit' ? (
+            <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
           ) : activeView === 'skills' ? (
             <SkillHubView />
           ) : activeView === 'connectors' ? (

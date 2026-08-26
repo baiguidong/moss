@@ -65,6 +65,10 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import {
+  createLocalAuditService,
+  registerLocalAuditIpcHandlers,
+} from './local-audit-service.mjs';
+import {
   applyManagedRuntimeEnv,
   ensureManagedRuntimes,
   getManagedRuntimeStatus,
@@ -165,6 +169,7 @@ const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const AUTH_SETTINGS_PATH = DESKTOP_SETTINGS_PATH;
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
+const AUDIT_DB_PATH = path.join(MOSS_HOME, 'audit.db');
 const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
@@ -441,6 +446,7 @@ let browserViewManager = null;
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
+let localAuditService = null;
 
 const sessions = new Map();
 const pendingQuestionRequests = new Map();
@@ -5287,6 +5293,24 @@ function getSessionRecord(sessionId) {
   return sessionRecord;
 }
 
+function getLocalAuditSessionSnapshots() {
+  return [...sessions.values(), ...subAgentSessions.values()]
+    .filter((sessionRecord) => sessionRecord?.agentMode !== 'remote-direct')
+    .map((sessionRecord) => ({
+      id: sessionRecord.id,
+      title: sessionRecord.title,
+      workspace: sessionRecord.workspace,
+      projectId: sessionRecord.projectId || null,
+      assistantName: sessionRecord.assistantName || null,
+      sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+      isSubAgent: Boolean(sessionRecord.isSubAgent),
+      createdAt: sessionRecord.createdAt,
+      updatedAt: sessionRecord.updatedAt,
+      agentMode: 'local',
+      history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
+    }));
+}
+
 function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
   return {
     ...getSessionSummary(sessionRecord),
@@ -6585,6 +6609,12 @@ app.whenReady().then(async () => {
   });
   registerAgentIpcHandlers();
   registerCronIpcHandlers();
+  localAuditService = createLocalAuditService({
+    dbPath: AUDIT_DB_PATH,
+    getLocalSessions: getLocalAuditSessionSnapshots,
+    onChanged: (payload) => emitToRenderer('audit:changed', payload),
+  });
+  registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
   startMossCronScheduler();
   initUpdateIpcHandlers();
   registerDocumentIpcHandlers();
@@ -6647,6 +6677,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  localAuditService?.close?.();
+  localAuditService = null;
 });
 
 ipcMain.handle('agent:get-status', () => getBootStatus());

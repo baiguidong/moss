@@ -1681,6 +1681,7 @@ export function ChatArea({
   sessionMessageCount,
   sessionId,
   sessionWorkspace,
+  focusedToolUseId,
   pendingPlanApproval,
   planDecisionBusy,
   leftCollapsed,
@@ -1727,6 +1728,7 @@ export function ChatArea({
   sessionMessageCount: number;
   sessionId?: string;
   sessionWorkspace?: string;
+  focusedToolUseId?: string;
   pendingPlanApproval: PendingPlanApproval | null;
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
@@ -1789,6 +1791,25 @@ export function ChatArea({
       return !prev;
     });
   }, []);
+
+  React.useEffect(() => {
+    if (!focusedToolUseId || !hasActiveSession) return;
+    setShowToolCalls(true);
+    const groupTimer = window.setTimeout(() => {
+      virtualListRef.current?.scrollToTool(focusedToolUseId);
+    }, 60);
+    const exactTimer = window.setTimeout(() => {
+      const selector = `[data-tool-use-id="${CSS.escape(focusedToolUseId)}"]`;
+      document.querySelector<HTMLElement>(selector)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 320);
+    return () => {
+      window.clearTimeout(groupTimer);
+      window.clearTimeout(exactTimer);
+    };
+  }, [focusedToolUseId, hasActiveSession, messages]);
 
   const outline = React.useMemo(() => deriveOutline(messages), [messages]);
   const handleJumpToOutlineItem = React.useCallback((messageId: string) => {
@@ -1878,6 +1899,7 @@ export function ChatArea({
         workspace={sessionWorkspace}
         loading={loading}
         hideToolCalls={!showToolCalls}
+        focusedToolUseId={focusedToolUseId}
         footer={pendingPlanApproval ? (
           <PlanApprovalCard
             pendingPlanApproval={pendingPlanApproval}
