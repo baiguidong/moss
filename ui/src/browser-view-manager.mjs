@@ -31,6 +31,7 @@ function isBrowserUrl(value) {
 function getExternalNavigationHref(value) {
   const url = typeof value === 'string' ? value.trim() : '';
   if (!url) return null;
+  if (isBrowserUrl(url)) return null;
   if (/^(?:mailto|tel|sms):/i.test(url)) return url;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^(?:file|javascript|data|about):/i.test(url)) {
     return url;
@@ -180,6 +181,14 @@ export function createBrowserViewManager({
     });
   }
 
+  function openFailedUrlExternally(session, tab, rawUrl) {
+    const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+    if (!/^https?:\/\//i.test(url) || tab.externalFallbackUrl === url) return;
+    tab.externalFallbackUrl = url;
+    emit?.('browser:external-url', { sessionId: session.id, tabId: tab.id, url });
+    void openExternal?.(url);
+  }
+
   function emitAuthNavigation(session, tab, rawUrl) {
     const url = typeof rawUrl === 'string' ? rawUrl : '';
     const context = getAuthNavigationContext(tab, url);
@@ -320,7 +329,10 @@ export function createBrowserViewManager({
     });
 
     webContents.on?.('will-navigate', (event, url) => {
-      if (isBrowserUrl(url)) return;
+      if (isBrowserUrl(url)) {
+        tab.externalFallbackUrl = null;
+        return;
+      }
       const externalUrl = getExternalNavigationHref(url);
       if (!externalUrl) return;
       event.preventDefault?.();
@@ -333,6 +345,7 @@ export function createBrowserViewManager({
     webContents.on?.('did-start-loading', () => {
       tab.isLoading = true;
       tab.error = null;
+      tab.externalFallbackUrl = null;
       syncViews();
       emitState(session);
     });
@@ -352,6 +365,7 @@ export function createBrowserViewManager({
       tab.isLoading = false;
       tab.url = validatedUrl || tab.url;
       tab.error = errorDescription || `页面加载失败 (${errorCode})`;
+      openFailedUrlExternally(session, tab, tab.url);
       syncViews();
       emitState(session);
     });
@@ -395,6 +409,7 @@ export function createBrowserViewManager({
       view,
       attachedWindow: null,
       closing: false,
+      externalFallbackUrl: null,
     };
     configureTabWebContents(session, tab);
 
@@ -403,6 +418,7 @@ export function createBrowserViewManager({
         if (tab.closing) return;
         tab.isLoading = false;
         tab.error = error instanceof Error ? error.message : String(error);
+        openFailedUrlExternally(session, tab, url);
         syncViews();
         emitState(session);
       });
@@ -445,6 +461,7 @@ export function createBrowserViewManager({
     tab.error = null;
     tab.isLoading = url !== BROWSER_DEFAULT_URL;
     tab.showNativeBlank = false;
+    tab.externalFallbackUrl = null;
     syncViews();
     emitState(session);
     if (url === BROWSER_DEFAULT_URL) {
@@ -455,6 +472,7 @@ export function createBrowserViewManager({
       if (tab.closing) return;
       tab.isLoading = false;
       tab.error = error instanceof Error ? error.message : String(error);
+      openFailedUrlExternally(session, tab, url);
       syncViews();
       emitState(session);
     });

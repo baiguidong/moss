@@ -303,8 +303,35 @@ describe('BrowserViewManager', () => {
     expect(manager.getState('session-external').tabs.find((tab: any) => tab.id === tabId)?.url).toBe('https://example.test');
   });
 
+  it('keeps address-bar web URLs internal and falls back only after load failure', () => {
+    const { manager, views, externalUrls } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-web', url: 'https://start.test' });
+    const tabId = opened.activeTabId;
+    const view = views[1]!.view;
+
+    let clickPrevented = false;
+    view.webContents.emit('will-navigate', {
+      preventDefault: () => { clickPrevented = true; },
+    }, 'https://clicked.test/page');
+    expect(clickPrevented).toBe(false);
+    expect(externalUrls).toEqual([]);
+
+    manager.navigate({ sessionId: 'session-web', tabId, url: 'https://inside.test/path' });
+    expect(view.webContents.loads.at(-1)).toBe('https://inside.test/path');
+    expect(externalUrls).toEqual([]);
+
+    view.webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://inside.test/path', true);
+    expect(externalUrls).toEqual([]);
+
+    view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://inside.test/path', true);
+    expect(externalUrls).toEqual(['https://inside.test/path']);
+
+    view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://inside.test/path', true);
+    expect(externalUrls).toEqual(['https://inside.test/path']);
+  });
+
   it('keeps main-frame load failures visible after loading stops', () => {
-    const { manager, views, children } = createHarness();
+    const { manager, views, externalUrls, children } = createHarness();
     const opened = manager.openTab({ sessionId: 'session-error', url: 'https://unreachable.test' });
     const tabId = opened.activeTabId;
     const view = views[1]!.view;
@@ -316,6 +343,7 @@ describe('BrowserViewManager', () => {
 
     view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://unreachable.test', true);
     expect(manager.getState('session-error').tabs.find((tab: any) => tab.id === tabId)?.error).toBe('NAME_NOT_RESOLVED');
+    expect(externalUrls).toEqual(['https://unreachable.test']);
     expect(children).toHaveLength(0);
 
     view.webContents.emit('did-stop-loading');

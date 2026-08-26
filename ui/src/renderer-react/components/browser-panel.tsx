@@ -254,6 +254,17 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       .then(() => window.setTimeout(() => inputRef.current?.focus(), 0));
   }, [applyState, sessionKey]);
 
+  const openActiveTabInSystemBrowser = React.useCallback(async () => {
+    if (!activeTab || activeTab.url === DEFAULT_URL) return;
+    try {
+      const result = await window.agentDesktop.shell.openExternal(activeTab.url);
+      if (!result?.ok) throw new Error("系统浏览器无法打开当前网址");
+      setCommandError(null);
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error));
+    }
+  }, [activeTab?.url]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex h-9 shrink-0 items-end gap-1 border-b border-border/80 bg-muted/35 px-1.5 pt-1">
@@ -389,9 +400,10 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
         <button
           type="button"
           disabled={!activeTab || activeTab.url === DEFAULT_URL}
-          onClick={() => activeTab && void window.agentDesktop.shell.openExternal(activeTab.url)}
+          onClick={() => void openActiveTabInSystemBrowser()}
           className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
-          title="在默认浏览器中打开"
+          title="在系统浏览器中打开"
+          aria-label="在系统浏览器中打开"
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </button>
