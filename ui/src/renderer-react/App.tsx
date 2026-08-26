@@ -16,6 +16,7 @@ import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/bu
 import { SettingsView } from '@/components/settings-view';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
+import { NotificationCenter, NotificationToast } from '@/components/notification-center';
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
@@ -27,6 +28,15 @@ import {
 import { PRESET_THEMES } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
 import { getToolPermissionNotice } from '../tool-permission-policy.mjs';
+import {
+  appendAppNotification,
+  cleanIpcErrorMessage,
+  getErrorMessage,
+  loadAppNotifications,
+  saveAppNotifications,
+  type AppNotificationSeverity,
+  type NewAppNotification,
+} from '@/lib/app-notifications';
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -329,6 +339,15 @@ export default function App() {
     /(Mac|iPhone|iPad|iPod)/i.test(`${navigator.platform} ${navigator.userAgent}`);
   const [bootError, setBootError] = React.useState('');
   const [permissionNotice, setPermissionNotice] = React.useState('');
+  const [permissionNoticeSeverity, setPermissionNoticeSeverity] = React.useState<AppNotificationSeverity>('info');
+  const permissionNoticeTimerRef = React.useRef<number | null>(null);
+  const [appNotifications, setAppNotifications] = React.useState(() => {
+    try {
+      return loadAppNotifications(window.localStorage);
+    } catch {
+      return [];
+    }
+  });
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -337,6 +356,38 @@ export default function App() {
   const resolveTheme = (pref: ThemeMode): 'dark' | 'light' => {
     return pref === 'system' ? getSystemTheme() : pref;
   };
+
+  const dismissPermissionNotice = React.useCallback(() => {
+    if (permissionNoticeTimerRef.current) {
+      window.clearTimeout(permissionNoticeTimerRef.current);
+      permissionNoticeTimerRef.current = null;
+    }
+    setPermissionNotice('');
+    setPermissionNoticeSeverity('info');
+  }, []);
+
+  const showPermissionNotice = React.useCallback((
+    message: string,
+    severity: AppNotificationSeverity = 'info',
+    durationMs = 4000,
+  ) => {
+    if (permissionNoticeTimerRef.current) {
+      window.clearTimeout(permissionNoticeTimerRef.current);
+    }
+    setPermissionNotice(message);
+    setPermissionNoticeSeverity(severity);
+    permissionNoticeTimerRef.current = durationMs > 0
+      ? window.setTimeout(() => {
+          setPermissionNotice('');
+          setPermissionNoticeSeverity('info');
+          permissionNoticeTimerRef.current = null;
+        }, durationMs)
+      : null;
+  }, []);
+
+  const pushAppNotification = React.useCallback((notification: NewAppNotification) => {
+    setAppNotifications((current) => appendAppNotification(current, notification));
+  }, []);
 
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
     try {
@@ -730,6 +781,63 @@ export default function App() {
   }, [activeDetail]);
 
   React.useEffect(() => {
+    try {
+      saveAppNotifications(appNotifications, window.localStorage);
+    } catch {
+      // Notification persistence is best-effort.
+    }
+  }, [appNotifications]);
+
+  React.useEffect(() => () => {
+    if (permissionNoticeTimerRef.current) {
+      window.clearTimeout(permissionNoticeTimerRef.current);
+      permissionNoticeTimerRef.current = null;
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const handleWindowError = (event: ErrorEvent) => {
+      const message = getErrorMessage(event.error || event.message);
+      const location = event.filename
+        ? `${event.filename}${event.lineno ? `:${event.lineno}:${event.colno || 0}` : ''}`
+        : '';
+      pushAppNotification({
+        severity: 'error',
+        source: '界面运行时',
+        title: '界面发生未处理异常',
+        message,
+        details: [event.error instanceof Error ? event.error.stack : '', location].filter(Boolean).join('\n'),
+      });
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const message = getErrorMessage(event.reason);
+      pushAppNotification({
+        severity: 'error',
+        source: '界面运行时',
+        title: '异步操作未处理',
+        message,
+        details: event.reason instanceof Error ? event.reason.stack : '',
+      });
+    };
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, [pushAppNotification]);
+
+  React.useEffect(() => {
+    if (!bootError) return;
+    pushAppNotification({
+      severity: 'error',
+      source: '应用启动',
+      title: 'Moss 启动检查失败',
+      message: bootError,
+    });
+  }, [bootError, pushAppNotification]);
+
+  React.useEffect(() => {
     expandedDirsRef.current = expandedDirs;
   }, [expandedDirs]);
 
@@ -1091,12 +1199,7 @@ export default function App() {
       if (payload?.sessionId !== activeSessionIdRef.current) return;
       const toolName = payload?.request?.tool_name || 'Tool';
       const notice = getToolPermissionNotice(toolName);
-      setPermissionNotice(notice);
-      window.setTimeout(() => {
-        setPermissionNotice((current) =>
-          current === notice ? '' : current
-        );
-      }, 4000);
+      showPermissionNotice(notice, 'info', 4000);
     });
 
     const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
@@ -1106,7 +1209,7 @@ export default function App() {
         payload,
       ]);
       if (payload.sessionId !== activeSessionIdRef.current) {
-        setPermissionNotice('另一个会话正在等待你回答问题');
+        showPermissionNotice('另一个会话正在等待你回答问题', 'info', 0);
       }
     });
 
@@ -1210,7 +1313,7 @@ export default function App() {
       offAssistantsChanged();
       window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, updateQuestionRequests]);
+  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1693,10 +1796,7 @@ export default function App() {
       { ok?: boolean; removedCronTasks?: number } | undefined;
     if (result?.removedCronTasks) {
       const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
-      setPermissionNotice(notice);
-      window.setTimeout(() => {
-        setPermissionNotice((current) => (current === notice ? '' : current));
-      }, 5000);
+      showPermissionNotice(notice, 'info', 5000);
     }
     if (activeSessionId === sessionId) {
       navigateToHome({ forceDiscardDirty: true });
@@ -1706,7 +1806,7 @@ export default function App() {
     nextModes.delete(sessionId);
     persistSessionAgentModes(nextModes);
     await refreshSummaries();
-  }, [activeSessionId, navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes]);
+  }, [activeSessionId, navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes, showPermissionNotice]);
 
   const handleRenameSession = React.useCallback(async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
@@ -1783,30 +1883,42 @@ export default function App() {
 
   const handleAuthenticateMcpConnector = React.useCallback(async (connector: InstalledConnector) => {
     const serverName = connector.mcpServerNames?.[0] || connector.id;
-    const sessionId = await createAndOpenSession(
-      `授权 ${connector.name} 连接器`,
-      undefined,
-      undefined,
-      undefined,
-      [connector.id],
-    );
-    setActiveView('chat');
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
     try {
+      const sessionId = await createAndOpenSession(
+        `授权 ${connector.name} 连接器`,
+        undefined,
+        undefined,
+        undefined,
+        [connector.id],
+      );
+      setActiveView('chat');
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
       const result = await window.agentDesktop.authenticateMcpServer({ name: serverName, sessionId });
       await refreshConnectors();
       const openedAuthUrl = (result as any)?.auth?.status === 'authorization_url_opened';
       const notice = openedAuthUrl
         ? `${connector.name} 授权页已打开，请在右侧浏览器完成授权`
         : `${connector.name} 授权已完成`;
-      setPermissionNotice(notice);
-      window.setTimeout(() => {
-        setPermissionNotice((current) => (current === notice ? '' : current));
-      }, 2500);
+      showPermissionNotice(notice, 'info', 2500);
     } catch (err) {
-      setPermissionNotice(err instanceof Error ? err.message : String(err));
+      const rawMessage = getErrorMessage(err);
+      const reason = cleanIpcErrorMessage(err);
+      showPermissionNotice(`${connector.name} 授权失败：${reason}`, 'error', 6000);
+      pushAppNotification({
+        severity: 'error',
+        source: '连接器授权',
+        title: `${connector.name} 授权失败`,
+        message: reason,
+        details: [
+          `连接器：${connector.name} (${connector.id})`,
+          `MCP 服务：${serverName}`,
+          'IPC 方法：agent:mcp-authenticate',
+          `原始错误：${rawMessage}`,
+          err instanceof Error && err.stack ? `调用栈：\n${err.stack}` : '',
+        ].filter(Boolean).join('\n'),
+      });
     }
-  }, [createAndOpenSession, refreshConnectors]);
+  }, [createAndOpenSession, pushAppNotification, refreshConnectors, showPermissionNotice]);
 
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
@@ -1942,8 +2054,8 @@ export default function App() {
       annotations,
     });
     updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
-    setPermissionNotice('');
-  }, [updateQuestionRequests]);
+    dismissPermissionNotice();
+  }, [dismissPermissionNotice, updateQuestionRequests]);
 
   const handleRejectQuestion = React.useCallback(async (request: AskUserQuestionRequest) => {
     await window.agentDesktop.rejectQuestion({
@@ -1952,8 +2064,8 @@ export default function App() {
       message: 'User declined to answer questions',
     });
     updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
-    setPermissionNotice('');
-  }, [updateQuestionRequests]);
+    dismissPermissionNotice();
+  }, [dismissPermissionNotice, updateQuestionRequests]);
 
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -2099,14 +2211,38 @@ export default function App() {
       connectorIds: next,
     });
     if (!res?.success || !res.data) {
-      setPermissionNotice(res?.error || '更新连接器失败');
+      const message = res?.error || '更新连接器失败';
+      showPermissionNotice(message, 'error', 6000);
+      pushAppNotification({
+        severity: 'error',
+        source: '连接器',
+        title: `${connector.name} 更新失败`,
+        message,
+        details: `连接器：${connector.name} (${connector.id})\n会话：${activeSessionId}`,
+      });
       return;
     }
     const detail = res.data;
     setActiveDetail(detail);
     activeDetailRef.current = detail;
     setSummaries((prev) => upsertSummary(prev, detail));
-  }, [activeSessionId, draftConnectorIds]);
+  }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
+
+  const handleConnectorHubError = React.useCallback((error: {
+    title: string;
+    message: string;
+    details?: string;
+  }) => {
+    const reason = cleanIpcErrorMessage(error.message);
+    showPermissionNotice(`${error.title}：${reason}`, 'error', 6000);
+    pushAppNotification({
+      severity: 'error',
+      source: '连接器中心',
+      title: error.title,
+      message: reason,
+      details: [error.details || '', `原始错误：${error.message}`].filter(Boolean).join('\n'),
+    });
+  }, [pushAppNotification, showPermissionNotice]);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
@@ -2206,11 +2342,33 @@ export default function App() {
 
   return (
     <div className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}>
-      <div className="moss-window-chrome shrink-0">
+      <div className="moss-window-chrome relative shrink-0">
         <div
           className="moss-window-drag h-9"
           style={{ paddingLeft: isMacOS ? 84 : 0 }}
         />
+        <div
+          className="absolute top-1"
+          style={{ right: isMacOS ? 8 : 144 }}
+        >
+          <NotificationCenter
+            notifications={appNotifications}
+            onMarkRead={(id) => {
+              setAppNotifications((current) => current.map((item) =>
+                item.id === id && !item.read ? { ...item, read: true } : item
+              ));
+            }}
+            onMarkAllRead={() => {
+              setAppNotifications((current) => current.map((item) =>
+                item.read ? item : { ...item, read: true }
+              ));
+            }}
+            onRemove={(id) => {
+              setAppNotifications((current) => current.filter((item) => item.id !== id));
+            }}
+            onClear={() => setAppNotifications([])}
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -2259,8 +2417,21 @@ export default function App() {
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           {(bootError || permissionNotice) && (
-            <div className="pointer-events-none absolute right-4 top-4 z-20 max-w-md rounded-2xl border border-border/80 bg-card/92 px-3 py-2 text-xs text-muted-foreground shadow-[0_18px_48px_-36px_rgba(0,0,0,0.6)] backdrop-blur">
-              {bootError || permissionNotice}
+            <div className="pointer-events-none absolute right-4 top-4 z-20 flex max-w-md flex-col items-end gap-2">
+              {bootError ? (
+                <NotificationToast
+                  message={bootError}
+                  severity="error"
+                  onDismiss={() => setBootError('')}
+                />
+              ) : null}
+              {permissionNotice ? (
+                <NotificationToast
+                  message={permissionNotice}
+                  severity={permissionNoticeSeverity}
+                  onDismiss={dismissPermissionNotice}
+                />
+              ) : null}
             </div>
           )}
           {activeView === 'chat' ? (
@@ -2362,6 +2533,7 @@ export default function App() {
               onConnectorsChanged={refreshConnectors}
               onRunCliSetup={handleRunCliConnectorSetup}
               onAuthenticateMcp={handleAuthenticateMcpConnector}
+              onError={handleConnectorHubError}
             />
           ) : activeView === 'experts' ? (
             <ExpertHubView />

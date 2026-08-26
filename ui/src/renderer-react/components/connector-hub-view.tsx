@@ -35,6 +35,7 @@ type ConnectorHubViewProps = {
   onConnectorsChanged?: () => void;
   onRunCliSetup?: (connector: InstalledConnector, cli: Record<string, any> | null) => void;
   onAuthenticateMcp?: (connector: InstalledConnector) => void;
+  onError?: (error: { title: string; message: string; details?: string }) => void;
 };
 
 function connectorIcon(connector: Pick<ConnectorCatalogItem, "type">) {
@@ -188,7 +189,7 @@ function ConnectorCard({
   );
 }
 
-export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthenticateMcp }: ConnectorHubViewProps) {
+export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthenticateMcp, onError }: ConnectorHubViewProps) {
   const [tab, setTab] = React.useState<ConnectorTab>("recommend");
   const [query, setQuery] = React.useState("");
   const deferredQuery = React.useDeferredValue(query.trim().toLowerCase());
@@ -200,6 +201,24 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
   const [credentialTarget, setCredentialTarget] = React.useState<InstalledConnector | null>(null);
   const [credentialValues, setCredentialValues] = React.useState<Record<string, string>>({});
   const [credentialSaving, setCredentialSaving] = React.useState(false);
+
+  const reportError = React.useCallback((title: string, err: unknown, connector?: ConnectorCatalogItem | null) => {
+    const message = err instanceof Error ? err.message : String(err);
+    setError(message);
+    onError?.({
+      title,
+      message,
+      details: connector
+        ? `连接器：${connector.name} (${connector.id})\n类型：${connector.type}\n来源：${connector.source}`
+        : undefined,
+    });
+  }, [onError]);
+
+  React.useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const installedLookup = React.useMemo(() => {
     const map = new Map<string, InstalledConnector>();
@@ -217,12 +236,12 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       if (!res?.success || !res.data) throw new Error(res?.error || "读取连接器市场失败");
       setPayload(res.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      reportError("读取连接器列表失败", err);
       setPayload(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [reportError]);
 
   React.useEffect(() => {
     void loadConnectors();
@@ -279,11 +298,11 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       await loadConnectors();
       await onConnectorsChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      reportError(`${credentialTarget.name} 凭据保存失败`, err, credentialTarget);
     } finally {
       setCredentialSaving(false);
     }
-  }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onConnectorsChanged]);
+  }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onConnectorsChanged, reportError]);
 
   const installConnector = React.useCallback(async (connector: ConnectorCatalogItem) => {
     setBusy(connector.id, true);
@@ -307,11 +326,11 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
         onAuthenticateMcp(installedConnector);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      reportError(`${connector.name} 安装失败`, err, connector);
     } finally {
       setBusy(connector.id, false);
     }
-  }, [flashNotice, loadConnectors, onAuthenticateMcp, onConnectorsChanged, onRunCliSetup, openCredentialEditor, setBusy]);
+  }, [flashNotice, loadConnectors, onAuthenticateMcp, onConnectorsChanged, onRunCliSetup, openCredentialEditor, reportError, setBusy]);
 
   const uninstallConnector = React.useCallback(async (connector: ConnectorCatalogItem) => {
     setBusy(connector.id, true);
@@ -323,11 +342,11 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       await loadConnectors();
       await onConnectorsChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      reportError(`${connector.name} 卸载失败`, err, connector);
     } finally {
       setBusy(connector.id, false);
     }
-  }, [flashNotice, loadConnectors, onConnectorsChanged, setBusy]);
+  }, [flashNotice, loadConnectors, onConnectorsChanged, reportError, setBusy]);
 
   const connectors = payload?.connectors || [];
   const installed = payload?.installed || [];
@@ -408,8 +427,17 @@ export function ConnectorHubView({ onConnectorsChanged, onRunCliSetup, onAuthent
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto w-full max-w-[1180px] px-4 py-2.5 sm:px-5">
           {error ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span className="min-w-0 flex-1 break-words">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError("")}
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-destructive/10"
+                title="关闭"
+                aria-label="关闭错误提示"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </div>
           ) : null}
 
