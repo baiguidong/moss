@@ -6,7 +6,6 @@ import {
   formatToolUse,
   formatPermissionRequest,
   truncateInput,
-  escapeMarkdownV2,
 } from '../format.js'
 
 describe('splitMessage', () => {
@@ -86,18 +85,6 @@ describe('truncateInput', () => {
     const circular: any = {}
     circular.self = circular
     expect(truncateInput(circular, 100)).toBe('(unserializable)')
-  })
-})
-
-describe('escapeMarkdownV2', () => {
-  it('escapes special characters', () => {
-    expect(escapeMarkdownV2('hello_world')).toBe('hello\\_world')
-    expect(escapeMarkdownV2('a*b*c')).toBe('a\\*b\\*c')
-    expect(escapeMarkdownV2('test.md')).toBe('test\\.md')
-  })
-
-  it('leaves plain text unchanged', () => {
-    expect(escapeMarkdownV2('hello world')).toBe('hello world')
   })
 })
 

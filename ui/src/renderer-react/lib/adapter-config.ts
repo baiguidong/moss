@@ -64,16 +64,16 @@ export function useAdapterConfig() {
   }, [updateConfig])
 
   const removePairedUser = React.useCallback(
-    async (platform: 'telegram' | 'feishu', userId: string | number) => {
+    async (userId: string | number) => {
       const { config } = state
-      const platformConfig = config[platform]
+      const platformConfig = config.feishu
       if (!platformConfig) return
       const pairedUsers = (platformConfig.pairedUsers ?? []).filter(
         (u) => String(u.userId) !== String(userId),
       )
       await updateConfig({
-        [platform]: { ...platformConfig, pairedUsers },
-      } as Partial<AdapterFileConfig>)
+        feishu: { ...platformConfig, pairedUsers },
+      })
     },
     [state.config, updateConfig],
   )

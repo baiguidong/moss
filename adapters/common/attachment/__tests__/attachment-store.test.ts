@@ -27,8 +27,8 @@ describe('AttachmentStore', () => {
 
   it('writes under {root}/{platform}/{sessionId}/', async () => {
     const store = new AttachmentStore({ root: tmpRoot, retentionMs: 60_000 })
-    const target = store.resolvePath('telegram', 'sess-42', 'foo.pdf')
-    expect(target).toContain(path.join('telegram', 'sess-42'))
+    const target = store.resolvePath('feishu', 'sess-42', 'foo.pdf')
+    expect(target).toContain(path.join('feishu', 'sess-42'))
     expect(target.endsWith('foo.pdf')).toBe(true)
   })
 

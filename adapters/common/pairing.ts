@@ -50,11 +50,10 @@ export function generatePairingCode(): string {
 
 /** 检查用户是否已配对（pairedUsers + allowedUsers 并集） */
 export function isPaired(
-  platform: 'telegram' | 'feishu',
   userId: string | number,
   config: Record<string, any>,
 ): boolean {
-  const platformConfig = config[platform] ?? {}
+  const platformConfig = config.feishu ?? {}
   const allowedUsers: (string | number)[] = platformConfig.allowedUsers ?? []
   const pairedUsers: PairedUser[] = platformConfig.pairedUsers ?? []
 
@@ -73,7 +72,6 @@ export function isPaired(
 export function tryPair(
   messageText: string,
   senderInfo: { userId: string | number; displayName: string },
-  platform: 'telegram' | 'feishu',
 ): boolean {
   const file = readAdapterConfig()
   const pairing: PairingState = file.pairing ?? { code: null, expiresAt: null, createdAt: null }
@@ -93,7 +91,7 @@ export function tryPair(
   }
 
   // 配对成功：写入 pairedUsers
-  const platformConfig = file[platform] ?? {}
+  const platformConfig = file.feishu ?? {}
   const pairedUsers: PairedUser[] = platformConfig.pairedUsers ?? []
 
   // 避免重复
@@ -107,7 +105,7 @@ export function tryPair(
   }
 
   // 更新 config
-  file[platform] = { ...platformConfig, pairedUsers }
+  file.feishu = { ...platformConfig, pairedUsers }
   file.pairing = { code: null, expiresAt: null, createdAt: null } // 一次性使用
   writeAdapterConfig(file)
 
@@ -115,10 +113,10 @@ export function tryPair(
 }
 
 /** 统一的用户授权检查（供各 adapter 调用） */
-export function isAllowedUser(platform: 'telegram' | 'feishu', userId: string | number): boolean {
+export function isAllowedUser(userId: string | number): boolean {
   try {
     const cfgFile = readAdapterConfig()
-    return isPaired(platform, userId, cfgFile)
+    return isPaired(userId, cfgFile)
   } catch {
     return false
   }

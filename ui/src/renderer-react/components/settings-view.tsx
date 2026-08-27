@@ -204,7 +204,7 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     title: 'IM 接入',
     icon: MessageSquare,
     iconGradientClassName: 'from-emerald-400 to-green-600',
-    keywords: ['IM', '接入', 'im', 'adapter', '飞书', 'feishu', 'telegram', '电报', '机器人', 'bot', '即时通讯'],
+    keywords: ['IM', '接入', 'im', 'adapter', '飞书', 'feishu', '机器人', 'bot', '即时通讯'],
   },
   {
     id: 'buddy',
@@ -2046,14 +2046,9 @@ export function SettingsView({
    );
 }
 
-type ImTab = 'feishu' | 'telegram'
-
 function ImAdapterSettings() {
   const { config, isLoading, fetchConfig, updateConfig, generatePairingCode, removePairedUser } = useAdapterConfig()
 
-  const [activeIm, setActiveIm] = React.useState<ImTab>('feishu')
-  const [tgBotToken, setTgBotToken] = React.useState('')
-  const [tgAllowedUsers, setTgAllowedUsers] = React.useState('')
   const [fsAppId, setFsAppId] = React.useState('')
   const [fsAppSecret, setFsAppSecret] = React.useState('')
   const [fsEncryptKey, setFsEncryptKey] = React.useState('')
@@ -2065,7 +2060,7 @@ function ImAdapterSettings() {
   const [saveError, setSaveError] = React.useState('')
   const [pairingCode, setPairingCode] = React.useState<string | null>(null)
   const [isGenerating, setIsGenerating] = React.useState(false)
-  const [pendingUnbind, setPendingUnbind] = React.useState<{ platform: 'telegram' | 'feishu'; userId: string | number } | null>(null)
+  const [pendingUnbind, setPendingUnbind] = React.useState<{ userId: string | number } | null>(null)
   const [isUnbinding, setIsUnbinding] = React.useState(false)
   const [feishuStatus, setFeishuStatus] = React.useState<FeishuAdapterStatus>({
     status: 'stopped',
@@ -2085,8 +2080,6 @@ function ImAdapterSettings() {
   }, [])
 
   React.useEffect(() => {
-    setTgBotToken(config.telegram?.botToken ?? '')
-    setTgAllowedUsers(config.telegram?.allowedUsers?.join(', ') ?? '')
     setFsAppId(config.feishu?.appId ?? '')
     setFsAppSecret(config.feishu?.appSecret ?? '')
     setFsEncryptKey(config.feishu?.encryptKey ?? '')
@@ -2100,30 +2093,20 @@ function ImAdapterSettings() {
     setSaveStatus('idle')
     setSaveError('')
     try {
-      const patch: Record<string, unknown> = {}
-      const tgUsers = tgAllowedUsers
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map(Number)
-        .filter((n) => !isNaN(n))
-      patch.telegram = {
-        botToken: tgBotToken || undefined,
-        allowedUsers: tgUsers.length ? tgUsers : [],
-      }
       const fsUsers = fsAllowedUsers
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
-      patch.feishu = {
-        appId: fsAppId || undefined,
-        appSecret: fsAppSecret || undefined,
-        encryptKey: fsEncryptKey || undefined,
-        verificationToken: fsVerificationToken || undefined,
-        allowedUsers: fsUsers.length ? fsUsers : [],
-        streamingCard: fsStreamingCard,
-      }
-      await updateConfig(patch as Partial<import('../types').AdapterFileConfig>)
+      await updateConfig({
+        feishu: {
+          appId: fsAppId || undefined,
+          appSecret: fsAppSecret || undefined,
+          encryptKey: fsEncryptKey || undefined,
+          verificationToken: fsVerificationToken || undefined,
+          allowedUsers: fsUsers.length ? fsUsers : [],
+          streamingCard: fsStreamingCard,
+        },
+      })
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
     } catch (err) {
@@ -2150,7 +2133,7 @@ function ImAdapterSettings() {
     if (!pendingUnbind) return
     setIsUnbinding(true)
     try {
-      await removePairedUser(pendingUnbind.platform, pendingUnbind.userId)
+      await removePairedUser(pendingUnbind.userId)
       await fetchConfig()
       setPendingUnbind(null)
     } finally {
@@ -2158,10 +2141,7 @@ function ImAdapterSettings() {
     }
   }
 
-  const allPairedUsers = [
-    ...(config.telegram?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'telegram' as const })),
-    ...(config.feishu?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'feishu' as const })),
-  ]
+  const allPairedUsers = config.feishu?.pairedUsers ?? []
 
   const pairingExpiry = config.pairing?.expiresAt
   const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
@@ -2178,8 +2158,8 @@ function ImAdapterSettings() {
   return (
     <div className="space-y-5">
       <SettingsGroup>
-        <SettingsRow title="IM 接入" description="配置飞书和 Telegram 机器人接入，允许用户通过 IM 应用与 AI 对话。" stacked>
-          <p className="text-xs leading-6 text-muted-foreground">在飞书或 Telegram 创建机器人，填入凭据后用户即可通过 IM 与 Agent 交互。</p>
+        <SettingsRow title="IM 接入" description="配置飞书机器人接入，允许用户通过飞书与 AI 对话。" stacked>
+          <p className="text-xs leading-6 text-muted-foreground">在飞书创建机器人，填入凭据后用户即可通过 IM 与 Agent 交互。</p>
         </SettingsRow>
       </SettingsGroup>
 
@@ -2190,7 +2170,7 @@ function ImAdapterSettings() {
           <span className="text-[13px] font-medium text-foreground">配对管理</span>
         </div>
         <div className="space-y-4 p-4">
-          <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书或 Telegram 机器人中输入该码即可绑定账号。</p>
+          <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书机器人中输入该码即可绑定账号。</p>
 
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
@@ -2215,18 +2195,16 @@ function ImAdapterSettings() {
               <div className="space-y-2">
                 {allPairedUsers.map((user) => (
                   <div
-                    key={`${user.platform}-${user.userId}`}
+                    key={String(user.userId)}
                     className="flex items-center justify-between rounded-xl border border-sidebar-border bg-sidebar-accent/70 px-3 py-2"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        {user.platform === 'feishu' ? '飞书' : 'Telegram'}
-                      </span>
+                      <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">飞书</span>
                       <span className="text-[13px] text-foreground">{user.displayName}</span>
                       <span className="text-xs text-muted-foreground">{new Date(user.pairedAt).toLocaleDateString()}</span>
                     </div>
                     <button
-                      onClick={() => setPendingUnbind({ platform: user.platform, userId: user.userId })}
+                      onClick={() => setPendingUnbind({ userId: user.userId })}
                       className="text-xs text-destructive hover:underline"
                     >
                       解绑
@@ -2239,113 +2217,71 @@ function ImAdapterSettings() {
         </div>
       </Surface>
 
-      {/* IM Tabs */}
+      {/* Feishu config */}
       <Surface>
-        <div role="tablist" aria-label="IM adapter" className="flex items-stretch border-b border-sidebar-border bg-sidebar-accent/58">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeIm === 'feishu'}
-            onClick={() => setActiveIm('feishu')}
-            className={cn(
-              'relative px-4 py-2.5 text-[13px] font-medium transition-colors',
-              activeIm === 'feishu'
-                ? 'text-foreground after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-primary'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            飞书
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeIm === 'telegram'}
-            onClick={() => setActiveIm('telegram')}
-            className={cn(
-              'relative px-4 py-2.5 text-[13px] font-medium transition-colors',
-              activeIm === 'telegram'
-                ? 'text-foreground after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-primary'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            Telegram
-          </button>
+        <div className="border-b border-sidebar-border bg-sidebar-accent/58 px-4 py-2.5 text-[13px] font-medium text-foreground">
+          飞书
         </div>
 
-        {activeIm === 'feishu' && (
-          <div className="space-y-3 p-4">
-            <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
-              <span className={cn(
-                'h-2 w-2 rounded-full',
-                feishuStatus.transportConnected
-                  ? 'bg-emerald-500'
-                  : feishuStatus.status === 'running' ? 'bg-amber-500' : 'bg-muted-foreground/45',
-              )} />
-              <span>
-                {feishuStatus.transportConnected
-                  ? '飞书长连接已就绪'
-                  : feishuStatus.bridgeReady
-                    ? '客户端桥接已连接，正在等待飞书长连接'
-                    : feishuStatus.status === 'error'
-                      ? `Adapter 启动失败：${feishuStatus.error || '未知错误'}`
-                    : feishuStatus.status === 'running'
-                      ? 'Adapter 正在启动'
-                      : feishuStatus.status === 'disabled'
-                        ? 'Adapter 未配置'
-                        : 'Adapter 未启动'}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-foreground">App ID</label>
-                <Input className={FIELD_CLASS_NAME} value={fsAppId} onChange={(e) => setFsAppId(e.target.value)} placeholder="cli_xxxxxxxx" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-foreground">App Secret</label>
-                <Input type="password" className={FIELD_CLASS_NAME} value={fsAppSecret} onChange={(e) => setFsAppSecret(e.target.value)} placeholder="****" />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-foreground">Encrypt Key</label>
-                <Input type="password" className={FIELD_CLASS_NAME} value={fsEncryptKey} onChange={(e) => setFsEncryptKey(e.target.value)} placeholder="****" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-foreground">Verification Token</label>
-                <Input type="password" className={FIELD_CLASS_NAME} value={fsVerificationToken} onChange={(e) => setFsVerificationToken(e.target.value)} placeholder="****" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
-              <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（可选白名单，逗号分隔）" />
-            </div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={fsStreamingCard}
-                onChange={(e) => setFsStreamingCard(e.target.checked)}
-                className="h-4 w-4 rounded border-sidebar-border accent-primary"
-              />
-              <div>
-                <span className="text-[13px] font-medium text-foreground">流式卡片</span>
-                <p className="text-xs text-muted-foreground">开启后，飞书消息流式更新（需要应用支持）</p>
-              </div>
-            </label>
+        <div className="space-y-3 p-4">
+          <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
+            <span className={cn(
+              'h-2 w-2 rounded-full',
+              feishuStatus.transportConnected
+                ? 'bg-emerald-500'
+                : feishuStatus.status === 'running' ? 'bg-amber-500' : 'bg-muted-foreground/45',
+            )} />
+            <span>
+              {feishuStatus.transportConnected
+                ? '飞书长连接已就绪'
+                : feishuStatus.bridgeReady
+                  ? '客户端桥接已连接，正在等待飞书长连接'
+                  : feishuStatus.status === 'error'
+                    ? `Adapter 启动失败：${feishuStatus.error || '未知错误'}`
+                  : feishuStatus.status === 'running'
+                    ? 'Adapter 正在启动'
+                    : feishuStatus.status === 'disabled'
+                      ? 'Adapter 未配置'
+                      : 'Adapter 未启动'}
+            </span>
           </div>
-        )}
-
-        {activeIm === 'telegram' && (
-          <div className="space-y-3 p-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">Bot Token</label>
-              <Input type="password" className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')} value={tgBotToken} onChange={(e) => setTgBotToken(e.target.value)} placeholder="123456:ABC-DEF..." />
+              <label className="text-[13px] font-medium text-foreground">App ID</label>
+              <Input className={FIELD_CLASS_NAME} value={fsAppId} onChange={(e) => setFsAppId(e.target.value)} placeholder="cli_xxxxxxxx" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
-              <Input className={FIELD_CLASS_NAME} value={tgAllowedUsers} onChange={(e) => setTgAllowedUsers(e.target.value)} placeholder="123456789, 987654321（逗号分隔，留空允许所有人）" />
+              <label className="text-[13px] font-medium text-foreground">App Secret</label>
+              <Input type="password" className={FIELD_CLASS_NAME} value={fsAppSecret} onChange={(e) => setFsAppSecret(e.target.value)} placeholder="****" />
             </div>
           </div>
-        )}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium text-foreground">Encrypt Key</label>
+              <Input type="password" className={FIELD_CLASS_NAME} value={fsEncryptKey} onChange={(e) => setFsEncryptKey(e.target.value)} placeholder="****" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium text-foreground">Verification Token</label>
+              <Input type="password" className={FIELD_CLASS_NAME} value={fsVerificationToken} onChange={(e) => setFsVerificationToken(e.target.value)} placeholder="****" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
+            <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（可选白名单，逗号分隔）" />
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fsStreamingCard}
+              onChange={(e) => setFsStreamingCard(e.target.checked)}
+              className="h-4 w-4 rounded border-sidebar-border accent-primary"
+            />
+            <div>
+              <span className="text-[13px] font-medium text-foreground">流式卡片</span>
+              <p className="text-xs text-muted-foreground">开启后，飞书消息流式更新（需要应用支持）</p>
+            </div>
+          </label>
+        </div>
       </Surface>
 
       {/* Save */}

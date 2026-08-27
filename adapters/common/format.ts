@@ -153,11 +153,6 @@ export function truncateInput(input: unknown, maxLen: number): string {
   }
 }
 
-/** Escape special characters for Telegram MarkdownV2. */
-export function escapeMarkdownV2(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1')
-}
-
 export function formatImHelp(): string {
   return `可用命令：\n\n${IM_HELP_LINES.join('\n')}`
 }

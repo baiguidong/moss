@@ -997,7 +997,7 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
 
     case 'thinking': {
       // 推理文本（reasoning）—— 作为卡片顶部的 blockquote 预览持续更新，
-      // 让用户在工具执行期间也能看到模型的思考过程（对齐 Telegram 的行为）。
+      // 让用户在工具执行期间也能看到模型的思考过程。
       // 同样不 auto-create: 没有预建卡的命令路径不应该被 thinking 事件撑出一张空卡。
       const card = streamingCards.get(chatId)
       if (card && typeof msg.text === 'string' && msg.text) {
@@ -1319,7 +1319,7 @@ async function handleMessage(data: any): Promise<void> {
 
   // 只处理私聊
   if (chatType === 'p2p') {
-    if (!isAllowedUser('feishu', senderOpenId)) {
+    if (!isAllowedUser(senderOpenId)) {
       // 尝试配对
       const pairText = extractInboundPayload(content, msgType).text.trim() || null
       if (pairText) {
@@ -1555,7 +1555,7 @@ async function handleCardAction(data: any): Promise<any> {
   const chatId = event.context?.open_chat_id
   const operatorOpenId = event.operator?.open_id
   if (!chatId || !operatorOpenId) return
-  if (!isAllowedUser('feishu', operatorOpenId)) {
+  if (!isAllowedUser(operatorOpenId)) {
     return { toast: { type: 'error', content: '当前飞书用户未与 Moss 配对' } }
   }
 

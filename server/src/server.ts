@@ -449,7 +449,7 @@ function listAdapterProcessStatusesForUser(
     startedAt: number | null
     orgId: string
     userId: string
-    platform: 'telegram' | 'feishu'
+    platform: 'feishu'
   }
 > {
   const result: Record<
@@ -461,18 +461,17 @@ function listAdapterProcessStatusesForUser(
       startedAt: number | null
       orgId: string
       userId: string
-      platform: 'telegram' | 'feishu'
+      platform: 'feishu'
     }
   > = {}
 
-  for (const platform of ['telegram', 'feishu'] as const) {
-    const key = `${orgId}:${userId}:${platform}`
-    result[key] = {
-      ...adapterProcessManager.getStatus(platform, orgId, userId),
-      orgId,
-      userId,
-      platform,
-    }
+  const platform = 'feishu' as const
+  const key = `${orgId}:${userId}:${platform}`
+  result[key] = {
+    ...adapterProcessManager.getStatus(platform, orgId, userId),
+    orgId,
+    userId,
+    platform,
   }
 
   return result
@@ -1226,12 +1225,13 @@ export function startServer(
             userId: _ignoredUserId,
             ...patch
           } = body
-          const platform =
-            rawPlatform === 'feishu' ? 'feishu' : 'telegram'
+          if (rawPlatform !== 'feishu') {
+            throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
+          }
           const result = adaptersApi.upsert(
             auth.orgId,
             targetUserId,
-            platform,
+            'feishu',
             patch as Record<string, unknown>,
           )
           if ('error' in result) {
@@ -1245,7 +1245,7 @@ export function startServer(
       }
 
       // PUT /api/v1/adapters/:platform — platform-specific upsert
-      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(telegram|feishu)$/)
+      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(feishu)$/)
       if (adapterPlatformMatch) {
         const platform = adapterPlatformMatch[1]!
         const targetUserId = resolveAdapterTargetUserId(
@@ -1309,10 +1309,10 @@ export function startServer(
           authService,
           typeof body.userId === 'string' ? body.userId : undefined,
         )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        if (adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
         }
-        await adapterProcessManager.restart(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        await adapterProcessManager.restart('feishu', auth.orgId, userId)
         writeJson(res, 200, { ok: true })
         return
       }
@@ -1325,10 +1325,10 @@ export function startServer(
           authService,
           typeof body.userId === 'string' ? body.userId : undefined,
         )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        if (adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
         }
-        await adapterProcessManager.start(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        await adapterProcessManager.start('feishu', auth.orgId, userId)
         writeJson(res, 200, { ok: true })
         return
       }
@@ -1341,10 +1341,10 @@ export function startServer(
           authService,
           typeof body.userId === 'string' ? body.userId : undefined,
         )
-        if (adapter !== 'telegram' && adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "telegram" or "feishu"')
+        if (adapter !== 'feishu') {
+          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
         }
-        await adapterProcessManager.stop(adapter as 'telegram' | 'feishu', auth.orgId, userId)
+        await adapterProcessManager.stop('feishu', auth.orgId, userId)
         writeJson(res, 200, { ok: true })
         return
       }

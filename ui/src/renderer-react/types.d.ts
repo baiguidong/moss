@@ -296,12 +296,6 @@ export type AdapterFileConfig = {
   serverUrl?: string
   defaultProjectDir?: string
   pairing?: PairingState
-  telegram?: {
-    botToken?: string
-    allowedUsers?: number[]
-    pairedUsers?: PairedUser[]
-    defaultWorkDir?: string
-  }
   feishu?: {
     appId?: string
     appSecret?: string

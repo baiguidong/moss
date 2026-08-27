@@ -37,7 +37,7 @@ describe('adapter settings', () => {
     });
 
     expect(masked.pairing.code).toBe('******');
-    expect(masked.telegram.botToken).toBe('****cret');
+    expect(masked.telegram).toBeUndefined();
     expect(masked.feishu.appSecret).toBe('****cret');
     expect(masked.feishu.verificationToken).toBe('****cret');
   });
@@ -59,7 +59,6 @@ describe('adapter settings', () => {
       model: 'test-model',
       pairing: { code: 'ABC234', expiresAt: 2_000, createdAt: 100 },
       feishu: { appId: 'cli_test', appSecret: 'secret', pairedUsers: [] },
-      telegram: { botToken: 'telegram' },
     };
     expect(applyFeishuPairingAttempt(current, {
       code: 'wrong', openId: 'ou_user', now: 1_000,
@@ -69,7 +68,6 @@ describe('adapter settings', () => {
     });
     expect(result.matched).toBe(true);
     expect(result.config.model).toBe('test-model');
-    expect(result.config.telegram.botToken).toBe('telegram');
     expect(result.config.feishu.pairedUsers).toEqual([{
       userId: 'ou_user', displayName: 'User', pairedAt: 1_000,
     }]);

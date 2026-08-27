@@ -34,12 +34,12 @@ describe('adapter pairing settings persistence', () => {
     expect(tryPair('abc234', {
       userId: 'ou_test_user',
       displayName: 'Test User',
-    }, 'feishu')).toBe(true)
+    })).toBe(true)
 
     const saved = JSON.parse(fs.readFileSync(path.join(tmpDir, 'settings.json'), 'utf8'))
     expect(saved.model).toBe('test-model')
     expect(saved.adapters.pairing.code).toBeNull()
     expect(saved.adapters.feishu.pairedUsers).toHaveLength(1)
-    expect(isAllowedUser('feishu', 'ou_test_user')).toBe(true)
+    expect(isAllowedUser('ou_test_user')).toBe(true)
   })
 })

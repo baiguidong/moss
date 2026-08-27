@@ -9,10 +9,10 @@
  * DELETE /api/v1/adapters/:platform           → 删除配置
  */
 
-import { AdapterService } from '../adapterService.js'
+import { AdapterService, type FeishuPartialConfig } from '../adapterService.js'
 import type { DatabaseSync } from 'node:sqlite'
 
-const ALLOWED_PLATFORMS = new Set(['telegram', 'feishu'])
+const ALLOWED_PLATFORM = 'feishu'
 
 export function createAdaptersApi(db: DatabaseSync) {
   const adapterService = new AdapterService(db)
@@ -21,7 +21,7 @@ export function createAdaptersApi(db: DatabaseSync) {
     /**
      * GET /api/v1/adapters
      * Query params: userId (optional, admin only - defaults to auth user)
-     * Returns masked config for the user's telegram and feishu adapters
+     * Returns masked config for the user's Feishu adapter
      */
     list: (orgId: string, userId: string): object => {
       const rows = adapterService.listByUser(orgId, userId)
@@ -29,17 +29,9 @@ export function createAdaptersApi(db: DatabaseSync) {
       for (const row of rows) {
         const config = JSON.parse(row.configJson) as Record<string, unknown>
         // Mask secrets
-        if (row.platform === 'telegram') {
-          if (typeof config.botToken === 'string') {
-            config.botToken = config.botToken.length > 4
-              ? '****' + config.botToken.slice(-4)
-              : '****'
-          }
-        } else if (row.platform === 'feishu') {
-          for (const key of ['appSecret', 'encryptKey', 'verificationToken']) {
-            if (typeof config[key] === 'string') {
-              config[key] = config[key].length > 4 ? '****' + (config[key] as string).slice(-4) : '****'
-            }
+        for (const key of ['appSecret', 'encryptKey', 'verificationToken']) {
+          if (typeof config[key] === 'string') {
+            config[key] = config[key].length > 4 ? '****' + (config[key] as string).slice(-4) : '****'
           }
         }
         result[row.platform] = { ...config, enabled: Boolean(row.enabled) }
@@ -69,12 +61,12 @@ export function createAdaptersApi(db: DatabaseSync) {
      * Upsert config for a specific platform
      */
     upsert: (orgId: string, userId: string, platform: string, patch: Record<string, unknown>): object => {
-      if (!ALLOWED_PLATFORMS.has(platform)) {
-        return { error: 'BAD_REQUEST', message: `Invalid platform: ${platform}. Must be "telegram" or "feishu"` }
+      if (platform !== ALLOWED_PLATFORM) {
+        return { error: 'BAD_REQUEST', message: `Invalid platform: ${platform}. Must be "feishu"` }
       }
-      const config = adapterService.upsert(orgId, userId, platform as 'telegram' | 'feishu', patch as any)
+      adapterService.upsert(orgId, userId, 'feishu', patch as FeishuPartialConfig)
       // Return masked version
-      const masked = adapterService.getMasked(orgId, userId, platform as 'telegram' | 'feishu')
+      const masked = adapterService.getMasked(orgId, userId, 'feishu')
       return { platform, config: masked }
     },
 
@@ -82,10 +74,10 @@ export function createAdaptersApi(db: DatabaseSync) {
      * DELETE /api/v1/adapters/:platform
      */
     remove: (orgId: string, userId: string, platform: string): { ok: boolean } | { error: string; message: string } => {
-      if (!ALLOWED_PLATFORMS.has(platform)) {
+      if (platform !== ALLOWED_PLATFORM) {
         return { error: 'BAD_REQUEST', message: `Invalid platform: ${platform}` }
       }
-      const deleted = adapterService.delete(orgId, userId, platform as 'telegram' | 'feishu')
+      const deleted = adapterService.delete(orgId, userId, 'feishu')
       return { ok: deleted }
     },
   }

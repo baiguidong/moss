@@ -1,14 +1,14 @@
 /**
  * Adapter Service — 多用户 IM Adapter 配置管理
  *
- * 每个用户可以独立配置 Telegram 和飞书 Bot 凭据。
+ * 每个用户可以独立配置飞书 Bot 凭据。
  * 配置存储在 SQLite DB 中，敏感字段读取时脱敏。
  */
 
 import type { DatabaseSync } from 'node:sqlite'
 
 type SqlRow = Record<string, unknown>
-type AdapterPlatform = 'telegram' | 'feishu'
+type AdapterPlatform = 'feishu'
 
 export type PairedUser = {
   userId: string | number
@@ -27,13 +27,6 @@ export type AdapterConfigRow = {
   updatedAt: number
 }
 
-export type TelegramPartialConfig = {
-  botToken?: string
-  allowedUsers?: number[]
-  pairedUsers?: PairedUser[]
-  defaultWorkDir?: string
-}
-
 export type FeishuPartialConfig = {
   appId?: string
   appSecret?: string
@@ -45,14 +38,14 @@ export type FeishuPartialConfig = {
   streamingCard?: boolean
 }
 
-type PlatformConfig = TelegramPartialConfig | FeishuPartialConfig
+type PlatformConfig = FeishuPartialConfig
 
 function mapAdapterConfigRow(row: SqlRow): AdapterConfigRow {
   return {
     id: String(row.id),
     orgId: String(row.orgId),
     userId: String(row.userId),
-    platform: row.platform === 'feishu' ? 'feishu' : 'telegram',
+    platform: 'feishu',
     configJson: typeof row.configJson === 'string' ? row.configJson : '{}',
     enabled: Boolean(row.enabled),
     createdAt: Number(row.createdAt),
@@ -96,7 +89,7 @@ export class AdapterService {
         id TEXT PRIMARY KEY,
         org_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
-        platform TEXT NOT NULL CHECK(platform IN ('telegram', 'feishu')),
+        platform TEXT NOT NULL CHECK(platform = 'feishu'),
         config_json TEXT NOT NULL DEFAULT '{}',
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL,
@@ -121,7 +114,7 @@ export class AdapterService {
   getMasked(orgId: string, userId: string, platform: AdapterPlatform): PlatformConfig | null {
     const config = this.get(orgId, userId, platform)
     if (!config) return null
-    return this.maskConfig(config, platform)
+    return this.maskConfig(config)
   }
 
   /** Get all adapter configs for an org */
@@ -136,7 +129,7 @@ export class AdapterService {
               created_at AS createdAt,
               updated_at AS updatedAt
        FROM adapter_configs
-       WHERE org_id = ?
+       WHERE org_id = ? AND platform = 'feishu'
        ORDER BY user_id, platform`
     ).all(orgId) as SqlRow[]
     return rows.map(mapAdapterConfigRow)
@@ -154,7 +147,7 @@ export class AdapterService {
               created_at AS createdAt,
               updated_at AS updatedAt
        FROM adapter_configs
-       WHERE org_id = ? AND user_id = ?
+       WHERE org_id = ? AND user_id = ? AND platform = 'feishu'
        ORDER BY platform`
     ).all(orgId, userId) as SqlRow[]
     return rows.map(mapAdapterConfigRow)
@@ -169,22 +162,15 @@ export class AdapterService {
 
     // Preserve masked secrets: if the patch contains masked values, keep the originals
     const rawPatch = { ...patch } as Record<string, unknown>
-    if (platform === 'telegram') {
-      const p = rawPatch as Record<string, unknown>
-      if (isMasked(p.botToken as string | undefined)) {
-        p.botToken = (rawCurrent as Record<string, unknown>).botToken
-      }
-    } else {
-      const p = rawPatch as Record<string, unknown>
-      if (isMasked(p.appSecret as string | undefined)) {
-        p.appSecret = (rawCurrent as Record<string, unknown>).appSecret
-      }
-      if (isMasked(p.encryptKey as string | undefined)) {
-        p.encryptKey = (rawCurrent as Record<string, unknown>).encryptKey
-      }
-      if (isMasked(p.verificationToken as string | undefined)) {
-        p.verificationToken = (rawCurrent as Record<string, unknown>).verificationToken
-      }
+    const p = rawPatch as Record<string, unknown>
+    if (isMasked(p.appSecret as string | undefined)) {
+      p.appSecret = (rawCurrent as Record<string, unknown>).appSecret
+    }
+    if (isMasked(p.encryptKey as string | undefined)) {
+      p.encryptKey = (rawCurrent as Record<string, unknown>).encryptKey
+    }
+    if (isMasked(p.verificationToken as string | undefined)) {
+      p.verificationToken = (rawCurrent as Record<string, unknown>).verificationToken
     }
 
     const merged = deepMerge(rawCurrent, rawPatch) as PlatformConfig
@@ -217,12 +203,7 @@ export class AdapterService {
     return result.changes > 0
   }
 
-  private maskConfig(config: PlatformConfig, platform: AdapterPlatform): PlatformConfig {
-    if (platform === 'telegram') {
-      const tg = { ...config as TelegramPartialConfig }
-      if (tg.botToken) tg.botToken = maskSecret(tg.botToken)
-      return tg
-    }
+  private maskConfig(config: PlatformConfig): PlatformConfig {
     const fs = { ...config as FeishuPartialConfig }
     if (fs.appSecret) fs.appSecret = maskSecret(fs.appSecret)
     if (fs.encryptKey) fs.encryptKey = maskSecret(fs.encryptKey)

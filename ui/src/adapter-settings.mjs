@@ -3,7 +3,6 @@ import { timingSafeEqual } from 'node:crypto';
 const MASK_PREFIX = '****';
 
 const SECRET_FIELDS = Object.freeze({
-  telegram: ['botToken'],
   feishu: ['appSecret', 'encryptKey', 'verificationToken'],
 });
 
@@ -37,13 +36,6 @@ export function mergeAdapterSettings(current, patch) {
   const incoming = isRecord(patch) ? patch : {};
   const merged = { ...previous, ...incoming };
 
-  if (incoming.telegram !== undefined) {
-    merged.telegram = mergePlatformConfig(
-      previous.telegram,
-      incoming.telegram,
-      SECRET_FIELDS.telegram,
-    );
-  }
   if (incoming.feishu !== undefined) {
     merged.feishu = mergePlatformConfig(
       previous.feishu,
@@ -58,6 +50,9 @@ export function mergeAdapterSettings(current, patch) {
     };
   }
 
+  // Drop the retired platform from legacy settings on the next update.
+  delete merged.telegram;
+
   return merged;
 }
 
@@ -71,10 +66,10 @@ export function maskAdapterSettings(config) {
   const source = isRecord(config) ? config : {};
   const masked = {
     ...source,
-    telegram: isRecord(source.telegram) ? { ...source.telegram } : source.telegram,
     feishu: isRecord(source.feishu) ? { ...source.feishu } : source.feishu,
     pairing: isRecord(source.pairing) ? { ...source.pairing } : source.pairing,
   };
+  delete masked.telegram;
 
   for (const [platform, fields] of Object.entries(SECRET_FIELDS)) {
     if (!isRecord(masked[platform])) continue;

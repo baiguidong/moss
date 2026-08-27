@@ -18,13 +18,6 @@ export type PairingState = {
   createdAt: number | null
 }
 
-export type TelegramConfig = {
-  botToken: string
-  allowedUsers: number[]
-  pairedUsers: PairedUser[]
-  defaultWorkDir: string
-}
-
 export type FeishuConfig = {
   appId: string
   appSecret: string
@@ -40,13 +33,11 @@ export type AdapterConfig = {
   serverUrl: string
   defaultProjectDir: string
   pairing: PairingState
-  telegram: TelegramConfig
   feishu: FeishuConfig
 }
 
 export function loadConfig(): AdapterConfig {
   const file = readAdapterConfig()
-  const tg = file.telegram ?? {}
   const fs_ = file.feishu ?? {}
   const pairing = file.pairing ?? {}
 
@@ -57,12 +48,6 @@ export function loadConfig(): AdapterConfig {
       code: pairing.code ?? null,
       expiresAt: pairing.expiresAt ?? null,
       createdAt: pairing.createdAt ?? null,
-    },
-    telegram: {
-      botToken: process.env.TELEGRAM_BOT_TOKEN || tg.botToken || '',
-      allowedUsers: tg.allowedUsers ?? [],
-      pairedUsers: tg.pairedUsers ?? [],
-      defaultWorkDir: tg.defaultWorkDir || process.cwd(),
     },
     feishu: {
       appId: process.env.FEISHU_APP_ID || fs_.appId || '',

@@ -1,7 +1,7 @@
 /**
- * Adapter Process Manager — 按 (orgId, userId, platform) 管理 Bot 子进程
+ * Adapter Process Manager — 按 (orgId, userId, platform) 管理飞书 Bot 子进程
  *
- * 每个用户可以独立启停自己的 Telegram 和飞书 Bot。
+ * 每个用户可以独立启停自己的飞书 Bot。
  * 进程以 detached child process 运行，通过 status file 监控。
  */
 
@@ -12,7 +12,7 @@ import path from 'path'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { MOSS_HOME, MOSS_SERVER_HOME } from './lib/env.js'
 
-type AdapterName = 'telegram' | 'feishu'
+type AdapterName = 'feishu'
 type ProcessKey = `${string}:${string}:${AdapterName}` // orgId:userId:platform
 
 type AdapterProcessState = {

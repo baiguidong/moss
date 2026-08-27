@@ -337,22 +337,17 @@ export interface PairedUser {
 
 export interface AdapterPlatformConfig {
   enabled?: boolean
-  // Telegram
-  botToken?: string
   allowedUsers?: Array<number | string>
   pairedUsers?: PairedUser[]
   defaultWorkDir?: string
-  // Feishu
   appId?: string
   appSecret?: string
   encryptKey?: string
   verificationToken?: string
-  // Feishu-only
   streamingCard?: boolean
 }
 
 export interface AdapterConfigsResponse {
-  telegram?: AdapterPlatformConfig
   feishu?: AdapterPlatformConfig
 }
 
@@ -370,7 +365,7 @@ export interface AdapterConfigRow {
   id: string
   orgId: string
   userId: string
-  platform: string
+  platform: 'feishu'
   enabled: boolean
   createdAt: number
   updatedAt: number
