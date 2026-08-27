@@ -156,6 +156,7 @@ export async function sendCardAsMessage(
   chatId: string,
   cardId: string,
   replyToMessageId?: string,
+  messageUuid?: string,
 ): Promise<string> {
   const content = JSON.stringify({
     type: 'card',
@@ -185,6 +186,7 @@ export async function sendCardAsMessage(
       receive_id: chatId,
       msg_type: 'interactive',
       content,
+      ...(messageUuid ? { uuid: messageUuid } : {}),
     },
   })
   const messageId = resp.data?.message_id

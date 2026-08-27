@@ -124,6 +124,7 @@ export type StreamingCardDeps = {
   larkClient: Lark.Client
   chatId: string
   replyToMessageId?: string
+  messageUuid?: string
 }
 
 /** One entry in the tool-use trace displayed above the answer text. */
@@ -166,6 +167,7 @@ export class StreamingCard {
   private accumulatedReasoningText = ''
   /** 工具调用轨迹：按 startTool 调用顺序排列，completeTool 改其 status。 */
   private toolSteps: ToolStep[] = []
+  private creationPromise: Promise<void> | null = null
 
   // ---- flush ----
   private flushController: FlushController
@@ -183,7 +185,18 @@ export class StreamingCard {
    * 幂等：已创建/正在创建时直接返回。
    */
   async ensureCreated(): Promise<void> {
+    if (this.creationPromise) return this.creationPromise
     if (this.phase !== 'idle') return
+    const creation = this.createCardMessage()
+    this.creationPromise = creation
+    try {
+      await creation
+    } finally {
+      if (this.creationPromise === creation) this.creationPromise = null
+    }
+  }
+
+  private async createCardMessage(): Promise<void> {
     this.phase = 'creating'
 
     try {
@@ -197,6 +210,7 @@ export class StreamingCard {
         this.deps.chatId,
         cardId,
         this.deps.replyToMessageId,
+        this.deps.messageUuid,
       )
       this.cardId = cardId
       this.messageId = messageId
@@ -217,6 +231,7 @@ export class StreamingCard {
             receive_id: this.deps.chatId,
             msg_type: 'interactive',
             content: JSON.stringify(buildRenderedCard(' ')),
+            ...(this.deps.messageUuid ? { uuid: this.deps.messageUuid } : {}),
           },
         })
         const mid = fallbackResp.data?.message_id
@@ -311,19 +326,24 @@ export class StreamingCard {
    * - 最后用完整 rendered 卡片 update
    * - complete FlushController 锁死，后续 appendText 被忽略
    */
-  async finalize(): Promise<void> {
-    if (this.phase === 'completed' || this.phase === 'aborted') return
+  async finalize(): Promise<boolean> {
+    if (this.creationPromise) {
+      await this.creationPromise.catch(() => {})
+    }
+    if (this.phase === 'completed') return true
+    if (this.phase === 'aborted') return false
     if (this.phase === 'idle') {
       // 完全没开始 —— 直接标记完成
       this.phase = 'completed'
       this.flushController.complete()
-      return
+      return false
     }
     this.phase = 'finalizing'
     this.flushController.cancelPendingFlush()
     await this.flushController.waitForFlush()
 
     const finalText = this.terminalText()
+    let delivered = false
     try {
       if (this.cardId) {
         // CardKit 路径: settings(false) + card.update（即使中间 stream 曾失败）
@@ -341,12 +361,14 @@ export class StreamingCard {
           buildRenderedCard(finalText),
           this.sequence,
         )
+        delivered = true
       } else if (this.messageId) {
         // Patch fallback 路径: 全量替换
         await this.deps.larkClient.im.message.patch({
           path: { message_id: this.messageId },
           data: { content: JSON.stringify(buildRenderedCard(finalText)) },
         })
+        delivered = true
       }
     } catch (err) {
       console.error(
@@ -359,11 +381,15 @@ export class StreamingCard {
       this.lastFlushedText = finalText
       this.flushController.complete()
     }
+    return delivered
   }
 
   /** 错误中止 —— 尝试把错误信息渲染到卡片上。 */
-  async abort(err: Error): Promise<void> {
-    if (this.phase === 'completed' || this.phase === 'aborted') return
+  async abort(err: Error): Promise<boolean> {
+    if (this.creationPromise) {
+      await this.creationPromise.catch(() => {})
+    }
+    if (this.phase === 'completed' || this.phase === 'aborted') return false
     const wasIdle = this.phase === 'idle'
     this.phase = 'aborted'
     this.flushController.cancelPendingFlush()
@@ -372,12 +398,13 @@ export class StreamingCard {
     if (wasIdle || !this.messageId) {
       // 卡片还没创建成功，没法渲染错误 —— 由上层 sendText 兜底
       this.flushController.complete()
-      return
+      return false
     }
 
     const errCard = buildErrorCard(
       `${err.message}${this.accumulatedText ? '\n\n——\n\n' + this.accumulatedText : ''}`,
     )
+    let delivered = false
     try {
       if (this.cardId) {
         this.sequence += 1
@@ -394,11 +421,13 @@ export class StreamingCard {
           errCard,
           this.sequence,
         )
+        delivered = true
       } else {
         await this.deps.larkClient.im.message.patch({
           path: { message_id: this.messageId },
           data: { content: JSON.stringify(errCard) },
         })
+        delivered = true
       }
     } catch (renderErr) {
       console.error(
@@ -408,6 +437,7 @@ export class StreamingCard {
     } finally {
       this.flushController.complete()
     }
+    return delivered
   }
 
   // ------------------------------------------------------------------

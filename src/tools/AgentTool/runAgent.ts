@@ -60,6 +60,7 @@ import {
   clearAgentTranscriptSubdir,
   recordSidechainTranscript,
   setAgentTranscriptSubdir,
+  updateAgentMetadata,
   writeAgentMetadata,
 } from '../../utils/sessionStorage.js'
 import {
@@ -74,6 +75,10 @@ import {
 import type { ContentReplacementState } from '../../utils/toolResultStorage.js'
 import { createAgentId } from '../../utils/uuid.js'
 import { resolveAgentTools } from './agentToolUtils.js'
+import {
+  AgentExecutionError,
+  getAgentExecutionFailure,
+} from './agentExecutionStatus.js'
 import { type AgentDefinition, isBuiltInAgent } from './loadAgentsDir.js'
 
 /**
@@ -241,6 +246,7 @@ export async function* runAgent({
   contentReplacementState,
   useExactTools,
   worktreePath,
+  workspacePath,
   description,
   transcriptSubdir,
   onQueryProgress,
@@ -292,6 +298,8 @@ export async function* runAgent({
   /** Worktree path if the agent was spawned with isolation: "worktree".
    * Persisted to metadata so resume can restore the correct cwd. */
   worktreePath?: string
+  /** Dedicated workspace for coordinator subagents. */
+  workspacePath?: string
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -689,21 +697,25 @@ export async function* runAgent({
   }
 
   // Record initial messages before the query loop starts, plus the agentType
-  // so resume can route correctly when subagent_type is omitted. Both writes
-  // are fire-and-forget — persistence failure shouldn't block the agent.
+  // so resume can route correctly when subagent_type is omitted. Metadata is
+  // awaited so later lifecycle patches cannot overtake its initial write.
   void recordSidechainTranscript(initialMessages, agentId).catch(_err =>
     logForDebugging(`Failed to record sidechain transcript: ${_err}`),
   )
-  void writeAgentMetadata(agentId, {
+  await writeAgentMetadata(agentId, {
     agentType: agentDefinition.agentType,
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
+    ...(workspacePath && { workspacePath }),
+    status: 'running',
+    startedAt: Date.now(),
   }).catch(_err => logForDebugging(`Failed to write agent metadata: ${_err}`))
 
   // Track the last recorded message UUID for parent chain continuity
   let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
 
   try {
+    let terminalFailure: ReturnType<typeof getAgentExecutionFailure> = null
     for await (const message of query({
       messages: initialMessages,
       systemPrompt: agentSystemPrompt,
@@ -749,6 +761,9 @@ export async function* runAgent({
       }
 
       if (isRecordableMessage(message)) {
+        if (message.type === 'assistant') {
+          terminalFailure = getAgentExecutionFailure(message)
+        }
         // Record only the new message with correct parent (O(1) per message)
         await recordSidechainTranscript(
           [message],
@@ -764,6 +779,10 @@ export async function* runAgent({
       }
     }
 
+    if (terminalFailure) {
+      throw new AgentExecutionError(terminalFailure)
+    }
+
     if (agentAbortController.signal.aborted) {
       throw new AbortError()
     }
@@ -772,6 +791,24 @@ export async function* runAgent({
     if (isBuiltInAgent(agentDefinition) && agentDefinition.callback) {
       agentDefinition.callback()
     }
+    await updateAgentMetadata(agentId, {
+      status: 'completed',
+      finishedAt: Date.now(),
+      errorCode: undefined,
+      errorMessage: undefined,
+    }).catch(_err => logForDebugging(`Failed to complete agent metadata: ${_err}`))
+  } catch (error) {
+    await updateAgentMetadata(agentId, {
+      status: 'failed',
+      finishedAt: Date.now(),
+      errorCode: error instanceof AgentExecutionError
+        ? error.code
+        : error instanceof AbortError
+          ? 'stopped'
+          : 'agent_error',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }).catch(_err => logForDebugging(`Failed to fail agent metadata: ${_err}`))
+    throw error
   } finally {
     // Clean up agent-specific MCP servers (runs on normal completion, abort, or error)
     await mcpCleanup()

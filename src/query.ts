@@ -566,14 +566,15 @@ async function* queryLoop(
     // flip during the 5-30s stream, and withhold-without-recover would eat
     // the message. PTL doesn't hoist because its withholding is ungated —
     // it predates the experiment and is already the control-arm baseline.
-    const mediaRecoveryEnabled =
+    const reactiveCompactEnabled =
       reactiveCompact?.isReactiveCompactEnabled() ?? false
+    const mediaRecoveryEnabled = reactiveCompactEnabled
     if (
       !compactionResult &&
       querySource !== 'compact' &&
       querySource !== 'session_memory' &&
       !(
-        reactiveCompact?.isReactiveCompactEnabled() && isAutoCompactEnabled()
+        reactiveCompactEnabled && isAutoCompactEnabled()
       )
     ) {
       const { isAtBlockingLimit } = calculateTokenWarningState(
@@ -731,7 +732,11 @@ async function* queryLoop(
             // retry) can succeed. Still pushed to
             // assistantMessages so the recovery checks below find them.
             let withheld = false
-            if (reactiveCompact?.isWithheldPromptTooLong(message)) {
+            if (
+              message.type === 'assistant' &&
+              message.isApiErrorMessage &&
+              isPromptTooLongMessage(message)
+            ) {
               withheld = true
             }
             if (
@@ -993,20 +998,33 @@ async function* queryLoop(
       const isWithheldMedia =
         mediaRecoveryEnabled &&
         reactiveCompact?.isWithheldMediaSizeError(lastMessage)
-      if ((isWithheld413 || isWithheldMedia) && reactiveCompact) {
-        const compacted = await reactiveCompact.tryReactiveCompact({
-          hasAttempted: hasAttemptedReactiveCompact,
-          querySource,
-          aborted: toolUseContext.abortController.signal.aborted,
-          messages: messagesForQuery,
-          cacheSafeParams: {
-            systemPrompt,
-            userContext,
-            systemContext,
-            toolUseContext,
-            forkContextMessages: messagesForQuery,
-          },
-        })
+      if (isWithheld413 || isWithheldMedia) {
+        const cacheSafeParams = {
+          systemPrompt,
+          userContext,
+          systemContext,
+          toolUseContext,
+          forkContextMessages: messagesForQuery,
+        }
+        const compacted = hasAttemptedReactiveCompact ||
+          toolUseContext.abortController.signal.aborted
+          ? null
+          : reactiveCompact && reactiveCompactEnabled
+            ? await reactiveCompact.tryReactiveCompact({
+                hasAttempted: false,
+                querySource,
+                aborted: false,
+                messages: messagesForQuery,
+                cacheSafeParams,
+              })
+            : isWithheld413
+              ? await deps.compactAfterPromptTooLong(
+                  messagesForQuery,
+                  toolUseContext,
+                  cacheSafeParams,
+                  querySource,
+                )
+              : null
 
         if (compacted) {
           // task_budget: same carryover as the proactive path above.
@@ -1131,7 +1149,11 @@ async function* queryLoop(
       // error → hook blocking → retry → error → …
       if (lastMessage?.isApiErrorMessage) {
         void executeStopFailureHooks(lastMessage, toolUseContext)
-        return { reason: 'completed' }
+        return {
+          reason: isPromptTooLongMessage(lastMessage)
+            ? 'prompt_too_long'
+            : 'api_error',
+        }
       }
 
       const stopHookResult = yield* handleStopHooks(

@@ -230,7 +230,7 @@ export function AskUserQuestionModal({
               ) : null}
             </div>
             <h2 className="mt-2 truncate text-base font-semibold text-foreground">
-              Agent 正在等待你的回答
+              {request.originLabel || 'Agent'} 正在等待你的回答
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               这些选择会直接回传给 agent，agent 会基于你的答案继续执行当前任务。

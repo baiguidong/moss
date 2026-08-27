@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 import {
   getSessionGroupPreview,
+  groupProjectSessionTrees,
   groupSidebarSessions,
   SIDEBAR_SESSION_GROUP_PREVIEW_LIMIT,
 } from '../src/renderer-react/lib/session-groups';
 
 describe('sidebar session groups', () => {
-  it('separates normal, cron, and project sessions', () => {
+  it('separates Feishu, normal, cron, and project sessions', () => {
     const groups = groupSidebarSessions([
+      { id: 'feishu', originChannel: 'feishu' as const },
       { id: 'normal' },
       { id: 'project', projectId: 'project-1' },
       { id: 'cron', sessionKind: 'cron' as const },
@@ -15,6 +17,7 @@ describe('sidebar session groups', () => {
     ]);
 
     expect(groups.map((group) => [group.id, group.sessions.map((session) => session.id)])).toEqual([
+      ['feishu', ['feishu']],
       ['chat', ['normal']],
       ['cron', ['cron', 'project-cron']],
       ['project', ['project']],
@@ -54,5 +57,17 @@ describe('sidebar session groups', () => {
       'session-3',
       'session-6',
     ]);
+  });
+
+  it('nests subagent sessions under their project parent', () => {
+    const trees = groupProjectSessionTrees([
+      { id: 'main-a', projectId: 'project-a', projectName: '项目 A' },
+      { id: 'child-a1', projectId: 'project-a', parentSessionId: 'main-a', isSubAgent: true },
+      { id: 'main-b', projectId: 'project-b', projectName: '项目 B' },
+    ]);
+
+    expect(trees.map((tree) => tree.label)).toEqual(['项目 A', '项目 B']);
+    expect(trees[0].sessions[0].session.id).toBe('main-a');
+    expect(trees[0].sessions[0].children.map((child) => child.id)).toEqual(['child-a1']);
   });
 });

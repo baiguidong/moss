@@ -79,10 +79,12 @@ export function getInputString(
 
 export function getToolKind(toolName: string, input?: unknown): ToolKind {
   const rawName = String(toolName || "").toLowerCase();
+  const normalizedName = rawName.replace(/[^a-z0-9]/g, "");
   const record = isRecord(input) ? input : {};
   const hasOldString = typeof record.old_string === "string";
   const hasNewString = typeof record.new_string === "string";
 
+  if (normalizedName === "todowrite") return "other";
   if (rawName.includes("agent")) return "agent";
   if (rawName.includes("web") || rawName.includes("fetch") || rawName.includes("browser")) return "web";
   if (rawName.includes("sql") || rawName.includes("db")) return "db";

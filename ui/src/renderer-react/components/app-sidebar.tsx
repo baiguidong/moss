@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
   AlarmClock,
+  Bot,
   ChevronDown,
   ChevronRight,
   FolderKanban,
@@ -27,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   getSessionGroupPreview,
+  groupProjectSessionTrees,
   groupSidebarSessions,
   SIDEBAR_SESSION_GROUP_PREVIEW_LIMIT,
   type SessionGroupId,
@@ -55,9 +57,13 @@ export interface SidebarSession {
   projectId?: string | null;
   projectName?: string | null;
   sessionKind?: 'chat' | 'cron';
+  originChannel?: 'desktop' | 'feishu' | 'cron';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
+  isSubAgent?: boolean;
+  parentSessionId?: string | null;
+  subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
 export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
@@ -99,6 +105,8 @@ function SessionItem({
   onDelete,
   onRename,
   onTogglePin,
+  childSessions = [],
+  depth = 0,
 }: {
   session: SidebarSession;
   isActive: boolean;
@@ -106,6 +114,8 @@ function SessionItem({
   onDelete: () => void;
   onRename: (newTitle: string) => void;
   onTogglePin: () => void;
+  childSessions?: SidebarSession[];
+  depth?: number;
 }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(session.title);
@@ -152,9 +162,10 @@ function SessionItem({
           ? "border-primary/25 bg-primary/10 shadow-[0_8px-24px_-24px_rgba(0,0,0,0.65)]"
           : "border-transparent bg-transparent hover:border-sidebar-border/70 hover:bg-sidebar-accent/80",
       )}
+      style={depth > 0 ? { marginLeft: depth * 14, width: `calc(100% - ${depth * 14}px)` } : undefined}
     >
       <div className="flex h-full min-w-0 items-center gap-1 overflow-hidden">
-        <DropdownMenu>
+        {!session.isSubAgent ? <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
@@ -185,7 +196,7 @@ function SessionItem({
               删除
             </DropdownMenuItem>
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu> : null}
         {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
         {isEditing ? (
           <input
@@ -203,6 +214,15 @@ function SessionItem({
             {session.title}
           </span>
         )}
+        {childSessions.length > 0 ? (
+          <span
+            className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-sidebar-accent px-1.5 text-[10px] tabular-nums text-sidebar-foreground/65"
+            title={`${childSessions.length} 个子任务`}
+          >
+            <Bot className="h-3 w-3" />
+            {childSessions.length}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -293,6 +313,7 @@ export function AppSidebar({
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedSessionGroups, setCollapsedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
+  const [collapsedProjects, setCollapsedProjects] = React.useState<Record<string, boolean>>({});
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -316,8 +337,10 @@ export function AppSidebar({
     ? (newSessionMode === 'remote-direct' ? remoteSessions : localSessions)
     : filteredSessions;
 
-  const sessionGroups = groupSidebarSessions(displaySessions);
+  const sessionGroups = groupSidebarSessions(displaySessions).filter((group) => group.id !== 'project');
+  const projectTrees = groupProjectSessionTrees(displaySessions);
   const sessionGroupIcons = {
+    feishu: Bot,
     chat: MessageSquareText,
     cron: AlarmClock,
     project: FolderKanban,
@@ -330,7 +353,10 @@ export function AppSidebar({
         ? group.sessions
         : getSessionGroupPreview(group.sessions, activeSessionId),
   }));
-  const orderedSessions = visibleSessionGroups.flatMap((group) => group.visibleSessions);
+  const orderedSessions = [
+    ...visibleSessionGroups.flatMap((group) => group.visibleSessions),
+    ...projectTrees.flatMap((project) => project.sessions.flatMap((node) => [node.session, ...node.children])),
+  ];
 
   const toggleSessionGroupCollapsed = (groupId: SessionGroupId) => {
     setCollapsedSessionGroups((current) => ({
@@ -534,8 +560,9 @@ export function AppSidebar({
 
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2 max-w-full overflow-hidden">
-              {sessionGroups.length > 0 ? (
-                visibleSessionGroups.map((group) => {
+              {sessionGroups.length > 0 || projectTrees.length > 0 ? (
+                <>
+                {visibleSessionGroups.map((group) => {
                   const GroupIcon = sessionGroupIcons[group.id];
                   const isCollapsed = Boolean(collapsedSessionGroups[group.id]);
                   const isExpanded = Boolean(expandedSessionGroups[group.id]);
@@ -592,7 +619,62 @@ export function AppSidebar({
                       )}
                     </section>
                   );
-                })
+                })}
+                {projectTrees.map((project) => {
+                  const isCollapsed = Boolean(collapsedProjects[project.id]);
+                  const sessionCount = project.sessions.reduce(
+                    (count, node) => count + 1 + node.children.length,
+                    0,
+                  );
+                  return (
+                    <section key={`project-${project.id}`}>
+                      <button
+                        type="button"
+                        className="mb-1 flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+                        onClick={() => setCollapsedProjects((current) => ({
+                          ...current,
+                          [project.id]: !current[project.id],
+                        }))}
+                        aria-expanded={!isCollapsed}
+                      >
+                        <FolderKanban className="h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-left">{project.label}</span>
+                        <span className="shrink-0 tabular-nums">({sessionCount})</span>
+                        {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      </button>
+                      {!isCollapsed ? (
+                        <div className="space-y-0.5">
+                          {project.sessions.map((node) => (
+                            <React.Fragment key={node.session.id}>
+                              <SessionItem
+                                session={node.session}
+                                childSessions={node.children}
+                                isActive={activeSessionId === node.session.id}
+                                onClick={() => onSelectSession(node.session.id)}
+                                onDelete={() => onDeleteSession(node.session.id)}
+                                onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
+                                onTogglePin={() => onTogglePin(node.session.id)}
+                              />
+                              {node.children.map((child) => (
+                                <SessionItem
+                                  key={child.id}
+                                  session={child}
+                                  depth={1}
+                                  isActive={activeSessionId === child.id}
+                                  onClick={() => onSelectSession(child.id)}
+                                  onDelete={() => onDeleteSession(child.id)}
+                                  onRename={(newTitle) => onRenameSession(child.id, newTitle)}
+                                  onTogglePin={() => onTogglePin(child.id)}
+                                />
+                              ))}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      ) : null}
+                    </section>
+                  );
+                })}
+                </>
               ) : (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
                   {showModePicker && newSessionMode === 'remote-direct' ? '暂无云端会话' : '还没有历史会话'}

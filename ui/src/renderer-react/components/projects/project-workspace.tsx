@@ -1,20 +1,16 @@
 import * as React from 'react';
 import {
-  Archive,
-  CheckCircle2,
-  Circle,
+  ChevronDown,
   FileText,
   FolderKanban,
+  ListChecks,
+  Loader2,
   MessageSquarePlus,
   MoreHorizontal,
   Plus,
-  Play,
   Search,
-  Square,
   Trash2,
   Upload,
-  UserPlus,
-  Users,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,29 +18,32 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ProjectResourcePicker } from '@/components/projects/project-resource-picker';
+import { ProjectTasksTab } from '@/components/projects/project-tasks-tab';
+import { MarkdownRenderer } from '@/components/markdown/markdown-renderer';
 import { cn } from '@/lib/utils';
+import { syncProjectMarketplaceResources } from '@/lib/project-resource-sync';
+import { formatProjectMemoryForDisplay } from '../../../shared/project-memory.mjs';
 import type {
   Project,
   ProjectAsset,
+  ProjectDecision,
+  ProjectEvent,
+  ProjectMemory,
   ProjectTask,
-  ProjectTeamMember,
-  ProjectTeamRun,
   ProjectTemplate,
-  SessionSummary,
 } from '@/types';
 
-type ProjectTab = 'activity' | 'plan' | 'tasks' | 'assets' | 'sessions' | 'team' | 'deliverables';
+type ProjectTab = 'activity' | 'decisions' | 'tasks' | 'assets';
 
 type ProjectWorkspaceProps = {
   projects: Project[];
   templates: ProjectTemplate[];
-  sessions: SessionSummary[];
   activeProjectId: string | null;
   refreshSignal: number;
   onActiveProjectChange: (projectId: string | null) => void;
   onProjectsChange: () => Promise<void>;
   onOpenSession: (sessionId: string) => void;
-  onCreateProjectSession: (project: Project) => Promise<void>;
 };
 
 type ProjectFormState = {
@@ -54,6 +53,7 @@ type ProjectFormState = {
   connectorIds: string[];
   expertIds: string[];
   skillIds: string[];
+  decisionPolicy: Project['decisionPolicy'];
 };
 
 const EMPTY_FORM: ProjectFormState = {
@@ -63,16 +63,14 @@ const EMPTY_FORM: ProjectFormState = {
   connectorIds: [],
   expertIds: [],
   skillIds: [],
+  decisionPolicy: { mode: 'auto_all' },
 };
 
 const TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'activity', label: '动态' },
-  { id: 'plan', label: '计划' },
+  { id: 'decisions', label: '待决策' },
   { id: 'tasks', label: '任务' },
   { id: 'assets', label: '资产' },
-  { id: 'sessions', label: '会话' },
-  { id: 'team', label: '团队' },
-  { id: 'deliverables', label: '交付物' },
 ];
 
 function formatTime(timestamp?: number | null) {
@@ -92,125 +90,12 @@ function formatBytes(size?: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function statusLabel(status: ProjectTask['status']) {
-  if (status === 'completed') return '已完成';
-  if (status === 'in_progress') return '进行中';
-  return '待处理';
-}
-
-function statusIcon(status: ProjectTask['status']) {
-  if (status === 'completed') return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-  if (status === 'in_progress') return <MoreHorizontal className="h-4 w-4 text-primary" />;
-  return <Circle className="h-4 w-4 text-muted-foreground" />;
-}
-
-function memberStatusLabel(status: ProjectTeamMember['status']) {
-  switch (status) {
-    case 'starting':
-      return '启动中';
-    case 'running':
-      return '运行中';
-    case 'idle':
-      return '空闲';
-    case 'blocked':
-      return '阻塞';
-    case 'completed':
-      return '完成';
-    case 'failed':
-      return '失败';
-    case 'stopped':
-      return '已停止';
-    case 'planned':
-    default:
-      return '计划中';
-  }
-}
-
-function teamRunStatusLabel(status: ProjectTeamRun['status']) {
-  switch (status) {
-    case 'running':
-      return '运行中';
-    case 'completed':
-      return '已完成';
-    case 'failed':
-      return '失败';
-    case 'closed':
-      return '已关闭';
-    case 'draft':
-    default:
-      return '草稿';
-  }
-}
-
-function nextStatus(status: ProjectTask['status']): ProjectTask['status'] {
-  if (status === 'pending') return 'in_progress';
-  if (status === 'in_progress') return 'completed';
-  return 'pending';
-}
-
-function uniqueStringList(values: string[]) {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
-}
-
-function TagEditor({
-  label,
-  values,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  values: string[];
-  placeholder: string;
-  onChange: (values: string[]) => void;
-}) {
-  const [draft, setDraft] = React.useState('');
-  const addValue = () => {
-    const text = draft.trim();
-    if (!text) return;
-    onChange(uniqueStringList([...values, text]));
-    setDraft('');
-  };
-  return (
-    <div className="space-y-2">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {values.map((value) => (
-          <span
-            key={value}
-            className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-          >
-            <span className="max-w-[180px] truncate">{value}</span>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={() => onChange(values.filter((entry) => entry !== value))}
-              aria-label={`移除 ${value}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <Input
-          value={draft}
-          placeholder={placeholder}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              addValue();
-            }
-          }}
-          className="h-8 text-xs"
-        />
-        <Button type="button" variant="outline" size="sm" onClick={addValue}>
-          <Plus className="h-3.5 w-3.5" />
-          添加
-        </Button>
-      </div>
-    </div>
-  );
+function projectEventIcon(type: string) {
+  if (type.startsWith('decision.')) return <MessageSquarePlus className="h-4 w-4 text-amber-600" />;
+  if (type.startsWith('task.')) return <ListChecks className="h-4 w-4 text-primary" />;
+  if (type.startsWith('asset.')) return <FileText className="h-4 w-4 text-primary" />;
+  if (type.startsWith('session.')) return <MessageSquarePlus className="h-4 w-4 text-primary" />;
+  return <FolderKanban className="h-4 w-4 text-muted-foreground" />;
 }
 
 function NewProjectDialog({
@@ -226,11 +111,13 @@ function NewProjectDialog({
 }) {
   const [form, setForm] = React.useState<ProjectFormState>(EMPTY_FORM);
   const [saving, setSaving] = React.useState(false);
+  const [savingStatus, setSavingStatus] = React.useState('');
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
     if (open) {
       setForm(EMPTY_FORM);
+      setSavingStatus('');
       setError('');
     }
   }, [open]);
@@ -250,7 +137,7 @@ function NewProjectDialog({
       form.expertIds.length ||
       form.skillIds.length,
     );
-    if (dirty && !window.confirm('切换模版会覆盖当前编辑内容')) {
+    if (dirty && !window.confirm('切换场景会覆盖当前编辑内容')) {
       return;
     }
     setForm({
@@ -260,6 +147,7 @@ function NewProjectDialog({
       connectorIds: template.connectorIds || [],
       expertIds: template.expertIds || [],
       skillIds: template.skillIds || [],
+      decisionPolicy: { mode: 'auto_all' },
     });
   };
 
@@ -269,8 +157,15 @@ function NewProjectDialog({
       return;
     }
     setSaving(true);
+    setSavingStatus('正在准备项目...');
     setError('');
     try {
+      await syncProjectMarketplaceResources({
+        skillIds: form.skillIds,
+        expertIds: form.expertIds,
+        onProgress: setSavingStatus,
+      });
+      setSavingStatus('正在创建项目...');
       const project = await window.agentDesktop.createProject({
         name: form.name.trim(),
         instructions: form.instructions,
@@ -278,6 +173,7 @@ function NewProjectDialog({
         connectorIds: form.connectorIds,
         expertIds: form.expertIds,
         skillIds: form.skillIds,
+        decisionPolicy: form.decisionPolicy,
       });
       onCreated(project);
       onClose();
@@ -285,6 +181,7 @@ function NewProjectDialog({
       setError(err?.message || String(err));
     } finally {
       setSaving(false);
+      setSavingStatus('');
     }
   };
 
@@ -294,9 +191,9 @@ function NewProjectDialog({
         <div className="shrink-0 flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="text-lg font-semibold text-foreground">新建项目</div>
-            <div className="text-xs text-muted-foreground">项目可为空，后续再添加任务、资产和会话。</div>
+            <div className="text-xs text-muted-foreground">创建后可发起任务，并持续沉淀项目资产和记忆。</div>
           </div>
-          <Button variant="ghost" size="icon-sm" onClick={onClose}>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} disabled={saving}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -317,19 +214,24 @@ function NewProjectDialog({
 
             {templates.length > 0 && (
               <div className="grid gap-2">
-                <div className="text-xs font-medium text-muted-foreground">模板</div>
+                <div className="text-xs font-medium text-muted-foreground">场景</div>
                 <select
                   value={form.templateId || ''}
                   onChange={(event) => applyTemplate(event.target.value)}
                   className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
                 >
-                  <option value="">空白项目</option>
+                  <option value="">空白场景</option>
                   {templates.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name}
                     </option>
                   ))}
                 </select>
+                {templates.find((template) => template.id === form.templateId)?.description ? (
+                  <div className="text-xs leading-5 text-muted-foreground">
+                    {templates.find((template) => template.id === form.templateId)?.description}
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -346,33 +248,41 @@ function NewProjectDialog({
               />
             </div>
 
-            <TagEditor
-              label="连接器（可选）"
-              values={form.connectorIds}
-              placeholder="Issue 系统、代码仓库、文档库"
+            <ProjectResourcePicker
+              kind="connector"
+              title="添加个人授权连接器"
+              description="添加后成员可使用个人账号授权连接。如需配置公共连接器，可在创建项目完成后配置。"
+              selectedIds={form.connectorIds}
               onChange={(connectorIds) => setForm((prev) => ({ ...prev, connectorIds }))}
             />
-            <TagEditor
-              label="专家（可选）"
-              values={form.expertIds}
-              placeholder="架构师、测试、研究员"
-              onChange={(expertIds) => setForm((prev) => ({ ...prev, expertIds }))}
-            />
-            <TagEditor
-              label="技能（可选）"
-              values={form.skillIds}
-              placeholder="调研、会议纪要、文档生成"
+            <ProjectResourcePicker
+              kind="skill"
+              title="添加技能"
+              description="从技能市场选择项目可使用的技能。"
+              selectedIds={form.skillIds}
               onChange={(skillIds) => setForm((prev) => ({ ...prev, skillIds }))}
+            />
+            <ProjectResourcePicker
+              kind="expert"
+              title="添加专家"
+              description="从整个专家市场选择项目成员。"
+              selectedIds={form.expertIds}
+              onChange={(expertIds) => setForm((prev) => ({ ...prev, expertIds }))}
             />
             {error && <div className="rounded-md border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive">{error}</div>}
           </div>
         </ScrollArea>
-        <div className="relative z-10 shrink-0 flex justify-end gap-2 border-t border-border bg-background px-5 py-4">
-          <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button onClick={createProject} disabled={saving}>
-            <FolderKanban className="h-4 w-4" />
-            创建项目
-          </Button>
+        <div className="relative z-10 flex shrink-0 items-center justify-between gap-3 border-t border-border bg-background px-5 py-4">
+          <div aria-live="polite" className="min-w-0 truncate text-xs text-muted-foreground">
+            {savingStatus}
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+            <Button className="min-w-[112px]" onClick={createProject} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderKanban className="h-4 w-4" />}
+              {saving ? '创建中' : '创建项目'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -384,18 +294,35 @@ function ProjectList({
   query,
   onQueryChange,
   onOpen,
+  onDelete,
   onNew,
 }: {
   projects: Project[];
   query: string;
   onQueryChange: (query: string) => void;
   onOpen: (projectId: string) => void;
+  onDelete: (project: Project) => Promise<void>;
   onNew: () => void;
 }) {
+  const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null);
+  const [deleteError, setDeleteError] = React.useState('');
   const filtered = projects.filter((project) =>
     project.name.toLowerCase().includes(query.toLowerCase()) ||
     project.id.toLowerCase().includes(query.toLowerCase())
   );
+
+  const deleteProject = async (project: Project) => {
+    if (!window.confirm(`删除项目「${project.name}」？\n\n项目将从列表中隐藏，相关任务、资产、会话和文件仍会保留。`)) return;
+    setDeletingProjectId(project.id);
+    setDeleteError('');
+    try {
+      await onDelete(project);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingProjectId(null);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -403,7 +330,7 @@ function ProjectList({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground">项目</h1>
-            <p className="mt-1 text-sm text-muted-foreground">管理长期上下文、任务、资产和协作执行。</p>
+            <p className="mt-1 text-sm text-muted-foreground">管理长期上下文、目标、任务和资产。</p>
           </div>
           <Button onClick={onNew}>
             <Plus className="h-4 w-4" />
@@ -422,31 +349,54 @@ function ProjectList({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="grid gap-2 p-6">
+          {deleteError ? (
+            <div className="mb-1 text-sm text-destructive">{deleteError}</div>
+          ) : null}
           {filtered.length > 0 ? (
             filtered.map((project) => (
-              <button
+              <div
                 key={project.id}
-                type="button"
-                onClick={() => onOpen(project.id)}
-                className="grid min-h-[92px] grid-cols-[1fr_auto] gap-4 rounded-lg border border-border bg-background px-4 py-3 text-left transition hover:border-primary/50 hover:bg-accent/35"
+                className="group grid min-h-[92px] grid-cols-[minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-lg border border-border bg-background transition hover:border-primary/50 hover:bg-accent/35"
               >
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <FolderKanban className="h-4 w-4 shrink-0 text-primary" />
-                    <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
+                <button
+                  type="button"
+                  onClick={() => onOpen(project.id)}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FolderKanban className="h-4 w-4 shrink-0 text-primary" />
+                      <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="outline">{project.sessionCount || 0} 会话</Badge>
+                      <Badge variant="outline">{project.taskCount || 0} 任务</Badge>
+                      <Badge variant="outline">{project.assetCount || 0} 资产</Badge>
+                      {project.pendingDecisionCount ? <Badge variant="destructive">{project.pendingDecisionCount} 待决策</Badge> : null}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <Badge variant="outline">{project.sessionCount || 0} 会话</Badge>
-                    <Badge variant="outline">{project.taskCount || 0} 任务</Badge>
-                    <Badge variant="outline">{project.assetCount || 0} 资产</Badge>
-                    <Badge variant="outline">{project.teamRunCount || 0} 团队</Badge>
+                  <div className="text-right text-xs text-muted-foreground">
+                    <div>更新于</div>
+                    <div className="mt-1">{formatTime(project.updatedAt)}</div>
                   </div>
+                </button>
+                <div className="flex items-center border-l border-border/70 px-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => void deleteProject(project)}
+                    disabled={deletingProjectId !== null}
+                    title={`删除项目 ${project.name}`}
+                    aria-label={`删除项目 ${project.name}`}
+                  >
+                    {deletingProjectId === project.id
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Trash2 className="h-4 w-4" />}
+                  </Button>
                 </div>
-                <div className="text-right text-xs text-muted-foreground">
-                  <div>更新于</div>
-                  <div className="mt-1">{formatTime(project.updatedAt)}</div>
-                </div>
-              </button>
+              </div>
             ))
           ) : (
             <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
@@ -478,30 +428,46 @@ function ProjectConfigPanel({
     connectorIds: project.connectorIds || [],
     expertIds: project.expertIds || [],
     skillIds: project.skillIds || [],
+    decisionPolicy: project.decisionPolicy || { mode: 'auto_all' },
   });
   const [saving, setSaving] = React.useState(false);
-
-  React.useEffect(() => {
-    setDraft({
-      name: project.name,
-      instructions: project.instructions,
-      templateId: project.templateId || null,
-      connectorIds: project.connectorIds || [],
-      expertIds: project.expertIds || [],
-      skillIds: project.skillIds || [],
-    });
-  }, [project]);
+  const [savingStatus, setSavingStatus] = React.useState('');
+  const [error, setError] = React.useState('');
 
   const save = async () => {
+    if (!draft.name.trim()) {
+      setError('项目名称不能为空');
+      return;
+    }
     setSaving(true);
+    setSavingStatus('正在检查本地资源...');
+    setError('');
     try {
+      await syncProjectMarketplaceResources({
+        skillIds: draft.skillIds,
+        expertIds: draft.expertIds,
+        onProgress: setSavingStatus,
+      });
+      setSavingStatus('正在保存项目配置...');
       const saved = await window.agentDesktop.updateProject({
         projectId: project.id,
         updates: draft,
       });
+      setDraft({
+        name: saved.name,
+        instructions: saved.instructions,
+        templateId: saved.templateId || null,
+        connectorIds: saved.connectorIds || [],
+        expertIds: saved.expertIds || [],
+        skillIds: saved.skillIds || [],
+        decisionPolicy: saved.decisionPolicy || { mode: 'auto_all' },
+      });
       onSaved(saved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+      setSavingStatus('');
     }
   };
 
@@ -528,114 +494,300 @@ function ProjectConfigPanel({
               className="min-h-[160px] text-xs"
             />
           </div>
-          <TagEditor
-            label="连接器"
-            values={draft.connectorIds}
-            placeholder="添加连接器"
+          <div className="grid gap-2">
+            <div className="text-xs font-medium text-muted-foreground">决策策略</div>
+            <select
+              value={draft.decisionPolicy.mode}
+              onChange={(event) => setDraft((prev) => ({
+                ...prev,
+                decisionPolicy: {
+                  mode: event.target.value as Project['decisionPolicy']['mode'],
+                },
+              }))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            >
+              <option value="auto_all">全部允许</option>
+              <option value="auto_low_risk">自动处理低风险偏好</option>
+              <option value="recommend">AI 推荐，人工确认</option>
+              <option value="manual">全部人工判断</option>
+            </select>
+            <div className="text-xs leading-5 text-muted-foreground">
+              {draft.decisionPolicy.mode === 'auto_all'
+                ? '自动采用 AI 推荐选项；没有明确推荐时采用首项，并保留操作预览和审计记录。'
+                : draft.decisionPolicy.mode === 'auto_low_risk'
+                  ? '仅自动处理有明确推荐的低风险偏好，其他操作需要人工确认。'
+                  : draft.decisionPolicy.mode === 'recommend'
+                    ? '显示 AI 推荐，但所有决策仍需人工确认。'
+                    : '所有项目决策均由用户选择。'}
+            </div>
+          </div>
+          <ProjectResourcePicker
+            kind="connector"
+            title="添加个人授权连接器"
+            description="项目任务将使用所选个人授权连接器。"
+            selectedIds={draft.connectorIds}
             onChange={(connectorIds) => setDraft((prev) => ({ ...prev, connectorIds }))}
           />
-          <TagEditor
-            label="专家"
-            values={draft.expertIds}
-            placeholder="添加专家"
-            onChange={(expertIds) => setDraft((prev) => ({ ...prev, expertIds }))}
-          />
-          <TagEditor
-            label="技能"
-            values={draft.skillIds}
-            placeholder="添加技能"
+          <ProjectResourcePicker
+            kind="skill"
+            title="添加技能"
+            description="从技能市场选择项目任务可调用的技能。"
+            selectedIds={draft.skillIds}
             onChange={(skillIds) => setDraft((prev) => ({ ...prev, skillIds }))}
           />
-          <div className="grid gap-2">
-            <div className="text-xs font-medium text-muted-foreground">自动化</div>
-            <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">暂无自动化</div>
-          </div>
+          <ProjectResourcePicker
+            kind="expert"
+            title="添加专家"
+            description="从专家市场选择项目会话可使用的专家。"
+            selectedIds={draft.expertIds}
+            onChange={(expertIds) => setDraft((prev) => ({ ...prev, expertIds }))}
+          />
+          {error ? <div className="text-xs text-destructive">{error}</div> : null}
         </div>
       </ScrollArea>
       <div className="border-t border-border p-4">
+        {savingStatus ? (
+          <div aria-live="polite" className="mb-2 truncate text-xs text-muted-foreground">{savingStatus}</div>
+        ) : null}
         <Button className="w-full" onClick={save} disabled={saving}>
-          保存配置
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {saving ? '保存中' : '保存配置'}
         </Button>
       </div>
     </aside>
   );
 }
 
-function ProjectTasksTab({
-  projectId,
+function ProjectDecisionsTab({
+  project,
+  decisions,
   tasks,
+  onOpenSession,
   onReload,
 }: {
-  projectId: string;
+  project: Project;
+  decisions: ProjectDecision[];
   tasks: ProjectTask[];
+  onOpenSession: (sessionId: string) => void;
   onReload: () => Promise<void>;
 }) {
-  const [subject, setSubject] = React.useState('');
-  const [description, setDescription] = React.useState('');
-  const [owner, setOwner] = React.useState('');
+  const [expandedId, setExpandedId] = React.useState<string | null>(
+    decisions.find((decision) => decision.status === 'pending')?.id || null,
+  );
+  const [answersByDecision, setAnswersByDecision] = React.useState<Record<string, Record<string, string>>>({});
+  const [resolvingId, setResolvingId] = React.useState<string | null>(null);
+  const [error, setError] = React.useState('');
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const pending = decisions.filter((decision) => decision.status === 'pending');
+  const history = decisions.filter((decision) => decision.status !== 'pending').slice(0, 30);
 
-  const createTask = async () => {
-    if (!subject.trim()) return;
-    await window.agentDesktop.createProjectTask({
-      projectId,
-      task: {
-        subject: subject.trim(),
-        description,
-        owner: owner.trim() || undefined,
-        status: 'pending',
-      },
+  React.useEffect(() => {
+    if (expandedId && decisions.some((decision) => decision.id === expandedId)) return;
+    setExpandedId(pending[0]?.id || null);
+  }, [decisions, expandedId, pending]);
+
+  const setAnswer = (decision: ProjectDecision, question: ProjectDecision['questions'][number], value: string) => {
+    setAnswersByDecision((current) => {
+      const decisionAnswers = current[decision.id] || decision.recommendation?.answers || {};
+      let nextValue = value;
+      if (question.multiSelect) {
+        const selected = decisionAnswers[question.question]
+          ? decisionAnswers[question.question].split(',').map((entry) => entry.trim()).filter(Boolean)
+          : [];
+        nextValue = selected.includes(value)
+          ? selected.filter((entry) => entry !== value).join(', ')
+          : [...selected, value].join(', ');
+      }
+      return {
+        ...current,
+        [decision.id]: { ...decisionAnswers, [question.question]: nextValue },
+      };
     });
-    setSubject('');
-    setDescription('');
-    setOwner('');
-    await onReload();
   };
 
-  const cycleStatus = async (task: ProjectTask) => {
-    await window.agentDesktop.updateProjectTask({
-      projectId,
-      taskId: task.id,
-      updates: { status: nextStatus(task.status) },
-    });
-    await onReload();
+  const resolve = async (decision: ProjectDecision) => {
+    setResolvingId(decision.id);
+    setError('');
+    try {
+      await window.agentDesktop.resolveProjectDecision({
+        projectId: project.id,
+        decisionId: decision.id,
+        answers: answersByDecision[decision.id] || decision.recommendation?.answers || {},
+      });
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
+  const reject = async (decision: ProjectDecision) => {
+    setResolvingId(decision.id);
+    setError('');
+    try {
+      await window.agentDesktop.rejectProjectDecision({
+        projectId: project.id,
+        decisionId: decision.id,
+        message: '用户在项目待决策中拒绝了该请求',
+      });
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
+  const renderDecision = (decision: ProjectDecision) => {
+    const expanded = expandedId === decision.id;
+    const sourceTask = decision.taskId ? taskById.get(decision.taskId) : null;
+    const answers = answersByDecision[decision.id] || decision.recommendation?.answers || {};
+    const ready = decision.questions.length > 0 && decision.questions.every((question) => Boolean(answers[question.question]?.trim()));
+    const statusText = decision.status === 'pending'
+      ? '等待判断'
+      : decision.status === 'resolved' ? '已决定' : decision.status === 'rejected' ? '已拒绝' : '已失效';
+    const riskText = decision.riskLevel === 'high' ? '高风险' : decision.riskLevel === 'low' ? '低风险' : '中风险';
+    return (
+      <article key={decision.id} className="overflow-hidden rounded-md border border-border bg-background">
+        <button
+          type="button"
+          className="grid min-h-12 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-3 text-left hover:bg-accent/40"
+          onClick={() => setExpandedId((current) => current === decision.id ? null : decision.id)}
+          aria-expanded={expanded}
+        >
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-foreground">
+              {decision.questions[0]?.question || '需要项目判断'}
+            </div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              {sourceTask?.subject || '项目任务'} · {decision.originLabel}
+            </div>
+          </div>
+          <Badge variant={decision.riskLevel === 'high' ? 'destructive' : 'outline'}>{riskText}</Badge>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{statusText}</span>
+            <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} />
+          </div>
+        </button>
+        {expanded ? (
+          <div className="grid gap-4 border-t border-border/70 px-4 py-4">
+            {decision.questions.map((question) => (
+              <div key={question.question} className="grid gap-2">
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground">{question.header}</div>
+                  <div className="mt-1 text-sm text-foreground">{question.question}</div>
+                </div>
+                {decision.status === 'pending' ? (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {question.options.map((option) => {
+                        const selectedValues = (answers[question.question] || '').split(',').map((entry) => entry.trim());
+                        const selected = selectedValues.includes(option.label);
+                        const recommended = decision.recommendation?.answers?.[question.question] === option.label;
+                        return (
+                          <button
+                            key={option.label}
+                            type="button"
+                            onClick={() => setAnswer(decision, question, option.label)}
+                            className={cn(
+                              'min-h-16 border px-3 py-2 text-left transition-colors',
+                              selected ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/45',
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-sm font-medium text-foreground">
+                              <span>{option.label}</span>
+                              {recommended ? <Badge variant="secondary">AI 推荐</Badge> : null}
+                            </div>
+                            {option.description ? <div className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</div> : null}
+                            {option.preview ? <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap border-t border-border/60 pt-2 text-xs leading-5 text-muted-foreground">{option.preview}</div> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Input
+                      value={answers[question.question] || ''}
+                      onChange={(event) => setAnswersByDecision((current) => ({
+                        ...current,
+                        [decision.id]: {
+                          ...(current[decision.id] || decision.recommendation?.answers || {}),
+                          [question.question]: event.target.value,
+                        },
+                      }))}
+                      placeholder="也可以输入自定义回答"
+                      className="h-8 text-xs"
+                    />
+                  </>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    {decision.resolution?.answers?.[question.question] || decision.resolution?.note || '未提供答案'}
+                  </div>
+                )}
+              </div>
+            ))}
+            {decision.recommendation?.reason ? (
+              <div className="text-xs leading-5 text-muted-foreground">推荐依据：{decision.recommendation.reason}</div>
+            ) : null}
+            {decision.resolution?.source === 'policy' ? (
+              <div className="text-xs leading-5 text-emerald-700">已由项目决策策略自动处理。</div>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3">
+              <div className="text-xs text-muted-foreground">{formatTime(decision.createdAt)}</div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenSession(decision.parentSessionId)}
+                >
+                  <MessageSquarePlus className="h-4 w-4" />
+                  主会话
+                </Button>
+                {decision.originSessionId && decision.originSessionId !== decision.parentSessionId ? (
+                  <Button variant="outline" size="sm" onClick={() => onOpenSession(decision.originSessionId)}>
+                    <MessageSquarePlus className="h-4 w-4" />
+                    子会话
+                  </Button>
+                ) : null}
+                {decision.status === 'pending' ? (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => void reject(decision)} disabled={resolvingId !== null}>拒绝</Button>
+                    <Button size="sm" onClick={() => void resolve(decision)} disabled={!ready || resolvingId !== null}>
+                      {resolvingId === decision.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      确认决定
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </article>
+    );
   };
 
   return (
-    <div className="grid min-h-0 gap-4">
-      <div className="rounded-lg border border-border bg-background p-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto]">
-          <Input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="任务标题" />
-          <Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="描述" />
-          <Input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="负责人" />
-          <Button onClick={createTask}>
-            <Plus className="h-4 w-4" />
-            创建任务
-          </Button>
+    <div className="grid gap-5">
+      {error ? <div className="text-sm text-destructive">{error}</div> : null}
+      <section className="grid gap-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium text-foreground">等待判断</div>
+          <Badge variant={pending.length > 0 ? 'default' : 'outline'}>{pending.length}</Badge>
         </div>
-      </div>
-      <div className="grid gap-2">
-        {tasks.length > 0 ? tasks.map((task) => (
-          <div key={task.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-border px-4 py-3">
-            <button type="button" onClick={() => cycleStatus(task)} className="rounded-md p-1 hover:bg-accent">
-              {statusIcon(task.status)}
-            </button>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-foreground">#{task.id} {task.subject}</div>
-              {task.description && <div className="mt-0.5 truncate text-xs text-muted-foreground">{task.description}</div>}
-            </div>
-            <div className="flex items-center gap-2">
-              {task.owner && <Badge variant="outline">{task.owner}</Badge>}
-              <Badge variant={task.status === 'completed' ? 'secondary' : 'outline'}>{statusLabel(task.status)}</Badge>
-            </div>
-          </div>
-        )) : (
-          <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">暂无任务</div>
+        {pending.length > 0 ? pending.map(renderDecision) : (
+          <div className="rounded-md border border-dashed border-border px-5 py-8 text-center text-sm text-muted-foreground">当前没有需要处理的决策</div>
         )}
-      </div>
+      </section>
+      {history.length > 0 ? (
+        <section className="grid gap-2">
+          <div className="text-sm font-medium text-foreground">最近记录</div>
+          {history.map(renderDecision)}
+        </section>
+      ) : null}
     </div>
   );
 }
 
+// Project assets are published by completed Coordinator task sessions.
 function ProjectAssetsTab({
   projectId,
   assets,
@@ -645,27 +797,63 @@ function ProjectAssetsTab({
   assets: ProjectAsset[];
   onReload: () => Promise<void>;
 }) {
+  const [error, setError] = React.useState('');
+  const [busyAssetId, setBusyAssetId] = React.useState<string | null>(null);
+
   const upload = async () => {
-    const files = await window.agentDesktop.pickFiles();
-    for (const file of files) {
-      await window.agentDesktop.addProjectAsset({
-        projectId,
-        sourcePath: file.path,
-        fileName: file.name,
-      });
+    setBusyAssetId('upload');
+    setError('');
+    try {
+      const files = await window.agentDesktop.pickFiles();
+      for (const file of files) {
+        await window.agentDesktop.addProjectAsset({
+          projectId,
+          sourcePath: file.path,
+          fileName: file.name,
+        });
+      }
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAssetId(null);
     }
-    await onReload();
+  };
+
+  const remove = async (assetId: string) => {
+    setBusyAssetId(assetId);
+    setError('');
+    try {
+      await window.agentDesktop.removeProjectAsset({ projectId, assetId });
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAssetId(null);
+    }
+  };
+
+  const open = async (asset: ProjectAsset) => {
+    setError('');
+    try {
+      await window.agentDesktop.shell.openFile(asset.path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
     <div className="grid min-h-0 gap-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm text-muted-foreground">{assets.length} 个资产</div>
-        <Button onClick={upload}>
-          <Upload className="h-4 w-4" />
+        <Button onClick={upload} disabled={busyAssetId !== null}>
+          {busyAssetId === 'upload'
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : <Upload className="h-4 w-4" />}
           上传文件
         </Button>
       </div>
+      {error ? <div className="text-sm text-destructive">{error}</div> : null}
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="grid grid-cols-[1fr_120px_140px_96px] border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
           <div>名称</div>
@@ -682,14 +870,27 @@ function ProjectAssetsTab({
             <div className="text-xs text-muted-foreground">{formatBytes(asset.size)}</div>
             <div className="text-xs text-muted-foreground">{formatTime(asset.updatedAt)}</div>
             <div className="flex justify-end gap-1">
-              <Button variant="ghost" size="icon-sm" onClick={() => window.agentDesktop.shell.openFile(asset.path)}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void open(asset)}
+                disabled={busyAssetId !== null}
+                title="打开资产"
+                aria-label={`打开资产：${asset.name}`}
+              >
                 <FileText className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon-sm" onClick={async () => {
-                await window.agentDesktop.removeProjectAsset({ projectId, assetId: asset.id });
-                await onReload();
-              }}>
-                <Trash2 className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void remove(asset.id)}
+                disabled={busyAssetId !== null}
+                title="删除资产"
+                aria-label={`删除资产：${asset.name}`}
+              >
+                {busyAssetId === asset.id
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Trash2 className="h-4 w-4" />}
               </Button>
             </div>
           </div>
@@ -701,360 +902,89 @@ function ProjectAssetsTab({
   );
 }
 
-function ProjectSessionsTab({
-  project,
-  projectSessions,
-  allSessions,
-  onCreateProjectSession,
-  onOpenSession,
-  onReload,
-}: {
-  project: Project;
-  projectSessions: SessionSummary[];
-  allSessions: SessionSummary[];
-  onCreateProjectSession: (project: Project) => Promise<void>;
-  onOpenSession: (sessionId: string) => void;
-  onReload: () => Promise<void>;
-}) {
-  const [selectedSessionId, setSelectedSessionId] = React.useState('');
-  const bindableSessions = allSessions.filter((session) => !session.projectId);
-
-  const bind = async () => {
-    if (!selectedSessionId) return;
-    await window.agentDesktop.bindSessionToProject({ sessionId: selectedSessionId, projectId: project.id });
-    setSelectedSessionId('');
-    await onReload();
-  };
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 gap-2">
-          <select
-            value={selectedSessionId}
-            onChange={(event) => setSelectedSessionId(event.target.value)}
-            className="h-9 min-w-[240px] rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-          >
-            <option value="">选择已有会话</option>
-            {bindableSessions.map((session) => (
-              <option key={session.id} value={session.id}>{session.title}</option>
-            ))}
-          </select>
-          <Button variant="outline" onClick={bind} disabled={!selectedSessionId}>绑定</Button>
-        </div>
-        <Button onClick={() => onCreateProjectSession(project)}>
-          <MessageSquarePlus className="h-4 w-4" />
-          新建项目会话
-        </Button>
-      </div>
-      <div className="grid gap-2">
-        {projectSessions.length > 0 ? projectSessions.map((session) => (
-          <div key={session.id} className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-lg border border-border px-4 py-3">
-            <button type="button" onClick={() => onOpenSession(session.id)} className="min-w-0 text-left">
-              <div className="truncate text-sm font-medium text-foreground">{session.title}</div>
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">{session.preview || session.workspace}</div>
-            </button>
-            <Button variant="ghost" size="sm" onClick={async () => {
-              await window.agentDesktop.unbindSessionFromProject({ sessionId: session.id });
-              await onReload();
-            }}>
-              解绑
-            </Button>
-          </div>
-        )) : (
-          <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">暂无项目会话</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ProjectTeamTab({
-  project,
-  projectId,
-  teamRuns,
-  onReload,
-}: {
-  project: Project;
-  projectId: string;
-  teamRuns: ProjectTeamRun[];
-  onReload: () => Promise<void>;
-}) {
-  const [name, setName] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const [memberDrafts, setMemberDrafts] = React.useState<Record<string, {
-    expertId: string;
-    role: string;
-    prompt: string;
-    mode: ProjectTeamMember['mode'];
-  }>>({});
-
-  const getDraft = (runId: string) => memberDrafts[runId] || {
-    expertId: '',
-    role: '',
-    prompt: '',
-    mode: 'default' as const,
-  };
-
-  const updateDraft = (
-    runId: string,
-    patch: Partial<{ expertId: string; role: string; prompt: string; mode: ProjectTeamMember['mode'] }>,
-  ) => {
-    setMemberDrafts((prev) => ({
-      ...prev,
-      [runId]: { ...getDraft(runId), ...patch },
-    }));
-  };
-
-  const createRun = async () => {
-    if (!name.trim()) return;
-    await window.agentDesktop.createProjectTeamRun({
-      projectId,
-      teamRun: { name: name.trim(), plannedMembers: [] },
-    });
-    setName('');
-    await onReload();
-  };
-
-  const addMember = async (runId: string) => {
-    const draft = getDraft(runId);
-    const expertId = draft.expertId.trim();
-    if (!expertId) return;
-    await window.agentDesktop.addProjectTeamMember({
-      projectId,
-      runId,
-      member: {
-        expertId,
-        name: expertId,
-        role: draft.role.trim() || expertId,
-        prompt: draft.prompt,
-        mode: draft.mode,
-        status: 'planned',
-      },
-    });
-    setMemberDrafts((prev) => ({
-      ...prev,
-      [runId]: { expertId: '', role: '', prompt: '', mode: 'default' },
-    }));
-    await onReload();
-  };
-
-  const startMember = async (runId: string, memberId: string) => {
-    setNotice('');
-    try {
-      await window.agentDesktop.startProjectTeamMember({ projectId, runId, memberId });
-    } catch (err: any) {
-      setNotice(err?.message || String(err));
-    } finally {
-      await onReload();
-    }
-  };
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex gap-2">
-        <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="团队执行名称" />
-        <Button onClick={createRun}>
-          <Users className="h-4 w-4" />
-          新建团队
-        </Button>
-      </div>
-      {project.expertIds.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
-          这个项目还没有专家。先在右侧项目配置里添加专家，再把专家加入团队执行。
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          {notice}
-        </div>
-      ) : null}
-      <div className="grid gap-2">
-        {teamRuns.length > 0 ? teamRuns.map((run) => (
-          <div key={run.id} className="rounded-lg border border-border bg-background">
-            <div className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-border px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{run.name}</div>
-                <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {run.plannedMembers.length} 个计划成员 · {run.activeMembers.length} 个运行成员
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">{teamRunStatusLabel(run.status)}</Badge>
-                <Button variant="ghost" size="icon-sm" onClick={async () => {
-                  await window.agentDesktop.closeProjectTeamRun({ projectId, runId: run.id });
-                  await onReload();
-                }}>
-                  <Square className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-3 p-4">
-              <div className="grid gap-2">
-                {run.plannedMembers.length > 0 ? run.plannedMembers.map((member) => (
-                  <div key={member.id} className="grid grid-cols-[1fr_auto] items-start gap-3 rounded-md border border-border/70 px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium text-foreground">{member.name}</span>
-                        <Badge variant={member.status === 'blocked' || member.status === 'failed' ? 'destructive' : 'outline'}>
-                          {memberStatusLabel(member.status)}
-                        </Badge>
-                        <Badge variant="secondary">{member.role}</Badge>
-                      </div>
-                      {member.prompt ? (
-                        <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{member.prompt}</div>
-                      ) : null}
-                      {member.error ? (
-                        <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">{member.error}</div>
-                      ) : null}
-                      {member.taskIds.length > 0 ? (
-                        <div className="mt-1 text-xs text-muted-foreground">任务 #{member.taskIds.join(', #')}</div>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => startMember(run.id, member.id)}
-                        title="启动成员"
-                      >
-                        <Play className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={async () => {
-                          await window.agentDesktop.removeProjectTeamMember({ projectId, runId: run.id, memberId: member.id });
-                          await onReload();
-                        }}
-                        title="移除成员"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )) : (
-                  <div className="rounded-md border border-dashed border-border px-4 py-5 text-center text-sm text-muted-foreground">
-                    暂无计划成员
-                  </div>
-                )}
-              </div>
-              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-3">
-                <div className="text-xs font-medium text-muted-foreground">从项目专家添加成员</div>
-                <div className="grid gap-2 md:grid-cols-[180px_160px_1fr_128px_auto]">
-                  <select
-                    value={getDraft(run.id).expertId}
-                    onChange={(event) => updateDraft(run.id, { expertId: event.target.value })}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-                    disabled={project.expertIds.length === 0}
-                  >
-                    <option value="">选择专家</option>
-                    {project.expertIds.map((expertId) => (
-                      <option key={expertId} value={expertId}>
-                        {expertId}
-                      </option>
-                    ))}
-                  </select>
-                  <Input
-                    value={getDraft(run.id).role}
-                    onChange={(event) => updateDraft(run.id, { role: event.target.value })}
-                    placeholder="角色"
-                    className="h-8 text-xs"
-                  />
-                  <Input
-                    value={getDraft(run.id).prompt}
-                    onChange={(event) => updateDraft(run.id, { prompt: event.target.value })}
-                    placeholder="成员任务说明"
-                    className="h-8 text-xs"
-                  />
-                  <select
-                    value={getDraft(run.id).mode}
-                    onChange={(event) => updateDraft(run.id, { mode: event.target.value as ProjectTeamMember['mode'] })}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-                  >
-                    <option value="default">默认</option>
-                    <option value="plan">计划</option>
-                    <option value="acceptEdits">接受编辑</option>
-                    <option value="bypassPermissions">跳过权限</option>
-                  </select>
-                  <Button size="sm" onClick={() => addMember(run.id)} disabled={!getDraft(run.id).expertId || project.expertIds.length === 0}>
-                    <UserPlus className="h-4 w-4" />
-                    添加
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )) : (
-          <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">暂无团队执行</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
+// Project detail exposes root Coordinator sessions as tasks.
 function ProjectDetail({
   project,
-  sessions,
   refreshSignal,
   onBack,
   onProjectSaved,
   onProjectsChange,
   onOpenSession,
-  onCreateProjectSession,
 }: {
   project: Project;
-  sessions: SessionSummary[];
   refreshSignal: number;
   onBack: () => void;
   onProjectSaved: (project: Project) => void;
   onProjectsChange: () => Promise<void>;
   onOpenSession: (sessionId: string) => void;
-  onCreateProjectSession: (project: Project) => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = React.useState<ProjectTab>('activity');
   const [detail, setDetail] = React.useState<Project>(project);
   const [assets, setAssets] = React.useState<ProjectAsset[]>([]);
   const [tasks, setTasks] = React.useState<ProjectTask[]>([]);
-  const [projectSessions, setProjectSessions] = React.useState<SessionSummary[]>([]);
-  const [teamRuns, setTeamRuns] = React.useState<ProjectTeamRun[]>([]);
+  const [events, setEvents] = React.useState<ProjectEvent[]>([]);
+  const [decisions, setDecisions] = React.useState<ProjectDecision[]>([]);
+  const [memory, setMemory] = React.useState<ProjectMemory | null>(null);
+  const [loadError, setLoadError] = React.useState('');
+  const reloadRequestIdRef = React.useRef(0);
 
   const reload = React.useCallback(async () => {
-    const [nextProject, nextAssets, nextTasks, nextSessions, nextRuns] = await Promise.all([
-      window.agentDesktop.getProject({ projectId: project.id }),
-      window.agentDesktop.listProjectAssets({ projectId: project.id }),
-      window.agentDesktop.listProjectTasks({ projectId: project.id }),
-      window.agentDesktop.listProjectSessions({ projectId: project.id }),
-      window.agentDesktop.listProjectTeamRuns({ projectId: project.id }),
-    ]);
-    setDetail(nextProject);
-    setAssets(nextAssets);
-    setTasks(nextTasks);
-    setProjectSessions(nextSessions);
-    setTeamRuns(nextRuns);
-    await onProjectsChange();
+    const requestId = ++reloadRequestIdRef.current;
+    try {
+      const [nextProject, nextAssets, nextTasks, nextEvents, nextDecisions, nextMemory] = await Promise.all([
+        window.agentDesktop.getProject({ projectId: project.id }),
+        window.agentDesktop.listProjectAssets({ projectId: project.id }),
+        window.agentDesktop.listProjectTasks({ projectId: project.id }),
+        window.agentDesktop.listProjectEvents({ projectId: project.id }),
+        window.agentDesktop.listProjectDecisions({ projectId: project.id }),
+        window.agentDesktop.getProjectMemory({ projectId: project.id }),
+      ]);
+      if (reloadRequestIdRef.current !== requestId) return;
+      setDetail(nextProject);
+      setAssets(nextAssets);
+      setTasks(nextTasks);
+      setEvents(nextEvents);
+      setDecisions(nextDecisions);
+      setMemory(nextMemory);
+      setLoadError('');
+      await onProjectsChange();
+    } catch (err) {
+      if (reloadRequestIdRef.current === requestId) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
+      throw err;
+    }
   }, [onProjectsChange, project.id]);
 
   React.useEffect(() => {
+    reloadRequestIdRef.current += 1;
     setDetail(project);
-  }, [project]);
+    setAssets([]);
+    setTasks([]);
+    setEvents([]);
+    setDecisions([]);
+    setMemory(null);
+    setLoadError('');
+  }, [project.id]);
 
   React.useEffect(() => {
-    void reload();
+    void reload().catch(() => {});
   }, [reload, refreshSignal]);
 
-  const archive = async () => {
-    if (!window.confirm(`归档项目「${detail.name}」？`)) return;
-    await window.agentDesktop.archiveProject({ projectId: detail.id });
-    await onProjectsChange();
-    onBack();
-  };
+  const recentEvents = events.slice(0, 30);
+  const memoryOverview = formatProjectMemoryForDisplay(memory?.overview || '');
 
-  const recentEvents = [
-    ...tasks.slice(0, 4).map((task) => ({ id: `task-${task.id}`, label: `任务：${task.subject}`, time: Number(task.metadata?.updatedAt) || detail.updatedAt })),
-    ...assets.slice(0, 4).map((asset) => ({ id: `asset-${asset.id}`, label: `资产：${asset.name}`, time: asset.updatedAt })),
-    ...projectSessions.slice(0, 4).map((session) => ({ id: `session-${session.id}`, label: `会话：${session.title}`, time: session.updatedAt })),
-  ].sort((a, b) => b.time - a.time).slice(0, 8);
+  const openEventTarget = (event: ProjectEvent) => {
+    if (event.targetType === 'session' && event.targetId) {
+      onOpenSession(event.targetId);
+    } else if (event.targetType === 'task') {
+      setActiveTab('tasks');
+    } else if (event.targetType === 'asset') {
+      setActiveTab('assets');
+    } else if (event.targetType === 'decision') {
+      setActiveTab('decisions');
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 bg-background">
@@ -1069,16 +999,6 @@ function ProjectDetail({
                 <FolderKanban className="h-5 w-5 shrink-0 text-primary" />
                 <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={archive}>
-                <Archive className="h-4 w-4" />
-                归档
-              </Button>
-              <Button onClick={() => onCreateProjectSession(detail)}>
-                <MessageSquarePlus className="h-4 w-4" />
-                新建项目会话
-              </Button>
             </div>
           </div>
           <div className="mt-4 flex flex-wrap gap-1.5 border-b border-border/0">
@@ -1095,63 +1015,110 @@ function ProjectDetail({
                 )}
               >
                 {tab.label}
+                {tab.id === 'decisions' && decisions.some((decision) => decision.status === 'pending') ? (
+                  <span className="ml-1.5 rounded-full bg-destructive px-1.5 text-[10px] leading-4 text-destructive-foreground">
+                    {decisions.filter((decision) => decision.status === 'pending').length}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-6">
+            {loadError ? (
+              <div className="mb-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">
+                {loadError}
+              </div>
+            ) : null}
             {activeTab === 'activity' && (
-              <div className="grid gap-2">
-                {recentEvents.length > 0 ? recentEvents.map((event) => (
-                  <div key={event.id} className="grid grid-cols-[1fr_auto] rounded-lg border border-border px-4 py-3 text-sm">
-                    <div className="truncate text-foreground">{event.label}</div>
-                    <div className="text-xs text-muted-foreground">{formatTime(event.time)}</div>
+              <div className="grid gap-6">
+                <section>
+                  <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
+                    <div className="text-sm font-medium text-foreground">项目记忆</div>
+                    <div className="text-xs text-muted-foreground">
+                      {memory?.finalizedSessionCount
+                        ? `${memory.finalizedSessionCount} 次沉淀${memory.updatedAt ? ` · ${formatTime(memory.updatedAt)}` : ''}`
+                        : '尚未沉淀'}
+                    </div>
                   </div>
-                )) : (
-                  <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">暂无动态</div>
-                )}
+                  <div className="max-h-[320px] overflow-auto py-3 text-sm text-muted-foreground">
+                    {memoryOverview ? (
+                      <MarkdownRenderer
+                        content={memoryOverview}
+                        variant="compact"
+                        sourceId={`project-memory:${detail.id}:${memory?.version || 0}`}
+                      />
+                    ) : (
+                      <div className="py-3 text-sm text-muted-foreground">暂无已沉淀的项目记忆</div>
+                    )}
+                  </div>
+                </section>
+                <section className="grid gap-2">
+                  <div className="flex h-7 items-center justify-between border-b border-border pb-2">
+                    <div className="text-sm font-medium text-foreground">项目动态</div>
+                    {recentEvents.length > 0 ? <div className="text-xs text-muted-foreground">最近 {recentEvents.length} 条</div> : null}
+                  </div>
+                  {recentEvents.length > 0 ? (
+                    <div className="overflow-hidden rounded-md border border-border">
+                      {recentEvents.map((event, index) => {
+                        const actionable = ['session', 'task', 'asset', 'decision'].includes(event.targetType);
+                        return (
+                          <button
+                            key={event.id}
+                            type="button"
+                            disabled={!actionable}
+                            onClick={() => openEventTarget(event)}
+                            className={cn(
+                              'grid min-h-11 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 text-left text-sm outline-none',
+                              index > 0 && 'border-t border-border',
+                              actionable && 'transition-colors hover:bg-accent/45 focus-visible:bg-accent/55',
+                            )}
+                          >
+                            {projectEventIcon(event.type)}
+                            <span className="truncate text-foreground" title={event.summary}>{event.summary}</span>
+                            <span className="text-xs text-muted-foreground">{formatTime(event.createdAt)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex h-16 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">暂无动态</div>
+                  )}
+                </section>
               </div>
             )}
-            {activeTab === 'plan' && (
-              <div className="rounded-lg border border-border p-4">
-                <div className="text-sm font-medium text-foreground">项目指令</div>
-                <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                  {detail.instructions || '暂无指令'}
-                </div>
-              </div>
-            )}
-            {activeTab === 'tasks' && (
-              <ProjectTasksTab projectId={detail.id} tasks={tasks} onReload={reload} />
-            )}
-            {activeTab === 'assets' && (
-              <ProjectAssetsTab projectId={detail.id} assets={assets} onReload={reload} />
-            )}
-            {activeTab === 'sessions' && (
-              <ProjectSessionsTab
+            {activeTab === 'decisions' && (
+              <ProjectDecisionsTab
                 project={detail}
-                projectSessions={projectSessions}
-                allSessions={sessions}
-                onCreateProjectSession={onCreateProjectSession}
+                decisions={decisions}
+                tasks={tasks}
                 onOpenSession={onOpenSession}
                 onReload={reload}
               />
             )}
-            {activeTab === 'team' && (
-              <ProjectTeamTab project={detail} projectId={detail.id} teamRuns={teamRuns} onReload={reload} />
+            {activeTab === 'tasks' && (
+              <ProjectTasksTab
+                project={detail}
+                tasks={tasks}
+                onOpenSession={onOpenSession}
+                onShowDecisions={() => setActiveTab('decisions')}
+                onReload={reload}
+              />
             )}
-            {activeTab === 'deliverables' && (
-              <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">暂无交付物</div>
+            {activeTab === 'assets' && (
+              <ProjectAssetsTab projectId={detail.id} assets={assets} onReload={reload} />
             )}
           </div>
         </ScrollArea>
       </div>
       <ProjectConfigPanel
+        key={detail.id}
         project={detail}
         onSaved={(saved) => {
           setDetail(saved);
           onProjectSaved(saved);
-          void reload();
+          void reload().catch(() => {});
         }}
       />
     </div>
@@ -1161,13 +1128,11 @@ function ProjectDetail({
 export function ProjectWorkspace({
   projects,
   templates,
-  sessions,
   activeProjectId,
   refreshSignal,
   onActiveProjectChange,
   onProjectsChange,
   onOpenSession,
-  onCreateProjectSession,
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = React.useState('');
   const [dialogOpen, setDialogOpen] = React.useState(false);
@@ -1186,7 +1151,6 @@ export function ProjectWorkspace({
       {activeProject ? (
         <ProjectDetail
           project={activeProject}
-          sessions={sessions}
           refreshSignal={refreshSignal}
           onBack={() => onActiveProjectChange(null)}
           onProjectSaved={async () => {
@@ -1194,7 +1158,6 @@ export function ProjectWorkspace({
           }}
           onProjectsChange={onProjectsChange}
           onOpenSession={onOpenSession}
-          onCreateProjectSession={onCreateProjectSession}
         />
       ) : (
         <ProjectList
@@ -1202,6 +1165,10 @@ export function ProjectWorkspace({
           query={query}
           onQueryChange={setQuery}
           onOpen={onActiveProjectChange}
+          onDelete={async (project) => {
+            await window.agentDesktop.archiveProject({ projectId: project.id });
+            await onProjectsChange();
+          }}
           onNew={() => setDialogOpen(true)}
         />
       )}

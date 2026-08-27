@@ -1,10 +1,10 @@
 /**
  * 飞书 (Feishu/Lark) Adapter for Claude Code Desktop
  *
- * 基于 @larksuiteoapi/node-sdk 的轻量飞书 Bot，直连服务端 /ws/:sessionId。
+ * 基于 @larksuiteoapi/node-sdk 的轻量飞书 Bot，通过进程 IPC 连接 Moss Desktop。
  * 使用 WebSocket 长连接接收事件，无需公网地址。
  *
- * 启动：FEISHU_APP_ID=xxx FEISHU_APP_SECRET=xxx bun run feishu/index.ts
+ * 由 Moss Desktop 作为 IPC 子进程启动，不支持独立运行。
  */
 
 import * as Lark from '@larksuiteoapi/node-sdk'
@@ -12,6 +12,7 @@ import * as path from 'node:path'
 import * as fs from 'node:fs/promises'
 import { WsBridge, type ServerMessage, type AttachmentRef } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
+import { ProcessBridge } from '../common/process-bridge.js'
 import { StreamingCard } from './streaming-card.js'
 import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
@@ -22,7 +23,7 @@ import {
 } from '../common/format.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient, type RecentProject } from '../common/http-client.js'
-import { isAllowedUser, tryPair } from '../common/pairing.js'
+import { isAllowedUser } from '../common/pairing.js'
 import { optimizeMarkdownForFeishu } from './markdown-style.js'
 import { extractInboundPayload } from './extract-payload.js'
 import { FeishuMediaService } from './media.js'
@@ -35,7 +36,7 @@ import type { PendingUpload } from '../common/attachment/attachment-types.js'
 
 const config = loadConfig()
 if (!config.feishu.appId || !config.feishu.appSecret) {
-  console.error('[Feishu] Missing FEISHU_APP_ID / FEISHU_APP_SECRET. Set env or ~/.moss/adapters.json')
+  console.error('[Feishu] Missing FEISHU_APP_ID / FEISHU_APP_SECRET. Set env or ~/.moss/settings.json adapters config')
   process.exit(1)
 }
 
@@ -47,6 +48,7 @@ const larkClient = new Lark.Client({
 })
 
 const bridge = new WsBridge(config.serverUrl, 'feishu')
+const desktopBridge = new ProcessBridge()
 const dedup = new MessageDedup()
 const sessionStore = new SessionStore()
 const httpClient = new AdapterHttpClient(config.serverUrl)
@@ -62,6 +64,12 @@ attachmentStore.gc().catch((err) => {
 const streamingCards = new Map<string, StreamingCard>()
 const pendingProjectSelection = new Map<string, boolean>()
 const runtimeStates = new Map<string, ChatRuntimeState>()
+const decisionMessages = new Map<string, Array<{
+  chatId: string
+  messageId: string
+  title: string
+  summary: string
+}>>()
 
 // Per-chat outbound watchers for Agent-produced markdown image references.
 // `imageWatchers` extracts `![alt](src)` from streaming text;
@@ -82,6 +90,16 @@ type ChatRuntimeState = {
   pendingPermissionCount: number
 }
 
+type DesktopSessionOption = {
+  id: string
+  title: string
+  preview?: string
+  updatedAt: number
+  busy: boolean
+  projectName?: string | null
+  originChannel?: 'desktop' | 'feishu' | 'cron'
+}
+
 // ---------- helpers ----------
 
 function getRuntimeState(chatId: string): ChatRuntimeState {
@@ -94,10 +112,10 @@ function getRuntimeState(chatId: string): ChatRuntimeState {
 }
 
 /** Get the existing StreamingCard for this chat, or create one in 'idle' state. */
-function getOrCreateStreamingCard(chatId: string): StreamingCard {
+function getOrCreateStreamingCard(chatId: string, messageUuid?: string): StreamingCard {
   let card = streamingCards.get(chatId)
   if (!card) {
-    card = new StreamingCard({ larkClient, chatId })
+    card = new StreamingCard({ larkClient, chatId, messageUuid })
     streamingCards.set(chatId, card)
   }
   return card
@@ -170,19 +188,19 @@ async function dispatchOutboundImage(chatId: string, pending: PendingUpload): Pr
 }
 
 /** Finalize and remove the streaming card (normal completion). */
-async function finalizeStreamingCard(chatId: string): Promise<void> {
+async function finalizeStreamingCard(chatId: string): Promise<boolean> {
   const card = streamingCards.get(chatId)
-  if (!card) return
+  if (!card) return false
   streamingCards.delete(chatId)
-  await card.finalize()
+  return card.finalize()
 }
 
 /** Abort and remove the streaming card (error path). Non-throwing. */
-async function abortStreamingCard(chatId: string, err: Error): Promise<void> {
+async function abortStreamingCard(chatId: string, err: Error): Promise<boolean> {
   const card = streamingCards.get(chatId)
-  if (!card) return
+  if (!card) return false
   streamingCards.delete(chatId)
-  await card.abort(err).catch(() => {})
+  return card.abort(err).catch(() => false)
 }
 
 function clearTransientChatState(chatId: string): void {
@@ -266,7 +284,12 @@ async function buildStatusText(chatId: string): Promise<string> {
 }
 
 /** Send a text message (post format). */
-async function sendText(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+async function sendText(
+  chatId: string,
+  text: string,
+  replyToMessageId?: string,
+  messageUuid?: string,
+): Promise<string | undefined> {
   const content = JSON.stringify({
     zh_cn: { content: [[{ tag: 'md', text }]] },
   })
@@ -285,6 +308,7 @@ async function sendText(chatId: string, text: string, replyToMessageId?: string)
         receive_id: chatId,
         msg_type: 'post' as const,
         content,
+        ...(messageUuid ? { uuid: messageUuid } : {}),
       },
     })
     return resp.data?.message_id
@@ -295,7 +319,11 @@ async function sendText(chatId: string, text: string, replyToMessageId?: string)
 }
 
 /** Send an interactive card (for permission requests). */
-async function sendCard(chatId: string, card: Record<string, unknown>): Promise<string | undefined> {
+async function sendCard(
+  chatId: string,
+  card: Record<string, unknown>,
+  messageUuid?: string,
+): Promise<string | undefined> {
   try {
     const resp = await larkClient.im.message.create({
       params: { receive_id_type: 'chat_id' },
@@ -303,6 +331,7 @@ async function sendCard(chatId: string, card: Record<string, unknown>): Promise<
         receive_id: chatId,
         msg_type: 'interactive',
         content: JSON.stringify(card),
+        ...(messageUuid ? { uuid: messageUuid } : {}),
       },
     })
     return resp.data?.message_id
@@ -418,6 +447,151 @@ function buildProjectPickerCard(projects: RecentProject[]): Record<string, unkno
           margin: '6px 0 0 0',
         },
       ],
+    },
+  }
+}
+
+function escapeCardMarkdown(value: unknown): string {
+  return String(value || '').replace(/([\\`*_{}\[\]()#+.!|>~-])/g, '\\$1')
+}
+
+function buildSessionPickerCard(
+  sessions: DesktopSessionOption[],
+  activeSessionId?: string | null,
+): Record<string, unknown> {
+  const rows = sessions.slice(0, 10).map((session, index) => {
+    const context = [
+      session.projectName,
+      session.originChannel === 'feishu' ? '飞书会话' : '桌面会话',
+      session.busy ? '运行中' : null,
+    ].filter(Boolean).join(' · ')
+    return {
+      tag: 'column_set',
+      flex_mode: 'stretch',
+      horizontal_spacing: '8px',
+      margin: index === 0 ? '0px 0 0 0' : '10px 0 0 0',
+      columns: [
+        {
+          tag: 'column',
+          width: 'weighted',
+          weight: 1,
+          vertical_align: 'center',
+          elements: [
+            { tag: 'markdown', content: `**${escapeCardMarkdown(session.title)}**${session.id === activeSessionId ? '  ·  当前' : ''}` },
+            {
+              tag: 'markdown',
+              content: escapeCardMarkdown(context || session.preview || '暂无摘要'),
+              text_size: 'notation',
+              margin: '2px 0 0 0',
+            },
+          ],
+        },
+        {
+          tag: 'column',
+          width: 'auto',
+          vertical_align: 'center',
+          elements: [{
+            tag: 'button',
+            text: { tag: 'plain_text', content: session.id === activeSessionId ? '已选择' : '选择' },
+            type: session.id === activeSessionId ? 'default' : index === 0 ? 'primary' : 'default',
+            size: 'small',
+            disabled: session.id === activeSessionId,
+            value: { action: 'pick_session', sessionId: session.id },
+          }],
+        },
+      ],
+    }
+  })
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: '选择 Moss 会话' },
+      subtitle: { tag: 'plain_text', content: `显示 ${rows.length} 个最近可继续会话` },
+      template: 'blue',
+    },
+    body: {
+      elements: rows.length > 0
+        ? rows
+        : [{ tag: 'markdown', content: '暂无可继续会话，发送 `/new` 创建新会话。' }],
+    },
+  }
+}
+
+function buildNotificationCard(payload: {
+  title?: string
+  summary?: string
+  decisionRequestId?: string
+  actionToken?: string
+}): Record<string, unknown> {
+  const elements: Array<Record<string, unknown>> = [{
+    tag: 'markdown',
+    content: escapeCardMarkdown(payload.summary || 'Moss 有一条新消息。'),
+  }]
+  if (payload.decisionRequestId && payload.actionToken) {
+    elements.push({ tag: 'hr', margin: '12px 0 0 0' })
+    elements.push({
+      tag: 'column_set',
+      flex_mode: 'stretch',
+      horizontal_spacing: '8px',
+      margin: '8px 0 0 0',
+      columns: [
+        {
+          tag: 'column', width: 'weighted', weight: 1,
+          elements: [{
+            tag: 'button',
+            text: { tag: 'plain_text', content: '允许一次' },
+            type: 'primary',
+            value: {
+              action: 'decision',
+              decisionId: payload.decisionRequestId,
+              actionToken: payload.actionToken,
+              allowed: true,
+            },
+          }],
+        },
+        {
+          tag: 'column', width: 'weighted', weight: 1,
+          elements: [{
+            tag: 'button',
+            text: { tag: 'plain_text', content: '拒绝' },
+            type: 'danger',
+            value: {
+              action: 'decision',
+              decisionId: payload.decisionRequestId,
+              actionToken: payload.actionToken,
+              allowed: false,
+            },
+          }],
+        },
+      ],
+    })
+  }
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: String(payload.title || 'Moss 消息') },
+      template: 'orange',
+    },
+    body: {
+      elements,
+    },
+  }
+}
+
+function buildResolvedNotificationCard(entry: { title: string; summary: string }, status: string) {
+  const allowed = status === 'resolved'
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: entry.title },
+      subtitle: { tag: 'plain_text', content: allowed ? '已允许' : status === 'rejected' ? '已拒绝' : '已失效' },
+      template: allowed ? 'green' : status === 'rejected' ? 'red' : 'grey',
+    },
+    body: {
+      elements: [{ tag: 'markdown', content: escapeCardMarkdown(entry.summary) }],
     },
   }
 }
@@ -758,7 +932,7 @@ async function startNewSession(chatId: string, query?: string): Promise<void> {
 
 // ---------- server message handler ----------
 
-async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
+async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<boolean | void> {
   const runtime = getRuntimeState(chatId)
 
   switch (msg.type) {
@@ -862,8 +1036,7 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
     case 'message_complete':
       runtime.state = 'idle'
       runtime.verb = undefined
-      await finalizeStreamingCard(chatId)
-      break
+      return finalizeStreamingCard(chatId)
 
     case 'error':
       runtime.state = 'idle'
@@ -912,6 +1085,201 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
   }
 }
 
+function desktopIdentity(chatId: string, openId: string, eventId?: string) {
+  return {
+    chatId,
+    openId,
+    ...(eventId ? { eventId } : {}),
+  }
+}
+
+async function handleDesktopChatInput({
+  chatId,
+  openId,
+  eventId,
+  text,
+  hasAttachments,
+}: {
+  chatId: string
+  openId: string
+  eventId: string
+  text: string
+  hasAttachments: boolean
+}): Promise<void> {
+  if (hasAttachments) {
+    await sendText(chatId, '当前 Moss 客户端飞书通道先支持文本消息，附件将在后续版本接入。')
+    return
+  }
+
+  if (text === '/help' || text === '帮助') {
+    await sendText(chatId, [
+      '**Moss 飞书会话**',
+      '',
+      '- `/new [标题]` 创建新会话',
+      '- `/sessions [关键词]` 选择老会话',
+      '- `/current` 查看当前会话',
+      '- `/stop` 停止当前执行',
+      '- 直接发送文本继续当前会话',
+    ].join('\n'))
+    return
+  }
+
+  if (text === '/new' || text === '新会话' || text.startsWith('/new ')) {
+    const title = text.startsWith('/new ') ? text.slice(5).trim() : ''
+    const result = await desktopBridge.request('conversation.new', {
+      ...desktopIdentity(chatId, openId, eventId),
+      title,
+    }) as { session?: DesktopSessionOption }
+    await sendText(chatId, `已切换到新会话：**${result.session?.title || '飞书会话'}**`)
+    return
+  }
+
+  if (text === '/sessions' || text === '会话列表' || text.startsWith('/sessions ')) {
+    const query = text.startsWith('/sessions ') ? text.slice('/sessions '.length).trim() : ''
+    const result = await desktopBridge.request('conversation.list', {
+      ...desktopIdentity(chatId, openId),
+      query,
+    }) as { sessions?: DesktopSessionOption[]; activeSessionId?: string | null }
+    await sendCard(chatId, buildSessionPickerCard(result.sessions || [], result.activeSessionId))
+    return
+  }
+
+  if (text === '/current' || text === '/status' || text === '状态') {
+    const result = await desktopBridge.request('conversation.current', desktopIdentity(chatId, openId)) as {
+      session?: DesktopSessionOption | null
+    }
+    if (!result.session) {
+      await sendText(chatId, '当前没有绑定会话，直接发送消息或使用 `/new` 创建。')
+      return
+    }
+    await sendText(chatId, [
+      `当前会话：**${result.session.title}**`,
+      result.session.busy ? '状态：运行中' : '状态：空闲',
+      result.session.projectName ? `项目：${result.session.projectName}` : '',
+    ].filter(Boolean).join('\n'))
+    return
+  }
+
+  if (text === '/stop' || text === '停止') {
+    const result = await desktopBridge.request('session.abort', desktopIdentity(chatId, openId)) as {
+      cancelled?: number
+    }
+    clearTransientChatState(chatId)
+    await sendText(chatId, result.cancelled
+      ? `已停止当前执行，并取消 ${result.cancelled} 条排队消息。`
+      : '已发送停止信号。')
+    return
+  }
+
+  if (text === '/projects' || text === '项目列表') {
+    await sendText(chatId, '普通聊天不再依赖项目列表。需要继续项目工作时，请使用 `/sessions` 选择对应项目会话。')
+    return
+  }
+
+  const result = await desktopBridge.request('chat.message.received', {
+    ...desktopIdentity(chatId, openId, eventId),
+    text,
+  }) as { accepted?: boolean; duplicate?: boolean; status?: string; turnId?: string | null }
+  if (result.accepted || (result.duplicate && ['accepted', 'running'].includes(result.status || ''))) {
+    const card = getOrCreateStreamingCard(chatId, result.turnId || undefined)
+    void card.ensureCreated().catch((error) => {
+      console.error('[Feishu] Unable to create Moss response card:', error)
+    })
+  }
+}
+
+desktopBridge.on('turn.completed', (payload: any) => {
+  const chatId = typeof payload?.chatId === 'string' ? payload.chatId : ''
+  const turnId = typeof payload?.turnId === 'string' ? payload.turnId : ''
+  if (!chatId) return
+  enqueue(chatId, async () => {
+    getOrCreateStreamingCard(chatId, turnId || undefined)
+    if (typeof payload.text === 'string' && payload.text) {
+      await handleServerMessage(chatId, { type: 'content_delta', text: payload.text })
+    }
+    const delivered = await handleServerMessage(chatId, { type: 'message_complete' })
+    if (delivered && turnId) {
+      await desktopBridge.request('turn.delivery.ack', { turnId, chatId })
+    }
+  })
+})
+
+desktopBridge.on('turn.failed', (payload: any) => {
+  const chatId = typeof payload?.chatId === 'string' ? payload.chatId : ''
+  const turnId = typeof payload?.turnId === 'string' ? payload.turnId : ''
+  if (!chatId) return
+  enqueue(chatId, async () => {
+    const message = typeof payload.message === 'string' ? payload.message : 'Moss 会话处理失败。'
+    const runtime = getRuntimeState(chatId)
+    runtime.state = 'idle'
+    runtime.verb = undefined
+    let delivered = await abortStreamingCard(chatId, new Error(message))
+    if (!delivered) {
+      delivered = Boolean(await sendText(chatId, `❌ ${message}`, undefined, turnId || undefined))
+    }
+    if (delivered && turnId) {
+      await desktopBridge.request('turn.delivery.ack', { turnId, chatId })
+    }
+  })
+})
+
+desktopBridge.on('notification.deliver', (payload: any) => {
+  const chatId = typeof payload?.chatId === 'string' ? payload.chatId : ''
+  const deliveryId = typeof payload?.deliveryId === 'string' ? payload.deliveryId : ''
+  if (!chatId || !deliveryId) return
+  enqueue(chatId, async () => {
+    try {
+      const messageId = await sendCard(chatId, buildNotificationCard(payload), deliveryId)
+      if (!messageId) throw new Error('Feishu returned no message id.')
+      if (typeof payload.decisionRequestId === 'string') {
+        const entries = decisionMessages.get(payload.decisionRequestId) || []
+        entries.push({
+          chatId,
+          messageId,
+          title: String(payload.title || 'Moss 待确认'),
+          summary: String(payload.summary || ''),
+        })
+        decisionMessages.set(payload.decisionRequestId, entries)
+      }
+      await desktopBridge.request('delivery.ack', {
+        deliveryId,
+        ok: true,
+        messageId,
+      })
+    } catch (error) {
+      await desktopBridge.request('delivery.ack', {
+        deliveryId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => {})
+    }
+  })
+})
+
+desktopBridge.on('decision.resolved', (payload: any) => {
+  const decisionId = typeof payload?.decision?.id === 'string' ? payload.decision.id : ''
+  const status = typeof payload?.decision?.status === 'string' ? payload.decision.status : 'expired'
+  const entries = decisionMessages.get(decisionId) || []
+  for (const delivery of Array.isArray(payload?.deliveries) ? payload.deliveries : []) {
+    if (!delivery?.externalMessageId || entries.some((entry) => entry.messageId === delivery.externalMessageId)) continue
+    entries.push({
+      chatId: String(delivery.chatId || ''),
+      messageId: String(delivery.externalMessageId),
+      title: String(payload?.decision?.mobileTitle || 'Moss 待确认'),
+      summary: String(payload?.decision?.mobileSummary || ''),
+    })
+  }
+  decisionMessages.delete(decisionId)
+  for (const entry of entries) {
+    void (larkClient as any).im.message.patch({
+      path: { message_id: entry.messageId },
+      data: { content: JSON.stringify(buildResolvedNotificationCard(entry, status)) },
+    }).catch((error: unknown) => {
+      console.error('[Feishu] Unable to update resolved decision card:', error)
+    })
+  }
+})
+
 // ---------- message helpers ----------
 
 function isBotMentioned(mentions?: Array<{ id?: { open_id?: string } }>): boolean {
@@ -955,9 +1323,19 @@ async function handleMessage(data: any): Promise<void> {
       // 尝试配对
       const pairText = extractInboundPayload(content, msgType).text.trim() || null
       if (pairText) {
-        const success = tryPair(pairText.trim(), { userId: senderOpenId, displayName: 'Feishu User' }, 'feishu')
-        if (success) {
-          await sendText(chatId, '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。')
+        const result = desktopBridge.available
+          ? await desktopBridge.request('pairing.attempt', {
+            chatId,
+            openId: senderOpenId,
+            code: pairText,
+            displayName: 'Feishu User',
+          }).catch((error) => {
+            console.error('[Feishu] Unable to pair with Moss Desktop:', error)
+            return { paired: false }
+          }) as { paired?: boolean }
+          : { paired: false }
+        if (result.paired) {
+          await sendText(chatId, '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可通过 Moss 继续会话。')
         } else {
           await sendText(chatId, '🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
         }
@@ -989,6 +1367,25 @@ async function handleMessage(data: any): Promise<void> {
   // async bodies interleave at `await` points, causing reply messages
   // (e.g. "🧹 已清空..." after "✅ 已新建...") to appear in the wrong order.
   enqueue(chatId, async () => {
+    if (!desktopBridge.available) {
+      await sendText(chatId, 'Moss 客户端连接已断开，请启动或重启 Moss 后再试。')
+      return
+    }
+    try {
+      await handleDesktopChatInput({
+        chatId,
+        openId: senderOpenId,
+        eventId: safeMessageId,
+        text: msgText,
+        hasAttachments,
+      })
+    } catch (error) {
+      console.error('[Feishu] Moss Desktop request failed:', error)
+      await abortStreamingCard(chatId, new Error('Moss 客户端处理失败，请在桌面端查看详情后重试。'))
+      await sendText(chatId, 'Moss 客户端处理失败，请在桌面端查看详情后重试。')
+    }
+    return
+
     // ----- Commands (only when there are no attachments — `command + image`
     //       isn't a meaningful combo, so attachments always take precedence) -----
 
@@ -1146,6 +1543,9 @@ async function handleCardAction(data: any): Promise<any> {
         rule?: string
         realPath?: string
         projectName?: string
+        sessionId?: string
+        actionToken?: string
+        decisionId?: string
       }
     }
     context?: { open_chat_id?: string }
@@ -1153,39 +1553,49 @@ async function handleCardAction(data: any): Promise<any> {
 
   const action = event.action?.value?.action
   const chatId = event.context?.open_chat_id
-  if (!chatId) return
-
-  if (action === 'permit') {
-    const requestId = event.action?.value?.requestId
-    const allowed = event.action?.value?.allowed ?? false
-    const rule = event.action?.value?.rule
-    if (!requestId) return
-
-    bridge.sendPermissionResponse(chatId, requestId, allowed, rule)
-    const runtime = getRuntimeState(chatId)
-    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-
-    const statusText = allowed
-      ? rule === 'always'
-        ? '♾️ 已永久允许（本次会话内不再询问相同操作）'
-        : '✅ 已允许'
-      : '❌ 已拒绝'
-    await sendText(chatId, statusText)
-    return { toast: { type: 'info', content: allowed ? (rule === 'always' ? '♾️ 永久允许' : '✅ 已允许') : '❌ 已拒绝' } }
+  const operatorOpenId = event.operator?.open_id
+  if (!chatId || !operatorOpenId) return
+  if (!isAllowedUser('feishu', operatorOpenId)) {
+    return { toast: { type: 'error', content: '当前飞书用户未与 Moss 配对' } }
   }
 
-  if (action === 'pick_project') {
-    const realPath = event.action?.value?.realPath
-    const projectName = event.action?.value?.projectName ?? realPath ?? '(unknown)'
-    if (!realPath) return
+  if (desktopBridge.available && action === 'pick_session') {
+    const sessionId = event.action?.value?.sessionId
+    if (!sessionId) return
+    const result = await desktopBridge.request('conversation.select', {
+      ...desktopIdentity(chatId, operatorOpenId),
+      sessionId,
+    }) as { session?: DesktopSessionOption }
+    await sendText(chatId, `已切换到会话：**${result.session?.title || sessionId}**`)
+    return { toast: { type: 'success', content: '已切换会话' } }
+  }
 
-    pendingProjectSelection.delete(chatId)
-    // createSessionForChat handles its own error messaging on failure
-    const ok = await createSessionForChat(chatId, realPath)
-    if (ok) {
-      await sendText(chatId, `✅ 已新建会话：**${projectName}**`)
+  if (desktopBridge.available && action === 'decision') {
+    const decisionId = event.action?.value?.decisionId
+    const actionToken = event.action?.value?.actionToken
+    const allowed = event.action?.value?.allowed ?? false
+    if (!decisionId || !actionToken) return
+    try {
+      await desktopBridge.request('decision.respond', {
+        ...desktopIdentity(chatId, operatorOpenId),
+        decisionId,
+        actionToken,
+        allowed,
+      })
+      return { toast: { type: 'success', content: allowed ? '已允许' : '已拒绝' } }
+    } catch (error) {
+      console.error('[Feishu] Decision response failed:', error)
+      return {
+        toast: {
+          type: 'error',
+          content: '请求已处理、失效或无法执行，请在 Moss 桌面端查看',
+        },
+      }
     }
-    return { toast: { type: 'info', content: `📁 ${projectName}` } }
+  }
+
+  if (action === 'permit' || action === 'pick_project') {
+    return { toast: { type: 'error', content: '旧版卡片已失效，请重新发送消息获取当前操作卡片' } }
   }
 }
 
@@ -1224,8 +1634,12 @@ async function resolveBotOpenId(retries = 3): Promise<void> {
 
 async function start(): Promise<void> {
   console.log('[Feishu] Starting bot...')
-  console.log(`[Feishu] Server: ${config.serverUrl}`)
+  console.log('[Feishu] Moss bridge: process IPC')
   console.log(`[Feishu] App ID: ${config.feishu.appId}`)
+
+  if (!desktopBridge.available) throw new Error('Feishu Adapter must be started by Moss Desktop.')
+  await desktopBridge.hello({ adapter: 'feishu', appId: config.feishu.appId })
+  console.log('[Feishu] Moss Desktop IPC bridge ready')
 
   await resolveBotOpenId()
 
@@ -1259,6 +1673,9 @@ async function start(): Promise<void> {
   })
 
   await wsClient.start({ eventDispatcher: dispatcher })
+  if (desktopBridge.available) {
+    await desktopBridge.request('adapter.connection', { connected: true })
+  }
   console.log('[Feishu] Bot is running! (WebSocket connected)')
 }
 
@@ -1267,9 +1684,13 @@ start().catch((err) => {
   process.exit(1)
 })
 
-process.on('SIGINT', () => {
+function shutdown(): void {
   console.log('[Feishu] Shutting down...')
+  desktopBridge.destroy()
   bridge.destroy()
   dedup.destroy()
   process.exit(0)
-})
+}
+
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)

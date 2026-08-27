@@ -1,5 +1,13 @@
 # Project, Team, and Skill Integration Plan
 
+> Historical design only. The current project contract is defined by
+> `project-data-layout.md` and the implemented project workspace. Team runs and
+> collaborative tasks are out of the current scope. Durable generated files are
+> project assets; there is no separate deliverable concept or directory. Each
+> project task is one root Project Coordinator session; its Worker/SubAgent
+> sessions are the only task breakdown. The former goal/compiler/DAG scheduler
+> design is retired.
+
 ## Background
 
 Moss currently uses sessions as the primary desktop entry point. This should stay true: a user should still be able to open Moss and start a normal conversation without creating or selecting a project.
@@ -298,9 +306,9 @@ Recommended file layout:
 ~/.moss/projects/{projectId}/memory/open-questions.md
 ~/.moss/projects/{projectId}/assets/
 ~/.moss/projects/{projectId}/sessions/{sessionId}.json
-~/.moss/projects/{projectId}/runs/{runId}/run.json
-~/.moss/projects/{projectId}/runs/{runId}/summary.md
-~/.moss/projects/{projectId}/runs/{runId}/tasks/{taskId}/result.md
+~/.moss/projects/{projectId}/runtime/runs/{runId}/run.json
+~/.moss/projects/{projectId}/runtime/runs/{runId}/summary.md
+~/.moss/projects/{projectId}/runtime/runs/{runId}/tasks/{taskId}/result.md
 ~/.moss/projects/{projectId}/deliverables/
 ```
 

@@ -28,7 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { PRESET_THEMES } from '@/theme/presets';
-import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
+import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
@@ -2052,7 +2052,6 @@ function ImAdapterSettings() {
   const { config, isLoading, fetchConfig, updateConfig, generatePairingCode, removePairedUser } = useAdapterConfig()
 
   const [activeIm, setActiveIm] = React.useState<ImTab>('feishu')
-  const [defaultProjectDir, setDefaultProjectDir] = React.useState('')
   const [tgBotToken, setTgBotToken] = React.useState('')
   const [tgAllowedUsers, setTgAllowedUsers] = React.useState('')
   const [fsAppId, setFsAppId] = React.useState('')
@@ -2068,13 +2067,24 @@ function ImAdapterSettings() {
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [pendingUnbind, setPendingUnbind] = React.useState<{ platform: 'telegram' | 'feishu'; userId: string | number } | null>(null)
   const [isUnbinding, setIsUnbinding] = React.useState(false)
+  const [feishuStatus, setFeishuStatus] = React.useState<FeishuAdapterStatus>({
+    status: 'stopped',
+    pid: null,
+    bridgeReady: false,
+    transportConnected: false,
+  })
 
   React.useEffect(() => {
     fetchConfig()
   }, [fetchConfig])
 
   React.useEffect(() => {
-    setDefaultProjectDir(config.defaultProjectDir ?? '')
+    const unsubscribe = window.agentDesktop.onAdapterStatus(setFeishuStatus)
+    void window.agentDesktop.getAdapterStatus().then(setFeishuStatus).catch(() => {})
+    return unsubscribe
+  }, [])
+
+  React.useEffect(() => {
     setTgBotToken(config.telegram?.botToken ?? '')
     setTgAllowedUsers(config.telegram?.allowedUsers?.join(', ') ?? '')
     setFsAppId(config.feishu?.appId ?? '')
@@ -2091,7 +2101,6 @@ function ImAdapterSettings() {
     setSaveError('')
     try {
       const patch: Record<string, unknown> = {}
-      if (defaultProjectDir) patch.defaultProjectDir = defaultProjectDir
       const tgUsers = tgAllowedUsers
         .split(',')
         .map((s) => s.trim())
@@ -2230,18 +2239,6 @@ function ImAdapterSettings() {
         </div>
       </Surface>
 
-      {/* Default Project */}
-      <SettingsGroup>
-        <SettingsRow title="默认工作目录" description="IM 会话的默认项目路径，不指定时使用服务器工作目录。" controlClassName="sm:w-[360px]">
-          <Input
-            className={FIELD_CLASS_NAME}
-            value={defaultProjectDir}
-            onChange={(e) => setDefaultProjectDir(e.target.value)}
-            placeholder="/path/to/project"
-          />
-        </SettingsRow>
-      </SettingsGroup>
-
       {/* IM Tabs */}
       <Surface>
         <div role="tablist" aria-label="IM adapter" className="flex items-stretch border-b border-sidebar-border bg-sidebar-accent/58">
@@ -2277,6 +2274,27 @@ function ImAdapterSettings() {
 
         {activeIm === 'feishu' && (
           <div className="space-y-3 p-4">
+            <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
+              <span className={cn(
+                'h-2 w-2 rounded-full',
+                feishuStatus.transportConnected
+                  ? 'bg-emerald-500'
+                  : feishuStatus.status === 'running' ? 'bg-amber-500' : 'bg-muted-foreground/45',
+              )} />
+              <span>
+                {feishuStatus.transportConnected
+                  ? '飞书长连接已就绪'
+                  : feishuStatus.bridgeReady
+                    ? '客户端桥接已连接，正在等待飞书长连接'
+                    : feishuStatus.status === 'error'
+                      ? `Adapter 启动失败：${feishuStatus.error || '未知错误'}`
+                    : feishuStatus.status === 'running'
+                      ? 'Adapter 正在启动'
+                      : feishuStatus.status === 'disabled'
+                        ? 'Adapter 未配置'
+                        : 'Adapter 未启动'}
+              </span>
+            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-[13px] font-medium text-foreground">App ID</label>
@@ -2299,7 +2317,7 @@ function ImAdapterSettings() {
             </div>
             <div className="space-y-1.5">
               <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
-              <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（逗号分隔，留空允许所有人）" />
+              <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（可选白名单，逗号分隔）" />
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
               <input

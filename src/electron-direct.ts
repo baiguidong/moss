@@ -15,6 +15,11 @@ import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
 import { mergeAndFilterTools } from './utils/toolPool.js'
+import {
+  filterToolsForMode,
+  isToolAllowedInMode,
+  type EmbeddedToolMode,
+} from './utils/toolMode.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -57,7 +62,10 @@ import {
   discardSessionRegisteredHooks,
   switchSession,
 } from './bootstrap/state.js'
-import { runWithCoordinatorMode } from './utils/sessionCoordinatorContext.js'
+import {
+  runWithCoordinatorMode,
+  runWithCoordinatorModeGenerator,
+} from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
 import { asSessionId, type SessionId } from './types/ids.js'
@@ -239,6 +247,9 @@ export type DesktopPermissionRequest = {
   suggestions?: PermissionUpdate[]
   blockedPath?: string
   toolUseId?: string
+  agentId?: string
+  agentType?: string
+  readOnly?: boolean
 }
 
 async function defaultDesktopPermissionRequest(
@@ -271,6 +282,11 @@ export interface ClaudeSessionOptions {
     input: unknown,
     request: DesktopPermissionRequest,
   ) => Promise<DesktopPermissionDecision>
+  /** Runs before permission rules for invariant validation. Returning deny always blocks the tool. */
+  onToolUseValidation?: (
+    tool: string,
+    input: unknown,
+  ) => Promise<DesktopPermissionDecision | null | undefined>
   /** 最大轮次 */
   maxTurns?: number
   /** 思考配置 */
@@ -295,6 +311,8 @@ export interface ClaudeSessionOptions {
   environment?: Record<string, string>
   /** Explicit task-list scope for file-backed task tools. */
   taskScope?: TaskScope
+  /** Restrict the embedded session to a purpose-specific tool subset. */
+  toolMode?: EmbeddedToolMode
 }
 
 type ResolvedClaudeSessionOptions = {
@@ -310,6 +328,10 @@ type ResolvedClaudeSessionOptions = {
     input: unknown,
     request: DesktopPermissionRequest,
   ) => Promise<DesktopPermissionDecision>
+  onToolUseValidation?: (
+    tool: string,
+    input: unknown,
+  ) => Promise<DesktopPermissionDecision | null | undefined>
   maxTurns: number
   thinkingConfig: ThinkingConfig
   coordinatorMode: boolean
@@ -322,6 +344,7 @@ type ResolvedClaudeSessionOptions = {
   addDirs: string[]
   environment: Record<string, string>
   taskScope: TaskScope
+  toolMode: EmbeddedToolMode
 }
 
 function addDynamicMcpScope(
@@ -535,6 +558,7 @@ export class ClaudeSession {
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
+      onToolUseValidation: opts.onToolUseValidation,
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
@@ -549,6 +573,10 @@ export class ClaudeSession {
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
       environment: { ...(opts.environment ?? {}) },
       taskScope,
+      toolMode:
+        opts.toolMode === 'ask-only' || opts.toolMode === 'goal-readonly'
+          ? opts.toolMode
+          : 'all',
     }
   }
 
@@ -670,6 +698,20 @@ export class ClaudeSession {
 
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
+      if (!isToolAllowedInMode(tool, this.#opts.toolMode, input)) {
+        return {
+          behavior: 'deny',
+          message: `Tool ${tool.name} is not available in this session mode.`,
+        }
+      }
+      const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input)
+      if (
+        validationDecision &&
+        typeof validationDecision !== 'boolean' &&
+        validationDecision.behavior === 'deny'
+      ) {
+        return validationDecision
+      }
       const permissionDecision =
         forceDecision ??
         (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
@@ -695,6 +737,9 @@ export class ClaudeSession {
         suggestions: permissionDecision.suggestions,
         blockedPath: permissionDecision.blockedPath,
         toolUseId: id,
+        agentId: ctx.agentId ? String(ctx.agentId) : undefined,
+        agentType: typeof ctx.agentType === 'string' ? ctx.agentType : undefined,
+        readOnly: tool.isReadOnly(input),
       })
 
       if (
@@ -755,7 +800,10 @@ export class ClaudeSession {
     const computeTools = () => {
       const state = store.getState()
       const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
-      return mergeAndFilterTools([], assembled, state.toolPermissionContext.mode)
+      return filterToolsForMode(
+        mergeAndFilterTools([], assembled, state.toolPermissionContext.mode),
+        this.#opts.toolMode,
+      )
     }
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {
@@ -962,7 +1010,9 @@ export class ClaudeSession {
               sessionId,
               projectDir,
               () =>
-                (async function* () {
+                runWithCoordinatorModeGenerator(
+                  this.#opts.coordinatorMode,
+                  () => (async function* () {
                 const runTurn = async function* (
                   turnPrompt:
                     | string
@@ -1051,7 +1101,8 @@ export class ClaudeSession {
                 if (finalResult) {
                   yield finalResult
                 }
-                })(),
+                  })(),
+                ),
               this.#opts.taskScope,
               this.#opts.environment,
             ),

@@ -35,3 +35,25 @@ export function runWithCoordinatorMode<T>(
 ): T {
   return coordinatorModeStorage.run({ coordinatorMode }, fn)
 }
+
+export async function* runWithCoordinatorModeGenerator<T, TReturn = void>(
+  coordinatorMode: boolean,
+  fn: () => AsyncGenerator<T, TReturn, unknown>,
+): AsyncGenerator<T, TReturn, unknown> {
+  const context = { coordinatorMode }
+  const runWithContext = <TResult>(callback: () => TResult): TResult =>
+    coordinatorModeStorage.run(context, callback)
+  const iterator = runWithContext(fn)
+
+  try {
+    while (true) {
+      const result = await runWithContext(() => iterator.next())
+      if (result.done) return result.value
+      yield result.value
+    }
+  } finally {
+    if (typeof iterator.return === 'function') {
+      await runWithContext(() => iterator.return!())
+    }
+  }
+}

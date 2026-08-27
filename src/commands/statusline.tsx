@@ -11,7 +11,13 @@ const statusline = {
   aliases: [],
   name: 'statusline',
   progressMessage: 'setting up statusLine',
-  allowedTools: [AGENT_TOOL_NAME, 'Read(~/**)', `Edit(${join(getMossConfigHomeDir(), 'moss.json')})`],
+  get allowedTools() {
+    return [
+      AGENT_TOOL_NAME,
+      'Read(~/**)',
+      `Edit(${join(getMossConfigHomeDir(), 'moss.json')})`,
+    ];
+  },
   source: 'builtin',
   disableNonInteractive: true,
   async getPromptForCommand(args): Promise<ContentBlockParam[]> {

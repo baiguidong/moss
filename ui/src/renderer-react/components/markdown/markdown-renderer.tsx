@@ -25,9 +25,10 @@ export function MarkdownRenderer({
   sourceId = "markdown",
 }: {
   content: string;
-  variant?: "default" | "document";
+  variant?: "default" | "document" | "compact";
   sourceId?: string;
 }) {
+  const compact = variant === "compact";
   return (
     <div
       className={cn(
@@ -95,13 +96,13 @@ export function MarkdownRenderer({
               {children}
             </blockquote>
           ),
-          h1: ({ children }) => <h1 className="mb-4 mt-2 text-2xl font-semibold leading-tight">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-3 mt-8 border-b border-border/70 pb-2 text-xl font-semibold">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-2 mt-6 text-base font-semibold">{children}</h3>,
-          p: ({ children }) => <p className="my-2 whitespace-pre-wrap break-words leading-7">{children}</p>,
-          ul: ({ children }) => <ul className="my-3 list-disc pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="my-3 list-decimal pl-5">{children}</ol>,
-          li: ({ children }) => <li className="my-1.5 break-words">{children}</li>,
+          h1: ({ children }) => <h1 className={compact ? "mb-2 mt-1 text-base font-semibold" : "mb-4 mt-2 text-2xl font-semibold leading-tight"}>{children}</h1>,
+          h2: ({ children }) => <h2 className={compact ? "mb-1.5 mt-4 text-sm font-semibold text-foreground" : "mb-3 mt-8 border-b border-border/70 pb-2 text-xl font-semibold"}>{children}</h2>,
+          h3: ({ children }) => <h3 className={compact ? "mb-1 mt-3 text-xs font-semibold text-foreground" : "mb-2 mt-6 text-base font-semibold"}>{children}</h3>,
+          p: ({ children }) => <p className={compact ? "my-1 whitespace-pre-wrap break-words leading-6" : "my-2 whitespace-pre-wrap break-words leading-7"}>{children}</p>,
+          ul: ({ children }) => <ul className={compact ? "my-1 list-disc pl-4" : "my-3 list-disc pl-5"}>{children}</ul>,
+          ol: ({ children }) => <ol className={compact ? "my-1 list-decimal pl-4" : "my-3 list-decimal pl-5"}>{children}</ol>,
+          li: ({ children }) => <li className={compact ? "my-0.5 break-words leading-6" : "my-1.5 break-words"}>{children}</li>,
           img: ({ src, alt }) => (
             <LocalImage
               src={typeof src === "string" ? src : ""}

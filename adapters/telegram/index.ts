@@ -35,7 +35,7 @@ const TELEGRAM_TEXT_LIMIT = 4000 // leave margin below 4096
 
 const config = loadConfig()
 if (!config.telegram.botToken) {
-  console.error('[Telegram] Missing TELEGRAM_BOT_TOKEN. Set env or ~/.moss/adapters.json')
+  console.error('[Telegram] Missing TELEGRAM_BOT_TOKEN. Set env or ~/.moss/settings.json adapters config')
   process.exit(1)
 }
 

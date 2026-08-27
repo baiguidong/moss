@@ -80,7 +80,15 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
         if (reservedNames.has(entry.name)) continue;
         const candidateDir = path.join(dir, entry.name);
         const meta = await readAssistantMeta(candidateDir);
-        if (meta?.name === normalizedAssistantName) {
+        const metaNames = [
+          meta?.id,
+          meta?.name,
+          meta?.display_name,
+          meta?.displayName,
+          meta?.agent_name,
+          meta?.agentName,
+        ].map((value) => String(value || '').trim()).filter(Boolean);
+        if (metaNames.includes(normalizedAssistantName)) {
           return candidateDir;
         }
       }
@@ -145,14 +153,23 @@ export function buildInstalledSkillLookup(installedSkills = []) {
   const lookup = new Map();
 
   for (const skill of installedSkills) {
-    if (!skill || !skill.source) continue;
+    if (!skill || !skill.source || skill.enabled === false) continue;
 
+    const namespace = skill.namespace && typeof skill.namespace === 'object'
+      ? skill.namespace
+      : null;
+    const namespaceHandle = String(namespace?.handle || '').trim();
+    const slug = String(skill.slug || '').trim();
     const keys = [
       skill.id,
+      skill.slug,
       skill.name,
+      skill.displayName,
+      namespace?.canonicalName,
+      namespaceHandle && slug ? `@${namespaceHandle}/${slug}` : '',
       path.basename(skill.source),
     ]
-      .map((value) => String(value || '').trim())
+      .map((value) => String(value || '').trim().toLocaleLowerCase('en-US'))
       .filter(Boolean);
 
     for (const key of keys) {
@@ -171,10 +188,12 @@ export function resolveInstalledSkillInfos(identifiers = [], installedSkills = [
   const seenSources = new Set();
 
   for (const identifier of identifiers) {
-    const skill = lookup.get(String(identifier || '').trim());
+    const normalizedIdentifier = String(identifier || '').trim();
+    const skill = lookup.get(normalizedIdentifier.toLocaleLowerCase('en-US'));
     if (!skill?.source || seenSources.has(skill.source)) continue;
     seenSources.add(skill.source);
     resolvedSkills.push({
+      id: normalizedIdentifier,
       name: skill.name || path.basename(skill.source),
       path: skill.source,
     });

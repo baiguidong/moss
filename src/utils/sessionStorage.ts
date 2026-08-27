@@ -11,6 +11,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   stat,
   unlink,
   writeFile,
@@ -313,7 +314,17 @@ export type AgentMetadata = {
    * resumed agent's notification can show the original description instead
    * of a placeholder. Optional — older metadata files lack this field. */
   description?: string
+  /** Dedicated workspace used by a coordinator subagent. */
+  workspacePath?: string
+  /** Durable lifecycle state consumed by desktop sub-session synchronization. */
+  status?: 'running' | 'completed' | 'failed'
+  startedAt?: number
+  finishedAt?: number
+  errorCode?: string
+  errorMessage?: string
 }
+
+const agentMetadataWriteQueues = new Map<string, Promise<void>>()
 
 /**
  * Persist the agentType used to launch a subagent. Read by resume to
@@ -330,7 +341,59 @@ export async function writeAgentMetadata(
 ): Promise<void> {
   const path = getAgentMetadataPath(agentId)
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(metadata))
+  const previous = agentMetadataWriteQueues.get(path) ?? Promise.resolve()
+  const current = previous.catch(() => {}).then(async () => {
+    const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`
+    try {
+      await writeFile(tempPath, JSON.stringify(metadata))
+      await rename(tempPath, path)
+    } finally {
+      await unlink(tempPath).catch(() => {})
+    }
+  })
+  agentMetadataWriteQueues.set(path, current)
+  try {
+    await current
+  } finally {
+    if (agentMetadataWriteQueues.get(path) === current) {
+      agentMetadataWriteQueues.delete(path)
+    }
+  }
+}
+
+export async function updateAgentMetadata(
+  agentId: AgentId,
+  updates: Partial<AgentMetadata>,
+): Promise<void> {
+  const path = getAgentMetadataPath(agentId)
+  const previous = agentMetadataWriteQueues.get(path) ?? Promise.resolve()
+  const current = previous.catch(() => {}).then(async () => {
+    let existing: AgentMetadata | null = null
+    try {
+      existing = JSON.parse(await readFile(path, 'utf-8')) as AgentMetadata
+    } catch (error) {
+      if (!isFsInaccessible(error)) throw error
+    }
+    if (!existing?.agentType && !updates.agentType) {
+      throw new Error(`Cannot update missing agent metadata: ${agentId}`)
+    }
+    const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`
+    try {
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(tempPath, JSON.stringify({ ...existing, ...updates }))
+      await rename(tempPath, path)
+    } finally {
+      await unlink(tempPath).catch(() => {})
+    }
+  })
+  agentMetadataWriteQueues.set(path, current)
+  try {
+    await current
+  } finally {
+    if (agentMetadataWriteQueues.get(path) === current) {
+      agentMetadataWriteQueues.delete(path)
+    }
+  }
 }
 
 export async function readAgentMetadata(

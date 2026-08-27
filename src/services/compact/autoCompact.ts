@@ -308,3 +308,47 @@ export async function autoCompactIfNeeded(
     return { wasCompacted: false, consecutiveFailures: nextFailures }
   }
 }
+
+/**
+ * Reactive fallback for a server-side prompt-too-long response. Proactive
+ * estimation can be late when provider limits or fixed prompt/tool overhead
+ * differ from the local estimate, so this path bypasses the threshold and
+ * uses the same compactor as REPL /compact.
+ */
+export async function compactAfterPromptTooLong(
+  messages: Message[],
+  toolUseContext: ToolUseContext,
+  cacheSafeParams: CacheSafeParams,
+  querySource?: QuerySource,
+): Promise<CompactionResult | null> {
+  if (!isAutoCompactEnabled() || isEnvTruthy(process.env.DISABLE_COMPACT)) {
+    return null
+  }
+
+  try {
+    const compactionResult = await compactConversation(
+      messages,
+      toolUseContext,
+      cacheSafeParams,
+      true,
+      undefined,
+      true,
+      {
+        isRecompactionInChain: false,
+        turnsSincePreviousCompact: -1,
+        autoCompactThreshold: getAutoCompactThreshold(
+          toolUseContext.options.mainLoopModel,
+        ),
+        querySource,
+      },
+    )
+    setLastSummarizedMessageId(undefined)
+    runPostCompactCleanup(querySource)
+    return compactionResult
+  } catch (error) {
+    if (!hasExactErrorMessage(error, ERROR_MESSAGE_USER_ABORT)) {
+      logError(error)
+    }
+    return null
+  }
+}

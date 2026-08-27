@@ -18,8 +18,12 @@ export function scheduleMcpRuntimeReload(sessionRecords, disposeRuntime) {
   return { resetSessionCount, skippedBusySessionCount };
 }
 
-export function applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime) {
-  if (!sessionRecord?.pendingMcpRuntimeReload || sessionRecord.busy) return false;
+export function applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime, shouldDefer = () => false) {
+  if (
+    !sessionRecord?.pendingMcpRuntimeReload ||
+    sessionRecord.busy ||
+    shouldDefer(sessionRecord)
+  ) return false;
   sessionRecord.pendingMcpRuntimeReload = false;
   if (!sessionRecord.runtime) return false;
   disposeRuntime(sessionRecord);

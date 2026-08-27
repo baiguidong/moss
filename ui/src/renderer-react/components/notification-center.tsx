@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Bell,
   BellOff,
+  Check,
   CheckCheck,
   CircleAlert,
   Copy,
@@ -38,17 +39,36 @@ export function NotificationCenter({
   onMarkAllRead,
   onRemove,
   onClear,
+  onResolveDecision,
 }: {
   notifications: AppNotification[];
   onMarkRead: (id: string) => void;
   onMarkAllRead: () => void;
   onRemove: (id: string) => void;
   onClear: () => void;
+  onResolveDecision: (decisionId: string, allowed: boolean, choice?: string) => Promise<void>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [confirmClear, setConfirmClear] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const [resolvingDecisionId, setResolvingDecisionId] = React.useState<string | null>(null);
+  const [decisionError, setDecisionError] = React.useState<{ id: string; message: string } | null>(null);
   const unreadCount = notifications.filter((item) => !item.read).length;
+
+  const resolveDecision = (decisionId: string, allowed: boolean, choice?: string) => {
+    setDecisionError(null);
+    setResolvingDecisionId(decisionId);
+    void onResolveDecision(decisionId, allowed, choice)
+      .catch((error) => {
+        setDecisionError({
+          id: decisionId,
+          message: error instanceof Error ? error.message : '处理失败，请重试',
+        });
+      })
+      .finally(() => setResolvingDecisionId((current) => (
+        current === decisionId ? null : current
+      )));
+  };
 
   React.useEffect(() => {
     if (!open) setConfirmClear(false);
@@ -211,6 +231,56 @@ export function NotificationCenter({
                               </pre>
                             </details>
                           ) : null}
+                          {notification.decisionRequestId ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={resolvingDecisionId === notification.decisionRequestId}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  resolveDecision(notification.decisionRequestId!, true);
+                                }}
+                                className="inline-flex h-7 items-center gap-1 rounded bg-primary px-2 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+                              >
+                                <Check className="h-3 w-3" />
+                                允许
+                              </button>
+                              {(notification.decisionOptions ?? []).map((option) => (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  disabled={resolvingDecisionId === notification.decisionRequestId}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    resolveDecision(
+                                      notification.decisionRequestId!,
+                                      true,
+                                      option.id,
+                                    );
+                                  }}
+                                  className="inline-flex h-7 items-center rounded border border-border px-2 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                disabled={resolvingDecisionId === notification.decisionRequestId}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  resolveDecision(notification.decisionRequestId!, false);
+                                }}
+                                className="inline-flex h-7 items-center gap-1 rounded border border-border px-2 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                              >
+                                <X className="h-3 w-3" />
+                                拒绝
+                              </button>
+                            </div>
+                          ) : null}
+                          {notification.decisionRequestId
+                            && decisionError?.id === notification.decisionRequestId ? (
+                              <p className="mt-1 text-[11px] text-destructive">{decisionError.message}</p>
+                            ) : null}
                         </div>
                         <div className="flex shrink-0 items-center">
                           <button
@@ -225,18 +295,20 @@ export function NotificationCenter({
                           >
                             <Copy className="h-3 w-3" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onRemove(notification.id);
-                            }}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            title="删除这条消息"
-                            aria-label="删除这条消息"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
+                          {!notification.decisionRequestId ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRemove(notification.id);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              title="删除这条消息"
+                              aria-label="删除这条消息"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </article>

@@ -10,6 +10,7 @@ export type TaskScope =
   | {
       kind: 'project'
       projectId: string
+      sessionId?: string | null
     }
   | {
       kind: 'team'

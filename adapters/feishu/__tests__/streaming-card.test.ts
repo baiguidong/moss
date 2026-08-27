@@ -318,7 +318,7 @@ describe('StreamingCard: appendText + flush', () => {
     })
     const sc = new StreamingCard({ larkClient: client, chatId: 'c' })
     await sc.ensureCreated()
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(true)
     sc.appendText('ignored')
     expect(sc._getAccumulatedText()).toBe('')
   })
@@ -343,7 +343,7 @@ describe('StreamingCard: finalize', () => {
       .map((c) => c.args.data.sequence)
     const lastContentSeq = contentSeqs[contentSeqs.length - 1] ?? 1
 
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(true)
 
     expect(sc._getPhase()).toBe('completed')
 
@@ -393,7 +393,7 @@ describe('StreamingCard: finalize', () => {
   it('完全 idle 时 finalize 直接标记 completed 不抛错', async () => {
     const { client } = makeMockClient()
     const sc = new StreamingCard({ larkClient: client, chatId: 'c' })
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(false)
     expect(sc._getPhase()).toBe('completed')
   })
 
@@ -420,7 +420,7 @@ describe('StreamingCard: finalize', () => {
     expect(lastMidFrame).toContain('Read')
     expect(lastMidFrame).toContain('最终答复正文')
 
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(true)
 
     // finalize 用的是 card.update，把整张卡换成只有 answer 的版本
     const updateCall = calls.filter((c) => c.api === 'cardkit.v1.card.update').pop()!
@@ -450,7 +450,7 @@ describe('StreamingCard: finalize', () => {
     sc.appendReasoning('I was thinking but never produced an answer.')
     await sleep(150)
 
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(true)
     const updateCall = calls.filter((c) => c.api === 'cardkit.v1.card.update').pop()!
     const finalContent = JSON.parse(updateCall.args.data.card.data).body.elements[0].content as string
     // 至少能看到推理内容
@@ -470,8 +470,33 @@ describe('StreamingCard: finalize', () => {
     sc.appendText('text')
     await sleep(150)
     // finalize 内部捕获错误不 rethrow
-    await sc.finalize()
+    expect(await sc.finalize()).toBe(false)
     expect(sc._getPhase()).toBe('completed')
+  })
+
+  it('等待尚未完成的卡片创建后再写入终态', async () => {
+    let releaseCreate!: () => void
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+    const { client, calls } = makeMockClient({
+      'card.create': async () => {
+        await createGate
+        return { code: 0, data: { card_id: 'ck_race' } }
+      },
+      'im.message.create': { data: { message_id: 'om_race' } },
+    })
+    const sc = new StreamingCard({ larkClient: client, chatId: 'c', messageUuid: 'turn-race' })
+    const creating = sc.ensureCreated()
+    sc.appendText('最终答复')
+    const finalizing = sc.finalize()
+    releaseCreate()
+
+    await creating
+    expect(await finalizing).toBe(true)
+    const messageCall = calls.find((call) => call.api === 'im.message.create')
+    expect(messageCall?.args.data.uuid).toBe('turn-race')
+    const updateCall = calls.filter((call) => call.api === 'cardkit.v1.card.update').pop()
+    expect(updateCall).toBeDefined()
+    expect(JSON.parse(updateCall!.args.data.card.data).body.elements[0].content).toContain('最终答复')
   })
 })
 

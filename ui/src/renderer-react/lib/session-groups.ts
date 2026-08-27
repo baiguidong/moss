@@ -1,9 +1,25 @@
-export type SessionGroupId = 'chat' | 'cron' | 'project';
+export type SessionGroupId = 'feishu' | 'chat' | 'cron' | 'project';
 
 export type GroupableSession = {
+  id: string;
   isPinned?: boolean;
   projectId?: string | null;
+  projectName?: string | null;
+  parentSessionId?: string | null;
+  isSubAgent?: boolean;
   sessionKind?: 'chat' | 'cron';
+  originChannel?: 'desktop' | 'feishu' | 'cron';
+};
+
+export type ProjectSessionNode<T> = {
+  session: T;
+  children: T[];
+};
+
+export type ProjectSessionTree<T> = {
+  id: string;
+  label: string;
+  sessions: ProjectSessionNode<T>[];
 };
 
 export type SessionGroup<T> = {
@@ -24,10 +40,17 @@ function prioritizePinned<T extends GroupableSession>(sessions: T[]) {
 export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]): SessionGroup<T>[] {
   return [
     {
+      id: 'feishu' as const,
+      label: '飞书会话',
+      sessions: prioritizePinned(sessions.filter(
+        (session) => session.sessionKind !== 'cron' && session.originChannel === 'feishu',
+      )),
+    },
+    {
       id: 'chat' as const,
       label: '普通会话',
       sessions: prioritizePinned(sessions.filter(
-        (session) => session.sessionKind !== 'cron' && !session.projectId,
+        (session) => session.sessionKind !== 'cron' && session.originChannel !== 'feishu' && !session.projectId,
       )),
     },
     {
@@ -39,10 +62,32 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       id: 'project' as const,
       label: '项目',
       sessions: prioritizePinned(sessions.filter(
-        (session) => session.sessionKind !== 'cron' && Boolean(session.projectId),
+        (session) => session.sessionKind !== 'cron' && session.originChannel !== 'feishu' && Boolean(session.projectId),
       )),
     },
   ].filter((group) => group.sessions.length > 0);
+}
+
+export function groupProjectSessionTrees<T extends GroupableSession>(sessions: T[]): ProjectSessionTree<T>[] {
+  const grouped = new Map<string, T[]>();
+  for (const session of sessions) {
+    if (session.sessionKind === 'cron' || session.originChannel === 'feishu' || !session.projectId) continue;
+    grouped.set(session.projectId, [...(grouped.get(session.projectId) || []), session]);
+  }
+  return Array.from(grouped.entries()).map(([projectId, entries]) => {
+    const entryIds = new Set(entries.map((entry) => entry.id));
+    const mainSessions = prioritizePinned(entries.filter(
+      (entry) => !entry.parentSessionId || !entryIds.has(entry.parentSessionId),
+    ));
+    return {
+      id: projectId,
+      label: entries.find((entry) => entry.projectName)?.projectName || projectId,
+      sessions: mainSessions.map((session) => ({
+        session,
+        children: entries.filter((entry) => entry.parentSessionId === session.id),
+      })),
+    };
+  });
 }
 
 export function getSessionGroupPreview<T extends { id: string }>(

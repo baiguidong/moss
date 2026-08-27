@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   clearMcpServerAuth: (payload) => ipcRenderer.invoke('agent:mcp-clear-auth', payload),
   getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
   updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
+  getAdapterStatus: () => ipcRenderer.invoke('agent:get-adapter-status'),
   listProjectTemplates: () => ipcRenderer.invoke('project:list-templates'),
   listProjects: (payload) => ipcRenderer.invoke('project:list', payload),
   getProject: (payload) => ipcRenderer.invoke('project:get', payload),
@@ -38,24 +39,16 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   updateProject: (payload) => ipcRenderer.invoke('project:update', payload),
   archiveProject: (payload) => ipcRenderer.invoke('project:archive', payload),
   listProjectAssets: (payload) => ipcRenderer.invoke('project:list-assets', payload),
+  listProjectEvents: (payload) => ipcRenderer.invoke('project:list-events', payload),
+  listProjectDecisions: (payload) => ipcRenderer.invoke('project:list-decisions', payload),
+  resolveProjectDecision: (payload) => ipcRenderer.invoke('project:resolve-decision', payload),
+  rejectProjectDecision: (payload) => ipcRenderer.invoke('project:reject-decision', payload),
+  getProjectMemory: (payload) => ipcRenderer.invoke('project:get-memory', payload),
   addProjectAsset: (payload) => ipcRenderer.invoke('project:add-asset', payload),
   removeProjectAsset: (payload) => ipcRenderer.invoke('project:remove-asset', payload),
-  listProjectSessions: (payload) => ipcRenderer.invoke('project:list-sessions', payload),
-  bindSessionToProject: (payload) => ipcRenderer.invoke('project:bind-session', payload),
-  unbindSessionFromProject: (payload) => ipcRenderer.invoke('project:unbind-session', payload),
   listProjectTasks: (payload) => ipcRenderer.invoke('project:list-tasks', payload),
   createProjectTask: (payload) => ipcRenderer.invoke('project:create-task', payload),
-  updateProjectTask: (payload) => ipcRenderer.invoke('project:update-task', payload),
   getProjectTask: (payload) => ipcRenderer.invoke('project:get-task', payload),
-  listProjectTeamRuns: (payload) => ipcRenderer.invoke('project:list-team-runs', payload),
-  getProjectTeamRun: (payload) => ipcRenderer.invoke('project:get-team-run', payload),
-  createProjectTeamRun: (payload) => ipcRenderer.invoke('project:create-team-run', payload),
-  updateProjectTeamRun: (payload) => ipcRenderer.invoke('project:update-team-run', payload),
-  addProjectTeamMember: (payload) => ipcRenderer.invoke('project:add-team-member', payload),
-  updateProjectTeamMember: (payload) => ipcRenderer.invoke('project:update-team-member', payload),
-  removeProjectTeamMember: (payload) => ipcRenderer.invoke('project:remove-team-member', payload),
-  startProjectTeamMember: (payload) => ipcRenderer.invoke('project:start-team-member', payload),
-  closeProjectTeamRun: (payload) => ipcRenderer.invoke('project:close-team-run', payload),
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
@@ -177,6 +170,23 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('audit:changed', handler);
     },
   },
+  notifications: {
+    list: () => ipcRenderer.invoke('notification:list'),
+    create: (notification, options) => ipcRenderer.invoke('notification:create', { notification, options }),
+    importLegacy: (notifications) => ipcRenderer.invoke('notification:import-legacy', { notifications }),
+    markRead: (id) => ipcRenderer.invoke('notification:mark-read', { id }),
+    markAllRead: () => ipcRenderer.invoke('notification:mark-all-read'),
+    remove: (id) => ipcRenderer.invoke('notification:remove', { id }),
+    clear: () => ipcRenderer.invoke('notification:clear'),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('notification:changed', handler);
+      return () => ipcRenderer.off('notification:changed', handler);
+    },
+  },
+  decisions: {
+    respond: (payload) => ipcRenderer.invoke('decision:respond', payload),
+  },
   workspace: {
     writeFile: (payload) => ipcRenderer.invoke('workspace.write-file', payload),
   },
@@ -222,6 +232,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.on('agent:question-request', handler);
     return () => ipcRenderer.off('agent:question-request', handler);
   },
+  onQuestionResolved: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:question-resolved', handler);
+    return () => ipcRenderer.off('agent:question-resolved', handler);
+  },
   onSessionMeta: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:session-meta', handler);
@@ -251,6 +266,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:settings-changed', handler);
     return () => ipcRenderer.off('agent:settings-changed', handler);
+  },
+  onAdapterStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:adapter-status', handler);
+    return () => ipcRenderer.off('agent:adapter-status', handler);
   },
   onProjectsChanged: (callback) => {
     const handler = (_event, payload) => callback(payload);

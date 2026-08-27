@@ -6,11 +6,9 @@
  * - tryPair(): 验证配对码，成功则写入 pairedUsers 并清除 code
  */
 
-import * as fs from 'node:fs'
-import * as os from 'node:os'
-import * as path from 'node:path'
 import * as crypto from 'node:crypto'
 import type { PairedUser, PairingState } from './config.js'
+import { readAdapterConfig, writeAdapterConfig } from './config-store.js'
 
 const SAFE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // 排除 0/O/1/I/L
 
@@ -41,28 +39,6 @@ function recordFailedAttempt(userId: string | number): void {
 }
 const CODE_LENGTH = 6
 const CODE_TTL_MS = 60 * 60 * 1000 // 60 minutes
-
-function getConfigPath(): string {
-  const configDir = process.env.MOSS_CONFIG_DIR || path.join(os.homedir(), '.moss')
-  return path.join(configDir, 'adapters.json')
-}
-
-function readConfigFile(): Record<string, any> {
-  try {
-    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8'))
-  } catch {
-    return {}
-  }
-}
-
-function writeConfigFile(data: Record<string, any>): void {
-  const filePath = getConfigPath()
-  const dir = path.dirname(filePath)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const tmp = `${filePath}.tmp.${Date.now()}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8')
-  fs.renameSync(tmp, filePath)
-}
 
 export function generatePairingCode(): string {
   let code = ''
@@ -99,7 +75,7 @@ export function tryPair(
   senderInfo: { userId: string | number; displayName: string },
   platform: 'telegram' | 'feishu',
 ): boolean {
-  const file = readConfigFile()
+  const file = readAdapterConfig()
   const pairing: PairingState = file.pairing ?? { code: null, expiresAt: null, createdAt: null }
 
   // 速率限制检查
@@ -133,7 +109,7 @@ export function tryPair(
   // 更新 config
   file[platform] = { ...platformConfig, pairedUsers }
   file.pairing = { code: null, expiresAt: null, createdAt: null } // 一次性使用
-  writeConfigFile(file)
+  writeAdapterConfig(file)
 
   return true
 }
@@ -141,7 +117,7 @@ export function tryPair(
 /** 统一的用户授权检查（供各 adapter 调用） */
 export function isAllowedUser(platform: 'telegram' | 'feishu', userId: string | number): boolean {
   try {
-    const cfgFile = readConfigFile()
+    const cfgFile = readAdapterConfig()
     return isPaired(platform, userId, cfgFile)
   } catch {
     return false

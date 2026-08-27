@@ -34,6 +34,27 @@ describe('MCP runtime reload', () => {
     expect(session.pendingMcpRuntimeReload).toBe(false);
     expect(disposed).toEqual([session]);
   });
+
+  it('keeps a pending reload deferred while background work is active', () => {
+    const session = {
+      agentMode: 'local',
+      busy: false,
+      runtime: {},
+      pendingMcpRuntimeReload: true,
+      hasActiveWorkers: true,
+    };
+    const disposed: unknown[] = [];
+    const dispose = (record: unknown) => disposed.push(record);
+    const shouldDefer = (record: typeof session) => record.hasActiveWorkers;
+
+    expect(applyPendingMcpRuntimeReload(session, dispose, shouldDefer)).toBe(false);
+    expect(session.pendingMcpRuntimeReload).toBe(true);
+    expect(disposed).toEqual([]);
+
+    session.hasActiveWorkers = false;
+    expect(applyPendingMcpRuntimeReload(session, dispose, shouldDefer)).toBe(true);
+    expect(disposed).toEqual([session]);
+  });
 });
 
 describe('connector authentication tool result', () => {

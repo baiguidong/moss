@@ -116,13 +116,14 @@ describe('sendCardAsMessage', () => {
     const { client, calls } = makeMockClient({
       'im.message.create': { data: { message_id: 'om_new_msg_1' } },
     })
-    const mid = await sendCardAsMessage(client, 'oc_chat_123', 'ck_id_xyz')
+    const mid = await sendCardAsMessage(client, 'oc_chat_123', 'ck_id_xyz', undefined, 'turn-uuid')
     expect(mid).toBe('om_new_msg_1')
     expect(calls.length).toBe(1)
     expect(calls[0]!.api).toBe('im.message.create')
     expect(calls[0]!.args.params.receive_id_type).toBe('chat_id')
     expect(calls[0]!.args.data.receive_id).toBe('oc_chat_123')
     expect(calls[0]!.args.data.msg_type).toBe('interactive')
+    expect(calls[0]!.args.data.uuid).toBe('turn-uuid')
     // content 格式: {"type":"card","data":{"card_id":"xxx"}}
     const parsed = JSON.parse(calls[0]!.args.data.content)
     expect(parsed).toEqual({ type: 'card', data: { card_id: 'ck_id_xyz' } })

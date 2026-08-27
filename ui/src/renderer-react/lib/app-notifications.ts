@@ -10,6 +10,8 @@ export type AppNotification = {
   createdAt: number;
   read: boolean;
   occurrences: number;
+  decisionRequestId?: string;
+  decisionOptions?: Array<{ id: string; label: string }>;
 };
 
 export type NewAppNotification = Pick<AppNotification, 'severity' | 'source' | 'title' | 'message'> & {
@@ -63,6 +65,16 @@ function parseNotification(value: unknown): AppNotification | null {
     createdAt: item.createdAt,
     read: Boolean(item.read),
     occurrences: Math.max(1, Math.floor(Number(item.occurrences) || 1)),
+    ...(typeof item.decisionRequestId === 'string' && item.decisionRequestId
+      ? { decisionRequestId: item.decisionRequestId }
+      : {}),
+    ...(Array.isArray(item.decisionOptions)
+      ? {
+        decisionOptions: item.decisionOptions
+          .filter((option: any) => option && typeof option.id === 'string' && typeof option.label === 'string')
+          .map((option: any) => ({ id: option.id, label: option.label })),
+      }
+      : {}),
   };
 }
 

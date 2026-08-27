@@ -28,11 +28,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { FilePreview } from "@/components/file-preview";
-import { WorkerThreadPanel } from "@/components/worker-thread-panel";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
-import type { TranscriptRenderMessage, WorkerThread } from "@/lib/agent-transcript";
-import type { BackgroundTaskInfo, InstalledConnector } from "../types";
+import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
+import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
 import { ConnectorSelectionArea } from "@/components/connector-selection-area";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
@@ -1687,9 +1686,7 @@ export function ChatArea({
   leftCollapsed,
   rightCollapsed,
   composerIntent,
-  workerThreads,
-  archivedWorkerRounds,
-  activeWorkerThreadId,
+  childSessions = [],
   onChange,
   onComposerIntentChange,
   onToggleLeftSidebar,
@@ -1698,7 +1695,7 @@ export function ChatArea({
   onRejectPlan,
   onSend,
   onStop,
-  onToggleWorkerThread,
+  onOpenChildSession,
   installedAssistants,
   selectedAssistant,
   onSelectAssistant,
@@ -1734,9 +1731,7 @@ export function ChatArea({
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   composerIntent: ComposerIntent;
-  workerThreads: WorkerThread[];
-  archivedWorkerRounds: WorkerThread[][];
-  activeWorkerThreadId: string | null;
+  childSessions?: SessionSummary[];
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onToggleLeftSidebar: () => void;
@@ -1745,7 +1740,7 @@ export function ChatArea({
   onRejectPlan: () => void;
   onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[]) => void;
   onStop: () => void;
-  onToggleWorkerThread: (threadId: string | null) => void;
+  onOpenChildSession?: (sessionId: string) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
@@ -1913,12 +1908,49 @@ export function ChatArea({
 
       <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto max-w-[980px] min-w-0">
-          <WorkerThreadPanel
-            threads={workerThreads}
-            archivedRounds={archivedWorkerRounds}
-            activeThreadId={activeWorkerThreadId}
-            onToggleThread={onToggleWorkerThread}
-          />
+          {childSessions.length > 0 ? (
+            <div
+              className="mb-2 flex h-10 min-w-0 items-center justify-start overflow-hidden text-[11px] text-muted-foreground"
+              aria-label={`${childSessions.length} 个子任务`}
+            >
+              <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                {childSessions.slice(0, 10).map((child) => {
+                  const status = child.subagentStatus === 'running' || child.busy
+                    ? '运行中'
+                    : child.subagentStatus === 'failed' ? '失败' : '已完成';
+                  return (
+                    <Tooltip key={child.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label={`打开子任务：${child.title}，${status}`}
+                          onClick={() => onOpenChildSession?.(child.id)}
+                        >
+                          <img src="./build/icon.png" alt="" className="h-4.5 w-4.5 object-contain" />
+                          <span
+                            className={cn(
+                              "absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full border border-card",
+                              status === '运行中'
+                                ? "bg-sky-500"
+                                : status === '失败' ? "bg-destructive" : "bg-emerald-500",
+                            )}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{child.title} · {status}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+                {childSessions.length > 10 ? (
+                  <span className="flex h-8 shrink-0 items-center rounded-lg border border-border/60 px-2 text-[10px] tabular-nums">
+                    +{childSessions.length - 10}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           {backgroundTasks && backgroundTasks.length > 0 && (
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks} />
           )}

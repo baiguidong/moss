@@ -1,5 +1,9 @@
 # Moss Desktop Data Layout Plan
 
+> The project/session portion of this document has been superseded by
+> `project-data-layout.md`. That module uses the new layout directly and does
+> not provide a legacy `app-projects` fallback.
+
 ## Purpose
 
 Moss Desktop should have a stable local data layout before more project,
@@ -145,8 +149,8 @@ Current desktop paths can map into the logical layout without moving data first:
 | --- | --- |
 | `~/.moss/settings.json` | `state/settings.json` |
 | `~/.moss/moss.db` | `state/moss.db` |
-| `~/.moss/projects/` | `projects/` or legacy session project index |
-| `~/.moss/app-projects/` | `projects/` app project records |
+| `~/.moss/projects/` | Shared root; desktop app projects are identified by their record kind |
+| `~/.moss/app-projects/` | Retired; the desktop project module does not read this path |
 | `~/.moss/workspace/` | `runtime/tmp/workspaces/` or `sessions/*/workspace/` |
 | `~/.moss/generated-app-data/` | `apps/data/` |
 | `~/.moss/generated-apps/` | `apps/builds/` |
@@ -252,8 +256,8 @@ the app can read both old and new paths:
 | --- | --- | --- |
 | `~/.moss/workspace/` | `~/.moss/runtime/tmp/workspaces/` or `~/.moss/sessions/<id>/workspace/` | Large and mostly temporary, but may contain user-generated files. New sessions can use the target path first; old workspaces should stay readable. |
 | `~/.moss/generated-app-data/` | `~/.moss/apps/data/` | App data may be user-owned. Move per app with backup. |
-| `~/.moss/app-projects/` | `~/.moss/projects/<project-id>/` | Small today, but should align with the project system migration. |
-| `~/.moss/tasks/` | `~/.moss/projects/<project-id>/tasks/` or `~/.moss/sessions/<id>/tasks/` | Needs ownership split: project task vs session task. |
+| `~/.moss/app-projects/` | Retired | New desktop projects are written directly to `~/.moss/projects/<project-id>/`; no fallback is provided. |
+| `~/.moss/tasks/` | Retired for projects | Project tasks are root Coordinator sessions in `moss.db`; session-local runtime tasks stay inside the session runtime. |
 
 ### Wave 3: Durable Stores, Move Last
 

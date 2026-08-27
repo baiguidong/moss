@@ -1,3 +1,5 @@
+import type { AppNotification, NewAppNotification } from './lib/app-notifications';
+
 export type PendingPlanApproval = {
   kind: 'plan';
   originalPrompt: string;
@@ -22,11 +24,20 @@ export type SessionSummary = {
   assistantName?: string | null;
   projectId?: string | null;
   projectName?: string | null;
+  runtimeMode?: 'normal' | 'coordinator' | 'project-coordinator';
+  projectSessionStatus?: ProjectTaskStatus | null;
+  completedAt?: number | null;
+  projectConclusion?: string;
+  projectMemoryVersion?: number;
   connectorIds?: string[];
   sessionKind?: 'chat' | 'cron';
+  originChannel?: 'desktop' | 'feishu' | 'cron';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
+  isSubAgent?: boolean;
+  parentSessionId?: string | null;
+  subagentStatus?: 'running' | 'completed' | 'failed' | null;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -49,9 +60,24 @@ export type SessionTask = {
   blockedBy: string[];
 };
 
-export type ProjectTask = SessionTask & {
-  blocks?: string[];
-  metadata?: Record<string, unknown>;
+export type ProjectTaskStatus = 'queued' | 'in_progress' | 'waiting_for_user' | 'completed' | 'failed' | 'canceled';
+
+export type ProjectTask = {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  subject: string;
+  description: string;
+  status: ProjectTaskStatus;
+  workerCount: number;
+  activeWorkerCount: number;
+  attentionCount: number;
+  conclusion?: string;
+  outputAssetIds: string[];
+  completedAt?: number | null;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type ProjectTemplate = {
@@ -73,15 +99,18 @@ export type Project = {
   connectorIds: string[];
   expertIds: string[];
   skillIds: string[];
+  decisionPolicy: {
+    mode: 'auto_all' | 'manual' | 'recommend' | 'auto_low_risk';
+  };
   createdAt: number;
   updatedAt: number;
   archivedAt?: number | null;
-  taskListId?: string;
   path?: string;
+  workspace?: string;
   assetCount?: number;
   taskCount?: number;
   sessionCount?: number;
-  teamRunCount?: number;
+  pendingDecisionCount?: number;
 };
 
 export type ConnectorType = 'mcp' | 'cli' | 'unknown';
@@ -158,52 +187,65 @@ export type ProjectAsset = {
   relativePath: string;
   size: number;
   mimeType?: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type ProjectTeamMemberStatus =
-  | 'planned'
-  | 'starting'
-  | 'running'
-  | 'idle'
-  | 'blocked'
-  | 'completed'
-  | 'failed'
-  | 'stopped';
-
-export type ProjectTeamMember = {
-  id: string;
-  name: string;
-  expertId?: string | null;
-  role: string;
-  subagentType?: string | null;
-  model?: string | null;
-  mode: 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
-  prompt: string;
-  autoStart: boolean;
-  status: ProjectTeamMemberStatus;
-  taskIds: string[];
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-  startedAt?: number | null;
-  stoppedAt?: number | null;
-};
-
-export type ProjectTeamRun = {
-  id: string;
-  projectId?: string | null;
-  sessionId?: string | null;
-  name: string;
+  sourceType?: 'upload' | 'session_output' | string;
+  sourceSessionId?: string | null;
+  sourcePath?: string | null;
+  contentHash?: string | null;
+  provenance?: Array<{
+    sourceSessionId?: string | null;
+    sourcePath?: string | null;
+    recordedAt: number;
+  }>;
   description?: string;
-  status: 'draft' | 'running' | 'completed' | 'failed' | 'closed';
-  taskListId: string;
-  plannedMembers: ProjectTeamMember[];
-  activeMembers: Array<Record<string, unknown>>;
   createdAt: number;
   updatedAt: number;
-  closedAt?: number | null;
+};
+
+export type ProjectEvent = {
+  id: string;
+  type: string;
+  summary: string;
+  actor: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+};
+
+export type ProjectDecision = {
+  id: string;
+  projectId: string;
+  requestId: string;
+  toolUseId?: string | null;
+  taskId?: string | null;
+  parentSessionId: string;
+  originSessionId: string;
+  originAgentId?: string | null;
+  originAgentType?: string | null;
+  originLabel: string;
+  kind: 'preference' | 'clarification' | 'external_action' | 'authorization' | 'tool_permission';
+  riskLevel: 'low' | 'medium' | 'high';
+  status: 'pending' | 'resolved' | 'rejected' | 'expired';
+  blocking: boolean;
+  questions: AskUserQuestion[];
+  recommendation?: { answers: Record<string, string>; reason: string } | null;
+  resolution?: {
+    answers: Record<string, string>;
+    source: 'user' | 'policy' | 'system';
+    note: string;
+  } | null;
+  createdAt: number;
+  resolvedAt?: number | null;
+  expiresAt?: number | null;
+};
+
+export type ProjectMemory = {
+  version: number;
+  updatedAt: number | null;
+  lastSessionId: string | null;
+  finalizedSessionCount: number;
+  overview: string;
+  overviewPath: string;
 };
 
 export type AskUserQuestionOption = {
@@ -227,6 +269,10 @@ export type AskUserQuestionRequest = {
     metadata?: Record<string, unknown>;
   };
   requestedAt: number;
+  projectId?: string | null;
+  decisionId?: string | null;
+  originSessionId?: string;
+  originLabel?: string;
 };
 
 export type AskUserQuestionAnnotations = Record<string, {
@@ -267,6 +313,16 @@ export type AdapterFileConfig = {
     streamingCard?: boolean
   }
 }
+
+export type FeishuAdapterStatus = {
+  status: 'stopped' | 'running' | 'disabled' | 'error';
+  pid: number | null;
+  bridgeReady: boolean;
+  error?: string | null;
+  transportConnected: boolean;
+  transportUpdatedAt?: number | null;
+  transportError?: string | null;
+};
 
 export type McpServerConfig =
   | {
@@ -698,6 +754,7 @@ declare global {
       clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
+      getAdapterStatus: () => Promise<FeishuAdapterStatus>;
       listProjectTemplates: () => Promise<ProjectTemplate[]>;
       listProjects: (payload?: { includeArchived?: boolean }) => Promise<Project[]>;
       getProject: (payload: { projectId: string }) => Promise<Project>;
@@ -708,30 +765,35 @@ declare global {
         connectorIds?: string[];
         expertIds?: string[];
         skillIds?: string[];
+        decisionPolicy?: Project['decisionPolicy'];
       }) => Promise<Project>;
       updateProject: (payload: { projectId: string; updates: Partial<Project> }) => Promise<Project>;
       archiveProject: (payload: { projectId: string }) => Promise<Project>;
       listProjectAssets: (payload: { projectId: string }) => Promise<ProjectAsset[]>;
-      addProjectAsset: (payload: { projectId: string; sourcePath: string; fileName?: string; name?: string }) => Promise<ProjectAsset>;
+      listProjectEvents: (payload: { projectId: string }) => Promise<ProjectEvent[]>;
+      listProjectDecisions: (payload: { projectId: string }) => Promise<ProjectDecision[]>;
+      resolveProjectDecision: (payload: {
+        projectId: string;
+        decisionId: string;
+        answers: Record<string, string>;
+        annotations?: AskUserQuestionAnnotations;
+      }) => Promise<ProjectDecision>;
+      rejectProjectDecision: (payload: {
+        projectId: string;
+        decisionId: string;
+        message?: string;
+      }) => Promise<ProjectDecision>;
+      getProjectMemory: (payload: { projectId: string }) => Promise<ProjectMemory>;
+      addProjectAsset: (payload: { projectId: string; sourcePath: string; fileName?: string; name?: string; description?: string; sourceType?: string; sourceSessionId?: string }) => Promise<ProjectAsset>;
       removeProjectAsset: (payload: { projectId: string; assetId: string }) => Promise<{ ok: boolean }>;
-      listProjectSessions: (payload: { projectId: string }) => Promise<SessionSummary[]>;
-      bindSessionToProject: (payload: { sessionId: string; projectId: string }) => Promise<SessionDetail>;
-      unbindSessionFromProject: (payload: { sessionId: string }) => Promise<SessionDetail>;
       listProjectTasks: (payload: { projectId: string }) => Promise<ProjectTask[]>;
-      createProjectTask: (payload: { projectId: string; task: Partial<ProjectTask> }) => Promise<ProjectTask>;
-      updateProjectTask: (payload: { projectId: string; taskId: string; updates: Partial<ProjectTask> }) => Promise<ProjectTask>;
+      createProjectTask: (payload: {
+        projectId: string;
+        task: { prompt: string };
+      }) => Promise<{ task: ProjectTask; session: SessionSummary }>;
       getProjectTask: (payload: { projectId: string; taskId: string }) => Promise<ProjectTask | null>;
-      listProjectTeamRuns: (payload: { projectId: string }) => Promise<ProjectTeamRun[]>;
-      getProjectTeamRun: (payload: { projectId: string; runId: string }) => Promise<ProjectTeamRun | null>;
-      createProjectTeamRun: (payload: { projectId: string; teamRun: Partial<ProjectTeamRun> }) => Promise<ProjectTeamRun>;
-      updateProjectTeamRun: (payload: { projectId: string; runId: string; updates: Partial<ProjectTeamRun> }) => Promise<ProjectTeamRun>;
-      addProjectTeamMember: (payload: { projectId: string; runId: string; member: Partial<ProjectTeamMember> }) => Promise<ProjectTeamRun>;
-      updateProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string; updates: Partial<ProjectTeamMember> }) => Promise<ProjectTeamRun>;
-      removeProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string }) => Promise<ProjectTeamRun>;
-      startProjectTeamMember: (payload: { projectId: string; runId: string; memberId: string }) => Promise<ProjectTeamRun>;
-      closeProjectTeamRun: (payload: { projectId: string; runId: string }) => Promise<ProjectTeamRun>;
       listSessions: () => Promise<SessionSummary[]>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; projectId?: string | null; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
@@ -897,6 +959,27 @@ declare global {
           alerts?: AuditAlert[];
         }) => void) => () => void;
       };
+      notifications: {
+        list: () => Promise<AppNotification[]>;
+        create: (notification: NewAppNotification, options?: { id?: string; now?: number }) => Promise<AppNotification>;
+        importLegacy: (notifications: AppNotification[]) => Promise<AppNotification[]>;
+        markRead: (id: string) => Promise<AppNotification[]>;
+        markAllRead: () => Promise<AppNotification[]>;
+        remove: (id: string) => Promise<AppNotification[]>;
+        clear: () => Promise<AppNotification[]>;
+        onChanged: (callback: (payload: {
+          reason: string;
+          notification?: AppNotification | null;
+          notifications: AppNotification[];
+        }) => void) => () => void;
+      };
+      decisions: {
+        respond: (payload: { decisionId: string; allowed: boolean; choice?: string }) => Promise<{
+          id: string;
+          sessionId: string;
+          status: string;
+        }>;
+      };
       workspace: {
         writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;
       };
@@ -922,6 +1005,7 @@ declare global {
       onState: (callback: (payload: any) => void) => () => void;
       onPermission: (callback: (payload: any) => void) => () => void;
       onQuestionRequest: (callback: (payload: AskUserQuestionRequest) => void) => () => void;
+      onQuestionResolved: (callback: (payload: { requestId: string; sessionId: string }) => void) => () => void;
       onSessionMeta: (callback: (payload: SessionSummary) => void) => () => void;
       onSessionHistory: (callback: (payload: {
         sessionId: string;
@@ -933,6 +1017,7 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
+      onAdapterStatus: (callback: (payload: FeishuAdapterStatus) => void) => () => void;
       onProjectsChanged: (callback: (payload: { projectId?: string; reason?: string }) => void) => () => void;
       onAssistantsChanged: (callback: (payload: { reason?: string; expertId?: string; sourcePath?: string }) => void) => () => void;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;
@@ -943,7 +1028,7 @@ declare global {
       getInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
       getRemoteInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
       getAssistantContext: (assistantName: string) => Promise<{ success: boolean; data?: string; error?: string }>;
-      getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ name: string; path: string }>; error?: string }>;
+      getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ id: string; name: string; path: string }>; error?: string }>;
       logWrite: (payload: { level?: string; category?: string; message: string; data?: unknown }) => Promise<void>;
       update: {
         check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: UpdateCheckResult; msg?: string }>;

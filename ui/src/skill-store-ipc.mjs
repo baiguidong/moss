@@ -175,6 +175,7 @@ export async function getInstalledSkills() {
         if (meta) {
           skills.push({
             id: meta.id || '',
+            slug: meta.slug || '',
             name: meta.name || entry.name,
             displayName: meta.display_name || meta.name || entry.name,
             description: meta.description || '',
@@ -184,9 +185,10 @@ export async function getInstalledSkills() {
             category: meta.category || '',
             categories: meta.categories || [],
             isBuiltin: false,
-            isHubInstalled: meta.source_type === 'hub',
+            isHubInstalled: meta.source_type === 'hub' || meta.source_type === 'skillhub',
             isUploaded: meta.source_type === 'upload',
             enabled: meta.enabled !== false,
+            namespace: meta.namespace || null,
             source: skillDir,
           });
         } else {

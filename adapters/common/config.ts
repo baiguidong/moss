@@ -1,12 +1,10 @@
 /**
  * Adapter 配置加载
  *
- * 优先级：环境变量 > ~/.moss/adapters.json > 默认值
+ * 优先级：环境变量 > ~/.moss/settings.json 的 adapters 字段 > 默认值
  */
 
-import * as fs from 'node:fs'
-import * as os from 'node:os'
-import * as path from 'node:path'
+import { readAdapterConfig } from './config-store.js'
 
 export type PairedUser = {
   userId: string | number
@@ -46,24 +44,8 @@ export type AdapterConfig = {
   feishu: FeishuConfig
 }
 
-function getConfigPath(): string {
-  const configDir = process.env.MOSS_CONFIG_DIR || path.join(os.homedir(), '.moss')
-  return path.join(configDir, 'adapters.json')
-}
-
-function loadFile(): Record<string, any> {
-  try {
-    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8'))
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') {
-      console.warn(`[Config] Failed to parse ${getConfigPath()}, using defaults`)
-    }
-    return {}
-  }
-}
-
 export function loadConfig(): AdapterConfig {
-  const file = loadFile()
+  const file = readAdapterConfig()
   const tg = file.telegram ?? {}
   const fs_ = file.feishu ?? {}
   const pairing = file.pairing ?? {}

@@ -10,7 +10,12 @@ const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(uiRoot, '..');
 const viteBin = path.join(uiRoot, 'node_modules', 'vite', 'bin', 'vite.js');
-const electronBin = path.join(uiRoot, 'node_modules', 'electron', 'cli.js');
+const electronPackageRoot = path.join(uiRoot, 'node_modules', 'electron');
+const electronExecutable = path.join(
+  electronPackageRoot,
+  'dist',
+  fs.readFileSync(path.join(electronPackageRoot, 'path.txt'), 'utf8').trim()
+);
 const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
@@ -26,6 +31,8 @@ let electronProcess = null;
 let shuttingDown = false;
 let restartTimer = null;
 let devServerUrl = '';
+let electronTransition = Promise.resolve();
+const intentionallyStoppedElectronProcesses = new WeakSet();
 
 if (command !== 'start') {
   console.error('Usage: node scripts/dev.mjs start');
@@ -59,6 +66,26 @@ function buildElectronDirect() {
         return;
       }
       reject(new Error(`electron-direct build exited with code ${code}`));
+    });
+  });
+}
+
+function buildAdapters() {
+  console.log('Building IM adapters');
+  const result = spawn(process.execPath, [path.join(uiRoot, 'scripts', 'build-adapters.mjs')], {
+    cwd: uiRoot,
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  return new Promise((resolve, reject) => {
+    result.on('error', reject);
+    result.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`adapter build exited with code ${code}`));
     });
   });
 }
@@ -102,20 +129,56 @@ async function waitForServer(url, timeoutMs = 30000) {
   throw new Error(`Timed out waiting for Vite dev server at ${url}`);
 }
 
-function stopElectron() {
-  if (!electronProcess || electronProcess.killed) return;
-  electronProcess.kill('SIGTERM');
+function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.off('exit', handleExit);
+      resolve(false);
+    }, timeoutMs);
+    const handleExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once('exit', handleExit);
+  });
 }
 
-function startElectron() {
-  stopElectron();
-  electronProcess = spawnChild(electronBin, ['.'], {
-    VITE_DEV_SERVER_URL: devServerUrl,
-    NODE_ENV: 'development',
-  });
+async function stopElectron() {
+  const child = electronProcess;
+  electronProcess = null;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
 
-  electronProcess.on('exit', (code, signal) => {
+  intentionallyStoppedElectronProcesses.add(child);
+  child.kill('SIGTERM');
+  if (await waitForExit(child, 3000)) return;
+
+  child.kill('SIGKILL');
+  await waitForExit(child, 1000);
+}
+
+async function restartElectron() {
+  await stopElectron();
+  if (shuttingDown) return;
+
+  const child = spawn(electronExecutable, ['.'], {
+    cwd: uiRoot,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      VITE_DEV_SERVER_URL: devServerUrl,
+      NODE_ENV: 'development',
+    },
+  });
+  electronProcess = child;
+
+  child.on('exit', (code, signal) => {
+    if (electronProcess === child) electronProcess = null;
     if (shuttingDown) return;
+    if (intentionallyStoppedElectronProcesses.has(child)) return;
     if (signal === 'SIGTERM') return;
     if (code && code !== 0) {
       console.error(`electron exited with code ${code}`);
@@ -123,26 +186,36 @@ function startElectron() {
   });
 }
 
+function enqueueElectronRestart() {
+  electronTransition = electronTransition
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+    })
+    .then(() => restartElectron());
+  return electronTransition;
+}
+
 function scheduleElectronRestart() {
   if (shuttingDown) return;
   if (restartTimer) clearTimeout(restartTimer);
   restartTimer = setTimeout(() => {
     restartTimer = null;
-    startElectron();
+    void enqueueElectronRestart();
   }, 150);
 }
 
-function shutdown(viteProcess) {
+async function shutdown(viteProcess) {
   shuttingDown = true;
   if (restartTimer) clearTimeout(restartTimer);
-  stopElectron();
+  await electronTransition.catch(() => {});
+  await stopElectron();
   if (viteProcess && !viteProcess.killed) {
     viteProcess.kill('SIGTERM');
   }
 }
 
 async function main() {
-  await buildElectronDirect();
+  await Promise.all([buildElectronDirect(), buildAdapters()]);
 
   let vitePort;
   try {
@@ -161,8 +234,7 @@ async function main() {
 
   viteProcess.on('exit', (code) => {
     if (!shuttingDown) {
-      shutdown(viteProcess);
-      process.exit(code || 0);
+      void shutdown(viteProcess).finally(() => process.exit(code || 0));
     }
   });
 
@@ -173,16 +245,14 @@ async function main() {
   }
 
   process.on('SIGINT', () => {
-    shutdown(viteProcess);
-    process.exit(0);
+    void shutdown(viteProcess).finally(() => process.exit(0));
   });
   process.on('SIGTERM', () => {
-    shutdown(viteProcess);
-    process.exit(0);
+    void shutdown(viteProcess).finally(() => process.exit(0));
   });
 
   await waitForServer(devServerUrl);
-  startElectron();
+  await enqueueElectronRestart();
 }
 
 main().catch((error) => {

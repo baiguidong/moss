@@ -21,10 +21,6 @@ import { NotificationCenter, NotificationToast } from '@/components/notification
 import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
-  buildWorkerRenderMessagesFromSubagentEvents,
-  type TranscriptRenderMessage,
-  type WorkerThread,
-  type WorkerThreadStatus,
 } from '@/lib/agent-transcript';
 import { PRESET_THEMES } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
@@ -34,7 +30,6 @@ import {
   cleanIpcErrorMessage,
   getErrorMessage,
   loadAppNotifications,
-  saveAppNotifications,
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
@@ -45,7 +40,6 @@ import type {
   AppVersion,
   AuditAlert,
   BackgroundTaskInfo,
-  CoordinatorTask,
   DesktopSettings,
   FileTreeNode,
   InstalledConnector,
@@ -56,7 +50,6 @@ import type {
   SessionSummary,
   StoredApp,
   WorkspacePreviewData,
-  WorkerSubagentResult,
 } from './types';
 
 function formatRelativeTime(timestamp: number): string {
@@ -323,15 +316,6 @@ function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>
     .filter(Boolean) as FileTreeNode[];
 }
 
-function mapCoordinatorTaskStatus(status: string | undefined): 'running' | 'completed' | 'failed' | undefined {
-  const normalized = String(status || '').toLowerCase();
-  if (!normalized) return undefined;
-  if (/(fail|error|killed|stopped|cancel)/.test(normalized)) return 'failed';
-  if (/(complete|completed|done|success|finished)/.test(normalized)) return 'completed';
-  if (/(run|running|pending|queued|waiting|spawned|created|active)/.test(normalized)) return 'running';
-  return undefined;
-}
-
 export default function App() {
   const isMacOS =
     typeof navigator !== 'undefined' &&
@@ -347,7 +331,6 @@ export default function App() {
       return [];
     }
   });
-  const appNotificationsRef = React.useRef(appNotifications);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
@@ -390,9 +373,9 @@ export default function App() {
   }, []);
 
   const pushAppNotification = React.useCallback((notification: NewAppNotification) => {
-    const next = appendAppNotification(appNotificationsRef.current, notification);
-    appNotificationsRef.current = next;
-    setAppNotifications(next);
+    void window.agentDesktop.notifications.create(notification).catch(() => {
+      setAppNotifications((current) => appendAppNotification(current, notification));
+    });
   }, []);
 
   const deliverAuditAlerts = React.useCallback(async (alerts: AuditAlert[]) => {
@@ -401,10 +384,9 @@ export default function App() {
       : [];
     if (validAlerts.length === 0) return;
 
-    let next = appNotificationsRef.current;
     for (const alert of validAlerts) {
       const context = [alert.ruleName, alert.sessionTitle, alert.toolName].filter(Boolean).join(' · ');
-      next = appendAppNotification(next, {
+      await window.agentDesktop.notifications.create({
         severity: alert.severity === 'critical' ? 'error' : 'warning',
         source: '审计中心',
         title: alert.title,
@@ -415,10 +397,6 @@ export default function App() {
         now: alert.createdAt,
       });
     }
-
-    if (!saveAppNotifications(next, window.localStorage)) return;
-    appNotificationsRef.current = next;
-    setAppNotifications(next);
     try {
       await window.agentDesktop.audit.markReported({
         fingerprints: [...new Set(validAlerts.map((alert) => alert.fingerprint))],
@@ -526,28 +504,10 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
-  const [coordinatorTasks, setCoordinatorTasks] = React.useState<CoordinatorTask[]>([]);
-  const [activeWorkerThreadId, setActiveWorkerThreadId] = React.useState<string | null>(null);
-  const [stickyWorkerTaskStatuses, setStickyWorkerTaskStatuses] = React.useState<Record<string, 'completed' | 'failed'>>({});
-  const [workerSubagentResults, setWorkerSubagentResults] = React.useState<Record<string, WorkerSubagentResult>>({});
-  // Workers from previous coordinator runs in the same session, grouped by round.
-  const [archivedWorkerRounds, setArchivedWorkerRounds] = React.useState<WorkerThread[][]>([]);
-  const archivedWorkerRoundsRef = React.useRef<WorkerThread[][]>([]);
   const previewAutoCollapsedRightRef = React.useRef(false);
   const previewAutoCollapsedBySessionRef = React.useRef<string | null>(null);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
-  const refreshedTerminalWorkerIdsRef = React.useRef<Set<string>>(new Set());
-  // Tracks which task IDs were present in the previous coordinatorTasks poll,
-  // so we can detect disappearances (tasks that completed without a terminal status).
-  const prevCoordinatorTaskIdsRef = React.useRef<Set<string>>(new Set());
-  // Keeps the last non-empty thread list so the worker panel and summary stay
-  // visible after the backend clears coordinatorTasks on completion.
-  const frozenWorkerThreadsRef = React.useRef<WorkerThread[]>([]);
-  // When the memo detects a new run (new task IDs while frozen is non-empty), it
-  // stores the old frozen workers here so the effect can archive them to state.
-  const pendingArchiveRef = React.useRef<WorkerThread[] | null>(null);
-  const prevBusyRef = React.useRef<boolean | undefined>(undefined);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
@@ -601,6 +561,13 @@ export default function App() {
     setProjects(list);
     return list;
   }, []);
+
+  const refreshProjectWorkspace = React.useCallback(async () => {
+    await Promise.all([
+      refreshProjects(),
+      refreshSummaries(),
+    ]);
+  }, [refreshProjects, refreshSummaries]);
 
   const refreshProjectTemplates = React.useCallback(async () => {
     const list = await window.agentDesktop.listProjectTemplates();
@@ -770,14 +737,12 @@ export default function App() {
     title?: string,
     workspace?: string,
     assistantName?: string,
-    projectId?: string | null,
     connectorIds?: string[],
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; projectId?: string | null; connectorIds?: string[] } = {};
+    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[] } = {};
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
-    if (projectId) payload.projectId = projectId;
     if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
@@ -820,13 +785,20 @@ export default function App() {
   }, [activeDetail]);
 
   React.useEffect(() => {
-    appNotificationsRef.current = appNotifications;
-    try {
-      saveAppNotifications(appNotifications, window.localStorage);
-    } catch {
-      // Notification persistence is best-effort.
-    }
-  }, [appNotifications]);
+    let receivedChange = false;
+    const unsubscribe = window.agentDesktop.notifications.onChanged((payload) => {
+      receivedChange = true;
+      setAppNotifications(payload.notifications);
+    });
+    const legacy = loadAppNotifications(window.localStorage);
+    void (legacy.length > 0
+      ? window.agentDesktop.notifications.importLegacy(legacy)
+      : window.agentDesktop.notifications.list()
+    ).then((notifications) => {
+      if (!receivedChange) setAppNotifications(notifications);
+    }).catch(() => {});
+    return unsubscribe;
+  }, []);
 
   React.useEffect(() => {
     const unsubscribe = window.agentDesktop.audit.onChanged((event) => {
@@ -963,127 +935,6 @@ export default function App() {
       persistAppShortcuts(nextShortcuts);
     }
   }, [apps, appShortcutIds, appsLoaded, persistAppShortcuts]);
-
-  // Poll for coordinator mode in-process teammate tasks
-  React.useEffect(() => {
-    if (!activeSessionId) {
-      setCoordinatorTasks([]);
-      return;
-    }
-    let mounted = true;
-    const loadCoordinatorTasks = async () => {
-      try {
-        const result = await window.agentDesktop.listCoordinatorTasks(activeSessionId);
-        if (mounted && result?.tasks) {
-          setCoordinatorTasks(result.tasks);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    loadCoordinatorTasks();
-    const timer = window.setInterval(loadCoordinatorTasks, 2000);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
-  }, [activeSessionId]);
-
-  React.useEffect(() => {
-    setStickyWorkerTaskStatuses({});
-    setWorkerSubagentResults({});
-    setArchivedWorkerRounds([]);
-    archivedWorkerRoundsRef.current = [];
-    refreshedTerminalWorkerIdsRef.current = new Set();
-    prevCoordinatorTaskIdsRef.current = new Set();
-    frozenWorkerThreadsRef.current = [];
-    pendingArchiveRef.current = null;
-    prevBusyRef.current = undefined;
-  }, [activeSessionId]);
-
-  // Track busy transitions:
-  // false → true: new coordinator request started — reset auxiliary tracking state.
-  //               frozenWorkerThreadsRef is intentionally NOT cleared here so
-  //               multi-turn coordinator follow-ups keep workers visible.
-  //               The resolvedWorkerThreads memo archives old workers when new task IDs appear.
-  // true  → false: coordinator just finished — persist worker states to SQLite so
-  //               the worker panel survives session switches and app restarts.
-  React.useEffect(() => {
-    const busy = Boolean(activeDetail?.busy);
-    if (prevBusyRef.current === false && busy === true) {
-      setStickyWorkerTaskStatuses({});
-      setWorkerSubagentResults({});
-      refreshedTerminalWorkerIdsRef.current = new Set();
-      prevCoordinatorTaskIdsRef.current = new Set();
-    } else if (prevBusyRef.current === true && busy === false) {
-      const threads = frozenWorkerThreadsRef.current;
-      const archived = archivedWorkerRoundsRef.current;
-      const sid = activeSessionIdRef.current;
-      if ((threads.length > 0 || archived.length > 0) && sid) {
-        // Persist worker metadata (messages excluded — they live in .jsonl files).
-        const data = {
-          current: threads.map((t) => ({ ...t, messages: [] as TranscriptRenderMessage[] })),
-          archived: archived.map((round) =>
-            round.map((t) => ({ ...t, messages: [] as TranscriptRenderMessage[] })),
-          ),
-        };
-        void window.agentDesktop.setWorkerSummaries({
-          sessionId: sid,
-          workerSummariesJson: JSON.stringify(data),
-        });
-      }
-    }
-    prevBusyRef.current = busy;
-  }, [activeDetail?.busy]);
-
-  // After each render, flush any pending archive produced by the resolvedWorkerThreads memo.
-  // The memo can't call setState, so it signals via pendingArchiveRef.
-  React.useEffect(() => {
-    if (!pendingArchiveRef.current) return;
-    const toArchive = pendingArchiveRef.current;
-    pendingArchiveRef.current = null;
-    setArchivedWorkerRounds((prev) => {
-      const next = [...prev, toArchive];
-      archivedWorkerRoundsRef.current = next;
-      return next;
-    });
-  });
-
-  // Restore worker panel from SQLite when opening a session that had previous coordinator runs.
-  // The saved JSON is the lightweight worker summary; full event streams are re-fetched
-  // from .jsonl files via getWorkerResults.
-  React.useEffect(() => {
-    const json = activeDetail?.workerSummariesJson;
-    if (!activeSessionId || !json) return;
-    if (frozenWorkerThreadsRef.current.length > 0) return; // live data already present
-    try {
-      const saved = JSON.parse(json);
-      // Support both the old format (WorkerThread[]) and the new format ({current, archived}).
-      let current: WorkerThread[] = [];
-      let archived: WorkerThread[][] = [];
-      if (Array.isArray(saved)) {
-        current = saved;
-      } else if (saved && typeof saved === 'object') {
-        if (Array.isArray(saved.current)) current = saved.current;
-        if (Array.isArray(saved.archived)) {
-          archived = saved.archived.every((entry) => Array.isArray(entry))
-            ? (saved.archived as WorkerThread[][]).filter((round) => round.length > 0)
-            : (saved.archived.length > 0 ? [saved.archived as WorkerThread[]] : []);
-        }
-      }
-      if (current.length === 0 && archived.length === 0) return;
-      frozenWorkerThreadsRef.current = current;
-      setArchivedWorkerRounds(archived);
-      archivedWorkerRoundsRef.current = archived;
-      // Re-fetch event streams to populate message history — also triggers a re-render
-      // so resolvedWorkerThreads picks up the restored frozenWorkerThreadsRef.
-      void window.agentDesktop.getWorkerResults({ sessionId: activeSessionId })
-        .then((res) => {
-          if (activeSessionIdRef.current !== activeSessionId) return;
-          setWorkerSubagentResults(res?.results ?? {});
-        });
-    } catch {}
-  }, [activeSessionId, activeDetail?.workerSummariesJson]);
 
   React.useEffect(() => {
     if (!activeDetail?.workspace || !activeSessionId) {
@@ -1258,9 +1109,20 @@ export default function App() {
         ...prev.filter((entry) => entry.requestId !== payload.requestId),
         payload,
       ]);
-      if (payload.sessionId !== activeSessionIdRef.current) {
+      if (payload.projectId) {
+        showPermissionNotice('项目有新的待决策，请到项目“待决策”中处理', 'info', 0);
+      } else if (payload.sessionId !== activeSessionIdRef.current) {
         showPermissionNotice('另一个会话正在等待你回答问题', 'info', 0);
       }
+    });
+
+    const offQuestionResolved = window.agentDesktop.onQuestionResolved((payload) => {
+      if (!payload?.requestId) return;
+      updateQuestionRequests((prev) => {
+        const next = prev.filter((entry) => entry.requestId !== payload.requestId);
+        if (!next.some((entry) => entry.projectId)) dismissPermissionNotice();
+        return next;
+      });
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
@@ -1353,6 +1215,7 @@ export default function App() {
       offBackgroundTasks();
       offPermission();
       offQuestionRequest();
+      offQuestionResolved();
       offMeta();
       offSessionHistory();
       offRemoved();
@@ -1363,11 +1226,17 @@ export default function App() {
       offAssistantsChanged();
       window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
     };
-  }, [applyDesktopSettings, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+  }, [applyDesktopSettings, dismissPermissionNotice, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
     [summaries, pinnedIds, sessionAgentModes]
+  );
+  const activeChildSessions = React.useMemo(
+    () => activeSessionId
+      ? summaries.filter((session) => session.parentSessionId === activeSessionId)
+      : [],
+    [activeSessionId, summaries],
   );
   const sidebarAppShortcuts = React.useMemo(
     () => apps.filter((app) => appShortcutIds.has(getStoredAppKey(app))),
@@ -1378,190 +1247,10 @@ export default function App() {
     [sidebarAppShortcuts]
   );
 
-  // Worker threads are built directly from coordinatorTasks (authoritative for
-  // list + agentId + status) and workerSubagentResults (authoritative for content).
-  // The frozen list accumulates all workers ever seen so completed ones remain
-  // visible even after the backend removes them from coordinatorTasks.
-  const resolvedWorkerThreads = React.useMemo(() => {
-    const live = coordinatorTasks.map((task, index) => {
-      const stickyStatus = stickyWorkerTaskStatuses[task.id];
-      const taskStatus = mapCoordinatorTaskStatus(task.status);
-      const resultKey = task.agentId || task.id;
-      const subagentResult = workerSubagentResults[resultKey];
-      const subagentStatus = subagentResult?.status === 'completed' || subagentResult?.status === 'failed'
-        ? subagentResult.status
-        : undefined;
-      // isIdle is the SDK-native signal: true means the worker has finished.
-      const status: WorkerThreadStatus = stickyStatus
-        || subagentStatus
-        || (task.isIdle ? (taskStatus === 'failed' ? 'failed' : 'completed') : taskStatus)
-        || 'queued';
-      // agentId (e.g. "alice@team1") is the key used in .jsonl filenames;
-      // task.id is the internal taskId which differs from the file-based agentId.
-      const resultText = subagentResult?.resultText || undefined;
-      const summary = resultText || undefined;
-      const messages = subagentResult?.events?.length
-        ? buildWorkerRenderMessagesFromSubagentEvents(subagentResult.events)
-        : [];
-      return {
-        id: task.id,
-        title: task.description || task.name || `Worker ${index + 1}`,
-        prompt: '',
-        status,
-        agentId: task.agentId || task.id,
-        description: task.description,
-        summary,
-        resultText,
-        messages,
-      };
-    });
-
-    const frozen = frozenWorkerThreadsRef.current;
-    if (live.length === 0 && frozen.length === 0) return [];
-
-    // Detect a genuinely new coordinator run vs incremental task spawning within
-    // the same run.
-    //
-    // Workers are spawned one by one: the first poll may show [A], the next [A,B],
-    // then [A,B,C]. Each arrival has hasNewTasks=true, but the OLD task IDs are
-    // still present in live — so this is the same run, not a new one.
-    //
-    // A truly new run is: new task IDs appeared AND ALL previous frozen IDs have
-    // disappeared from live (the SDK cleared the old run's task list).
-    const frozenIds = new Set(frozen.map((t) => t.id));
-    const liveIds  = new Set(live.map((t) => t.id));
-    const hasNewTasks = live.some((t) => !frozenIds.has(t.id));
-    const allOldGone  = frozen.every((t) => !liveIds.has(t.id));
-    if (hasNewTasks && frozen.length > 0 && allOldGone) {
-      // New run started — archive the previous run's workers, then reset frozen.
-      // Can't call setState here (inside memo), so signal via ref; the effect below
-      // will pick this up and update archivedWorkerRounds state.
-      pendingArchiveRef.current = frozen;
-      frozenWorkerThreadsRef.current = live;
-      return live;
-    }
-
-    // Merge: preserve original ordering from frozen, update with live data where
-    // available, and append any brand-new workers not yet in frozen.
-    const liveById = new Map(live.map((t) => [t.id, t]));
-    const merged = [
-      ...frozen.map((t) => {
-        const liveVersion = liveById.get(t.id);
-        if (liveVersion) return liveVersion;
-        // Task no longer in live (completed and removed by backend). Re-apply the
-        // latest sticky status and worker results so the panel shows correct state.
-        const stickyStatus = stickyWorkerTaskStatuses[t.id];
-        const resultKey = t.agentId || t.id;
-        const subagentResult = workerSubagentResults[resultKey];
-        const resultText = subagentResult?.resultText || t.resultText;
-        const messages = subagentResult?.events?.length
-          ? buildWorkerRenderMessagesFromSubagentEvents(subagentResult.events)
-          : t.messages;
-        return {
-          ...t,
-          status: (stickyStatus || t.status) as WorkerThreadStatus,
-          resultText,
-          summary: resultText || t.summary,
-          messages,
-        };
-      }),
-      ...live.filter((t) => !frozenIds.has(t.id)),
-    ];
-
-    frozenWorkerThreadsRef.current = merged;
-    return merged;
-  }, [coordinatorTasks, stickyWorkerTaskStatuses, workerSubagentResults]);
-
-  React.useEffect(() => {
-    if (!activeSessionId) return;
-    if (coordinatorTasks.length === 0 && activeDetail?.busy) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const workerResultsRes = await window.agentDesktop.getWorkerResults({ sessionId: activeSessionId });
-        if (cancelled || activeSessionIdRef.current !== activeSessionId) return;
-        if (workerResultsRes?.results) {
-          setWorkerSubagentResults((prev) => ({ ...prev, ...workerResultsRes.results }));
-        }
-      } catch {
-        // Worker result files are best-effort UI state; polling will retry.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionId, activeDetail?.busy, coordinatorTasks.length]);
-
-  React.useEffect(() => {
-    if (!activeSessionId) return;
-
-    const currentTaskIds = new Set(coordinatorTasks.map((t) => t.id));
-
-    // Two complementary signals for task completion:
-    // 1. task.isIdle === true  — SDK-native: task finished but still in the list
-    // 2. task disappeared from list — SDK sometimes removes tasks without status update
-    const prevIds = prevCoordinatorTaskIdsRef.current;
-    const disappearedIds = [...prevIds].filter(
-      (id) => !currentTaskIds.has(id) && !refreshedTerminalWorkerIdsRef.current.has(id),
-    );
-    prevCoordinatorTaskIdsRef.current = currentTaskIds;
-
-    const nextSticky: Record<string, 'completed' | 'failed'> = {};
-    for (const task of coordinatorTasks) {
-      const taskStatus = mapCoordinatorTaskStatus(task.status);
-      // isIdle is the SDK-native signal that a worker finished (primary source)
-      if (task.isIdle || taskStatus === 'completed' || taskStatus === 'failed') {
-        nextSticky[task.id] = taskStatus === 'failed' ? 'failed' : 'completed';
-      }
-    }
-    // Disappeared tasks: treat as completed (SDK sometimes removes without status)
-    for (const id of disappearedIds) {
-      nextSticky[id] = 'completed';
-    }
-
-    const newTerminalTaskIds = Object.keys(nextSticky).filter(
-      (taskId) => !refreshedTerminalWorkerIdsRef.current.has(taskId),
-    );
-
-    if (Object.keys(nextSticky).length > 0) {
-      setStickyWorkerTaskStatuses((prev) => {
-        let changed = false;
-        const merged = { ...prev };
-        for (const [taskId, status] of Object.entries(nextSticky)) {
-          if (merged[taskId] !== status) {
-            merged[taskId] = status;
-            changed = true;
-          }
-        }
-        return changed ? merged : prev;
-      });
-    }
-
-    if (newTerminalTaskIds.length === 0) return;
-
-    newTerminalTaskIds.forEach((taskId) => {
-      refreshedTerminalWorkerIdsRef.current.add(taskId);
-    });
-
-    void (async () => {
-      try {
-        const workerResultsRes = await window.agentDesktop.getWorkerResults({ sessionId: activeSessionId });
-        if (activeSessionIdRef.current !== activeSessionId) return;
-        if (workerResultsRes?.results) {
-          setWorkerSubagentResults((prev) => ({ ...prev, ...workerResultsRes.results }));
-        }
-      } catch {
-        // ignore refresh failures; polling will retry on the next change
-      }
-    })();
-  }, [activeSessionId, coordinatorTasks]);
-
   // chatMessages is built exclusively from session history.
   // The coordinator agent produces its own formatted summary in the history;
   // the UI must not generate its own summary on top of it.
-  // Worker status is shown in WorkerThreadPanel, not injected into chatMessages.
+  // Subagent status is rendered from persisted child session summaries.
   const chatMessages = React.useMemo(() => {
     const messages = buildMainChatRenderMessagesFromHistory(activeDetail?.history || []);
     // Orphaned tool calls: an aborted turn may end without a result event, so
@@ -1587,34 +1276,21 @@ export default function App() {
   );
 
   const sidebarSessions = React.useMemo(
-    () => baseSidebarSessions.map((session) => (
-      questionRequests.some((request) => request.sessionId === session.id)
-        ? {
-            ...session,
-            preview: '等待你回答问题',
-          }
-        : session
-    )),
+    () => baseSidebarSessions.map((session) => {
+      const pendingCount = questionRequests.filter((request) => request.sessionId === session.id).length;
+      return pendingCount > 0
+        ? { ...session, preview: `待决策 ${pendingCount}` }
+        : session;
+    }),
     [baseSidebarSessions, questionRequests],
   );
 
   const activeQuestionRequest = React.useMemo(() => {
-    return questionRequests.find((request) => request.sessionId === activeSessionId)
-      || questionRequests[0]
+    const modalRequests = questionRequests.filter((request) => !request.projectId);
+    return modalRequests.find((request) => request.sessionId === activeSessionId)
+      || modalRequests[0]
       || null;
   }, [activeSessionId, questionRequests]);
-
-  React.useEffect(() => {
-    if (resolvedWorkerThreads.length === 0) {
-      setActiveWorkerThreadId(null);
-      return;
-    }
-    setActiveWorkerThreadId((current) => (
-      current && resolvedWorkerThreads.some((thread) => thread.id === current)
-        ? current
-        : null
-    ));
-  }, [resolvedWorkerThreads]);
 
   const workspaceTree = React.useMemo(() => {
     if (!activeDetail?.workspace) return [];
@@ -1831,29 +1507,35 @@ export default function App() {
     setActiveView('chat');
   }, [openSession]);
 
-  const handleCreateProjectSession = React.useCallback(async (project: Project) => {
-    const sessionId = await createAndOpenSession(project.name, undefined, selectedAssistant?.name, project.id);
-    if (!sessionId) return;
-    await refreshSummaries();
-    await refreshProjects();
-    setActiveView('chat');
-  }, [createAndOpenSession, refreshProjects, refreshSummaries, selectedAssistant?.name]);
+  const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
+    if (activeDetailRef.current?.projectId) {
+      setComposerIntent('coordinator');
+      if (intent !== 'coordinator') {
+        showPermissionNotice('项目会话固定使用项目协调模式', 'info', 3000);
+      }
+      return;
+    }
+    setComposerIntent(intent);
+  }, [showPermissionNotice]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
-    const result = await window.agentDesktop.deleteSession({ sessionId }) as
-      { ok?: boolean; removedCronTasks?: number } | undefined;
-    if (result?.removedCronTasks) {
-      const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
-      showPermissionNotice(notice, 'info', 5000);
+    try {
+      const result = await window.agentDesktop.deleteSession({ sessionId }) as
+        { ok?: boolean; removedCronTasks?: number } | undefined;
+      if (result?.removedCronTasks) {
+        const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
+        showPermissionNotice(notice, 'info', 5000);
+      }
+      if (activeSessionId === sessionId) {
+        navigateToHome({ forceDiscardDirty: true });
+      }
+      const nextModes = new Map(sessionAgentModes);
+      nextModes.delete(sessionId);
+      persistSessionAgentModes(nextModes);
+      await refreshSummaries();
+    } catch (err) {
+      showPermissionNotice(err instanceof Error ? err.message : String(err), 'error', 6000);
     }
-    if (activeSessionId === sessionId) {
-      navigateToHome({ forceDiscardDirty: true });
-    }
-    // Remove from sessionAgentModes map
-    const nextModes = new Map(sessionAgentModes);
-    nextModes.delete(sessionId);
-    persistSessionAgentModes(nextModes);
-    await refreshSummaries();
   }, [activeSessionId, navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes, showPermissionNotice]);
 
   const handleRenameSession = React.useCallback(async (sessionId: string, newTitle: string) => {
@@ -1894,15 +1576,6 @@ export default function App() {
     files?: Array<{ name: string; path: string }>,
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
   ) => {
-    // Reset auxiliary tracking state before sending. frozenWorkerThreadsRef is
-    // intentionally NOT cleared here so multi-turn coordinators keep their
-    // worker panel visible during follow-up turns. The resolvedWorkerThreads
-    // memo resets frozen automatically when genuinely new task IDs appear.
-    refreshedTerminalWorkerIdsRef.current = new Set();
-    prevCoordinatorTaskIdsRef.current = new Set();
-    setStickyWorkerTaskStatuses({});
-    setWorkerSubagentResults({});
-
     await window.agentDesktop.send({
       sessionId,
       prompt,
@@ -1922,7 +1595,6 @@ export default function App() {
       `设置 ${connector.name} 连接器`,
       undefined,
       undefined,
-      undefined,
       [connector.id],
     );
     setActiveView('chat');
@@ -1934,7 +1606,6 @@ export default function App() {
     try {
       const sessionId = await createAndOpenSession(
         `授权 ${connector.name} 连接器`,
-        undefined,
         undefined,
         undefined,
         [connector.id],
@@ -2025,7 +1696,6 @@ export default function App() {
           undefined,
           workspace,
           selectedAssistant?.name,
-          undefined,
           draftConnectorIds,
         ).finally(() => {
           creatingSessionRef.current = null;
@@ -2443,19 +2113,18 @@ export default function App() {
           <NotificationCenter
             notifications={appNotifications}
             onMarkRead={(id) => {
-              setAppNotifications((current) => current.map((item) =>
-                item.id === id && !item.read ? { ...item, read: true } : item
-              ));
+              void window.agentDesktop.notifications.markRead(id);
             }}
             onMarkAllRead={() => {
-              setAppNotifications((current) => current.map((item) =>
-                item.read ? item : { ...item, read: true }
-              ));
+              void window.agentDesktop.notifications.markAllRead();
             }}
             onRemove={(id) => {
-              setAppNotifications((current) => current.filter((item) => item.id !== id));
+              void window.agentDesktop.notifications.remove(id);
             }}
-            onClear={() => setAppNotifications([])}
+            onClear={() => { void window.agentDesktop.notifications.clear(); }}
+            onResolveDecision={async (decisionId, allowed, choice) => {
+              await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
+            }}
           />
         </div>
       </div>
@@ -2530,7 +2199,13 @@ export default function App() {
                 value={input}
                 selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy)}
-                readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
+                readOnlyReason={activeDetail?.resumeReadOnlyReason || (
+                  activeDetail?.projectId && ['queued', 'in_progress', 'waiting_for_user'].includes(activeDetail.projectSessionStatus || '')
+                    ? activeDetail.projectSessionStatus === 'waiting_for_user'
+                      ? '项目任务正在等待判断，请在项目“待决策”中处理。'
+                      : '项目任务正在由 Coordinator 和子 Agent 执行。'
+                    : null
+                )}
                 hasActiveSession={Boolean(activeSessionId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
                 sessionMessageCount={visibleChatMessageCount}
@@ -2542,25 +2217,23 @@ export default function App() {
                 leftCollapsed={layout.leftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
-                workerThreads={resolvedWorkerThreads}
-                archivedWorkerRounds={archivedWorkerRounds}
-                activeWorkerThreadId={activeWorkerThreadId}
+                childSessions={activeChildSessions}
                 onChange={setInput}
-                onComposerIntentChange={setComposerIntent}
+                onComposerIntentChange={handleComposerIntentChange}
                 onToggleLeftSidebar={() => toggleSidebar('left')}
                 onToggleRightSidebar={() => toggleSidebar('right')}
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
                 onStop={handleStop}
-                onToggleWorkerThread={setActiveWorkerThreadId}
+                onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
                 installedAssistants={installedAssistants}
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
-                installedConnectors={installedConnectors}
+                installedConnectors={activeDetail?.projectId ? [] : installedConnectors}
                 selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={handleToggleConnector}
+                onToggleConnector={activeDetail?.projectId ? undefined : handleToggleConnector}
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
@@ -2588,18 +2261,16 @@ export default function App() {
                 leftCollapsed={layout.leftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
-                workerThreads={[]}
-                archivedWorkerRounds={[]}
-                activeWorkerThreadId={null}
+                childSessions={[]}
                 onChange={setInput}
-                onComposerIntentChange={setComposerIntent}
+                onComposerIntentChange={handleComposerIntentChange}
                 onToggleLeftSidebar={() => toggleSidebar('left')}
                 onToggleRightSidebar={() => toggleSidebar('right')}
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
                 onStop={handleStop}
-                onToggleWorkerThread={setActiveWorkerThreadId}
+                onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
                 installedAssistants={installedAssistants}
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
@@ -2634,16 +2305,11 @@ export default function App() {
             <ProjectWorkspace
               projects={projects}
               templates={projectTemplates}
-              sessions={summaries}
               activeProjectId={activeProjectId}
               refreshSignal={projectRefreshSignal}
               onActiveProjectChange={setActiveProjectId}
-              onProjectsChange={async () => {
-                await refreshProjects();
-                await refreshSummaries();
-              }}
+              onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
-              onCreateProjectSession={handleCreateProjectSession}
             />
           ) : activeView === 'embedded-app' && embeddedAppName ? (
             <EmbeddedAppView

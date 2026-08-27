@@ -1,4 +1,7 @@
 import { feature } from 'bun:bundle';
+import { cp, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as React from 'react';
 import { buildTool, type ToolDef, toolMatchesName } from 'src/Tool.js';
 import type { Message as MessageType, NormalizedUserMessage } from 'src/types/message.js';
@@ -27,7 +30,8 @@ import { permissionModeSchema } from '../../utils/permissions/PermissionMode.js'
 import type { PermissionResult } from '../../utils/permissions/PermissionResult.js';
 import { filterDeniedAgents, getDenyRuleForAgent } from '../../utils/permissions/permissions.js';
 import { enqueueSdkEvent } from '../../utils/sdkEventQueue.js';
-import { writeAgentMetadata } from '../../utils/sessionStorage.js';
+import { updateAgentMetadata } from '../../utils/sessionStorage.js';
+import { getTaskScopeContext } from '../../utils/sessionIdContext.js';
 import { sleep } from '../../utils/sleep.js';
 import { buildEffectiveSystemPrompt } from '../../utils/systemPrompt.js';
 import { asSystemPrompt } from '../../utils/systemPromptType.js';
@@ -197,9 +201,7 @@ export const AgentTool = buildTool({
     const agentsWithMcpRequirementsMet = filterAgentsByMcpRequirements(agents, mcpServersWithTools);
     const filteredAgents = filterDeniedAgents(agentsWithMcpRequirementsMet, toolPermissionContext, AGENT_TOOL_NAME);
 
-    // Use inline env check instead of coordinatorModule to avoid circular
-    // dependency issues during test module loading.
-    const isCoordinator = feature('COORDINATOR_MODE') ? isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE) : false;
+    const isCoordinator = feature('COORDINATOR_MODE') ? isCoordinatorMode() : false;
     return await getPrompt(filteredAgents, isCoordinator, allowedAgentTypes);
   },
   name: AGENT_TOOL_NAME,
@@ -471,9 +473,7 @@ export const AgentTool = buildTool({
       isAsync: (run_in_background === true || selectedAgent.background === true) && !isBackgroundTasksDisabled
     };
 
-    // Use inline env check instead of coordinatorModule to avoid circular
-    // dependency issues during test module loading.
-    const isCoordinator = feature('COORDINATOR_MODE') ? isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE) : false;
+    const isCoordinator = feature('COORDINATOR_MODE') ? isCoordinatorMode() : false;
 
     // Fork subagent experiment: force ALL spawns async for a unified
     // <task-notification> interaction model (not just fork spawns — all of them).
@@ -507,6 +507,49 @@ export const AgentTool = buildTool({
       worktreeInfo = await createAgentWorktree(slug);
     }
 
+    const taskScope = getTaskScopeContext();
+    const parentUiSessionId = taskScope && 'sessionId' in taskScope
+      ? taskScope.sessionId
+      : null;
+    const isolatedWorkspace = isCoordinator && parentUiSessionId
+      ? join(
+          process.env.MOSS_HOME || join(homedir(), '.moss'),
+          'sessions',
+          `subagent-${earlyAgentId}`,
+          'workspace',
+        )
+      : undefined;
+    if (isolatedWorkspace) {
+      await mkdir(isolatedWorkspace, { recursive: true });
+      await Promise.all(
+        ['inputs', 'working', 'outputs'].map(directory =>
+          mkdir(join(isolatedWorkspace, directory), { recursive: true }),
+        ),
+      );
+      const mossHome = process.env.MOSS_HOME || join(homedir(), '.moss');
+      const parentAssetSnapshot = join(
+        mossHome,
+        'sessions',
+        parentUiSessionId!,
+        'workspace',
+        '.moss',
+        'project-assets',
+      );
+      const childAssetSnapshot = join(isolatedWorkspace, '.moss', 'project-assets');
+      await cp(parentAssetSnapshot, childAssetSnapshot, {
+        recursive: true,
+        force: true,
+      }).catch(() => {});
+      promptMessages.push(createUserMessage({
+        content: [
+          `Your isolated workspace is: ${isolatedWorkspace}`,
+          `A session-local project asset snapshot is available at: ${childAssetSnapshot}`,
+          'If the task mentions project asset paths from the parent session, use the matching files in this local snapshot instead.',
+          'Keep all local files inside your isolated workspace: use working/ for intermediate files and outputs/ for final publishable files.',
+        ].join('\n'),
+      }));
+    }
+
     // Fork + worktree: inject a notice telling the child to translate paths
     // and re-read potentially stale files. Appended after the fork directive
     // so it appears as the most recent guidance the child sees.
@@ -536,7 +579,7 @@ export const AgentTool = buildTool({
       // returns the override path.
       override: isForkPath ? {
         systemPrompt: forkParentSystemPrompt
-      } : enhancedSystemPrompt && !worktreeInfo ? {
+      } : enhancedSystemPrompt && !worktreeInfo && !isolatedWorkspace ? {
         systemPrompt: asSystemPrompt(enhancedSystemPrompt)
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
@@ -547,10 +590,11 @@ export const AgentTool = buildTool({
         useExactTools: true
       }),
       worktreePath: worktreeInfo?.worktreePath,
+      workspacePath: isolatedWorkspace,
       description
     };
 
-    const cwdOverridePath = worktreeInfo?.worktreePath;
+    const cwdOverridePath = worktreeInfo?.worktreePath ?? isolatedWorkspace;
     const wrapWithCwd = <T,>(fn: () => T): T => cwdOverridePath ? runWithCwdOverride(cwdOverridePath, fn) : fn();
 
     // Helper to clean up worktree after agent completes
@@ -583,9 +627,8 @@ export const AgentTool = buildTool({
           // Clear worktreePath from metadata so resume doesn't try to use
           // a deleted directory. Fire-and-forget to match runAgent's
           // writeAgentMetadata handling.
-          void writeAgentMetadata(asAgentId(earlyAgentId), {
-            agentType: selectedAgent.agentType,
-            description
+          void updateAgentMetadata(asAgentId(earlyAgentId), {
+            worktreePath: undefined
           }).catch(_err => logForDebugging(`Failed to clear worktree metadata: ${_err}`));
           return {};
         }
@@ -1109,20 +1152,11 @@ export const AgentTool = buildTool({
           throw new AbortError();
         }
 
-        // If an error occurred during iteration, try to return a result with
-        // whatever messages we have. If we have no assistant messages,
-        // re-throw the error so it's properly handled by the tool framework.
+        // A failed child must remain failed even when it produced partial text.
+        // Returning partial output as a completed Agent result hides API and
+        // execution failures from the coordinator and desktop status sync.
         if (syncAgentError) {
-          // Check if we have any assistant messages to return
-          const hasAssistantMessages = agentMessages.some(msg => msg.type === 'assistant');
-          if (!hasAssistantMessages) {
-            // No messages collected, re-throw the error
-            throw syncAgentError;
-          }
-
-          // We have some messages, try to finalize and return them
-          // This allows the parent agent to see partial progress even after an error
-          logForDebugging(`Sync agent recovering from error with ${agentMessages.length} messages`);
+          throw syncAgentError;
         }
         const agentResult = finalizeAgentTool(agentMessages, syncAgentId, metadata);
         return {
