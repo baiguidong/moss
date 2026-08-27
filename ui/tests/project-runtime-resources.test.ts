@@ -6,6 +6,7 @@ import {
   mergeProjectConnectorIds,
   normalizeSelectedSkills,
   resolveProjectSessionResourceScope,
+  scopeProjectResourceManifestForWorker,
 } from '../src/shared/project-runtime-resources.mjs';
 
 describe('project runtime resources', () => {
@@ -58,7 +59,31 @@ describe('project runtime resources', () => {
       { name: 'research', displayName: '调研' },
     ]);
     expect(instruction).toContain('project coordinator cannot invoke Skill directly');
-    expect(instruction).toContain('require that worker to invoke');
+    expect(instruction).toContain('instructions are preloaded');
     expect(instruction).toContain('- research (调研)');
+  });
+
+  it('scopes a worker manifest to its explicit resource assignment', () => {
+    const scoped = scopeProjectResourceManifestForWorker({
+      projectId: 'project-1',
+      connectors: [{ id: 'mail' }, { id: 'meeting' }],
+      skills: [{ id: 'review' }, { id: 'slides' }],
+      unavailableSkillIds: ['review', 'slides'],
+      experts: [{ id: 'reviewer' }, { id: 'designer' }],
+      unavailableExpertIds: ['reviewer', 'designer'],
+      assets: [{ id: 'asset-1' }],
+      memory: { version: 2 },
+    }, {
+      connectorIds: ['mail'],
+      skillIds: ['review'],
+      expertId: 'reviewer',
+    });
+    expect(scoped?.connectors).toEqual([{ id: 'mail' }]);
+    expect(scoped?.skills).toEqual([{ id: 'review' }]);
+    expect(scoped?.unavailableSkillIds).toEqual(['review']);
+    expect(scoped?.experts).toEqual([{ id: 'reviewer' }]);
+    expect(scoped?.unavailableExpertIds).toEqual(['reviewer']);
+    expect(scoped?.assets).toEqual([{ id: 'asset-1' }]);
+    expect(scoped?.memory).toEqual({ version: 2 });
   });
 });

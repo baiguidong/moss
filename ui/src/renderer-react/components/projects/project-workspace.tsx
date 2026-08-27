@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Settings,
   Trash2,
   Upload,
   X,
@@ -330,7 +331,7 @@ function ProjectList({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground">项目</h1>
-            <p className="mt-1 text-sm text-muted-foreground">管理长期上下文、目标、任务和资产。</p>
+            <p className="mt-1 text-sm text-muted-foreground">管理项目沉淀、任务和资产。</p>
           </div>
           <Button onClick={onNew}>
             <Plus className="h-4 w-4" />
@@ -416,9 +417,11 @@ function ProjectList({
 
 function ProjectConfigPanel({
   project,
+  open,
   onSaved,
 }: {
   project: Project;
+  open: boolean;
   onSaved: (project: Project) => void;
 }) {
   const [draft, setDraft] = React.useState<ProjectFormState>({
@@ -470,6 +473,8 @@ function ProjectConfigPanel({
       setSavingStatus('');
     }
   };
+
+  if (!open) return null;
 
   return (
     <aside className="hidden h-full min-h-0 w-[312px] shrink-0 border-l border-border bg-sidebar/35 lg:flex lg:flex-col">
@@ -926,6 +931,7 @@ function ProjectDetail({
   const [decisions, setDecisions] = React.useState<ProjectDecision[]>([]);
   const [memory, setMemory] = React.useState<ProjectMemory | null>(null);
   const [loadError, setLoadError] = React.useState('');
+  const [configOpen, setConfigOpen] = React.useState(false);
   const reloadRequestIdRef = React.useRef(0);
 
   const reload = React.useCallback(async () => {
@@ -965,6 +971,7 @@ function ProjectDetail({
     setDecisions([]);
     setMemory(null);
     setLoadError('');
+    setConfigOpen(false);
   }, [project.id]);
 
   React.useEffect(() => {
@@ -1000,6 +1007,17 @@ function ProjectDetail({
                 <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
               </div>
             </div>
+            <Button
+              variant={configOpen ? 'secondary' : 'ghost'}
+              size="icon-sm"
+              className="hidden lg:inline-flex"
+              onClick={() => setConfigOpen((current) => !current)}
+              title={configOpen ? '收起项目配置' : '展开项目配置'}
+              aria-label={configOpen ? '收起项目配置' : '展开项目配置'}
+              aria-expanded={configOpen}
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
           </div>
           <div className="mt-4 flex flex-wrap gap-1.5 border-b border-border/0">
             {TABS.map((tab) => (
@@ -1035,7 +1053,7 @@ function ProjectDetail({
               <div className="grid gap-6">
                 <section>
                   <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
-                    <div className="text-sm font-medium text-foreground">项目记忆</div>
+                    <div className="text-sm font-medium text-foreground">项目沉淀</div>
                     <div className="text-xs text-muted-foreground">
                       {memory?.finalizedSessionCount
                         ? `${memory.finalizedSessionCount} 次沉淀${memory.updatedAt ? ` · ${formatTime(memory.updatedAt)}` : ''}`
@@ -1050,7 +1068,7 @@ function ProjectDetail({
                         sourceId={`project-memory:${detail.id}:${memory?.version || 0}`}
                       />
                     ) : (
-                      <div className="py-3 text-sm text-muted-foreground">暂无已沉淀的项目记忆</div>
+                      <div className="py-3 text-sm text-muted-foreground">暂无项目沉淀</div>
                     )}
                   </div>
                 </section>
@@ -1115,6 +1133,7 @@ function ProjectDetail({
       <ProjectConfigPanel
         key={detail.id}
         project={detail}
+        open={configOpen}
         onSaved={(saved) => {
           setDetail(saved);
           onProjectSaved(saved);

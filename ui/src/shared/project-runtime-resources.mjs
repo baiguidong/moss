@@ -31,6 +31,31 @@ export function resolveProjectSessionResourceScope(project) {
   };
 }
 
+export function scopeProjectResourceManifestForWorker(manifest, assignment) {
+  if (!manifest || typeof manifest !== 'object') return null;
+  const connectorIds = new Set(normalizeStringList(assignment?.connectorIds));
+  const skillIds = new Set(normalizeStringList(assignment?.skillIds));
+  const expertIds = new Set(normalizeStringList(
+    typeof assignment?.expertId === 'string' ? [assignment.expertId] : [],
+  ));
+  return {
+    ...manifest,
+    connectors: Array.isArray(manifest.connectors)
+      ? manifest.connectors.filter((item) => connectorIds.has(item?.id))
+      : [],
+    skills: Array.isArray(manifest.skills)
+      ? manifest.skills.filter((item) => skillIds.has(item?.id))
+      : [],
+    unavailableSkillIds: normalizeStringList(manifest.unavailableSkillIds)
+      .filter((id) => skillIds.has(id)),
+    experts: Array.isArray(manifest.experts)
+      ? manifest.experts.filter((item) => expertIds.has(item?.id))
+      : [],
+    unavailableExpertIds: normalizeStringList(manifest.unavailableExpertIds)
+      .filter((id) => expertIds.has(id)),
+  };
+}
+
 export function normalizeSelectedSkills(skills) {
   if (!Array.isArray(skills)) return [];
   const seen = new Set();
@@ -70,7 +95,7 @@ export function buildProjectCoordinatorSelectedSkillsInstruction(skills) {
   return [
     '[User-selected project skills]',
     'The user explicitly selected the following skills for this project turn.',
-    'The project coordinator cannot invoke Skill directly. Delegate the work to a worker and require that worker to invoke each listed command with the Skill tool before doing the work.',
+    'The project coordinator cannot invoke Skill directly. Assign each listed skill ID to the relevant worker; assigned skill instructions are preloaded into that worker before it starts.',
     ...selectedSkills.map((skill) => (
       skill.displayName === skill.name
         ? `- ${skill.name}`

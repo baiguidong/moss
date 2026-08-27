@@ -90,6 +90,7 @@ export function formatProjectMemoryForDisplay(value) {
   if (!memory) return '';
   return memory
     .replace(/^#\s+项目记忆\s*\n+/, '')
+    .replace(/^##\s+当前上下文\s*\n+/, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

@@ -15,11 +15,6 @@ import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
 import { mergeAndFilterTools } from './utils/toolPool.js'
-import {
-  filterToolsForMode,
-  isToolAllowedInMode,
-  type EmbeddedToolMode,
-} from './utils/toolMode.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -311,8 +306,6 @@ export interface ClaudeSessionOptions {
   environment?: Record<string, string>
   /** Explicit task-list scope for file-backed task tools. */
   taskScope?: TaskScope
-  /** Restrict the embedded session to a purpose-specific tool subset. */
-  toolMode?: EmbeddedToolMode
 }
 
 type ResolvedClaudeSessionOptions = {
@@ -344,7 +337,6 @@ type ResolvedClaudeSessionOptions = {
   addDirs: string[]
   environment: Record<string, string>
   taskScope: TaskScope
-  toolMode: EmbeddedToolMode
 }
 
 function addDynamicMcpScope(
@@ -573,10 +565,6 @@ export class ClaudeSession {
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
       environment: { ...(opts.environment ?? {}) },
       taskScope,
-      toolMode:
-        opts.toolMode === 'ask-only' || opts.toolMode === 'goal-readonly'
-          ? opts.toolMode
-          : 'all',
     }
   }
 
@@ -698,12 +686,6 @@ export class ClaudeSession {
 
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
-      if (!isToolAllowedInMode(tool, this.#opts.toolMode, input)) {
-        return {
-          behavior: 'deny',
-          message: `Tool ${tool.name} is not available in this session mode.`,
-        }
-      }
       const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input)
       if (
         validationDecision &&
@@ -800,10 +782,7 @@ export class ClaudeSession {
     const computeTools = () => {
       const state = store.getState()
       const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
-      return filterToolsForMode(
-        mergeAndFilterTools([], assembled, state.toolPermissionContext.mode),
-        this.#opts.toolMode,
-      )
+      return mergeAndFilterTools([], assembled, state.toolPermissionContext.mode)
     }
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {

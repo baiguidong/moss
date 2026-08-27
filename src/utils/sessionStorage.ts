@@ -316,6 +316,12 @@ export type AgentMetadata = {
   description?: string
   /** Dedicated workspace used by a coordinator subagent. */
   workspacePath?: string
+  /** Project resources explicitly assigned to this worker. */
+  projectResources?: {
+    connectorIds: string[]
+    skillIds: string[]
+    expertId?: string
+  }
   /** Durable lifecycle state consumed by desktop sub-session synchronization. */
   status?: 'running' | 'completed' | 'failed'
   startedAt?: number

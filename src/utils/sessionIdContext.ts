@@ -11,6 +11,17 @@ export type TaskScope =
       kind: 'project'
       projectId: string
       sessionId?: string | null
+      projectResources?: {
+        connectors: Array<{
+          id: string
+          mcpServerNames?: string[]
+          skillCommands?: string[]
+          directories?: string[]
+          environment?: Record<string, string>
+        }>
+        skills: Array<{ id: string; command: string; directories?: string[] }>
+        experts: Array<{ id: string; instructionsPath?: string | null; directories?: string[] }>
+      }
     }
   | {
       kind: 'team'
@@ -71,14 +82,10 @@ function runWithExistingSessionIdContext<T>(
   return sessionIdStorage.run(context, fn)
 }
 
-export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
-  sessionId: SessionId,
-  projectDir: string | null | undefined,
+async function* runGeneratorWithSessionContext<T, TReturn>(
+  context: SessionIdContext,
   fn: () => AsyncGenerator<T, TReturn, unknown>,
-  taskScope?: TaskScope,
-  environment?: Record<string, string>,
 ): AsyncGenerator<T, TReturn, unknown> {
-  const context: SessionIdContext = { sessionId, projectDir, taskScope, environment }
   const iterator = runWithExistingSessionIdContext(context, fn)
 
   try {
@@ -96,4 +103,35 @@ export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
       await runWithExistingSessionIdContext(context, () => iterator.return!())
     }
   }
+}
+
+export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
+  sessionId: SessionId,
+  projectDir: string | null | undefined,
+  fn: () => AsyncGenerator<T, TReturn, unknown>,
+  taskScope?: TaskScope,
+  environment?: Record<string, string>,
+): AsyncGenerator<T, TReturn, unknown> {
+  const context: SessionIdContext = { sessionId, projectDir, taskScope, environment }
+  yield* runGeneratorWithSessionContext(context, fn)
+}
+
+export async function* runWithSessionContextOverridesGenerator<T, TReturn = void>(
+  overrides: {
+    environment: Record<string, string>
+    taskScope?: TaskScope
+  },
+  fn: () => AsyncGenerator<T, TReturn, unknown>,
+): AsyncGenerator<T, TReturn, unknown> {
+  const parentContext = sessionIdStorage.getStore()
+  if (!parentContext) {
+    yield* fn()
+    return
+  }
+  const context: SessionIdContext = {
+    ...parentContext,
+    environment: { ...overrides.environment },
+    taskScope: overrides.taskScope ?? parentContext.taskScope,
+  }
+  yield* runGeneratorWithSessionContext(context, fn)
 }

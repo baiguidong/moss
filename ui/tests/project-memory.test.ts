@@ -50,9 +50,7 @@ describe('project memory finalization', () => {
 
 ## 会话结论：调研任务
 
-- 使用方案 A`)).toBe(`## 当前上下文
-
-- 已确认范围
+- 使用方案 A`)).toBe(`- 已确认范围
 
 ## 会话结论：调研任务
 

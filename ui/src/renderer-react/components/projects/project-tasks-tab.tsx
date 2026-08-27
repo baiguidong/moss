@@ -10,6 +10,7 @@ import {
   Search,
   Send,
   Square,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,12 +29,11 @@ type ProjectTasksTabProps = {
 
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'all', label: '全部状态' },
-  { value: 'queued', label: '等待开始' },
-  { value: 'in_progress', label: '进行中' },
+  { value: 'working', label: '进行中' },
   { value: 'waiting_for_user', label: '等待判断' },
   { value: 'failed', label: '失败' },
   { value: 'completed', label: '已完成' },
-  { value: 'canceled', label: '已取消' },
+  { value: 'stopped', label: '已停止' },
 ];
 
 function formatTime(timestamp?: number | null) {
@@ -47,14 +47,14 @@ function formatTime(timestamp?: number | null) {
 }
 
 function taskStatusLabel(status: ProjectTask['status']) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label || '等待开始';
+  return STATUS_OPTIONS.find((option) => option.value === status)?.label || '进行中';
 }
 
 function TaskStatusIcon({ status }: { status: ProjectTask['status'] }) {
   if (status === 'completed') return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-  if (status === 'in_progress') return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+  if (status === 'working') return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
   if (status === 'waiting_for_user') return <MessageSquareMore className="h-4 w-4 text-amber-600" />;
-  if (status === 'failed' || status === 'canceled') return <CircleX className="h-4 w-4 text-destructive" />;
+  if (status === 'failed' || status === 'stopped') return <CircleX className="h-4 w-4 text-destructive" />;
   return <Circle className="h-4 w-4 text-muted-foreground" />;
 }
 
@@ -72,6 +72,7 @@ export function ProjectTasksTab({
   const [sort, setSort] = React.useState<'newest' | 'oldest' | 'updated' | 'status'>('newest');
   const [expandedTaskIds, setExpandedTaskIds] = React.useState<Set<string>>(() => new Set());
   const [stoppingTaskId, setStoppingTaskId] = React.useState<string | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = React.useState<string | null>(null);
   const [error, setError] = React.useState('');
   const visibleTasks = React.useMemo(() => filterAndSortProjectTasks(tasks, {
     query,
@@ -130,6 +131,20 @@ export function ProjectTasksTab({
     }
   };
 
+  const deleteTask = async (task: ProjectTask) => {
+    if (!window.confirm(`删除任务记录“${task.subject}”？关联会话和子会话记录将一并删除。`)) return;
+    setDeletingTaskId(task.id);
+    setError('');
+    try {
+      await window.agentDesktop.deleteSession({ sessionId: task.sessionId });
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
+
   return (
     <div className="grid min-h-0 gap-5">
       <section aria-label="创建项目任务">
@@ -150,10 +165,7 @@ export function ProjectTasksTab({
             disabled={submitting}
             className="min-h-[76px] max-h-[160px] resize-none border-0 bg-transparent px-4 pb-2 pt-3 text-sm leading-6 shadow-none focus-visible:ring-0"
           />
-          <div className="flex items-end justify-between gap-3 border-t border-border/60 px-3 py-2.5 pl-4">
-            <p className="min-w-0 text-xs leading-5 text-muted-foreground">
-              Coordinator 会使用项目配置的资源，自行拆分并协调子 Agent，完成后汇总结果和资产。
-            </p>
+          <div className="flex items-end justify-end border-t border-border/60 px-3 py-2.5">
             <Button size="sm" onClick={() => void createTask()} disabled={!prompt.trim() || submitting}>
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {submitting ? '创建中' : '发送'}
@@ -217,7 +229,7 @@ export function ProjectTasksTab({
                     </button>
                     <span className={cn(
                       'text-xs',
-                      task.status === 'failed' || task.status === 'canceled' ? 'text-destructive' :
+                      task.status === 'failed' || task.status === 'stopped' ? 'text-destructive' :
                         task.status === 'waiting_for_user' ? 'text-amber-700' : 'text-muted-foreground',
                     )}>
                       {taskStatusLabel(task.status)}
@@ -226,7 +238,7 @@ export function ProjectTasksTab({
                       {task.attentionCount > 0 ? (
                         <Button variant="outline" size="sm" onClick={onShowDecisions}>处理判断</Button>
                       ) : null}
-                      {['queued', 'in_progress', 'waiting_for_user'].includes(task.status) ? (
+                      {['working', 'waiting_for_user'].includes(task.status) ? (
                         <Button
                           variant="ghost"
                           size="icon-sm"
@@ -248,6 +260,18 @@ export function ProjectTasksTab({
                       >
                         <MessageSquare className="h-4 w-4" />
                         {task.status === 'failed' ? '介入' : null}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => void deleteTask(task)}
+                        disabled={deletingTaskId !== null}
+                        title="删除任务记录"
+                        aria-label={`删除任务记录：${task.subject}`}
+                      >
+                        {deletingTaskId === task.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Trash2 className="h-4 w-4" />}
                       </Button>
                       <Button
                         variant="ghost"

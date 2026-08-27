@@ -1,10 +1,9 @@
 const STATUS_PRIORITY = new Map([
   ['waiting_for_user', 0],
-  ['in_progress', 1],
-  ['queued', 2],
-  ['failed', 3],
-  ['completed', 4],
-  ['canceled', 5],
+  ['working', 1],
+  ['failed', 2],
+  ['completed', 3],
+  ['stopped', 4],
 ]);
 
 function taskTimestamp(task, field) {

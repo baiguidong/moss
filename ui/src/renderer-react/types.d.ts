@@ -60,7 +60,7 @@ export type SessionTask = {
   blockedBy: string[];
 };
 
-export type ProjectTaskStatus = 'queued' | 'in_progress' | 'waiting_for_user' | 'completed' | 'failed' | 'canceled';
+export type ProjectTaskStatus = 'working' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped';
 
 export type ProjectTask = {
   id: string;

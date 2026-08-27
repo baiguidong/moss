@@ -1,7 +1,9 @@
 import { z } from 'zod/v4'
 import { buildTool, getGlobalAppEventBridge, type ToolDef } from '../../Tool.js'
 import type { MossAppEvent, MossAppEventResult, ToolUseContext } from '../../Tool.js'
+import { getTaskScopeContext } from '../../utils/sessionIdContext.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
+import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
 
 const MOSS_TOOL_NAME = 'moss'
 
@@ -135,6 +137,13 @@ Parameter requirements:
     return input.action === 'app_launch' || input.action === 'app_get_versions' || input.action === 'app_preview' || input.action === 'browser_open'
   },
   async call(input: MossActionInput, context: ToolUseContext): Promise<{ data: MossOutput }> {
+    if (input.action === 'connector_cli_setup' || input.action === 'connector_mcp_authenticate') {
+      const scopeError = getProjectConnectorScopeError(getTaskScopeContext(), {
+        connectorId: input.connector_id,
+        serverName: input.server_name,
+      })
+      if (scopeError) return { data: { ok: false, error: scopeError } }
+    }
     const emitAppEvent = context.emitAppEvent ?? getGlobalAppEventBridge()
 
     // Check if emitAppEvent is available

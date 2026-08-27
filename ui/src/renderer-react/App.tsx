@@ -2199,13 +2199,7 @@ export default function App() {
                 value={input}
                 selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy)}
-                readOnlyReason={activeDetail?.resumeReadOnlyReason || (
-                  activeDetail?.projectId && ['queued', 'in_progress', 'waiting_for_user'].includes(activeDetail.projectSessionStatus || '')
-                    ? activeDetail.projectSessionStatus === 'waiting_for_user'
-                      ? '项目任务正在等待判断，请在项目“待决策”中处理。'
-                      : '项目任务正在由 Coordinator 和子 Agent 执行。'
-                    : null
-                )}
+                readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
                 sessionMessageCount={visibleChatMessageCount}

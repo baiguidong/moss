@@ -78,6 +78,7 @@ function buildCommandDialog(input) {
   return {
     title: '运行命令',
     message: '允许 Agent 在这台电脑上运行下面的命令吗？',
+    projectQuestion: '是否允许当前项目中的 Agent 在这台电脑上运行下面的命令？',
     detail: truncateDetail(details.join('\n\n') || 'Agent 请求运行一个本地命令。'),
     buttons: ['允许运行', '取消'],
   };
@@ -94,6 +95,7 @@ function buildFileDialog(toolName, input) {
   return {
     title: `${action}文件`,
     message: `允许 Agent ${action}下面的文件吗？`,
+    projectQuestion: `是否允许当前项目中的 Agent ${action}下面的文件？`,
     detail: filePath ? `文件：\n${filePath}` : `Agent 请求${action}一个文件。`,
     buttons: [`允许${action}`, '取消'],
   };
@@ -110,6 +112,7 @@ function buildWebDialog(toolName, input) {
   return {
     title: action,
     message: `允许 Agent ${action}吗？`,
+    projectQuestion: `是否允许当前项目中的 Agent ${action}？`,
     detail: target
       ? `${isSearch ? '搜索内容' : '网址'}：\n${target}`
       : `Agent 请求${action}。`,
@@ -195,6 +198,7 @@ export function buildToolPermissionDialog(toolName, input, suggestions) {
     return {
       title: '计划确认',
       message: '计划已准备好',
+      projectQuestion: '是否允许当前项目中的 Agent 执行已准备好的计划？',
       detail: '确认后，Agent 将结束规划并进入执行阶段。',
       buttons: ['执行计划', '继续规划'],
     };
@@ -223,6 +227,7 @@ export function buildToolPermissionDialog(toolName, input, suggestions) {
   return withRememberOption({
     title: '确认操作',
     message: '允许 Agent 执行这项操作吗？',
+    projectQuestion: '是否允许当前项目中的 Agent 执行这项操作？',
     detail: inputSummary || 'Agent 请求执行一项需要确认的操作。',
     buttons: ['允许', '取消'],
   }, suggestions);

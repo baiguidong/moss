@@ -19,6 +19,10 @@ import {
 import { getAgentModel } from '../../utils/model/agent.js'
 import { getQuerySourceForAgent } from '../../utils/promptCategory.js'
 import {
+  getTaskScopeContext,
+  runWithSessionContextOverridesGenerator,
+} from '../../utils/sessionIdContext.js'
+import {
   getAgentTranscript,
   readAgentMetadata,
 } from '../../utils/sessionStorage.js'
@@ -32,6 +36,12 @@ import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import { FORK_AGENT, isForkSubagentEnabled } from './forkSubagent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 import { isBuiltInAgent } from './loadAgentsDir.js'
+import {
+  filterResourceDirectoriesForProjectWorker,
+  filterToolsForProjectWorker,
+  resolveProjectWorkerResourceSelection,
+  scopeProjectTaskScopeForWorker,
+} from './projectResourceScope.js'
 import { runAgent } from './runAgent.js'
 
 export type ResumeAgentResult = {
@@ -90,6 +100,17 @@ export async function resumeAgentBackground({
         },
       )
     : undefined
+  const resumedWorkspacePath = meta?.workspacePath
+    ? await fsp.stat(meta.workspacePath).then(
+        s => (s.isDirectory() ? meta.workspacePath : undefined),
+        () => {
+          logForDebugging(
+            `Resumed workspace ${meta.workspacePath} no longer exists; falling back to parent cwd`,
+          )
+          return undefined
+        },
+      )
+    : undefined
   if (resumedWorktreePath) {
     // Bump mtime so stale-worktree cleanup doesn't delete a just-resumed worktree (#22355)
     const now = new Date()
@@ -111,6 +132,31 @@ export async function resumeAgentBackground({
     selectedAgent = GENERAL_PURPOSE_AGENT
   }
 
+  const taskScope = getTaskScopeContext()
+  if (taskScope?.kind === 'project' && !meta?.projectResources) {
+    throw new Error('Cannot resume a project worker without its resource assignment')
+  }
+  if (meta?.projectResources && taskScope?.kind !== 'project') {
+    throw new Error('Cannot resume a project worker outside its project task scope')
+  }
+  const projectResourceSelection = meta?.projectResources
+    ? resolveProjectWorkerResourceSelection(taskScope, {
+        connector_ids: meta.projectResources.connectorIds,
+        skill_ids: meta.projectResources.skillIds,
+        expert_id: meta.projectResources.expertId,
+      })
+    : null
+  const workerTaskScope = scopeProjectTaskScopeForWorker(
+    taskScope,
+    projectResourceSelection,
+  )
+  if (projectResourceSelection) {
+    selectedAgent = {
+      ...selectedAgent,
+      skills: projectResourceSelection.skillCommands,
+    }
+  }
+
   const uiDescription = meta?.description ?? '(resumed)'
 
   let forkParentSystemPrompt: SystemPrompt | undefined
@@ -124,7 +170,10 @@ export async function resumeAgentBackground({
           )
         : undefined
       const additionalWorkingDirectories = Array.from(
-        appState.toolPermissionContext.additionalWorkingDirectories.keys(),
+        filterResourceDirectoriesForProjectWorker(
+          appState.toolPermissionContext.additionalWorkingDirectories,
+          projectResourceSelection,
+        ).keys(),
       )
       const defaultSystemPrompt = await getSystemPrompt(
         toolUseContext.options.tools,
@@ -158,10 +207,17 @@ export async function resumeAgentBackground({
   const workerPermissionContext = {
     ...appState.toolPermissionContext,
     mode: selectedAgent.permissionMode ?? 'acceptEdits',
+    additionalWorkingDirectories: filterResourceDirectoriesForProjectWorker(
+      appState.toolPermissionContext.additionalWorkingDirectories,
+      projectResourceSelection,
+    ),
   }
   const workerTools = isResumedFork
     ? toolUseContext.options.tools
-    : assembleToolPool(workerPermissionContext, appState.mcp.tools)
+    : filterToolsForProjectWorker(
+        assembleToolPool(workerPermissionContext, appState.mcp.tools),
+        projectResourceSelection,
+      )
 
   const runAgentParams: Parameters<typeof runAgent>[0] = {
     agentDefinition: selectedAgent,
@@ -172,6 +228,7 @@ export async function resumeAgentBackground({
     toolUseContext,
     canUseTool,
     isAsync: true,
+    canShowPermissionPrompts: projectResourceSelection ? true : undefined,
     querySource: getQuerySourceForAgent(
       selectedAgent.agentType,
       isBuiltInAgent(selectedAgent),
@@ -184,15 +241,31 @@ export async function resumeAgentBackground({
       ? { systemPrompt: forkParentSystemPrompt }
       : undefined,
     availableTools: workerTools,
+    permissionContextOverride: projectResourceSelection
+      ? workerPermissionContext
+      : undefined,
     // Transcript already contains the parent context slice from the
     // original fork. Re-supplying it would cause duplicate tool_use IDs.
     forkContextMessages: undefined,
     ...(isResumedFork && { useExactTools: true }),
     // Re-persist so metadata survives runAgent's writeAgentMetadata overwrite
     worktreePath: resumedWorktreePath,
+    workspacePath: resumedWorkspacePath,
+    projectResources: meta?.projectResources,
     description: meta?.description,
     contentReplacementState: resumedReplacementState,
   }
+  const makeAgentStream = (
+    params: Parameters<typeof runAgent>[0],
+  ): ReturnType<typeof runAgent> => projectResourceSelection
+    ? runWithSessionContextOverridesGenerator(
+        {
+          environment: projectResourceSelection.environment,
+          taskScope: workerTaskScope,
+        },
+        () => runAgent(params),
+      )
+    : runAgent(params)
 
   // Skip name-registry write — original entry persists from the initial spawn
   const agentBackgroundTask = registerAsyncAgent({
@@ -224,8 +297,18 @@ export async function resumeAgentBackground({
     invocationEmitted: false,
   }
 
-  const wrapWithCwd = <T>(fn: () => T): T =>
-    resumedWorktreePath ? runWithCwdOverride(resumedWorktreePath, fn) : fn()
+  const resumedCwdPath = resumedWorktreePath ?? resumedWorkspacePath
+  const workerAdditionalDirectories = Array.from(
+    workerPermissionContext.additionalWorkingDirectories.keys(),
+  )
+  const wrapWithCwd = <T>(fn: () => T): T => resumedCwdPath
+    ? projectResourceSelection
+      ? runWithCwdOverride(resumedCwdPath, fn, {
+          projectRoot: resumedCwdPath,
+          additionalDirectories: workerAdditionalDirectories,
+        })
+      : runWithCwdOverride(resumedCwdPath, fn)
+    : fn()
 
   void runWithAgentContext(asyncAgentContext, () =>
     wrapWithCwd(() =>
@@ -233,7 +316,7 @@ export async function resumeAgentBackground({
         taskId: agentBackgroundTask.agentId,
         abortController: agentBackgroundTask.abortController!,
         makeStream: onCacheSafeParams =>
-          runAgent({
+          makeAgentStream({
             ...runAgentParams,
             override: {
               ...runAgentParams.override,

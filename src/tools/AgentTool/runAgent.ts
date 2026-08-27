@@ -24,7 +24,7 @@ import type {
   MCPServerConnection,
   ScopedMcpServerConfig,
 } from '../../services/mcp/types.js'
-import type { Tool, Tools, ToolUseContext } from '../../Tool.js'
+import type { Tool, ToolPermissionContext, Tools, ToolUseContext } from '../../Tool.js'
 import { killShellTasksForAgent } from '../../tasks/LocalShellTask/killShellTasks.js'
 import type { Command } from '../../types/command.js'
 import type { AgentId } from '../../types/ids.js'
@@ -241,12 +241,14 @@ export async function* runAgent({
   maxTurns,
   preserveToolUseResults,
   availableTools,
+  permissionContextOverride,
   allowedTools,
   onCacheSafeParams,
   contentReplacementState,
   useExactTools,
   worktreePath,
   workspacePath,
+  projectResources,
   description,
   transcriptSubdir,
   onQueryProgress,
@@ -277,6 +279,8 @@ export async function* runAgent({
    * Always contains the full tool pool assembled with the worker's own permission
    * mode, independent of the parent's tool restrictions. */
   availableTools: Tools
+  /** Project workers use this to remove unassigned resource directories. */
+  permissionContextOverride?: ToolPermissionContext
   /** Tool permission rules to add to the agent's session allow rules.
    * When provided, replaces ALL allow rules so the agent only has what's
    * explicitly listed (parent approvals don't leak through). */
@@ -300,6 +304,12 @@ export async function* runAgent({
   worktreePath?: string
   /** Dedicated workspace for coordinator subagents. */
   workspacePath?: string
+  /** Project resources explicitly assigned to this worker. */
+  projectResources?: {
+    connectorIds: string[]
+    skillIds: string[]
+    expertId?: string
+  }
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -393,7 +403,7 @@ export async function* runAgent({
   const agentPermissionMode = agentDefinition.permissionMode
   const agentGetAppState = () => {
     const state = toolUseContext.getAppState()
-    let toolPermissionContext = state.toolPermissionContext
+    let toolPermissionContext = permissionContextOverride ?? state.toolPermissionContext
 
     // Override permission mode if agent defines one unless the parent already
     // grants bypass or edit permissions.
@@ -477,7 +487,8 @@ export async function* runAgent({
     : resolveAgentTools(agentDefinition, availableTools, isAsync).resolvedTools
 
   const additionalWorkingDirectories = Array.from(
-    appState.toolPermissionContext.additionalWorkingDirectories.keys(),
+    (permissionContextOverride ?? appState.toolPermissionContext)
+      .additionalWorkingDirectories.keys(),
   )
 
   const agentSystemPrompt = override?.systemPrompt
@@ -707,6 +718,7 @@ export async function* runAgent({
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
     ...(workspacePath && { workspacePath }),
+    ...(projectResources && { projectResources }),
     status: 'running',
     startedAt: Date.now(),
   }).catch(_err => logForDebugging(`Failed to write agent metadata: ${_err}`))

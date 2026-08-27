@@ -31,7 +31,7 @@ import type { PermissionResult } from '../../utils/permissions/PermissionResult.
 import { filterDeniedAgents, getDenyRuleForAgent } from '../../utils/permissions/permissions.js';
 import { enqueueSdkEvent } from '../../utils/sdkEventQueue.js';
 import { updateAgentMetadata } from '../../utils/sessionStorage.js';
-import { getTaskScopeContext } from '../../utils/sessionIdContext.js';
+import { getTaskScopeContext, runWithSessionContextOverridesGenerator } from '../../utils/sessionIdContext.js';
 import { sleep } from '../../utils/sleep.js';
 import { buildEffectiveSystemPrompt } from '../../utils/systemPrompt.js';
 import { asSystemPrompt } from '../../utils/systemPromptType.js';
@@ -53,6 +53,12 @@ import { buildForkedMessages, buildWorktreeNotice, FORK_AGENT, isForkSubagentEna
 import type { AgentDefinition } from './loadAgentsDir.js';
 import { filterAgentsByMcpRequirements, hasRequiredMcpServers, isBuiltInAgent } from './loadAgentsDir.js';
 import { getPrompt } from './prompt.js';
+import {
+  filterResourceDirectoriesForProjectWorker,
+  filterToolsForProjectWorker,
+  resolveProjectWorkerResourceSelection,
+  scopeProjectTaskScopeForWorker,
+} from './projectResourceScope.js';
 import { runAgent } from './runAgent.js';
 import { renderGroupedAgentToolUse, renderToolResultMessage, renderToolUseErrorMessage, renderToolUseMessage, renderToolUseProgressMessage, renderToolUseRejectedMessage, renderToolUseTag, userFacingName, userFacingNameBackgroundColor } from './UI.js';
 
@@ -84,6 +90,9 @@ const baseInputSchema = lazySchema(() => z.object({
   description: z.string().describe('A short (3-5 word) description of the task'),
   prompt: z.string().describe('The task for the agent to perform'),
   subagent_type: z.string().optional().describe('The type of specialized agent to use for this task'),
+  connector_ids: z.array(z.string()).optional().describe('Project connector IDs assigned to this worker. Use an empty array when none are needed.'),
+  skill_ids: z.array(z.string()).optional().describe('Project skill IDs assigned to this worker. Use an empty array when none are needed.'),
+  expert_id: z.string().optional().describe('One project expert ID assigned to this worker, only when expert guidance is needed.'),
   model: z.enum(['sonnet', 'opus', 'haiku']).optional().describe("Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
   run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.')
 }));
@@ -227,12 +236,32 @@ export const AgentTool = buildTool({
     team_name,
     mode: spawnMode,
     isolation,
+    connector_ids,
+    skill_ids,
+    expert_id,
   }: AgentToolInput, toolUseContext, canUseTool, assistantMessage, onProgress?) {
     const startTime = Date.now();
     const model = isCoordinatorMode() ? undefined : modelParam;
 
     // Get app state for permission mode and agent filtering
     const appState = toolUseContext.getAppState();
+    const taskScope = getTaskScopeContext();
+    const projectResourceSelection = resolveProjectWorkerResourceSelection(taskScope, {
+      connector_ids,
+      skill_ids,
+      expert_id,
+    });
+    const workerTaskScope = scopeProjectTaskScopeForWorker(
+      taskScope,
+      projectResourceSelection,
+    );
+    if (
+      projectResourceSelection &&
+      subagent_type &&
+      subagent_type !== GENERAL_PURPOSE_AGENT.agentType
+    ) {
+      throw new Error(`Project coordinator workers must use '${GENERAL_PURPOSE_AGENT.agentType}' and assign expertise with expert_id.`);
+    }
     const permissionMode = appState.toolPermissionContext.mode;
     // In-process teammates get a no-op setAppState; setAppStateForTasks
     // reaches the root store so task registration/progress/kill stay visible.
@@ -249,6 +278,9 @@ export const AgentTool = buildTool({
     const teamName = resolveTeamName({
       team_name
     }, appState);
+    if (projectResourceSelection && teamName && name) {
+      throw new Error('Project coordinator workers must run as scoped Agent sessions, not team teammates. Omit name and team_name.');
+    }
     if (isTeammate() && teamName && name) {
       throw new Error('Teammates cannot spawn other teammates — the team roster is flat. To spawn a subagent instead, omit the `name` parameter.');
     }
@@ -299,7 +331,9 @@ export const AgentTool = buildTool({
     // - subagent_type set: use it (explicit wins)
     // - subagent_type omitted, gate on: fork path (undefined)
     // - subagent_type omitted, gate off: default general-purpose
-    const effectiveType = subagent_type ?? (isForkSubagentEnabled() ? undefined : GENERAL_PURPOSE_AGENT.agentType);
+    const effectiveType = subagent_type ?? (projectResourceSelection
+      ? GENERAL_PURPOSE_AGENT.agentType
+      : isForkSubagentEnabled() ? undefined : GENERAL_PURPOSE_AGENT.agentType);
     const isForkPath = effectiveType === undefined;
     let selectedAgent: AgentDefinition;
     if (isForkPath) {
@@ -387,7 +421,17 @@ export const AgentTool = buildTool({
         const missing = requiredMcpServers.filter(pattern => !serversWithTools.some(server => server.toLowerCase().includes(pattern.toLowerCase())));
         throw new Error(`Agent '${selectedAgent.agentType}' requires MCP servers matching: ${missing.join(', ')}. ` + `MCP servers with tools: ${serversWithTools.length > 0 ? serversWithTools.join(', ') : 'none'}. ` + `Use /mcp to configure and authenticate the required MCP servers.`);
       }
+      if (
+        projectResourceSelection &&
+        !hasRequiredMcpServers(selectedAgent, Array.from(projectResourceSelection.connectorServerNames))
+      ) {
+        throw new Error(`Assigned connector_ids do not satisfy agent '${selectedAgent.agentType}' MCP requirements.`);
+      }
     }
+
+    const workerAgentDefinition: AgentDefinition = projectResourceSelection
+      ? { ...selectedAgent, skills: projectResourceSelection.skillCommands }
+      : selectedAgent;
 
     // Initialize the color for this agent if it has a predefined one
     if (selectedAgent.color) {
@@ -395,7 +439,7 @@ export const AgentTool = buildTool({
     }
 
     // Resolve agent params for logging (these are already resolved in runAgent)
-    const resolvedAgentModel = getAgentModel(selectedAgent.model, toolUseContext.options.mainLoopModel, isForkPath ? undefined : model, permissionMode);
+    const resolvedAgentModel = getAgentModel(workerAgentDefinition.model, toolUseContext.options.mainLoopModel, isForkPath ? undefined : model, permissionMode);
     logEvent('tengu_agent_tool_selected', {
       agent_type: selectedAgent.agentType as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       model: resolvedAgentModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -407,7 +451,12 @@ export const AgentTool = buildTool({
       is_fork: isForkPath
     });
 
-    const effectiveIsolation = isolation ?? selectedAgent.isolation;
+    // Project workers already receive a dedicated session workspace. A second
+    // worktree cwd would make their advertised workspace differ from the path
+    // where tools actually run and where the Finalizer collects outputs.
+    const effectiveIsolation = projectResourceSelection
+      ? undefined
+      : isolation ?? selectedAgent.isolation;
     // System prompt + prompt messages: branch on fork path.
     //
     // Fork path: child inherits the PARENT's system prompt (not FORK_AGENT's)
@@ -427,7 +476,12 @@ export const AgentTool = buildTool({
         // Fallback: recompute. May diverge from parent's cached bytes if
         // feature flag state changed between parent turn-start and fork spawn.
         const mainThreadAgentDefinition = appState.agent ? appState.agentDefinitions.activeAgents.find(a => a.agentType === appState.agent) : undefined;
-        const additionalWorkingDirectories = Array.from(appState.toolPermissionContext.additionalWorkingDirectories.keys());
+        const additionalWorkingDirectories = Array.from(
+          filterResourceDirectoriesForProjectWorker(
+            appState.toolPermissionContext.additionalWorkingDirectories,
+            projectResourceSelection,
+          ).keys(),
+        );
         const defaultSystemPrompt = await getSystemPrompt(toolUseContext.options.tools, toolUseContext.options.mainLoopModel, additionalWorkingDirectories, toolUseContext.options.mcpClients);
         forkParentSystemPrompt = buildEffectiveSystemPrompt({
           mainThreadAgentDefinition,
@@ -440,10 +494,15 @@ export const AgentTool = buildTool({
       promptMessages = buildForkedMessages(prompt, assistantMessage);
     } else {
       try {
-        const additionalWorkingDirectories = Array.from(appState.toolPermissionContext.additionalWorkingDirectories.keys());
+        const additionalWorkingDirectories = Array.from(
+          filterResourceDirectoriesForProjectWorker(
+            appState.toolPermissionContext.additionalWorkingDirectories,
+            projectResourceSelection,
+          ).keys(),
+        );
 
         // All agents have getSystemPrompt - pass toolUseContext to all
-        const agentPrompt = selectedAgent.getSystemPrompt({
+        const agentPrompt = workerAgentDefinition.getSystemPrompt({
           toolUseContext
         });
 
@@ -463,6 +522,18 @@ export const AgentTool = buildTool({
       promptMessages = [createUserMessage({
         content: prompt
       })];
+    }
+    if (projectResourceSelection) {
+      const assignedResources = [
+        `Assigned connector ids: ${projectResourceSelection.connectorIds.join(', ') || 'none'}`,
+        `Assigned skill ids: ${projectResourceSelection.skillIds.join(', ') || 'none'}`,
+        `Assigned expert id: ${projectResourceSelection.expertId || 'none'}`,
+        projectResourceSelection.expertInstructionsPath
+          ? `Before working, read and follow the assigned expert instructions: ${projectResourceSelection.expertInstructionsPath}`
+          : '',
+        'Only the resources listed above are assigned to this worker. Do not substitute or request other project resources.',
+      ].filter(Boolean).join('\n');
+      promptMessages.push(createUserMessage({ content: assignedResources }));
     }
     const metadata = {
       prompt,
@@ -487,9 +558,16 @@ export const AgentTool = buildTool({
     // import from tools.ts (which would create a circular dependency).
     const workerPermissionContext = {
       ...appState.toolPermissionContext,
-      mode: selectedAgent.permissionMode ?? 'acceptEdits'
+      mode: workerAgentDefinition.permissionMode ?? 'acceptEdits',
+      additionalWorkingDirectories: filterResourceDirectoriesForProjectWorker(
+        appState.toolPermissionContext.additionalWorkingDirectories,
+        projectResourceSelection,
+      ),
     };
-    const workerTools = assembleToolPool(workerPermissionContext, appState.mcp.tools);
+    const workerTools = filterToolsForProjectWorker(
+      assembleToolPool(workerPermissionContext, appState.mcp.tools),
+      projectResourceSelection,
+    );
 
     // Create a stable agent ID early so it can be used for worktree slug
     const earlyAgentId = createAgentId();
@@ -507,7 +585,6 @@ export const AgentTool = buildTool({
       worktreeInfo = await createAgentWorktree(slug);
     }
 
-    const taskScope = getTaskScopeContext();
     const parentUiSessionId = taskScope && 'sessionId' in taskScope
       ? taskScope.sessionId
       : null;
@@ -559,11 +636,12 @@ export const AgentTool = buildTool({
       }));
     }
     const runAgentParams: Parameters<typeof runAgent>[0] = {
-      agentDefinition: selectedAgent,
+      agentDefinition: workerAgentDefinition,
       promptMessages,
       toolUseContext,
       canUseTool,
       isAsync: shouldRunAsync,
+      canShowPermissionPrompts: projectResourceSelection ? true : undefined,
       querySource: toolUseContext.options.querySource ?? getQuerySourceForAgent(selectedAgent.agentType, isBuiltInAgent(selectedAgent)),
       model: isForkPath ? undefined : model,
       // Fork path: pass parent's system prompt AND parent's exact tool
@@ -583,6 +661,9 @@ export const AgentTool = buildTool({
         systemPrompt: asSystemPrompt(enhancedSystemPrompt)
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
+      permissionContextOverride: projectResourceSelection
+        ? workerPermissionContext
+        : undefined,
       // Pass parent conversation when the fork-subagent path needs full
       // context. useExactTools inherits thinkingConfig (runAgent.ts:624).
       forkContextMessages: isForkPath ? toolUseContext.messages : undefined,
@@ -591,11 +672,40 @@ export const AgentTool = buildTool({
       }),
       worktreePath: worktreeInfo?.worktreePath,
       workspacePath: isolatedWorkspace,
+      projectResources: projectResourceSelection ? {
+        connectorIds: projectResourceSelection.connectorIds,
+        skillIds: projectResourceSelection.skillIds,
+        ...(projectResourceSelection.expertId
+          ? { expertId: projectResourceSelection.expertId }
+          : {}),
+      } : undefined,
       description
     };
 
+    const makeAgentStream = (
+      params: Parameters<typeof runAgent>[0],
+    ): ReturnType<typeof runAgent> => projectResourceSelection
+      ? runWithSessionContextOverridesGenerator(
+          {
+            environment: projectResourceSelection.environment,
+            taskScope: workerTaskScope,
+          },
+          () => runAgent(params),
+        )
+      : runAgent(params);
+
     const cwdOverridePath = worktreeInfo?.worktreePath ?? isolatedWorkspace;
-    const wrapWithCwd = <T,>(fn: () => T): T => cwdOverridePath ? runWithCwdOverride(cwdOverridePath, fn) : fn();
+    const workerAdditionalDirectories = Array.from(
+      workerPermissionContext.additionalWorkingDirectories.keys(),
+    );
+    const wrapWithCwd = <T,>(fn: () => T): T => cwdOverridePath
+      ? projectResourceSelection
+        ? runWithCwdOverride(cwdOverridePath, fn, {
+            projectRoot: cwdOverridePath,
+            additionalDirectories: workerAdditionalDirectories,
+          })
+        : runWithCwdOverride(cwdOverridePath, fn)
+      : fn();
 
     // Helper to clean up worktree after agent completes
     const cleanupWorktreeIfNeeded = async (): Promise<{
@@ -689,7 +799,7 @@ export const AgentTool = buildTool({
       void runWithAgentContext(asyncAgentContext, () => wrapWithCwd(() => runAsyncAgentLifecycle({
         taskId: agentBackgroundTask.agentId,
         abortController: agentBackgroundTask.abortController!,
-        makeStream: onCacheSafeParams => runAgent({
+        makeStream: onCacheSafeParams => makeAgentStream({
           ...runAgentParams,
           override: {
             ...runAgentParams.override,
@@ -799,7 +909,7 @@ export const AgentTool = buildTool({
         const summaryTaskId = foregroundTaskId;
 
         // Get async iterator for the agent
-        const agentIterator = runAgent({
+        const agentIterator = makeAgentStream({
           ...runAgentParams,
           override: {
             ...runAgentParams.override,
@@ -878,7 +988,7 @@ export const AgentTool = buildTool({
                     for (const existingMsg of agentMessages) {
                       updateProgressFromMessage(tracker, existingMsg, resolveActivity2, toolUseContext.options.tools);
                     }
-                    for await (const msg of runAgent({
+                    for await (const msg of makeAgentStream({
                       ...runAgentParams,
                       isAsync: true,
                       // Agent is now running in background

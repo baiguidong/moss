@@ -55,6 +55,7 @@ describe('desktop tool permission policy', () => {
     expect(dialog).toEqual({
       title: '运行命令',
       message: '允许 Agent 在这台电脑上运行下面的命令吗？',
+      projectQuestion: '是否允许当前项目中的 Agent 在这台电脑上运行下面的命令？',
       detail: "用途：Show current local time\n\n命令：\ndate '+%H:%M:%S %Z'",
       buttons: ['允许运行', '取消'],
     });
@@ -65,6 +66,19 @@ describe('desktop tool permission policy', () => {
   it('uses customer-facing notices instead of internal tool names', () => {
     expect(getToolPermissionNotice('Bash')).toBe('Agent 正在等待运行命令的确认');
     expect(getToolPermissionNotice('FileEdit')).toBe('Agent 正在等待修改文件的确认');
+  });
+
+  it('provides complete project questions without duplicated wording or punctuation', () => {
+    expect(buildToolPermissionDialog('Bash', { command: 'pwd' }).projectQuestion)
+      .toBe('是否允许当前项目中的 Agent 在这台电脑上运行下面的命令？');
+    expect(buildToolPermissionDialog('FileEdit', { file_path: '/tmp/example.txt' }).projectQuestion)
+      .toBe('是否允许当前项目中的 Agent 修改下面的文件？');
+    expect(buildToolPermissionDialog('WebSearch', { query: 'Moss' }).projectQuestion)
+      .toBe('是否允许当前项目中的 Agent 搜索网页？');
+    expect(buildToolPermissionDialog('UnknownTool', {}).projectQuestion)
+      .toBe('是否允许当前项目中的 Agent 执行这项操作？');
+    expect(buildToolPermissionDialog('ExitPlanMode', {}).projectQuestion)
+      .toBe('是否允许当前项目中的 Agent 执行已准备好的计划？');
   });
 
   it('offers persistent approval when CLI provides persistent suggestions', () => {
