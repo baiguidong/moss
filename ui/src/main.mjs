@@ -7005,6 +7005,7 @@ function createWindow() {
       sandbox: false,
     },
   });
+  mainWindow.maximize();
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getPluginAppTokenFromUrl(params?.src || '');

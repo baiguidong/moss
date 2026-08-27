@@ -3,13 +3,6 @@ import { Bot, Check, ListFilter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
 import { cn } from '@/lib/utils';
-import {
-  QUICK_SELECTION_LIMIT,
-  rankRecentItems,
-  useRecentIds,
-} from '@/lib/recent-selection';
-
-const ASSISTANT_RECENTS_KEY = 'ui.recentAssistants.v1';
 
 export type InstalledAssistant = {
   name: string;
@@ -32,8 +25,10 @@ export type InstalledAssistant = {
 type AssistantSelectionAreaProps = {
   assistants: InstalledAssistant[];
   selectedAssistant: InstalledAssistant | null;
-  onSelectAssistant: (assistant: InstalledAssistant) => void;
+  onSelectAssistant?: (assistant: InstalledAssistant) => void;
+  onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
+  displayOnly?: boolean;
 };
 
 const isDataUri = (value: string) => value.startsWith('data:');
@@ -54,40 +49,16 @@ const AssistantAvatar: React.FC<{
   return <span className="shrink-0 text-sm leading-none">{emojiOrAvatar}</span>;
 };
 
-const AssistantPill: React.FC<{
-  assistant: InstalledAssistant;
-  isSelected: boolean;
-  onClick: () => void;
-  className?: string;
-}> = ({ assistant, isSelected, onClick, className }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    aria-pressed={isSelected}
-    className={cn(
-      'group flex h-7 min-w-0 max-w-[144px] items-center gap-1.5 rounded-full border bg-transparent px-2.5 text-sm transition-colors',
-      isSelected
-        ? 'border-primary bg-primary/10 text-foreground'
-        : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-      className,
-    )}
-    title={assistant.description || assistant.displayName || assistant.name}
-  >
-    <AssistantAvatar assistant={assistant} className="h-3.5 w-3.5" />
-    <span className="truncate">{assistant.displayName || assistant.name}</span>
-    {isSelected ? <Check className="h-3 w-3 shrink-0 text-primary" /> : null}
-  </button>
-);
-
 export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
   assistants,
   selectedAssistant,
   onSelectAssistant,
+  onClearAssistant,
   onOpenExpertHub,
+  displayOnly = false,
 }) => {
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
-  const { recentIds, remember } = useRecentIds(ASSISTANT_RECENTS_KEY);
 
   const installed = React.useMemo(() => assistants
     .filter((assistant) => assistant.enabled !== false)
@@ -99,16 +70,6 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
         'zh-Hans-CN',
       );
     }), [assistants]);
-  const quickAssistants = React.useMemo(
-    () => rankRecentItems(
-      installed,
-      (assistant) => assistant.name,
-      selectedAssistant ? [selectedAssistant.name] : [],
-      recentIds,
-      QUICK_SELECTION_LIMIT,
-    ),
-    [installed, recentIds, selectedAssistant],
-  );
   const filteredAssistants = React.useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('zh-Hans-CN');
     if (!normalizedQuery) return installed;
@@ -121,50 +82,62 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
     ].some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(normalizedQuery)));
   }, [installed, query]);
 
-  const handleSelect = React.useCallback((assistant: InstalledAssistant, closeAfterSelect = false) => {
-    remember(assistant.name);
-    onSelectAssistant(assistant);
-    if (closeAfterSelect) {
-      setPickerOpen(false);
-      setQuery('');
+  const handleSelect = React.useCallback((assistant: InstalledAssistant) => {
+    if (selectedAssistant?.name === assistant.name && onClearAssistant) {
+      onClearAssistant();
+    } else {
+      onSelectAssistant?.(assistant);
     }
-  }, [onSelectAssistant, remember]);
+    setPickerOpen(false);
+    setQuery('');
+  }, [onClearAssistant, onSelectAssistant, selectedAssistant?.name]);
   const closePicker = React.useCallback(() => {
     setPickerOpen(false);
     setQuery('');
   }, []);
 
+  if (displayOnly) {
+    if (!selectedAssistant) return null;
+    return (
+      <span
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary"
+        title={selectedAssistant.displayName || selectedAssistant.name}
+        aria-label={`当前助手：${selectedAssistant.displayName || selectedAssistant.name}`}
+      >
+        <AssistantAvatar assistant={selectedAssistant} className="h-4 w-4" />
+      </span>
+    );
+  }
+
   if (installed.length === 0) return null;
 
   return (
     <>
-      <div className="flex w-full min-w-0 items-center justify-center gap-2">
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-          {quickAssistants.map((assistant, index) => (
-            <AssistantPill
-              key={assistant.name}
-              assistant={assistant}
-              isSelected={selectedAssistant?.name === assistant.name}
-              onClick={() => handleSelect(assistant)}
-              className={index >= 3 ? 'hidden lg:flex' : undefined}
-            />
-          ))}
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 shrink-0 rounded-full px-2.5 text-xs text-muted-foreground"
-          onClick={() => setPickerOpen(true)}
-          title="选择助手"
-        >
-          <ListFilter className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">选择助手</span>
-          {installed.length > QUICK_SELECTION_LIMIT ? (
-            <span className="text-[11px] text-muted-foreground/70">{installed.length}</span>
-          ) : null}
-        </Button>
-      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(
+          'h-7 shrink-0 border-border/70 bg-muted/35 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+          selectedAssistant ? 'w-7 rounded-md px-0' : 'rounded-full px-2.5',
+        )}
+        onClick={() => setPickerOpen(true)}
+        title={selectedAssistant
+          ? selectedAssistant.displayName || selectedAssistant.name
+          : '选择助手'}
+        aria-label={selectedAssistant
+          ? `选择助手，当前为 ${selectedAssistant.displayName || selectedAssistant.name}`
+          : '选择助手'}
+      >
+        {selectedAssistant ? (
+          <AssistantAvatar assistant={selectedAssistant} className="h-4 w-4" />
+        ) : (
+          <>
+            <ListFilter className="h-3.5 w-3.5" />
+            <span>选择助手</span>
+          </>
+        )}
+      </Button>
 
       <SelectionPickerDialog
         open={pickerOpen}
@@ -189,7 +162,7 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
                 key={assistant.name}
                 type="button"
                 aria-pressed={isSelected}
-                onClick={() => handleSelect(assistant, true)}
+                onClick={() => handleSelect(assistant)}
                 className={cn(
                   'flex h-12 w-full items-center gap-3 rounded-md px-3 text-left transition-colors',
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted',

@@ -145,7 +145,7 @@ type PreviewTabMetadata = Record<string, unknown> & {
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
 const APP_SHORTCUTS_STORAGE_KEY = 'ui.appShortcuts.v1';
 const DEFAULT_LAYOUT: LayoutState = {
-  leftWidth: 248,
+  leftWidth: 224,
   previewWidth: 420,
   rightWidth: 280,
   leftCollapsed: false,

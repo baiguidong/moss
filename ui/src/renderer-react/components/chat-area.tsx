@@ -320,8 +320,15 @@ function ComposerPanel({
   onComposerIntentChange,
   onSend,
   onStop,
+  installedAssistants,
   selectedAssistant,
+  onSelectAssistant,
   onClearAssistant,
+  onOpenExpertHub,
+  installedConnectors,
+  selectedConnectorIds,
+  onToggleConnector,
+  onOpenConnectorHub,
   className,
   contextUsage,
 }: {
@@ -338,8 +345,15 @@ function ComposerPanel({
   onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
+  installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
+  onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
+  onOpenExpertHub?: () => void;
+  installedConnectors?: InstalledConnector[];
+  selectedConnectorIds?: string[];
+  onToggleConnector?: (connector: InstalledConnector) => void;
+  onOpenConnectorHub?: () => void;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[]) => void;
   onStop?: () => void;
   className?: string;
@@ -366,6 +380,8 @@ function ComposerPanel({
     setAttachmentsRef.current = setAttachments;
   }, [setAttachments]);
   const isHomeComposer = !hasActiveSession;
+  const activeIntentOption = [chatIntentOption, ...intentOptions]
+    .find((option) => option.id === composerIntent) ?? chatIntentOption;
   // Sending while loading is allowed: the message is queued and dispatched
   // when the current turn ends (REPL type-while-busy behavior).
   const submitDisabled =
@@ -929,12 +945,6 @@ function ComposerPanel({
           />
         )}
 
-        {readOnlyReason && (
-          <div className="px-4 pb-2 text-xs text-amber-600">
-            当前会话不可继续输入：{readOnlyReason}
-          </div>
-        )}
-
       </div>
 
       {!isHomeComposer && (
@@ -966,31 +976,26 @@ function ComposerPanel({
               </button>
 
               {selectedAssistant && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-                  <Bot className="h-3 w-3" />
-                  <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
-                </span>
+                <AssistantSelectionArea
+                  assistants={installedAssistants ?? []}
+                  selectedAssistant={selectedAssistant}
+                  displayOnly
+                />
               )}
 
               <span className="text-xs text-muted-foreground">模式：</span>
-              {[chatIntentOption, ...intentOptions].map((option) => {
-                const isSelected = composerIntent === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => onComposerIntentChange(option.id)}
-                    className={cn(
-                      "inline-flex items-center rounded-full border px-2 py-1 text-xs transition-colors",
-                      isSelected
-                        ? "border-green-500/50 bg-green-500/15 text-green-600"
-                        : "border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                    )}
-                  >
-                    {option.title}
-                  </button>
-                );
-              })}
+              <span className="inline-flex items-center rounded-full border border-green-500/50 bg-green-500/15 px-2 py-1 text-xs text-green-600">
+                {activeIntentOption.title}
+              </span>
+
+              {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
+                <ConnectorSelectionArea
+                  connectors={installedConnectors}
+                  selectedConnectorIds={selectedConnectorIds ?? []}
+                  onToggleConnector={onToggleConnector}
+                  onOpenConnectorHub={onOpenConnectorHub}
+                />
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2">
@@ -1021,12 +1026,12 @@ function ComposerPanel({
 
       {isHomeComposer && (
         <div className="px-4 py-3 sm:px-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <button
                 type="button"
                 onClick={handleSelectFile}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                 title="选择文件"
               >
                 <Plus className="h-3 w-3" />
@@ -1036,7 +1041,7 @@ function ComposerPanel({
               <button
                 type="button"
                 onClick={handleSelectDirectory}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                 title="选择目录"
               >
                 <Plus className="h-3 w-3" />
@@ -1044,7 +1049,7 @@ function ComposerPanel({
                 <span>目录</span>
               </button>
 
-              <span className="ml-2 text-xs text-muted-foreground">模式：</span>
+              <span className="ml-2 shrink-0 text-xs text-muted-foreground">模式：</span>
               {[chatIntentOption, ...intentOptions].map((option) => {
                 const isSelected = composerIntent === option.id;
                 return (
@@ -1053,7 +1058,7 @@ function ComposerPanel({
                     type="button"
                     onClick={() => onComposerIntentChange(option.id)}
                     className={cn(
-                      "inline-flex items-center rounded-full border px-2.5 py-1.5 text-xs transition-colors",
+                      "inline-flex shrink-0 items-center rounded-full border px-2.5 py-1.5 text-xs transition-colors",
                       isSelected
                         ? "border-green-500/50 bg-green-500/15 text-green-600"
                         : "border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -1063,25 +1068,30 @@ function ComposerPanel({
                   </button>
                 );
               })}
-            </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {selectedAssistant && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary">
-                  <Bot className="h-3 w-3" />
-                  <span>{selectedAssistant.displayName || selectedAssistant.name}</span>
-                  <button
-                    type="button"
-                    onClick={onClearAssistant}
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-primary/20"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+              {installedAssistants && installedAssistants.length > 0 && onSelectAssistant && (
+                <AssistantSelectionArea
+                  assistants={installedAssistants}
+                  selectedAssistant={selectedAssistant ?? null}
+                  onSelectAssistant={onSelectAssistant}
+                  onClearAssistant={onClearAssistant}
+                  onOpenExpertHub={onOpenExpertHub}
+                />
               )}
 
+              {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
+                <ConnectorSelectionArea
+                  connectors={installedConnectors}
+                  selectedConnectorIds={selectedConnectorIds ?? []}
+                  onToggleConnector={onToggleConnector}
+                  onOpenConnectorHub={onOpenConnectorHub}
+                />
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2">
               {selectedAssistant?.name === "app-builder-assistant" && selectedAppName && (
-                <span className="rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
+                <span className="max-w-[160px] shrink-0 truncate rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
                   更新 {selectedAppName}
                 </span>
               )}
@@ -1246,30 +1256,17 @@ function HomeLanding({
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
         onSend={onSend}
+        installedAssistants={installedAssistants}
         selectedAssistant={selectedAssistant ?? null}
+        onSelectAssistant={onSelectAssistant}
         onClearAssistant={onClearAssistant}
-        className="w-full max-w-[720px]"
+        onOpenExpertHub={onOpenExpertHub}
+        installedConnectors={installedConnectors}
+        selectedConnectorIds={selectedConnectorIds}
+        onToggleConnector={onToggleConnector}
+        onOpenConnectorHub={onOpenConnectorHub}
+        className="w-full max-w-[820px]"
       />
-      {installedAssistants && onSelectAssistant && (
-      <div className="mx-auto mt-5 w-full max-w-[720px] min-w-0">
-          <AssistantSelectionArea
-            assistants={installedAssistants}
-            selectedAssistant={selectedAssistant ?? null}
-            onSelectAssistant={onSelectAssistant}
-            onOpenExpertHub={onOpenExpertHub}
-          />
-        </div>
-      )}
-      {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
-        <div className="mx-auto mt-2 w-full max-w-[720px] min-w-0">
-          <ConnectorSelectionArea
-            connectors={installedConnectors}
-            selectedConnectorIds={selectedConnectorIds ?? []}
-            onToggleConnector={onToggleConnector}
-            onOpenConnectorHub={onOpenConnectorHub}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -1957,16 +1954,6 @@ export function ChatArea({
           {loading && composerActivity && busyStartRef.current !== null && (
             <ActivityStrip label={composerActivity.label} startTime={busyStartRef.current} />
           )}
-          {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
-            <div className="mb-2 flex justify-center">
-              <ConnectorSelectionArea
-                connectors={installedConnectors}
-                selectedConnectorIds={selectedConnectorIds ?? []}
-                onToggleConnector={onToggleConnector}
-                onOpenConnectorHub={onOpenConnectorHub}
-              />
-            </div>
-          )}
           {queuedMessages && queuedMessages.length > 0 && (
             <div className="mb-2 space-y-1">
               {queuedMessages.map((q, index) => (
@@ -2007,8 +1994,15 @@ export function ChatArea({
             onComposerIntentChange={onComposerIntentChange}
             onSend={(files, skills) => onSend(files, undefined, skills)}
             onStop={onStop}
+            installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
+            onSelectAssistant={onSelectAssistant}
             onClearAssistant={onClearAssistant}
+            onOpenExpertHub={onOpenExpertHub}
+            installedConnectors={installedConnectors}
+            selectedConnectorIds={selectedConnectorIds}
+            onToggleConnector={onToggleConnector}
+            onOpenConnectorHub={onOpenConnectorHub}
           />
         </div>
       </div>
