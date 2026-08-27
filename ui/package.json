@@ -15,7 +15,7 @@
     "start": "node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
-    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/adapter-settings.mjs && node --check src/adapter-process-manager.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && node --check scripts/build-adapters.mjs && node --check scripts/download-runtimes.mjs && tsc --noEmit",
+    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/adapter-settings.mjs && node --check src/adapter-process-manager.mjs && node --check src/desktop-settings.mjs && node --check src/desktop-mcp-settings.mjs && node --check src/remote-direct-client.mjs && node --check src/moss-cron-scheduler.mjs && node --check src/file-system-ipc.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && node --check scripts/build-adapters.mjs && node --check scripts/download-runtimes.mjs && tsc --noEmit",
     "dist:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --win --publish never",
     "dist:mac": "node scripts/download-runtimes.mjs && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --mac --publish never",
     "release:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --win --publish always",
