@@ -81,6 +81,18 @@
   --color-terminal-danger: oklch(0.69 0.19 24);
   --color-terminal-warning: oklch(0.83 0.15 84);
   --color-terminal-accent: oklch(0.72 0.16 150);
+  --color-repl-bg: color-mix(in oklab, var(--card) 72%, var(--background));
+  --color-repl-header-bg: color-mix(in oklab, var(--card) 88%, var(--muted));
+  --color-repl-border: color-mix(in oklab, var(--border) 88%, transparent);
+  --color-repl-fg: var(--foreground);
+  --color-repl-code-fg: var(--color-code-fg);
+  --color-repl-muted: var(--muted-foreground);
+  --color-repl-success: var(--color-success);
+  --color-repl-error: var(--destructive);
+  --color-repl-diff-added-bg: var(--color-diff-added-bg);
+  --color-repl-diff-removed-bg: var(--color-diff-removed-bg);
+  --color-repl-diff-added-fg: var(--color-diff-added-text);
+  --color-repl-diff-removed-fg: var(--color-diff-removed-text);
 }
 
 [data-theme='dark'] {
@@ -160,6 +172,18 @@
   --color-terminal-danger: oklch(0.7 0.18 24);
   --color-terminal-warning: oklch(0.82 0.15 84);
   --color-terminal-accent: oklch(0.72 0.16 150);
+  --color-repl-bg: rgb(40 44 53);
+  --color-repl-header-bg: rgb(45 49 59);
+  --color-repl-border: rgb(68 73 84);
+  --color-repl-fg: rgb(254 255 255);
+  --color-repl-code-fg: rgb(205 214 240);
+  --color-repl-muted: rgb(149 150 155);
+  --color-repl-success: rgb(180 190 104);
+  --color-repl-error: rgb(204 102 102);
+  --color-repl-diff-added-bg: rgb(34 58 44);
+  --color-repl-diff-removed-bg: rgb(69 43 49);
+  --color-repl-diff-added-fg: rgb(173 221 173);
+  --color-repl-diff-removed-fg: rgb(216 168 176);
 }
 
 @theme inline {

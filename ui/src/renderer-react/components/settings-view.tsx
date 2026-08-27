@@ -43,6 +43,7 @@ type SettingsViewProps = {
   setThemeMode: (mode: ThemeMode) => void;
   cssThemeId: string;
   setCssThemeId: (id: string) => void;
+  onAutoCollapseToolCallsChange: (enabled: boolean) => void;
   buddyEnabled: boolean;
   onBuddyEnabledChange: (enabled: boolean) => void;
 };
@@ -218,7 +219,7 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     title: '外观',
     icon: Palette,
     iconGradientClassName: 'from-amber-400 to-orange-600',
-    keywords: ['appearance', 'theme', 'background', '外观', '主题'],
+    keywords: ['appearance', 'theme', 'background', 'tool', 'collapse', '外观', '主题', '工具', '折叠'],
   },
 ];
 
@@ -1071,6 +1072,7 @@ export function SettingsView({
   setThemeMode,
   cssThemeId,
   setCssThemeId,
+  onAutoCollapseToolCallsChange,
   buddyEnabled,
   onBuddyEnabledChange,
 }: SettingsViewProps) {
@@ -2034,16 +2036,30 @@ export function SettingsView({
                           ))}
                         </div>
                       </SettingsRow>
-</SettingsGroup>
-                   </SettingsSection>
-                 ) : null}
-               </div>
-               </div>
-             </div>
-           </div>
-         </div>
-     </div>
-   );
+
+                      <SettingsRow
+                        title="自动折叠工具调用"
+                        description="开启后，仅正在执行的工具保持展开；完成、失败及其他状态自动折叠为一行。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={settingsDraft.appearance.autoCollapseToolCalls ?? false}
+                            onCheckedChange={onAutoCollapseToolCallsChange}
+                            label="自动折叠工具调用"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ImAdapterSettings() {

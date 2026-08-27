@@ -9,10 +9,12 @@ export function CopyButton({
   text,
   label = "复制",
   className,
+  showLabel = true,
 }: {
   text?: string;
   label?: string;
   className?: string;
+  showLabel?: boolean;
 }) {
   const [copied, setCopied] = React.useState(false);
 
@@ -35,7 +37,7 @@ export function CopyButton({
       aria-label={label}
     >
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-      <span>{copied ? "已复制" : label}</span>
+      {showLabel ? <span>{copied ? "已复制" : label}</span> : null}
     </button>
   );
 }

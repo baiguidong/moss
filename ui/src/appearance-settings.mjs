@@ -1,6 +1,7 @@
 export const DEFAULT_APPEARANCE = Object.freeze({
   themeMode: 'light',
   cssThemeId: 'grid-theme',
+  autoCollapseToolCalls: false,
 });
 
 const THEME_MODES = new Set(['light', 'dark', 'system']);
@@ -25,6 +26,11 @@ export function normalizeAppearance(input, existing = DEFAULT_APPEARANCE) {
       : CSS_THEME_IDS.has(fallback.cssThemeId)
         ? fallback.cssThemeId
         : DEFAULT_APPEARANCE.cssThemeId,
+    autoCollapseToolCalls: typeof source.autoCollapseToolCalls === 'boolean'
+      ? source.autoCollapseToolCalls
+      : typeof fallback.autoCollapseToolCalls === 'boolean'
+        ? fallback.autoCollapseToolCalls
+        : DEFAULT_APPEARANCE.autoCollapseToolCalls,
   };
 }
 

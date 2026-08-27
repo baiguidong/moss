@@ -1111,8 +1111,9 @@ export function buildTranscriptRenderMessages(
       const resultBlocks = event.message.content.filter((block: any) => block?.type === 'tool_result');
       for (let resultIndex = 0; resultIndex < resultBlocks.length; resultIndex += 1) {
         const block = resultBlocks[resultIndex];
-        const rawContent = resultBlocks.length === 1 && event?.tool_use_result !== undefined
-          ? event.tool_use_result
+        const eventToolResult = event?.tool_use_result ?? event?.toolUseResult;
+        const rawContent = resultBlocks.length === 1 && eventToolResult !== undefined
+          ? eventToolResult
           : block?.content;
         addToolResultMessage(state, turn, timestamp, block, rawContent);
       }

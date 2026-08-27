@@ -15,6 +15,7 @@ describe('desktop appearance settings', () => {
     const appearance = {
       themeMode: 'system',
       cssThemeId: 'dot-theme',
+      autoCollapseToolCalls: true,
     };
 
     expect(normalizeAppearance(appearance)).toEqual(appearance);
@@ -28,6 +29,7 @@ describe('desktop appearance settings', () => {
     )).toEqual({
       themeMode: 'dark',
       cssThemeId: 'gradient-theme',
+      autoCollapseToolCalls: false,
     });
 
     expect(hasPersistedAppearance({

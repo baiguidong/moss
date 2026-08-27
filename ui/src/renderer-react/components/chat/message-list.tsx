@@ -24,12 +24,6 @@ type RenderItem =
       toolCalls: ToolUseRenderMessage[];
     }
   | {
-      kind: "assistant_with_tools";
-      id: string;
-      message: Extract<TranscriptRenderMessage, { type: "assistant_text" }>;
-      toolCalls: ToolUseRenderMessage[];
-    }
-  | {
       kind: "message";
       message: Exclude<TranscriptRenderMessage, ToolUseRenderMessage>;
     };
@@ -61,6 +55,7 @@ function buildSyntheticBashToolCall(
   message: TranscriptRenderMessage,
   status: ToolUseRenderMessage["status"] = "success",
 ): ToolUseRenderMessage {
+  const command = message.type === "bash" ? message.command : undefined;
   return {
     id: `${message.id}-bash-tool`,
     timestamp: message.timestamp,
@@ -69,6 +64,8 @@ function buildSyntheticBashToolCall(
     toolUseId: `synthetic-bash-${message.id}`,
     toolName: "Bash",
     displayName: "Bash",
+    input: command ? { command } : undefined,
+    inputText: command,
     status,
   };
 }
@@ -113,7 +110,23 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
 
     if (message.type === "bash") {
       const failed = message.exitCode != null && message.exitCode !== 0;
-      appendTopLevelToolCall(buildSyntheticBashToolCall(message, failed ? "error" : "success"));
+      const toolCall = buildSyntheticBashToolCall(message, failed ? "error" : "success");
+      appendTopLevelToolCall(toolCall);
+      resultMap.set(toolCall.toolUseId, {
+        id: `${message.id}-bash-result`,
+        timestamp: message.timestamp,
+        type: "tool_result",
+        role: "assistant",
+        toolUseId: toolCall.toolUseId,
+        toolName: "Bash",
+        content: message.output,
+        rawContent: {
+          stdout: message.output,
+          stderr: "",
+          exitCode: message.exitCode ?? undefined,
+        },
+        isError: failed,
+      });
       continue;
     }
 
@@ -142,6 +155,7 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
     // transcript. Do not promote their first line into a chat message.
     if (message.type === "tool_result") continue;
 
+    activeToolGroup = null;
     renderItems.push({
       kind: "message",
       message,
@@ -208,47 +222,19 @@ function renderTranscriptItem(
   item: RenderItem,
   resultMap: Map<string, ToolResultRenderMessage>,
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
-  compact = false,
   focusedToolUseId?: string,
 ) {
   if (item.kind === "tool_group") {
     return (
-      <div key={item.id} className="group mb-5 flex justify-start gap-2">
-        <img
-          src="./build/icon.png"
-          alt="Moss"
-          className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+      <div key={item.id} className="group mb-5 min-w-0 w-full">
+        <ToolCallGroup
+          toolCalls={item.toolCalls}
+          resultMap={resultMap}
+          childToolCallsByParent={childToolCallsByParent}
+          embedded
+          focusedToolUseId={focusedToolUseId}
         />
-        <div className="flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]">
-          <ToolCallGroup
-            toolCalls={item.toolCalls}
-            resultMap={resultMap}
-            childToolCallsByParent={childToolCallsByParent}
-            isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
-            embedded
-            focusedToolUseId={focusedToolUseId}
-          />
-        </div>
       </div>
-    );
-  }
-
-  if (item.kind === "assistant_with_tools") {
-    return (
-      <AssistantMessage
-        key={item.id}
-        message={item.message}
-        beforeContent={
-          <ToolCallGroup
-            toolCalls={item.toolCalls}
-            resultMap={resultMap}
-            childToolCallsByParent={childToolCallsByParent}
-            isStreaming={item.toolCalls.some((toolCall) => toolCall.status === "running" || toolCall.status === "pending")}
-            embedded
-            focusedToolUseId={focusedToolUseId}
-          />
-        }
-      />
     );
   }
 
@@ -263,7 +249,7 @@ function renderTranscriptItem(
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
   }
   if (message.type === "tool_result") {
-    return <ToolResultBlock key={message.id} result={message} compact={compact} />;
+    return <ToolResultBlock key={message.id} result={message} />;
   }
   if (message.type === "system") {
     return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} />;
@@ -300,7 +286,6 @@ function LoadingIndicator() {
 const TIME_SEPARATOR_GAP_MS = 10 * 60 * 1000;
 
 function itemTimestamp(item: RenderItem): Date | null {
-  if (item.kind === "assistant_with_tools") return item.message.timestamp ?? null;
   if (item.kind === "message") return item.message.timestamp ?? null;
   return item.toolCalls[0]?.timestamp ?? null;
 }
@@ -328,9 +313,6 @@ function TimeSeparator({ date }: { date: Date }) {
 }
 
 function extractItemCopyText(item: RenderItem): string {
-  if (item.kind === "assistant_with_tools") {
-    return item.message.content;
-  }
   if (item.kind === "tool_group") {
     return item.toolCalls
       .map((toolCall) => `${toolCall.displayName || toolCall.toolName}${toolCall.inputText ? `: ${toolCall.inputText}` : ""}`)
@@ -478,7 +460,9 @@ export const VirtualMessageList = React.forwardRef<
     [messages],
   );
 
-  const renderItems = allRenderItems;
+  const renderItems = hideToolCalls
+    ? allRenderItems.filter((item) => item.kind !== "tool_group")
+    : allRenderItems;
   const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
   const atBottomRef = React.useRef(true);
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
@@ -578,7 +562,7 @@ export const VirtualMessageList = React.forwardRef<
               }}
             >
               {showSeparator && ts && <TimeSeparator date={ts} />}
-              {renderTranscriptItem(item, resultMap, childToolCallsByParent, hideToolCalls, focusedToolUseId)}
+              {renderTranscriptItem(item, resultMap, childToolCallsByParent, focusedToolUseId)}
             </div>
           );
         }}

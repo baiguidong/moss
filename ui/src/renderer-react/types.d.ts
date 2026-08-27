@@ -379,6 +379,7 @@ export type DesktopSettings = {
   appearance: {
     themeMode: 'dark' | 'light' | 'system';
     cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme';
+    autoCollapseToolCalls: boolean;
   };
   mcp?: {
     version?: number;

@@ -4,6 +4,7 @@ import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { ChatArea } from '@/components/chat-area';
+import { ToolDisplaySettingsProvider } from '@/components/chat/tool-display-settings';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { SkillHubView } from '@/components/skill-hub-view';
 import { ExpertHubView } from '@/components/expert-hub-view';
@@ -419,7 +420,13 @@ export default function App() {
       ? stored
       : 'grid-theme';
   });
-  const appearanceRef = React.useRef<DesktopSettings['appearance']>({ themeMode, cssThemeId });
+  const appearanceRef = React.useRef<DesktopSettings['appearance']>({
+    themeMode,
+    cssThemeId,
+    autoCollapseToolCalls: false,
+  });
+  const committedAppearanceRef = React.useRef(appearanceRef.current);
+  const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
@@ -619,8 +626,24 @@ export default function App() {
 
   const applyAppearance = React.useCallback((appearance: DesktopSettings['appearance']) => {
     appearanceRef.current = appearance;
+    committedAppearanceRef.current = appearance;
     setThemeMode(appearance.themeMode);
     setCssThemeId(appearance.cssThemeId);
+  }, []);
+
+  const applyAppearanceOptimistically = React.useCallback((appearance: DesktopSettings['appearance']) => {
+    appearanceRef.current = appearance;
+    setThemeMode(appearance.themeMode);
+    setCssThemeId(appearance.cssThemeId);
+    if (desktopSettingsRef.current) {
+      desktopSettingsRef.current = { ...desktopSettingsRef.current, appearance };
+    }
+    setDesktopSettings((prev) => {
+      const next = prev ? { ...prev, appearance } : prev;
+      if (next) desktopSettingsRef.current = next;
+      return next;
+    });
+    setSettingsDraft((prev) => (prev ? { ...prev, appearance } : prev));
   }, []);
 
   const applyDesktopSettings = React.useCallback((next: DesktopSettings) => {
@@ -2058,13 +2081,21 @@ export default function App() {
 
   const saveAppearance = React.useCallback((patch: Partial<DesktopSettings['appearance']>) => {
     const next = { ...appearanceRef.current, ...patch };
-    applyAppearance(next);
+    const requestId = appearanceSaveRequestRef.current + 1;
+    appearanceSaveRequestRef.current = requestId;
+    applyAppearanceOptimistically(next);
     void window.agentDesktop.updateSettings({ appearance: next }).then((saved) => {
+      if (requestId !== appearanceSaveRequestRef.current) {
+        committedAppearanceRef.current = saved.appearance;
+        return;
+      }
       applyDesktopSettings(saved);
     }).catch((error: any) => {
+      if (requestId !== appearanceSaveRequestRef.current) return;
+      applyAppearanceOptimistically(committedAppearanceRef.current);
       setSettingsNotice(error?.message || String(error));
     });
-  }, [applyAppearance, applyDesktopSettings]);
+  }, [applyAppearanceOptimistically, applyDesktopSettings]);
 
   const handleThemeModeChange = React.useCallback((mode: ThemeMode) => {
     saveAppearance({ themeMode: mode });
@@ -2091,6 +2122,9 @@ export default function App() {
       setThemeMode={handleThemeModeChange}
       cssThemeId={cssThemeId}
       setCssThemeId={handleCssThemeChange}
+      onAutoCollapseToolCallsChange={(enabled) => {
+        saveAppearance({ autoCollapseToolCalls: enabled });
+      }}
       buddyEnabled={isBuddyEnabled()}
       onBuddyEnabledChange={(enabled) => {
         setBuddyEnabled(enabled);
@@ -2100,6 +2134,9 @@ export default function App() {
   );
 
   return (
+    <ToolDisplaySettingsProvider
+      autoCollapseToolCalls={desktopSettings?.appearance.autoCollapseToolCalls ?? false}
+    >
     <div className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}>
       <div className="moss-window-chrome relative shrink-0">
         <div
@@ -2425,5 +2462,6 @@ export default function App() {
         <UpdateModal />
       </div>
     </div>
+    </ToolDisplaySettingsProvider>
   );
 }

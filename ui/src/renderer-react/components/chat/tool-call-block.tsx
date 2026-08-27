@@ -2,24 +2,35 @@
 
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
+import SyntaxHighlighter from "react-syntax-highlighter";
+import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { cn } from "@/lib/utils";
-import { CodeViewer } from "@/components/chat/code-viewer";
-import { DiffViewer } from "@/components/chat/diff-viewer";
-import { TerminalChrome, CollapsibleContent } from "@/components/chat/terminal-chrome";
+import {
+  DiffViewer,
+  getDiffPatchText,
+  getDiffStats,
+  getStructuredDiffStats,
+  type StructuredPatchLike,
+} from "@/components/chat/diff-viewer";
+import { replDarkSyntaxTheme } from "@/components/chat/repl-syntax-theme";
+import {
+  getToolExecutionState,
+  shouldAutoCollapseToolCall,
+  useToolDisplaySettings,
+} from "@/components/chat/tool-display-settings";
 import {
   extractShellResult,
+  extractTextContent,
   formatLocator,
   getInputRecord,
   getInputString,
   getToolCommand,
   getToolFilePath,
   getToolKind,
-  getToolPatternOrQuery,
-  getToolUrl,
-  ToolKind,
-  extractTextContent,
-  inferLanguage,
+  isRecord,
+  stripAnsi,
   summarizeToolLabel,
+  ToolKind,
 } from "@/components/chat/tool-utils";
 import { CopyButton } from "@/components/shared/copy-button";
 import type {
@@ -27,309 +38,469 @@ import type {
   ToolUseRenderMessage,
 } from "@/lib/agent-transcript";
 
-function statusDot(status: ToolUseRenderMessage["status"]) {
-  if (status === "running" || status === "pending") {
-    return <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />;
+const OUTPUT_PREVIEW_LINES = 4;
+
+function StatusDot({
+  executionState,
+}: {
+  executionState: ReturnType<typeof getToolExecutionState>;
+}) {
+  const label = executionState === "failed"
+    ? "Failed"
+    : executionState === "running"
+      ? "Running"
+      : "Completed";
+  if (executionState === "running") {
+    return (
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[var(--color-repl-success)]"
+      />
+    );
   }
-  if (status === "error") {
-    return <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive" />;
-  }
-  return <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn(
+        "mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full",
+        executionState === "failed"
+          ? "bg-[var(--color-repl-error)]"
+          : "bg-[var(--color-repl-success)]",
+      )}
+    />
+  );
+}
+
+function InlineSyntax({ code, language }: { code: string; language: string }) {
+  const [dark, setDark] = React.useState(
+    () => document.documentElement.getAttribute("data-theme") === "dark",
+  );
+
+  React.useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setDark(document.documentElement.getAttribute("data-theme") === "dark");
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <SyntaxHighlighter
+      language={language}
+      style={dark ? replDarkSyntaxTheme : atomOneLight}
+      PreTag="span"
+      CodeTag="span"
+      customStyle={{
+        display: "inline",
+        margin: 0,
+        padding: 0,
+        overflow: "visible",
+        background: "transparent",
+        fontFamily: "inherit",
+        fontSize: "inherit",
+        lineHeight: "inherit",
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {code}
+    </SyntaxHighlighter>
+  );
 }
 
 function buildHeadline(toolCall: ToolUseRenderMessage, kind: ToolKind) {
   switch (kind) {
+    case "bash":
+      return "Ran";
     case "read":
       return "Read";
     case "search":
-      return "Search";
+      return "Searched";
     case "write":
-      return "Write";
+      return "Wrote";
     case "edit":
-      return "Edit";
-    case "bash":
-      return "Bash";
+      return "Edited";
     case "web":
-      return "Fetch";
+      return "Fetched";
     case "agent":
-      return "Agent";
+      return "Delegated";
     case "db":
-      return "Query";
+      return "Queried";
     default:
       return toolCall.displayName;
   }
 }
 
-function buildCollapsedLabel(
-  toolCall: ToolUseRenderMessage,
-  kind: ToolKind,
-  result?: ToolResultRenderMessage,
-) {
-  const headline = buildHeadline(toolCall, kind);
+function buildSubject(toolCall: ToolUseRenderMessage, kind: ToolKind) {
+  if (kind === "bash") {
+    return getToolCommand(toolCall) || summarizeToolLabel(toolCall);
+  }
   const summary = summarizeToolLabel(toolCall);
-  if (!summary || summary === headline || summary === toolCall.displayName) return headline;
-  return `${headline} · ${summary}`;
+  return summary === toolCall.displayName ? "" : summary;
 }
 
-function ToolInputPreview({
+type OutputLine = {
+  text: string;
+  isError: boolean;
+};
+
+type InlineDiff = {
+  filePath: string;
+  oldString: string;
+  newString: string;
+  structuredPatch?: StructuredPatchLike[];
+};
+
+function extractStructuredDiff(rawContent: unknown): InlineDiff | undefined {
+  if (!isRecord(rawContent) || !Array.isArray(rawContent.structuredPatch)) return undefined;
+  const structuredPatch = rawContent.structuredPatch.filter((hunk): hunk is StructuredPatchLike => (
+    isRecord(hunk)
+    && typeof hunk.oldStart === "number"
+    && typeof hunk.oldLines === "number"
+    && typeof hunk.newStart === "number"
+    && typeof hunk.newLines === "number"
+    && Array.isArray(hunk.lines)
+    && hunk.lines.every((line) => typeof line === "string")
+  ));
+  if (structuredPatch.length === 0) return undefined;
+  return {
+    filePath: typeof rawContent.filePath === "string" ? rawContent.filePath : "file",
+    oldString: "",
+    newString: "",
+    structuredPatch,
+  };
+}
+
+function outputLines(segments: Array<{ text?: string; isError?: boolean }>): OutputLine[] {
+  return segments.flatMap((segment) => {
+    const normalized = stripAnsi(segment.text || "").replace(/\s+$/, "");
+    if (!normalized) return [];
+    return normalized.split("\n").map((text) => ({
+      text,
+      isError: Boolean(segment.isError),
+    }));
+  });
+}
+
+function TranscriptOutput({
+  segments,
+  expanded,
+  emptyLabel,
+  onExpand,
+}: {
+  segments: Array<{ text?: string; isError?: boolean }>;
+  expanded: boolean;
+  emptyLabel?: string;
+  onExpand?: () => void;
+}) {
+  const lines = React.useMemo(() => outputLines(segments), [segments]);
+  const visibleLines = expanded ? lines : lines.slice(0, OUTPUT_PREVIEW_LINES);
+  const hiddenCount = lines.length - visibleLines.length;
+
+  if (lines.length === 0 && !emptyLabel) return null;
+
+  return (
+    <div className="mt-1 grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] text-[12px] leading-[1.55]">
+      <span className="select-none font-mono text-[color:var(--color-repl-muted)] opacity-70">⎿</span>
+      <div className="min-w-0 font-mono text-[color:var(--color-repl-muted)] select-text">
+        {visibleLines.length > 0 ? (
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words">
+            {visibleLines.map((line, index) => (
+              <React.Fragment key={`${index}:${line.text}`}>
+                {index > 0 ? "\n" : null}
+                <span className={line.isError ? "text-[color:var(--color-repl-error)]" : undefined}>{line.text || " "}</span>
+              </React.Fragment>
+            ))}
+          </pre>
+        ) : (
+          <span>{emptyLabel}</span>
+        )}
+        {hiddenCount > 0 ? (
+          <button
+            type="button"
+            onClick={onExpand}
+            className="mt-0.5 text-left text-[11px] text-[color:var(--color-repl-muted)] opacity-70 transition-opacity hover:opacity-100"
+          >
+            … +{hiddenCount} lines (click to expand)
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ExpandedInput({
   toolCall,
   kind,
+  inlineDiff,
+  transcriptDiff = false,
 }: {
   toolCall: ToolUseRenderMessage;
   kind: ToolKind;
+  inlineDiff?: InlineDiff;
+  transcriptDiff?: boolean;
 }) {
   const input = getInputRecord(toolCall);
-  const filePath = getToolFilePath(toolCall) || "file";
-  const command = getToolCommand(toolCall);
-  const pattern = getToolPatternOrQuery(toolCall);
-  const url = getToolUrl(toolCall);
-  const description = getInputString(input, ["description"]);
-
-  if (kind === "edit" && typeof input.old_string === "string" && typeof input.new_string === "string") {
+  if (inlineDiff) {
     return (
       <DiffViewer
-        filePath={filePath}
-        oldString={input.old_string}
-        newString={input.new_string}
+        filePath={inlineDiff.filePath}
+        oldString={inlineDiff.oldString}
+        newString={inlineDiff.newString}
+        structuredPatch={inlineDiff.structuredPatch}
+        maxLines={transcriptDiff ? 28 : 16}
+        variant={transcriptDiff ? "transcript" : "card"}
       />
-    );
-  }
-
-  if (kind === "write" && typeof input.content === "string") {
-    return (
-      <DiffViewer
-        filePath={filePath}
-        oldString=""
-        newString={input.content}
-      />
-    );
-  }
-
-  if (kind === "bash" && command) {
-    return (
-      <TerminalChrome title={description || toolCall.displayName} command={command}>
-        <div className="px-3 py-2 font-mono text-[12px] leading-[1.5] text-[var(--color-terminal-fg)]">
-          <span className="text-[var(--color-terminal-accent)]">$</span> {command}
-        </div>
-      </TerminalChrome>
     );
   }
 
   if (kind === "agent") {
     const prompt = getInputString(input, ["prompt", "query"]);
-    return (
-      <div className="rounded-xl border border-border/60 bg-[var(--color-surface-container-low)] px-3 py-2">
-        <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-          Prompt
-        </div>
-        <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--color-text-secondary)]">
-          {prompt || description || toolCall.displayName}
-        </p>
-      </div>
-    );
+    if (prompt) return <TranscriptOutput segments={[{ text: prompt }]} expanded />;
   }
 
-  if (kind === "web" && (url || pattern)) {
-    return (
-      <div className="rounded-xl border border-border/60 bg-[var(--color-surface-container-low)] px-3 py-2">
-        <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-          Request
-        </div>
-        <p className="mt-1 break-words font-mono text-[12px] leading-5 text-[var(--color-text-secondary)]">
-          {url || pattern}
-        </p>
-      </div>
-    );
-  }
-
-  if (toolCall.inputText) {
-    return (
-      <CodeViewer
-        code={toolCall.inputText}
-        language={kind === "db" ? "sql" : "json"}
-        title="input"
-        maxLines={8}
-        showLineNumbers={kind === "db"}
-      />
-    );
+  if (kind !== "bash" && toolCall.inputText) {
+    return <TranscriptOutput segments={[{ text: toolCall.inputText }]} expanded />;
   }
 
   return null;
 }
 
-function InlineResult({
-  result,
-  toolCall,
-}: {
-  result: ToolResultRenderMessage;
-  toolCall: ToolUseRenderMessage;
-}) {
-  const shell = extractShellResult(result.rawContent);
-  const text = extractTextContent(result.rawContent ?? result.content).trim() || result.content;
-
-  if (shell && (shell.stdout || shell.stderr)) {
-    return (
-      <TerminalChrome title={toolCall.displayName}>
-        <div className="border-t-0">
-          {shell.stdout ? <CollapsibleContent content={shell.stdout} maxLines={3} /> : null}
-          {shell.stderr ? (
-            <>
-              {shell.stdout ? <div className="border-t border-white/10" /> : null}
-              <CollapsibleContent content={shell.stderr} maxLines={3} isError />
-            </>
-          ) : null}
-        </div>
-      </TerminalChrome>
-    );
-  }
-
-  if (text) {
-    const filePath =
-      typeof toolCall.input === "object" && toolCall.input && "file_path" in toolCall.input
-        ? typeof (toolCall.input as Record<string, unknown>).file_path === "string"
-          ? String((toolCall.input as Record<string, unknown>).file_path)
-          : undefined
-        : undefined;
-
-    return (
-      <CodeViewer
-        code={text}
-        language={inferLanguage(filePath, "text")}
-        title={result.isError ? "error" : "output"}
-        maxLines={8}
-      />
-    );
-  }
-
-  return null;
+function hasExpandedInput(toolCall: ToolUseRenderMessage, kind: ToolKind) {
+  const input = getInputRecord(toolCall);
+  if (kind === "edit" || kind === "write") return false;
+  if (kind === "agent") return Boolean(getInputString(input, ["prompt", "query"]));
+  return kind !== "bash" && Boolean(toolCall.inputText);
 }
 
 export function ToolCallBlock({
   toolCall,
   result,
   children,
-  compact = false,
   focused = false,
   expandForFocus = false,
 }: {
   toolCall: ToolUseRenderMessage;
   result?: ToolResultRenderMessage;
   children?: React.ReactNode;
-  compact?: boolean;
   focused?: boolean;
   expandForFocus?: boolean;
 }) {
+  const { autoCollapseToolCalls } = useToolDisplaySettings();
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
-  const [expanded, setExpanded] = React.useState(isRunning || focused || expandForFocus);
-  const userToggledRef = React.useRef(false);
-  const prevRunningRef = React.useRef(isRunning);
+  const shell = extractShellResult(result?.rawContent);
+  const input = getInputRecord(toolCall);
+  const resultDiff = kind === "edit" || kind === "write"
+    ? extractStructuredDiff(result?.rawContent)
+    : undefined;
+  const inputDiff: InlineDiff | undefined = kind === "edit" && typeof input.old_string === "string" && typeof input.new_string === "string"
+    ? {
+        filePath: getToolFilePath(toolCall) || "file",
+        oldString: input.old_string,
+        newString: input.new_string,
+      }
+    : kind === "write" && typeof input.content === "string"
+      ? {
+          filePath: getToolFilePath(toolCall) || "file",
+          oldString: "",
+          newString: input.content,
+        }
+      : undefined;
+  const inlineDiff = resultDiff || inputDiff;
+  const diffStats = inlineDiff?.structuredPatch
+    ? getStructuredDiffStats(inlineDiff.structuredPatch)
+    : inlineDiff
+      ? getDiffStats(inlineDiff.oldString, inlineDiff.newString)
+      : undefined;
+  const failed = toolCall.status === "error" || Boolean(result?.isError) || Boolean(shell?.exitCode);
+  const resultText = inlineDiff && !failed
+    ? ""
+    : shell
+    ? [shell.stdout, shell.stderr].filter(Boolean).join("\n")
+    : result
+      ? extractTextContent(result.rawContent ?? result.content).trim() || result.content
+      : "";
+  const segments = inlineDiff && !failed
+    ? []
+    : shell
+    ? [
+        { text: shell.stdout, isError: false },
+        { text: shell.stderr, isError: false },
+      ]
+    : [{ text: resultText, isError: Boolean(result?.isError) }];
+  const lineCount = outputLines(segments).length;
+  const hasDetailInput = hasExpandedInput(toolCall, kind);
+  const hasResponse = Boolean(inlineDiff)
+    || lineCount > 0
+    || isRunning
+    || Boolean(result)
+    || Boolean(children)
+    || Boolean(result?.attachments?.length);
+  const hasResult = Boolean(result);
+  const executionState = getToolExecutionState({
+    status: toolCall.status,
+    failed,
+    hasResult,
+  });
+  const shouldAutoCollapse = shouldAutoCollapseToolCall({
+    enabled: autoCollapseToolCalls,
+    status: toolCall.status,
+    failed,
+    hasResult,
+  });
+  const [collapsed, setCollapsed] = React.useState(
+    shouldAutoCollapse && !focused && !expandForFocus,
+  );
+  const [outputExpanded, setOutputExpanded] = React.useState(focused || expandForFocus);
+  const autoCollapseWasEnabledRef = React.useRef(autoCollapseToolCalls);
 
   React.useEffect(() => {
-    if (isRunning) {
-      setExpanded(true);
-    } else if (prevRunningRef.current && !userToggledRef.current) {
-      setExpanded(false);
+    if (focused || expandForFocus) {
+      setCollapsed(false);
+      setOutputExpanded(true);
+    } else if (autoCollapseToolCalls) {
+      setCollapsed(shouldAutoCollapse);
+    } else if (autoCollapseWasEnabledRef.current) {
+      setCollapsed(false);
     }
-    prevRunningRef.current = isRunning;
-  }, [isRunning]);
+    autoCollapseWasEnabledRef.current = autoCollapseToolCalls;
+  }, [
+    autoCollapseToolCalls,
+    expandForFocus,
+    failed,
+    focused,
+    hasResult,
+    shouldAutoCollapse,
+    toolCall.status,
+  ]);
 
-  React.useEffect(() => {
-    if (focused || expandForFocus) setExpanded(true);
-  }, [expandForFocus, focused]);
+  const command = getToolCommand(toolCall);
+  const diffText = inlineDiff
+    ? getDiffPatchText(
+        inlineDiff.filePath,
+        inlineDiff.oldString,
+        inlineDiff.newString,
+        inlineDiff.structuredPatch,
+      )
+    : "";
+  const copyText = [command ? `$ ${command}` : toolCall.inputText, diffText || resultText]
+    .filter(Boolean)
+    .join("\n");
+  const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
 
-  const shellResult = extractShellResult(result?.rawContent);
-  const copyText = result
-    ? (extractTextContent(result.rawContent ?? result.content) || result.content)
-    : toolCall.inputText || "";
-
-  // Collapsed: one line dot + summary
-  if (!expanded) {
-    return (
-      <button
-        type="button"
-        data-tool-use-id={toolCall.toolUseId}
-        onClick={() => {
-          userToggledRef.current = true;
-          setExpanded(true);
-        }}
-        className={cn(
-          "flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[13px] transition-colors hover:bg-muted/50 select-none",
-          focused && "bg-primary/10 ring-2 ring-primary/25",
-        )}
-      >
-        {statusDot(toolCall.status)}
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {buildCollapsedLabel(toolCall, kind, result)}
-        </span>
-        {shellResult?.exitCode !== undefined && shellResult.exitCode !== 0 ? (
-          <span className="shrink-0 text-[10px] text-destructive">exit {shellResult.exitCode}</span>
-        ) : null}
-      </button>
-    );
-  }
-
-  // Expanded: show input + result inline
   return (
     <div
       data-tool-use-id={toolCall.toolUseId}
       className={cn(
-        "rounded-xl border transition-shadow",
-        toolCall.status === "error"
-          ? "border-destructive/30 bg-destructive/5"
-          : isRunning
-            ? "border-primary/30 bg-primary/5"
-            : "border-border/60 bg-card/72",
-        focused && "border-primary/60 ring-2 ring-primary/25 ring-offset-1 ring-offset-background",
+        "group/tool-call min-w-0 overflow-hidden rounded-md border border-[color:var(--color-repl-border)] bg-[var(--color-repl-bg)] transition-colors",
+        focused && "ring-1 ring-[color:var(--color-repl-fg)]/20",
       )}
     >
-      {/* Header: click to collapse */}
-      <button
-        type="button"
-        onClick={() => {
-          userToggledRef.current = true;
-          setExpanded(false);
-        }}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left select-none hover:bg-muted/30 transition-colors rounded-t-xl"
+      <div
+        className={cn(
+          "flex min-h-9 min-w-0 items-start gap-2 bg-[var(--color-repl-header-bg)] px-3 py-2",
+          hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
+        )}
       >
-        {statusDot(toolCall.status)}
-        <span className="truncate text-sm font-medium text-foreground flex-1">
-          {buildHeadline(toolCall, kind)}
-        </span>
-        {shellResult?.exitCode !== undefined ? (
-          <span className={cn(
-            "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-            shellResult.exitCode === 0
-              ? "bg-emerald-500/10 text-emerald-600"
-              : "bg-destructive/10 text-destructive",
-          )}>
-            {shellResult.exitCode === 0 ? "0" : shellResult.exitCode}
-          </span>
-        ) : null}
-        <CopyButton text={copyText} label="复制" className="border-border/50 bg-background/50" />
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      </button>
-
-      {/* Body: input + result */}
-      <div className="space-y-1.5 px-3 pb-3 select-text">
-        <ToolInputPreview toolCall={toolCall} kind={kind} />
-
-        {result ? <InlineResult result={result} toolCall={toolCall} /> : null}
-
-        {result?.attachments && result.attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {result.attachments.map((attachment) => (
-              <span key={`${attachment.kind}:${attachment.path}`} className="text-[11px] text-muted-foreground">
-                {attachment.path}
+        <StatusDot executionState={executionState} />
+        <button
+          type="button"
+          disabled={!hasResponse}
+          aria-expanded={hasResponse ? !collapsed : undefined}
+          onClick={() => setCollapsed((value) => !value)}
+          className={cn(
+            "min-w-0 flex-1 text-left text-[13px] leading-[1.55] disabled:pointer-events-none",
+            hasResponse ? "cursor-pointer" : "cursor-default",
+          )}
+        >
+          <span className="block truncate whitespace-nowrap">
+            <span className="font-semibold text-[color:var(--color-repl-fg)]">{buildHeadline(toolCall, kind)}</span>
+            {subject ? (
+              <span className={cn("ml-1 text-[color:var(--color-repl-code-fg)]", kind === "bash" && "font-mono")}>
+                {kind === "bash" ? <InlineSyntax code={subject} language="bash" /> : subject}
               </span>
-            ))}
-          </div>
-        ) : null}
-
-        {children ? (
-          <div className="space-y-1 pt-1">{children}</div>
-        ) : null}
+            ) : null}
+            {diffStats ? (
+              <span className="ml-1 font-mono text-[color:var(--color-repl-muted)]">
+                (<span className="text-[color:var(--color-repl-diff-added-fg)]">+{diffStats.additions}</span>{" "}
+                <span className="text-[color:var(--color-repl-diff-removed-fg)]">-{diffStats.deletions}</span>)
+              </span>
+            ) : null}
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <CopyButton
+            text={copyText}
+            label="复制工具记录"
+            showLabel={false}
+            className="h-6 w-6 justify-center rounded-sm border-0 bg-transparent p-0 text-[color:var(--color-repl-muted)] opacity-0 transition-opacity hover:bg-white/10 hover:text-[color:var(--color-repl-fg)] group-hover/tool-call:opacity-100 focus:opacity-100"
+          />
+          {hasResponse ? (
+            <button
+              type="button"
+              onClick={() => setCollapsed((value) => !value)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[color:var(--color-repl-muted)] transition-colors hover:bg-white/10 hover:text-[color:var(--color-repl-fg)]"
+              title={collapsed ? "展开工具记录" : "折叠到一行"}
+              aria-label={collapsed ? "展开工具记录" : "折叠到一行"}
+              aria-expanded={!collapsed}
+            >
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", collapsed && "-rotate-90")} />
+            </button>
+          ) : null}
+        </div>
       </div>
+
+      {hasResponse && !collapsed ? (
+        <div className="min-w-0 bg-[var(--color-repl-bg)] px-3 py-2">
+          <div className="ml-3.5 min-w-0">
+            <TranscriptOutput
+              segments={segments}
+              expanded={outputExpanded}
+              emptyLabel={inlineDiff
+                ? undefined
+                : executionState === "failed"
+                  ? "Failed"
+                  : executionState === "running"
+                    ? "Running…"
+                    : "Done"}
+              onExpand={() => setOutputExpanded(true)}
+            />
+
+            {outputExpanded && !inlineDiff && hasDetailInput ? (
+              <ExpandedInput
+                toolCall={toolCall}
+                kind={kind}
+              />
+            ) : null}
+
+            {result?.attachments?.length ? (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-[11px] text-[color:var(--color-repl-muted)]">
+                {result.attachments.map((attachment) => (
+                  <span key={`${attachment.kind}:${attachment.path}`}>{attachment.path}</span>
+                ))}
+              </div>
+            ) : null}
+
+            {children ? <div className="mt-2">{children}</div> : null}
+          </div>
+
+          {inlineDiff ? (
+            <ExpandedInput
+              toolCall={toolCall}
+              kind={kind}
+              inlineDiff={inlineDiff}
+              transcriptDiff
+            />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

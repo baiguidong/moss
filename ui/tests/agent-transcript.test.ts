@@ -1,13 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { buildRenderModel } from "@/components/chat/message-list";
 import {
-  groupConsecutiveToolCalls,
-  summarizeToolCalls,
-} from "@/components/chat/tool-call-group";
-import {
-  buildMainChatRenderMessagesFromHistory,
-  type ToolUseRenderMessage,
-} from "@/lib/agent-transcript";
+  getDiffPatchText,
+  getDiffStats,
+  getStructuredDiffStats,
+} from "@/components/chat/diff-viewer";
+import { buildMainChatRenderMessagesFromHistory } from "@/lib/agent-transcript";
 
 function assistantTool(id: string, name: string, input: unknown = {}) {
   return {
@@ -68,6 +66,11 @@ describe("agent transcript tool rendering", () => {
     ]);
     expect(model.resultMap.get("read-1")?.content).toBe("1\t# Heading");
     expect(model.resultMap.get("bash-1")?.content).toBe("1:# Heading");
+    expect(model.resultMap.get("bash-1")?.rawContent).toEqual({
+      stdout: "1:# Heading",
+      stderr: "",
+      exitCode: 0,
+    });
     expect(
       model.renderItems.some(
         (item) => item.kind === "message" && item.message.type === "tool_result",
@@ -75,58 +78,104 @@ describe("agent transcript tool rendering", () => {
     ).toBe(false);
   });
 
-  it("formats one count summary by tool kind", () => {
-    const makeTool = (id: string, toolName: string): ToolUseRenderMessage => ({
-      id,
-      timestamp: new Date("2026-08-13T00:00:00.000Z"),
-      type: "tool_use",
-      role: "assistant",
-      toolUseId: id,
-      toolName,
-      displayName: toolName,
-      status: "success",
-    });
+  it("keeps command and output when adapting legacy bash messages", () => {
+    const model = buildRenderModel([
+      {
+        id: "bash-message-1",
+        timestamp: new Date("2026-08-13T00:00:00.000Z"),
+        type: "bash",
+        role: "user",
+        command: "git status --short",
+        output: "M ui/src/App.tsx",
+        exitCode: 0,
+      },
+    ]);
+    const group = model.renderItems.find((item) => item.kind === "tool_group");
+    const toolCall = group?.kind === "tool_group" ? group.toolCalls[0] : undefined;
 
-    expect(
-      summarizeToolCalls([
-        makeTool("bash-1", "Bash"),
-        makeTool("bash-2", "Bash"),
-        makeTool("read-1", "Read"),
-        makeTool("todo-1", "TodoWrite"),
-      ]),
-    ).toBe("调用 4 个工具 · 2*Bash · 1*Read · 1*Tool");
+    expect(toolCall?.input).toEqual({ command: "git status --short" });
+    expect(model.resultMap.get(toolCall!.toolUseId)?.rawContent).toEqual({
+      stdout: "M ui/src/App.tsx",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
-  it("collapses only consecutive calls and preserves timeline order", () => {
-    const makeTool = (id: string, toolName: string, displayName = toolName): ToolUseRenderMessage => ({
-      id,
-      timestamp: new Date("2026-08-13T00:00:00.000Z"),
-      type: "tool_use",
-      role: "assistant",
-      toolUseId: id,
-      toolName,
-      displayName,
-      status: "success",
+  it("counts a new file as additions without a synthetic empty deletion", () => {
+    expect(getDiffStats("", "first\nsecond")).toEqual({
+      additions: 2,
+      deletions: 0,
     });
+  });
 
-    const batches = groupConsecutiveToolCalls([
-      makeTool("skill-1", "Skill"),
-      makeTool("todo-1", "TodoWrite", "Todo Write"),
-      makeTool("search-1", "Grep"),
-      makeTool("search-2", "Glob"),
-      makeTool("bash-1", "Bash"),
-      makeTool("read-1", "Read"),
-      makeTool("read-2", "Read"),
-      makeTool("search-3", "Grep"),
-    ]);
+  it("does not count a terminal newline as an extra diff line", () => {
+    expect(getDiffStats("", "hello\n")).toEqual({ additions: 1, deletions: 0 });
+    expect(getDiffStats("hello\n", "")).toEqual({ additions: 0, deletions: 1 });
+    expect(getDiffPatchText("ui/test.ts", "", "hello\n")).toBe([
+      "--- ui/test.ts",
+      "+++ ui/test.ts",
+      "+hello",
+    ].join("\n"));
+  });
 
-    expect(batches.map((batch) => [batch.label, batch.toolCalls.length])).toEqual([
-      ["Skill", 1],
-      ["Todo Write", 1],
-      ["Search", 2],
-      ["Bash", 1],
-      ["Read", 2],
-      ["Search", 1],
+  it("keeps additions and deletions accurate for large replacements", () => {
+    const oldString = Array.from({ length: 300 }, (_, index) => `old ${index}`).join("\n");
+    const newString = Array.from({ length: 300 }, (_, index) => `new ${index}`).join("\n");
+    expect(getDiffStats(oldString, newString)).toEqual({ additions: 300, deletions: 300 });
+
+    const sharedLines = Array.from({ length: 300 }, (_, index) => `shared ${index}`);
+    expect(getDiffStats(sharedLines.join("\n"), sharedLines.join("\n"))).toEqual({
+      additions: 0,
+      deletions: 0,
+    });
+    const changedLines = [...sharedLines];
+    changedLines[150] = "changed middle";
+    expect(getDiffStats(sharedLines.join("\n"), changedLines.join("\n"))).toEqual({
+      additions: 1,
+      deletions: 1,
+    });
+  });
+
+  it("uses structured patch line counts", () => {
+    const patch = [{
+      oldStart: 77,
+      oldLines: 2,
+      newStart: 77,
+      newLines: 3,
+      lines: [" unchanged", "+added one", "+added two", "-removed"],
+    }];
+
+    expect(getStructuredDiffStats(patch)).toEqual({ additions: 2, deletions: 1 });
+    expect(getDiffPatchText("ui/test.ts", "", "", patch)).toBe([
+      "--- ui/test.ts",
+      "+++ ui/test.ts",
+      " unchanged",
+      "+added one",
+      "+added two",
+      "-removed",
+    ].join("\n"));
+  });
+
+  it("keeps assistant commentary between consecutive tool groups", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([
+      assistantTool("bash-before", "Bash", { command: "git status --short" }),
+      toolResult("bash-before", "clean", { stdout: "clean", stderr: "", exitCode: 0 }),
+      {
+        type: "assistant",
+        timestamp: "2026-08-13T00:00:03.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "Checking the diff next." }] },
+      },
+      assistantTool("bash-after", "Bash", { command: "git diff --stat" }),
+      toolResult("bash-after", "1 file changed", { stdout: "1 file changed", stderr: "", exitCode: 0 }),
     ]);
+    const model = buildRenderModel(messages);
+
+    expect(model.renderItems.map((item) => item.kind)).toEqual([
+      "tool_group",
+      "message",
+      "tool_group",
+    ]);
+    expect(model.renderItems[0]?.kind === "tool_group" && model.renderItems[0].toolCalls[0]?.toolUseId).toBe("bash-before");
+    expect(model.renderItems[2]?.kind === "tool_group" && model.renderItems[2].toolCalls[0]?.toolUseId).toBe("bash-after");
   });
 });
