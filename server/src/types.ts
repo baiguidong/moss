@@ -10,6 +10,34 @@ function lazySchema<T>(factory: () => T): () => T {
   return () => (cached ??= factory())
 }
 
+const oauthFileConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  providerId: z.string().min(1).default('default'),
+  authorizationUrl: z.string().optional(),
+  tokenUrl: z.string().optional(),
+  userInfoUrl: z.string().optional(),
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(),
+  redirectUri: z.string().optional(),
+  scopes: z.array(z.string().min(1)).default(['openid', 'profile', 'email']),
+  tokenEndpointAuthMethod: z.enum(['client_secret_post', 'client_secret_basic'])
+    .default('client_secret_post'),
+  organizationId: z.string().min(1).optional(),
+  autoProvision: z.boolean().default(true),
+  defaultRole: z.literal('user').default('user'),
+  requireVerifiedEmail: z.boolean().default(true),
+  allowedEmailDomains: z.array(z.string().min(1)).default([]),
+}).default({
+  enabled: false,
+  providerId: 'default',
+  scopes: ['openid', 'profile', 'email'],
+  tokenEndpointAuthMethod: 'client_secret_post',
+  autoProvision: true,
+  defaultRole: 'user',
+  requireVerifiedEmail: true,
+  allowedEmailDomains: [],
+})
+
 export const serverFileConfigSchema = lazySchema(() =>
   z.object({
     server: z.object({
@@ -24,9 +52,20 @@ export const serverFileConfigSchema = lazySchema(() =>
       mode: z.enum(['local', 'auth-center']).default('local'),
       tokenTtlSec: z.number().int().min(60).default(60 * 60),
       authCenterUrl: z.string().min(1).optional(),
+      oauth: oauthFileConfigSchema,
     }).default({
       mode: 'local',
       tokenTtlSec: 60 * 60,
+      oauth: {
+        enabled: false,
+        providerId: 'default',
+        scopes: ['openid', 'profile', 'email'],
+        tokenEndpointAuthMethod: 'client_secret_post',
+        autoProvision: true,
+        defaultRole: 'user',
+        requireVerifiedEmail: true,
+        allowedEmailDomains: [],
+      },
     }),
     bootstrapAdmin: z.object({
       username: z.string().min(1).default('admin'),
@@ -80,12 +119,31 @@ export const serverFileConfigSchema = lazySchema(() =>
 
 export type ServerFileConfig = z.infer<ReturnType<typeof serverFileConfigSchema>>
 
+export type ServerOAuthConfig = {
+  enabled: boolean
+  providerId: string
+  authorizationUrl: string
+  tokenUrl: string
+  userInfoUrl: string
+  clientId: string
+  clientSecret: string
+  redirectUri: string
+  scopes: string[]
+  tokenEndpointAuthMethod: 'client_secret_post' | 'client_secret_basic'
+  organizationId?: string
+  autoProvision: boolean
+  defaultRole: 'user'
+  requireVerifiedEmail: boolean
+  allowedEmailDomains: string[]
+}
+
 export type ServerConfig = {
   host: string
   port: number
   advertisedHost?: string
   authMode: 'local'
   tokenTtlSec: number
+  oauth: ServerOAuthConfig
   bootstrapAdmin: {
     username: string
     password?: string

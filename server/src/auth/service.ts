@@ -74,6 +74,14 @@ function isUserStatus(value: string): value is 'active' | 'disabled' {
   return value === 'active' || value === 'disabled'
 }
 
+function isUsableOAuthEmail(email: string): boolean {
+  const at = email.lastIndexOf('@')
+  return at > 0 &&
+    at === email.indexOf('@') &&
+    at < email.length - 1 &&
+    !/[\u0000-\u0020\u007f]/.test(email)
+}
+
 export async function createAuthService(
   options: AuthServiceOptions,
 ): Promise<{
@@ -189,6 +197,140 @@ export class AuthService {
       user,
       scopes: apiKey.scopes,
       keyId: apiKey.id,
+    })
+  }
+
+  issuePermanentApiKeyFromOAuth(input: {
+    providerId: string
+    subject: string
+    email: string
+    emailVerified: boolean
+    name: string
+    organizationId?: string
+    autoProvision: boolean
+    requireVerifiedEmail: boolean
+    allowedEmailDomains: string[]
+  }): {
+    api_key: string
+    key: Omit<AuthCenterApiKey, 'secretHash'>
+    user: SanitizedAuthCenterUser
+    organization: { id: string; name: string; createdAt: number }
+    scopes: string[]
+  } {
+    const providerId = input.providerId.trim()
+    const subject = input.subject.trim()
+    const email = input.email.trim().toLowerCase()
+    const requestedName = input.name.trim()
+    if (!providerId || !subject || !isUsableOAuthEmail(email)) {
+      throw new AuthServiceError(401, 'OAuth provider did not return a usable identity')
+    }
+    if (input.requireVerifiedEmail && !input.emailVerified) {
+      throw new AuthServiceError(403, 'OAuth email is not verified')
+    }
+    const emailDomain = email.slice(email.lastIndexOf('@') + 1)
+    if (
+      input.allowedEmailDomains.length > 0 &&
+      !input.allowedEmailDomains.includes(emailDomain)
+    ) {
+      throw new AuthServiceError(403, 'OAuth email domain is not allowed')
+    }
+
+    const configuredOrg = input.organizationId
+      ? this.db.getOrganization(input.organizationId)
+      : this.db.listOrganizations()[0]
+    if (!configuredOrg) {
+      throw new AuthServiceError(500, 'OAuth organization is not configured')
+    }
+
+    return this.db.transaction(() => {
+      let identity = this.db.getOAuthIdentity(providerId, subject)
+      let user = identity ? this.db.getUserById(identity.userId) : null
+      if (identity && !user) {
+        throw new AuthServiceError(403, 'OAuth identity owner no longer exists')
+      }
+      if (user && user.orgId !== configuredOrg.id) {
+        throw new AuthServiceError(403, 'OAuth identity belongs to another organization')
+      }
+
+      if (!user) {
+        user = input.emailVerified ? this.db.getUserByEmail(email) : null
+        if (user && user.orgId !== configuredOrg.id) {
+          throw new AuthServiceError(403, 'OAuth email belongs to another organization')
+        }
+        if (!user) {
+          if (!input.autoProvision) {
+            throw new AuthServiceError(403, 'OAuth user has not been provisioned')
+          }
+          const createdAt = Date.now()
+          const userId = randomUUID()
+          const baseName = requestedName || email.split('@')[0] || 'oauth-user'
+          let name = baseName
+          let suffix = 2
+          while (this.db.listUsersByName(name).length > 0) {
+            name = `${baseName}-${suffix}`
+            suffix += 1
+          }
+          user = {
+            id: userId,
+            orgId: configuredOrg.id,
+            email: input.emailVerified ? email : createSyntheticUserEmail(userId),
+            name,
+            departmentId: null,
+            role: 'user',
+            status: 'active',
+            tokenLimit: null,
+            createdAt,
+            passwordHash: null,
+            passwordUpdatedAt: null,
+            lastLoginAt: createdAt,
+          }
+          this.db.createUser(user)
+        }
+
+        identity = {
+          providerId,
+          subject,
+          userId: user.id,
+          email,
+          apiKeyId: null,
+          createdAt: Date.now(),
+          lastLoginAt: Date.now(),
+        }
+        this.db.createOAuthIdentity(identity)
+      }
+
+      if (user.status !== 'active') {
+        throw new AuthServiceError(403, 'OAuth user is disabled')
+      }
+
+      if (identity?.apiKeyId) {
+        this.db.revokeApiKey(identity.apiKeyId)
+      }
+      const scopes = defaultScopesForRole(user.role)
+      const created = createApiKeyRecord({
+        orgId: user.orgId,
+        userId: user.id,
+        name: `oauth:${providerId}`,
+        scopes,
+      })
+      const loggedInAt = Date.now()
+      this.db.createApiKey(created.apiKey)
+      this.db.updateOAuthIdentityLogin({
+        providerId,
+        subject,
+        email,
+        apiKeyId: created.apiKey.id,
+        lastLoginAt: loggedInAt,
+      })
+      this.db.updateUserLastLogin(user.id, loggedInAt)
+
+      return {
+        api_key: created.plainTextKey,
+        key: sanitizeApiKey(created.apiKey),
+        user: sanitizeUser({ ...user, lastLoginAt: loggedInAt }),
+        organization: configuredOrg,
+        scopes,
+      }
     })
   }
 

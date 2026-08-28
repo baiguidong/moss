@@ -197,6 +197,7 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:0.1.8 whoami
 - **工作区管理**：右侧面板实时展示当前工作区文件树，支持文件预览和变更监听。
 - **Mini App 生成**：支持通过自然语言描述生成单文件 HTML 应用，并提供 Host API 访问宿主能力。
 - **工作区隔离**：每个新会话创建独立工作区目录，不自动初始化 Git 仓库。
+- **Server OAuth 登录**：支持 Authorization Code + PKCE，通过一次性交换返回只展示一次的永久 API Key；数据库仅保存 Key 哈希并支持撤销和登录轮换。
 
 ## 配置文件
 

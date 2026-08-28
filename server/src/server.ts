@@ -11,6 +11,7 @@ import { MOSS_SERVER_HOME } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
+import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import {
@@ -300,20 +301,39 @@ function checksum(value: unknown): string {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
 }
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+function readBody(
+  req: http.IncomingMessage,
+  maxBytes = Number.POSITIVE_INFINITY,
+): Promise<string> {
   return new Promise((resolveBody, reject) => {
     let data = ''
+    let bytes = 0
+    let rejected = false
     req.setEncoding('utf8')
     req.on('data', chunk => {
+      if (rejected) return
+      bytes += Buffer.byteLength(chunk)
+      if (bytes > maxBytes) {
+        rejected = true
+        reject(new HttpError(413, 'Request body too large'))
+        return
+      }
       data += chunk
     })
-    req.on('end', () => resolveBody(data))
-    req.on('error', reject)
+    req.on('end', () => {
+      if (!rejected) resolveBody(data)
+    })
+    req.on('error', error => {
+      if (!rejected) reject(error)
+    })
   })
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
-  const rawBody = await readBody(req)
+async function readJsonBody(
+  req: http.IncomingMessage,
+  maxBytes = Number.POSITIVE_INFINITY,
+): Promise<JsonBody> {
+  const rawBody = await readBody(req, maxBytes)
   if (!rawBody.trim()) {
     return {}
   }
@@ -327,6 +347,20 @@ async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
     throw new HttpError(400, 'JSON body must be an object')
   }
   return parsed
+}
+
+async function readOAuthJsonBody(
+  req: http.IncomingMessage,
+  maxBytes: number,
+): Promise<JsonBody> {
+  try {
+    return await readJsonBody(req, maxBytes)
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw new OAuthLoginError(error.statusCode, error.message)
+    }
+    throw error
+  }
 }
 
 function getBearerToken(req: http.IncomingMessage): string | null {
@@ -363,6 +397,38 @@ function writeJson(
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+function writeNoStoreJson(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+): void {
+  const payload = JSON.stringify(body)
+  res.writeHead(status, {
+    'cache-control': 'no-store',
+    pragma: 'no-cache',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+function writeOAuthCallbackPage(res: http.ServerResponse, ok: boolean): void {
+  const title = ok ? 'Moss login complete' : 'Moss login failed'
+  const message = ok
+    ? 'Authentication completed. Return to Moss to finish signing in.'
+    : 'Authentication could not be completed. Return to Moss and try again.'
+  const payload = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${message}</p></main></body></html>`
+  res.writeHead(ok ? 200 : 400, {
+    'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(payload),
+    'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff',
   })
   res.end(payload)
 }
@@ -556,6 +622,11 @@ function writeError(
   res: http.ServerResponse,
   error: unknown,
 ): void {
+  if (error instanceof OAuthLoginError) {
+    writeNoStoreJson(res, error.statusCode, { error: error.message })
+    return
+  }
+
   if (error instanceof AuthServiceError || error instanceof HttpError) {
     writeJson(res, error.statusCode, { error: error.message })
     return
@@ -580,6 +651,7 @@ export function startServer(
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
   const adaptersApi = createAdaptersApi(runtime.store.db)
+  const oauthLoginService = new OAuthLoginService(config.oauth, authService)
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -598,6 +670,7 @@ export function startServer(
           ready: true,
           sessions: runtime.countActiveSessions(),
           auth_mode: config.authMode,
+          oauth_enabled: oauthLoginService.isEnabled(),
         })
         return
       }
@@ -655,6 +728,35 @@ export function startServer(
         }
 
         throw new HttpError(400, `Unsupported grant_type: ${grantType}`)
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/start') {
+        writeNoStoreJson(res, 200, oauthLoginService.start())
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/auth/oauth/callback') {
+        try {
+          const result = await oauthLoginService.completeCallback({
+            state: url.searchParams.get('state') || '',
+            code: url.searchParams.get('code') || undefined,
+            error: url.searchParams.get('error') || undefined,
+          })
+          writeOAuthCallbackPage(res, result.ok)
+        } catch (error) {
+          if (!(error instanceof OAuthLoginError)) throw error
+          writeOAuthCallbackPage(res, false)
+        }
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/exchange') {
+        const body = await readOAuthJsonBody(req, 4 * 1024)
+        const result = oauthLoginService.exchange(
+          typeof body.transaction_id === 'string' ? body.transaction_id : '',
+        )
+        writeNoStoreJson(res, result.pending ? 202 : 200, result)
+        return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/auth/me') {

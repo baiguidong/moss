@@ -48,6 +48,16 @@ export type AuthCenterApiKey = {
   lastUsedAt: number | null
 }
 
+export type AuthCenterOAuthIdentity = {
+  providerId: string
+  subject: string
+  userId: string
+  email: string
+  apiKeyId: string | null
+  createdAt: number
+  lastLoginAt: number
+}
+
 export type AuthCenterStore = {
   version: 1 | 2 | 3
   issuer: string
@@ -155,6 +165,18 @@ function mapApiKey(row: SqlRow): AuthCenterApiKey {
   }
 }
 
+function mapOAuthIdentity(row: SqlRow): AuthCenterOAuthIdentity {
+  return {
+    providerId: String(row.provider_id),
+    subject: String(row.subject),
+    userId: String(row.user_id),
+    email: String(row.email),
+    apiKeyId: row.api_key_id == null ? null : String(row.api_key_id),
+    createdAt: Number(row.created_at),
+    lastLoginAt: Number(row.last_login_at),
+  }
+}
+
 export function getDefaultAuthCenterDbPath(): string {
   return join(getMossConfigHomeDir(), 'authcenter.db')
 }
@@ -232,6 +254,18 @@ export class AuthCenterDb {
         last_used_at INTEGER
       );
 
+      CREATE TABLE IF NOT EXISTS oauth_identities (
+        provider_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        email TEXT NOT NULL,
+        api_key_id TEXT REFERENCES api_keys(id),
+        created_at INTEGER NOT NULL,
+        last_login_at INTEGER NOT NULL,
+        PRIMARY KEY (provider_id, subject),
+        UNIQUE (provider_id, user_id)
+      );
+
       CREATE TABLE IF NOT EXISTS server_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -243,6 +277,7 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS users_email_idx ON users (email);
       CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
       CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
+      CREATE INDEX IF NOT EXISTS oauth_identities_user_idx ON oauth_identities (user_id);
     `)
 
     // Older databases may need the column added before SQLite can create the index.
@@ -301,6 +336,18 @@ export class AuthCenterDb {
   close(): void {
     if (this.#ownsConnection) {
       this.db.close()
+    }
+  }
+
+  transaction<T>(operation: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE TRANSACTION')
+    try {
+      const result = operation()
+      this.db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -501,10 +548,10 @@ export class AuthCenterDb {
     )
   }
 
-  updateUserLastLogin(id: string): void {
+  updateUserLastLogin(id: string, lastLoginAt = now()): void {
     this.db.prepare(`
       UPDATE users SET last_login_at = ? WHERE id = ?
-    `).run(now(), id)
+    `).run(lastLoginAt, id)
   }
 
   setUserTokenLimit(id: string, tokenLimit: number | null): void {
@@ -576,6 +623,52 @@ export class AuthCenterDb {
     this.db.prepare(`
       UPDATE api_keys SET status = 'revoked' WHERE id = ?
     `).run(id)
+  }
+
+  // OAuth identity operations
+  getOAuthIdentity(providerId: string, subject: string): AuthCenterOAuthIdentity | null {
+    const row = this.db.prepare(`
+      SELECT * FROM oauth_identities
+      WHERE provider_id = ? AND subject = ?
+      LIMIT 1
+    `).get(providerId, subject) as SqlRow | undefined
+    return row ? mapOAuthIdentity(row) : null
+  }
+
+  createOAuthIdentity(identity: AuthCenterOAuthIdentity): void {
+    this.db.prepare(`
+      INSERT INTO oauth_identities (
+        provider_id, subject, user_id, email, api_key_id, created_at, last_login_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      identity.providerId,
+      identity.subject,
+      identity.userId,
+      identity.email,
+      identity.apiKeyId,
+      identity.createdAt,
+      identity.lastLoginAt,
+    )
+  }
+
+  updateOAuthIdentityLogin(input: {
+    providerId: string
+    subject: string
+    email: string
+    apiKeyId: string
+    lastLoginAt: number
+  }): void {
+    this.db.prepare(`
+      UPDATE oauth_identities
+      SET email = ?, api_key_id = ?, last_login_at = ?
+      WHERE provider_id = ? AND subject = ?
+    `).run(
+      input.email,
+      input.apiKeyId,
+      input.lastLoginAt,
+      input.providerId,
+      input.subject,
+    )
   }
 
   // Config operations
