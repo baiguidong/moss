@@ -3,6 +3,7 @@ import { Cable, Check, ListFilter, Plug, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
 import { cn } from '@/lib/utils';
+import { isAuthorizedConnector } from '@/lib/connector-selection';
 import type { InstalledConnector } from '../types';
 
 type ConnectorSelectionAreaProps = {
@@ -52,12 +53,15 @@ export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
   const [query, setQuery] = React.useState('');
 
   const installed = React.useMemo(() => connectors
-    .filter((connector) => connector.enabled !== false)
+    .filter(isAuthorizedConnector)
     .sort((a, b) => {
       if (a.type !== b.type) return a.type === 'mcp' ? -1 : 1;
       return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN');
   }), [connectors]);
-  const selected = React.useMemo(() => new Set(selectedConnectorIds), [selectedConnectorIds]);
+  const selected = React.useMemo(() => {
+    const authorizedIds = new Set(installed.map((connector) => connector.id));
+    return new Set(selectedConnectorIds.filter((id) => authorizedIds.has(id)));
+  }, [installed, selectedConnectorIds]);
   const selectedPreview = React.useMemo(
     () => selectedConnectorIds
       .map((id) => installed.find((connector) => connector.id === id))

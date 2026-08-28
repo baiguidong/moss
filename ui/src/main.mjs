@@ -1072,7 +1072,7 @@ function normalizeProjectMemoryIndex(raw) {
   };
 }
 
-async function validateAuthorizedProjectConnectorIds(connectorIds) {
+async function validateAuthorizedConnectorIds(connectorIds) {
   const ids = normalizeStringList(connectorIds);
   if (ids.length === 0) return ids;
   const installed = await listInstalledConnectors();
@@ -1538,7 +1538,7 @@ async function createProject(payload = {}) {
     throw new Error('Project name is required.');
   }
   const now = Date.now();
-  const connectorIds = await validateAuthorizedProjectConnectorIds(payload.connectorIds);
+  const connectorIds = await validateAuthorizedConnectorIds(payload.connectorIds);
   const project = {
     kind: DESKTOP_PROJECT_KIND,
     layoutVersion: DESKTOP_PROJECT_LAYOUT_VERSION,
@@ -1589,7 +1589,7 @@ function invalidateProjectSessionRuntimes(projectId) {
 
 async function updateProject(projectId, updates = {}) {
   const connectorIds = Object.prototype.hasOwnProperty.call(updates, 'connectorIds')
-    ? await validateAuthorizedProjectConnectorIds(updates.connectorIds)
+    ? await validateAuthorizedConnectorIds(updates.connectorIds)
     : null;
   const next = await mutateProjectRecord(projectId, (existing) => {
     if (existing.archivedAt) throw new Error('Project not found.');
@@ -6375,9 +6375,10 @@ function getSessionDetailPayload(sessionRecord, history = sessionRecord.history)
 }
 
 async function updateSessionConnectors(sessionRecord, connectorIds) {
+  const authorizedConnectorIds = await validateAuthorizedConnectorIds(connectorIds);
   sessionRecord.connectorIds = getSessionConnectorOverrides(
     getProjectConnectorIds(sessionRecord),
-    connectorIds,
+    authorizedConnectorIds,
   );
   sessionRecord.updatedAt = Date.now();
   let skippedBusyRuntime = false;
@@ -8480,11 +8481,12 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
   const requestedAssistantName = typeof payload.assistant_name === 'string'
     ? payload.assistant_name.trim()
     : '';
+  const connectorIds = await validateAuthorizedConnectorIds(payload.connectorIds);
   const sessionRecord = createSessionRecord({
     workspace: payload.workspace,
     title: payload.title,
     assistantName: requestedAssistantName || null,
-    connectorIds: payload.connectorIds,
+    connectorIds,
   });
   await prepareAssistantContextForSessionStart(sessionRecord);
   return {

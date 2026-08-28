@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
+import { isAuthorizedConnector } from '@/lib/connector-selection';
 import { cn } from '@/lib/utils';
 import type { InstalledConnector } from '@/types';
 
@@ -59,10 +60,6 @@ function matchesQuery(option: ProjectResourceOption, query: string) {
     .some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(normalizedQuery));
 }
 
-export function isAuthorizedProjectConnector(connector: InstalledConnector) {
-  return connector.enabled !== false && connector.connected === true;
-}
-
 async function loadAuthorizedConnectors(query: string, page: number): Promise<ProjectResourcePage> {
   if (page > 1) return { items: [], total: 0, hasMore: false };
   const response = await window.agentDesktop.getInstalledConnectors();
@@ -70,7 +67,7 @@ async function loadAuthorizedConnectors(query: string, page: number): Promise<Pr
     throw new Error(response?.error || '读取已授权连接器失败');
   }
   const items = (Array.isArray(response.data) ? response.data : [])
-    .filter(isAuthorizedProjectConnector)
+    .filter(isAuthorizedConnector)
     .map((connector) => ({
       id: connector.id,
       name: connector.name || connector.id,

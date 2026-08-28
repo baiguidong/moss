@@ -88,8 +88,6 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
     } else {
       onSelectAssistant?.(assistant);
     }
-    setPickerOpen(false);
-    setQuery('');
   }, [onClearAssistant, onSelectAssistant, selectedAssistant?.name]);
   const closePicker = React.useCallback(() => {
     setPickerOpen(false);
@@ -151,8 +149,11 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
         resultCount={filteredAssistants.length}
         totalCount={installed.length}
         emptyLabel="没有匹配的助手"
-        managerLabel="打开专家中心"
+        managerLabel="管理专家"
         onOpenManager={onOpenExpertHub}
+        managerPlacement="left"
+        confirmLabel="确定"
+        onConfirm={closePicker}
       >
         <div className="space-y-1">
           {filteredAssistants.map((assistant) => {

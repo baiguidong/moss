@@ -34,6 +34,7 @@ import {
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
+import { isAuthorizedConnector } from '@/lib/connector-selection';
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -1932,19 +1933,26 @@ export default function App() {
   );
 
   React.useEffect(() => {
-    const installedIds = new Set(installedConnectors.map((connector) => connector.id));
-    setDraftConnectorIds((prev) => prev.filter((id) => installedIds.has(id)));
+    const authorizedIds = new Set(
+      installedConnectors.filter(isAuthorizedConnector).map((connector) => connector.id),
+    );
+    setDraftConnectorIds((prev) => prev.filter((id) => authorizedIds.has(id)));
   }, [installedConnectors]);
 
   const handleToggleConnector = React.useCallback(async (connector: InstalledConnector) => {
     const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
-    const next = current.includes(connector.id)
+    const isSelected = current.includes(connector.id);
+    if (!isSelected && !isAuthorizedConnector(connector)) {
+      showPermissionNotice(`${connector.name} 尚未完成认证，不能加入会话`, 'error', 6000);
+      return false;
+    }
+    const next = isSelected
       ? current.filter((id) => id !== connector.id)
       : [...current, connector.id];
 
     if (!activeSessionId) {
       setDraftConnectorIds(next);
-      return;
+      return true;
     }
 
     const res = await window.agentDesktop.setSessionConnectors({
@@ -1961,18 +1969,20 @@ export default function App() {
         message,
         details: `连接器：${connector.name} (${connector.id})\n会话：${activeSessionId}`,
       });
-      return;
+      return false;
     }
     const detail = res.data;
     setActiveDetail(detail);
     activeDetailRef.current = detail;
     setSummaries((prev) => upsertSummary(prev, detail));
+    return true;
   }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
 
   const handleUseConnector = React.useCallback(async (connector: InstalledConnector) => {
     const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
     if (!current.includes(connector.id)) {
-      await handleToggleConnector(connector);
+      const added = await handleToggleConnector(connector);
+      if (!added) return;
     }
     setActiveView('chat');
   }, [activeSessionId, draftConnectorIds, handleToggleConnector]);
@@ -2267,6 +2277,7 @@ export default function App() {
                 onToggleConnector={activeDetail?.projectId ? undefined : handleToggleConnector}
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
+                onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
@@ -2311,6 +2322,7 @@ export default function App() {
                 onToggleConnector={handleToggleConnector}
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
+                onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}

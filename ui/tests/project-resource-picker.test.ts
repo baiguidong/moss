@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isAuthorizedProjectConnector } from '../src/renderer-react/components/projects/project-resource-picker';
+import { isAuthorizedConnector } from '../src/renderer-react/lib/connector-selection';
 import type { InstalledConnector } from '../src/renderer-react/types';
 
 function connector(overrides: Partial<InstalledConnector>): InstalledConnector {
@@ -14,11 +14,12 @@ function connector(overrides: Partial<InstalledConnector>): InstalledConnector {
   };
 }
 
-describe('project connector selection', () => {
+describe('connector selection', () => {
   it('includes only enabled connectors with completed authorization', () => {
-    expect(isAuthorizedProjectConnector(connector({ connected: true, enabled: true }))).toBe(true);
-    expect(isAuthorizedProjectConnector(connector({ connected: true }))).toBe(true);
-    expect(isAuthorizedProjectConnector(connector({ connected: false, enabled: true }))).toBe(false);
-    expect(isAuthorizedProjectConnector(connector({ connected: true, enabled: false }))).toBe(false);
+    expect(isAuthorizedConnector(connector({ connected: true, enabled: true }))).toBe(true);
+    expect(isAuthorizedConnector(connector({ connected: true }))).toBe(true);
+    expect(isAuthorizedConnector(connector({ connected: false, enabled: true }))).toBe(false);
+    expect(isAuthorizedConnector(connector({ connected: true, enabled: false }))).toBe(false);
+    expect(isAuthorizedConnector(connector({ enabled: true }))).toBe(false);
   });
 });

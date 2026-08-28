@@ -11,6 +11,7 @@ import {
   Copy,
   FileText,
   FolderOpen,
+  Hammer,
   Plus,
   Send,
   Square,
@@ -34,6 +35,7 @@ import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
 import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
 import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
 import { ConnectorSelectionArea } from "@/components/connector-selection-area";
+import { SkillSelectionArea, type InstalledSkillOption } from "@/components/skill-selection-area";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 
 type ComposerIntent = "chat" | "plan" | "coordinator";
@@ -325,6 +327,7 @@ function ComposerPanel({
   onSelectAssistant,
   onClearAssistant,
   onOpenExpertHub,
+  onOpenSkillHub,
   installedConnectors,
   selectedConnectorIds,
   onToggleConnector,
@@ -350,6 +353,7 @@ function ComposerPanel({
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
+  onOpenSkillHub?: () => void;
   installedConnectors?: InstalledConnector[];
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
@@ -396,24 +400,30 @@ function ComposerPanel({
   const [mentionTab, setMentionTab] = React.useState<"files" | "skills">("files");
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
   const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
+  const [skillsLoading, setSkillsLoading] = React.useState(false);
   const skillsLoadedRef = React.useRef(false);
   const workspaceRootRef = React.useRef<string | null>(null);
 
-  React.useEffect(() => {
-    if (mentionFilter === null || skillsLoadedRef.current) return;
+  const loadInstalledSkills = React.useCallback(async () => {
+    if (skillsLoadedRef.current) return;
     skillsLoadedRef.current = true;
-    void (async () => {
-      try {
-        const res = await window.agentDesktop.ipcInvoke("skill-store:getInstalledSkills") as
-          { success?: boolean; data?: SkillMentionItem[] } | undefined;
-        if (res?.success && Array.isArray(res.data)) {
-          setSkillItems(res.data);
-        }
-      } catch {
-        // skill list unavailable — files tab still works
+    setSkillsLoading(true);
+    try {
+      const res = await window.agentDesktop.ipcInvoke("skill-store:getInstalledSkills") as
+        { success?: boolean; data?: SkillMentionItem[] } | undefined;
+      if (res?.success && Array.isArray(res.data)) {
+        setSkillItems(res.data);
       }
-    })();
-  }, [mentionFilter]);
+    } catch {
+      skillsLoadedRef.current = false;
+    } finally {
+      setSkillsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadInstalledSkills();
+  }, [loadInstalledSkills]);
 
   const mentionDirPart = React.useMemo(() => {
     if (mentionFilter === null) return null;
@@ -520,6 +530,12 @@ function ComposerPanel({
     setMentionIndex(0);
     setMentionTab("files");
   }, [onChange, value]);
+
+  const toggleSelectedSkill = React.useCallback((skill: SkillMentionItem) => {
+    setSelectedSkills((prev) => prev.some((item) => item.name === skill.name)
+      ? prev.filter((item) => item.name !== skill.name)
+      : [...prev, skill]);
+  }, []);
 
   React.useEffect(() => {
     pasteService.init();
@@ -665,7 +681,7 @@ function ComposerPanel({
           className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary"
           title={skill.description || skill.name}
         >
-          <Bot className="h-3 w-3" />
+          <Hammer className="h-3 w-3" />
           {skill.displayName || skill.name}
           <button
             type="button"
@@ -983,6 +999,14 @@ function ComposerPanel({
                 />
               )}
 
+              <SkillSelectionArea
+                skills={skillItems}
+                selectedSkills={selectedSkills}
+                onToggleSkill={toggleSelectedSkill}
+                onOpenSkillHub={onOpenSkillHub}
+                loading={skillsLoading}
+              />
+
               <span className="text-xs text-muted-foreground">模式：</span>
               <span className="inline-flex items-center rounded-full border border-green-500/50 bg-green-500/15 px-2 py-1 text-xs text-green-600">
                 {activeIntentOption.title}
@@ -1079,6 +1103,14 @@ function ComposerPanel({
                 />
               )}
 
+              <SkillSelectionArea
+                skills={skillItems}
+                selectedSkills={selectedSkills}
+                onToggleSkill={toggleSelectedSkill}
+                onOpenSkillHub={onOpenSkillHub}
+                loading={skillsLoading}
+              />
+
               {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
                 <ConnectorSelectionArea
                   connectors={installedConnectors}
@@ -1173,6 +1205,7 @@ function HomeLanding({
   onToggleConnector,
   onOpenConnectorHub,
   onOpenExpertHub,
+  onOpenSkillHub,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1198,6 +1231,7 @@ function HomeLanding({
   onToggleConnector?: (connector: InstalledConnector) => void;
   onOpenConnectorHub?: () => void;
   onOpenExpertHub?: () => void;
+  onOpenSkillHub?: () => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1261,6 +1295,7 @@ function HomeLanding({
         onSelectAssistant={onSelectAssistant}
         onClearAssistant={onClearAssistant}
         onOpenExpertHub={onOpenExpertHub}
+        onOpenSkillHub={onOpenSkillHub}
         installedConnectors={installedConnectors}
         selectedConnectorIds={selectedConnectorIds}
         onToggleConnector={onToggleConnector}
@@ -1302,12 +1337,7 @@ type WorkspaceMentionItem = {
   type: "directory" | "file";
 };
 
-export type SkillMentionItem = {
-  name: string;
-  displayName?: string;
-  description?: string;
-  source?: string;
-};
+export type SkillMentionItem = InstalledSkillOption;
 
 function getFileMentionFilter(text: string, cursorPos: number): string | null {
   const before = text.slice(0, cursorPos);
@@ -1702,6 +1732,7 @@ export function ChatArea({
   onToggleConnector,
   onOpenConnectorHub,
   onOpenExpertHub,
+  onOpenSkillHub,
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
@@ -1747,6 +1778,7 @@ export function ChatArea({
   onToggleConnector?: (connector: InstalledConnector) => void;
   onOpenConnectorHub?: () => void;
   onOpenExpertHub?: () => void;
+  onOpenSkillHub?: () => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1858,6 +1890,7 @@ export function ChatArea({
           onToggleConnector={onToggleConnector}
           onOpenConnectorHub={onOpenConnectorHub}
           onOpenExpertHub={onOpenExpertHub}
+          onOpenSkillHub={onOpenSkillHub}
           remoteEnabled={remoteEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
@@ -1999,6 +2032,7 @@ export function ChatArea({
             onSelectAssistant={onSelectAssistant}
             onClearAssistant={onClearAssistant}
             onOpenExpertHub={onOpenExpertHub}
+            onOpenSkillHub={onOpenSkillHub}
             installedConnectors={installedConnectors}
             selectedConnectorIds={selectedConnectorIds}
             onToggleConnector={onToggleConnector}
