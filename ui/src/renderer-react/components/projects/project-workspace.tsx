@@ -7,6 +7,8 @@ import {
   Loader2,
   MessageSquarePlus,
   MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Settings,
@@ -19,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProjectResourcePicker } from '@/components/projects/project-resource-picker';
 import { ProjectTasksTab } from '@/components/projects/project-tasks-tab';
 import { MarkdownRenderer } from '@/components/markdown/markdown-renderer';
@@ -479,7 +482,10 @@ function ProjectConfigPanel({
   return (
     <aside className="hidden h-full min-h-0 w-[312px] shrink-0 border-l border-border bg-sidebar/35 lg:flex lg:flex-col">
       <div className="border-b border-border px-4 py-4">
-        <div className="text-sm font-semibold text-foreground">项目配置</div>
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Settings className="h-4 w-4 text-muted-foreground" />
+          <span>项目配置</span>
+        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-5 p-4">
@@ -997,27 +1003,33 @@ function ProjectDetail({
     <div className="flex h-full min-h-0 bg-background">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-border px-6 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <button type="button" onClick={onBack} className="text-xs text-muted-foreground hover:text-foreground">
-                项目 / 返回列表
-              </button>
-              <div className="mt-1 flex min-w-0 items-center gap-2">
-                <FolderKanban className="h-5 w-5 shrink-0 text-primary" />
-                <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
-              </div>
+          <button type="button" onClick={onBack} className="text-xs text-muted-foreground hover:text-foreground">
+            项目 / 返回列表
+          </button>
+          <div className="mt-1 flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <FolderKanban className="h-5 w-5 shrink-0 text-primary" />
+              <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
             </div>
-            <Button
-              variant={configOpen ? 'secondary' : 'ghost'}
-              size="icon-sm"
-              className="hidden lg:inline-flex"
-              onClick={() => setConfigOpen((current) => !current)}
-              title={configOpen ? '收起项目配置' : '展开项目配置'}
-              aria-label={configOpen ? '收起项目配置' : '展开项目配置'}
-              aria-expanded={configOpen}
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={configOpen ? 'secondary' : 'ghost'}
+                  size="icon-sm"
+                  className="hidden h-8 w-8 shrink-0 rounded-md lg:inline-flex"
+                  onClick={() => setConfigOpen((current) => !current)}
+                  aria-label={configOpen ? '收起右侧项目配置' : '在右侧展开项目配置'}
+                  aria-expanded={configOpen}
+                >
+                  {configOpen
+                    ? <PanelRightClose className="h-4 w-4" />
+                    : <PanelRightOpen className="h-4 w-4" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                {configOpen ? '收起右侧项目配置' : '在右侧展开项目配置'}
+              </TooltipContent>
+            </Tooltip>
           </div>
           <div className="mt-4 flex flex-wrap gap-1.5 border-b border-border/0">
             {TABS.map((tab) => (

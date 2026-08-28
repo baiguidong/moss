@@ -1226,30 +1226,28 @@ export function SettingsView({
   return (
     <div className="h-full overflow-hidden bg-sidebar/96 text-sidebar-foreground">
       <div className="flex h-full">
-          <aside className="hidden w-[232px] shrink-0 border-r border-sidebar-border bg-sidebar/96 lg:block">
-            <div className="sticky top-0 p-4">
-              <div className="mb-4">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
-                    placeholder="搜索设置"
-                  />
-                </div>
+          <aside className="hidden h-full min-h-0 w-[232px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar/96 lg:flex">
+            <div className="shrink-0 p-4 pb-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
+                  placeholder="搜索设置"
+                />
               </div>
-              <nav className="space-y-1">
-                {visibleSections.map((section) => (
-                  <SectionNavItem
-                    key={section.id}
-                    section={section}
-                    active={section.id === activeSection}
-                    onClick={() => scrollToSection(section.id)}
-                  />
-                ))}
-              </nav>
             </div>
+            <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-4 pb-4 [scrollbar-gutter:stable]">
+              {visibleSections.map((section) => (
+                <SectionNavItem
+                  key={section.id}
+                  section={section}
+                  active={section.id === activeSection}
+                  onClick={() => scrollToSection(section.id)}
+                />
+              ))}
+            </nav>
           </aside>
 
           <div className="min-w-0 flex-1 overflow-hidden bg-sidebar/96">
