@@ -22,6 +22,7 @@ type SelectionPickerDialogProps = {
   managerPlacement?: 'left' | 'right';
   confirmLabel?: string;
   onConfirm?: () => void;
+  contentHeader?: React.ReactNode;
   children: React.ReactNode;
 };
 
@@ -42,6 +43,7 @@ export function SelectionPickerDialog({
   managerPlacement = 'right',
   confirmLabel,
   onConfirm,
+  contentHeader,
   children,
 }: SelectionPickerDialogProps) {
   React.useEffect(() => {
@@ -98,6 +100,12 @@ export function SelectionPickerDialog({
             />
           </div>
         </div>
+
+        {contentHeader ? (
+          <div className="shrink-0 border-b border-border px-4 py-2">
+            {contentHeader}
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           {resultCount > 0 ? children : (

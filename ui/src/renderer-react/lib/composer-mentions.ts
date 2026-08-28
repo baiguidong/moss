@@ -1,15 +1,35 @@
 export type ComposerMentionTab = 'files' | 'skills' | 'assistants' | 'connectors';
+export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'>;
+
+export function getComposerResourceTabs({
+  includeAssistants,
+  includeSkills,
+  includeConnectors,
+}: {
+  includeAssistants: boolean;
+  includeSkills: boolean;
+  includeConnectors: boolean;
+}): ComposerResourceTab[] {
+  const tabs: ComposerResourceTab[] = [];
+  if (includeAssistants) tabs.push('assistants');
+  if (includeSkills) tabs.push('skills');
+  if (includeConnectors) tabs.push('connectors');
+  return tabs;
+}
 
 export function getComposerMentionTabs({
+  includeFiles,
   includeSkills,
   includeAssistants,
   includeConnectors,
 }: {
+  includeFiles: boolean;
   includeSkills: boolean;
   includeAssistants: boolean;
   includeConnectors: boolean;
 }): ComposerMentionTab[] {
-  const tabs: ComposerMentionTab[] = ['files'];
+  const tabs: ComposerMentionTab[] = [];
+  if (includeFiles) tabs.push('files');
   if (includeSkills) tabs.push('skills');
   if (includeAssistants) tabs.push('assistants');
   if (includeConnectors) tabs.push('connectors');
@@ -53,4 +73,14 @@ export function getNextComposerMentionTab(
   if (tabs.length === 0) return 'files';
   const currentIndex = tabs.indexOf(current);
   return tabs[(currentIndex + 1 + tabs.length) % tabs.length];
+}
+
+export function getPreviousComposerMentionTab(
+  tabs: ComposerMentionTab[],
+  current: ComposerMentionTab,
+): ComposerMentionTab {
+  if (tabs.length === 0) return 'files';
+  const currentIndex = tabs.indexOf(current);
+  const normalizedIndex = currentIndex < 0 ? 0 : currentIndex;
+  return tabs[(normalizedIndex - 1 + tabs.length) % tabs.length];
 }

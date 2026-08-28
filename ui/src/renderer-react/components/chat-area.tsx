@@ -33,27 +33,26 @@ import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
 import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
 import {
   AssistantAvatar,
-  AssistantSelectionArea,
   getSelectableInstalledAssistants,
   type InstalledAssistant,
 } from "@/components/assistant-selection-area";
 import {
   ConnectorIcon,
-  ConnectorSelectionArea,
   connectorTypeLabel,
   getSelectableInstalledConnectors,
 } from "@/components/connector-selection-area";
 import {
   getSelectableInstalledSkills,
   SkillIcon,
-  SkillSelectionArea,
   type InstalledSkillOption,
 } from "@/components/skill-selection-area";
+import { ComposerResourceSelectionArea } from "@/components/composer-resource-selection-area";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 import {
   getComposerMentionTabs,
   getDefaultComposerPlaceholder,
   getNextComposerMentionTab,
+  getPreviousComposerMentionTab,
   type ComposerMentionTab,
 } from "@/lib/composer-mentions";
 
@@ -418,13 +417,16 @@ function ComposerPanel({
   const [mentionFilter, setMentionFilter] = React.useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = React.useState(0);
   const [mentionItems, setMentionItems] = React.useState<WorkspaceMentionItem[]>([]);
-  const [mentionTab, setMentionTab] = React.useState<ComposerMentionTab>("files");
+  const [mentionTab, setMentionTab] = React.useState<ComposerMentionTab>(
+    hasActiveSession ? "files" : "skills",
+  );
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
   const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
   const [skillsLoading, setSkillsLoading] = React.useState(false);
   const skillsLoadedRef = React.useRef(false);
   const workspaceRootRef = React.useRef<string | null>(null);
   const mentionTabs = React.useMemo(() => getComposerMentionTabs({
+    includeFiles: hasActiveSession,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
@@ -768,9 +770,44 @@ function ComposerPanel({
     setSelectedSkills([]);
   };
 
-  const skillChips = selectedSkills.length > 0 ? (
-    <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已选技能">
-      {selectedSkills.map((skill) => (
+  const selectedConnectorItems = React.useMemo(() => {
+    const selected = new Set(selectedConnectorIds ?? []);
+    return getSelectableInstalledConnectors(installedConnectors ?? [])
+      .filter((connector) => selected.has(connector.id));
+  }, [installedConnectors, selectedConnectorIds]);
+  const hasSelectedResources = Boolean(selectedAssistant)
+    || (allowSkillSelection && selectedSkills.length > 0)
+    || selectedConnectorItems.length > 0;
+  const selectedResourceIcons = hasSelectedResources ? (
+    <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
+      {selectedAssistant ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {isHomeComposer && onClearAssistant ? (
+              <button
+                type="button"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary transition-colors hover:bg-primary/15 hover:text-foreground"
+                onClick={onClearAssistant}
+                aria-label={`移除助手：${selectedAssistant.displayName || selectedAssistant.name}`}
+              >
+                <AssistantAvatar assistant={selectedAssistant} className="h-4 w-4" />
+              </button>
+            ) : (
+              <span
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary"
+                aria-label={`当前助手：${selectedAssistant.displayName || selectedAssistant.name}`}
+              >
+                <AssistantAvatar assistant={selectedAssistant} className="h-4 w-4" />
+              </span>
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {selectedAssistant.displayName || selectedAssistant.name}
+            {isHomeComposer && onClearAssistant ? ' · 点击移除' : ' · 当前助手'}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+      {allowSkillSelection ? selectedSkills.map((skill) => (
         <Tooltip key={skill.name}>
           <TooltipTrigger asChild>
             <button
@@ -783,6 +820,21 @@ function ComposerPanel({
             </button>
           </TooltipTrigger>
           <TooltipContent>{skill.displayName || skill.name} · 点击移除</TooltipContent>
+        </Tooltip>
+      )) : null}
+      {selectedConnectorItems.map((connector) => (
+        <Tooltip key={connector.id}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary transition-colors hover:bg-primary/15 hover:text-foreground"
+              onClick={() => onToggleConnector?.(connector)}
+              aria-label={`移除连接器：${connector.name}`}
+            >
+              <ConnectorIcon connector={connector} className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{connector.name} · 点击移除</TooltipContent>
         </Tooltip>
       ))}
     </div>
@@ -898,6 +950,14 @@ function ComposerPanel({
           rows={isHomeComposer ? 5 : 1}
           onKeyDown={(event) => {
             if (mentionFilter !== null) {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                event.preventDefault();
+                setMentionTab((prev) => event.key === "ArrowLeft"
+                  ? getPreviousComposerMentionTab(mentionTabs, prev)
+                  : getNextComposerMentionTab(mentionTabs, prev));
+                setMentionIndex(0);
+                return;
+              }
               if (event.key === "Tab") {
                 event.preventDefault();
                 setMentionTab((prev) => getNextComposerMentionTab(mentionTabs, prev));
@@ -1070,7 +1130,7 @@ function ComposerPanel({
 
       {!isHomeComposer && (
         <div className="px-4 py-2 sm:px-5">
-          {skillChips}
+          {selectedResourceIcons ? <div className="mb-2">{selectedResourceIcons}</div> : null}
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {attachments.map((file, index) => (
@@ -1096,37 +1156,23 @@ function ComposerPanel({
                 <span>文件</span>
               </button>
 
-              {selectedAssistant && (
-                <AssistantSelectionArea
-                  assistants={installedAssistants ?? []}
-                  selectedAssistant={selectedAssistant}
-                  displayOnly
-                />
-              )}
-
-              {allowSkillSelection ? (
-                <SkillSelectionArea
-                  skills={skillItems}
-                  selectedSkills={selectedSkills}
-                  onToggleSkill={toggleSelectedSkill}
-                  onOpenSkillHub={onOpenSkillHub}
-                  loading={skillsLoading}
-                />
-              ) : null}
+              <ComposerResourceSelectionArea
+                skills={skillItems}
+                selectedSkills={selectedSkills}
+                onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
+                onOpenSkillHub={onOpenSkillHub}
+                skillsLoading={skillsLoading}
+                connectors={installedConnectors}
+                selectedConnectorIds={selectedConnectorIds}
+                onToggleConnector={onToggleConnector}
+                onOpenConnectorHub={onOpenConnectorHub}
+              />
 
               <span className="text-xs text-muted-foreground">模式：</span>
               <span className="inline-flex items-center rounded-full border border-green-500/50 bg-green-500/15 px-2 py-1 text-xs text-green-600">
                 {activeIntentOption.title}
               </span>
 
-              {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
-                <ConnectorSelectionArea
-                  connectors={installedConnectors}
-                  selectedConnectorIds={selectedConnectorIds ?? []}
-                  onToggleConnector={onToggleConnector}
-                  onOpenConnectorHub={onOpenConnectorHub}
-                />
-              )}
             </div>
 
             <div className="flex items-center justify-end gap-2">
@@ -1200,34 +1246,22 @@ function ComposerPanel({
                 );
               })}
 
-              {installedAssistants && installedAssistants.length > 0 && onSelectAssistant && (
-                <AssistantSelectionArea
-                  assistants={installedAssistants}
-                  selectedAssistant={selectedAssistant ?? null}
-                  onSelectAssistant={onSelectAssistant}
-                  onClearAssistant={onClearAssistant}
-                  onOpenExpertHub={onOpenExpertHub}
-                />
-              )}
-
-              {allowSkillSelection ? (
-                <SkillSelectionArea
-                  skills={skillItems}
-                  selectedSkills={selectedSkills}
-                  onToggleSkill={toggleSelectedSkill}
-                  onOpenSkillHub={onOpenSkillHub}
-                  loading={skillsLoading}
-                />
-              ) : null}
-
-              {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
-                <ConnectorSelectionArea
-                  connectors={installedConnectors}
-                  selectedConnectorIds={selectedConnectorIds ?? []}
-                  onToggleConnector={onToggleConnector}
-                  onOpenConnectorHub={onOpenConnectorHub}
-                />
-              )}
+              <ComposerResourceSelectionArea
+                assistants={installedAssistants}
+                selectedAssistant={selectedAssistant}
+                onSelectAssistant={onSelectAssistant}
+                onClearAssistant={onClearAssistant}
+                onOpenExpertHub={onOpenExpertHub}
+                skills={skillItems}
+                selectedSkills={selectedSkills}
+                onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
+                onOpenSkillHub={onOpenSkillHub}
+                skillsLoading={skillsLoading}
+                connectors={installedConnectors}
+                selectedConnectorIds={selectedConnectorIds}
+                onToggleConnector={onToggleConnector}
+                onOpenConnectorHub={onOpenConnectorHub}
+              />
             </div>
 
             <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2">
@@ -1248,7 +1282,7 @@ function ComposerPanel({
             </div>
           </div>
 
-          {allowSkillSelection && selectedSkills.length > 0 && <div className="mt-3">{skillChips}</div>}
+          {selectedResourceIcons ? <div className="mt-3">{selectedResourceIcons}</div> : null}
           {(attachments.length > 0 || workspace) && (
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -1570,7 +1604,7 @@ function MentionMenu({
           ))}
         </div>
         <span className="ml-auto hidden shrink-0 pl-2 pr-1 text-[10px] text-muted-foreground/60 sm:inline">
-          Tab 切换 · Enter 选择
+          ← → 切换 · Enter 选择
         </span>
       </div>
       <div className="max-h-64 overflow-y-auto p-1">
