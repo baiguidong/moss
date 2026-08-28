@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { ipcMain, safeStorage } = electron;
+const { ipcMain } = electron;
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -7,13 +7,16 @@ import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 import semver from 'semver';
+import { createConnectorCredentialStore } from './connector-credential-store.mjs';
+import { getMossCredentialMasterKeyPaths } from '../../shared/security/credential-crypto.mjs';
 
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_CONNECTORS_DIR = path.join(MOSS_HOME, 'connectors');
 const CONNECTOR_CATALOG_DIR = path.join(MOSS_CONNECTORS_DIR, 'catalog');
 const CONNECTOR_INSTALLED_DIR = path.join(MOSS_CONNECTORS_DIR, 'installed');
 const CONNECTOR_STATE_DIR = path.join(MOSS_CONNECTORS_DIR, 'state');
-const CONNECTOR_CREDENTIALS_FILE = path.join(MOSS_CONNECTORS_DIR, 'credentials.json');
+const CONNECTOR_CREDENTIALS_FILE = path.join(MOSS_CONNECTORS_DIR, 'credentials.v3.json');
+const CREDENTIAL_MASTER_KEY_PATHS = getMossCredentialMasterKeyPaths(MOSS_HOME);
 const CONNECTOR_CATALOG_ZIP_NAME = 'workbuddy-connectors-config.zip';
 const CONNECTOR_CLOUD_AUTH_PROVIDERS_FILE_NAME = 'cloud-auth-providers.json';
 const CONNECTOR_MCP_OVERRIDES_FILE_NAME = 'connector-mcp-overrides.json';
@@ -33,6 +36,11 @@ const ICON_MIME_TYPES = Object.freeze({
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+});
+const connectorCredentialStore = createConnectorCredentialStore({
+  storagePath: CONNECTOR_CREDENTIALS_FILE,
+  primaryKeyPath: CREDENTIAL_MASTER_KEY_PATHS.primaryPath,
+  backupKeyPath: CREDENTIAL_MASTER_KEY_PATHS.backupPath,
 });
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -60,45 +68,15 @@ async function writeJsonFileAsync(filePath, value) {
 }
 
 function readConnectorCredentials() {
-  const data = readJsonFile(CONNECTOR_CREDENTIALS_FILE, {});
+  const data = connectorCredentialStore.read();
   return isPlainObject(data) ? data : {};
 }
 
-async function writeConnectorCredentials(data) {
-  await writeJsonFileAsync(CONNECTOR_CREDENTIALS_FILE, isPlainObject(data) ? data : {});
-  try {
-    await fsp.chmod(CONNECTOR_CREDENTIALS_FILE, 0o600);
-  } catch {}
-}
-
-function encryptConnectorSecret(secret) {
-  const text = String(secret || '');
-  if (!text) return null;
-  try {
-    if (safeStorage?.isEncryptionAvailable?.()) {
-      return {
-        type: 'safeStorage',
-        value: safeStorage.encryptString(text).toString('base64'),
-      };
-    }
-  } catch {}
-  return {
-    type: 'base64',
-    value: Buffer.from(text, 'utf8').toString('base64'),
-  };
-}
-
-function decryptConnectorSecret(record) {
-  if (!isPlainObject(record) || typeof record.value !== 'string') return '';
-  try {
-    if (record.type === 'safeStorage' && safeStorage?.isEncryptionAvailable?.()) {
-      return safeStorage.decryptString(Buffer.from(record.value, 'base64'));
-    }
-    if (record.type === 'base64') {
-      return Buffer.from(record.value, 'base64').toString('utf8');
-    }
-  } catch {}
-  return '';
+async function updateConnectorCredentials(mutator) {
+  connectorCredentialStore.update((current) => {
+    const next = mutator(isPlainObject(current) ? current : {});
+    return isPlainObject(next) ? next : {};
+  });
 }
 
 function normalizeString(value) {
@@ -791,22 +769,35 @@ async function readInstalledConnector(connectorId) {
   const credentialSchema = normalizeConnectorCredentialSchema(
     meta.credentialSchema || await readJsonFileAsync(path.join(baseDir, 'token-schema.json'), null),
   );
-  const credentialValues = credentialSchema ? readConnectorCredentialValues(id) : {};
-  const credentialsConfigured = connectorCredentialsConfigured(credentialSchema, credentialValues);
+  let credentialValues = {};
+  let credentialReadFailed = false;
+  if (credentialSchema) {
+    try {
+      credentialValues = readConnectorCredentialValues(id);
+    } catch {
+      credentialReadFailed = true;
+    }
+  }
+  const credentialsConfigured = !credentialReadFailed
+    && connectorCredentialsConfigured(credentialSchema, credentialValues);
   const skillRoot = path.join(baseDir, '.moss', 'skills');
   return {
     ...meta,
     installed: true,
     enabled: meta.enabled !== false,
     connected: Boolean(state?.connected) && credentialsConfigured,
-    setupStatus: normalizeString(state?.setupStatus || meta.setupStatus) || (
+    setupStatus: credentialReadFailed
+      ? 'credential-error'
+      : normalizeString(state?.setupStatus || meta.setupStatus) || (
       credentialSchema && !credentialsConfigured
         ? 'needs-credentials'
         : meta.type === 'cli' || meta.requiresCliSetup
           ? 'pending'
           : 'installed'
     ),
-    setupMessage: normalizeString(state?.setupMessage),
+    setupMessage: credentialReadFailed
+      ? '本地凭据无法读取，请重新授权连接器'
+      : normalizeString(state?.setupMessage),
     setupUpdatedAt: normalizeString(state?.updatedAt),
     path: baseDir,
     skillRoot: fs.existsSync(skillRoot) ? skillRoot : '',
@@ -946,7 +937,7 @@ function connectorCredentialKey(connectorId, serverName) {
 function readConnectorMcpAccessToken(connectorId, serverName) {
   const credentials = readConnectorCredentials();
   const record = credentials?.mcpAccessTokens?.[connectorCredentialKey(connectorId, serverName)];
-  return decryptConnectorSecret(record);
+  return normalizeString(record?.value);
 }
 
 function readConnectorCredentialValues(connectorId) {
@@ -957,7 +948,7 @@ function readConnectorCredentialValues(connectorId) {
   const values = {};
   for (const [key, record] of Object.entries(records)) {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/.test(key)) continue;
-    const value = decryptConnectorSecret(record);
+    const value = normalizeString(record?.value);
     if (value) values[key] = value;
   }
   return values;
@@ -1040,37 +1031,34 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
   if (!schema) throw new Error(`Connector has no credential schema: ${id}`);
   if (!isPlainObject(inputValues)) throw new Error('Connector credentials must be an object.');
 
-  const credentials = readConnectorCredentials();
-  const connectorFields = isPlainObject(credentials.connectorFields)
-    ? { ...credentials.connectorFields }
-    : {};
-  const existingRecords = isPlainObject(connectorFields[id]) ? connectorFields[id] : {};
-  const nextRecords = { ...existingRecords };
   const allowedFields = new Map(schema.fields.map((field) => [field.key, field]));
-  for (const [key, rawValue] of Object.entries(inputValues)) {
-    const field = allowedFields.get(key);
-    if (!field || typeof rawValue !== 'string') continue;
-    const value = rawValue;
-    if (!value.trim()) continue;
-    const encrypted = encryptConnectorSecret(value);
-    if (!encrypted) continue;
-    nextRecords[key] = {
-      ...encrypted,
-      connectorId: id,
-      field: key,
-      updatedAt: new Date().toISOString(),
-    };
-  }
+  let configuredFields = [];
+  await updateConnectorCredentials((credentials) => {
+    const connectorFields = isPlainObject(credentials.connectorFields)
+      ? { ...credentials.connectorFields }
+      : {};
+    const existingRecords = isPlainObject(connectorFields[id]) ? connectorFields[id] : {};
+    const nextRecords = { ...existingRecords };
+    for (const [key, rawValue] of Object.entries(inputValues)) {
+      const field = allowedFields.get(key);
+      if (!field || typeof rawValue !== 'string') continue;
+      const value = rawValue;
+      if (!value.trim()) continue;
+      nextRecords[key] = {
+        value,
+        connectorId: id,
+        field: key,
+        updatedAt: new Date().toISOString(),
+      };
+    }
 
-  const nextValues = {};
-  for (const field of schema.fields) {
-    const value = decryptConnectorSecret(nextRecords[field.key]);
-    if (value) nextValues[field.key] = value;
-    else if (field.defaultValue) {
-      const encrypted = encryptConnectorSecret(field.defaultValue);
-      if (encrypted) {
+    const nextValues = {};
+    for (const field of schema.fields) {
+      const value = normalizeString(nextRecords[field.key]?.value);
+      if (value) nextValues[field.key] = value;
+      else if (field.defaultValue) {
         nextRecords[field.key] = {
-          ...encrypted,
+          value: field.defaultValue,
           connectorId: id,
           field: field.key,
           updatedAt: new Date().toISOString(),
@@ -1078,16 +1066,17 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
         nextValues[field.key] = field.defaultValue;
       }
     }
-  }
-  const missing = schema.fields
-    .filter((field) => field.required && !normalizeString(nextValues[field.key]))
-    .map((field) => field.label || field.key);
-  if (missing.length > 0) {
-    throw new Error(`请填写必填凭据：${missing.join('、')}`);
-  }
+    const missing = schema.fields
+      .filter((field) => field.required && !normalizeString(nextValues[field.key]))
+      .map((field) => field.label || field.key);
+    if (missing.length > 0) {
+      throw new Error(`请填写必填凭据：${missing.join('、')}`);
+    }
 
-  connectorFields[id] = nextRecords;
-  await writeConnectorCredentials({ ...credentials, connectorFields });
+    configuredFields = Object.keys(nextValues);
+    connectorFields[id] = nextRecords;
+    return { ...credentials, connectorFields };
+  });
   const state = await updateConnectorRuntimeState(id, {
     connected: true,
     setupStatus: 'connected',
@@ -1096,7 +1085,7 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
   return {
     ok: true,
     connectorId: id,
-    configuredFields: Object.keys(nextValues),
+    configuredFields,
     state,
   };
 }
@@ -1137,21 +1126,18 @@ export async function saveConnectorMcpAccessToken(connectorId, serverName, value
   if (!isValidMcpServerName(name)) throw new Error('Invalid MCP server name.');
   const token = extractAccessToken(value);
   if (!token) throw new Error('No access token found.');
-  const encrypted = encryptConnectorSecret(token);
-  if (!encrypted) throw new Error('No access token found.');
-  const credentials = readConnectorCredentials();
-  await writeConnectorCredentials({
+  await updateConnectorCredentials((credentials) => ({
     ...credentials,
     mcpAccessTokens: {
       ...(isPlainObject(credentials.mcpAccessTokens) ? credentials.mcpAccessTokens : {}),
       [connectorCredentialKey(id, name)]: {
-        ...encrypted,
+        value: token,
         connectorId: id,
         serverName: name,
         updatedAt: new Date().toISOString(),
       },
     },
-  });
+  }));
   const state = await updateConnectorMcpAuthState(id, {
     connected: true,
     setupStatus: 'connected',
@@ -1163,12 +1149,15 @@ export async function saveConnectorMcpAccessToken(connectorId, serverName, value
 export async function clearConnectorMcpAccessToken(connectorId, serverName) {
   const id = normalizeConnectorId(connectorId);
   const name = normalizeString(serverName);
-  const credentials = readConnectorCredentials();
-  const tokens = isPlainObject(credentials.mcpAccessTokens) ? { ...credentials.mcpAccessTokens } : {};
-  delete tokens[connectorCredentialKey(id, name)];
-  await writeConnectorCredentials({
-    ...credentials,
-    mcpAccessTokens: tokens,
+  await updateConnectorCredentials((credentials) => {
+    const tokens = isPlainObject(credentials.mcpAccessTokens)
+      ? { ...credentials.mcpAccessTokens }
+      : {};
+    delete tokens[connectorCredentialKey(id, name)];
+    return {
+      ...credentials,
+      mcpAccessTokens: tokens,
+    };
   });
   return updateConnectorMcpAuthState(id, {
     connected: false,
@@ -1951,18 +1940,19 @@ export async function uninstallConnector(connectorId) {
   const id = normalizeConnectorId(connectorId);
   await fsp.rm(connectorDir(id), { recursive: true, force: true });
   await fsp.rm(connectorStatePath(id), { force: true });
-  const credentials = readConnectorCredentials();
-  const connectorFields = isPlainObject(credentials.connectorFields)
-    ? { ...credentials.connectorFields }
-    : {};
-  const mcpAccessTokens = isPlainObject(credentials.mcpAccessTokens)
-    ? { ...credentials.mcpAccessTokens }
-    : {};
-  delete connectorFields[id];
-  for (const key of Object.keys(mcpAccessTokens)) {
-    if (key.startsWith(`${id}:`)) delete mcpAccessTokens[key];
-  }
-  await writeConnectorCredentials({ ...credentials, connectorFields, mcpAccessTokens });
+  await updateConnectorCredentials((credentials) => {
+    const connectorFields = isPlainObject(credentials.connectorFields)
+      ? { ...credentials.connectorFields }
+      : {};
+    const mcpAccessTokens = isPlainObject(credentials.mcpAccessTokens)
+      ? { ...credentials.mcpAccessTokens }
+      : {};
+    delete connectorFields[id];
+    for (const key of Object.keys(mcpAccessTokens)) {
+      if (key.startsWith(`${id}:`)) delete mcpAccessTokens[key];
+    }
+    return { ...credentials, connectorFields, mcpAccessTokens };
+  });
   return { ok: true, id };
 }
 
@@ -1978,9 +1968,9 @@ export function getConnectorMcpServers(connectorIds) {
     const credentialSchema = normalizeConnectorCredentialSchema(
       readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
-    const credentialValues = credentialSchema ? readConnectorCredentialValues(item) : {};
-    if (!connectorCredentialsConfigured(credentialSchema, credentialValues)) continue;
     try {
+      const credentialValues = credentialSchema ? readConnectorCredentialValues(item) : {};
+      if (!connectorCredentialsConfigured(credentialSchema, credentialValues)) continue;
       const normalized = normalizeConnectorMcpConfig(item, rawMcp);
       for (const [serverName, config] of Object.entries(normalized.mcpServers)) {
         const accessToken = readConnectorMcpAccessToken(item, serverName);
@@ -2017,7 +2007,12 @@ export function findConnectorMcpServer(nameOrConnectorId) {
     const credentialSchema = normalizeConnectorCredentialSchema(
       readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
-    const credentialValues = credentialSchema ? readConnectorCredentialValues(connectorId) : {};
+    let credentialValues = {};
+    try {
+      credentialValues = credentialSchema ? readConnectorCredentialValues(connectorId) : {};
+    } catch {
+      continue;
+    }
     if (!connectorCredentialsConfigured(credentialSchema, credentialValues)) continue;
 
     let normalized;
@@ -2069,8 +2064,14 @@ export function getConnectorAddDirs(connectorIds) {
     const credentialSchema = normalizeConnectorCredentialSchema(
       readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
-    if (credentialSchema && !connectorCredentialsConfigured(credentialSchema, readConnectorCredentialValues(item))) {
-      continue;
+    if (credentialSchema) {
+      try {
+        if (!connectorCredentialsConfigured(credentialSchema, readConnectorCredentialValues(item))) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
     }
     const skillRoot = path.join(baseDir, '.moss', 'skills');
     if (!fs.existsSync(skillRoot)) continue;

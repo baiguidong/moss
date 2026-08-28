@@ -56,6 +56,7 @@ function connectorTypeLabel(connector: ConnectorCatalogItem) {
 function connectorStatusLabel(connector: ConnectorCatalogItem) {
   if (!connector.installed) return "";
   if (connector.connected) return "已连接";
+  if (connector.setupStatus === "credential-error") return "凭据异常";
   if (connector.credentialSchema?.fields?.length && !connector.credentialsConfigured) return "待配置";
   if (connector.hasCli && connector.setupStatus === "running") return "安装中";
   if (connector.hasCli && connector.setupStatus === "authenticating") return "认证中";
@@ -195,7 +196,11 @@ function ConnectorCard({
               <Badge variant="outline" className="rounded-md text-[11px]">{connector.authMode}</Badge>
             ) : null}
             {installed ? (
-              <Badge variant={activeConnector.connected ? "secondary" : "outline"} className="rounded-md text-[11px]">
+              <Badge
+                variant={activeConnector.connected ? "secondary" : "outline"}
+                className="rounded-md text-[11px]"
+                title={activeConnector.setupMessage || undefined}
+              >
                 {connectorStatusLabel(installedRecord || connector)}
               </Badge>
             ) : null}

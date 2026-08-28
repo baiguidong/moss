@@ -63,6 +63,13 @@
     ],
     "extraResources": [
       {
+        "from": "../shared",
+        "to": "shared",
+        "filter": [
+          "security/**/*.mjs"
+        ]
+      },
+      {
         "from": "../skills",
         "to": "skills",
         "filter": [

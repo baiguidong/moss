@@ -1,10 +1,15 @@
 import { execaSync } from 'execa'
+import { join } from 'path'
 import { logForDebugging } from '../debug.js'
 import { execFileNoThrow } from '../execFileNoThrow.js'
-import { execSyncWithDefaults_DEPRECATED } from '../execFileNoThrowPortable.js'
+import { getMossConfigHomeDir } from '../envUtils.js'
 import { jsonParse, jsonStringify } from '../slowOperations.js'
 import {
-  CREDENTIALS_SERVICE_SUFFIX,
+  attachCredentialBaseSnapshot,
+  mergeCredentialUpdate,
+  withPrivateFileLockSync,
+} from '../../../shared/security/credential-crypto.mjs'
+import {
   clearKeychainCache,
   getMacOsKeychainStorageServiceName,
   getUsername,
@@ -23,6 +28,74 @@ import type { SecureStorage, SecureStorageData } from './types.js'
 // accounting differences.
 const SECURITY_STDIN_LINE_LIMIT = 4096 - 64
 
+function getKeychainLockTarget(): string {
+  return join(getMossConfigHomeDir(), 'credentials', '.keychain')
+}
+
+function readKeychainDirect(): SecureStorageData | null {
+  const storageServiceName = getMacOsKeychainStorageServiceName()
+  const username = getUsername()
+  const result = execaSync(
+    'security',
+    ['find-generic-password', '-a', username, '-w', '-s', storageServiceName],
+    { stdio: ['ignore', 'pipe', 'pipe'], reject: false, timeout: 10_000 },
+  )
+  if (result.exitCode === 44) return null
+  if (result.exitCode !== 0 || !result.stdout) {
+    throw new Error('Unable to read the Moss keychain entry.')
+  }
+  return attachCredentialBaseSnapshot(jsonParse(result.stdout.trim())) as SecureStorageData
+}
+
+function writeKeychainDirect(data: SecureStorageData): boolean {
+  const storageServiceName = getMacOsKeychainStorageServiceName()
+  const username = getUsername()
+  const jsonString = jsonStringify(data)
+
+  // Convert to hexadecimal to avoid any escaping issues
+  const hexValue = Buffer.from(jsonString, 'utf-8').toString('hex')
+
+  // Prefer stdin (`security -i`) so process monitors (CrowdStrike et al.)
+  // see only "security -i", not the payload (INC-3028).
+  // When the payload would overflow the stdin line buffer, fall back to
+  // argv. Hex in argv is recoverable by a determined observer but defeats
+  // naive plaintext-grep rules, and the alternative — silent credential
+  // corruption — is strictly worse. ARG_MAX on darwin is 1MB so argv has
+  // effectively no size limit for our purposes.
+  const command = `add-generic-password -U -a "${username}" -s "${storageServiceName}" -X "${hexValue}"\n`
+
+  let result
+  if (command.length <= SECURITY_STDIN_LINE_LIMIT) {
+    result = execaSync('security', ['-i'], {
+      input: command,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      reject: false,
+      timeout: 10_000,
+    })
+  } else {
+    logForDebugging(
+      `Keychain payload (${jsonString.length}B JSON) exceeds security -i stdin limit; using argv`,
+      { level: 'warn' },
+    )
+    result = execaSync(
+      'security',
+      [
+        'add-generic-password',
+        '-U',
+        '-a',
+        username,
+        '-s',
+        storageServiceName,
+        '-X',
+        hexValue,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'], reject: false, timeout: 10_000 },
+    )
+  }
+
+  return result.exitCode === 0
+}
+
 export const macOsKeychainStorage = {
   name: 'keychain',
   read(): SecureStorageData | null {
@@ -32,18 +105,9 @@ export const macOsKeychainStorage = {
     }
 
     try {
-      const storageServiceName = getMacOsKeychainStorageServiceName(
-        CREDENTIALS_SERVICE_SUFFIX,
-      )
-      const username = getUsername()
-      const result = execSyncWithDefaults_DEPRECATED(
-        `security find-generic-password -a "${username}" -w -s "${storageServiceName}"`,
-      )
-      if (result) {
-        const data = jsonParse(result)
-        keychainCacheState.cache = { data, cachedAt: Date.now() }
-        return data
-      }
+      const data = readKeychainDirect()
+      keychainCacheState.cache = { data, cachedAt: Date.now() }
+      return data
     } catch (_e) {
       // fall through
     }
@@ -95,80 +159,36 @@ export const macOsKeychainStorage = {
     return promise
   },
   update(data: SecureStorageData): { success: boolean; warning?: string } {
-    // Invalidate cache before update
-    clearKeychainCache()
-
     try {
-      const storageServiceName = getMacOsKeychainStorageServiceName(
-        CREDENTIALS_SERVICE_SUFFIX,
-      )
-      const username = getUsername()
-      const jsonString = jsonStringify(data)
+      return withPrivateFileLockSync(getKeychainLockTarget(), () => {
+        clearKeychainCache()
+        const current = readKeychainDirect() || {}
+        const next = mergeCredentialUpdate(data, current) as SecureStorageData
+        if (!writeKeychainDirect(next)) return { success: false }
 
-      // Convert to hexadecimal to avoid any escaping issues
-      const hexValue = Buffer.from(jsonString, 'utf-8').toString('hex')
-
-      // Prefer stdin (`security -i`) so process monitors (CrowdStrike et al.)
-      // see only "security -i", not the payload (INC-3028).
-      // When the payload would overflow the stdin line buffer, fall back to
-      // argv. Hex in argv is recoverable by a determined observer but defeats
-      // naive plaintext-grep rules, and the alternative — silent credential
-      // corruption — is strictly worse. ARG_MAX on darwin is 1MB so argv has
-      // effectively no size limit for our purposes.
-      const command = `add-generic-password -U -a "${username}" -s "${storageServiceName}" -X "${hexValue}"\n`
-
-      let result
-      if (command.length <= SECURITY_STDIN_LINE_LIMIT) {
-        result = execaSync('security', ['-i'], {
-          input: command,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          reject: false,
-        })
-      } else {
-        logForDebugging(
-          `Keychain payload (${jsonString.length}B JSON) exceeds security -i stdin limit; using argv`,
-          { level: 'warn' },
-        )
-        result = execaSync(
-          'security',
-          [
-            'add-generic-password',
-            '-U',
-            '-a',
-            username,
-            '-s',
-            storageServiceName,
-            '-X',
-            hexValue,
-          ],
-          { stdio: ['ignore', 'pipe', 'pipe'], reject: false },
-        )
-      }
-
-      if (result.exitCode !== 0) {
-        return { success: false }
-      }
-
-      // Update cache with new data on success
-      keychainCacheState.cache = { data, cachedAt: Date.now() }
-      return { success: true }
+        keychainCacheState.cache = {
+          data: attachCredentialBaseSnapshot(next) as SecureStorageData,
+          cachedAt: Date.now(),
+        }
+        return { success: true }
+      })
     } catch (_e) {
       return { success: false }
     }
   },
   delete(): boolean {
-    // Invalidate cache before delete
-    clearKeychainCache()
-
     try {
-      const storageServiceName = getMacOsKeychainStorageServiceName(
-        CREDENTIALS_SERVICE_SUFFIX,
-      )
-      const username = getUsername()
-      execSyncWithDefaults_DEPRECATED(
-        `security delete-generic-password -a "${username}" -s "${storageServiceName}"`,
-      )
-      return true
+      return withPrivateFileLockSync(getKeychainLockTarget(), () => {
+        clearKeychainCache()
+        const storageServiceName = getMacOsKeychainStorageServiceName()
+        const username = getUsername()
+        const result = execaSync(
+          'security',
+          ['delete-generic-password', '-a', username, '-s', storageServiceName],
+          { stdio: ['ignore', 'pipe', 'pipe'], reject: false, timeout: 10_000 },
+        )
+        return result.exitCode === 0 || result.exitCode === 44
+      })
     } catch (_e) {
       return false
     }
@@ -177,9 +197,7 @@ export const macOsKeychainStorage = {
 
 async function doReadAsync(): Promise<SecureStorageData | null> {
   try {
-    const storageServiceName = getMacOsKeychainStorageServiceName(
-      CREDENTIALS_SERVICE_SUFFIX,
-    )
+    const storageServiceName = getMacOsKeychainStorageServiceName()
     const username = getUsername()
     const { stdout, code } = await execFileNoThrow(
       'security',
@@ -187,7 +205,7 @@ async function doReadAsync(): Promise<SecureStorageData | null> {
       { useCwd: false, preserveOutputOnError: false },
     )
     if (code === 0 && stdout) {
-      return jsonParse(stdout.trim())
+      return attachCredentialBaseSnapshot(jsonParse(stdout.trim())) as SecureStorageData
     }
   } catch (_e) {
     // fall through

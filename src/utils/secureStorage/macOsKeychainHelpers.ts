@@ -9,41 +9,25 @@
  * so a heavy transitive import here defeats the prefetch. The execa →
  * human-signals → cross-spawn chain alone is ~58ms of synchronous init.
  *
- * The imports below (envUtils, crypto, os) are already
- * evaluated by startupProfiler.ts at main.tsx:5, so they add no module-init
- * cost when keychainPrefetch.ts pulls this file in.
+ * The OS import is already evaluated by startupProfiler.ts at main.tsx:5,
+ * and the credential update helper has no runtime dependencies.
  */
 
-import { createHash } from 'crypto'
 import { userInfo } from 'os'
-import { getMossConfigHomeDir } from '../envUtils.js'
+import { attachCredentialBaseSnapshot } from '../../../shared/security/credential-update.mjs'
 import type { SecureStorageData } from './types.js'
 
-// Suffix distinguishing the credentials keychain entry from the legacy API key
-// entry (which uses no suffix). Both share the service name base.
-// DO NOT change this value — it's part of the keychain lookup key and would
-// orphan existing stored credentials.
-export const CREDENTIALS_SERVICE_SUFFIX = '-credentials'
+export const MOSS_CREDENTIALS_SERVICE_NAME = 'moss-credentials'
 
-export function getMacOsKeychainStorageServiceName(
-  serviceSuffix: string = '',
-): string {
-  const configDir = getMossConfigHomeDir()
-  const isDefaultDir = !process.env.MOSS_CONFIG_DIR
-
-  // Use a hash of the config dir path to create a unique but stable suffix
-  // Only add suffix for non-default directories to maintain backwards compatibility
-  const dirHash = isDefaultDir
-    ? ''
-    : `-${createHash('sha256').update(configDir).digest('hex').substring(0, 8)}`
-  return `Claude Code${serviceSuffix}${dirHash}`
+export function getMacOsKeychainStorageServiceName(): string {
+  return MOSS_CREDENTIALS_SERVICE_NAME
 }
 
 export function getUsername(): string {
   try {
     return process.env.USER || userInfo().username
   } catch {
-    return 'claude-code-user'
+    return 'moss-user'
   }
 }
 
@@ -100,7 +84,7 @@ export function primeKeychainCacheFromPrefetch(stdout: string | null): void {
   if (stdout) {
     try {
       // eslint-disable-next-line custom-rules/no-direct-json-operations -- jsonParse() pulls slowOperations (lodash-es/cloneDeep) into the early-startup import chain; see file header
-      data = JSON.parse(stdout)
+      data = attachCredentialBaseSnapshot(JSON.parse(stdout)) as SecureStorageData
     } catch {
       // malformed prefetch result — let sync read() re-fetch
       return
