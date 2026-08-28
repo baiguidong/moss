@@ -53,7 +53,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   expertHub: {
     baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
-  adapters: {},
+  adapters: { feishu: { runLocation: 'desktop' } },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserEmail: '',
@@ -653,13 +653,13 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
       normalizedSettings.remoteDirectCredentialMode,
     ),
     userEmail: normalizedSettings.remoteDirectUserEmail || '',
-    userPassword: normalizedSettings.remoteDirectUserPassword || '',
-    apiKey: normalizedSettings.remoteDirectApiKey || '',
     workspace: normalizedSettings.remoteDirectWorkspace || '',
     profileMode: normalizeRemoteDirectProfileMode(
       normalizedSettings.remoteDirectProfileMode,
     ),
   };
+  delete remoteDirect.userPassword;
+  delete remoteDirect.apiKey;
 
   const models = {
     ...existingModels,

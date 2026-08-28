@@ -12,7 +12,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 ## 飞书 Adapter
 
-Moss Desktop 可以通过企业自建应用机器人连接飞书手机端。当前支持私聊、新建或切换 Moss 会话、消息中心主动推送、手机端允许或拒绝待确认操作，以及 CardKit 流式回复。
+Moss Desktop 可以配置企业自建应用机器人连接飞书手机端，并选择让 Adapter 运行在本机或长期在线的 Moss Server。当前支持私聊、新建或切换 Moss 会话、消息中心主动推送、手机端允许或拒绝待确认操作，以及 CardKit 流式回复。
 
 ### 必须配置的权限
 
@@ -197,7 +197,7 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:0.1.8 whoami
 - **工作区管理**：右侧面板实时展示当前工作区文件树，支持文件预览和变更监听。
 - **Mini App 生成**：支持通过自然语言描述生成单文件 HTML 应用，并提供 Host API 访问宿主能力。
 - **工作区隔离**：每个新会话创建独立工作区目录，不自动初始化 Git 仓库。
-- **Server OAuth 登录**：支持 Authorization Code + PKCE，通过一次性交换返回只展示一次的永久 API Key；数据库仅保存 Key 哈希并支持撤销和登录轮换。
+- **Server 内置窗口认证**：客户端通过隔离的 Moss 认证窗口、Authorization Code + PKCE 和本地回环 callback 登录 Moss Server，取得只展示一次的永久 API Key；不依赖系统浏览器，Server 默认可用且无需外部 OAuth 配置，客户端支持取消认证并使用加密凭据存储。
 
 ## 配置文件
 

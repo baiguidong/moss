@@ -228,6 +228,43 @@ export async function parseRemoteDirectError(prefix, response) {
     : `${prefix}: ${response.status} ${response.statusText}`;
 }
 
+async function requestRemoteFeishuAdapter(settings, path, { method = 'GET', body } = {}) {
+  const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
+  let response;
+  try {
+    response = await fetch(`${serverUrl}/api/v1/adapters/feishu/${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to the Moss Server Feishu runtime: ${message}`);
+  }
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Moss Server Feishu runtime request failed', response));
+  }
+  return response.json();
+}
+
+export function fetchRemoteFeishuAdapterStatus(settings) {
+  return requestRemoteFeishuAdapter(settings, 'status');
+}
+
+export function startRemoteFeishuAdapter(settings, config) {
+  return requestRemoteFeishuAdapter(settings, 'start', {
+    method: 'POST',
+    body: { config },
+  });
+}
+
+export function stopRemoteFeishuAdapter(settings) {
+  return requestRemoteFeishuAdapter(settings, 'stop', { method: 'POST' });
+}
+
 export async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessionId }) {
   let response;
   try {
@@ -398,6 +435,9 @@ export function createRemoteDirectClient({ getSettings }) {
     requestRemoteDirectAccessToken,
     resolveRemoteDirectConnection: (settings) => resolveRemoteDirectConnection(currentSettings(settings)),
     parseRemoteDirectError,
+    fetchRemoteFeishuAdapterStatus: (settings) => fetchRemoteFeishuAdapterStatus(currentSettings(settings)),
+    startRemoteFeishuAdapter: (config, settings) => startRemoteFeishuAdapter(currentSettings(settings), config),
+    stopRemoteFeishuAdapter: (settings) => stopRemoteFeishuAdapter(currentSettings(settings)),
     fetchRemoteDirectSessionInfo,
     fetchRemoteDirectSessionContext,
     fetchRemoteDirectWorkspaceDir,

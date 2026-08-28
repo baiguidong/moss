@@ -6,21 +6,22 @@
 
 ## 当前方案摘要
 
-当前真实链路是：
+当前真实链路由客户端选择运行位置：
 
 ```text
 Desktop Webapp Settings
   -> ~/.moss/settings.json (adapters)
-  -> Electron Main 启动 Feishu Adapter 子进程
-  -> 版本化进程 IPC
-  -> Moss Desktop session / notification / decision
+  -> 本机：Electron Main -> Feishu Adapter -> Desktop session
+  -> Server：托管 API -> Feishu Adapter -> Moss Server session
 ```
 
 注意：
 
 - IM 配置和配对都在 Desktop Webapp 的 `Settings -> IM 接入`
-- Desktop 客户端启动时会在飞书凭据完整的情况下自动启动飞书 Adapter；保存新配置后也会立即启动或按需重启
-- 飞书 Adapter 必须由 Moss Desktop 启动，不再连接 `/api/sessions` 或 `/ws/:sessionId`
+- Server 管理后台不提供飞书凭据配置；Desktop 只在选择 Server 运行时推送完整配置快照
+- Desktop 会先停止另一端再启动目标端，避免本机与 Server 同时连接同一个飞书应用
+- Server 托管实例在 Desktop 退出后继续运行，并在 Server 重启后自动恢复
+- 飞书 Adapter 必须由 Moss Desktop 或 Moss Server 通过版本化进程 IPC 启动
 
 ## 飞书应用配置
 
@@ -86,7 +87,7 @@ Adapter 已接入 `application.bot.menu_v6`，并提供会话中心卡片。菜�
 
 ### 发布检查
 
-权限、事件、回调或菜单发生变化后，必须在飞书开发者后台创建并发布新版本；仅保存草稿不会对手机端生效。发布后检查应用可用范围包含实际验收用户，然后在 Moss 的 `设置 -> IM 接入` 中保存 `App ID` 和 `App Secret`。客户端会自动启动 Adapter 和飞书长连接。
+权限、事件、回调或菜单发生变化后，必须在飞书开发者后台创建并发布新版本；仅保存草稿不会对手机端生效。发布后检查应用可用范围包含实际验收用户，然后在 Moss 的 `设置 -> IM 接入` 中保存 `App ID` 和 `App Secret`。客户端会按选定的运行位置启动 Adapter 和飞书长连接。
 
 ### Moss 客户端配置
 
@@ -100,8 +101,9 @@ Adapter 已接入 `application.bot.menu_v6`，并提供会话中心卡片。菜�
 | `Verification Token` | 长连接不填 | 仅开发者服务器回调验签模式使用；Moss 当前使用长连接 |
 | 允许的用户 ID | 可选 | 可预先填写 `open_id` 白名单，多个值用逗号分隔；通常留空后使用配对码 |
 | 流式卡片 | 可选 | 不影响 Adapter 启动；具备 `cardkit:card:write` 时可使用 CardKit，失败会自动降级 |
+| 运行位置 | 必填 | `本机` 随 Desktop 运行；`Moss Server` 在 Desktop 退出后继续运行，需要先完成远程连接认证 |
 
-保存后，状态应依次变为“Adapter 正在启动”“客户端桥接已连接，正在等待飞书长连接”“飞书长连接已就绪”。然后在“配对管理”中生成 6 位配对码，在飞书中与机器人私聊发送该配对码；配对成功后，用户会出现在“已配对用户”列表中。
+保存后，状态应依次变为“Adapter 正在启动”“桥接已连接，正在等待飞书长连接”“飞书长连接已就绪”，状态中会显示当前运行在本机还是 Moss Server。然后在“配对管理”中生成 6 位配对码，在飞书中与机器人私聊发送该配对码；配对成功后，用户会出现在“已配对用户”列表中。
 
 ### 配置检查清单
 
@@ -187,7 +189,7 @@ adapters/
 
 ## 附件收发
 
-飞书 Desktop IPC 当前只接收入站文本；入站附件会返回明确提示。
+飞书 IPC 通道当前只接收入站文本；入站附件会返回明确提示。
 
 **出站(Claude → 用户):**
 

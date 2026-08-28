@@ -97,16 +97,20 @@ describe('direct embedded backend model settings', () => {
   test('bridges Moss app events through control request responses', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-app-event-'))
     const eventUrl = 'file:///tmp/welcome.html'
+    let createdWorkspaceDirectories: string[] | undefined
 
     class FakeSession {
       constructor(
         private readonly options: {
+          workspaceDirectories?: string[]
           onAppEvent?: (event: {
             type: string
             input?: Record<string, unknown>
           }) => Promise<unknown>
         },
-      ) {}
+      ) {
+        createdWorkspaceDirectories = options.workspaceDirectories
+      }
 
       async *send(
         _text: string | Array<{ type: string; [key: string]: unknown }>,
@@ -146,6 +150,9 @@ describe('direct embedded backend model settings', () => {
     })
 
     try {
+      expect(createdWorkspaceDirectories).toEqual([
+        join(tempRoot, 'workspace'),
+      ])
       const controlRequestPromise = waitForStdout(
         handle,
         message => message.type === 'control_request',
@@ -216,9 +223,6 @@ function makeSettings(
       url: 'https://image.default.test',
       apiKey: 'image-key',
       model: 'image-model',
-    },
-    skillStore: {
-      tenantId: '',
     },
     serverRuntime: {
       backend: 'host',

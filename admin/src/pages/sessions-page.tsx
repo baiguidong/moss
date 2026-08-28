@@ -23,10 +23,8 @@ import {
 } from '@/components/ui/select'
 import { getSessions, terminateSession } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
-import { getInstalledAgents } from '@/lib/api/agent-hub'
-import type { InstalledAgentInfo } from '@/lib/api/agent-hub'
 import type { Session, AuthUser } from '@/lib/api/types'
-import { Search, ArrowRight, Loader2, Power, RefreshCw, Calendar } from 'lucide-react'
+import { Search, ArrowRight, Loader2, Power, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns'
@@ -69,7 +67,6 @@ function SessionsSkeleton() {
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
-  const [installedAgents, setInstalledAgents] = useState<InstalledAgentInfo[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [userFilter, setUserFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -81,10 +78,9 @@ export default function SessionsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, usersRes, agentsRes] = await Promise.all([getSessions(), getUsers(), getInstalledAgents()])
+      const [sessionsRes, usersRes] = await Promise.all([getSessions(), getUsers()])
       setSessions(sessionsRes.sessions)
       setUsers(usersRes.users)
-      setInstalledAgents(agentsRes)
     } catch (error) {
       console.error('Failed to fetch data:', error)
       toast.error('获取会话列表失败')
@@ -103,10 +99,9 @@ export default function SessionsPage() {
     fetchData()
   }
 
-  const agentNames = Array.from(new Set([
-    ...installedAgents.map((a) => a.name),
-    ...sessions.map((s) => s.assistantName ?? null).filter((n): n is string => n !== null),
-  ]))
+  const agentNames = Array.from(new Set(
+    sessions.map((session) => session.assistantName).filter((name): name is string => Boolean(name)),
+  ))
 
   const filteredSessions = sessions
     .filter((session) => {
@@ -206,14 +201,11 @@ export default function SessionsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">全部智能体</SelectItem>
-                {agentNames.map((name) => {
-                  const agent = installedAgents.find((a) => a.name === name)
-                  return (
-                    <SelectItem key={name} value={name}>
-                      {agent?.displayName || name}
-                    </SelectItem>
-                  )
-                })}
+                {agentNames.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

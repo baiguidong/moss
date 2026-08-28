@@ -92,6 +92,10 @@ export function hasFeishuAdapterCredentials(config) {
   );
 }
 
+export function getFeishuAdapterRunLocation(config) {
+  return config?.feishu?.runLocation === 'server' ? 'server' : 'desktop';
+}
+
 export function getFeishuAdapterFingerprint(config) {
   if (!hasFeishuAdapterCredentials(config)) return '';
   const feishu = config.feishu;

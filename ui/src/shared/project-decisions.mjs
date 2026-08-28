@@ -2,7 +2,6 @@ import { redactProjectMemorySecrets } from './project-memory.mjs';
 
 export const PROJECT_DECISION_POLICY_MODES = Object.freeze([
   'auto_all',
-  'manual',
   'recommend',
   'auto_low_risk',
 ]);

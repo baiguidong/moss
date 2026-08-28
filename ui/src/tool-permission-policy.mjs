@@ -121,7 +121,7 @@ function buildWebDialog(toolName, input) {
 }
 
 export function shouldAutoApproveToolPermission({ bypassPermissions, toolName }) {
-  return Boolean(bypassPermissions) && toolName === EXIT_PLAN_MODE_TOOL_NAME;
+  return Boolean(bypassPermissions) && toolName !== ASK_USER_QUESTION_TOOL_NAME;
 }
 
 function getRememberPermissionLabel(suggestions) {
@@ -233,6 +233,33 @@ export function buildToolPermissionDialog(toolName, input, suggestions) {
   }, suggestions);
 }
 
+export function buildToolPermissionQuestion(dialog) {
+  const buttons = Array.isArray(dialog?.buttons) ? dialog.buttons : [];
+  const permissionButtons = buttons.slice(0, Math.max(1, buttons.length - 1));
+  return {
+    question: String(dialog?.message || '允许 Agent 执行这项操作吗？'),
+    header: String(dialog?.title || '工具权限'),
+    options: permissionButtons.map((label, index) => {
+      const isRemember = index === dialog?.rememberOptionIndex;
+      const isAllowOnce = index === 0;
+      return {
+        label: String(label),
+        description: isRemember
+          ? (label === '以后允许'
+            ? '保存这项权限，以后遇到相同范围时直接允许。'
+            : '仅在本次会话内，对相同范围直接允许。')
+          : isAllowOnce
+            ? '仅允许本次工具调用。'
+            : '阻止本次工具调用，Agent 将收到拒绝结果。',
+        ...((isAllowOnce || isRemember) && dialog?.detail
+          ? { preview: String(dialog.detail) }
+          : {}),
+      };
+    }),
+    multiSelect: false,
+  };
+}
+
 export function getToolPermissionNotice(toolName) {
   const normalizedName = String(toolName || '').toLowerCase();
   if (toolName === ASK_USER_QUESTION_TOOL_NAME) return 'Agent 正在等待你回答问题';
@@ -271,4 +298,11 @@ export function resolveToolPermissionDialogResponse(responseIndex, dialog, sugge
     };
   }
   return { behavior: 'deny', message: 'Denied by user' };
+}
+
+export function resolveToolPermissionQuestionAnswer(answer, dialog, suggestions) {
+  const responseIndex = Array.isArray(dialog?.buttons)
+    ? dialog.buttons.indexOf(answer)
+    : -1;
+  return resolveToolPermissionDialogResponse(responseIndex, dialog, suggestions);
 }

@@ -520,16 +520,13 @@ function ProjectConfigPanel({
               <option value="auto_all">全部允许</option>
               <option value="auto_low_risk">自动处理低风险偏好</option>
               <option value="recommend">AI 推荐，人工确认</option>
-              <option value="manual">全部人工判断</option>
             </select>
             <div className="text-xs leading-5 text-muted-foreground">
               {draft.decisionPolicy.mode === 'auto_all'
                 ? '自动采用 AI 推荐选项；没有明确推荐时采用首项，并保留操作预览和审计记录。'
                 : draft.decisionPolicy.mode === 'auto_low_risk'
                   ? '仅自动处理有明确推荐的低风险偏好，其他操作需要人工确认。'
-                  : draft.decisionPolicy.mode === 'recommend'
-                    ? '显示 AI 推荐，但所有决策仍需人工确认。'
-                    : '所有项目决策均由用户选择。'}
+                  : '显示 AI 推荐，但所有决策仍需人工确认。'}
             </div>
           </div>
           <ProjectResourcePicker

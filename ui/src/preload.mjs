@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   updateSettings: (payload) => ipcRenderer.invoke('agent:update-settings', payload),
+  authenticateRemoteServer: (payload) => ipcRenderer.invoke('agent:remote-authenticate', payload),
+  cancelRemoteServerAuthentication: () => ipcRenderer.invoke('agent:remote-authenticate-cancel'),
   listMcpServers: () => ipcRenderer.invoke('agent:mcp-list'),
   upsertMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-upsert', payload),
   removeMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-remove', payload),
@@ -62,6 +64,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   uninstallConnector: (payload) => ipcRenderer.invoke('connector-hub:uninstall', payload),
   saveConnectorMcpToken: (payload) => ipcRenderer.invoke('connector-hub:save-mcp-token', payload),
   saveConnectorCredentials: (payload) => ipcRenderer.invoke('connector-hub:save-credentials', payload),
+  provisionConnectorCredentials: (payload) => ipcRenderer.invoke('connector-hub:provision-credentials', payload),
   pickDirectory: () => ipcRenderer.invoke('agent:pick-directory'),
   pickFiles: () => ipcRenderer.invoke('agent:pick-files'),
   setSessionWorkspace: (payload) => ipcRenderer.invoke('agent:set-session-workspace', payload),
@@ -291,7 +294,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   cronDelete: (taskId) => ipcRenderer.invoke('cron:delete', { taskId }),
   // Assistant management
   getInstalledAssistants: () => ipcRenderer.invoke('agent:getInstalledAssistants'),
-  getRemoteInstalledAssistants: () => ipcRenderer.invoke('agent:getRemoteInstalledAssistants'),
   getAssistantContext: (assistantName) => ipcRenderer.invoke('agent:getAssistantContext', { assistantName }),
   getSkillInfosByIds: (skillIds) => ipcRenderer.invoke('agent:getSkillInfosByIds', { skillIds }),
   // Log management

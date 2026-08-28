@@ -6,6 +6,8 @@ import {
   type AuthCenterApiKey,
   type AuthCenterBootstrap,
   type AuthCenterDepartment,
+  type AuthCenterOAuthAuthorizationCode,
+  type AuthCenterOAuthAuthorizationRequest,
   type BootstrapAdminConfig,
   type AuthCenterUser,
   type SanitizedAuthCenterDepartment,
@@ -74,14 +76,6 @@ function isUserStatus(value: string): value is 'active' | 'disabled' {
   return value === 'active' || value === 'disabled'
 }
 
-function isUsableOAuthEmail(email: string): boolean {
-  const at = email.lastIndexOf('@')
-  return at > 0 &&
-    at === email.indexOf('@') &&
-    at < email.length - 1 &&
-    !/[\u0000-\u0020\u007f]/.test(email)
-}
-
 export async function createAuthService(
   options: AuthServiceOptions,
 ): Promise<{
@@ -143,29 +137,101 @@ export class AuthService {
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
-    const username = input.username?.trim() || ''
-    const email = input.email?.trim() || ''
-    if ((!username && !email) || !input.password) {
-      throw new AuthServiceError(400, 'Missing username/email or password')
-    }
-
-    const user = username
-      ? this.getUniqueUserByName(username)
-      : this.db.getUserByEmail(email)
-    if (
-      !user ||
-      user.status !== 'active' ||
-      !verifyPassword(input.password, user.passwordHash)
-    ) {
-      throw new AuthServiceError(401, 'Invalid username/email or password')
-    }
-
-    this.db.updateUserLastLogin(user.id)
+    const user = this.authenticatePasswordUser(input)
+    const loggedInAt = Date.now()
+    this.db.updateUserLastLogin(user.id, loggedInAt)
     return this.issueToken({
-      user,
+      user: { ...user, lastLoginAt: loggedInAt },
       scopes: defaultScopesForRole(user.role),
       keyId: 'password-login',
     })
+  }
+
+  authenticatePasswordForOAuth(input: {
+    username?: string
+    email?: string
+    password: string
+  }): {
+    user: SanitizedAuthCenterUser
+    organization: { id: string; name: string; createdAt: number }
+    scopes: string[]
+  } {
+    const user = this.authenticatePasswordUser(input)
+    const organization = this.db.getOrganization(user.orgId)
+    if (!organization) {
+      throw new AuthServiceError(401, 'User organization is invalid')
+    }
+    const loggedInAt = Date.now()
+    this.db.updateUserLastLogin(user.id, loggedInAt)
+    return {
+      user: sanitizeUser({ ...user, lastLoginAt: loggedInAt }),
+      organization,
+      scopes: defaultScopesForRole(user.role),
+    }
+  }
+
+  pruneOAuthAuthorizationRecords(currentTime: number): void {
+    this.db.pruneOAuthAuthorizationRecords(currentTime)
+  }
+
+  countOAuthAuthorizationRecords(): number {
+    return this.db.countOAuthAuthorizationRecords()
+  }
+
+  createOAuthAuthorizationRequest(request: AuthCenterOAuthAuthorizationRequest): void {
+    this.db.createOAuthAuthorizationRequest(request)
+  }
+
+  getOAuthAuthorizationRequest(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    return this.db.getOAuthAuthorizationRequest(id, currentTime)
+  }
+
+  incrementOAuthAuthorizationAttempts(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    return this.db.incrementOAuthAuthorizationAttempts(id, currentTime)
+  }
+
+  deleteOAuthAuthorizationRequest(id: string): void {
+    this.db.deleteOAuthAuthorizationRequest(id)
+  }
+
+  deleteOAuthAuthorizationRequestByState(state: string, redirectUri: string): boolean {
+    return this.db.deleteOAuthAuthorizationRequestByState(state, redirectUri)
+  }
+
+  consumeOAuthAuthorizationRequest(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    return this.db.consumeOAuthAuthorizationRequest(id, currentTime)
+  }
+
+  completeOAuthAuthorization(
+    requestId: string,
+    authorization: AuthCenterOAuthAuthorizationCode,
+    currentTime: number,
+  ): boolean {
+    return this.db.completeOAuthAuthorization(requestId, authorization, currentTime)
+  }
+
+  consumeOAuthAuthorizationCode(
+    code: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationCode | null {
+    return this.db.consumeOAuthAuthorizationCode(code, currentTime)
+  }
+
+  deleteOAuthAuthorizationCode(code: string, redirectUri: string): boolean {
+    return this.db.deleteOAuthAuthorizationCode(code, redirectUri)
+  }
+
+  deleteOAuthAuthorizationCodeByState(state: string, redirectUri: string): boolean {
+    return this.db.deleteOAuthAuthorizationCodeByState(state, redirectUri)
   }
 
   issueTokenFromApiKey(apiKeyValue: string): {
@@ -200,16 +266,9 @@ export class AuthService {
     })
   }
 
-  issuePermanentApiKeyFromOAuth(input: {
-    providerId: string
-    subject: string
-    email: string
-    emailVerified: boolean
-    name: string
-    organizationId?: string
-    autoProvision: boolean
-    requireVerifiedEmail: boolean
-    allowedEmailDomains: string[]
+  issuePermanentApiKeyForOAuthUser(input: {
+    userId: string
+    orgId: string
   }): {
     api_key: string
     key: Omit<AuthCenterApiKey, 'secretHash'>
@@ -217,92 +276,29 @@ export class AuthService {
     organization: { id: string; name: string; createdAt: number }
     scopes: string[]
   } {
-    const providerId = input.providerId.trim()
-    const subject = input.subject.trim()
-    const email = input.email.trim().toLowerCase()
-    const requestedName = input.name.trim()
-    if (!providerId || !subject || !isUsableOAuthEmail(email)) {
-      throw new AuthServiceError(401, 'OAuth provider did not return a usable identity')
-    }
-    if (input.requireVerifiedEmail && !input.emailVerified) {
-      throw new AuthServiceError(403, 'OAuth email is not verified')
-    }
-    const emailDomain = email.slice(email.lastIndexOf('@') + 1)
-    if (
-      input.allowedEmailDomains.length > 0 &&
-      !input.allowedEmailDomains.includes(emailDomain)
-    ) {
-      throw new AuthServiceError(403, 'OAuth email domain is not allowed')
-    }
-
-    const configuredOrg = input.organizationId
-      ? this.db.getOrganization(input.organizationId)
-      : this.db.listOrganizations()[0]
-    if (!configuredOrg) {
-      throw new AuthServiceError(500, 'OAuth organization is not configured')
-    }
-
     return this.db.transaction(() => {
+      const user = this.db.getUserByIdAndOrg(input.userId, input.orgId)
+      const organization = this.db.getOrganization(input.orgId)
+      if (!user || user.status !== 'active' || !organization) {
+        throw new AuthServiceError(403, 'OAuth user is disabled')
+      }
+
+      const providerId = 'moss-server'
+      const subject = user.id
       let identity = this.db.getOAuthIdentity(providerId, subject)
-      let user = identity ? this.db.getUserById(identity.userId) : null
-      if (identity && !user) {
-        throw new AuthServiceError(403, 'OAuth identity owner no longer exists')
-      }
-      if (user && user.orgId !== configuredOrg.id) {
-        throw new AuthServiceError(403, 'OAuth identity belongs to another organization')
-      }
-
-      if (!user) {
-        user = input.emailVerified ? this.db.getUserByEmail(email) : null
-        if (user && user.orgId !== configuredOrg.id) {
-          throw new AuthServiceError(403, 'OAuth email belongs to another organization')
-        }
-        if (!user) {
-          if (!input.autoProvision) {
-            throw new AuthServiceError(403, 'OAuth user has not been provisioned')
-          }
-          const createdAt = Date.now()
-          const userId = randomUUID()
-          const baseName = requestedName || email.split('@')[0] || 'oauth-user'
-          let name = baseName
-          let suffix = 2
-          while (this.db.listUsersByName(name).length > 0) {
-            name = `${baseName}-${suffix}`
-            suffix += 1
-          }
-          user = {
-            id: userId,
-            orgId: configuredOrg.id,
-            email: input.emailVerified ? email : createSyntheticUserEmail(userId),
-            name,
-            departmentId: null,
-            role: 'user',
-            status: 'active',
-            tokenLimit: null,
-            createdAt,
-            passwordHash: null,
-            passwordUpdatedAt: null,
-            lastLoginAt: createdAt,
-          }
-          this.db.createUser(user)
-        }
-
+      if (!identity) {
+        const createdAt = Date.now()
         identity = {
           providerId,
           subject,
           userId: user.id,
-          email,
+          email: user.email,
           apiKeyId: null,
-          createdAt: Date.now(),
-          lastLoginAt: Date.now(),
+          createdAt,
+          lastLoginAt: createdAt,
         }
         this.db.createOAuthIdentity(identity)
       }
-
-      if (user.status !== 'active') {
-        throw new AuthServiceError(403, 'OAuth user is disabled')
-      }
-
       if (identity?.apiKeyId) {
         this.db.revokeApiKey(identity.apiKeyId)
       }
@@ -310,7 +306,7 @@ export class AuthService {
       const created = createApiKeyRecord({
         orgId: user.orgId,
         userId: user.id,
-        name: `oauth:${providerId}`,
+        name: 'oauth:browser-login',
         scopes,
       })
       const loggedInAt = Date.now()
@@ -318,7 +314,7 @@ export class AuthService {
       this.db.updateOAuthIdentityLogin({
         providerId,
         subject,
-        email,
+        email: user.email,
         apiKeyId: created.apiKey.id,
         lastLoginAt: loggedInAt,
       })
@@ -328,7 +324,7 @@ export class AuthService {
         api_key: created.plainTextKey,
         key: sanitizeApiKey(created.apiKey),
         user: sanitizeUser({ ...user, lastLoginAt: loggedInAt }),
-        organization: configuredOrg,
+        organization,
         scopes,
       }
     })
@@ -895,6 +891,30 @@ export class AuthService {
       organization: this.db.getOrganization(input.user.orgId),
       scopes: input.scopes,
     }
+  }
+
+  private authenticatePasswordUser(input: {
+    username?: string
+    email?: string
+    password: string
+  }): AuthCenterUser {
+    const username = input.username?.trim() || ''
+    const email = input.email?.trim().toLowerCase() || ''
+    if ((!username && !email) || !input.password) {
+      throw new AuthServiceError(400, 'Missing username/email or password')
+    }
+
+    const user = username
+      ? this.getUniqueUserByName(username)
+      : this.db.getUserByEmail(email)
+    if (
+      !user ||
+      user.status !== 'active' ||
+      !verifyPassword(input.password, user.passwordHash)
+    ) {
+      throw new AuthServiceError(401, 'Invalid username/email or password')
+    }
+    return user
   }
 
   private getUniqueUserByName(name: string): AuthCenterUser | null {

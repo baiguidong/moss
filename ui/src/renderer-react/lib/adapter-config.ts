@@ -26,7 +26,7 @@ type AdapterState = {
 export function useAdapterConfig() {
   const [state, setState] = React.useState<AdapterState>({
     config: {},
-    isLoading: false,
+    isLoading: true,
     error: null,
   })
 
@@ -65,8 +65,8 @@ export function useAdapterConfig() {
 
   const removePairedUser = React.useCallback(
     async (userId: string | number) => {
-      const { config } = state
-      const platformConfig = config.feishu
+      const current = await window.agentDesktop.getAdapterConfig()
+      const platformConfig = current.feishu
       if (!platformConfig) return
       const pairedUsers = (platformConfig.pairedUsers ?? []).filter(
         (u) => String(u.userId) !== String(userId),
@@ -75,7 +75,7 @@ export function useAdapterConfig() {
         feishu: { ...platformConfig, pairedUsers },
       })
     },
-    [state.config, updateConfig],
+    [updateConfig],
   )
 
   return {

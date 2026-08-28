@@ -58,6 +58,25 @@ export type AuthCenterOAuthIdentity = {
   lastLoginAt: number
 }
 
+export type AuthCenterOAuthAuthorizationRequest = {
+  id: string
+  redirectUri: string
+  state: string
+  codeChallenge: string
+  expiresAt: number
+  passwordAttempts: number
+}
+
+export type AuthCenterOAuthAuthorizationCode = {
+  code: string
+  redirectUri: string
+  state: string
+  codeChallenge: string
+  userId: string
+  orgId: string
+  expiresAt: number
+}
+
 export type AuthCenterStore = {
   version: 1 | 2 | 3
   issuer: string
@@ -177,6 +196,29 @@ function mapOAuthIdentity(row: SqlRow): AuthCenterOAuthIdentity {
   }
 }
 
+function mapOAuthAuthorizationRequest(row: SqlRow): AuthCenterOAuthAuthorizationRequest {
+  return {
+    id: String(row.id),
+    redirectUri: String(row.redirect_uri),
+    state: String(row.state),
+    codeChallenge: String(row.code_challenge),
+    expiresAt: Number(row.expires_at),
+    passwordAttempts: Number(row.password_attempts),
+  }
+}
+
+function mapOAuthAuthorizationCode(row: SqlRow): AuthCenterOAuthAuthorizationCode {
+  return {
+    code: String(row.code),
+    redirectUri: String(row.redirect_uri),
+    state: String(row.state),
+    codeChallenge: String(row.code_challenge),
+    userId: String(row.user_id),
+    orgId: String(row.org_id),
+    expiresAt: Number(row.expires_at),
+  }
+}
+
 export function getDefaultAuthCenterDbPath(): string {
   return join(getMossConfigHomeDir(), 'authcenter.db')
 }
@@ -266,6 +308,25 @@ export class AuthCenterDb {
         UNIQUE (provider_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS oauth_authorization_requests (
+        id TEXT PRIMARY KEY,
+        redirect_uri TEXT NOT NULL,
+        state TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        password_attempts INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+        code TEXT PRIMARY KEY,
+        redirect_uri TEXT NOT NULL,
+        state TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        org_id TEXT NOT NULL REFERENCES organizations(id),
+        expires_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS server_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -278,6 +339,10 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
       CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
       CREATE INDEX IF NOT EXISTS oauth_identities_user_idx ON oauth_identities (user_id);
+      CREATE INDEX IF NOT EXISTS oauth_authorization_requests_expiry_idx
+        ON oauth_authorization_requests (expires_at);
+      CREATE INDEX IF NOT EXISTS oauth_authorization_codes_expiry_idx
+        ON oauth_authorization_codes (expires_at);
     `)
 
     // Older databases may need the column added before SQLite can create the index.
@@ -299,6 +364,15 @@ export class AuthCenterDb {
       'token_limit',
       'ALTER TABLE departments ADD COLUMN token_limit INTEGER',
     )
+    this.ensureColumn(
+      'oauth_authorization_codes',
+      'state',
+      "ALTER TABLE oauth_authorization_codes ADD COLUMN state TEXT NOT NULL DEFAULT ''",
+    )
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS oauth_authorization_codes_state_idx
+        ON oauth_authorization_codes (state, redirect_uri);
+    `)
     this.db.exec(`
       UPDATE users
       SET role = 'user'
@@ -669,6 +743,155 @@ export class AuthCenterDb {
       input.providerId,
       input.subject,
     )
+  }
+
+  pruneOAuthAuthorizationRecords(currentTime: number): void {
+    this.db.prepare(`
+      DELETE FROM oauth_authorization_requests WHERE expires_at <= ?
+    `).run(currentTime)
+    this.db.prepare(`
+      DELETE FROM oauth_authorization_codes WHERE expires_at <= ?
+    `).run(currentTime)
+  }
+
+  countOAuthAuthorizationRecords(): number {
+    const requests = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM oauth_authorization_requests
+    `).get() as SqlRow
+    const codes = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM oauth_authorization_codes
+    `).get() as SqlRow
+    return Number(requests.count) + Number(codes.count)
+  }
+
+  createOAuthAuthorizationRequest(request: AuthCenterOAuthAuthorizationRequest): void {
+    this.db.prepare(`
+      INSERT INTO oauth_authorization_requests (
+        id, redirect_uri, state, code_challenge, expires_at, password_attempts
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      request.id,
+      request.redirectUri,
+      request.state,
+      request.codeChallenge,
+      request.expiresAt,
+      request.passwordAttempts,
+    )
+  }
+
+  getOAuthAuthorizationRequest(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    const row = this.db.prepare(`
+      SELECT * FROM oauth_authorization_requests
+      WHERE id = ? AND expires_at > ?
+      LIMIT 1
+    `).get(id, currentTime) as SqlRow | undefined
+    return row ? mapOAuthAuthorizationRequest(row) : null
+  }
+
+  incrementOAuthAuthorizationAttempts(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    return this.transaction(() => {
+      const request = this.getOAuthAuthorizationRequest(id, currentTime)
+      if (!request) return null
+      const passwordAttempts = request.passwordAttempts + 1
+      this.db.prepare(`
+        UPDATE oauth_authorization_requests
+        SET password_attempts = ?
+        WHERE id = ?
+      `).run(passwordAttempts, id)
+      return { ...request, passwordAttempts }
+    })
+  }
+
+  deleteOAuthAuthorizationRequest(id: string): void {
+    this.db.prepare(`
+      DELETE FROM oauth_authorization_requests WHERE id = ?
+    `).run(id)
+  }
+
+  deleteOAuthAuthorizationRequestByState(state: string, redirectUri: string): boolean {
+    const result = this.db.prepare(`
+      DELETE FROM oauth_authorization_requests
+      WHERE state = ? AND redirect_uri = ?
+    `).run(state, redirectUri)
+    return Number(result.changes) > 0
+  }
+
+  consumeOAuthAuthorizationRequest(
+    id: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationRequest | null {
+    return this.transaction(() => {
+      const request = this.getOAuthAuthorizationRequest(id, currentTime)
+      this.deleteOAuthAuthorizationRequest(id)
+      return request
+    })
+  }
+
+  completeOAuthAuthorization(
+    requestId: string,
+    authorization: AuthCenterOAuthAuthorizationCode,
+    currentTime: number,
+  ): boolean {
+    return this.transaction(() => {
+      const result = this.db.prepare(`
+        DELETE FROM oauth_authorization_requests
+        WHERE id = ? AND expires_at > ?
+      `).run(requestId, currentTime)
+      if (Number(result.changes) !== 1) return false
+      this.db.prepare(`
+        INSERT INTO oauth_authorization_codes (
+          code, redirect_uri, state, code_challenge, user_id, org_id, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        authorization.code,
+        authorization.redirectUri,
+        authorization.state,
+        authorization.codeChallenge,
+        authorization.userId,
+        authorization.orgId,
+        authorization.expiresAt,
+      )
+      return true
+    })
+  }
+
+  consumeOAuthAuthorizationCode(
+    code: string,
+    currentTime: number,
+  ): AuthCenterOAuthAuthorizationCode | null {
+    return this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT * FROM oauth_authorization_codes
+        WHERE code = ? AND expires_at > ?
+        LIMIT 1
+      `).get(code, currentTime) as SqlRow | undefined
+      this.db.prepare(`
+        DELETE FROM oauth_authorization_codes WHERE code = ?
+      `).run(code)
+      return row ? mapOAuthAuthorizationCode(row) : null
+    })
+  }
+
+  deleteOAuthAuthorizationCode(code: string, redirectUri: string): boolean {
+    const result = this.db.prepare(`
+      DELETE FROM oauth_authorization_codes
+      WHERE code = ? AND redirect_uri = ?
+    `).run(code, redirectUri)
+    return Number(result.changes) > 0
+  }
+
+  deleteOAuthAuthorizationCodeByState(state: string, redirectUri: string): boolean {
+    const result = this.db.prepare(`
+      DELETE FROM oauth_authorization_codes
+      WHERE state = ? AND redirect_uri = ?
+    `).run(state, redirectUri)
+    return Number(result.changes) > 0
   }
 
   // Config operations

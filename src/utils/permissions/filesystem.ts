@@ -16,7 +16,6 @@ import type { z } from 'zod/v4'
 import {
   getOriginalCwd,
   getSessionId,
-  getSessionProjectDir,
 } from '../../bootstrap/state.js'
 import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
@@ -43,6 +42,8 @@ import {
 } from '../settings/settings.js'
 import { containsVulnerableUncPath } from '../shell/readOnlyCommandValidation.js'
 import { getToolResultsDir } from '../toolResultStorage.js'
+import { getTaskScopeContext } from '../sessionIdContext.js'
+import { getSessionWorkspaceDirectories } from '../sessionWorkspaceRegistry.js'
 import { windowsPathToPosixPath } from '../windowsPaths.js'
 import type {
   PermissionDecision,
@@ -226,32 +227,21 @@ export function isMossSettingsPath(filePath: string): boolean {
   )
 }
 
-function getManagedSessionWorkspaceDir(): string | null {
-  const sessionProjectDir = getSessionProjectDir()
-  if (!sessionProjectDir) {
-    return null
-  }
-
-  const sessionsDir = join(getMossConfigHomeDir(), 'sessions')
-  const relativeSessionDir = relativePath(
-    normalizeCaseForComparison(expandPath(sessionsDir)),
-    normalizeCaseForComparison(expandPath(sessionProjectDir)),
+export function getCurrentSessionWorkspaceDirectories(): readonly string[] {
+  const taskScopeSessionId = getTaskScopeContext()?.sessionId
+  const sessionIds = [taskScopeSessionId, getSessionId()].filter(
+    (sessionId, index, values): sessionId is string =>
+      typeof sessionId === 'string' &&
+      sessionId.length > 0 &&
+      values.indexOf(sessionId) === index,
   )
-  if (
-    !relativeSessionDir ||
-    containsPathTraversal(relativeSessionDir) ||
-    posix.isAbsolute(relativeSessionDir) ||
-    relativeSessionDir.includes(DIR_SEP)
-  ) {
-    return null
-  }
-
-  return join(sessionProjectDir, 'workspace')
+  return [...new Set(sessionIds.flatMap(getSessionWorkspaceDirectories))]
 }
 
-function isManagedSessionWorkspacePath(filePath: string): boolean {
-  const workspaceDir = getManagedSessionWorkspaceDir()
-  return workspaceDir !== null && pathInWorkingPath(filePath, workspaceDir)
+export function isManagedSessionWorkspacePath(filePath: string): boolean {
+  return getCurrentSessionWorkspaceDirectories().some(workspaceDir =>
+    pathInWorkingPath(filePath, workspaceDir),
+  )
 }
 
 function pathsAreSameForSecurityComparison(
@@ -730,10 +720,9 @@ export function checkPathSafetyForAutoEdit(
 export function allWorkingDirectories(
   context: ToolPermissionContext,
 ): Set<string> {
-  const managedSessionWorkspaceDir = getManagedSessionWorkspaceDir()
   return new Set([
     getOriginalCwd(),
-    ...(managedSessionWorkspaceDir ? [managedSessionWorkspaceDir] : []),
+    ...getCurrentSessionWorkspaceDirectories(),
     ...context.additionalWorkingDirectories.keys(),
   ])
 }
@@ -1431,6 +1420,17 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
     toolPermissionContext,
     pathsToCheck,
   )
+  const isInManagedWorkspace = pathsToCheck.every(isManagedSessionWorkspacePath)
+  if (isInManagedWorkspace) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Path is in an explicitly registered session workspace',
+      },
+    }
+  }
   if (toolPermissionContext.mode === 'acceptEdits' && isInWorkingDir) {
     return {
       behavior: 'allow',

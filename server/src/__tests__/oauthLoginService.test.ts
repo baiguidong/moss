@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,52 +6,134 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AuthService } from '../auth/service.js'
 import { OAuthLoginError, OAuthLoginService } from '../auth/oauth.js'
-import type { ServerOAuthConfig } from '../types.js'
 
-function oauthConfig(overrides: Partial<ServerOAuthConfig> = {}): ServerOAuthConfig {
-  return {
-    enabled: true,
-    providerId: 'test-idp',
-    authorizationUrl: 'https://idp.example.com/oauth/authorize',
-    tokenUrl: 'https://idp.example.com/oauth/token',
-    userInfoUrl: 'https://idp.example.com/oauth/userinfo',
-    clientId: 'moss-client',
-    clientSecret: 'moss-secret',
-    redirectUri: 'https://moss.example.com/api/v1/auth/oauth/callback',
-    scopes: ['openid', 'profile', 'email'],
-    tokenEndpointAuthMethod: 'client_secret_post',
-    autoProvision: true,
-    defaultRole: 'user',
-    requireVerifiedEmail: true,
-    allowedEmailDomains: [],
-    ...overrides,
-  }
-}
+const REDIRECT_URI = 'http://127.0.0.1:54321/callback'
+const STATE = 's'.repeat(43)
+const CODE_VERIFIER = 'v'.repeat(64)
+const CODE_CHALLENGE = createHash('sha256')
+  .update(CODE_VERIFIER, 'ascii')
+  .digest('base64url')
 
 function authService() {
   let sequence = 0
-  const activeKeys = new Set<string>()
   let currentKey: string | null = null
+  const activeKeys = new Set<string>()
+  const authorizationRequests = new Map<string, {
+    id: string
+    redirectUri: string
+    state: string
+    codeChallenge: string
+    expiresAt: number
+    passwordAttempts: number
+  }>()
+  const authorizationCodes = new Map<string, {
+    code: string
+    redirectUri: string
+    state: string
+    codeChallenge: string
+    userId: string
+    orgId: string
+    expiresAt: number
+  }>()
   const user = {
-    id: 'oauth-user',
+    id: 'user-1',
     orgId: 'org-1',
     email: 'user@example.com',
-    name: 'OAuth User',
+    name: 'Moss User',
     departmentId: null,
     role: 'user',
     status: 'active' as const,
     tokenLimit: null,
     createdAt: 1,
-    passwordUpdatedAt: null,
+    passwordUpdatedAt: 1,
     lastLoginAt: 1,
   }
   const service = {
-    issuePermanentApiKeyFromOAuth(input: { requireVerifiedEmail: boolean; emailVerified: boolean }) {
-      if (input.requireVerifiedEmail && !input.emailVerified) {
-        const error = new OAuthLoginError(403, 'OAuth email is not verified')
+    pruneOAuthAuthorizationRecords(currentTime: number) {
+      for (const [id, request] of authorizationRequests) {
+        if (request.expiresAt <= currentTime) authorizationRequests.delete(id)
+      }
+      for (const [code, authorization] of authorizationCodes) {
+        if (authorization.expiresAt <= currentTime) authorizationCodes.delete(code)
+      }
+    },
+    countOAuthAuthorizationRecords() {
+      return authorizationRequests.size + authorizationCodes.size
+    },
+    createOAuthAuthorizationRequest(request: any) {
+      authorizationRequests.set(request.id, { ...request })
+    },
+    getOAuthAuthorizationRequest(id: string, currentTime: number) {
+      const request = authorizationRequests.get(id)
+      return request && request.expiresAt > currentTime ? { ...request } : null
+    },
+    incrementOAuthAuthorizationAttempts(id: string, currentTime: number) {
+      const request = authorizationRequests.get(id)
+      if (!request || request.expiresAt <= currentTime) return null
+      request.passwordAttempts += 1
+      return { ...request }
+    },
+    deleteOAuthAuthorizationRequest(id: string) {
+      authorizationRequests.delete(id)
+    },
+    deleteOAuthAuthorizationRequestByState(state: string, redirectUri: string) {
+      let deleted = false
+      for (const [id, request] of authorizationRequests) {
+        if (request.state === state && request.redirectUri === redirectUri) {
+          authorizationRequests.delete(id)
+          deleted = true
+        }
+      }
+      return deleted
+    },
+    consumeOAuthAuthorizationRequest(id: string, currentTime: number) {
+      const request = authorizationRequests.get(id)
+      authorizationRequests.delete(id)
+      return request && request.expiresAt > currentTime ? { ...request } : null
+    },
+    completeOAuthAuthorization(requestId: string, authorization: any, currentTime: number) {
+      const request = authorizationRequests.get(requestId)
+      if (!request || request.expiresAt <= currentTime) return false
+      authorizationRequests.delete(requestId)
+      authorizationCodes.set(authorization.code, { ...authorization })
+      return true
+    },
+    consumeOAuthAuthorizationCode(code: string, currentTime: number) {
+      const authorization = authorizationCodes.get(code)
+      authorizationCodes.delete(code)
+      return authorization && authorization.expiresAt > currentTime
+        ? { ...authorization }
+        : null
+    },
+    deleteOAuthAuthorizationCode(code: string, redirectUri: string) {
+      const authorization = authorizationCodes.get(code)
+      if (!authorization || authorization.redirectUri !== redirectUri) return false
+      authorizationCodes.delete(code)
+      return true
+    },
+    deleteOAuthAuthorizationCodeByState(state: string, redirectUri: string) {
+      let deleted = false
+      for (const [code, authorization] of authorizationCodes) {
+        if (authorization.state === state && authorization.redirectUri === redirectUri) {
+          authorizationCodes.delete(code)
+          deleted = true
+        }
+      }
+      return deleted
+    },
+    authenticatePasswordForOAuth(input: { password: string }) {
+      if (input.password !== 'correct-password') {
+        const error = new OAuthLoginError(401, 'Invalid username/email or password')
         error.name = 'AuthServiceError'
         throw error
       }
+      return {
+        user,
+        organization: { id: 'org-1', name: 'Default Organization', createdAt: 1 },
+        scopes: ['sessions:create', 'sessions:attach', 'sessions:list'],
+      }
+    },
+    issuePermanentApiKeyForOAuthUser() {
       if (currentKey) activeKeys.delete(currentKey)
       sequence += 1
       currentKey = `moss_sk_key-${sequence}.secret-${sequence}`
@@ -61,7 +144,7 @@ function authService() {
           id: `key-${sequence}`,
           orgId: 'org-1',
           userId: user.id,
-          name: 'oauth:test-idp',
+          name: 'oauth:browser-login',
           prefix: currentKey.slice(0, 16),
           scopes: ['sessions:create', 'sessions:attach', 'sessions:list'],
           status: 'active' as const,
@@ -82,189 +165,222 @@ function authService() {
   }
 }
 
-function providerFetch(profile: Record<string, unknown> = {
-  sub: 'subject-1',
-  email: 'user@example.com',
-  email_verified: true,
-  name: 'OAuth User',
-}) {
-  const requests: Array<{ url: string; init?: RequestInit }> = []
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input)
-    requests.push({ url, init })
-    if (url.endsWith('/oauth/token')) {
-      return Response.json({ access_token: 'provider-access-token', token_type: 'Bearer' })
-    }
-    if (url.endsWith('/oauth/userinfo')) {
-      return Response.json(profile)
-    }
-    return new Response('not found', { status: 404 })
-  }) as typeof fetch
-  return { fetchImpl, requests }
+function start(service: OAuthLoginService, overrides: Record<string, string> = {}) {
+  return service.start({
+    redirectUri: REDIRECT_URI,
+    state: STATE,
+    codeChallenge: CODE_CHALLENGE,
+    codeChallengeMethod: 'S256',
+    ...overrides,
+  })
 }
 
-describe('OAuth login service', () => {
-  test('uses state and PKCE, then returns a permanent API key exactly once', async () => {
-    const auth = authService()
-    const provider = providerFetch()
-    const service = new OAuthLoginService(oauthConfig(), auth.service, provider.fetchImpl)
+function transactionId(authorizationUrl: string): string {
+  const url = new URL(authorizationUrl, 'http://moss.local')
+  return url.pathname.split('/').pop() || ''
+}
 
-    const started = service.start()
-    const authorizationUrl = new URL(started.authorization_url)
-    expect(authorizationUrl.searchParams.get('response_type')).toBe('code')
-    expect(authorizationUrl.searchParams.get('state')).toBeTruthy()
-    expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256')
-    expect(authorizationUrl.searchParams.get('code_challenge')).toHaveLength(43)
-    expect(started.authorization_url).not.toContain('moss-secret')
-    expect(service.exchange(started.transaction_id)).toEqual({ pending: true, retry_after: 1 })
-
-    const callback = await service.completeCallback({
-      state: authorizationUrl.searchParams.get('state') || '',
-      code: 'authorization-code',
-    })
-    expect(callback).toEqual({ ok: true })
-
-    const exchanged = service.exchange(started.transaction_id)
-    expect(exchanged.pending).toBe(false)
-    if (exchanged.pending) throw new Error('OAuth exchange remained pending')
-    expect(exchanged.api_key).toStartWith('moss_sk_')
-    expect(exchanged.key).not.toHaveProperty('secretHash')
-    expect(exchanged.user).toMatchObject({ email: 'user@example.com', role: 'user' })
-    expect(auth.isActive(exchanged.api_key)).toBe(true)
-    expect(() => service.exchange(started.transaction_id)).toThrow('not found or has expired')
-
-    const tokenRequest = provider.requests.find(request => request.url.endsWith('/oauth/token'))
-    expect(String(tokenRequest?.init?.body)).toContain('code_verifier=')
-    expect(tokenRequest?.init?.redirect).toBe('error')
-    const userInfoRequest = provider.requests.find(request => request.url.endsWith('/oauth/userinfo'))
-    expect((userInfoRequest?.init?.headers as Record<string, string>).authorization)
-      .toBe('Bearer provider-access-token')
-    expect(userInfoRequest?.init?.redirect).toBe('error')
+describe('OAuth browser login service', () => {
+  test('accepts only a loopback callback and PKCE S256', () => {
+    const service = new OAuthLoginService(authService().service)
+    expect(() => start(service, {
+      redirectUri: 'https://attacker.example.com/callback',
+    })).toThrow('redirect_uri must be an HTTP loopback URL')
+    expect(() => start(service, {
+      codeChallengeMethod: 'plain',
+    })).toThrow('code_challenge_method must be S256')
   })
 
-  test('rotates the OAuth-issued key on a later login', async () => {
+  test('authenticates in the browser and exchanges a code exactly once', () => {
     const auth = authService()
-    const provider = providerFetch()
-    const service = new OAuthLoginService(oauthConfig(), auth.service, provider.fetchImpl)
-
-    const first = service.start()
-    await service.completeCallback({
-      state: new URL(first.authorization_url).searchParams.get('state') || '',
-      code: 'code-1',
+    const service = new OAuthLoginService(auth.service)
+    const started = start(service)
+    const id = transactionId(started.authorization_url)
+    expect(service.getAuthorizationRequest(id)).toEqual({
+      transactionId: id,
+      redirectUri: REDIRECT_URI,
     })
-    const firstResult = service.exchange(first.transaction_id)
-    if (firstResult.pending) throw new Error('First login remained pending')
 
-    const second = service.start()
-    await service.completeCallback({
-      state: new URL(second.authorization_url).searchParams.get('state') || '',
-      code: 'code-2',
+    const callbackUrl = new URL(service.authorizeWithPassword({
+      transactionId: id,
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    }))
+    expect(callbackUrl.origin + callbackUrl.pathname).toBe(REDIRECT_URI)
+    expect(callbackUrl.searchParams.get('state')).toBe(STATE)
+    const code = callbackUrl.searchParams.get('code') || ''
+
+    const result = service.exchange({
+      code,
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
     })
-    const secondResult = service.exchange(second.transaction_id)
-    if (secondResult.pending) throw new Error('Second login remained pending')
-
-    expect(secondResult.api_key).not.toBe(firstResult.api_key)
-    expect(auth.isActive(firstResult.api_key)).toBe(false)
-    expect(auth.isActive(secondResult.api_key)).toBe(true)
-    expect(secondResult.user.id).toBe(firstResult.user.id)
+    expect(result.api_key).toStartWith('moss_sk_')
+    expect(result.key).not.toHaveProperty('secretHash')
+    expect(auth.isActive(result.api_key)).toBe(true)
+    expect(() => service.exchange({
+      code,
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
+    })).toThrow('授权码无效或已过期')
   })
 
-  test('rejects an unclaimed result after a newer login supersedes it', async () => {
+  test('survives an OAuth service restart through the shared store', () => {
     const auth = authService()
-    const provider = providerFetch()
-    const service = new OAuthLoginService(oauthConfig(), auth.service, provider.fetchImpl)
+    const firstProcess = new OAuthLoginService(auth.service)
+    const started = start(firstProcess)
+    const id = transactionId(started.authorization_url)
 
-    const first = service.start()
-    await service.completeCallback({
-      state: new URL(first.authorization_url).searchParams.get('state') || '',
-      code: 'code-1',
+    const secondProcess = new OAuthLoginService(auth.service)
+    expect(secondProcess.getAuthorizationRequest(id)).toEqual({
+      transactionId: id,
+      redirectUri: REDIRECT_URI,
     })
+    const callback = new URL(secondProcess.authorizeWithPassword({
+      transactionId: id,
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    }))
 
-    const second = service.start()
-    await service.completeCallback({
-      state: new URL(second.authorization_url).searchParams.get('state') || '',
-      code: 'code-2',
+    const thirdProcess = new OAuthLoginService(auth.service)
+    const result = thirdProcess.exchange({
+      code: callback.searchParams.get('code') || '',
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
     })
-
-    expect(() => service.exchange(first.transaction_id)).toThrow('superseded by a newer login')
-    const secondResult = service.exchange(second.transaction_id)
-    if (secondResult.pending) throw new Error('Second login remained pending')
-    expect(auth.isActive(secondResult.api_key)).toBe(true)
+    expect(result.api_key).toStartWith('moss_sk_')
   })
 
-  test('uses only HTTP Basic client authentication and accepts a numeric provider id', async () => {
-    const auth = authService()
-    const provider = providerFetch({
-      id: 12345,
-      email: 'user@example.com',
-      email_verified: true,
-      name: 'OAuth User',
-    })
-    const config = oauthConfig({
-      clientId: 'moss client',
-      clientSecret: 'secret: value~',
-      tokenEndpointAuthMethod: 'client_secret_basic',
-    })
-    const service = new OAuthLoginService(config, auth.service, provider.fetchImpl)
-    const started = service.start()
-
-    expect(await service.completeCallback({
-      state: new URL(started.authorization_url).searchParams.get('state') || '',
-      code: 'authorization-code',
-    })).toEqual({ ok: true })
-    const result = service.exchange(started.transaction_id)
-    expect(result.pending).toBe(false)
-
-    const tokenRequest = provider.requests.find(request => request.url.endsWith('/oauth/token'))
-    const tokenBody = new URLSearchParams(String(tokenRequest?.init?.body))
-    expect(tokenBody.has('client_id')).toBe(false)
-    expect(tokenBody.has('client_secret')).toBe(false)
-    const encode = (value: string) =>
-      new URLSearchParams({ value }).toString().slice('value='.length)
-    expect((tokenRequest?.init?.headers as Record<string, string>).authorization).toBe(
-      `Basic ${Buffer.from(`${encode(config.clientId)}:${encode(config.clientSecret)}`).toString('base64')}`,
-    )
+  test('allows a retry after an invalid password', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const id = transactionId(started.authorization_url)
+    expect(() => service.authorizeWithPassword({
+      transactionId: id,
+      loginIdentifier: 'user@example.com',
+      password: 'wrong-password',
+    })).toThrow('用户名、邮箱或密码不正确')
+    expect(service.authorizeWithPassword({
+      transactionId: id,
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    })).toContain('code=')
   })
 
-  test('rejects an unverified email without returning provider secrets', async () => {
-    const auth = authService()
-    const provider = providerFetch({
-      sub: 'subject-2',
-      email: 'unverified@example.com',
-      email_verified: false,
-    })
-    const service = new OAuthLoginService(oauthConfig(), auth.service, provider.fetchImpl)
-    const started = service.start()
-
-    expect(await service.completeCallback({
-      state: new URL(started.authorization_url).searchParams.get('state') || '',
-      code: 'authorization-code',
-    })).toEqual({ ok: false })
-    expect(() => service.exchange(started.transaction_id)).toThrow('OAuth email is not verified')
+  test('removes a pending request when the desktop client cancels', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const id = transactionId(started.authorization_url)
+    expect(service.cancelClientRequest({ state: STATE, redirectUri: REDIRECT_URI }))
+      .toEqual({ canceled: true })
+    expect(service.cancelClientRequest({ state: STATE, redirectUri: REDIRECT_URI }))
+      .toEqual({ canceled: false })
+    expect(() => service.getAuthorizationRequest(id)).toThrow('授权请求无效或已过期')
   })
 
-  test('preserves an upstream provider failure status for the exchange response', async () => {
+  test('still removes a pending request when cancellation contains a malformed code', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const id = transactionId(started.authorization_url)
+    expect(() => service.cancelClientRequest({
+      state: STATE,
+      redirectUri: REDIRECT_URI,
+      code: 'malformed',
+    })).toThrow('Invalid code')
+    expect(() => service.getAuthorizationRequest(id)).toThrow('授权请求无效或已过期')
+  })
+
+  test('removes an issued code when the desktop client cancels during exchange', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const callback = new URL(service.authorizeWithPassword({
+      transactionId: transactionId(started.authorization_url),
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    }))
+    const code = callback.searchParams.get('code') || ''
+    expect(service.cancelClientRequest({ state: STATE, redirectUri: REDIRECT_URI, code }))
+      .toEqual({ canceled: true })
+    expect(() => service.exchange({
+      code,
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
+    })).toThrow('授权码无效或已过期')
+  })
+
+  test('removes an issued code by state when the callback never reaches the client', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const callback = new URL(service.authorizeWithPassword({
+      transactionId: transactionId(started.authorization_url),
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    }))
+    const code = callback.searchParams.get('code') || ''
+    expect(service.cancelClientRequest({ state: STATE, redirectUri: REDIRECT_URI }))
+      .toEqual({ canceled: true })
+    expect(() => service.exchange({
+      code,
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
+    })).toThrow('授权码无效或已过期')
+  })
+
+  test('consumes a code when PKCE or redirect verification fails', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const callback = new URL(service.authorizeWithPassword({
+      transactionId: transactionId(started.authorization_url),
+      loginIdentifier: 'user@example.com',
+      password: 'correct-password',
+    }))
+    const code = callback.searchParams.get('code') || ''
+    expect(() => service.exchange({
+      code,
+      codeVerifier: 'x'.repeat(64),
+      redirectUri: REDIRECT_URI,
+    })).toThrow('授权码校验失败')
+    expect(() => service.exchange({
+      code,
+      codeVerifier: CODE_VERIFIER,
+      redirectUri: REDIRECT_URI,
+    })).toThrow('授权码无效或已过期')
+  })
+
+  test('returns an access_denied callback when the user cancels', () => {
+    const service = new OAuthLoginService(authService().service)
+    const started = start(service)
+    const id = transactionId(started.authorization_url)
+    const callback = new URL(service.cancel(id))
+    expect(callback.searchParams.get('error')).toBe('access_denied')
+    expect(callback.searchParams.get('state')).toBe(STATE)
+    expect(() => service.getAuthorizationRequest(id)).toThrow('授权请求无效或已过期')
+  })
+
+  test('rotates the prior browser-login API key', () => {
     const auth = authService()
-    const fetchImpl = (async () => new Response('unavailable', { status: 503 })) as typeof fetch
-    const service = new OAuthLoginService(oauthConfig(), auth.service, fetchImpl)
-    const started = service.start()
-
-    expect(await service.completeCallback({
-      state: new URL(started.authorization_url).searchParams.get('state') || '',
-      code: 'authorization-code',
-    })).toEqual({ ok: false })
-
-    try {
-      service.exchange(started.transaction_id)
-      throw new Error('Expected OAuth exchange to fail')
-    } catch (error) {
-      expect(error).toBeInstanceOf(OAuthLoginError)
-      expect((error as OAuthLoginError).statusCode).toBe(502)
-      expect((error as Error).message).toBe('OAuth token exchange failed')
+    const service = new OAuthLoginService(auth.service)
+    const login = () => {
+      const started = start(service)
+      const callback = new URL(service.authorizeWithPassword({
+        transactionId: transactionId(started.authorization_url),
+        loginIdentifier: 'user@example.com',
+        password: 'correct-password',
+      }))
+      return service.exchange({
+        code: callback.searchParams.get('code') || '',
+        codeVerifier: CODE_VERIFIER,
+        redirectUri: REDIRECT_URI,
+      })
     }
+    const first = login()
+    const second = login()
+    expect(second.api_key).not.toBe(first.api_key)
+    expect(auth.isActive(first.api_key)).toBe(false)
+    expect(auth.isActive(second.api_key)).toBe(true)
   })
 
-  test('persists only the API key hash and rotates keys in Node SQLite', async () => {
+  test('persists only the API key hash and completes the HTTP flow in Node', async () => {
     const outdir = await mkdtemp(join(tmpdir(), 'moss-oauth-node-test-'))
     try {
       const entrypoint = join(
@@ -293,5 +409,5 @@ describe('OAuth login service', () => {
     } finally {
       await rm(outdir, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 })

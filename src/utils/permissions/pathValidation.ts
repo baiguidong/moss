@@ -15,6 +15,7 @@ import {
   checkEditableInternalPath,
   checkPathSafetyForAutoEdit,
   checkReadableInternalPath,
+  isManagedSessionWorkspacePath,
   matchingRuleForInput,
   pathInAllowedWorkingPath,
   pathInWorkingPath,
@@ -203,7 +204,11 @@ export function isPathAllowed(
     precomputedPathsToCheck,
   )
   if (isInWorkingDir) {
-    if (operationType === 'read' || context.mode === 'acceptEdits') {
+    if (
+      operationType === 'read' ||
+      context.mode === 'acceptEdits' ||
+      isManagedSessionWorkspacePath(resolvedPath)
+    ) {
       return { allowed: true }
     }
     // Write/create without acceptEdits mode falls through to check allow rules

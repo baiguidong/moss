@@ -21,6 +21,7 @@ import {
   checkEditableInternalPath,
   checkPathSafetyForAutoEdit,
   checkReadableInternalPath,
+  isManagedSessionWorkspacePath,
   matchingRuleForInput,
   pathInAllowedWorkingPath,
 } from '../../utils/permissions/filesystem.js'
@@ -920,7 +921,11 @@ function isPathAllowed(
     precomputedPathsToCheck,
   )
   if (isInWorkingDir) {
-    if (operationType === 'read' || context.mode === 'acceptEdits') {
+    if (
+      operationType === 'read' ||
+      context.mode === 'acceptEdits' ||
+      isManagedSessionWorkspacePath(resolvedPath)
+    ) {
       return { allowed: true }
     }
   }

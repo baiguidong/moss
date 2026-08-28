@@ -56,6 +56,7 @@ type DirectSessionOptions = {
   coordinatorMode?: boolean
   sessionId?: string
   projectDir?: string
+  workspaceDirectories?: string[]
   sourceJsonlFile?: string
 }
 type DirectSession = {
@@ -640,6 +641,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
       maxTurns: settings.maxTurns,
       thinkingConfig: buildThinkingConfig(settings),
       projectDir: options.runtime.transcriptDir,
+      workspaceDirectories: [options.cwd],
       permissionMode: bypassPermissions ? 'allow-all' : 'default',
       url: settings.url || undefined,
       apiKey: settings.apiKey || undefined,

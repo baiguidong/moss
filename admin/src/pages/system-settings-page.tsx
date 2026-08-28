@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { DashboardLayout } from '@/components/dashboard-layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -30,26 +28,22 @@ import type {
   ProfileMode,
   RuntimeBackend,
   SystemSettings,
-  ThinkingMode,
   UpdateSystemSettingsRequest,
 } from '@/lib/api/types'
 import {
-  Building2,
   Copy,
   Image as ImageIcon,
   Loader2,
   Package,
-  RefreshCw,
   Server,
-  Shield,
   Sparkles,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-type EditableSystemSettings = Omit<
+type EditableSystemSettings = Pick<
   SystemSettings,
-  'settingsPath' | 'settingsExists' | 'settingsLoaded' | 'settingsParseError'
+  'model' | 'url' | 'apiKey' | 'image' | 'serverRuntime'
 >
 
 type SettingsSectionProps = {
@@ -64,28 +58,6 @@ type SettingsFieldProps = {
   description?: string
   children: ReactNode
 }
-
-const thinkingModeOptions: Array<{
-  value: ThinkingMode
-  label: string
-  description: string
-}> = [
-  {
-    value: 'disabled',
-    label: 'disabled',
-    description: '关闭思考模式',
-  },
-  {
-    value: 'adaptive',
-    label: 'adaptive',
-    description: '由系统自动决定',
-  },
-  {
-    value: 'enabled',
-    label: 'enabled',
-    description: '始终启用思考模式',
-  },
-]
 
 const runtimeBackendOptions: Array<{
   value: RuntimeBackend
@@ -115,11 +87,7 @@ const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
-    bypassPermissions: settings.bypassPermissions,
     model: settings.model,
-    maxTurns: settings.maxTurns,
-    thinkingMode: settings.thinkingMode,
-    thinkingBudgetTokens: settings.thinkingBudgetTokens,
     url: settings.url,
     apiKey: settings.apiKey,
     image: {
@@ -127,9 +95,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
       url: settings.image.url,
       apiKey: settings.image.apiKey,
       model: settings.image.model,
-    },
-    skillStore: {
-      tenantId: settings.skillStore.tenantId,
     },
     serverRuntime: {
       backend: settings.serverRuntime.backend,
@@ -146,28 +111,11 @@ function buildSystemSettingsPatch(
 ): UpdateSystemSettingsRequest {
   const patch: UpdateSystemSettingsRequest = {}
 
-  if (draft.bypassPermissions !== settings.bypassPermissions) {
-    patch.bypassPermissions = draft.bypassPermissions
-  }
-
   const textPatch: NonNullable<
     NonNullable<UpdateSystemSettingsRequest['models']>['text']
   > = {}
   if (draft.model !== settings.model) {
     textPatch.model = draft.model
-  }
-  if (draft.maxTurns !== settings.maxTurns) {
-    textPatch.maxTurns = draft.maxTurns
-  }
-  const thinkingPatch: NonNullable<typeof textPatch.thinking> = {}
-  if (draft.thinkingMode !== settings.thinkingMode) {
-    thinkingPatch.mode = draft.thinkingMode
-  }
-  if (draft.thinkingBudgetTokens !== settings.thinkingBudgetTokens) {
-    thinkingPatch.budgetTokens = draft.thinkingBudgetTokens
-  }
-  if (Object.keys(thinkingPatch).length > 0) {
-    textPatch.thinking = thinkingPatch
   }
   if (draft.url !== settings.url) {
     textPatch.baseUrl = draft.url
@@ -202,14 +150,6 @@ function buildSystemSettingsPatch(
       ...patch.models,
       image: imagePatch,
     }
-  }
-
-  const skillStorePatch: NonNullable<UpdateSystemSettingsRequest['skillStore']> = {}
-  if (draft.skillStore.tenantId !== settings.skillStore.tenantId) {
-    skillStorePatch.tenantId = draft.skillStore.tenantId
-  }
-  if (Object.keys(skillStorePatch).length > 0) {
-    patch.skillStore = skillStorePatch
   }
 
   const serverRuntimePatch: NonNullable<UpdateSystemSettingsRequest['serverRuntime']> = {}
@@ -280,7 +220,7 @@ function SettingField({
 function SettingsSkeleton() {
   return (
     <div className="space-y-6">
-      {[...Array(4)].map((_, index) => (
+      {[...Array(3)].map((_, index) => (
         <Card key={index}>
           <CardHeader className="border-b">
             <Skeleton className="h-5 w-32" />
@@ -310,7 +250,6 @@ export default function SystemSettingsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
-  const [hasSavedOnce, setHasSavedOnce] = useState(false)
   const settingsRef = useRef<SystemSettings | null>(null)
   const draftRef = useRef<EditableSystemSettings | null>(null)
   const lastFailedSnapshotRef = useRef<string | null>(null)
@@ -330,7 +269,6 @@ export default function SystemSettingsPage() {
       setSettings(response)
       setDraft(toEditableSettings(response))
       setSaveError('')
-      setHasSavedOnce(false)
       lastFailedSnapshotRef.current = null
     } catch (error) {
       const message =
@@ -346,12 +284,6 @@ export default function SystemSettingsPage() {
     void loadSettings()
   }, [loadSettings])
 
-  const isDirty = useMemo(() => {
-    if (!settings || !draft) return false
-    return (
-      JSON.stringify(toEditableSettings(settings)) !== JSON.stringify(draft)
-    )
-  }, [draft, settings])
   const serializedDraft = useMemo(
     () => (draft ? JSON.stringify(draft) : ''),
     [draft],
@@ -369,11 +301,6 @@ export default function SystemSettingsPage() {
     } catch {
       toast.error(`复制 ${label} 失败`)
     }
-  }
-
-  const handleRefresh = async () => {
-    setIsLoading(true)
-    await loadSettings()
   }
 
   useEffect(() => {
@@ -413,7 +340,6 @@ export default function SystemSettingsPage() {
       void updateSystemSettings(patch)
         .then(response => {
           lastFailedSnapshotRef.current = null
-          setHasSavedOnce(true)
           setSettings(response)
           setDraft(current => {
             if (!current) return current
@@ -437,36 +363,11 @@ export default function SystemSettingsPage() {
     return () => window.clearTimeout(timer)
   }, [draft, serializedDraft, serializedSettings, settings, isSaving])
 
-  const autoSaveStatus = useMemo(() => {
-    if (saveError) {
-      return {
-        label: '自动保存失败',
-        variant: 'destructive' as const,
-      }
-    }
-    if (isSaving) {
-      return {
-        label: '自动保存中',
-        variant: 'secondary' as const,
-      }
-    }
-    if (isDirty) {
-      return {
-        label: '等待自动保存',
-        variant: 'outline' as const,
-      }
-    }
-    return {
-      label: hasSavedOnce ? '已自动保存' : '自动保存已开启',
-      variant: 'secondary' as const,
-    }
-  }, [hasSavedOnce, isDirty, isSaving, saveError])
-
   if (isLoading && !draft) {
     return (
       <DashboardLayout
         title="系统设置"
-        description="管理服务端的默认文本模型、图片模型和执行权限。"
+        description="管理服务端的默认文本模型、图片模型和会话运行时。"
       >
         <SettingsSkeleton />
       </DashboardLayout>
@@ -477,64 +378,25 @@ export default function SystemSettingsPage() {
     return (
       <DashboardLayout
         title="系统设置"
-        description="管理服务端的默认文本模型、图片模型和执行权限。"
+        description="管理服务端的默认文本模型、图片模型和会话运行时。"
       >
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => void handleRefresh()}>
-              <RefreshCw className="mr-2 size-4" />
-              刷新
-            </Button>
-          </div>
-          <Alert variant="destructive" className="max-w-3xl">
-            <TriangleAlert className="size-4" />
-            <AlertTitle>读取系统设置失败</AlertTitle>
-            <AlertDescription>
-              <p>{loadError || '未获取到系统设置数据。'}</p>
-            </AlertDescription>
-          </Alert>
-        </div>
+        <Alert variant="destructive" className="max-w-3xl">
+          <TriangleAlert className="size-4" />
+          <AlertTitle>读取系统设置失败</AlertTitle>
+          <AlertDescription>
+            <p>{loadError || '未获取到系统设置数据。'}</p>
+          </AlertDescription>
+        </Alert>
       </DashboardLayout>
     )
   }
 
-  const thinkingModeMeta = thinkingModeOptions.find(
-    option => option.value === draft.thinkingMode,
-  )
-
   return (
     <DashboardLayout
       title="系统设置"
-      description="管理服务端的默认文本模型、图片模型和执行权限。所有改动都会写入 ~/.moss/settings.json。"
+      description="管理服务端的默认文本模型、图片模型和会话运行时。"
     >
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={settings.settingsExists ? 'secondary' : 'outline'}>
-              {settings.settingsExists ? '配置文件已存在' : '配置文件尚未创建'}
-            </Badge>
-            <Badge variant={settings.settingsLoaded ? 'secondary' : 'outline'}>
-              {settings.settingsLoaded ? '已加载' : '使用默认值'}
-            </Badge>
-            <Badge variant={autoSaveStatus.variant}>
-              {autoSaveStatus.label}
-            </Badge>
-            {settings.settingsParseError ? (
-              <Badge variant="destructive">文件解析失败</Badge>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              onClick={() => void handleRefresh()}
-              disabled={isLoading || isSaving}
-            >
-              <RefreshCw className="mr-2 size-4" />
-              刷新
-            </Button>
-          </div>
-        </div>
-
         {saveError ? (
           <Alert variant="destructive">
             <TriangleAlert className="size-4" />
@@ -544,44 +406,6 @@ export default function SystemSettingsPage() {
             </AlertDescription>
           </Alert>
         ) : null}
-
-        <Card>
-          <CardHeader className="border-b">
-            <div>
-              <CardTitle>配置文件</CardTitle>
-              <CardDescription>
-                这里展示当前服务端读取的配置文件位置和加载状态。
-              </CardDescription>
-            </div>
-            <CardAction>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleCopy(settings.settingsPath, '配置文件路径')}
-              >
-                <Copy className="mr-2 size-4" />
-                复制路径
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="space-y-4 pt-6">
-            <div className="rounded-lg border bg-muted/40 px-3 py-2 font-mono text-xs">
-              {settings.settingsPath}
-            </div>
-            {settings.settingsParseError ? (
-              <Alert variant="destructive">
-                <TriangleAlert className="size-4" />
-                <AlertTitle>配置文件存在 JSON 解析错误</AlertTitle>
-                <AlertDescription>
-                  <p>{settings.settingsParseError}</p>
-                  <p>
-                    当前表单展示的是默认值和可识别字段。保存后会用新的合法配置覆盖原文件。
-                  </p>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-          </CardContent>
-        </Card>
 
         <SettingSection
           icon={Sparkles}
@@ -783,31 +607,6 @@ export default function SystemSettingsPage() {
         </SettingSection>
 
         <SettingSection
-          icon={Building2}
-          title="专属资产"
-        >
-          <SettingField label="租户 ID">
-            <Input
-              value={draft.skillStore.tenantId}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        skillStore: {
-                          ...current.skillStore,
-                          tenantId: event.target.value,
-                        },
-                      }
-                    : current,
-                )
-              }
-              placeholder="tenant-001"
-            />
-          </SettingField>
-        </SettingSection>
-
-        <SettingSection
           icon={Server}
           title="会话运行时"
           description="设置新会话使用的服务端执行后端和默认 Profile 模式。"
@@ -939,110 +738,6 @@ export default function SystemSettingsPage() {
           </SettingField>
         </SettingSection>
 
-        <SettingSection
-          icon={Shield}
-          title="权限"
-          description="设置工具调用权限确认、最大轮次和 thinking 模式。"
-        >
-          <SettingField
-            label="跳过所有权限确认"
-            description="打开后，新会话的工具调用将不再弹出权限确认框。"
-          >
-            <div className="flex min-h-10 items-center">
-              <Switch
-                checked={draft.bypassPermissions}
-                onCheckedChange={checked =>
-                  setDraft(current =>
-                    current
-                      ? {
-                          ...current,
-                          bypassPermissions: checked,
-                        }
-                      : current,
-                  )
-                }
-              />
-            </div>
-          </SettingField>
-
-          <SettingField
-            label="最大轮次"
-            description="仅影响新的 local 会话。"
-          >
-            <Input
-              type="number"
-              min={1}
-              max={10000}
-              value={draft.maxTurns}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        maxTurns: Number.parseInt(event.target.value || '1', 10) || 1,
-                      }
-                    : current,
-                )
-              }
-            />
-          </SettingField>
-
-          <SettingField
-            label="思考模式"
-            description={thinkingModeMeta?.description || '控制 thinking 的默认行为。'}
-          >
-            <Select
-              value={draft.thinkingMode}
-              onValueChange={value =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        thinkingMode: value as ThinkingMode,
-                      }
-                    : current,
-                )
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="选择思考模式" />
-              </SelectTrigger>
-              <SelectContent>
-                {thinkingModeOptions.map(option => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingField>
-
-          {draft.thinkingMode === 'enabled' ? (
-            <SettingField
-              label="Thinking Budget Tokens"
-              description="只在强制开启思考模式时生效。"
-            >
-              <Input
-                type="number"
-                min={1024}
-                max={128000}
-                value={draft.thinkingBudgetTokens}
-                onChange={(event) =>
-                  setDraft(current =>
-                    current
-                      ? {
-                          ...current,
-                          thinkingBudgetTokens:
-                            Number.parseInt(event.target.value || '1024', 10) ||
-                            1024,
-                        }
-                      : current,
-                  )
-                }
-              />
-            </SettingField>
-          ) : null}
-        </SettingSection>
       </div>
     </DashboardLayout>
   )

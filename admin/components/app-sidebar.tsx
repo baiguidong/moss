@@ -10,7 +10,6 @@ import {
   LogOut,
   Shield,
   Bot,
-  Sparkles,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -49,23 +48,6 @@ const menuItems: NavItem[] = [
     url: '/sessions',
     icon: MessageSquare,
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
-  },
-  {
-    title: 'IM 接入',
-    url: '/settings/adapters',
-    icon: Bot,
-  },
-  {
-    title: '智能体管理',
-    url: '/settings/agents',
-    icon: Bot,
-    requiredScope: 'admin:settings',
-  },
-  {
-    title: '技能商店',
-    url: '/settings/skill',
-    icon: Sparkles,
-    requiredScope: 'admin:settings',
   },
 ]
 

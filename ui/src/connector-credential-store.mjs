@@ -37,7 +37,7 @@ function recordPath(...parts) {
 
 function getRecordMetadata(record) {
   return Object.fromEntries(
-    ['connectorId', 'field', 'serverName', 'updatedAt']
+    ['connectorId', 'field', 'serverName', 'serverUrl', 'updatedAt']
       .filter((key) => typeof record[key] === 'string')
       .map((key) => [key, record[key]]),
   );
@@ -87,6 +87,23 @@ function decryptDocument(document, cipher) {
       recordPath('mcpAccessTokens', key),
     );
   }
+  const remoteDirectCredentials = isPlainObject(document.remoteDirectCredentials)
+    ? document.remoteDirectCredentials
+    : {};
+  if (Object.keys(remoteDirectCredentials).length > 0) {
+    result.remoteDirectCredentials = {};
+    for (const [serverKey, records] of Object.entries(remoteDirectCredentials)) {
+      if (!isPlainObject(records)) throw new Error('Invalid encrypted remote server credential group.');
+      result.remoteDirectCredentials[serverKey] = {};
+      for (const [field, record] of Object.entries(records)) {
+        result.remoteDirectCredentials[serverKey][field] = decryptRecord(
+          cipher,
+          record,
+          recordPath('remoteDirectCredentials', serverKey, field),
+        );
+      }
+    }
+  }
   return result;
 }
 
@@ -117,6 +134,23 @@ function encryptDocument(data, cipher, header) {
       record,
       recordPath('mcpAccessTokens', key),
     );
+  }
+  const remoteDirectCredentials = isPlainObject(data?.remoteDirectCredentials)
+    ? data.remoteDirectCredentials
+    : {};
+  if (Object.keys(remoteDirectCredentials).length > 0) {
+    document.remoteDirectCredentials = {};
+    for (const [serverKey, records] of Object.entries(remoteDirectCredentials)) {
+      if (!isPlainObject(records)) throw new Error('Invalid remote server credential group.');
+      document.remoteDirectCredentials[serverKey] = {};
+      for (const [field, record] of Object.entries(records)) {
+        document.remoteDirectCredentials[serverKey][field] = encryptRecord(
+          cipher,
+          record,
+          recordPath('remoteDirectCredentials', serverKey, field),
+        );
+      }
+    }
   }
   return document;
 }

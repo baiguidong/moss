@@ -1,6 +1,7 @@
 import electron from 'electron';
 const { ipcMain } = electron;
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -28,6 +29,8 @@ const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_AUTH_TIMEOUT_MS = 6 * 60 * 1000;
+const DEFAULT_CREDENTIAL_PROVISION_TIMEOUT_MS = 15 * 1000;
+const MAX_CREDENTIAL_PROVISION_RESPONSE_BYTES = 64 * 1024;
 const CLI_STATUS_REFRESH_TIMEOUT_MS = 15 * 1000;
 const AUTH_STATUS_POLL_MS = 3000;
 const ICON_MIME_TYPES = Object.freeze({
@@ -79,6 +82,63 @@ async function updateConnectorCredentials(mutator) {
   });
 }
 
+function remoteDirectCredentialKey(serverUrl) {
+  return createHash('sha256').update(normalizeString(serverUrl), 'utf8').digest('hex');
+}
+
+export function getRemoteDirectCredentials(serverUrl) {
+  const normalizedServerUrl = normalizeString(serverUrl);
+  if (!normalizedServerUrl) return { apiKey: '', userPassword: '' };
+  const credentials = readConnectorCredentials();
+  const records = credentials.remoteDirectCredentials?.[
+    remoteDirectCredentialKey(normalizedServerUrl)
+  ];
+  if (!isPlainObject(records)) return { apiKey: '', userPassword: '' };
+  return {
+    apiKey: normalizeString(records.apiKey?.value),
+    userPassword: typeof records.userPassword?.value === 'string'
+      ? records.userPassword.value
+      : '',
+  };
+}
+
+export function saveRemoteDirectCredentials({ serverUrl, apiKey, userPassword }) {
+  const normalizedServerUrl = normalizeString(serverUrl);
+  if (!normalizedServerUrl) return;
+  const serverKey = remoteDirectCredentialKey(normalizedServerUrl);
+  const updatedAt = new Date().toISOString();
+  connectorCredentialStore.update((current) => {
+    const remoteDirectCredentials = isPlainObject(current.remoteDirectCredentials)
+      ? { ...current.remoteDirectCredentials }
+      : {};
+    const records = {};
+    if (normalizeString(apiKey)) {
+      records.apiKey = {
+        value: normalizeString(apiKey),
+        field: 'apiKey',
+        serverUrl: normalizedServerUrl,
+        updatedAt,
+      };
+    }
+    if (typeof userPassword === 'string' && userPassword) {
+      records.userPassword = {
+        value: userPassword,
+        field: 'userPassword',
+        serverUrl: normalizedServerUrl,
+        updatedAt,
+      };
+    }
+    if (Object.keys(records).length > 0) remoteDirectCredentials[serverKey] = records;
+    else delete remoteDirectCredentials[serverKey];
+    return {
+      ...current,
+      ...(Object.keys(remoteDirectCredentials).length > 0
+        ? { remoteDirectCredentials }
+        : { remoteDirectCredentials: {} }),
+    };
+  });
+}
+
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -94,6 +154,54 @@ function normalizeStringList(value) {
     result.push(text);
   }
   return result;
+}
+
+function normalizeHttpsUrl(value) {
+  const text = normalizeString(value);
+  if (!text) return '';
+  try {
+    const url = new URL(text);
+    return url.protocol === 'https:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+export function normalizeConnectorCredentialProvision(input, fieldKeys = []) {
+  if (!isPlainObject(input)) return null;
+  const url = normalizeHttpsUrl(input.url);
+  const targetField = normalizeString(input.targetField || input.target_field);
+  const responseField = normalizeString(input.responseField || input.response_field);
+  if (!url || !fieldKeys.includes(targetField) || !/^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/.test(responseField)) {
+    return null;
+  }
+
+  let validation;
+  if (isPlainObject(input.validation)) {
+    const validationUrl = normalizeHttpsUrl(input.validation.url);
+    if (validationUrl && new URL(validationUrl).origin === new URL(url).origin) {
+      const headers = isPlainObject(input.validation.headers)
+        ? Object.fromEntries(
+            Object.entries(input.validation.headers)
+              .filter(([key, value]) => normalizeString(key) && typeof value === 'string')
+              .map(([key, value]) => [key, value]),
+          )
+        : {};
+      validation = {
+        url: validationUrl,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      };
+    }
+  }
+
+  return {
+    url,
+    targetField,
+    responseField,
+    label: normalizeString(input.label) || '自动创建凭据',
+    labelEn: normalizeString(input.labelEn || input.label_en),
+    ...(validation ? { validation } : {}),
+  };
 }
 
 export function normalizeConnectorCredentialSchema(input) {
@@ -120,6 +228,10 @@ export function normalizeConnectorCredentialSchema(input) {
     })
     .filter(Boolean);
   if (fields.length === 0) return null;
+  const provision = normalizeConnectorCredentialProvision(
+    input.provision,
+    fields.map((field) => field.key),
+  );
   return {
     title: normalizeString(input.title) || '连接器凭据',
     titleEn: normalizeString(input.titleEn || input.title_en),
@@ -129,6 +241,7 @@ export function normalizeConnectorCredentialSchema(input) {
     docLabel: normalizeString(input.docLabel),
     docLabelEn: normalizeString(input.docLabelEn || input.docLabel_en),
     fields,
+    ...(provision ? { provision } : {}),
   };
 }
 
@@ -1013,6 +1126,72 @@ export function applyConnectorCredentials(config, values) {
   return resolved;
 }
 
+async function fetchConnectorCredentialProvision(url, init, {
+  fetchImpl = globalThis.fetch,
+  timeoutMs = DEFAULT_CREDENTIAL_PROVISION_TIMEOUT_MS,
+} = {}) {
+  if (typeof fetchImpl !== 'function') throw new Error('当前运行环境不支持网络请求。');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, {
+      ...init,
+      redirect: 'error',
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('自动创建凭据请求超时。');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function requestProvisionedConnectorCredentials(schema, options = {}) {
+  const normalizedSchema = normalizeConnectorCredentialSchema(schema);
+  const provision = normalizedSchema?.provision;
+  if (!provision) throw new Error('连接器未配置自动凭据创建。');
+
+  const response = await fetchConnectorCredentialProvision(provision.url, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  }, options);
+  if (!response?.ok) {
+    throw new Error(`自动创建凭据失败（HTTP ${response?.status || 'unknown'}）。`);
+  }
+  const raw = await response.text();
+  if (Buffer.byteLength(raw, 'utf8') > MAX_CREDENTIAL_PROVISION_RESPONSE_BYTES) {
+    throw new Error('自动创建凭据响应过大。');
+  }
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new Error('自动创建凭据返回了无效 JSON。');
+  }
+  const credential = normalizeString(payload?.[provision.responseField]);
+  if (!credential) throw new Error('自动创建凭据响应中缺少 API Key。');
+  const values = { [provision.targetField]: credential };
+
+  if (provision.validation) {
+    const headers = Object.fromEntries(
+      Object.entries(provision.validation.headers || {}).map(([key, value]) => [
+        key,
+        replaceCredentialReferences(value, values),
+      ]),
+    );
+    const validationResponse = await fetchConnectorCredentialProvision(provision.validation.url, {
+      method: 'GET',
+      headers: { Accept: 'application/json', ...headers },
+    }, options);
+    if (!validationResponse?.ok) {
+      throw new Error(`自动创建的凭据验证失败（HTTP ${validationResponse?.status || 'unknown'}）。`);
+    }
+  }
+
+  return values;
+}
+
 export function getConnectorCredentialEnv(connectorIds) {
   const env = {};
   for (const connectorId of normalizeStringList(connectorIds)) {
@@ -1088,6 +1267,14 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
     configuredFields,
     state,
   };
+}
+
+export async function provisionConnectorCredentials(connectorId, options = {}) {
+  const id = normalizeConnectorId(connectorId);
+  const schema = await readJsonFileAsync(path.join(connectorDir(id), 'token-schema.json'), null);
+  const values = await requestProvisionedConnectorCredentials(schema, options);
+  const result = await saveConnectorCredentials(id, values);
+  return { ...result, provisioned: true };
 }
 
 function withMcpAccessToken(config, token) {
@@ -2156,6 +2343,17 @@ export function registerConnectorHubIpcHandlers({
       const result = await saveConnectorCredentials(payload.connectorId, payload.values);
       const reload = await onMcpTokenSaved?.(result);
       emitConnectorsChanged?.({ reason: 'credentials-saved', connectorId: result.connectorId, ...reload });
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: redactSensitiveText(error?.message || String(error)) };
+    }
+  });
+
+  ipcMain.handle('connector-hub:provision-credentials', async (_event, payload = {}) => {
+    try {
+      const result = await provisionConnectorCredentials(payload.connectorId);
+      const reload = await onMcpTokenSaved?.(result);
+      emitConnectorsChanged?.({ reason: 'credentials-provisioned', connectorId: result.connectorId, ...reload });
       return { success: true, data: result };
     } catch (error) {
       return { success: false, error: redactSensitiveText(error?.message || String(error)) };

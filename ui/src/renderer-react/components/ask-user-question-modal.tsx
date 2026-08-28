@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronLeft, ChevronRight, HelpCircle, MessageSquareText, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, HelpCircle, MessageSquareText, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,6 +31,7 @@ type Props = {
 
 function normalizeQuestions(request: AskUserQuestionRequest | null): AskUserQuestion[] {
   const questions = request?.input?.questions;
+  const minimumOptionCount = request?.input?.metadata?.source === "session:tool-permission" ? 1 : 2;
   if (!Array.isArray(questions)) return [];
   return questions
     .map((question): AskUserQuestion | null => {
@@ -54,7 +55,7 @@ function normalizeQuestions(request: AskUserQuestionRequest | null): AskUserQues
         })
         .slice(0, 4);
 
-      if (!question.question.trim() || normalizedOptions.length < 2) return null;
+      if (!question.question.trim() || normalizedOptions.length < minimumOptionCount) return null;
 
       return {
         question: question.question.trim(),
@@ -123,6 +124,10 @@ export function AskUserQuestionModal({
   onReject,
 }: Props) {
   const questions = React.useMemo(() => normalizeQuestions(request), [request]);
+  const isToolPermission = request?.input?.metadata?.source === "session:tool-permission";
+  const toolPermissionTitle = typeof request?.input?.metadata?.title === "string"
+    ? request.input.metadata.title
+    : "工具权限";
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const [answers, setAnswers] = React.useState<AnswerState>({});
   const [notes, setNotes] = React.useState<NotesState>({});
@@ -212,17 +217,24 @@ export function AskUserQuestionModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/62 p-4 backdrop-blur-md">
-      <div className="flex max-h-[min(760px,calc(100vh-32px))] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border/80 bg-card shadow-[0_30px_100px_-45px_rgba(0,0,0,0.72)]">
+      <div className={cn(
+        "flex max-h-[min(760px,calc(100vh-32px))] w-full flex-col overflow-hidden rounded-lg border border-border/80 bg-card shadow-[0_30px_100px_-45px_rgba(0,0,0,0.72)]",
+        isToolPermission ? "max-w-2xl" : "max-w-4xl",
+      )}>
         <div className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary" className="gap-1.5 rounded-md">
-                <HelpCircle className="h-3.5 w-3.5" />
-                需要你选择
+                {isToolPermission
+                  ? <ShieldCheck className="h-3.5 w-3.5" />
+                  : <HelpCircle className="h-3.5 w-3.5" />}
+                {isToolPermission ? "工具权限" : "需要你选择"}
               </Badge>
-              <span className="text-xs text-muted-foreground">
-                {answeredCount}/{questions.length} 已回答
-              </span>
+              {!isToolPermission ? (
+                <span className="text-xs text-muted-foreground">
+                  {answeredCount}/{questions.length} 已回答
+                </span>
+              ) : null}
               {!isActiveSession ? (
                 <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
                   来自其他会话
@@ -230,10 +242,14 @@ export function AskUserQuestionModal({
               ) : null}
             </div>
             <h2 className="mt-2 truncate text-base font-semibold text-foreground">
-              {request.originLabel || 'Agent'} 正在等待你的回答
+              {isToolPermission
+                ? `${toolPermissionTitle}确认`
+                : `${request.originLabel || 'Agent'} 正在等待你的回答`}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              这些选择会直接回传给 agent，agent 会基于你的答案继续执行当前任务。
+              {isToolPermission
+                ? "此操作会暂停等待，直到你明确允许或拒绝。"
+                : "这些选择会直接回传给 agent，agent 会基于你的答案继续执行当前任务。"}
             </p>
           </div>
           <Button
@@ -253,7 +269,11 @@ export function AskUserQuestionModal({
           </div>
         ) : null}
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)]">
+        <div className={cn(
+          "min-h-0 flex-1",
+          isToolPermission ? "block" : "grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)]",
+        )}>
+          {!isToolPermission ? (
           <div className="border-b border-border/70 bg-muted/20 p-3 md:border-b-0 md:border-r">
             <div className="space-y-1">
               {questions.map((question, index) => {
@@ -290,6 +310,7 @@ export function AskUserQuestionModal({
               })}
             </div>
           </div>
+          ) : null}
 
           <div className="min-h-0 overflow-y-auto p-5">
             {currentQuestion ? (
@@ -349,6 +370,7 @@ export function AskUserQuestionModal({
                   })}
                 </div>
 
+                {!isToolPermission ? (
                 <div className="mt-5">
                   <label className="text-xs font-medium text-muted-foreground">其他说明</label>
                   <Textarea
@@ -364,6 +386,7 @@ export function AskUserQuestionModal({
                     className="mt-2 min-h-20 resize-none bg-background disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </div>
+                ) : null}
 
                 {selectedPreview ? (
                   <div className="mt-5 rounded-lg border border-border/80 bg-muted/25 p-4">
@@ -386,32 +409,42 @@ export function AskUserQuestionModal({
 
         <div className="flex flex-col gap-3 border-t border-border/70 bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 text-sm text-muted-foreground">
-            {error ? <span className="text-destructive">{error}</span> : "可跳过暂不确定的问题；提交后当前 agent 会自动继续。"}
+            {error ? (
+              <span className="text-destructive">{error}</span>
+            ) : isToolPermission ? (
+              "请选择允许范围，或拒绝本次操作。"
+            ) : (
+              "可跳过暂不确定的问题；提交后当前 agent 会自动继续。"
+            )}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}
-              disabled={submitting || currentIndex === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              上一题
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setCurrentIndex((index) => Math.min(questions.length - 1, index + 1))}
-              disabled={submitting || currentIndex >= questions.length - 1}
-            >
-              下一题
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            {!isToolPermission ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}
+                  disabled={submitting || currentIndex === 0}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  上一题
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentIndex((index) => Math.min(questions.length - 1, index + 1))}
+                  disabled={submitting || currentIndex >= questions.length - 1}
+                >
+                  下一题
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
             {isActiveSession ? (
               <>
                 <Button variant="outline" onClick={handleReject} disabled={submitting}>
-                  暂不回答
+                  {isToolPermission ? "拒绝" : "暂不回答"}
                 </Button>
                 <Button onClick={handleSubmit} disabled={submitting || !canSubmit}>
-                  {submitting ? "提交中..." : "提交答案"}
+                  {submitting ? "提交中..." : isToolPermission ? "确认选择" : "提交答案"}
                 </Button>
               </>
             ) : (

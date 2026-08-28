@@ -14,31 +14,7 @@ import { AuthService, AuthServiceError } from './auth/service.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
-import {
-  fetchAgentHubAssistantDetail,
-  fetchAgentHubAssistants,
-  fetchAgentHubCategories,
-  fetchAgentHubSkillDetailsByIds,
-  getInstalledAssistants,
-  installHubAssistant,
-  type AgentHubAssistant,
-  uninstallAssistant,
-  updateInstalledAssistantMeta,
-} from './agentStore.js'
-import {
-  fetchSkillHubCategories,
-  fetchSkillHubSkillDetail,
-  fetchSkillHubSkills,
-  getInstalledSkills,
-  importLocalSkillArchive,
-  importLocalSkillDirectory,
-  installHubSkill,
-  setInstalledSkillEnabled,
-  type SkillHubSkill,
-  uninstallSkill,
-} from './skillStore.js'
-import { createAdaptersApi } from './api/adapters.js'
-import { adapterProcessManager } from './adapterProcessManager.js'
+import { AdapterProcessManager } from './adapterProcessManager.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 
@@ -363,6 +339,23 @@ async function readOAuthJsonBody(
   }
 }
 
+async function readOAuthFormBody(
+  req: http.IncomingMessage,
+  maxBytes: number,
+): Promise<URLSearchParams> {
+  if (!String(req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded')) {
+    throw new OAuthLoginError(415, 'OAuth authorization form must be URL encoded')
+  }
+  try {
+    return new URLSearchParams(await readBody(req, maxBytes))
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw new OAuthLoginError(error.statusCode, error.message)
+    }
+    throw error
+  }
+}
+
 function getBearerToken(req: http.IncomingMessage): string | null {
   const header = req.headers.authorization
   if (typeof header !== 'string') {
@@ -416,21 +409,81 @@ function writeNoStoreJson(
   res.end(payload)
 }
 
-function writeOAuthCallbackPage(res: http.ServerResponse, ok: boolean): void {
-  const title = ok ? 'Moss login complete' : 'Moss login failed'
-  const message = ok
-    ? 'Authentication completed. Return to Moss to finish signing in.'
-    : 'Authentication could not be completed. Return to Moss and try again.'
-  const payload = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${message}</p></main></body></html>`
-  res.writeHead(ok ? 200 : 400, {
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function writeOAuthAuthorizePage(
+  res: http.ServerResponse,
+  input: {
+    transactionId?: string
+    redirectUri?: string
+    loginIdentifier?: string
+    error?: string
+    status?: number
+  },
+): void {
+  const canLogin = Boolean(input.transactionId)
+  const title = canLogin ? '登录到 Moss Server' : '认证请求已失效'
+  const error = input.error
+    ? `<div class="error" role="alert">${escapeHtml(input.error)}</div>`
+    : ''
+  const form = canLogin
+    ? `<form method="post" action="/api/v1/auth/oauth/authorize">
+        <input type="hidden" name="transaction_id" value="${escapeHtml(input.transactionId || '')}">
+        <label for="login_identifier">用户名或邮箱</label>
+        <input id="login_identifier" name="login_identifier" value="${escapeHtml(input.loginIdentifier || '')}" autocomplete="username" required autofocus>
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <div class="actions">
+          <button type="submit" name="action" value="authorize">登录并授权</button>
+          <button class="secondary" type="submit" name="action" value="cancel" formnovalidate>取消</button>
+        </div>
+      </form>`
+    : '<p class="muted">请返回 Moss 客户端重新发起认证。</p>'
+  const callbackTarget = canLogin && input.redirectUri
+    ? new URL(input.redirectUri).toString()
+    : ''
+  const formAction = callbackTarget
+    ? `'self' ${callbackTarget}`
+    : "'none'"
+  const payload = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
+    :root{color-scheme:light dark;font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#f4f5f7;color:#17191d}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f5f7}
+    main{width:min(100%,400px);padding:28px;background:#fff;border:1px solid #dfe2e7;border-radius:8px;box-shadow:0 12px 32px rgba(19,25,35,.08)}
+    .brand{font-size:15px;font-weight:700;color:#176b52;margin-bottom:28px}h1{font-size:24px;line-height:1.25;margin:0 0 22px;letter-spacing:0}
+    label{display:block;font-size:13px;font-weight:600;margin:16px 0 7px}input{width:100%;height:42px;padding:0 11px;border:1px solid #c9ced6;border-radius:6px;background:#fff;color:#17191d;font:inherit;outline:none}
+    input:focus{border-color:#176b52;box-shadow:0 0 0 3px rgba(23,107,82,.14)}.actions{display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:24px}
+    button{height:42px;padding:0 18px;border:1px solid #176b52;border-radius:6px;background:#176b52;color:#fff;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer}button.secondary{border-color:#c9ced6;background:#fff;color:#30343b}
+    .error{padding:10px 12px;border-left:3px solid #c53b3b;background:#fff1f1;color:#8f2424;font-size:13px}.muted{color:#626974;line-height:1.6}
+    @media(prefers-color-scheme:dark){:root,body{background:#17191d;color:#f2f3f5}main{background:#21242a;border-color:#363b44;box-shadow:none}input{background:#17191d;border-color:#4a505b;color:#f2f3f5}button.secondary{background:#21242a;border-color:#4a505b;color:#f2f3f5}.error{background:#3a2325;color:#ffb8b8}}
+  </style></head><body><main><div class="brand">Moss</div><h1>${title}</h1>${error}${form}</main></body></html>`
+  res.writeHead(input.status ?? 200, {
     'cache-control': 'no-store',
-    'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
     'referrer-policy': 'no-referrer',
     'x-content-type-options': 'nosniff',
   })
   res.end(payload)
+}
+
+function redirectNoStore(
+  res: http.ServerResponse,
+  location: string,
+): void {
+  res.writeHead(303, {
+    'cache-control': 'no-store',
+    location,
+    'referrer-policy': 'no-referrer',
+  })
+  res.end()
 }
 
 function redirect(
@@ -478,69 +531,6 @@ function canAccessSession(
     session.orgId === auth.orgId &&
     (session.userId === auth.userId || hasScope(auth.scopes, anyScope))
   )
-}
-
-function resolveAdapterTargetUserId(
-  auth: AuthContext,
-  authService: AuthService,
-  requestedUserId: string | null | undefined,
-): string {
-  const targetUserId =
-    typeof requestedUserId === 'string' ? requestedUserId.trim() : ''
-
-  if (!targetUserId || targetUserId === auth.userId) {
-    return auth.userId
-  }
-
-  if (!hasScope(auth.scopes, 'admin:settings')) {
-    throw new AuthServiceError(403, 'Missing scope: admin:settings')
-  }
-
-  if (!authService.getUserOrNull(targetUserId, auth.orgId)) {
-    throw new HttpError(404, 'Unknown user_id')
-  }
-
-  return targetUserId
-}
-
-function listAdapterProcessStatusesForUser(
-  orgId: string,
-  userId: string,
-): Record<
-  string,
-  {
-    status: 'running' | 'stopped' | 'error'
-    pid: number | null
-    error: string | null
-    startedAt: number | null
-    orgId: string
-    userId: string
-    platform: 'feishu'
-  }
-> {
-  const result: Record<
-    string,
-    {
-      status: 'running' | 'stopped' | 'error'
-      pid: number | null
-      error: string | null
-      startedAt: number | null
-      orgId: string
-      userId: string
-      platform: 'feishu'
-    }
-  > = {}
-
-  const platform = 'feishu' as const
-  const key = `${orgId}:${userId}:${platform}`
-  result[key] = {
-    ...adapterProcessManager.getStatus(platform, orgId, userId),
-    orgId,
-    userId,
-    platform,
-  }
-
-  return result
 }
 
 function resolveAdminDistDir(): string | null {
@@ -650,8 +640,9 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
-  const adaptersApi = createAdaptersApi(runtime.store.db)
-  const oauthLoginService = new OAuthLoginService(config.oauth, authService)
+  const adapterProcessManager = new AdapterProcessManager(runtime.store.db, runtime, logger)
+  const oauthLoginService = new OAuthLoginService(authService)
+  void adapterProcessManager.restoreEnabled()
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -670,7 +661,7 @@ export function startServer(
           ready: true,
           sessions: runtime.countActiveSessions(),
           auth_mode: config.authMode,
-          oauth_enabled: oauthLoginService.isEnabled(),
+          oauth_enabled: true,
         })
         return
       }
@@ -731,31 +722,92 @@ export function startServer(
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/start') {
-        writeNoStoreJson(res, 200, oauthLoginService.start())
+        const body = await readOAuthJsonBody(req, 4 * 1024)
+        writeNoStoreJson(res, 200, oauthLoginService.start({
+          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+          state: typeof body.state === 'string' ? body.state : '',
+          codeChallenge:
+            typeof body.code_challenge === 'string' ? body.code_challenge : '',
+          codeChallengeMethod:
+            typeof body.code_challenge_method === 'string'
+              ? body.code_challenge_method
+              : '',
+        }))
         return
       }
 
-      if (req.method === 'GET' && pathname === '/api/v1/auth/oauth/callback') {
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/cancel') {
+        const body = await readOAuthJsonBody(req, 4 * 1024)
+        writeNoStoreJson(res, 200, oauthLoginService.cancelClientRequest({
+          state: typeof body.state === 'string' ? body.state : '',
+          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+          code: typeof body.code === 'string' ? body.code : undefined,
+        }))
+        return
+      }
+
+      if (
+        req.method === 'GET' &&
+        (
+          pathname === '/api/v1/auth/oauth/authorize' ||
+          pathname.startsWith('/api/v1/auth/oauth/authorize/')
+        )
+      ) {
         try {
-          const result = await oauthLoginService.completeCallback({
-            state: url.searchParams.get('state') || '',
-            code: url.searchParams.get('code') || undefined,
-            error: url.searchParams.get('error') || undefined,
-          })
-          writeOAuthCallbackPage(res, result.ok)
+          const pathTransactionId = pathname.startsWith('/api/v1/auth/oauth/authorize/')
+            ? pathname.slice('/api/v1/auth/oauth/authorize/'.length)
+            : ''
+          const authorization = oauthLoginService.getAuthorizationRequest(
+            pathTransactionId,
+          )
+          writeOAuthAuthorizePage(res, authorization)
         } catch (error) {
           if (!(error instanceof OAuthLoginError)) throw error
-          writeOAuthCallbackPage(res, false)
+          writeOAuthAuthorizePage(res, {
+            error: error.message,
+            status: error.statusCode,
+          })
+        }
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/authorize') {
+        const form = await readOAuthFormBody(req, 8 * 1024)
+        const transactionId = form.get('transaction_id') || ''
+        if (form.get('action') === 'cancel') {
+          redirectNoStore(res, oauthLoginService.cancel(transactionId))
+          return
+        }
+        try {
+          redirectNoStore(res, oauthLoginService.authorizeWithPassword({
+            transactionId,
+            loginIdentifier: form.get('login_identifier') || '',
+            password: form.get('password') || '',
+          }))
+        } catch (error) {
+          if (!(error instanceof OAuthLoginError)) throw error
+          const retryable = error.statusCode === 401
+          const retryAuthorization = retryable
+            ? oauthLoginService.getAuthorizationRequest(transactionId)
+            : null
+          writeOAuthAuthorizePage(res, {
+            ...retryAuthorization,
+            loginIdentifier: retryable ? form.get('login_identifier') || '' : undefined,
+            error: error.message,
+            status: error.statusCode,
+          })
         }
         return
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/exchange') {
         const body = await readOAuthJsonBody(req, 4 * 1024)
-        const result = oauthLoginService.exchange(
-          typeof body.transaction_id === 'string' ? body.transaction_id : '',
-        )
-        writeNoStoreJson(res, result.pending ? 202 : 200, result)
+        writeNoStoreJson(res, 200, oauthLoginService.exchange({
+          code: typeof body.code === 'string' ? body.code : '',
+          codeVerifier:
+            typeof body.code_verifier === 'string' ? body.code_verifier : '',
+          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+        }))
         return
       }
 
@@ -1044,410 +1096,47 @@ export function startServer(
         return
       }
 
-      if (req.method === 'GET' && pathname === '/api/v1/agent-hub/categories') {
-        authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await fetchAgentHubCategories())
+      if (pathname === '/api/v1/adapters/feishu/status' && req.method === 'GET') {
+        authService.requireScope(auth, 'sessions:create')
+        writeJson(res, 200, adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId))
         return
       }
 
-      if (
-        req.method === 'GET' &&
-        pathname === '/api/v1/agent-hub/assistants/cursor'
-      ) {
-        authService.requireScope(auth, 'admin:settings')
-        const limitRaw = url.searchParams.get('limit')
-        const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined
-
-        writeJson(
-          res,
-          200,
-          await fetchAgentHubAssistants({
-            cursor: url.searchParams.get('cursor') || undefined,
-            limit: Number.isFinite(limit) ? limit : undefined,
-            query: url.searchParams.get('query') || undefined,
-            category: url.searchParams.get('category') || undefined,
-          }),
-        )
-        return
-      }
-
-      const agentHubDetailMatch = pathname.match(
-        /^\/api\/v1\/agent-hub\/assistants\/([^/]+)$/,
-      )
-      if (req.method === 'GET' && agentHubDetailMatch) {
-        authService.requireScope(auth, 'admin:settings')
-        const assistantId = decodeURIComponent(agentHubDetailMatch[1] || '')
-        writeJson(res, 200, await fetchAgentHubAssistantDetail(assistantId))
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/agent-hub/skills/by-ids') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        const skillIds = Array.isArray(body.skillIds)
-          ? body.skillIds
-              .map(skillId => String(skillId || '').trim())
-              .filter(Boolean)
-          : []
-        writeJson(res, 200, await fetchAgentHubSkillDetailsByIds(skillIds))
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/agents/installed') {
-        writeJson(res, 200, await getInstalledAssistants())
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/agents/install') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        const assistantMeta = isJsonBody(body.assistantMeta)
-          ? (body.assistantMeta as AgentHubAssistant)
-          : null
-        const selectedSkillIds = Array.isArray(body.selectedSkillIds)
-          ? body.selectedSkillIds
-              .map(skillId => String(skillId || '').trim())
-              .filter(Boolean)
-          : []
-
-        writeJson(
-          res,
-          200,
-          await installHubAssistant({
-            assistantName:
-              typeof body.assistantName === 'string' ? body.assistantName : '',
-            sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
-            version: typeof body.version === 'string' ? body.version : undefined,
-            checksum:
-              typeof body.checksum === 'string' ? body.checksum : undefined,
-            assistantMeta,
-            selectedSkillIds,
-          }),
-        )
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/agents/uninstall') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        await uninstallAssistant({
-          assistantName:
-            typeof body.assistantName === 'string' ? body.assistantName : '',
-          sourcePath:
-            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
+      if (pathname === '/api/v1/adapters/feishu/start' && req.method === 'POST') {
+        authService.requireScope(auth, 'sessions:create')
+        authService.requireScope(auth, 'sessions:list')
+        authService.requireScope(auth, 'sessions:attach')
+        const body = await readJsonBody(req, 64 * 1024)
+        if (
+          !isJsonBody(body.config)
+          || typeof body.config.appId !== 'string'
+          || !body.config.appId.trim()
+          || typeof body.config.appSecret !== 'string'
+          || !body.config.appSecret.trim()
+        ) {
+          throw new HttpError(400, 'Feishu App ID and App Secret are required')
+        }
+        await adapterProcessManager.start('feishu', {
+          orgId: auth.orgId,
+          userId: auth.userId,
+          role: auth.role,
+          scopes: auth.scopes,
+          config: body.config,
         })
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (req.method === 'PATCH' && pathname === '/api/v1/agents/meta') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        const updates = isJsonBody(body.updates) ? body.updates : {}
-
-        await updateInstalledAssistantMeta({
-          assistantName:
-            typeof body.assistantName === 'string' ? body.assistantName : '',
-          updates: {
-            display_name:
-              typeof updates.display_name === 'string'
-                ? updates.display_name
-                : undefined,
-            description:
-              typeof updates.description === 'string'
-                ? updates.description
-                : undefined,
-            avatar:
-              typeof updates.avatar === 'string' ? updates.avatar : undefined,
-          },
+        writeJson(res, 200, {
+          ok: true,
+          status: adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId),
         })
-        writeJson(res, 200, { ok: true })
         return
       }
 
-      if (req.method === 'GET' && pathname === '/api/v1/skill-hub/categories') {
-        authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await fetchSkillHubCategories())
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/skill-hub/skills/cursor') {
-        authService.requireScope(auth, 'admin:settings')
-        const category =
-          typeof url.searchParams.get('category') === 'string'
-            ? url.searchParams.get('category') || ''
-            : typeof url.searchParams.get('categories') === 'string'
-              ? url.searchParams.get('categories') || ''
-              : ''
-        const limitRaw = url.searchParams.get('limit')
-        const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined
-
-        writeJson(
-          res,
-          200,
-          await fetchSkillHubSkills({
-            cursor: url.searchParams.get('cursor') || undefined,
-            limit: Number.isFinite(limit) ? limit : undefined,
-            query: url.searchParams.get('query') || undefined,
-            category: category || undefined,
-            tenantId: url.searchParams.get('tenant_id') || undefined,
-          }),
-        )
-        return
-      }
-
-      const skillHubDetailMatch = pathname.match(/^\/api\/v1\/skill-hub\/skills\/([^/]+)$/)
-      if (req.method === 'GET' && skillHubDetailMatch) {
-        authService.requireScope(auth, 'admin:settings')
-        const skillId = decodeURIComponent(skillHubDetailMatch[1] || '')
-        writeJson(res, 200, await fetchSkillHubSkillDetail(skillId))
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/skills/installed') {
-        authService.requireScope(auth, 'admin:settings')
-        writeJson(res, 200, await getInstalledSkills())
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/skills/install') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        const skillMeta = isJsonBody(body.skillMeta)
-          ? (body.skillMeta as SkillHubSkill)
-          : null
-        writeJson(
-          res,
-          200,
-          await installHubSkill({
-            skillName: typeof body.skillName === 'string' ? body.skillName : '',
-            sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
-            version: typeof body.version === 'string' ? body.version : undefined,
-            checksum:
-              typeof body.checksum === 'string' ? body.checksum : undefined,
-            skillMeta,
-          }),
-        )
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/skills/uninstall') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        await uninstallSkill({
-          skillName: typeof body.skillName === 'string' ? body.skillName : '',
-          sourcePath:
-            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
+      if (pathname === '/api/v1/adapters/feishu/stop' && req.method === 'POST') {
+        authService.requireScope(auth, 'sessions:create')
+        await adapterProcessManager.stop('feishu', auth.orgId, auth.userId)
+        writeJson(res, 200, {
+          ok: true,
+          status: adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId),
         })
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (req.method === 'PATCH' && pathname === '/api/v1/skills/enabled') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        if (typeof body.enabled !== 'boolean') {
-          throw new HttpError(400, 'enabled must be a boolean')
-        }
-        await setInstalledSkillEnabled({
-          skillName: typeof body.skillName === 'string' ? body.skillName : '',
-          enabled: body.enabled,
-          sourcePath:
-            typeof body.sourcePath === 'string' ? body.sourcePath : undefined,
-        })
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/skills/import/archive') {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        writeJson(
-          res,
-          200,
-          await importLocalSkillArchive({
-            fileName: typeof body.fileName === 'string' ? body.fileName : '',
-            archiveBase64:
-              typeof body.archiveBase64 === 'string' ? body.archiveBase64 : '',
-          }),
-        )
-        return
-      }
-
-      if (
-        req.method === 'POST' &&
-        pathname === '/api/v1/skills/import/directory'
-      ) {
-        authService.requireScope(auth, 'admin:settings')
-        const body = await readJsonBody(req)
-        const entries = Array.isArray(body.entries)
-          ? body.entries
-              .filter(isJsonBody)
-              .map(entry => ({
-                path: typeof entry.path === 'string' ? entry.path : '',
-                contentBase64:
-                  typeof entry.contentBase64 === 'string'
-                    ? entry.contentBase64
-                    : '',
-              }))
-              .filter(entry => entry.path && entry.contentBase64)
-          : []
-        writeJson(
-          res,
-          200,
-          await importLocalSkillDirectory({
-            entries,
-          }),
-        )
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/all') {
-        authService.requireScope(auth, 'admin:settings')
-        const rows = adaptersApi.listAll(auth.orgId)
-        writeJson(res, 200, rows)
-        return
-      }
-
-      if (pathname === '/api/v1/adapters') {
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-        if (req.method === 'GET') {
-          const result = adaptersApi.list(auth.orgId, targetUserId)
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'PUT') {
-          const body = await readJsonBody(req)
-          const {
-            platform: rawPlatform,
-            userId: _ignoredUserId,
-            ...patch
-          } = body
-          if (rawPlatform !== 'feishu') {
-            throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
-          }
-          const result = adaptersApi.upsert(
-            auth.orgId,
-            targetUserId,
-            'feishu',
-            patch as Record<string, unknown>,
-          )
-          if ('error' in result) {
-            writeJson(res, 400, result)
-            return
-          }
-          writeJson(res, 200, result)
-          return
-        }
-        throw new HttpError(405, `Method ${req.method} not allowed`)
-      }
-
-      // PUT /api/v1/adapters/:platform — platform-specific upsert
-      const adapterPlatformMatch = pathname.match(/^\/api\/v1\/adapters\/(feishu)$/)
-      if (adapterPlatformMatch) {
-        const platform = adapterPlatformMatch[1]!
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-
-        if (req.method === 'GET') {
-          const result = adaptersApi.list(auth.orgId, targetUserId)
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'PUT') {
-          const body = await readJsonBody(req)
-          const {
-            userId: _ignoredUserId,
-            platform: _ignoredPlatform,
-            ...patch
-          } = body
-          const result = adaptersApi.upsert(
-            auth.orgId,
-            targetUserId,
-            platform,
-            patch as Record<string, unknown>,
-          )
-          if ('error' in result) {
-            writeJson(res, 400, result)
-            return
-          }
-          writeJson(res, 200, result)
-          return
-        }
-        if (req.method === 'DELETE') {
-          const result = adaptersApi.remove(auth.orgId, targetUserId, platform)
-          writeJson(res, 200, result)
-          return
-        }
-        throw new HttpError(405, `Method ${req.method} not allowed`)
-      }
-
-      if (pathname === '/api/v1/adapters/processes') {
-        const targetUserId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          url.searchParams.get('userId'),
-        )
-        writeJson(
-          res,
-          200,
-          listAdapterProcessStatusesForUser(auth.orgId, targetUserId),
-        )
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/restart' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
-        }
-        await adapterProcessManager.restart('feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/start' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
-        }
-        await adapterProcessManager.start('feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/processes/stop' && req.method === 'POST') {
-        const body = await readJsonBody(req)
-        const adapter = typeof body.adapter === 'string' ? body.adapter : ''
-        const userId = resolveAdapterTargetUserId(
-          auth,
-          authService,
-          typeof body.userId === 'string' ? body.userId : undefined,
-        )
-        if (adapter !== 'feishu') {
-          throw new HttpError(400, 'Invalid adapter name, must be "feishu"')
-        }
-        await adapterProcessManager.stop('feishu', auth.orgId, userId)
-        writeJson(res, 200, { ok: true })
         return
       }
 
@@ -1757,6 +1446,7 @@ export function startServer(
     port: null,
     ready,
     stop: async () => {
+      await adapterProcessManager.dispose()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {

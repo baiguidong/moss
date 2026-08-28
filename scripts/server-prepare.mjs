@@ -30,16 +30,16 @@ async function main() {
   run('Building server runtime artifacts', 'bun', ['run', 'build:server'])
 
   const binDir = join(serverHome, 'bin')
+  const adaptersDir = join(serverHome, 'adapters')
   const adminDir = join(serverHome, 'admin')
   const adminDistDir = join(adminDir, 'dist')
 
   await Promise.all([
     mkdir(binDir, { recursive: true }),
+    mkdir(adaptersDir, { recursive: true }),
     mkdir(join(serverHome, 'var', 'lib'), { recursive: true }),
     mkdir(join(serverHome, 'var', 'run'), { recursive: true }),
     mkdir(join(serverHome, 'var', 'log'), { recursive: true }),
-    mkdir(join(serverHome, 'skills'), { recursive: true }),
-    mkdir(join(serverHome, 'assistants'), { recursive: true }),
   ])
 
   await copyFileIntoServerHome(
@@ -49,6 +49,10 @@ async function main() {
   await copyFileIntoServerHome(
     join(repoRoot, 'bin', 'moss-session-runner.mjs'),
     join(binDir, 'moss-session-runner.mjs'),
+  )
+  await copyFileIntoServerHome(
+    join(repoRoot, 'bin', 'adapters', 'feishu.mjs'),
+    join(adaptersDir, 'feishu.mjs'),
   )
   await rm(join(binDir, 'cli-node.js'), {
     force: true,
@@ -70,6 +74,7 @@ async function main() {
   console.log(`\nPrepared Moss server runtime at ${serverHome}`)
   console.log(`  ${join(binDir, 'moss-server.mjs')}`)
   console.log(`  ${join(binDir, 'moss-session-runner.mjs')}`)
+  console.log(`  ${join(adaptersDir, 'feishu.mjs')}`)
   console.log(`  ${adminDistDir}`)
 }
 

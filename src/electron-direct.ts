@@ -32,6 +32,7 @@ import {
 } from './utils/permissions/PermissionUpdate.js'
 import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchema.js'
 import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
+import { shouldBypassDesktopToolPermission } from './utils/permissions/desktopPermissionMode.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
@@ -107,6 +108,10 @@ import { discardSessionHooksConfigSnapshot } from './utils/hooks/hooksConfigSnap
 import { discardSessionFileChangedWatcher } from './utils/hooks/fileChangedWatcher.js'
 import { discardSessionEnvCache } from './utils/sessionEnvironment.js'
 import { discardSessionLspServerManager } from './services/lsp/manager.js'
+import {
+  discardSessionWorkspaceDirectories,
+  registerSessionWorkspaceDirectories,
+} from './utils/sessionWorkspaceRegistry.js'
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 import { initBundledSkills } from './skills/bundled/index.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
@@ -302,6 +307,8 @@ export interface ClaudeSessionOptions {
   mcpServers?: Record<string, McpServerConfig>
   /** Additional directories to load .moss/agents and .moss/skills from for this embedded session. */
   addDirs?: string[]
+  /** Desktop-managed writable workspaces, explicitly supplied by the session owner. */
+  workspaceDirectories?: string[]
   /** Environment variables exposed only to subprocesses started by this embedded session. */
   environment?: Record<string, string>
   /** Explicit task-list scope for file-backed task tools. */
@@ -335,6 +342,7 @@ type ResolvedClaudeSessionOptions = {
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
   addDirs: string[]
+  workspaceDirectories: string[]
   environment: Record<string, string>
   taskScope: TaskScope
 }
@@ -522,6 +530,7 @@ export class ClaudeSession {
   #projectRoot: string | undefined
   #storageActivated = false
   #sessionApiOverrides: SessionApiOverrides | undefined
+  #workspaceRegistryIds: string[] = []
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -540,6 +549,20 @@ export class ClaudeSession {
     const taskScope = opts.taskScope ?? {
       kind: 'session' as const,
       sessionId: this.sessionId,
+    }
+    this.#workspaceRegistryIds = [
+      this.sessionId,
+      typeof taskScope.sessionId === 'string' ? taskScope.sessionId : '',
+    ].filter((sessionId, index, values) =>
+      Boolean(sessionId) && values.indexOf(sessionId) === index,
+    )
+    for (const sessionId of this.#workspaceRegistryIds) {
+      registerSessionWorkspaceDirectories(
+        sessionId,
+        Array.isArray(opts.workspaceDirectories)
+          ? opts.workspaceDirectories
+          : [],
+      )
     }
     this.#opts = {
       cwd,
@@ -563,6 +586,9 @@ export class ClaudeSession {
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
+      workspaceDirectories: Array.isArray(opts.workspaceDirectories)
+        ? opts.workspaceDirectories.filter(Boolean)
+        : [],
       environment: { ...(opts.environment ?? {}) },
       taskScope,
     }
@@ -676,6 +702,7 @@ export class ClaudeSession {
         permissionMode === 'allow-all' ? 'bypassPermissions' : 'default',
       allowDangerouslySkipPermissions: permissionMode === 'allow-all',
       addDirs: this.#opts.addDirs,
+      workspaceDirectories: this.#opts.workspaceDirectories,
     })
     const permissionContext = permissionInit.toolPermissionContext
     for (const warning of permissionInit.warnings) {
@@ -694,6 +721,25 @@ export class ClaudeSession {
       ) {
         return validationDecision
       }
+
+      // Desktop bypass mode is authoritative for permission checks. Keep tools
+      // that collect actual user input (for example AskUserQuestion) interactive.
+      if (
+        shouldBypassDesktopToolPermission(
+          permissionMode,
+          tool.requiresUserInteraction?.() === true,
+        )
+      ) {
+        return {
+          behavior: 'allow',
+          updatedInput: input,
+          decisionReason: {
+            type: 'mode',
+            mode: 'bypassPermissions',
+          },
+        }
+      }
+
       const permissionDecision =
         forceDecision ??
         (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
@@ -1129,6 +1175,10 @@ export class ClaudeSession {
     discardSessionHooksConfigSnapshot(this.sessionId)
     discardSessionFileChangedWatcher(this.sessionId)
     discardSessionEnvCache(this.sessionId)
+    for (const sessionId of this.#workspaceRegistryIds) {
+      discardSessionWorkspaceDirectories(sessionId)
+    }
+    this.#workspaceRegistryIds = []
     void discardSessionLspServerManager(this.sessionId)
     discardWorktreeSessionState(this.sessionId)
     discardSessionTaskScope(this.sessionId)
@@ -1245,9 +1295,10 @@ export async function resumeClaudeSession(
     return null
   }
 
+  const effectiveCwd = sessionOptions.cwd ?? prepared.cwd
   const session = new ClaudeSession({
     ...sessionOptions,
-    cwd: prepared.cwd ?? sessionOptions.cwd,
+    cwd: effectiveCwd,
     coordinatorMode: prepared.mode
       ? prepared.mode === 'coordinator'
       : (sessionOptions.coordinatorMode ?? false),
@@ -1265,7 +1316,7 @@ export async function resumeClaudeSession(
       sourceSessionId: prepared.sourceSessionId,
       customTitle: prepared.customTitle,
       projectDir: prepared.projectDir,
-      cwd: prepared.cwd,
+      cwd: effectiveCwd ?? null,
       fullPath: prepared.fullPath,
       mode: prepared.mode,
     },

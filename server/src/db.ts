@@ -281,6 +281,7 @@ export class DirectConnectStore {
     runtime: SessionRuntimeInfo
     status: SessionStatus
     desiredState: DesiredSessionState
+    title?: string
     assistantName?: string
   }): SessionRecord {
     const ts = now()
@@ -289,9 +290,9 @@ export class DirectConnectStore {
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
         cwd, runtime_backend, profile_mode, docker_image, profile_dir,
         workspace_dir, transcript_dir, container_name,
-        status, desired_state, transcript_path, assistant_name,
+        status, desired_state, transcript_path, title, assistant_name,
         created_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -310,6 +311,7 @@ export class DirectConnectStore {
       input.status,
       input.desiredState,
       input.transcriptPath,
+      input.title?.trim() || null,
       input.assistantName ?? null,
       ts,
       ts,
@@ -317,6 +319,7 @@ export class DirectConnectStore {
     this.addEvent(input.sessionId, null, 'session_created', {
       runtime: input.runtime,
       cwd: input.cwd,
+      title: input.title,
       assistantName: input.assistantName,
     })
     return this.getSession(input.sessionId)!

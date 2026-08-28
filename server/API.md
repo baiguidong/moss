@@ -11,7 +11,7 @@
 
 - session runtime API
 - auth API
-- OAuth/OIDC 登录与永久 API Key 交换
+- 内置窗口登录授权与永久 API Key 交换
 - users / api keys 管理 API
 - `/admin` 静态 SPA
 
@@ -30,6 +30,7 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 - `~/.moss/server/bin/moss-server.mjs`
 - `~/.moss/server/bin/moss-session-runner.mjs`
+- `~/.moss/server/adapters/feishu.mjs`
 - `~/.moss/server/admin/dist/`
 
 运行期状态也只落在 server root 的子目录：
@@ -40,8 +41,6 @@ prepare 会把随代码变化的运行产物复制到 server root：
 - `~/.moss/server/var/run/`
 - `~/.moss/server/var/log/`
 - `~/.moss/server/settings.json`
-- `~/.moss/server/skills/`
-- `~/.moss/server/assistants/`
 
 服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。服务端执行后端写在 `serverRuntime.backend`，客户端只能指定 `profileMode`。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
 
@@ -119,38 +118,15 @@ host 模式直接在本机 runner 内运行 Agent；docker 模式在容器内运
 - `password` 仅在数据库首次初始化时生效
 - `email` 可选；不填时会自动生成一个本地占位邮箱
 
-### OAuth/OIDC 登录配置
+### 内置窗口认证（零配置）
 
-Server 支持标准 Authorization Code + PKCE 登录。OAuth 提供方必须有标准 token endpoint 和 Bearer userinfo endpoint；userinfo 至少返回 `sub`（或 `id`）、`email`，建议同时返回 `email_verified` 和 `name`。
+Moss Server 自身提供浏览器登录授权，不连接外部 OAuth/OIDC 提供方，因此无需配置 authorization URL、client ID、client secret 或固定 Server callback。
 
-```json
-{
-  "auth": {
-    "mode": "local",
-    "tokenTtlSec": 3600,
-    "oauth": {
-      "enabled": true,
-      "providerId": "company-sso",
-      "authorizationUrl": "https://idp.example.com/oauth2/authorize",
-      "tokenUrl": "https://idp.example.com/oauth2/token",
-      "userInfoUrl": "https://idp.example.com/oauth2/userinfo",
-      "clientId": "moss-server",
-      "clientSecret": "replace-me",
-      "redirectUri": "https://moss.example.com/api/v1/auth/oauth/callback",
-      "scopes": ["openid", "profile", "email"],
-      "tokenEndpointAuthMethod": "client_secret_post",
-      "autoProvision": true,
-      "defaultRole": "user",
-      "requireVerifiedEmail": true,
-      "allowedEmailDomains": ["example.com"]
-    }
-  }
-}
-```
+桌面客户端在“设置 → 远端”填写 Server 地址并点击“认证”后，会启动临时本地 callback listener，生成 `state` 和 PKCE verifier/challenge，再通过隔离的 Moss 认证窗口打开 Server 登录页。用户使用已有 Moss Server 账号登录，Server 将一次性 authorization code 重定向到客户端回环地址，客户端换取永久 API Key 并加密保存。
 
-生产环境建议通过 `MOSS_OAUTH_CLIENT_SECRET` 注入 secret。也支持环境变量 `MOSS_OAUTH_AUTHORIZATION_URL`、`MOSS_OAUTH_TOKEN_URL`、`MOSS_OAUTH_USERINFO_URL`、`MOSS_OAUTH_CLIENT_ID`、`MOSS_OAUTH_REDIRECT_URI`。所有 OAuth URL 必须使用 HTTPS、不得包含内嵌账号密码或 fragment；仅回环地址开发环境允许 HTTP。`redirectUri` 的路径必须是 `/api/v1/auth/oauth/callback`。可用 `organizationId` 指定 OAuth 用户所属组织，省略时使用数据库中的第一个组织。
+授权请求和一次性 authorization code 保存在 AuthCenter SQLite 中，分别有效 10 分钟和 2 分钟，可跨 Server 进程重启和多实例请求切换。桌面客户端认证期间，原“认证”按钮会变为“取消”，点击后立即关闭本地 callback 并解除认证状态。
 
-在 OAuth 提供方登记的回调地址必须与 `redirectUri` 完全相同。`tokenEndpointAuthMethod` 支持 `client_secret_post` 和 `client_secret_basic`。默认要求 `email_verified=true`。即使关闭该全局检查，未验证邮箱也不会参与账号查找或占用 Moss 的唯一邮箱字段；系统会创建仅由 provider subject 绑定的隔离普通用户。
+Server 只接受 `http://127.0.0.1:<动态端口>/callback` 或 IPv6 回环地址，拒绝外部 callback。远端 Server 登录页应通过 HTTPS 提供；只有本机 Server 可以使用 HTTP。
 
 ## Base URL
 
@@ -184,7 +160,9 @@ Authorization: Bearer <access_token>
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/introspect`
 - `POST /api/v1/auth/oauth/start`
-- `GET /api/v1/auth/oauth/callback`
+- `POST /api/v1/auth/oauth/cancel`
+- `GET /api/v1/auth/oauth/authorize/:transactionId`
+- `POST /api/v1/auth/oauth/authorize`
 - `POST /api/v1/auth/oauth/exchange`
 
 失败格式统一为：
@@ -259,6 +237,19 @@ Authorization: Bearer <access_token>
 }
 ```
 
+飞书凭据不在 Admin UI 或 Server 配置文件中编辑。Desktop 是唯一配置入口，
+并通过以下托管接口选择让 Adapter 运行在本机或长期在线的 Moss Server。
+
+## Feishu Runtime
+
+所有接口只操作当前认证用户的飞书实例。Server 不提供读取或修改飞书密钥的配置接口。
+
+- `GET /api/v1/adapters/feishu/status`：查询 Server 托管实例状态；需要 `sessions:create` scope。
+- `POST /api/v1/adapters/feishu/start`：由 Desktop 推送完整配置快照并启动；需要 `sessions:create`、`sessions:list`、`sessions:attach` scope。
+- `POST /api/v1/adapters/feishu/stop`：停止 Server 托管实例；需要 `sessions:create` scope。
+
+Server 会记住由 Desktop 启用的托管实例并在自身重启后恢复。Desktop 切换运行位置时会先停止另一端，确保本机和 Server 不会同时连接同一个飞书应用。
+
 ## Admin UI
 
 ### GET `/admin`
@@ -329,52 +320,62 @@ API key 登录：
 
 ### POST `/api/v1/auth/oauth/start`
 
-创建一次 OAuth 登录事务。响应中的 `transaction_id` 是取得登录结果的私密一次性凭据，客户端必须留在内存或安全存储中，不得拼接到浏览器 URL。
+客户端创建回环 callback，生成随机 `state` 和 PKCE S256 challenge 后发起登录：
 
 ```json
 {
-  "authorization_url": "https://idp.example.com/oauth2/authorize?...",
-  "transaction_id": "private-random-value",
+  "redirect_uri": "http://127.0.0.1:54321/callback",
+  "state": "43-character-client-state",
+  "code_challenge": "base64url-sha256-challenge",
+  "code_challenge_method": "S256"
+}
+```
+
+Server 返回站内授权页地址：
+
+```json
+{
+  "authorization_url": "/api/v1/auth/oauth/authorize/<transaction_id>",
   "expires_in": 600
 }
 ```
 
-客户端使用系统浏览器打开 `authorization_url`。授权请求包含随机 `state` 和 PKCE `S256` challenge，不包含 OAuth client secret。
+客户端必须使用配置的 Server origin 解析相对地址，并通过独立的 Moss 认证窗口打开。认证窗口使用临时隔离会话，不开放 Node.js、弹窗、下载或网站权限，只允许当前 Server 授权页和本机一次性 callback 之间的顶层导航。授权页 CSP 也只额外允许当前事务绑定的精确 callback，事务 ID 只位于 URL path 中。
 
-### GET `/api/v1/auth/oauth/callback`
+### POST `/api/v1/auth/oauth/cancel`
 
-OAuth 提供方回调地址。Server 校验 `state`，使用授权码和 PKCE verifier 换取提供方 access token，再通过 userinfo endpoint 取得身份。页面只显示成功或失败，不会在 URL 或 HTML 中返回 Moss API Key。
+客户端取消、超时或无法打开认证窗口时，使用原始 `state`、`redirect_uri`，以及已经收到时的一次性 `code`，回收尚未完成的授权请求或授权码。即使 callback 没有把 code 送达客户端，Server 也能通过 `state + redirect_uri` 回收已经签发的 code。接口幂等返回 `{ "canceled": true|false }`，不会触发额外跳转。
 
-首次登录会按已验证邮箱关联现有用户；没有现有用户且 `autoProvision=true` 时，在指定组织或默认组织中创建普通用户。OAuth access token 不持久化。
+### GET/POST `/api/v1/auth/oauth/authorize`
+
+`GET` 返回 Moss Server 登录授权页。用户提交现有用户名或邮箱及密码后，`POST` 校验账号并返回 HTTP `303`，认证窗口跳转到客户端的回环 callback：
+
+```text
+http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
+```
+
+用户取消时 callback 包含 `error=access_denied`。authorization code 两分钟内有效，只能使用一次；登录请求最多允许五次密码尝试。
 
 ### POST `/api/v1/auth/oauth/exchange`
 
-客户端使用 `oauth/start` 返回的事务 ID 轮询登录结果：
+客户端校验 callback 中的 `state` 后，提交 code、原始 PKCE verifier 和相同 callback：
 
 ```json
 {
-  "transaction_id": "private-random-value"
+  "code": "one-time-code",
+  "code_verifier": "client-pkce-verifier",
+  "redirect_uri": "http://127.0.0.1:54321/callback"
 }
 ```
 
-登录尚未完成时返回 HTTP `202`：
+验证完成后返回 HTTP `200`，永久 API Key 只在这一次响应中返回：
 
 ```json
 {
-  "pending": true,
-  "retry_after": 1
-}
-```
-
-认证完成后返回 HTTP `200`，永久 API Key 只在这一次响应中返回：
-
-```json
-{
-  "pending": false,
   "api_key": "moss_sk_xxx.yyy",
   "key": {
     "id": "key-id",
-    "name": "oauth:company-sso",
+    "name": "oauth:browser-login",
     "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
     "status": "active"
   },
@@ -391,7 +392,7 @@ OAuth 提供方回调地址。Server 校验 `state`，使用授权码和 PKCE ve
 }
 ```
 
-API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE /api/v1/api-keys/:keyId` 撤销。相同 OAuth 身份再次登录会轮换 Key，并立即撤销该身份上一次 OAuth 登录签发的 Key；尚未领取的旧登录事务会返回 HTTP `409`，不会返回已经撤销的 Key。客户端随后可使用新 Key 调用 `POST /api/v1/auth/token` 获取短期 access token，或直接作为 Bearer 凭据访问 Server。
+API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE /api/v1/api-keys/:keyId` 撤销。同一用户再次通过浏览器认证会轮换 Key，并立即撤销上一次浏览器登录签发的 Key。客户端随后可使用新 Key 调用 `POST /api/v1/auth/token` 获取短期 access token，或直接作为 Bearer 凭据访问 Server。
 
 ### GET `/api/v1/auth/me`
 

@@ -6,12 +6,14 @@ import {
   FileText,
   Image as ImageIcon,
   Link2,
+  LogIn,
   MessageSquare,
   Monitor,
   MoonStar,
   Palette,
   RefreshCw,
   Search,
+  Server,
   Shield,
   Store,
   Sparkles,
@@ -19,6 +21,7 @@ import {
   Trash2,
   TriangleAlert,
   Wrench,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { BuddySummary } from '@/components/buddy';
@@ -27,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
+import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
@@ -1077,6 +1081,8 @@ export function SettingsView({
   onBuddyEnabledChange,
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
+  const [remoteAuthError, setRemoteAuthError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeSection, setActiveSection] = React.useState<SectionId>('connection');
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -1168,6 +1174,40 @@ export function SettingsView({
   const updateSetting = <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => {
     setSettingsDraft((current) => (current ? { ...current, [key]: value } : current));
     void autoSaveSettings(key, value);
+  };
+
+  const authenticateRemoteServer = async () => {
+    const serverUrl = settingsDraft?.remoteDirectServerUrl?.trim() || '';
+    if (!serverUrl) {
+      setRemoteAuthError('请先填写服务器地址。');
+      return;
+    }
+    setRemoteAuthState('loading');
+    setRemoteAuthError('');
+    try {
+      const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
+      setSettingsDraft(next);
+      setRemoteAuthState('success');
+      window.setTimeout(() => setRemoteAuthState('idle'), 2000);
+    } catch (error) {
+      const message = cleanIpcErrorMessage(error);
+      if (message === '远端 Server 认证正在进行中。') {
+        setRemoteAuthState('loading');
+        setRemoteAuthError('');
+        return;
+      }
+      setRemoteAuthState('idle');
+      setRemoteAuthError(message === '认证已取消。' ? '' : message);
+    }
+  };
+
+  const cancelRemoteServerAuthentication = async () => {
+    try {
+      await window.agentDesktop.cancelRemoteServerAuthentication();
+    } finally {
+      setRemoteAuthState('idle');
+      setRemoteAuthError('');
+    }
   };
 
   const updateImageSettings = (patch: Partial<DesktopSettings['image']>) => {
@@ -1386,14 +1426,52 @@ export function SettingsView({
                           <>
                             <SettingsRow
                               title="服务器地址"
-                              controlClassName="sm:w-[360px]"
+                              controlClassName="sm:w-[480px]"
                             >
-                              <Input
-                                className={FIELD_CLASS_NAME}
-                                value={settingsDraft.remoteDirectServerUrl || ''}
-                                onChange={(event) => updateSetting('remoteDirectServerUrl', event.target.value)}
-                                placeholder="http://127.0.0.1:43127 或 cc://server:43127"
-                              />
+                              <div className="space-y-2">
+                                <div className="flex min-w-0 gap-2">
+                                  <Input
+                                    className={cn(FIELD_CLASS_NAME, 'min-w-0 flex-1')}
+                                    value={settingsDraft.remoteDirectServerUrl || ''}
+                                    disabled={remoteAuthState === 'loading'}
+                                    onChange={(event) => {
+                                      setRemoteAuthError('');
+                                      updateSetting('remoteDirectServerUrl', event.target.value);
+                                    }}
+                                    placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-9 shrink-0 gap-2 rounded-lg px-3"
+                                    onClick={() => {
+                                      if (remoteAuthState === 'loading') {
+                                        void cancelRemoteServerAuthentication();
+                                      } else {
+                                        void authenticateRemoteServer();
+                                      }
+                                    }}
+                                  >
+                                    {remoteAuthState === 'loading' ? (
+                                      <X className="h-4 w-4" />
+                                    ) : remoteAuthState === 'success' ? (
+                                      <Check className="h-4 w-4" />
+                                    ) : (
+                                      <LogIn className="h-4 w-4" />
+                                    )}
+                                    {remoteAuthState === 'loading'
+                                      ? '取消'
+                                      : remoteAuthState === 'success'
+                                        ? '已认证'
+                                        : settingsDraft.remoteDirectApiKey
+                                          ? '重新认证'
+                                          : '认证'}
+                                  </Button>
+                                </div>
+                                {remoteAuthError ? (
+                                  <p className="text-xs text-destructive">{remoteAuthError}</p>
+                                ) : null}
+                              </div>
                             </SettingsRow>
 
                             <SettingsRow
@@ -1421,6 +1499,7 @@ export function SettingsView({
                                 controlClassName="sm:w-[360px]"
                               >
                                 <Input
+                                  type="password"
                                   className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
                                   value={settingsDraft.remoteDirectApiKey || ''}
                                   onChange={(event) => updateSetting('remoteDirectApiKey', event.target.value)}
@@ -1488,12 +1567,6 @@ export function SettingsView({
                               </select>
                             </SettingsRow>
 
-                            <div className="px-4 py-4">
-                              <div className="rounded-[18px] border border-amber-200/80 bg-amber-50/[0.85] px-4 py-3 text-xs leading-6 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
-                                当前版本会把云端登录凭据保存在本机 `~/.moss/settings.json`。后续应该迁移到系统密钥链，已记录在
-                                `ui/plan.md`。
-                              </div>
-                            </div>
                           </>
                         ) : null}
                       </SettingsGroup>
@@ -2069,6 +2142,7 @@ function ImAdapterSettings() {
   const [fsVerificationToken, setFsVerificationToken] = React.useState('')
   const [fsAllowedUsers, setFsAllowedUsers] = React.useState('')
   const [fsStreamingCard, setFsStreamingCard] = React.useState(false)
+  const [fsRunLocation, setFsRunLocation] = React.useState<'desktop' | 'server'>('desktop')
   const [isSaving, setIsSaving] = React.useState(false)
   const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = React.useState('')
@@ -2076,11 +2150,13 @@ function ImAdapterSettings() {
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [pendingUnbind, setPendingUnbind] = React.useState<{ userId: string | number } | null>(null)
   const [isUnbinding, setIsUnbinding] = React.useState(false)
+  const hasHydratedForm = React.useRef(false)
   const [feishuStatus, setFeishuStatus] = React.useState<FeishuAdapterStatus>({
     status: 'stopped',
     pid: null,
     bridgeReady: false,
     transportConnected: false,
+    location: 'desktop',
   })
 
   React.useEffect(() => {
@@ -2089,18 +2165,36 @@ function ImAdapterSettings() {
 
   React.useEffect(() => {
     const unsubscribe = window.agentDesktop.onAdapterStatus(setFeishuStatus)
-    void window.agentDesktop.getAdapterStatus().then(setFeishuStatus).catch(() => {})
-    return unsubscribe
+    const refresh = () => {
+      void window.agentDesktop.getAdapterStatus()
+        .then((status) => {
+          setFeishuStatus(status)
+        })
+        .catch(() => {})
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 5_000)
+    return () => {
+      window.clearInterval(timer)
+      unsubscribe()
+    }
   }, [])
 
   React.useEffect(() => {
+    if (feishuStatus.pairing && !feishuStatus.pairing.code) setPairingCode(null)
+  }, [feishuStatus.pairing])
+
+  React.useEffect(() => {
+    if (isLoading || hasHydratedForm.current) return
     setFsAppId(config.feishu?.appId ?? '')
     setFsAppSecret(config.feishu?.appSecret ?? '')
     setFsEncryptKey(config.feishu?.encryptKey ?? '')
     setFsVerificationToken(config.feishu?.verificationToken ?? '')
     setFsAllowedUsers(config.feishu?.allowedUsers?.join(', ') ?? '')
     setFsStreamingCard(config.feishu?.streamingCard ?? false)
-  }, [config])
+    setFsRunLocation(config.feishu?.runLocation === 'server' ? 'server' : 'desktop')
+    hasHydratedForm.current = true
+  }, [config, isLoading])
 
   async function handleSave() {
     setIsSaving(true)
@@ -2119,6 +2213,7 @@ function ImAdapterSettings() {
           verificationToken: fsVerificationToken || undefined,
           allowedUsers: fsUsers.length ? fsUsers : [],
           streamingCard: fsStreamingCard,
+          runLocation: fsRunLocation,
         },
       })
       setSaveStatus('saved')
@@ -2136,6 +2231,7 @@ function ImAdapterSettings() {
     try {
       const code = await generatePairingCode()
       setPairingCode(code)
+      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
     } catch (err) {
       console.error('Failed to generate pairing code:', err)
     } finally {
@@ -2148,16 +2244,21 @@ function ImAdapterSettings() {
     setIsUnbinding(true)
     try {
       await removePairedUser(pendingUnbind.userId)
-      await fetchConfig()
+      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
       setPendingUnbind(null)
     } finally {
       setIsUnbinding(false)
     }
   }
 
-  const allPairedUsers = config.feishu?.pairedUsers ?? []
+  const allPairedUsers = feishuStatus.enabled === false
+    ? config.feishu?.pairedUsers ?? []
+    : feishuStatus.pairedUsers ?? config.feishu?.pairedUsers ?? []
 
-  const pairingExpiry = config.pairing?.expiresAt
+  const pairingState = feishuStatus.enabled === false
+    ? config.pairing
+    : feishuStatus.pairing ?? config.pairing
+  const pairingExpiry = pairingState?.expiresAt
   const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
   const minutesLeft = pairingExpiry ? Math.max(0, Math.ceil((pairingExpiry - Date.now()) / 60000)) : 0
 
@@ -2190,7 +2291,7 @@ function ImAdapterSettings() {
             <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
               {pairingCode || isPairingActive ? '重新生成' : '生成配对码'}
             </Button>
-            {pairingCode && (
+            {pairingCode && isPairingActive && (
               <div className="flex items-center gap-2">
                 <span className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{pairingCode}</span>
                 <span className="text-xs text-muted-foreground">60 分钟内有效</span>
@@ -2238,6 +2339,36 @@ function ImAdapterSettings() {
         </div>
 
         <div className="space-y-3 p-4">
+          <div className="flex flex-col gap-2 border-b border-sidebar-border pb-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[13px] font-medium text-foreground">运行位置</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">同一时间只运行一个飞书实例</p>
+            </div>
+            <div className="grid grid-cols-2 rounded-md border border-sidebar-border bg-sidebar p-0.5">
+              <button
+                type="button"
+                onClick={() => setFsRunLocation('desktop')}
+                className={cn(
+                  'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
+                  fsRunLocation === 'desktop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Monitor className="h-3.5 w-3.5" />
+                本机
+              </button>
+              <button
+                type="button"
+                onClick={() => setFsRunLocation('server')}
+                className={cn(
+                  'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
+                  fsRunLocation === 'server' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Server className="h-3.5 w-3.5" />
+                Moss Server
+              </button>
+            </div>
+          </div>
           <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
             <span className={cn(
               'h-2 w-2 rounded-full',
@@ -2245,11 +2376,11 @@ function ImAdapterSettings() {
                 ? 'bg-emerald-500'
                 : feishuStatus.status === 'running' ? 'bg-amber-500' : 'bg-muted-foreground/45',
             )} />
-            <span>
+            <span className="min-w-0 break-words">
               {feishuStatus.transportConnected
-                ? '飞书长连接已就绪'
+                ? `${feishuStatus.location === 'server' ? 'Moss Server' : '本机'}飞书长连接已就绪`
                 : feishuStatus.bridgeReady
-                  ? '客户端桥接已连接，正在等待飞书长连接'
+                  ? `${feishuStatus.location === 'server' ? 'Server' : '客户端'}桥接已连接，正在等待飞书长连接`
                   : feishuStatus.status === 'error'
                     ? `Adapter 启动失败：${feishuStatus.error || '未知错误'}`
                   : feishuStatus.status === 'running'

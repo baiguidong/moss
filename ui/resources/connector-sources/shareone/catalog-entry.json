@@ -1,0 +1,28 @@
+{
+  "id": "shareone",
+  "name": "ShareOne",
+  "name_en": "ShareOne",
+  "description": "将 HTML、Markdown、PDF、Word 和 PPT 发布为可分享链接，并支持更新原链接、密码、水印和评论协作。",
+  "description_zh": "将 HTML、Markdown、PDF、Word 和 PPT 发布为可分享链接，并支持更新原链接、密码、水印和评论协作。",
+  "description_en": "Publish HTML, Markdown, PDF, Word, and PowerPoint files as shareable links with same-link updates, passwords, watermarks, and review comments.",
+  "source": "shareone",
+  "type": "skill-only",
+  "auth_mode": "api-key",
+  "examples_zh": [
+    "把这个 HTML 页面发布成分享链接",
+    "发布这份 PDF，设置访问密码并返回链接",
+    "更新刚才的 ShareOne 链接，不要创建新链接",
+    "拉取这个页面的未解决评论并帮我处理"
+  ],
+  "examples_en": [
+    "Publish this HTML page as a shareable link",
+    "Publish this PDF with a password and return the link",
+    "Update the previous ShareOne link without creating a new one",
+    "Fetch and process unresolved comments on this page"
+  ],
+  "visible_in": [
+    "external",
+    "cloudhosted",
+    "selfhosted"
+  ]
+}

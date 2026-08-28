@@ -10,9 +10,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "fflate": "^0.8.2",
-    "jszip": "^3.10.1",
-    "p-map": "^7.0.4",
     "ws": "^8.20.0",
     "zod": "*"
   }

@@ -25,7 +25,6 @@ import {
 } from '@/lib/agent-transcript';
 import { PRESET_THEMES } from '@/theme/presets';
 import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
-import { getToolPermissionNotice } from '../tool-permission-policy.mjs';
 import {
   appendAppNotification,
   cleanIpcErrorMessage,
@@ -452,6 +451,7 @@ export default function App() {
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
+  const assistantRefreshRequestIdRef = React.useRef(0);
   const [installedConnectors, setInstalledConnectors] = React.useState<InstalledConnector[]>([]);
   const [draftConnectorIds, setDraftConnectorIds] = React.useState<string[]>([]);
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
@@ -591,10 +591,15 @@ export default function App() {
   }, []);
 
   const refreshAssistants = React.useCallback(async (mode?: 'local' | 'remote-direct') => {
+    const requestId = ++assistantRefreshRequestIdRef.current;
     const agentMode = mode ?? desktopSettingsRef.current?.agentMode ?? 'local';
-    const result = agentMode === 'remote-direct'
-      ? await window.agentDesktop.getRemoteInstalledAssistants()
-      : await window.agentDesktop.getInstalledAssistants();
+    if (agentMode === 'remote-direct') {
+      setInstalledAssistants([]);
+      setSelectedAssistant(null);
+      return [];
+    }
+    const result = await window.agentDesktop.getInstalledAssistants();
+    if (requestId !== assistantRefreshRequestIdRef.current) return [];
     const assistants = result?.data ?? result ?? [];
     setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
     return assistants;
@@ -1120,13 +1125,6 @@ export default function App() {
       setBackgroundTasks((prev) => ({ ...prev, [payload.sessionId]: payload.tasks ?? [] }));
     });
 
-    const offPermission = window.agentDesktop.onPermission((payload) => {
-      if (payload?.sessionId !== activeSessionIdRef.current) return;
-      const toolName = payload?.request?.tool_name || 'Tool';
-      const notice = getToolPermissionNotice(toolName);
-      showPermissionNotice(notice, 'info', 4000);
-    });
-
     const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
       if (!payload?.requestId || !payload?.sessionId) return;
       updateQuestionRequests((prev) => [
@@ -1237,7 +1235,6 @@ export default function App() {
       offEvent();
       offState();
       offBackgroundTasks();
-      offPermission();
       offQuestionRequest();
       offQuestionResolved();
       offMeta();
@@ -1800,10 +1797,13 @@ export default function App() {
   }, [dismissPermissionNotice, updateQuestionRequests]);
 
   const handleRejectQuestion = React.useCallback(async (request: AskUserQuestionRequest) => {
+    const isToolPermission = request.input?.metadata?.source === 'session:tool-permission';
     await window.agentDesktop.rejectQuestion({
       requestId: request.requestId,
       sessionId: request.sessionId,
-      message: 'User declined to answer questions',
+      message: isToolPermission
+        ? 'User denied tool permission'
+        : 'User declined to answer questions',
     });
     updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
     dismissPermissionNotice();
@@ -2116,9 +2116,9 @@ export default function App() {
   }, [saveAppearance]);
 
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
+    const refreshPromise = refreshAssistants(mode);
     await autoSaveSettings('agentMode', mode);
-    // Refresh assistants list based on new mode
-    await refreshAssistants(mode);
+    await refreshPromise;
   }, [autoSaveSettings, refreshAssistants]);
 
   const renderSettingsView = () => (

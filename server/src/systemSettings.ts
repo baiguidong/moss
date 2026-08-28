@@ -11,10 +11,6 @@ export type SystemSettingsImage = {
   model: string
 }
 
-export type SystemSettingsSkillStore = {
-  tenantId: string
-}
-
 export type SystemRuntimeBackend = 'host' | 'docker'
 export type SystemProfileMode = 'session' | 'user'
 
@@ -34,7 +30,6 @@ export type SystemSettingsPayload = {
   url: string
   apiKey: string
   image: SystemSettingsImage
-  skillStore: SystemSettingsSkillStore
   serverRuntime: SystemSettingsServerRuntime
   settingsPath: string
   settingsExists: boolean
@@ -74,9 +69,6 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     url: 'https://api.minimaxi.com/v1/image_generation',
     apiKey: '',
     model: '',
-  },
-  skillStore: {
-    tenantId: '',
   },
   serverRuntime: {
     backend: 'host',
@@ -281,19 +273,6 @@ function normalizeSystemSettings(
           : DEFAULT_SYSTEM_SETTINGS.image.model,
   }
 
-  const sourceSkillStore = isRecord(source.skillStore) ? source.skillStore : {}
-  const existingSkillStore = isRecord(result.skillStore)
-    ? result.skillStore
-    : {}
-  result.skillStore = {
-    tenantId:
-      typeof sourceSkillStore.tenantId === 'string'
-        ? sourceSkillStore.tenantId.trim()
-        : typeof existingSkillStore.tenantId === 'string'
-          ? existingSkillStore.tenantId
-          : DEFAULT_SYSTEM_SETTINGS.skillStore.tenantId,
-  }
-
   const sourceServerRuntime = isRecord(source.serverRuntime)
     ? source.serverRuntime
     : {}
@@ -355,9 +334,6 @@ function readSystemSettingsState(): SystemSettingsState {
       ...rawSettings,
       ...normalized,
       image: normalized.image || { ...DEFAULT_SYSTEM_SETTINGS.image },
-      skillStore: normalized.skillStore || {
-        ...DEFAULT_SYSTEM_SETTINGS.skillStore,
-      },
     }
     result.loaded = true
     return result
@@ -379,7 +355,6 @@ function toSystemSettingsPayload(
     url: state.value.url,
     apiKey: state.value.apiKey,
     image: state.value.image,
-    skillStore: state.value.skillStore,
     serverRuntime: state.value.serverRuntime,
     settingsPath: state.path,
     settingsExists: state.exists,
@@ -462,7 +437,6 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     ...existingFile,
     bypassPermissions: nextSettings.bypassPermissions,
     models,
-    skillStore: nextSettings.skillStore,
     serverRuntime: nextSettings.serverRuntime,
     env,
   }
@@ -476,6 +450,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   delete toSave.apiKey
   delete toSave.serverUrl
   delete toSave.serverAuthToken
+  delete toSave.skillStore
   if (Object.keys(env).length === 0) {
     delete toSave.env
   }
@@ -492,7 +467,6 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     url: nextSettings.url,
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
-    skillStore: nextSettings.skillStore,
     serverRuntime: nextSettings.serverRuntime,
     settingsPath,
     settingsExists: true,

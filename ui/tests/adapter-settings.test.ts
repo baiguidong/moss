@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   applyFeishuPairingAttempt,
   getFeishuAdapterFingerprint,
+  getFeishuAdapterRunLocation,
   hasFeishuAdapterCredentials,
   maskAdapterSettings,
   mergeAdapterSettings,
@@ -52,6 +53,12 @@ describe('adapter settings', () => {
     };
     expect(hasFeishuAdapterCredentials(first)).toBe(true);
     expect(getFeishuAdapterFingerprint(first)).not.toBe(getFeishuAdapterFingerprint(second));
+  });
+
+  it('defaults Feishu to Desktop and accepts explicit Server hosting', () => {
+    expect(getFeishuAdapterRunLocation({})).toBe('desktop');
+    expect(getFeishuAdapterRunLocation({ feishu: { runLocation: 'desktop' } })).toBe('desktop');
+    expect(getFeishuAdapterRunLocation({ feishu: { runLocation: 'server' } })).toBe('server');
   });
 
   it('applies a one-time Feishu pairing without mutating unrelated settings', () => {

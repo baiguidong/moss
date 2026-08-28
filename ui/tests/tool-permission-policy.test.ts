@@ -1,19 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  buildToolPermissionQuestion,
   buildToolPermissionDialog,
   getToolPermissionNotice,
   resolveToolPermissionDialogResponse,
+  resolveToolPermissionQuestionAnswer,
   shouldAutoApproveToolPermission,
 } from '../src/tool-permission-policy.mjs';
 
 describe('desktop tool permission policy', () => {
-  it('only auto-approves plan transition control in bypass mode', () => {
+  it('auto-approves permission requests in bypass mode', () => {
     expect(shouldAutoApproveToolPermission({
       bypassPermissions: true,
       toolName: 'ExitPlanMode',
     })).toBe(true);
     expect(shouldAutoApproveToolPermission({
       bypassPermissions: true,
+      toolName: 'Bash',
+    })).toBe(true);
+    expect(shouldAutoApproveToolPermission({
+      bypassPermissions: true,
+      toolName: 'Write',
+    })).toBe(true);
+    expect(shouldAutoApproveToolPermission({
+      bypassPermissions: false,
       toolName: 'Bash',
     })).toBe(false);
   });
@@ -128,6 +138,41 @@ describe('desktop tool permission policy', () => {
       updatedPermissions: suggestions,
     });
     expect(resolveToolPermissionDialogResponse(2, dialog, suggestions)).toEqual({
+      behavior: 'deny',
+      message: 'Denied by user',
+    });
+  });
+
+  it('builds persistent modal choices without duplicating the reject action', () => {
+    const suggestions = [{
+      type: 'setMode',
+      mode: 'acceptEdits',
+      destination: 'session',
+    }];
+    const dialog = buildToolPermissionDialog('Write', {
+      file_path: '/tmp/welcome.md',
+    }, suggestions);
+
+    const question = buildToolPermissionQuestion(dialog);
+    expect(question.header).toBe('修改文件');
+    expect(question.options.map((option) => option.label)).toEqual([
+      '允许修改',
+      '本次会话允许',
+    ]);
+    expect(question.options[0]?.preview).toContain('/tmp/welcome.md');
+    expect(resolveToolPermissionQuestionAnswer(
+      '本次会话允许',
+      dialog,
+      suggestions,
+    )).toEqual({
+      behavior: 'allow',
+      updatedPermissions: suggestions,
+    });
+    expect(resolveToolPermissionQuestionAnswer(
+      '未知选择',
+      dialog,
+      suggestions,
+    )).toEqual({
       behavior: 'deny',
       message: 'Denied by user',
     });

@@ -54,7 +54,10 @@ import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js'
 import { WEB_FETCH_TOOL_NAME } from 'src/tools/WebFetchTool/prompt.js'
 import { errorMessage } from '../errors.js'
-import { getClaudeTempDir } from '../permissions/filesystem.js'
+import {
+  getClaudeTempDir,
+  getCurrentSessionWorkspaceDirectories,
+} from '../permissions/filesystem.js'
 import type { PermissionRuleValue } from '../permissions/PermissionRule.js'
 import { ripgrepCommand } from '../ripgrep.js'
 
@@ -295,6 +298,7 @@ export function convertToSandboxRuntimeConfig(
   const additionalDirs = new Set([
     ...(settings.permissions?.additionalDirectories || []),
     ...getAdditionalDirectoriesForMossMd(),
+    ...getCurrentSessionWorkspaceDirectories(),
   ])
   allowWrite.push(...additionalDirs)
 

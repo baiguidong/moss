@@ -13,6 +13,7 @@
     "docker:build-runtime": "bun scripts/docker-build-runtime.mjs",
     "server:prepare": "bun scripts/server-prepare.mjs",
     "server:start": "bun scripts/server-start.mjs",
+    "connectors:sync-shareone": "node scripts/sync-shareone-connector.mjs",
     "postinstall": "bun run scripts/copy-vendor.js"
   },
   "dependencies": {

@@ -75,10 +75,8 @@ describe('system settings model layout', () => {
         apiKey: 'image-key-initial',
         model: 'image-initial',
       },
-      skillStore: {
-        tenantId: 'tenant-initial',
-      },
     })
+    expect(mod.getSystemSettings()).not.toHaveProperty('skillStore')
 
     const updated = mod.updateSystemSettings({
       bypassPermissions: true,
@@ -99,9 +97,6 @@ describe('system settings model layout', () => {
           apiKey: 'image-key-updated',
           model: 'image-updated',
         },
-      },
-      skillStore: {
-        tenantId: 'tenant-updated',
       },
     })
 
@@ -147,6 +142,7 @@ describe('system settings model layout', () => {
     expect(persisted.url).toBeUndefined()
     expect(persisted.apiKey).toBeUndefined()
     expect(persisted.image).toBeUndefined()
+    expect(persisted.skillStore).toBeUndefined()
     expect(persisted.env).toEqual({
       KEEP_ME: 'yes',
     })

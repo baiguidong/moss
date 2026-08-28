@@ -145,10 +145,6 @@ export interface SystemSettingsImage {
   model: string
 }
 
-export interface SystemSettingsSkillStore {
-  tenantId: string
-}
-
 export type RuntimeBackend = 'host' | 'docker'
 export type ProfileMode = 'session' | 'user'
 
@@ -168,7 +164,6 @@ export interface SystemSettings {
   url: string
   apiKey: string
   image: SystemSettingsImage
-  skillStore: SystemSettingsSkillStore
   serverRuntime: SystemSettingsServerRuntime
   settingsPath: string
   settingsExists: boolean
@@ -196,7 +191,6 @@ export interface UpdateSystemSettingsRequest {
       model?: string
     }
   }
-  skillStore?: Partial<SystemSettingsSkillStore>
   serverRuntime?: Partial<SystemSettingsServerRuntime>
 }
 
@@ -326,47 +320,4 @@ export interface HealthResponse {
   ok: boolean
   sessions: number
   auth_mode: string
-}
-
-// IM Adapter Types
-export interface PairedUser {
-  userId: string | number
-  displayName: string
-  pairedAt: number
-}
-
-export interface AdapterPlatformConfig {
-  enabled?: boolean
-  allowedUsers?: Array<number | string>
-  pairedUsers?: PairedUser[]
-  defaultWorkDir?: string
-  appId?: string
-  appSecret?: string
-  encryptKey?: string
-  verificationToken?: string
-  streamingCard?: boolean
-}
-
-export interface AdapterConfigsResponse {
-  feishu?: AdapterPlatformConfig
-}
-
-export interface AdapterProcessStatus {
-  status: 'running' | 'stopped' | 'error'
-  pid: number | null
-  error: string | null
-  startedAt: number | null
-  orgId: string
-  userId: string
-  platform: string
-}
-
-export interface AdapterConfigRow {
-  id: string
-  orgId: string
-  userId: string
-  platform: 'feishu'
-  enabled: boolean
-  createdAt: number
-  updatedAt: number
 }

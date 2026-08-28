@@ -8,14 +8,22 @@ import {
   switchSession,
 } from '../../bootstrap/state.js'
 import statusline from '../../commands/statusline.js'
-import { getEmptyToolPermissionContext } from '../../Tool.js'
+import {
+  getEmptyToolPermissionContext,
+  type ToolUseContext,
+} from '../../Tool.js'
 import {
   getGlobalMossFolderPermissionPattern,
   GLOBAL_MOSS_FOLDER_PERMISSION_PATTERN,
   MOSS_FOLDER_PERMISSION_PATTERN,
 } from '../../tools/FileEditTool/constants.js'
 import { asSessionId } from '../../types/ids.js'
+import { runWithSessionIdContext } from '../sessionIdContext.js'
 import { getMossConfigHomeDir } from '../envUtils.js'
+import {
+  discardSessionWorkspaceDirectories,
+  registerSessionWorkspaceDirectories,
+} from '../sessionWorkspaceRegistry.js'
 import { getMemoryPath } from '../config.js'
 import { isMemoryFilePath } from '../mossmd.js'
 import {
@@ -37,6 +45,9 @@ mock.module('color-diff-napi', () => ({
 
 const { checkPathSafetyForAutoEdit, pathInAllowedWorkingPath } =
   await import('../permissions/filesystem.js')
+const { hasPermissionsToUseTool } = await import('../permissions/permissions.js')
+const { validatePath } = await import('../permissions/pathValidation.js')
+const { FileWriteTool } = await import('../../tools/FileWriteTool/FileWriteTool.js')
 
 const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
 const originalCwd = getOriginalCwd()
@@ -44,6 +55,7 @@ const originalSessionId = getSessionId()
 const originalSessionProjectDir = getSessionProjectDir()
 
 afterEach(() => {
+  discardSessionWorkspaceDirectories(getSessionId())
   restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
   setOriginalCwd(originalCwd)
   switchSession(originalSessionId, originalSessionProjectDir)
@@ -121,12 +133,16 @@ describe('Moss project paths', () => {
     })
   })
 
-  test('allows managed session workspace files when cwd context is unavailable', () => {
+  test('allows explicitly registered session workspace files by session id', () => {
     process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
     const sessionDir = '/tmp/custom-moss/sessions/moss-session'
     const workspaceDir = join(sessionDir, 'workspace')
     setOriginalCwd('/tmp/unrelated-project')
-    switchSession(asSessionId('underlying-session'), sessionDir)
+    switchSession(
+      asSessionId('underlying-session'),
+      join(sessionDir, 'runtime', 'engine'),
+    )
+    registerSessionWorkspaceDirectories('underlying-session', [workspaceDir])
 
     const workspaceFile = join(workspaceDir, 'welcome.txt')
     const sessionMetadataFile = join(sessionDir, 'session.json')
@@ -185,6 +201,153 @@ describe('Moss project paths', () => {
         nestedProjectConfigFile,
       ]).safe,
     ).toBe(false)
+  })
+
+  test('allows both session and shared project workspaces for project sessions', async () => {
+    process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
+    const sessionWorkspace =
+      '/tmp/custom-moss/sessions/project-session/workspace'
+    const projectWorkspace =
+      '/tmp/custom-moss/projects/project-1/workspace'
+    const sessionId = asSessionId('project-engine-session')
+    setOriginalCwd('/tmp/unrelated-project')
+    switchSession(sessionId, '/tmp/custom-moss/sessions/project-session/runtime/engine')
+    registerSessionWorkspaceDirectories(sessionId, [
+      sessionWorkspace,
+      projectWorkspace,
+    ])
+    const permissionContext = getEmptyToolPermissionContext()
+    const toolUseContext = {
+      abortController: new AbortController(),
+      getAppState: () => ({ toolPermissionContext: permissionContext }),
+    } as unknown as ToolUseContext
+
+    for (const workspaceFile of [
+      join(sessionWorkspace, 'working', 'draft.md'),
+      join(projectWorkspace, 'shared-report.md'),
+    ]) {
+      expect(checkPathSafetyForAutoEdit(workspaceFile, [workspaceFile])).toEqual({
+        safe: true,
+      })
+      expect(
+        pathInAllowedWorkingPath(
+          workspaceFile,
+          getEmptyToolPermissionContext(),
+          [workspaceFile],
+        ),
+      ).toBe(true)
+      expect(
+        await hasPermissionsToUseTool(
+          FileWriteTool,
+          { file_path: workspaceFile, content: 'project output' },
+          toolUseContext,
+          {} as never,
+          `write-project-workspace-${workspaceFile}`,
+        ),
+      ).toMatchObject({ behavior: 'allow' })
+    }
+
+    const projectConfigFile = join(
+      projectWorkspace,
+      '.moss',
+      'settings.json',
+    )
+    expect(
+      checkPathSafetyForAutoEdit(projectConfigFile, [projectConfigFile]).safe,
+    ).toBe(false)
+  })
+
+  test('resolves workspace by the stable desktop session id', () => {
+    process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
+    const desktopSessionId = 'desktop-session'
+    const workspace = '/tmp/custom-moss/sessions/desktop-session/workspace'
+    const workspaceFile = join(workspace, 'welcome.md')
+    registerSessionWorkspaceDirectories(desktopSessionId, [workspace])
+
+    const isAllowed = runWithSessionIdContext(
+      asSessionId('underlying-session'),
+      '/tmp/custom-moss/sessions/desktop-session/runtime/engine',
+      () => pathInAllowedWorkingPath(
+        workspaceFile,
+        getEmptyToolPermissionContext(),
+        [workspaceFile],
+      ),
+      { kind: 'session', sessionId: desktopSessionId },
+    )
+
+    expect(isAllowed).toBe(true)
+    discardSessionWorkspaceDirectories(desktopSessionId)
+  })
+
+  test('allows a user-selected workspace only for its registered session', async () => {
+    process.env.MOSS_CONFIG_DIR = '/tmp/custom-moss'
+    const customWorkspace = '/tmp/custom-moss/workspace/user-selected'
+    const workspaceFile = join(customWorkspace, 'welcome.md')
+    const sessionId = asSessionId('custom-workspace-session')
+    setOriginalCwd('/tmp/unrelated-project')
+    switchSession(sessionId, '/tmp/transcripts/custom-workspace-session')
+    registerSessionWorkspaceDirectories(sessionId, [customWorkspace])
+
+    const permissionContext = {
+      ...getEmptyToolPermissionContext(),
+    }
+    const toolUseContext = {
+      abortController: new AbortController(),
+      getAppState: () => ({ toolPermissionContext: permissionContext }),
+    } as unknown as ToolUseContext
+
+    expect(checkPathSafetyForAutoEdit(workspaceFile, [workspaceFile])).toEqual({
+      safe: true,
+    })
+    expect(
+      pathInAllowedWorkingPath(
+        workspaceFile,
+        getEmptyToolPermissionContext(),
+        [workspaceFile],
+      ),
+    ).toBe(true)
+    expect(
+      await hasPermissionsToUseTool(
+        FileWriteTool,
+        { file_path: workspaceFile, content: 'welcome' },
+        toolUseContext,
+        {} as never,
+        'write-registered-workspace',
+      ),
+    ).toMatchObject({ behavior: 'allow' })
+    expect(
+      validatePath(
+        workspaceFile,
+        '/tmp/unrelated-project',
+        permissionContext,
+        'write',
+      ),
+    ).toMatchObject({ allowed: true })
+
+    switchSession(asSessionId('different-session'), '/tmp/transcripts/different')
+    expect(
+      checkPathSafetyForAutoEdit(workspaceFile, [workspaceFile]).safe,
+    ).toBe(false)
+    expect(
+      pathInAllowedWorkingPath(
+        workspaceFile,
+        getEmptyToolPermissionContext(),
+        [workspaceFile],
+      ),
+    ).toBe(false)
+    expect(
+      await hasPermissionsToUseTool(
+        FileWriteTool,
+        { file_path: workspaceFile, content: 'welcome' },
+        toolUseContext,
+        {} as never,
+        'write-unregistered-workspace',
+      ),
+    ).toMatchObject({
+      behavior: 'ask',
+      decisionReason: { type: 'safetyCheck' },
+    })
+    discardSessionWorkspaceDirectories(sessionId)
   })
 
   test('allows statusline to edit only the Moss global config', () => {

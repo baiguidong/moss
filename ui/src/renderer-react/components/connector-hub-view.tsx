@@ -229,6 +229,7 @@ export function ConnectorHubView({
   const [credentialTarget, setCredentialTarget] = React.useState<InstalledConnector | null>(null);
   const [credentialValues, setCredentialValues] = React.useState<Record<string, string>>({});
   const [credentialSaving, setCredentialSaving] = React.useState(false);
+  const [credentialProvisioning, setCredentialProvisioning] = React.useState(false);
   const checkedCliIdsRef = React.useRef<Set<string>>(new Set());
 
   const reportError = React.useCallback((title: string, err: unknown, connector?: ConnectorCatalogItem | null) => {
@@ -362,6 +363,27 @@ export function ConnectorHubView({
       setCredentialSaving(false);
     }
   }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onConnectorsChanged, reportError]);
+
+  const provisionCredentials = React.useCallback(async () => {
+    if (!credentialTarget?.credentialSchema?.provision) return;
+    setCredentialProvisioning(true);
+    setError("");
+    try {
+      const res = await window.agentDesktop.provisionConnectorCredentials({
+        connectorId: credentialTarget.id,
+      });
+      if (!res?.success) throw new Error(res?.error || "自动创建连接器凭据失败");
+      setCredentialTarget(null);
+      setCredentialValues({});
+      flashNotice(`已连接 ${credentialTarget.name}`);
+      await loadConnectors();
+      await onConnectorsChanged?.();
+    } catch (err) {
+      reportError(`${credentialTarget.name} 自动连接失败`, err, credentialTarget);
+    } finally {
+      setCredentialProvisioning(false);
+    }
+  }, [credentialTarget, flashNotice, loadConnectors, onConnectorsChanged, reportError]);
 
   const installConnector = React.useCallback(async (connector: ConnectorCatalogItem) => {
     setBusy(connector.id, true);
@@ -551,7 +573,7 @@ export function ConnectorHubView({
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target && !credentialSaving) setCredentialTarget(null);
+            if (event.currentTarget === event.target && !credentialSaving && !credentialProvisioning) setCredentialTarget(null);
           }}
         >
           <form
@@ -583,7 +605,7 @@ export function ConnectorHubView({
                 variant="ghost"
                 size="icon-sm"
                 className="h-8 w-8 shrink-0 rounded-lg"
-                disabled={credentialSaving}
+                disabled={credentialSaving || credentialProvisioning}
                 onClick={() => setCredentialTarget(null)}
                 title="关闭"
               >
@@ -630,19 +652,34 @@ export function ConnectorHubView({
               ) : null}
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={credentialSaving}
-                onClick={() => setCredentialTarget(null)}
-              >
-                取消
-              </Button>
-              <Button type="submit" disabled={credentialSaving}>
-                {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                保存
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-4">
+              <div>
+                {credentialTarget.credentialSchema.provision ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={credentialSaving || credentialProvisioning}
+                    onClick={() => void provisionCredentials()}
+                  >
+                    {credentialProvisioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                    {credentialTarget.credentialSchema.provision.label}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={credentialSaving || credentialProvisioning}
+                  onClick={() => setCredentialTarget(null)}
+                >
+                  取消
+                </Button>
+                <Button type="submit" disabled={credentialSaving || credentialProvisioning}>
+                  {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                  保存
+                </Button>
+              </div>
             </div>
           </form>
         </div>

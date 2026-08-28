@@ -455,6 +455,7 @@ export async function initializeToolPermissionContext({
   permissionMode,
   allowDangerouslySkipPermissions,
   addDirs,
+  workspaceDirectories,
 }: {
   allowedToolsCli: string[]
   disallowedToolsCli: string[]
@@ -462,6 +463,7 @@ export async function initializeToolPermissionContext({
   permissionMode: PermissionMode
   allowDangerouslySkipPermissions: boolean
   addDirs: string[]
+  workspaceDirectories: string[]
 }): Promise<{
   toolPermissionContext: ToolPermissionContext
   warnings: string[]
@@ -491,6 +493,13 @@ export async function initializeToolPermissionContext({
     string,
     AdditionalWorkingDirectory
   >()
+  for (const workspaceDirectory of workspaceDirectories) {
+    const normalizedWorkspace = resolve(workspaceDirectory)
+    additionalWorkingDirectories.set(normalizedWorkspace, {
+      path: normalizedWorkspace,
+      source: 'session',
+    })
+  }
   // process.env.PWD may be a symlink, while getOriginalCwd() uses the real path
   const processPwd = process.env.PWD
   if (

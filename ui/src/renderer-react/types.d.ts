@@ -100,7 +100,7 @@ export type Project = {
   expertIds: string[];
   skillIds: string[];
   decisionPolicy: {
-    mode: 'auto_all' | 'manual' | 'recommend' | 'auto_low_risk';
+    mode: 'auto_all' | 'recommend' | 'auto_low_risk';
   };
   createdAt: number;
   updatedAt: number;
@@ -128,6 +128,18 @@ export type ConnectorCredentialField = {
   defaultValue?: string;
 };
 
+export type ConnectorCredentialProvision = {
+  url: string;
+  targetField: string;
+  responseField: string;
+  label: string;
+  labelEn?: string;
+  validation?: {
+    url: string;
+    headers?: Record<string, string>;
+  };
+};
+
 export type ConnectorCredentialSchema = {
   title: string;
   titleEn?: string;
@@ -137,6 +149,7 @@ export type ConnectorCredentialSchema = {
   docLabel?: string;
   docLabelEn?: string;
   fields: ConnectorCredentialField[];
+  provision?: ConnectorCredentialProvision;
 };
 
 export type ConnectorCatalogItem = {
@@ -305,6 +318,14 @@ export type AdapterFileConfig = {
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
     streamingCard?: boolean
+    runLocation?: 'desktop' | 'server'
+    serverDeployment?: {
+      serverUrl: string
+      credentialMode: 'password' | 'api-key'
+      userEmail: string
+      workspace: string
+      configFingerprint: string
+    }
   }
 }
 
@@ -316,6 +337,10 @@ export type FeishuAdapterStatus = {
   transportConnected: boolean;
   transportUpdatedAt?: number | null;
   transportError?: string | null;
+  location: 'desktop' | 'server';
+  enabled?: boolean;
+  pairedUsers?: PairedUser[];
+  pairing?: PairingState;
 };
 
 export type McpServerConfig =
@@ -740,6 +765,8 @@ declare global {
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
+      authenticateRemoteServer: (payload: { serverUrl: string }) => Promise<DesktopSettings>;
+      cancelRemoteServerAuthentication: () => Promise<{ canceled: boolean }>;
       listMcpServers: () => Promise<McpSettingsPayload>;
       upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
       removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
@@ -800,6 +827,7 @@ declare global {
       uninstallConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { ok: boolean; id: string }; error?: string }>;
       saveConnectorMcpToken: (payload: { connectorId: string; serverName: string; token?: string; url?: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; serverName: string }; error?: string }>;
       saveConnectorCredentials: (payload: { connectorId: string; values: Record<string, string> }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[] }; error?: string }>;
+      provisionConnectorCredentials: (payload: { connectorId: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[]; provisioned: boolean }; error?: string }>;
       pickDirectory: () => Promise<string | null>;
       pickFiles: () => Promise<Array<{ name: string; path: string }>>;
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
@@ -1021,7 +1049,6 @@ declare global {
       cronList: () => Promise<CronTask[]>;
       cronDelete: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
       getInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
-      getRemoteInstalledAssistants: () => Promise<{ success: boolean; data?: InstalledAssistant[]; error?: string }>;
       getAssistantContext: (assistantName: string) => Promise<{ success: boolean; data?: string; error?: string }>;
       getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ id: string; name: string; path: string }>; error?: string }>;
       logWrite: (payload: { level?: string; category?: string; message: string; data?: unknown }) => Promise<void>;

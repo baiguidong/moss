@@ -94,6 +94,36 @@ describe('connector credential store', () => {
     expect(() => store.read()).toThrow('authentication failed');
   });
 
+  it('encrypts remote server API keys and passwords by server identity', () => {
+    const { storagePath, store } = createStore();
+    const data = {
+      remoteDirectCredentials: {
+        abc123: {
+          apiKey: {
+            value: 'moss_sk_remote.secret',
+            field: 'apiKey',
+            serverUrl: 'https://moss.example.com',
+          },
+          userPassword: {
+            value: 'remote-password',
+            field: 'userPassword',
+            serverUrl: 'https://moss.example.com',
+          },
+        },
+      },
+    };
+
+    store.write(data);
+    const serialized = fs.readFileSync(storagePath, 'utf8');
+    expect(serialized).not.toContain('moss_sk_remote.secret');
+    expect(serialized).not.toContain('remote-password');
+    expect(store.read()).toEqual({
+      connectorFields: {},
+      mcpAccessTokens: {},
+      ...data,
+    });
+  });
+
   it('updates against the latest encrypted document while holding the lock', () => {
     const { store } = createStore();
     store.update((credentials) => ({

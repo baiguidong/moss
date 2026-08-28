@@ -4,7 +4,7 @@
  * 基于 @larksuiteoapi/node-sdk 的轻量飞书 Bot，通过进程 IPC 连接 Moss Desktop。
  * 使用 WebSocket 长连接接收事件，无需公网地址。
  *
- * 由 Moss Desktop 作为 IPC 子进程启动，不支持独立运行。
+ * 由 Moss Desktop 或 Moss Server 作为 IPC 子进程启动，不支持独立运行。
  */
 
 import * as Lark from '@larksuiteoapi/node-sdk'
@@ -1727,7 +1727,7 @@ async function start(): Promise<void> {
   console.log('[Feishu] Moss bridge: process IPC')
   console.log(`[Feishu] App ID: ${config.feishu.appId}`)
 
-  if (!desktopBridge.available) throw new Error('Feishu Adapter must be started by Moss Desktop.')
+  if (!desktopBridge.available) throw new Error('Feishu Adapter must be started by a Moss host process.')
   await desktopBridge.hello({ adapter: 'feishu', appId: config.feishu.appId })
   console.log('[Feishu] Moss Desktop IPC bridge ready')
 

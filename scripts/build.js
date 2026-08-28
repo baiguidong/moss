@@ -140,6 +140,14 @@ build('bin/moss-server.mjs', [
 ])
 sanitizePaths('bin/moss-server.mjs')
 
+// bin/adapters/feishu.mjs（由 server 托管、由 Desktop 控制启停）
+build('bin/adapters/feishu.mjs', [
+  'build', 'adapters/feishu/index.ts',
+  '--outfile=bin/adapters/feishu.mjs',
+  '--target=node',
+  '--format=esm',
+])
+
 // bin/moss-session-runner.mjs（每个 server session 的独立 runner 进程）
 build('bin/moss-session-runner.mjs', [
   'build', 'scripts/session-runner-entry.ts',

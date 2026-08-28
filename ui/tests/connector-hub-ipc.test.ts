@@ -8,11 +8,13 @@ import {
   extractAuthorizationUrl,
   getConnectorProviderAuthContext,
   matchesCliStatus,
+  normalizeConnectorCredentialProvision,
   normalizeConnectorCredentialSchema,
   normalizeConnectorMcpConfig,
   normalizeCliAuthSteps,
   normalizeMcpConfig,
   normalizeMcpServerName,
+  requestProvisionedConnectorCredentials,
   validateMcpServerConfig,
 } from '../src/connector-hub-ipc.mjs';
 import {
@@ -52,12 +54,40 @@ describe('connector catalog pruning', () => {
     const catalogIds = catalog.connectors.map((connector: { id: string }) => connector.id);
     const zipEntries = Object.keys(zip.files);
 
-    expect(catalogIds).toHaveLength(115);
+    expect(catalogIds).toHaveLength(116);
     for (const id of REMOVED_CONNECTOR_IDS) {
       expect(catalogIds).not.toContain(id);
       expect(zipEntries.some((entry) => entry.startsWith(`connectors/${id}/`))).toBe(false);
       expect(zipEntries.some((entry) => entry.startsWith(`icons/${id}.`))).toBe(false);
     }
+  });
+
+  it('packages ShareOne as a skill-only connector with API key provisioning', async () => {
+    const zip = await JSZip.loadAsync(readFileSync(
+      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+    ));
+    const catalog = JSON.parse(await zip
+      .file('.codebuddy-connector/connectors.json')!
+      .async('text'));
+    const connector = catalog.connectors.find((entry: { id: string }) => entry.id === 'shareone');
+    const credentialSchema = JSON.parse(await zip
+      .file('connectors/shareone/token-schema.json')!
+      .async('text'));
+
+    expect(connector).toMatchObject({
+      id: 'shareone',
+      source: 'shareone',
+      type: 'skill-only',
+      auth_mode: 'api-key',
+    });
+    expect(credentialSchema.provision).toMatchObject({
+      url: 'https://shareone.vip/api/v1/agent-guest-key',
+      targetField: 'SHAREONE_API_KEY',
+      responseField: 'api_key',
+    });
+    expect(zip.file('connectors/shareone/skills/SKILL.md')).not.toBeNull();
+    expect(zip.file('connectors/shareone/skills/scripts/publish.js')).not.toBeNull();
+    expect(zip.file('icons/shareone.png')).not.toBeNull();
   });
 });
 
@@ -405,5 +435,78 @@ describe('connector credential schemas', () => {
       args: ['server.js', '--token=secret'],
       env: { EXISTING: 'value', API_KEY: 'secret' },
     });
+  });
+
+  it('normalizes HTTPS API key provisioning and blocks cross-origin validation', () => {
+    expect(normalizeConnectorCredentialProvision({
+      url: 'https://auth.example.test/guest-key',
+      targetField: 'API_KEY',
+      responseField: 'api_key',
+      label: 'Create key',
+      validation: {
+        url: 'https://auth.example.test/me',
+        headers: { 'X-API-Key': '${API_KEY}' },
+      },
+    }, ['API_KEY'])).toEqual({
+      url: 'https://auth.example.test/guest-key',
+      targetField: 'API_KEY',
+      responseField: 'api_key',
+      label: 'Create key',
+      labelEn: '',
+      validation: {
+        url: 'https://auth.example.test/me',
+        headers: { 'X-API-Key': '${API_KEY}' },
+      },
+    });
+
+    expect(normalizeConnectorCredentialProvision({
+      url: 'http://auth.example.test/guest-key',
+      targetField: 'API_KEY',
+      responseField: 'api_key',
+    }, ['API_KEY'])).toBeNull();
+    expect(normalizeConnectorCredentialProvision({
+      url: 'https://auth.example.test/guest-key',
+      targetField: 'API_KEY',
+      responseField: 'api_key',
+      validation: {
+        url: 'https://other.example.test/me',
+        headers: { Authorization: 'Bearer ${API_KEY}' },
+      },
+    }, ['API_KEY'])?.validation).toBeUndefined();
+  });
+
+  it('creates and validates a provisioned API key before it is saved', async () => {
+    const calls: Array<{ url: string; method: string; apiKey: string | null }> = [];
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({
+        url,
+        method: String(init?.method || 'GET'),
+        apiKey: new Headers(init?.headers).get('X-API-Key'),
+      });
+      if (url.endsWith('/guest-key')) {
+        return new Response(JSON.stringify({ api_key: 'guest-secret' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ username: 'guest-user' }), { status: 200 });
+    };
+    const values = await requestProvisionedConnectorCredentials({
+      title: 'Example',
+      fields: [{ key: 'API_KEY', type: 'password' }],
+      provision: {
+        url: 'https://auth.example.test/guest-key',
+        targetField: 'API_KEY',
+        responseField: 'api_key',
+        validation: {
+          url: 'https://auth.example.test/me',
+          headers: { 'X-API-Key': '${API_KEY}' },
+        },
+      },
+    }, { fetchImpl });
+
+    expect(values).toEqual({ API_KEY: 'guest-secret' });
+    expect(calls).toEqual([
+      { url: 'https://auth.example.test/guest-key', method: 'POST', apiKey: null },
+      { url: 'https://auth.example.test/me', method: 'GET', apiKey: 'guest-secret' },
+    ]);
   });
 });

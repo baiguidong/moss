@@ -258,6 +258,7 @@ export class RuntimeService {
       runtime,
       status: 'creating',
       desiredState: 'active',
+      title: input.title,
       assistantName: input.assistantName,
     })
 
