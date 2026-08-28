@@ -2248,6 +2248,7 @@ export default function App() {
                 loading={Boolean(activeDetail?.busy)}
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
+                isProjectSession={Boolean(activeDetail?.projectId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
                 sessionMessageCount={visibleChatMessageCount}
                 sessionId={activeSessionId || undefined}

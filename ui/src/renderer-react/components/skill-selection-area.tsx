@@ -31,7 +31,7 @@ export function getSelectableInstalledSkills(skills: InstalledSkillOption[]) {
     ));
 }
 
-function SkillIcon({ skill, className }: { skill?: InstalledSkillOption; className?: string }) {
+export function SkillIcon({ skill, className }: { skill?: InstalledSkillOption; className?: string }) {
   const [failed, setFailed] = React.useState(false);
   if (skill?.icon && !failed) {
     return (

@@ -38,8 +38,17 @@ export function createFeishuAdapterController({
   function getConversation(payload = {}) {
     const chatId = normalizeText(payload.chatId);
     const openId = normalizeText(payload.openId);
-    if (!chatId || !openId) throw new Error('Feishu chat identity is incomplete.');
+    if (!openId) throw new Error('Feishu user identity is incomplete.');
     const identity = resolveIdentity(openId);
+    if (!chatId) {
+      const conversation = store.listConversations?.()
+        .filter((entry) => entry.adapterInstanceId === identity.adapterInstanceId
+          && entry.tenantKey === identity.tenantKey
+          && entry.pairedOpenId === openId)
+        .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0];
+      if (!conversation) throw new Error('Send a message to Moss before using the Feishu bot menu.');
+      return { ...identity, conversation };
+    }
     return {
       ...identity,
       conversation: store.getOrCreateConversation({
@@ -117,15 +126,39 @@ export function createFeishuAdapterController({
     const { adapterInstanceId, conversation } = getConversation(payload);
 
     if (request.type === 'conversation.list') {
+      const category = ['feishu', 'project'].includes(payload.category) ? payload.category : 'recent';
+      const requestedPage = Number.parseInt(payload.page, 10);
+      const page = Number.isFinite(requestedPage) ? Math.max(0, requestedPage) : 0;
+      const requestedPageSize = Number.parseInt(payload.pageSize, 10);
+      const pageSize = Number.isFinite(requestedPageSize)
+        ? Math.min(8, Math.max(1, requestedPageSize))
+        : 5;
+      const matchingSessions = listWritableSessions(normalizeText(payload.query))
+        .filter((session) => category === 'recent'
+          || (category === 'feishu' && session.originChannel === 'feishu')
+          || (category === 'project' && Boolean(session.projectName)));
+      const total = matchingSessions.length;
+      const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+      const effectivePage = Math.min(page, lastPage);
+      const offset = effectivePage * pageSize;
       return {
         conversationId: conversation.id,
+        chatId: conversation.chatId,
         activeSessionId: conversation.activeSessionId,
-        sessions: listWritableSessions(normalizeText(payload.query)),
+        currentSession: getWritableSession(conversation.activeSessionId),
+        sessions: matchingSessions.slice(offset, offset + pageSize),
+        category,
+        query: normalizeText(payload.query),
+        page: effectivePage,
+        pageSize,
+        total,
+        hasPrevious: effectivePage > 0,
+        hasNext: offset + pageSize < total,
       };
     }
 
     if (request.type === 'conversation.current') {
-      return { session: getWritableSession(conversation.activeSessionId) };
+      return { chatId: conversation.chatId, session: getWritableSession(conversation.activeSessionId) };
     }
 
     if (request.type === 'conversation.select') {

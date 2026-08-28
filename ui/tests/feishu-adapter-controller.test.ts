@@ -27,6 +27,9 @@ function createMemoryStore() {
       const value = [...conversations.values()].find((entry) => entry.id === id);
       return value ? { ...value } : null;
     },
+    listConversations() {
+      return [...conversations.values()].map((entry) => ({ ...entry }));
+    },
     setActiveSession(id: string, sessionId: string) {
       const value = [...conversations.values()].find((entry) => entry.id === id);
       value.activeSessionId = sessionId;
@@ -173,6 +176,47 @@ describe('Feishu adapter controller', () => {
     await waitUntil(() => prompts.length === 2);
     expect(prompts).toEqual(['first', 'second']);
     releases.shift()?.();
+  });
+
+  it('lists customer-facing session pages and resolves bot menu requests by user', async () => {
+    const store = createMemoryStore();
+    store.getOrCreateConversation({
+      adapterInstanceId: 'feishu:app',
+      tenantKey: 'app',
+      chatId: 'chat',
+      pairedOpenId: 'user',
+    });
+    const sessions = new Map<string, any>([
+      ['s1', { id: 's1', title: '飞书一', updatedAt: 6, busy: false, originChannel: 'feishu' }],
+      ['s2', { id: 's2', title: '飞书二', updatedAt: 5, busy: false, originChannel: 'feishu' }],
+      ['s3', { id: 's3', title: '项目一', updatedAt: 4, busy: false, originChannel: 'desktop', projectName: 'Moss' }],
+      ['s4', { id: 's4', title: '桌面一', updatedAt: 3, busy: false, originChannel: 'desktop' }],
+    ]);
+    const controller = createFeishuAdapterController({
+      store,
+      resolveIdentity: () => ({ adapterInstanceId: 'feishu:app', tenantKey: 'app' }),
+      listWritableSessions: () => [...sessions.values()],
+      getWritableSession: (id: string) => sessions.get(id) || null,
+      createSession: async () => { throw new Error('should not create'); },
+      sendPrompt: async () => ({ assistantText: '' }),
+      abortSession: async () => {},
+      sendAdapterEvent: () => true,
+    });
+
+    const firstPage = await controller.handleRequest({
+      type: 'conversation.list',
+      payload: { openId: 'user', category: 'recent', page: 0, pageSize: 2 },
+    });
+    expect(firstPage).toMatchObject({
+      chatId: 'chat', page: 0, pageSize: 2, total: 4, hasPrevious: false, hasNext: true,
+    });
+    expect(firstPage.sessions.map((session: any) => session.id)).toEqual(['s1', 's2']);
+
+    const projectPage = await controller.handleRequest({
+      type: 'conversation.list',
+      payload: { openId: 'user', category: 'project' },
+    });
+    expect(projectPage.sessions.map((session: any) => session.id)).toEqual(['s3']);
   });
 
   it('authorizes decision callbacks only for the delivered Feishu conversation', () => {

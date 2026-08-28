@@ -25,6 +25,8 @@ import {
 import { isCardRateLimitError, isCardTableLimitError } from './card-errors.js'
 import { optimizeMarkdownForFeishu, sanitizeTextForCard } from './markdown-style.js'
 
+const INITIAL_STATUS_TEXT = '☁️ Moss 正在处理...'
+
 // ---------------------------------------------------------------------------
 // Card JSON builders
 // ---------------------------------------------------------------------------
@@ -36,18 +38,26 @@ import { optimizeMarkdownForFeishu, sanitizeTextForCard } from './markdown-style
  *  避免静态 loading 元素和 streaming 内容同时显示造成"两个思考中"。
  *
  *  finalize 时整卡 update 替换为纯答复正文。 */
-export function buildInitialStreamingCard(): Record<string, unknown> {
+export function buildInitialStreamingCard(sessionTitle?: string): Record<string, unknown> {
+  const title = String(sessionTitle || '').trim().slice(0, 80)
   return {
     schema: '2.0',
     config: {
       streaming_mode: true,
       update_multi: true,
     },
+    ...(title ? {
+      header: {
+        title: { tag: 'plain_text', content: title },
+        subtitle: { tag: 'plain_text', content: '当前会话' },
+        template: 'blue',
+      },
+    } : {}),
     body: {
       elements: [
         {
           tag: 'markdown',
-          content: '☁️ *正在思考中...*',
+          content: INITIAL_STATUS_TEXT,
           text_align: 'left',
           element_id: STREAMING_ELEMENT_ID,
         },
@@ -61,12 +71,20 @@ export function buildInitialStreamingCard(): Record<string, unknown> {
  *  代码块的 "10 行代码 >" 手机端 bug 是通过 `optimizeMarkdownForFeishu` 把
  *  fenced code 降级成纯文字来规避的，不依赖多元素结构。这里就是最朴素的
  *  一张纯 markdown 卡片。 */
-export function buildRenderedCard(renderedMarkdown: string): Record<string, unknown> {
+export function buildRenderedCard(renderedMarkdown: string, sessionTitle?: string): Record<string, unknown> {
+  const title = String(sessionTitle || '').trim().slice(0, 80)
   return {
     schema: '2.0',
     config: {
       update_multi: true,
     },
+    ...(title ? {
+      header: {
+        title: { tag: 'plain_text', content: title },
+        subtitle: { tag: 'plain_text', content: 'Moss 回复' },
+        template: 'blue',
+      },
+    } : {}),
     body: {
       elements: [
         {
@@ -125,6 +143,7 @@ export type StreamingCardDeps = {
   chatId: string
   replyToMessageId?: string
   messageUuid?: string
+  sessionTitle?: string
 }
 
 /** One entry in the tool-use trace displayed above the answer text. */
@@ -168,17 +187,23 @@ export class StreamingCard {
   /** 工具调用轨迹：按 startTool 调用顺序排列，completeTool 改其 status。 */
   private toolSteps: ToolStep[] = []
   private creationPromise: Promise<void> | null = null
+  private sessionTitle = ''
 
   // ---- flush ----
   private flushController: FlushController
 
   constructor(private readonly deps: StreamingCardDeps) {
+    this.sessionTitle = String(deps.sessionTitle || '').trim().slice(0, 80)
     this.flushController = new FlushController(() => this.performFlush())
   }
 
   // ------------------------------------------------------------------
   // Public API
   // ------------------------------------------------------------------
+
+  setSessionTitle(title: string): void {
+    this.sessionTitle = String(title || '').trim().slice(0, 80)
+  }
 
   /**
    * 首次创建卡片（CardKit 主路径；失败则降级到直发 Schema 2.0 卡 + patch）。
@@ -203,7 +228,7 @@ export class StreamingCard {
       // CardKit 主路径
       const cardId = await createCardEntity(
         this.deps.larkClient,
-        buildInitialStreamingCard(),
+        buildInitialStreamingCard(this.sessionTitle),
       )
       const messageId = await sendCardAsMessage(
         this.deps.larkClient,
@@ -225,12 +250,13 @@ export class StreamingCard {
         cardKitErr instanceof Error ? cardKitErr.message : cardKitErr,
       )
       try {
+        const fallbackInitialText = this.renderedText()
         const fallbackResp = await this.deps.larkClient.im.message.create({
           params: { receive_id_type: 'chat_id' },
           data: {
             receive_id: this.deps.chatId,
             msg_type: 'interactive',
-            content: JSON.stringify(buildRenderedCard(' ')),
+            content: JSON.stringify(buildRenderedCard(fallbackInitialText, this.sessionTitle)),
             ...(this.deps.messageUuid ? { uuid: this.deps.messageUuid } : {}),
           },
         })
@@ -242,6 +268,7 @@ export class StreamingCard {
         this.messageId = mid
         this.cardKitStreamActive = false
         this.phase = 'streaming'
+        this.lastFlushedText = fallbackInitialText
         this.flushController.setCardMessageReady(true)
       } catch (fallbackErr) {
         // 兜底都失败了 —— 无法显示任何东西
@@ -254,11 +281,11 @@ export class StreamingCard {
       }
     }
 
-    // 卡片可写之后若已有 buffered 内容（text / reasoning / tools），
-    // 立刻触发一次 flush —— 否则 content_start{tool_use} 或 thinking 在
-    // ensureCreated 期间到达的状态会一直卡在节流 gate 上，用户看不到。
-    if (this.hasAnyContent()) {
-      void this.flushController.throttledUpdate(this.currentThrottle())
+    // CardKit 的 streaming 元素在部分手机端不会显示卡片 JSON 中的初始
+    // content，必须在消息发出后再写一次首帧。fallback 已直接携带首帧，
+    // 但若发送期间积累了新内容，也需要立即补刷。
+    if (this.renderedText() !== this.lastFlushedText) {
+      await this.flushController.flush()
     }
   }
 
@@ -310,15 +337,6 @@ export class StreamingCard {
     void this.flushController.throttledUpdate(this.currentThrottle())
   }
 
-  /** 是否已有任何可渲染内容（文本 / 推理 / 工具）。 */
-  private hasAnyContent(): boolean {
-    return (
-      this.accumulatedText.length > 0 ||
-      this.accumulatedReasoningText.length > 0 ||
-      this.toolSteps.length > 0
-    )
-  }
-
   /**
    * 流式结束，切到最终态。
    * - 先 waitForFlush 确保中间帧写入完成
@@ -358,7 +376,7 @@ export class StreamingCard {
         await updateCardKitCard(
           this.deps.larkClient,
           this.cardId,
-          buildRenderedCard(finalText),
+          buildRenderedCard(finalText, this.sessionTitle),
           this.sequence,
         )
         delivered = true
@@ -366,7 +384,7 @@ export class StreamingCard {
         // Patch fallback 路径: 全量替换
         await this.deps.larkClient.im.message.patch({
           path: { message_id: this.messageId },
-          data: { content: JSON.stringify(buildRenderedCard(finalText)) },
+          data: { content: JSON.stringify(buildRenderedCard(finalText, this.sessionTitle)) },
         })
         delivered = true
       }
@@ -487,7 +505,7 @@ export class StreamingCard {
       sections.push(this.accumulatedText)
     }
 
-    if (sections.length === 0) return '☁️ *正在思考中...*'
+    if (sections.length === 0) return INITIAL_STATUS_TEXT
 
     // 用一行分隔符把 sections 分开，比单纯空行更稳定
     const composed = sections.join('\n\n---\n\n')
@@ -578,7 +596,7 @@ export class StreamingCard {
       try {
         await this.deps.larkClient.im.message.patch({
           path: { message_id: this.messageId },
-          data: { content: JSON.stringify(buildRenderedCard(finalText)) },
+          data: { content: JSON.stringify(buildRenderedCard(finalText, this.sessionTitle)) },
         })
         this.lastFlushedText = finalText
       } catch (err) {

@@ -226,7 +226,11 @@ export async function streamCardContent(
   sequence: number,
 ): Promise<void> {
   const resp = (await client.cardkit.v1.cardElement.content({
-    data: { content, sequence },
+    data: {
+      content,
+      sequence,
+      uuid: `c_${cardId}_${sequence}`,
+    },
     path: { card_id: cardId, element_id: elementId },
   })) as unknown as CardKitResponse
 
@@ -255,6 +259,7 @@ export async function setCardStreamingMode(
     data: {
       settings: JSON.stringify({ streaming_mode: streamingMode }),
       sequence,
+      uuid: `s_${cardId}_${sequence}`,
     },
     path: { card_id: cardId },
   })) as unknown as CardKitResponse
@@ -284,6 +289,7 @@ export async function updateCardKitCard(
     data: {
       card: { type: 'card_json', data: JSON.stringify(card) },
       sequence,
+      uuid: `u_${cardId}_${sequence}`,
     },
     path: { card_id: cardId },
   })) as unknown as CardKitResponse

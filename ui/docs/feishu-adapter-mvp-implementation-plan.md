@@ -17,6 +17,7 @@ Completed on 2026-08-27.
 - Stage 6 automated verification passes through the repository UI and Adapter suites, plus TypeScript/static checks and production builds.
 - A real desktop launch completed the process IPC handshake and Feishu persistent WebSocket connection.
 - A real hot restart left exactly one Main process and one Adapter child; the child exits when its IPC parent disconnects.
+- Customer-facing mobile session navigation is implemented with bot-menu events and interactive cards: current session, recent/Feishu/project categories, pagination, form search, switch, create, and stop.
 - Final handset acceptance remains with the user: first-message session creation, old-session selection, and allow/reject card interaction.
 
 ## MVP Scope
@@ -115,8 +116,10 @@ Important constraints:
 ## Conversation Behavior
 
 - The first normal Feishu message with no active binding creates a new session and submits the message atomically at the idempotency boundary.
-- `/new [title]` creates a Feishu-origin session and makes it active.
-- `/sessions [query]` returns recent writable top-level sessions.
+- The bot menu and session-center card are the primary customer entry points; no session ID is shown or required.
+- The card supports recent, Feishu, and project categories, pagination, keyword search, session selection, and new-session creation.
+- Natural-language entries such as `会话中心`, `切换会话`, `新会话`, and `当前会话` open the same customer workflows.
+- `/new [title]`, `/sessions [query]`, and `/current` remain as compatibility aliases.
 - Selecting a session changes only the active binding. It does not change an existing session's origin.
 - `/current` reports the active session and queue state.
 - `/stop` aborts the active session and cancels its queued turns.

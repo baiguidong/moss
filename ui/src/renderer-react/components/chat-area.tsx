@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   Activity,
-  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,7 +10,6 @@ import {
   Copy,
   FileText,
   FolderOpen,
-  Hammer,
   Plus,
   Send,
   Square,
@@ -33,10 +31,31 @@ import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
 import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
-import { AssistantSelectionArea, type InstalledAssistant } from "@/components/assistant-selection-area";
-import { ConnectorSelectionArea } from "@/components/connector-selection-area";
-import { SkillSelectionArea, type InstalledSkillOption } from "@/components/skill-selection-area";
+import {
+  AssistantAvatar,
+  AssistantSelectionArea,
+  getSelectableInstalledAssistants,
+  type InstalledAssistant,
+} from "@/components/assistant-selection-area";
+import {
+  ConnectorIcon,
+  ConnectorSelectionArea,
+  connectorTypeLabel,
+  getSelectableInstalledConnectors,
+} from "@/components/connector-selection-area";
+import {
+  getSelectableInstalledSkills,
+  SkillIcon,
+  SkillSelectionArea,
+  type InstalledSkillOption,
+} from "@/components/skill-selection-area";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
+import {
+  getComposerMentionTabs,
+  getDefaultComposerPlaceholder,
+  getNextComposerMentionTab,
+  type ComposerMentionTab,
+} from "@/lib/composer-mentions";
 
 type ComposerIntent = "chat" | "plan" | "coordinator";
 type PendingPlanApproval = {
@@ -328,6 +347,7 @@ function ComposerPanel({
   onClearAssistant,
   onOpenExpertHub,
   onOpenSkillHub,
+  allowSkillSelection = true,
   installedConnectors,
   selectedConnectorIds,
   onToggleConnector,
@@ -354,6 +374,7 @@ function ComposerPanel({
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
   onOpenSkillHub?: () => void;
+  allowSkillSelection?: boolean;
   installedConnectors?: InstalledConnector[];
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
@@ -397,12 +418,27 @@ function ComposerPanel({
   const [mentionFilter, setMentionFilter] = React.useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = React.useState(0);
   const [mentionItems, setMentionItems] = React.useState<WorkspaceMentionItem[]>([]);
-  const [mentionTab, setMentionTab] = React.useState<"files" | "skills">("files");
+  const [mentionTab, setMentionTab] = React.useState<ComposerMentionTab>("files");
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
   const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
   const [skillsLoading, setSkillsLoading] = React.useState(false);
   const skillsLoadedRef = React.useRef(false);
   const workspaceRootRef = React.useRef<string | null>(null);
+  const mentionTabs = React.useMemo(() => getComposerMentionTabs({
+    includeSkills: allowSkillSelection,
+    includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
+    includeConnectors: Boolean(onToggleConnector),
+  }), [allowSkillSelection, hasActiveSession, onSelectAssistant, onToggleConnector]);
+  const defaultPlaceholder = React.useMemo(() => getDefaultComposerPlaceholder({
+    hasActiveSession,
+    includeSkills: allowSkillSelection,
+    includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
+    includeConnectors: Boolean(onToggleConnector),
+  }), [allowSkillSelection, hasActiveSession, onSelectAssistant, onToggleConnector]);
+
+  React.useEffect(() => {
+    if (!mentionTabs.includes(mentionTab)) setMentionTab(mentionTabs[0]);
+  }, [mentionTab, mentionTabs]);
 
   const loadInstalledSkills = React.useCallback(async () => {
     if (skillsLoadedRef.current) return;
@@ -422,8 +458,12 @@ function ComposerPanel({
   }, []);
 
   React.useEffect(() => {
-    void loadInstalledSkills();
-  }, [loadInstalledSkills]);
+    if (allowSkillSelection) void loadInstalledSkills();
+  }, [allowSkillSelection, loadInstalledSkills]);
+
+  React.useEffect(() => {
+    if (!allowSkillSelection) setSelectedSkills([]);
+  }, [allowSkillSelection]);
 
   const mentionDirPart = React.useMemo(() => {
     if (mentionFilter === null) return null;
@@ -441,7 +481,7 @@ function ComposerPanel({
     }
     if (!sessionId) {
       setMentionItems([]);
-      setMentionNotice("发送第一条消息创建会话后，可用 @ 引用工作区文件");
+      setMentionNotice(null);
       return;
     }
     let cancelled = false;
@@ -505,15 +545,48 @@ function ComposerPanel({
   }, [value, isHomeComposer]);
 
   const visibleSkillItems = React.useMemo(() => {
-    if (mentionFilter === null) return [];
+    if (mentionFilter === null || !allowSkillSelection) return [];
     const query = mentionFilter.toLowerCase();
-    return skillItems
+    return getSelectableInstalledSkills(skillItems)
       .filter((skill) =>
         !query
         || (skill.displayName || skill.name).toLowerCase().includes(query)
         || (skill.description || "").toLowerCase().includes(query))
       .slice(0, 8);
-  }, [mentionFilter, skillItems]);
+  }, [allowSkillSelection, mentionFilter, skillItems]);
+
+  const visibleAssistantItems = React.useMemo(() => {
+    if (mentionFilter === null || hasActiveSession) return [];
+    const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
+    return getSelectableInstalledAssistants(installedAssistants ?? [])
+      .filter((assistant) => !query || [
+        assistant.displayName,
+        assistant.name,
+        assistant.description,
+        assistant.category,
+      ].some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(query)))
+      .slice(0, 8);
+  }, [hasActiveSession, installedAssistants, mentionFilter]);
+
+  const visibleConnectorItems = React.useMemo(() => {
+    if (mentionFilter === null) return [];
+    const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
+    return getSelectableInstalledConnectors(installedConnectors ?? [])
+      .filter((connector) => !query || [
+        connector.name,
+        connector.description,
+        connector.type,
+      ].some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(query)))
+      .slice(0, 8);
+  }, [installedConnectors, mentionFilter]);
+
+  const activeMentionItemCount = mentionTab === 'files'
+    ? visibleMentionItems.length
+    : mentionTab === 'skills'
+      ? visibleSkillItems.length
+      : mentionTab === 'assistants'
+        ? visibleAssistantItems.length
+        : visibleConnectorItems.length;
 
   const applyMention = React.useCallback((item: WorkspaceMentionItem) => {
     const isDir = item.type === "directory";
@@ -524,12 +597,34 @@ function ComposerPanel({
   }, [onChange, value]);
 
   const applySkillMention = React.useCallback((skill: SkillMentionItem) => {
-    setSelectedSkills((prev) => (prev.some((s) => s.name === skill.name) ? prev : [...prev, skill]));
+    setSelectedSkills((prev) => prev.some((item) => item.name === skill.name)
+      ? prev.filter((item) => item.name !== skill.name)
+      : [...prev, skill]);
     onChange(value.replace(/(^|\s)@[^\s@]*$/, "$1"));
     setMentionFilter(null);
     setMentionIndex(0);
     setMentionTab("files");
   }, [onChange, value]);
+
+  const applyAssistantMention = React.useCallback((assistant: InstalledAssistant) => {
+    if (selectedAssistant?.name === assistant.name) {
+      onClearAssistant?.();
+    } else {
+      onSelectAssistant?.(assistant);
+    }
+    onChange(value.replace(/(^|\s)@[^\s@]*$/, "$1"));
+    setMentionFilter(null);
+    setMentionIndex(0);
+    setMentionTab("files");
+  }, [onChange, onClearAssistant, onSelectAssistant, selectedAssistant?.name, value]);
+
+  const applyConnectorMention = React.useCallback((connector: InstalledConnector) => {
+    onToggleConnector?.(connector);
+    onChange(value.replace(/(^|\s)@[^\s@]*$/, "$1"));
+    setMentionFilter(null);
+    setMentionIndex(0);
+    setMentionTab("files");
+  }, [onChange, onToggleConnector, value]);
 
   const toggleSelectedSkill = React.useCallback((skill: SkillMentionItem) => {
     setSelectedSkills((prev) => prev.some((item) => item.name === skill.name)
@@ -668,29 +763,27 @@ function ComposerPanel({
 
   const handleSendClick = () => {
     const files = attachments.length > 0 ? attachments : undefined;
-    onSend(files, selectedSkills.length > 0 ? [...selectedSkills] : undefined);
+    onSend(files, allowSkillSelection && selectedSkills.length > 0 ? [...selectedSkills] : undefined);
     setAttachments([]);
     setSelectedSkills([]);
   };
 
   const skillChips = selectedSkills.length > 0 ? (
-    <div className="mb-2 flex flex-wrap gap-1.5">
+    <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已选技能">
       {selectedSkills.map((skill) => (
-        <span
-          key={skill.name}
-          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary"
-          title={skill.description || skill.name}
-        >
-          <Hammer className="h-3 w-3" />
-          {skill.displayName || skill.name}
-          <button
-            type="button"
-            className="rounded p-0.5 transition-colors hover:text-foreground"
-            onClick={() => setSelectedSkills((prev) => prev.filter((s) => s.name !== skill.name))}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </span>
+        <Tooltip key={skill.name}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary transition-colors hover:bg-primary/15 hover:text-foreground"
+              onClick={() => setSelectedSkills((prev) => prev.filter((item) => item.name !== skill.name))}
+              aria-label={`移除技能：${skill.displayName || skill.name}`}
+            >
+              <SkillIcon skill={skill} className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{skill.displayName || skill.name} · 点击移除</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   ) : null;
@@ -728,8 +821,9 @@ function ComposerPanel({
             onSetSelectedIndex={setSlashCommandIndex}
           />
         )}
-        {mentionFilter !== null && (visibleMentionItems.length > 0 || visibleSkillItems.length > 0 || mentionNotice) && (
+        {mentionFilter !== null && (
           <MentionMenu
+            tabs={mentionTabs}
             tab={mentionTab}
             onTabChange={(tab) => {
               setMentionTab(tab);
@@ -737,13 +831,19 @@ function ComposerPanel({
             }}
             fileItems={visibleMentionItems}
             skillItems={visibleSkillItems}
-            notice={visibleMentionItems.length === 0 ? (mentionNotice ?? "无匹配文件") : null}
-            selectedIndex={Math.min(
-              mentionIndex,
-              Math.max(0, (mentionTab === "files" ? visibleMentionItems.length : visibleSkillItems.length) - 1),
-            )}
+            assistantItems={visibleAssistantItems}
+            connectorItems={visibleConnectorItems}
+            notice={visibleMentionItems.length === 0
+              ? (mentionNotice ?? (sessionId ? "无匹配文件" : null))
+              : null}
+            selectedIndex={Math.min(mentionIndex, Math.max(0, activeMentionItemCount - 1))}
+            selectedSkillNames={selectedSkills.map((skill) => skill.name)}
+            selectedAssistantName={selectedAssistant?.name}
+            selectedConnectorIds={selectedConnectorIds ?? []}
             onSelectFile={applyMention}
             onSelectSkill={applySkillMention}
+            onSelectAssistant={applyAssistantMention}
+            onSelectConnector={applyConnectorMention}
           />
         )}
         {subMenuCommand && !isHomeComposer && COMMANDS_WITH_ARGS[subMenuCommand] && (
@@ -772,8 +872,8 @@ function ComposerPanel({
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : composerIntent === "plan"
                     ? "描述需求，我会先给出计划..."
-                      : "输入任务、问题或想法..."
-              : "继续输入消息..."
+                      : defaultPlaceholder
+              : defaultPlaceholder
               )
           }
           value={value}
@@ -798,14 +898,13 @@ function ComposerPanel({
           rows={isHomeComposer ? 5 : 1}
           onKeyDown={(event) => {
             if (mentionFilter !== null) {
-              const activeList = mentionTab === "files" ? visibleMentionItems : visibleSkillItems;
               if (event.key === "Tab") {
                 event.preventDefault();
-                setMentionTab((prev) => (prev === "files" ? "skills" : "files"));
+                setMentionTab((prev) => getNextComposerMentionTab(mentionTabs, prev));
                 setMentionIndex(0);
                 return;
               }
-              if (activeList.length > 0) {
+              if (activeMentionItemCount > 0) {
                 if (event.key === "ArrowUp") {
                   event.preventDefault();
                   setMentionIndex((prev) => Math.max(0, prev - 1));
@@ -813,18 +912,24 @@ function ComposerPanel({
                 }
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
-                  setMentionIndex((prev) => Math.min(activeList.length - 1, prev + 1));
+                  setMentionIndex((prev) => Math.min(activeMentionItemCount - 1, prev + 1));
                   return;
                 }
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  const clamped = Math.min(mentionIndex, activeList.length - 1);
+                  const clamped = Math.min(mentionIndex, activeMentionItemCount - 1);
                   if (mentionTab === "files") {
                     const item = visibleMentionItems[clamped];
                     if (item) applyMention(item);
-                  } else {
+                  } else if (mentionTab === "skills") {
                     const skill = visibleSkillItems[clamped];
                     if (skill) applySkillMention(skill);
+                  } else if (mentionTab === "assistants") {
+                    const assistant = visibleAssistantItems[clamped];
+                    if (assistant) applyAssistantMention(assistant);
+                  } else {
+                    const connector = visibleConnectorItems[clamped];
+                    if (connector) applyConnectorMention(connector);
                   }
                   return;
                 }
@@ -999,13 +1104,15 @@ function ComposerPanel({
                 />
               )}
 
-              <SkillSelectionArea
-                skills={skillItems}
-                selectedSkills={selectedSkills}
-                onToggleSkill={toggleSelectedSkill}
-                onOpenSkillHub={onOpenSkillHub}
-                loading={skillsLoading}
-              />
+              {allowSkillSelection ? (
+                <SkillSelectionArea
+                  skills={skillItems}
+                  selectedSkills={selectedSkills}
+                  onToggleSkill={toggleSelectedSkill}
+                  onOpenSkillHub={onOpenSkillHub}
+                  loading={skillsLoading}
+                />
+              ) : null}
 
               <span className="text-xs text-muted-foreground">模式：</span>
               <span className="inline-flex items-center rounded-full border border-green-500/50 bg-green-500/15 px-2 py-1 text-xs text-green-600">
@@ -1103,13 +1210,15 @@ function ComposerPanel({
                 />
               )}
 
-              <SkillSelectionArea
-                skills={skillItems}
-                selectedSkills={selectedSkills}
-                onToggleSkill={toggleSelectedSkill}
-                onOpenSkillHub={onOpenSkillHub}
-                loading={skillsLoading}
-              />
+              {allowSkillSelection ? (
+                <SkillSelectionArea
+                  skills={skillItems}
+                  selectedSkills={selectedSkills}
+                  onToggleSkill={toggleSelectedSkill}
+                  onOpenSkillHub={onOpenSkillHub}
+                  loading={skillsLoading}
+                />
+              ) : null}
 
               {installedConnectors && installedConnectors.length > 0 && onToggleConnector && (
                 <ConnectorSelectionArea
@@ -1139,7 +1248,7 @@ function ComposerPanel({
             </div>
           </div>
 
-          {selectedSkills.length > 0 && <div className="mt-3">{skillChips}</div>}
+          {allowSkillSelection && selectedSkills.length > 0 && <div className="mt-3">{skillChips}</div>}
           {(attachments.length > 0 || workspace) && (
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -1345,59 +1454,136 @@ function getFileMentionFilter(text: string, cursorPos: number): string | null {
   return match ? match[1] : null;
 }
 
+const MENTION_TAB_LABELS: Record<ComposerMentionTab, string> = {
+  files: '文件',
+  skills: '技能',
+  assistants: '专家',
+  connectors: '连接器',
+};
+
+function MentionResourceRow({
+  active,
+  selected,
+  icon,
+  title,
+  description,
+  selectionStyle,
+  onSelect,
+}: {
+  active: boolean;
+  selected: boolean;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  selectionStyle: 'check' | 'checkbox';
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      className={cn(
+        'flex h-12 w-full items-center gap-3 rounded-md px-3 text-left transition-colors',
+        active || selected ? 'bg-primary/10' : 'hover:bg-muted',
+      )}
+      onClick={onSelect}
+    >
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+        <span className="block truncate text-xs text-muted-foreground">{description}</span>
+      </span>
+      {selectionStyle === 'checkbox' ? (
+        <span className={cn(
+          'flex h-5 w-5 shrink-0 items-center justify-center rounded border',
+          selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
+        )}>
+          {selected ? <Check className="h-3.5 w-3.5" /> : null}
+        </span>
+      ) : selected ? (
+        <Check className="h-4 w-4 shrink-0 text-primary" />
+      ) : null}
+    </button>
+  );
+}
+
 function MentionMenu({
+  tabs,
   tab,
   onTabChange,
   fileItems,
   skillItems,
+  assistantItems,
+  connectorItems,
   notice,
   selectedIndex,
+  selectedSkillNames,
+  selectedAssistantName,
+  selectedConnectorIds,
   onSelectFile,
   onSelectSkill,
+  onSelectAssistant,
+  onSelectConnector,
 }: {
-  tab: "files" | "skills";
-  onTabChange: (tab: "files" | "skills") => void;
+  tabs: ComposerMentionTab[];
+  tab: ComposerMentionTab;
+  onTabChange: (tab: ComposerMentionTab) => void;
   fileItems: WorkspaceMentionItem[];
   skillItems: SkillMentionItem[];
+  assistantItems: InstalledAssistant[];
+  connectorItems: InstalledConnector[];
   notice?: string | null;
   selectedIndex: number;
+  selectedSkillNames: string[];
+  selectedAssistantName?: string;
+  selectedConnectorIds: string[];
   onSelectFile: (item: WorkspaceMentionItem) => void;
   onSelectSkill: (item: SkillMentionItem) => void;
+  onSelectAssistant: (assistant: InstalledAssistant) => void;
+  onSelectConnector: (connector: InstalledConnector) => void;
 }) {
+  const selectedSkills = new Set(selectedSkillNames);
+  const selectedConnectors = new Set(selectedConnectorIds);
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur">
-      <div className="flex items-center gap-1 border-b border-border/50 px-2 pt-1.5 pb-1 text-xs">
-        {([["files", "文件"], ["skills", "技能"]] as const).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={cn(
-              "rounded-md px-2.5 py-1 transition-colors",
-              tab === key
-                ? "bg-primary/10 font-medium text-primary"
-                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
-            )}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onTabChange(key);
-            }}
-          >
-            {label}
-          </button>
-        ))}
-        <span className="ml-auto pr-1 text-[10px] text-muted-foreground/60">Tab 切换 · Enter 选择</span>
+      <div className="flex min-w-0 items-center border-b border-border/50 px-2 py-1.5 text-xs">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          {tabs.map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={cn(
+                "shrink-0 rounded-md px-2.5 py-1 transition-colors",
+                tab === key
+                  ? "bg-primary/10 font-medium text-primary"
+                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+              )}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onTabChange(key);
+              }}
+            >
+              {MENTION_TAB_LABELS[key]}
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto hidden shrink-0 pl-2 pr-1 text-[10px] text-muted-foreground/60 sm:inline">
+          Tab 切换 · Enter 选择
+        </span>
       </div>
-      <div className="max-h-60 overflow-y-auto py-1">
+      <div className="max-h-64 overflow-y-auto p-1">
         {tab === "files" ? (
           fileItems.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">{notice ?? "无匹配文件"}</div>
+            notice ? <div className="px-3 py-2 text-xs text-muted-foreground">{notice}</div> : null
           ) : (
             fileItems.map((item, i) => (
               <button
                 key={item.relativePath}
                 type="button"
                 className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
+                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors",
                   i === selectedIndex
                     ? "bg-primary/10 text-foreground"
                     : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
@@ -1413,29 +1599,50 @@ function MentionMenu({
               </button>
             ))
           )
-        ) : skillItems.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已安装技能</div>
-        ) : (
-          skillItems.map((skill, i) => (
-            <button
+        ) : tab === 'skills' ? (
+          skillItems.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已安装技能</div>
+          ) : skillItems.map((skill, i) => (
+            <MentionResourceRow
               key={skill.name}
-              type="button"
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
-                i === selectedIndex
-                  ? "bg-primary/10 text-foreground"
-                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-              )}
-              onClick={() => onSelectSkill(skill)}
-            >
-              <Bot className="h-3.5 w-3.5 shrink-0 text-primary" />
-              <span className="shrink-0 text-xs font-medium">{skill.displayName || skill.name}</span>
-              {skill.description && (
-                <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{skill.description}</span>
-              )}
-            </button>
+              active={i === selectedIndex}
+              selected={selectedSkills.has(skill.name)}
+              icon={<SkillIcon skill={skill} className="h-4 w-4" />}
+              title={skill.displayName || skill.name}
+              description={skill.description || skill.name}
+              selectionStyle="checkbox"
+              onSelect={() => onSelectSkill(skill)}
+            />
           ))
-        )}
+        ) : tab === 'assistants' ? (
+          assistantItems.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已安装专家</div>
+          ) : assistantItems.map((assistant, i) => (
+            <MentionResourceRow
+              key={assistant.name}
+              active={i === selectedIndex}
+              selected={selectedAssistantName === assistant.name}
+              icon={<AssistantAvatar assistant={assistant} className="h-4 w-4" />}
+              title={assistant.displayName || assistant.name}
+              description={assistant.description || assistant.category || assistant.name}
+              selectionStyle="check"
+              onSelect={() => onSelectAssistant(assistant)}
+            />
+          ))
+        ) : connectorItems.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已认证连接器</div>
+        ) : connectorItems.map((connector, i) => (
+          <MentionResourceRow
+            key={connector.id}
+            active={i === selectedIndex}
+            selected={selectedConnectors.has(connector.id)}
+            icon={<ConnectorIcon connector={connector} className="h-4 w-4" />}
+            title={connector.name}
+            description={`${connectorTypeLabel(connector)}${connector.description ? ` · ${connector.description}` : ''}`}
+            selectionStyle="checkbox"
+            onSelect={() => onSelectConnector(connector)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1703,6 +1910,7 @@ export function ChatArea({
   loading,
   readOnlyReason,
   hasActiveSession,
+  isProjectSession = false,
   sessionTitle,
   sessionMessageCount,
   sessionId,
@@ -1749,6 +1957,7 @@ export function ChatArea({
   loading: boolean;
   readOnlyReason?: string | null;
   hasActiveSession: boolean;
+  isProjectSession?: boolean;
   sessionTitle: string;
   sessionMessageCount: number;
   sessionId?: string;
@@ -2033,6 +2242,7 @@ export function ChatArea({
             onClearAssistant={onClearAssistant}
             onOpenExpertHub={onOpenExpertHub}
             onOpenSkillHub={onOpenSkillHub}
+            allowSkillSelection={!isProjectSession}
             installedConnectors={installedConnectors}
             selectedConnectorIds={selectedConnectorIds}
             onToggleConnector={onToggleConnector}

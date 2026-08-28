@@ -31,6 +31,18 @@ import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
 import type { PendingUpload } from '../common/attachment/attachment-types.js'
+import {
+  FEISHU_MENU_KEYS,
+  buildSessionCenterCard,
+  buildSessionSearchCard,
+  buildSessionSelectedCard,
+  isCurrentSessionIntent,
+  isNewSessionIntent,
+  isSessionCenterIntent,
+  normalizeSessionCenterCategory,
+  type SessionCenterCategory,
+  type SessionCenterPage,
+} from './session-center.js'
 
 // ---------- init ----------
 
@@ -112,11 +124,13 @@ function getRuntimeState(chatId: string): ChatRuntimeState {
 }
 
 /** Get the existing StreamingCard for this chat, or create one in 'idle' state. */
-function getOrCreateStreamingCard(chatId: string, messageUuid?: string): StreamingCard {
+function getOrCreateStreamingCard(chatId: string, messageUuid?: string, sessionTitle?: string): StreamingCard {
   let card = streamingCards.get(chatId)
   if (!card) {
-    card = new StreamingCard({ larkClient, chatId, messageUuid })
+    card = new StreamingCard({ larkClient, chatId, messageUuid, sessionTitle })
     streamingCards.set(chatId, card)
+  } else if (sessionTitle) {
+    card.setSessionTitle(sessionTitle)
   }
   return card
 }
@@ -283,9 +297,11 @@ async function buildStatusText(chatId: string): Promise<string> {
   })
 }
 
-/** Send a text message (post format). */
-async function sendText(
-  chatId: string,
+type FeishuReceiveIdType = 'chat_id' | 'open_id'
+
+async function sendTextTo(
+  receiveId: string,
+  receiveIdType: FeishuReceiveIdType,
   text: string,
   replyToMessageId?: string,
   messageUuid?: string,
@@ -303,9 +319,9 @@ async function sendText(
       return resp.data?.message_id
     }
     const resp = await larkClient.im.message.create({
-      params: { receive_id_type: 'chat_id' },
+      params: { receive_id_type: receiveIdType },
       data: {
-        receive_id: chatId,
+        receive_id: receiveId,
         msg_type: 'post' as const,
         content,
         ...(messageUuid ? { uuid: messageUuid } : {}),
@@ -318,17 +334,27 @@ async function sendText(
   }
 }
 
-/** Send an interactive card (for permission requests). */
-async function sendCard(
+/** Send a text message (post format). */
+async function sendText(
   chatId: string,
+  text: string,
+  replyToMessageId?: string,
+  messageUuid?: string,
+): Promise<string | undefined> {
+  return sendTextTo(chatId, 'chat_id', text, replyToMessageId, messageUuid)
+}
+
+async function sendCardTo(
+  receiveId: string,
+  receiveIdType: FeishuReceiveIdType,
   card: Record<string, unknown>,
   messageUuid?: string,
 ): Promise<string | undefined> {
   try {
     const resp = await larkClient.im.message.create({
-      params: { receive_id_type: 'chat_id' },
+      params: { receive_id_type: receiveIdType },
       data: {
-        receive_id: chatId,
+        receive_id: receiveId,
         msg_type: 'interactive',
         content: JSON.stringify(card),
         ...(messageUuid ? { uuid: messageUuid } : {}),
@@ -339,6 +365,15 @@ async function sendCard(
     console.error('[Feishu] Send card error:', err)
     return undefined
   }
+}
+
+/** Send an interactive card to a chat. */
+async function sendCard(
+  chatId: string,
+  card: Record<string, unknown>,
+  messageUuid?: string,
+): Promise<string | undefined> {
+  return sendCardTo(chatId, 'chat_id', card, messageUuid)
 }
 
 /** Pretty-print an absolute path for IM display.
@@ -453,69 +488,6 @@ function buildProjectPickerCard(projects: RecentProject[]): Record<string, unkno
 
 function escapeCardMarkdown(value: unknown): string {
   return String(value || '').replace(/([\\`*_{}\[\]()#+.!|>~-])/g, '\\$1')
-}
-
-function buildSessionPickerCard(
-  sessions: DesktopSessionOption[],
-  activeSessionId?: string | null,
-): Record<string, unknown> {
-  const rows = sessions.slice(0, 10).map((session, index) => {
-    const context = [
-      session.projectName,
-      session.originChannel === 'feishu' ? '飞书会话' : '桌面会话',
-      session.busy ? '运行中' : null,
-    ].filter(Boolean).join(' · ')
-    return {
-      tag: 'column_set',
-      flex_mode: 'stretch',
-      horizontal_spacing: '8px',
-      margin: index === 0 ? '0px 0 0 0' : '10px 0 0 0',
-      columns: [
-        {
-          tag: 'column',
-          width: 'weighted',
-          weight: 1,
-          vertical_align: 'center',
-          elements: [
-            { tag: 'markdown', content: `**${escapeCardMarkdown(session.title)}**${session.id === activeSessionId ? '  ·  当前' : ''}` },
-            {
-              tag: 'markdown',
-              content: escapeCardMarkdown(context || session.preview || '暂无摘要'),
-              text_size: 'notation',
-              margin: '2px 0 0 0',
-            },
-          ],
-        },
-        {
-          tag: 'column',
-          width: 'auto',
-          vertical_align: 'center',
-          elements: [{
-            tag: 'button',
-            text: { tag: 'plain_text', content: session.id === activeSessionId ? '已选择' : '选择' },
-            type: session.id === activeSessionId ? 'default' : index === 0 ? 'primary' : 'default',
-            size: 'small',
-            disabled: session.id === activeSessionId,
-            value: { action: 'pick_session', sessionId: session.id },
-          }],
-        },
-      ],
-    }
-  })
-  return {
-    schema: '2.0',
-    config: { wide_screen_mode: true, update_multi: true },
-    header: {
-      title: { tag: 'plain_text', content: '选择 Moss 会话' },
-      subtitle: { tag: 'plain_text', content: `显示 ${rows.length} 个最近可继续会话` },
-      template: 'blue',
-    },
-    body: {
-      elements: rows.length > 0
-        ? rows
-        : [{ tag: 'markdown', content: '暂无可继续会话，发送 `/new` 创建新会话。' }],
-    },
-  }
 }
 
 function buildNotificationCard(payload: {
@@ -1093,6 +1065,36 @@ function desktopIdentity(chatId: string, openId: string, eventId?: string) {
   }
 }
 
+async function showSessionCenter({
+  chatId,
+  openId,
+  category = 'recent',
+  page = 0,
+  query = '',
+  receiveId,
+  receiveIdType = 'chat_id',
+}: {
+  chatId?: string
+  openId: string
+  category?: SessionCenterCategory
+  page?: number
+  query?: string
+  receiveId?: string
+  receiveIdType?: FeishuReceiveIdType
+}): Promise<void> {
+  const result = await desktopBridge.request('conversation.list', {
+    ...(chatId ? { chatId } : {}),
+    openId,
+    category,
+    page,
+    pageSize: 5,
+    query,
+  }) as SessionCenterPage & { chatId?: string }
+  const targetId = receiveId || result.chatId || chatId
+  if (!targetId) throw new Error('Unable to resolve the Feishu conversation.')
+  await sendCardTo(targetId, receiveIdType, buildSessionCenterCard(result))
+}
+
 async function handleDesktopChatInput({
   chatId,
   openId,
@@ -1112,51 +1114,37 @@ async function handleDesktopChatInput({
   }
 
   if (text === '/help' || text === '帮助') {
-    await sendText(chatId, [
-      '**Moss 飞书会话**',
-      '',
-      '- `/new [标题]` 创建新会话',
-      '- `/sessions [关键词]` 选择老会话',
-      '- `/current` 查看当前会话',
-      '- `/stop` 停止当前执行',
-      '- 直接发送文本继续当前会话',
-    ].join('\n'))
+    await showSessionCenter({ chatId, openId })
     return
   }
 
-  if (text === '/new' || text === '新会话' || text.startsWith('/new ')) {
+  if (isNewSessionIntent(text)) {
     const title = text.startsWith('/new ') ? text.slice(5).trim() : ''
     const result = await desktopBridge.request('conversation.new', {
       ...desktopIdentity(chatId, openId, eventId),
       title,
     }) as { session?: DesktopSessionOption }
-    await sendText(chatId, `已切换到新会话：**${result.session?.title || '飞书会话'}**`)
+    if (result.session) {
+      await sendCard(chatId, buildSessionSelectedCard(result.session))
+    }
     return
   }
 
-  if (text === '/sessions' || text === '会话列表' || text.startsWith('/sessions ')) {
+  if (isSessionCenterIntent(text)) {
     const query = text.startsWith('/sessions ') ? text.slice('/sessions '.length).trim() : ''
-    const result = await desktopBridge.request('conversation.list', {
-      ...desktopIdentity(chatId, openId),
-      query,
-    }) as { sessions?: DesktopSessionOption[]; activeSessionId?: string | null }
-    await sendCard(chatId, buildSessionPickerCard(result.sessions || [], result.activeSessionId))
+    await showSessionCenter({ chatId, openId, query })
     return
   }
 
-  if (text === '/current' || text === '/status' || text === '状态') {
+  if (isCurrentSessionIntent(text)) {
     const result = await desktopBridge.request('conversation.current', desktopIdentity(chatId, openId)) as {
       session?: DesktopSessionOption | null
     }
     if (!result.session) {
-      await sendText(chatId, '当前没有绑定会话，直接发送消息或使用 `/new` 创建。')
+      await showSessionCenter({ chatId, openId })
       return
     }
-    await sendText(chatId, [
-      `当前会话：**${result.session.title}**`,
-      result.session.busy ? '状态：运行中' : '状态：空闲',
-      result.session.projectName ? `项目：${result.session.projectName}` : '',
-    ].filter(Boolean).join('\n'))
+    await sendCard(chatId, buildSessionSelectedCard(result.session))
     return
   }
 
@@ -1172,16 +1160,22 @@ async function handleDesktopChatInput({
   }
 
   if (text === '/projects' || text === '项目列表') {
-    await sendText(chatId, '普通聊天不再依赖项目列表。需要继续项目工作时，请使用 `/sessions` 选择对应项目会话。')
+    await showSessionCenter({ chatId, openId, category: 'project' })
     return
   }
 
   const result = await desktopBridge.request('chat.message.received', {
     ...desktopIdentity(chatId, openId, eventId),
     text,
-  }) as { accepted?: boolean; duplicate?: boolean; status?: string; turnId?: string | null }
+  }) as {
+    accepted?: boolean
+    duplicate?: boolean
+    status?: string
+    turnId?: string | null
+    session?: DesktopSessionOption
+  }
   if (result.accepted || (result.duplicate && ['accepted', 'running'].includes(result.status || ''))) {
-    const card = getOrCreateStreamingCard(chatId, result.turnId || undefined)
+    const card = getOrCreateStreamingCard(chatId, result.turnId || undefined, result.session?.title)
     void card.ensureCreated().catch((error) => {
       console.error('[Feishu] Unable to create Moss response card:', error)
     })
@@ -1193,7 +1187,8 @@ desktopBridge.on('turn.completed', (payload: any) => {
   const turnId = typeof payload?.turnId === 'string' ? payload.turnId : ''
   if (!chatId) return
   enqueue(chatId, async () => {
-    getOrCreateStreamingCard(chatId, turnId || undefined)
+    const sessionTitle = typeof payload?.title === 'string' ? payload.title : undefined
+    getOrCreateStreamingCard(chatId, turnId || undefined, sessionTitle)
     if (typeof payload.text === 'string' && payload.text) {
       await handleServerMessage(chatId, { type: 'content_delta', text: payload.text })
     }
@@ -1335,7 +1330,8 @@ async function handleMessage(data: any): Promise<void> {
           }) as { paired?: boolean }
           : { paired: false }
         if (result.paired) {
-          await sendText(chatId, '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可通过 Moss 继续会话。')
+          await sendText(chatId, '配对成功，可以从会话中心选择工作内容。')
+          await showSessionCenter({ chatId, openId: senderOpenId })
         } else {
           await sendText(chatId, '🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
         }
@@ -1546,12 +1542,18 @@ async function handleCardAction(data: any): Promise<any> {
         sessionId?: string
         actionToken?: string
         decisionId?: string
+        category?: string
+        page?: number | string
+        query?: string
       }
+      form_value?: { query?: string }
     }
     context?: { open_chat_id?: string }
+    event_id?: string
   }
 
-  const action = event.action?.value?.action
+  const value = event.action?.value || {}
+  const action = value.action
   const chatId = event.context?.open_chat_id
   const operatorOpenId = event.operator?.open_id
   if (!chatId || !operatorOpenId) return
@@ -1559,14 +1561,51 @@ async function handleCardAction(data: any): Promise<any> {
     return { toast: { type: 'error', content: '当前飞书用户未与 Moss 配对' } }
   }
 
+  if (desktopBridge.available && (action === 'session_center' || action === 'session_page')) {
+    const requestedPage = Number.parseInt(String(value.page ?? 0), 10)
+    await showSessionCenter({
+      chatId,
+      openId: operatorOpenId,
+      category: normalizeSessionCenterCategory(value.category),
+      page: Number.isFinite(requestedPage) ? requestedPage : 0,
+      query: typeof value.query === 'string' ? value.query : '',
+    })
+    return { toast: { type: 'success', content: '会话列表已更新' } }
+  }
+
+  if (desktopBridge.available && action === 'search_sessions') {
+    await sendCard(chatId, buildSessionSearchCard(normalizeSessionCenterCategory(value.category)))
+    return { toast: { type: 'success', content: '请输入搜索关键词' } }
+  }
+
+  if (desktopBridge.available && action === 'submit_session_search') {
+    const query = String(event.action?.form_value?.query || '').trim()
+    await showSessionCenter({
+      chatId,
+      openId: operatorOpenId,
+      category: normalizeSessionCenterCategory(value.category),
+      query,
+    })
+    return { toast: { type: 'success', content: query ? '已完成搜索' : '已显示全部会话' } }
+  }
+
+  if (desktopBridge.available && action === 'new_session') {
+    const result = await desktopBridge.request('conversation.new', {
+      ...desktopIdentity(chatId, operatorOpenId, event.event_id),
+      title: '',
+    }) as { session?: DesktopSessionOption }
+    if (result.session) await sendCard(chatId, buildSessionSelectedCard(result.session))
+    return { toast: { type: 'success', content: '已创建新会话' } }
+  }
+
   if (desktopBridge.available && action === 'pick_session') {
-    const sessionId = event.action?.value?.sessionId
+    const sessionId = value.sessionId
     if (!sessionId) return
     const result = await desktopBridge.request('conversation.select', {
       ...desktopIdentity(chatId, operatorOpenId),
       sessionId,
     }) as { session?: DesktopSessionOption }
-    await sendText(chatId, `已切换到会话：**${result.session?.title || sessionId}**`)
+    if (result.session) await sendCard(chatId, buildSessionSelectedCard(result.session))
     return { toast: { type: 'success', content: '已切换会话' } }
   }
 
@@ -1596,6 +1635,57 @@ async function handleCardAction(data: any): Promise<any> {
 
   if (action === 'permit' || action === 'pick_project') {
     return { toast: { type: 'error', content: '旧版卡片已失效，请重新发送消息获取当前操作卡片' } }
+  }
+}
+
+async function handleBotMenu(data: any): Promise<void> {
+  const eventKey = typeof data?.event_key === 'string' ? data.event_key.trim() : ''
+  const openId = data?.operator?.operator_id?.open_id || data?.operator?.open_id
+  if (!eventKey || typeof openId !== 'string' || !openId) return
+
+  if (!isAllowedUser(openId)) {
+    await sendTextTo(openId, 'open_id', '当前飞书用户还没有与 Moss 配对。请先向机器人发送桌面端生成的配对码。')
+    return
+  }
+  if (!desktopBridge.available) {
+    await sendTextTo(openId, 'open_id', 'Moss 客户端当前未连接，请启动客户端后重试。')
+    return
+  }
+
+  const aliases: Record<string, string> = {
+    sessions: FEISHU_MENU_KEYS.sessions,
+    new_session: FEISHU_MENU_KEYS.newSession,
+    current: FEISHU_MENU_KEYS.current,
+    stop: FEISHU_MENU_KEYS.stop,
+  }
+  const action = aliases[eventKey] || eventKey
+  try {
+    if (action === FEISHU_MENU_KEYS.sessions || action === FEISHU_MENU_KEYS.current) {
+      await showSessionCenter({
+        openId,
+        receiveId: openId,
+        receiveIdType: 'open_id',
+      })
+      return
+    }
+    if (action === FEISHU_MENU_KEYS.newSession) {
+      const result = await desktopBridge.request('conversation.new', { openId, title: '' }) as {
+        session?: DesktopSessionOption
+      }
+      if (result.session) {
+        await sendCardTo(openId, 'open_id', buildSessionSelectedCard(result.session))
+      }
+      return
+    }
+    if (action === FEISHU_MENU_KEYS.stop) {
+      const result = await desktopBridge.request('session.abort', { openId }) as { cancelled?: number }
+      await sendTextTo(openId, 'open_id', result.cancelled
+        ? `已停止当前执行，并取消 ${result.cancelled} 条排队消息。`
+        : '已发送停止信号。')
+    }
+  } catch (error) {
+    console.error('[Feishu] Bot menu action failed:', error)
+    await sendTextTo(openId, 'open_id', '请先向 Moss 机器人发送一条消息，再使用会话菜单。')
   }
 }
 
@@ -1661,6 +1751,13 @@ async function start(): Promise<void> {
         return await handleCardAction(data)
       } catch (err) {
         console.error('[Feishu] Card action error:', err)
+      }
+    },
+    'application.bot.menu_v6': async (data: any) => {
+      try {
+        await handleBotMenu(data)
+      } catch (err) {
+        console.error('[Feishu] Bot menu handler error:', err)
       }
     },
   } as any)

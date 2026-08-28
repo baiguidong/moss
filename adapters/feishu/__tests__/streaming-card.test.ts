@@ -107,8 +107,14 @@ describe('buildInitialStreamingCard', () => {
     expect(elements.length).toBe(1)
     const streaming = elements[0]
     expect(streaming.tag).toBe('markdown')
-    expect(streaming.content).toContain('正在思考中')
+    expect(streaming.content).toBe('☁️ Moss 正在处理...')
     expect(streaming.element_id).toBe(STREAMING_ELEMENT_ID)
+  })
+
+  it('shows the active session name in the card header', () => {
+    const card = buildInitialStreamingCard('客户交付计划') as any
+    expect(card.header.title.content).toBe('客户交付计划')
+    expect(card.header.subtitle.content).toBe('当前会话')
   })
 })
 
@@ -129,6 +135,12 @@ describe('buildRenderedCard', () => {
     const card = buildRenderedCard('') as any
     expect(card.body.elements[0].content).toBe(' ')
   })
+
+  it('keeps the session name on the completed response card', () => {
+    const card = buildRenderedCard('done', '客户交付计划') as any
+    expect(card.header.title.content).toBe('客户交付计划')
+    expect(card.header.subtitle.content).toBe('Moss 回复')
+  })
 })
 
 describe('buildErrorCard', () => {
@@ -145,7 +157,7 @@ describe('buildErrorCard', () => {
 // ---------------------------------------------------------------------------
 
 describe('StreamingCard: ensureCreated (CardKit 主路径)', () => {
-  it('依次调用 card.create + im.message.create，sequence=1', async () => {
+  it('创建消息后立即写入可见首帧', async () => {
     const { client, calls } = makeMockClient({
       'card.create': { code: 0, data: { card_id: 'ck_main_1' } },
       'im.message.create': { data: { message_id: 'om_main_1' } },
@@ -156,7 +168,7 @@ describe('StreamingCard: ensureCreated (CardKit 主路径)', () => {
     expect(sc._getPhase()).toBe('streaming')
     expect(sc._getCardId()).toBe('ck_main_1')
     expect(sc._getMessageId()).toBe('om_main_1')
-    expect(sc._getSequence()).toBe(1)
+    expect(sc._getSequence()).toBe(2)
     expect(sc._isCardKitStreamActive()).toBe(true)
 
     expect(calls[0]!.api).toBe('cardkit.v1.card.create')
@@ -172,6 +184,10 @@ describe('StreamingCard: ensureCreated (CardKit 主路径)', () => {
     // IM message 引用 card_id
     const content = JSON.parse(calls[1]!.args.data.content)
     expect(content).toEqual({ type: 'card', data: { card_id: 'ck_main_1' } })
+
+    const firstFrame = calls[2]!
+    expect(firstFrame.api).toBe('cardkit.v1.cardElement.content')
+    expect(firstFrame.args.data.content).toBe('☁️ Moss 正在处理...')
   })
 
   it('幂等: 重复调用 ensureCreated 不重复创建', async () => {
@@ -227,6 +243,7 @@ describe('StreamingCard: ensureCreated (fallback 降级路径)', () => {
     expect(createCall!.args.data.msg_type).toBe('interactive')
     const cardContent = JSON.parse(createCall!.args.data.content)
     expect(cardContent.schema).toBe('2.0')
+    expect(cardContent.body.elements[0].content).toBe('☁️ Moss 正在处理...')
   })
 
   it('CardKit send 失败（create 成功但 im.message.create 失败）也能降级', async () => {
@@ -306,8 +323,10 @@ describe('StreamingCard: appendText + flush', () => {
     // 强制再跑一次 flush（无新文本）
     await sc._getFlushController().flush()
 
-    const contentCalls = calls.filter((c) => c.api === 'cardkit.v1.cardElement.content')
-    // 应该只有一次 content 调用
+    const contentCalls = calls.filter((c) => (
+      c.api === 'cardkit.v1.cardElement.content' && c.args.data.content.includes('same')
+    ))
+    // 除首帧外，相同正文只应写入一次。
     expect(contentCalls.length).toBe(1)
   })
 

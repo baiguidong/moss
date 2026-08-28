@@ -165,7 +165,11 @@ describe('streamCardContent', () => {
 
     expect(calls.length).toBe(1)
     expect(calls[0]!.api).toBe('cardkit.v1.cardElement.content')
-    expect(calls[0]!.args.data).toEqual({ content: 'hello', sequence: 42 })
+    expect(calls[0]!.args.data).toEqual({
+      content: 'hello',
+      sequence: 42,
+      uuid: 'c_ck_abc_42',
+    })
     expect(calls[0]!.args.path).toEqual({
       card_id: 'ck_abc',
       element_id: STREAMING_ELEMENT_ID,
@@ -221,6 +225,7 @@ describe('setCardStreamingMode', () => {
     expect(calls[0]!.api).toBe('cardkit.v1.card.settings')
     expect(calls[0]!.args.path).toEqual({ card_id: 'ck_xxx' })
     expect(calls[0]!.args.data.sequence).toBe(99)
+    expect(calls[0]!.args.data.uuid).toBe('s_ck_xxx_99')
     // settings 是 JSON 字符串
     const settings = JSON.parse(calls[0]!.args.data.settings)
     expect(settings).toEqual({ streaming_mode: false })
@@ -252,6 +257,7 @@ describe('updateCardKitCard', () => {
     expect(calls[0]!.api).toBe('cardkit.v1.card.update')
     expect(calls[0]!.args.path).toEqual({ card_id: 'ck_final' })
     expect(calls[0]!.args.data.sequence).toBe(100)
+    expect(calls[0]!.args.data.uuid).toBe('u_ck_final_100')
     expect(calls[0]!.args.data.card.type).toBe('card_json')
     expect(calls[0]!.args.data.card.data).toBe(JSON.stringify(card))
   })

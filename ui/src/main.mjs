@@ -7541,8 +7541,7 @@ function listWritableFeishuSessions(query = '') {
     .filter(Boolean)
     .filter((session) => !normalizedQuery || [session.title, session.preview, session.projectName]
       .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-    .slice(0, 10);
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 async function createSessionFromFeishu(title) {

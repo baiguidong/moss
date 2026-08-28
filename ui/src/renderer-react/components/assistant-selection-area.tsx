@@ -33,7 +33,7 @@ type AssistantSelectionAreaProps = {
 
 const isDataUri = (value: string) => value.startsWith('data:');
 
-const AssistantAvatar: React.FC<{
+export const AssistantAvatar: React.FC<{
   assistant: InstalledAssistant;
   className?: string;
 }> = ({ assistant, className }) => {
@@ -49,6 +49,19 @@ const AssistantAvatar: React.FC<{
   return <span className="shrink-0 text-sm leading-none">{emojiOrAvatar}</span>;
 };
 
+export function getSelectableInstalledAssistants(assistants: InstalledAssistant[]) {
+  return assistants
+    .filter((assistant) => assistant.enabled !== false)
+    .sort((a, b) => {
+      if (a.name === 'cowork') return -1;
+      if (b.name === 'cowork') return 1;
+      return String(a.displayName || a.name).localeCompare(
+        String(b.displayName || b.name),
+        'zh-Hans-CN',
+      );
+    });
+}
+
 export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
   assistants,
   selectedAssistant,
@@ -60,16 +73,7 @@ export const AssistantSelectionArea: React.FC<AssistantSelectionAreaProps> = ({
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
 
-  const installed = React.useMemo(() => assistants
-    .filter((assistant) => assistant.enabled !== false)
-    .sort((a, b) => {
-      if (a.name === 'cowork') return -1;
-      if (b.name === 'cowork') return 1;
-      return String(a.displayName || a.name).localeCompare(
-        String(b.displayName || b.name),
-        'zh-Hans-CN',
-      );
-    }), [assistants]);
+  const installed = React.useMemo(() => getSelectableInstalledAssistants(assistants), [assistants]);
   const filteredAssistants = React.useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('zh-Hans-CN');
     if (!normalizedQuery) return installed;

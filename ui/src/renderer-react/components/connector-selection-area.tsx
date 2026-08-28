@@ -19,13 +19,13 @@ function connectorIcon(connector: InstalledConnector) {
   return Cable;
 }
 
-function connectorTypeLabel(connector: InstalledConnector) {
+export function connectorTypeLabel(connector: InstalledConnector) {
   if (connector.type === 'cli') return 'CLI';
   if (connector.type === 'mcp') return 'MCP';
   return '连接器';
 }
 
-const ConnectorIcon: React.FC<{
+export const ConnectorIcon: React.FC<{
   connector: InstalledConnector;
   className?: string;
 }> = ({ connector, className }) => {
@@ -43,6 +43,15 @@ const ConnectorIcon: React.FC<{
   );
 };
 
+export function getSelectableInstalledConnectors(connectors: InstalledConnector[]) {
+  return connectors
+    .filter(isAuthorizedConnector)
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'mcp' ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN');
+    });
+}
+
 export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
   connectors,
   selectedConnectorIds,
@@ -52,12 +61,7 @@ export const ConnectorSelectionArea: React.FC<ConnectorSelectionAreaProps> = ({
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
 
-  const installed = React.useMemo(() => connectors
-    .filter(isAuthorizedConnector)
-    .sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'mcp' ? -1 : 1;
-      return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN');
-  }), [connectors]);
+  const installed = React.useMemo(() => getSelectableInstalledConnectors(connectors), [connectors]);
   const selected = React.useMemo(() => {
     const authorizedIds = new Set(installed.map((connector) => connector.id));
     return new Set(selectedConnectorIds.filter((id) => authorizedIds.has(id)));
