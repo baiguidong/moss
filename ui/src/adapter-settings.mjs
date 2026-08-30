@@ -56,6 +56,14 @@ export function mergeAdapterSettings(current, patch) {
   return merged;
 }
 
+export function withoutFeishuRunLocation(patch) {
+  const incoming = isRecord(patch) ? { ...patch } : {};
+  if (!isRecord(incoming.feishu)) return incoming;
+  const feishu = { ...incoming.feishu };
+  delete feishu.runLocation;
+  return { ...incoming, feishu };
+}
+
 function maskSecret(value) {
   if (typeof value !== 'string' || !value) return value;
   if (value.startsWith(MASK_PREFIX)) return value;

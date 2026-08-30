@@ -592,6 +592,8 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
   },
   "status": "creating|active|detached|ended|terminated|failed|lost",
   "desiredState": "active|ended|terminated",
+  "title": "飞书会话",
+  "summary": null,
   "createdAt": 0,
   "lastActiveAt": 0,
   "endedAt": null
@@ -652,6 +654,8 @@ session 目录，并额外挂共享的 user profile/workspace 目录。显式传
 - `active_only=true`
 
 有 `sessions:list:any` 时可看当前 org 的全部 session；否则只看自己的。
+列表中的每条 session 还包含 `originChannel`：由 Server 飞书 Adapter 创建的会话为
+`feishu`，其他会话为 `desktop`。Desktop 用这个字段同步和分组 Server 飞书会话。
 
 ### GET `/api/v1/sessions/:sessionId`
 

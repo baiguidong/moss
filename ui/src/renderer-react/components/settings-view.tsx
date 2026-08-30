@@ -2134,7 +2134,7 @@ export function SettingsView({
 }
 
 function ImAdapterSettings() {
-  const { config, isLoading, fetchConfig, updateConfig, generatePairingCode, removePairedUser } = useAdapterConfig()
+  const { config, isLoading, fetchConfig, updateConfig, applyRunLocation, generatePairingCode, removePairedUser } = useAdapterConfig()
 
   const [fsAppId, setFsAppId] = React.useState('')
   const [fsAppSecret, setFsAppSecret] = React.useState('')
@@ -2144,6 +2144,8 @@ function ImAdapterSettings() {
   const [fsStreamingCard, setFsStreamingCard] = React.useState(false)
   const [fsRunLocation, setFsRunLocation] = React.useState<'desktop' | 'server'>('desktop')
   const [isSaving, setIsSaving] = React.useState(false)
+  const [isApplyingLocation, setIsApplyingLocation] = React.useState(false)
+  const [applyLocationError, setApplyLocationError] = React.useState('')
   const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = React.useState('')
   const [pairingCode, setPairingCode] = React.useState<string | null>(null)
@@ -2213,9 +2215,9 @@ function ImAdapterSettings() {
           verificationToken: fsVerificationToken || undefined,
           allowedUsers: fsUsers.length ? fsUsers : [],
           streamingCard: fsStreamingCard,
-          runLocation: fsRunLocation,
         },
       })
+      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
     } catch (err) {
@@ -2223,6 +2225,20 @@ function ImAdapterSettings() {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const handleApplyRunLocation = async () => {
+    setIsApplyingLocation(true)
+    setApplyLocationError('')
+    try {
+      const result = await applyRunLocation(fsRunLocation)
+      setFeishuStatus(result.status)
+    } catch (err) {
+      setApplyLocationError(err instanceof Error ? err.message : '切换运行位置失败')
+      void window.agentDesktop.getAdapterStatus().then(setFeishuStatus).catch(() => {})
+    } finally {
+      setIsApplyingLocation(false)
     }
   }
 
@@ -2261,6 +2277,8 @@ function ImAdapterSettings() {
   const pairingExpiry = pairingState?.expiresAt
   const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
   const minutesLeft = pairingExpiry ? Math.max(0, Math.ceil((pairingExpiry - Date.now()) / 60000)) : 0
+  const appliedRunLocation = config.feishu?.runLocation === 'server' ? 'server' : 'desktop'
+  const hasPendingRunLocation = fsRunLocation !== appliedRunLocation
 
   if (isLoading) {
     return (
@@ -2344,29 +2362,51 @@ function ImAdapterSettings() {
               <p className="text-[13px] font-medium text-foreground">运行位置</p>
               <p className="mt-0.5 text-xs text-muted-foreground">同一时间只运行一个飞书实例</p>
             </div>
-            <div className="grid grid-cols-2 rounded-md border border-sidebar-border bg-sidebar p-0.5">
-              <button
-                type="button"
-                onClick={() => setFsRunLocation('desktop')}
-                className={cn(
-                  'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
-                  fsRunLocation === 'desktop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <Monitor className="h-3.5 w-3.5" />
-                本机
-              </button>
-              <button
-                type="button"
-                onClick={() => setFsRunLocation('server')}
-                className={cn(
-                  'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
-                  fsRunLocation === 'server' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <Server className="h-3.5 w-3.5" />
-                Moss Server
-              </button>
+            <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              <div className="grid grid-cols-2 rounded-md border border-sidebar-border bg-sidebar p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setFsRunLocation('desktop')}
+                  disabled={isApplyingLocation}
+                  className={cn(
+                    'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
+                    fsRunLocation === 'desktop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Monitor className="h-3.5 w-3.5" />
+                  本机
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFsRunLocation('server')}
+                  disabled={isApplyingLocation}
+                  className={cn(
+                    'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
+                    fsRunLocation === 'server' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Server className="h-3.5 w-3.5" />
+                  Moss Server
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="text-xs text-muted-foreground">
+                  当前：{appliedRunLocation === 'server' ? 'Moss Server' : '本机'}
+                  {hasPendingRunLocation ? ' · 待应用' : ''}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleApplyRunLocation}
+                  disabled={!hasPendingRunLocation || isApplyingLocation || isSaving}
+                  className="rounded-md"
+                >
+                  {isApplyingLocation ? '切换中…' : hasPendingRunLocation ? '应用切换' : '已应用'}
+                </Button>
+              </div>
+              {applyLocationError ? (
+                <p className="max-w-[420px] text-right text-xs text-destructive">{applyLocationError}</p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
@@ -2431,7 +2471,7 @@ function ImAdapterSettings() {
 
       {/* Save */}
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={isSaving} className="rounded-xl">
+        <Button onClick={handleSave} disabled={isSaving || isApplyingLocation} className="rounded-xl">
           {isSaving ? '保存中…' : saveStatus === 'saved' ? '已保存 ✓' : '保存配置'}
         </Button>
         {saveStatus === 'error' && (

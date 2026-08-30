@@ -706,12 +706,16 @@ export class AdapterProcessManager {
       const page = Math.max(0, Number.parseInt(String(payload.page ?? 0), 10) || 0)
       const pageSize = Math.min(8, Math.max(1, Number.parseInt(String(payload.pageSize ?? 5), 10) || 5))
       const query = normalizeText(payload.query).toLowerCase()
-      const feishuSessions = new Set(this.listFeishuSessionIds(hosted))
+      const feishuSessions = new Set(this.listFeishuSessionIds(
+        hosted.auth.orgId,
+        hosted.auth.userId,
+      ))
       const sessions = this.runtime.listSessionRecords({
         orgId: hosted.auth.orgId,
         userId: hosted.auth.userId,
-        activeOnly: true,
-      }).map(session => sessionOption(session, this.isSessionBusy(session.sessionId), feishuSessions.has(session.sessionId) ? 'feishu' : undefined))
+        activeOnly: false,
+      }).filter(session => session.desiredState !== 'terminated')
+        .map(session => sessionOption(session, this.isSessionBusy(session.sessionId), feishuSessions.has(session.sessionId) ? 'feishu' : undefined))
         .filter(Boolean)
         .filter(session => !query || session!.title.toLowerCase().includes(query) || session!.preview.toLowerCase().includes(query))
         .filter(session => category === 'recent'
@@ -742,14 +746,29 @@ export class AdapterProcessManager {
       const session = conversation.activeSessionId
         ? this.getWritableSession(hosted, conversation.activeSessionId)
         : null
-      return { chatId, session: session ? sessionOption(session, this.isSessionBusy(session.sessionId), 'feishu') : null }
+      return {
+        chatId,
+        session: session
+          ? sessionOption(
+            session,
+            this.isSessionBusy(session.sessionId),
+            this.getSessionOriginChannel(hosted, session.sessionId),
+          )
+          : null,
+      }
     }
 
     if (request.type === 'conversation.select') {
       const session = this.getWritableSession(hosted, normalizeText(payload.sessionId))
       if (!session) throw new Error('The selected Moss Server session is not writable.')
       this.setActiveSession(hosted, chatId, session.sessionId)
-      return { session: sessionOption(session, this.isSessionBusy(session.sessionId)) }
+      return {
+        session: sessionOption(
+          session,
+          this.isSessionBusy(session.sessionId),
+          this.getSessionOriginChannel(hosted, session.sessionId),
+        ),
+      }
     }
 
     if (request.type === 'conversation.new') {
@@ -777,7 +796,14 @@ export class AdapterProcessManager {
       for (const turn of queued) {
         this.updateEvent(turn.hosted, turn.eventId, 'cancelled', '', 'Turn cancelled by user.')
       }
-      return { session: sessionOption(session, Boolean(activeTurn)), cancelled: queued.length }
+      return {
+        session: sessionOption(
+          session,
+          Boolean(activeTurn),
+          this.getSessionOriginChannel(hosted, session.sessionId),
+        ),
+        cancelled: queued.length,
+      }
     }
 
     if (request.type === 'chat.message.received') {
@@ -800,7 +826,16 @@ export class AdapterProcessManager {
       queue.push({ hosted, eventId, turnId, chatId, session, prompt: text })
       this.turnQueues.set(session.sessionId, queue)
       void this.drainTurnQueue(session.sessionId)
-      return { accepted: true, queued, turnId, session: sessionOption(session, true, 'feishu') }
+      return {
+        accepted: true,
+        queued,
+        turnId,
+        session: sessionOption(
+          session,
+          true,
+          this.getSessionOriginChannel(hosted, session.sessionId),
+        ),
+      }
     }
 
     throw new Error(`Unsupported Feishu Adapter request: ${request.type}`)
@@ -881,77 +916,84 @@ export class AdapterProcessManager {
   }
 
   private async sendPrompt(hosted: HostedProcess, chatId: string, sessionId: string, prompt: string): Promise<string> {
-    const ready = await this.runtime.ensureSessionReady(sessionId)
-    const socket = await this.runtime.connectToAttempt(ready.attempt)
-    const key = makeKey(hosted.auth.orgId, hosted.auth.userId, 'feishu')
-    if (this.processes.get(key) !== hosted || this.cancelledSessions.has(sessionId)) {
-      socket.destroy()
-      throw new Error('Feishu runtime stopped before the turn started.')
-    }
-    return await new Promise<string>((resolve, reject) => {
-      let buffer = ''
-      let settled = false
-      const finish = (error?: Error, text = '') => {
-        if (settled) return
-        settled = true
-        this.turns.delete(sessionId)
-        for (const permission of this.pendingPermissions.values()) {
-          if (permission.sessionId !== sessionId) continue
-          clearTimeout(permission.timer)
-          this.pendingPermissions.delete(permission.id)
-        }
+    const releaseTurn = await this.runtime.acquireSessionTurn(sessionId)
+    try {
+      const ready = await this.runtime.ensureSessionReady(sessionId)
+      const socket = await this.runtime.connectToAttempt(ready.attempt)
+      const key = makeKey(hosted.auth.orgId, hosted.auth.userId, 'feishu')
+      if (this.processes.get(key) !== hosted || this.cancelledSessions.has(sessionId)) {
         socket.destroy()
-        if (error) reject(error)
-        else resolve(text)
+        throw new Error('Feishu runtime stopped before the turn started.')
       }
-      this.turns.set(sessionId, { hosted, socket, reject: error => finish(error) })
-      socket.on('data', chunk => {
-        buffer += Buffer.from(chunk).toString('utf8')
-        while (true) {
-          const index = buffer.indexOf('\n')
-          if (index < 0) break
-          const line = buffer.slice(0, index)
-          buffer = buffer.slice(index + 1)
-          if (!line.trim()) continue
-          try {
-            const envelope = JSON.parse(line) as { type?: string; line?: string }
-            if (envelope.type !== 'stdout' || typeof envelope.line !== 'string') continue
-            const message = JSON.parse(envelope.line) as Record<string, unknown>
-            if (message.type === 'control_request') {
-              const request = isRecord(message.request) ? message.request : {}
-              if (request.subtype === 'can_use_tool') {
-                this.requestToolPermission(hosted, socket, sessionId, chatId, message)
-              } else {
-                const response = JSON.stringify({
-                  type: 'control_response',
-                  response: {
-                    subtype: 'error',
-                    request_id: message.request_id,
-                    error: `Unsupported server-hosted control request: ${normalizeText(request.subtype) || 'unknown'}`,
-                  },
-                })
-                socket.write(`${JSON.stringify({ type: 'stdin', data: `${response}\n` })}\n`)
-              }
-              continue
-            }
-            if (message.type === 'result') {
-              if (message.subtype === 'success') finish(undefined, typeof message.result === 'string' ? message.result : '')
-              else finish(new Error(normalizeText(message.result) || normalizeText(message.error) || 'Moss Server turn failed'))
-            }
-          } catch {}
+      return await new Promise<string>((resolve, reject) => {
+        let buffer = ''
+        let settled = false
+        const finish = (error?: Error, text = '') => {
+          if (settled) return
+          settled = true
+          this.turns.delete(sessionId)
+          for (const permission of this.pendingPermissions.values()) {
+            if (permission.sessionId !== sessionId) continue
+            clearTimeout(permission.timer)
+            this.pendingPermissions.delete(permission.id)
+          }
+          socket.destroy()
+          releaseTurn()
+          if (error) reject(error)
+          else resolve(text)
         }
+        this.turns.set(sessionId, { hosted, socket, reject: error => finish(error) })
+        socket.on('data', chunk => {
+          buffer += Buffer.from(chunk).toString('utf8')
+          while (true) {
+            const index = buffer.indexOf('\n')
+            if (index < 0) break
+            const line = buffer.slice(0, index)
+            buffer = buffer.slice(index + 1)
+            if (!line.trim()) continue
+            try {
+              const envelope = JSON.parse(line) as { type?: string; line?: string }
+              if (envelope.type !== 'stdout' || typeof envelope.line !== 'string') continue
+              const message = JSON.parse(envelope.line) as Record<string, unknown>
+              if (message.type === 'control_request') {
+                const request = isRecord(message.request) ? message.request : {}
+                if (request.subtype === 'can_use_tool') {
+                  this.requestToolPermission(hosted, socket, sessionId, chatId, message)
+                } else {
+                  const response = JSON.stringify({
+                    type: 'control_response',
+                    response: {
+                      subtype: 'error',
+                      request_id: message.request_id,
+                      error: `Unsupported server-hosted control request: ${normalizeText(request.subtype) || 'unknown'}`,
+                    },
+                  })
+                  socket.write(`${JSON.stringify({ type: 'stdin', data: `${response}\n` })}\n`)
+                }
+                continue
+              }
+              if (message.type === 'result') {
+                if (message.subtype === 'success') finish(undefined, typeof message.result === 'string' ? message.result : '')
+                else finish(new Error(normalizeText(message.result) || normalizeText(message.error) || 'Moss Server turn failed'))
+              }
+            } catch {}
+          }
+        })
+        socket.once('close', () => finish(new Error('Moss Server session disconnected before completion.')))
+        socket.once('error', error => finish(error))
+        const userMessage = JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: prompt },
+          parent_tool_use_id: null,
+          session_id: '',
+          uuid: randomUUID(),
+        })
+        socket.write(`${JSON.stringify({ type: 'stdin', data: `${userMessage}\n` })}\n`)
       })
-      socket.once('close', () => finish(new Error('Moss Server session disconnected before completion.')))
-      socket.once('error', error => finish(error))
-      const userMessage = JSON.stringify({
-        type: 'user',
-        message: { role: 'user', content: prompt },
-        parent_tool_use_id: null,
-        session_id: '',
-        uuid: randomUUID(),
-      })
-      socket.write(`${JSON.stringify({ type: 'stdin', data: `${userMessage}\n` })}\n`)
-    })
+    } catch (error) {
+      releaseTurn()
+      throw error
+    }
   }
 
   private async createSession(hosted: HostedProcess, title = ''): Promise<SessionRecord> {
@@ -976,7 +1018,7 @@ export class AdapterProcessManager {
     if (!sessionId) return null
     const session = this.runtime.getSession(sessionId)
     if (!session || session.orgId !== hosted.auth.orgId || session.userId !== hosted.auth.userId) return null
-    return session.desiredState === 'active' ? session : null
+    return session.desiredState !== 'terminated' && !session.deletedAt ? session : null
   }
 
   private sendEvent(hosted: HostedProcess, type: string, payload: Record<string, unknown>): boolean {
@@ -1181,11 +1223,23 @@ export class AdapterProcessManager {
     return normalizeText(row?.chat_id)
   }
 
-  private listFeishuSessionIds(hosted: HostedProcess): string[] {
+  listFeishuSessionIds(orgId: string, userId: string): string[] {
     const rows = this.db.prepare(`
       SELECT session_id FROM feishu_adapter_sessions WHERE org_id = ? AND user_id = ?
-    `).all(hosted.auth.orgId, hosted.auth.userId) as Array<Record<string, unknown>>
+    `).all(orgId, userId) as Array<Record<string, unknown>>
     return rows.map(row => normalizeText(row.session_id)).filter(Boolean)
+  }
+
+  private getSessionOriginChannel(
+    hosted: HostedProcess,
+    sessionId: string,
+  ): 'feishu' | undefined {
+    const row = this.db.prepare(`
+      SELECT 1 FROM feishu_adapter_sessions
+      WHERE org_id = ? AND user_id = ? AND session_id = ?
+      LIMIT 1
+    `).get(hosted.auth.orgId, hosted.auth.userId, sessionId)
+    return row ? 'feishu' : undefined
   }
 
   private saveEvent(

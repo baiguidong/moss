@@ -1073,6 +1073,14 @@ export default function App() {
   }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshProjectTemplates, refreshAssistants, refreshConnectors]);
 
   React.useEffect(() => {
+    if (!desktopSettings?.remoteEnabled) return;
+    const timer = window.setInterval(() => {
+      void window.agentDesktop.syncRemoteSessions().catch(() => {});
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [desktopSettings?.remoteEnabled]);
+
+  React.useEffect(() => {
 
     const offEvent = window.agentDesktop.onEvent((payload) => {
       if (payload.sessionId !== activeSessionIdRef.current) return;

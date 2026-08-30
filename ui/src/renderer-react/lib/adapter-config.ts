@@ -50,6 +50,12 @@ export function useAdapterConfig() {
     return config
   }, [])
 
+  const applyRunLocation = React.useCallback(async (runLocation: 'desktop' | 'server') => {
+    const result = await window.agentDesktop.applyAdapterRuntime({ runLocation })
+    setState((prev) => ({ ...prev, config: result.config }))
+    return result
+  }, [])
+
   const generatePairingCode = React.useCallback(async (): Promise<string> => {
     const code = createPairingCode()
     const now = Date.now()
@@ -84,6 +90,7 @@ export function useAdapterConfig() {
     error: state.error,
     fetchConfig,
     updateConfig,
+    applyRunLocation,
     generatePairingCode,
     removePairedUser,
   }

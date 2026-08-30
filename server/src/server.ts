@@ -61,6 +61,8 @@ function serializeSession(session: {
   runtime: SessionRecord['runtime']
   status: string
   desiredState: string
+  title?: string | null
+  summary?: string | null
   assistantName?: string | null
   createdAt: number
   lastActiveAt: number
@@ -77,6 +79,8 @@ function serializeSession(session: {
     runtime: session.runtime,
     status: session.status,
     desiredState: session.desiredState,
+    title: session.title ?? null,
+    summary: session.summary ?? null,
     assistantName: session.assistantName,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
@@ -1148,7 +1152,21 @@ export function startServer(
           userId: hasScope(auth.scopes, 'sessions:list:any') ? undefined : auth.userId,
           activeOnly,
         })
-        writeJson(res, 200, { sessions })
+        const feishuSessionIdsByUser = new Map<string, Set<string>>()
+        const enrichedSessions = sessions.map(session => {
+          let feishuSessionIds = feishuSessionIdsByUser.get(session.userId)
+          if (!feishuSessionIds) {
+            feishuSessionIds = new Set(
+              adapterProcessManager.listFeishuSessionIds(session.orgId, session.userId),
+            )
+            feishuSessionIdsByUser.set(session.userId, feishuSessionIds)
+          }
+          return {
+            ...session,
+            originChannel: feishuSessionIds.has(session.sessionId) ? 'feishu' : 'desktop',
+          }
+        })
+        writeJson(res, 200, { sessions: enrichedSessions })
         return
       }
 
@@ -1342,10 +1360,37 @@ export function startServer(
         wss.handleUpgrade(req, socket, head, ws => {
           void runtime.connectToAttempt(ready.attempt).then((runnerSocket: net.Socket) => {
             let buffer = ''
+            let userMessageQueue: Promise<void> = Promise.resolve()
+            let activeTurn: { release: () => void; complete: () => void } | null = null
             const sendToRunner = (payload: Record<string, unknown>) => {
               if (!runnerSocket.destroyed) {
                 runnerSocket.write(`${jsonStringify(payload)}\n`)
               }
+            }
+            const finishActiveTurn = () => {
+              const turn = activeTurn
+              activeTurn = null
+              turn?.release()
+              turn?.complete()
+            }
+            const queueUserMessage = (text: string) => {
+              userMessageQueue = userMessageQueue.then(async () => {
+                const release = await runtime.acquireSessionTurn(sessionId)
+                try {
+                  if (ws.readyState !== ws.OPEN || runnerSocket.destroyed) return
+                  await new Promise<void>(complete => {
+                    activeTurn = { release, complete }
+                    sendToRunner({
+                      type: 'stdin',
+                      data: text.endsWith('\n') ? text : `${text}\n`,
+                    })
+                  })
+                } finally {
+                  release()
+                }
+              }).catch(error => {
+                logger.error(error instanceof Error ? error.message : String(error))
+              })
             }
 
             ws.on('message', data => {
@@ -1353,22 +1398,29 @@ export function startServer(
                 typeof data === 'string'
                   ? data
                   : Buffer.from(data).toString('utf8')
+              let parsed: Record<string, unknown> | null = null
               try {
-                const parsed = jsonParse(text) as Record<string, unknown>
+                parsed = jsonParse(text) as Record<string, unknown>
                 if (parsed.type === 'control_request' && (parsed.request as Record<string, unknown>)?.subtype === 'interrupt') {
-                  sendToRunner({ type: 'interrupt' })
+                  if (activeTurn) sendToRunner({ type: 'interrupt' })
                   return
                 }
               } catch {}
+              if (parsed?.type === 'user') {
+                queueUserMessage(text)
+                return
+              }
               sendToRunner({
                 type: 'stdin',
                 data: text.endsWith('\n') ? text : `${text}\n`,
               })
             })
             ws.on('close', () => {
+              finishActiveTurn()
               runnerSocket.destroy()
             })
             ws.on('error', () => {
+              finishActiveTurn()
               runnerSocket.destroy()
             })
 
@@ -1393,22 +1445,32 @@ export function startServer(
                 }
 
                 if (parsed.type === 'stdout' && typeof parsed.line === 'string') {
-                  if (ws.readyState === ws.OPEN) {
+                  const ownsTurn = activeTurn !== null
+                  if (ownsTurn && ws.readyState === ws.OPEN) {
                     ws.send(parsed.line)
+                  }
+                  if (ownsTurn) {
+                    try {
+                      const message = jsonParse(parsed.line) as Record<string, unknown>
+                      if (message.type === 'result') finishActiveTurn()
+                    } catch {}
                   }
                 }
                 if (parsed.type === 'exit') {
+                  finishActiveTurn()
                   ws.close()
                 }
               }
             })
 
             runnerSocket.on('close', () => {
+              finishActiveTurn()
               if (ws.readyState === ws.OPEN) {
                 ws.close()
               }
             })
             runnerSocket.on('error', () => {
+              finishActiveTurn()
               if (ws.readyState === ws.OPEN) {
                 ws.close()
               }

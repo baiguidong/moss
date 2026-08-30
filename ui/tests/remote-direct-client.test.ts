@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
+  fetchRemoteDirectSessions,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
   startRemoteFeishuAdapter,
@@ -78,5 +79,35 @@ describe('remote direct client settings', () => {
     expect(JSON.parse(requests[1].init.body)).toEqual({
       config: { appId: 'cli_test', appSecret: 'secret' },
     });
+  });
+
+  it('lists authoritative Moss Server sessions with bearer auth', async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        sessions: [{
+          sessionId: 'server-session-1',
+          title: '飞书会话',
+          originChannel: 'feishu',
+        }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const result = await fetchRemoteDirectSessions({
+      serverUrl: 'https://moss.example.com',
+      authToken: 'access-token',
+    });
+
+    expect(result.sessions).toEqual([{
+      sessionId: 'server-session-1',
+      title: '飞书会话',
+      originChannel: 'feishu',
+    }]);
+    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions');
+    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
   });
 });

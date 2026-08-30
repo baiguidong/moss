@@ -265,6 +265,32 @@ export function stopRemoteFeishuAdapter(settings) {
   return requestRemoteFeishuAdapter(settings, 'stop', { method: 'POST' });
 }
 
+export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
+  let response;
+  try {
+    response = await fetch(`${serverUrl}/api/v1/sessions`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to list remote sessions', response),
+    );
+  }
+
+  const data = await response.json();
+  return {
+    sessions: Array.isArray(data?.sessions) ? data.sessions : [],
+  };
+}
+
 export async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessionId }) {
   let response;
   try {
@@ -438,6 +464,7 @@ export function createRemoteDirectClient({ getSettings }) {
     fetchRemoteFeishuAdapterStatus: (settings) => fetchRemoteFeishuAdapterStatus(currentSettings(settings)),
     startRemoteFeishuAdapter: (config, settings) => startRemoteFeishuAdapter(currentSettings(settings), config),
     stopRemoteFeishuAdapter: (settings) => stopRemoteFeishuAdapter(currentSettings(settings)),
+    fetchRemoteDirectSessions,
     fetchRemoteDirectSessionInfo,
     fetchRemoteDirectSessionContext,
     fetchRemoteDirectWorkspaceDir,

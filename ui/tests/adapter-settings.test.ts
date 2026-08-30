@@ -6,6 +6,7 @@ import {
   hasFeishuAdapterCredentials,
   maskAdapterSettings,
   mergeAdapterSettings,
+  withoutFeishuRunLocation,
 } from '../src/adapter-settings.mjs';
 
 describe('adapter settings', () => {
@@ -59,6 +60,25 @@ describe('adapter settings', () => {
     expect(getFeishuAdapterRunLocation({})).toBe('desktop');
     expect(getFeishuAdapterRunLocation({ feishu: { runLocation: 'desktop' } })).toBe('desktop');
     expect(getFeishuAdapterRunLocation({ feishu: { runLocation: 'server' } })).toBe('server');
+  });
+
+  it('keeps runtime selection out of ordinary config saves', () => {
+    const current = {
+      feishu: {
+        appId: 'cli_old',
+        appSecret: 'secret',
+        runLocation: 'desktop',
+      },
+    };
+    const saved = mergeAdapterSettings(current, withoutFeishuRunLocation({
+      feishu: {
+        appId: 'cli_new',
+        runLocation: 'server',
+      },
+    }));
+
+    expect(saved.feishu.appId).toBe('cli_new');
+    expect(saved.feishu.runLocation).toBe('desktop');
   });
 
   it('applies a one-time Feishu pairing without mutating unrelated settings', () => {

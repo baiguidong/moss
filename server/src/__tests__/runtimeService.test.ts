@@ -7,6 +7,7 @@ import {
   getSessionRuntimeMountDirs,
   resolveSessionWorkspaceDir,
 } from '../runtimePaths.js'
+import { SessionTurnLock } from '../sessionTurnLock.js'
 import type { ServerConfig } from '../types.js'
 
 describe('runtime service workspace layout', () => {
@@ -91,6 +92,27 @@ describe('runtime service workspace layout', () => {
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-2'),
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1'),
     ])
+  })
+})
+
+describe('runtime service session turn lock', () => {
+  test('serializes turns for one session without blocking another session', async () => {
+    const lock = new SessionTurnLock()
+    const releaseFirst = await lock.acquire('session-1')
+    let secondAcquired = false
+    const second = lock.acquire('session-1').then(release => {
+      secondAcquired = true
+      return release
+    })
+
+    const releaseOther = await lock.acquire('session-2')
+    expect(secondAcquired).toBe(false)
+    releaseOther()
+    releaseFirst()
+
+    const releaseSecond = await second
+    expect(secondAcquired).toBe(true)
+    releaseSecond()
   })
 })
 

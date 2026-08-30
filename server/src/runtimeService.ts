@@ -7,6 +7,7 @@ import { join } from 'path'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
 import { getSystemSettings } from './systemSettings.js'
+import { SessionTurnLock } from './sessionTurnLock.js'
 import type {
   AttemptRecord,
   RunnerManifest,
@@ -152,6 +153,7 @@ type RuntimeServiceOptions = {
 export class RuntimeService {
   readonly store: DirectConnectStore
   private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
+  private readonly sessionTurnLock = new SessionTurnLock()
 
   constructor(private readonly options: RuntimeServiceOptions) {
     this.store = options.store ?? openDirectConnectStore(options.config)
@@ -324,6 +326,10 @@ export class RuntimeService {
       socket.once('connect', () => resolve(socket))
       socket.once('error', reject)
     })
+  }
+
+  async acquireSessionTurn(sessionId: string): Promise<() => void> {
+    return this.sessionTurnLock.acquire(sessionId)
   }
 
   private async ensureAttempt(session: SessionRecord): Promise<AttemptRecord> {

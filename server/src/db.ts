@@ -686,6 +686,8 @@ export function toSessionSummary(session: SessionRecord): SessionSummary {
     runtime: session.runtime,
     status: session.status,
     desiredState: session.desiredState,
+    title: session.title,
+    summary: session.summary,
     assistantName: session.assistantName,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,

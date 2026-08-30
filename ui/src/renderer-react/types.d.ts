@@ -776,6 +776,10 @@ declare global {
       clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;
       getAdapterConfig: () => Promise<AdapterFileConfig>;
       updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
+      applyAdapterRuntime: (payload: { runLocation: 'desktop' | 'server' }) => Promise<{
+        config: AdapterFileConfig;
+        status: FeishuAdapterStatus;
+      }>;
       getAdapterStatus: () => Promise<FeishuAdapterStatus>;
       listProjectTemplates: () => Promise<ProjectTemplate[]>;
       listProjects: (payload?: { includeArchived?: boolean }) => Promise<Project[]>;
@@ -815,6 +819,7 @@ declare global {
       }) => Promise<{ task: ProjectTask; session: SessionSummary }>;
       getProjectTask: (payload: { projectId: string; taskId: string }) => Promise<ProjectTask | null>;
       listSessions: () => Promise<SessionSummary[]>;
+      syncRemoteSessions: () => Promise<{ ok: boolean }>;
       createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;

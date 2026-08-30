@@ -166,6 +166,7 @@ import {
   hasFeishuAdapterCredentials,
   maskAdapterSettings,
   mergeAdapterSettings,
+  withoutFeishuRunLocation,
 } from './adapter-settings.mjs';
 import {
   createFeishuAdapterProcessManager,
@@ -185,6 +186,10 @@ import {
   createRemoteDirectClient,
   parseRemoteDirectServerInput,
 } from './remote-direct-client.mjs';
+import {
+  applyRemoteSessionTitle,
+  createRemoteHistoryCheckpoint,
+} from './remote-session-reconcile.mjs';
 import { performRemoteDirectOAuth } from './remote-direct-oauth.mjs';
 import { openRemoteDirectAuthorizationWindow } from './remote-direct-auth-window.mjs';
 import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
@@ -453,6 +458,9 @@ let remoteFeishuStatus = {
   location: 'server',
   enabled: false,
 };
+let remoteSessionSyncPromise = null;
+let lastRemoteSessionSyncErrorMessage = '';
+let feishuRuntimeTransition = Promise.resolve();
 const feishuNotificationRetryTimers = new Map();
 const FEISHU_NOTIFICATION_RETRY_MAX_MS = 5 * 60_000;
 const feishuPairingFailures = new Map();
@@ -831,6 +839,7 @@ try {
 const {
   fetchRemoteDirectSessionContext,
   fetchRemoteDirectSessionInfo,
+  fetchRemoteDirectSessions,
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
   fetchRemoteFeishuAdapterStatus,
@@ -6440,6 +6449,142 @@ function createSessionRecord({
   return sessionRecord;
 }
 
+function remoteSessionTimestamp(value, fallback = Date.now()) {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : fallback;
+}
+
+function findRemoteDirectSessionRecord(serverSessionId) {
+  if (!serverSessionId) return null;
+  return [...sessions.values()].find((record) => (
+    record.agentMode === 'remote-direct'
+    && record.underlyingSessionId === serverSessionId
+  )) || null;
+}
+
+function enqueueFeishuRuntimeTransition(task) {
+  const transition = feishuRuntimeTransition
+    .catch(() => {})
+    .then(task);
+  feishuRuntimeTransition = transition.catch(() => {});
+  return transition;
+}
+
+async function syncRemoteDirectSessionsFromServer() {
+  if (remoteSessionSyncPromise) return remoteSessionSyncPromise;
+  remoteSessionSyncPromise = (async () => {
+    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+    const response = await fetchRemoteDirectSessions({ serverUrl, authToken });
+    const remoteSessions = Array.isArray(response?.sessions) ? response.sessions : [];
+    const synchronized = [];
+
+    for (const remoteSession of remoteSessions) {
+      const serverSessionId = typeof remoteSession?.sessionId === 'string'
+        ? remoteSession.sessionId.trim()
+        : '';
+      if (!serverSessionId) continue;
+
+      const originChannel = remoteSession.originChannel === 'feishu' ? 'feishu' : 'desktop';
+      const createdAt = remoteSessionTimestamp(remoteSession.createdAt);
+      const lastActiveAt = remoteSessionTimestamp(remoteSession.lastActiveAt, createdAt);
+      let sessionRecord = findRemoteDirectSessionRecord(serverSessionId);
+      const isNew = !sessionRecord;
+
+      if (!sessionRecord) {
+        sessionRecord = createSessionRecord({
+          title: typeof remoteSession.title === 'string' && remoteSession.title.trim()
+            ? remoteSession.title.trim()
+            : originChannel === 'feishu' ? '飞书会话' : 'Moss Server 会话',
+          assistantName: typeof remoteSession.assistantName === 'string'
+            ? remoteSession.assistantName
+            : null,
+          agentMode: 'remote-direct',
+          originChannel,
+        });
+        closeWorkspaceWatcher(sessionRecord);
+        sessionRecord.underlyingSessionId = serverSessionId;
+        sessionRecord.createdAt = createdAt;
+        sessionRecord.updatedAt = lastActiveAt;
+      }
+
+      const historyCheckpoint = createRemoteHistoryCheckpoint(sessionRecord, lastActiveAt, {
+        isNew,
+      });
+      sessionRecord.agentMode = 'remote-direct';
+      sessionRecord.originChannel = originChannel;
+      sessionRecord.underlyingSessionId = serverSessionId;
+      sessionRecord.createdAt = Math.min(
+        remoteSessionTimestamp(sessionRecord.createdAt, createdAt),
+        createdAt,
+      );
+      sessionRecord.updatedAt = Math.max(
+        remoteSessionTimestamp(sessionRecord.updatedAt, lastActiveAt),
+        lastActiveAt,
+      );
+      applyRemoteSessionTitle(sessionRecord, remoteSession.title, { isNew });
+      if (typeof remoteSession.summary === 'string' && remoteSession.summary.trim()) {
+        sessionRecord.preview = normalizePreviewText(remoteSession.summary, 120);
+      }
+      if (typeof remoteSession.assistantName === 'string') {
+        sessionRecord.assistantName = remoteSession.assistantName || null;
+      }
+      if (applyRemoteSessionWorkspace(sessionRecord, remoteSession.workDir)) {
+        closeWorkspaceWatcher(sessionRecord);
+      }
+
+      if (historyCheckpoint.needsRefresh) {
+        sessionRecord.historyLoadedFromSource = false;
+        try {
+          const context = await fetchRemoteDirectSessionContext({
+            serverUrl,
+            authToken,
+            sessionId: serverSessionId,
+          });
+          const history = Array.isArray(context?.context?.messages)
+            ? context.context.messages
+            : [];
+          const historyAdopted = syncSessionRecordHistory(sessionRecord, history, {
+            sessionId: serverSessionId,
+            customTitle: typeof context?.context?.customTitle === 'string'
+              ? context.context.customTitle
+              : undefined,
+            mode: typeof context?.context?.mode === 'string'
+              ? context.context.mode
+              : undefined,
+            remoteWorkspace: typeof context?.session?.workDir === 'string'
+              ? context.session.workDir
+              : remoteSession.workDir,
+          });
+          historyCheckpoint.commit();
+          if (historyAdopted) {
+            emitSessionHistory(sessionRecord);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (sessionRecord.remoteHistorySyncError !== message) {
+            sessionRecord.remoteHistorySyncError = message;
+            mossLog('warn', 'remote-session-sync', 'Unable to synchronize remote session history', {
+              sessionId: sessionRecord.id,
+              underlyingSessionId: serverSessionId,
+              error: message,
+            });
+          }
+        }
+      }
+
+      schedulePersistSession(sessionRecord, true);
+      emitSessionMeta(sessionRecord);
+      synchronized.push(sessionRecord);
+    }
+
+    lastRemoteSessionSyncErrorMessage = '';
+    return synchronized;
+  })().finally(() => {
+    remoteSessionSyncPromise = null;
+  });
+  return remoteSessionSyncPromise;
+}
+
 function getSessionRecord(sessionId) {
   const sessionRecord = sessions.get(sessionId) || subAgentSessions.get(sessionId);
   if (!sessionRecord) {
@@ -7627,7 +7772,12 @@ async function pairFeishuUserFromAdapter(payload) {
 }
 
 function toFeishuSessionOption(sessionRecord) {
-  if (!sessionRecord || sessionRecord.isSubAgent || sessionRecord.sessionKind === 'cron') return null;
+  if (
+    !sessionRecord
+    || sessionRecord.agentMode !== 'local'
+    || sessionRecord.isSubAgent
+    || sessionRecord.sessionKind === 'cron'
+  ) return null;
   const summary = getSessionSummary(sessionRecord);
   if (summary.resumeReadOnlyReason) return null;
   return {
@@ -7658,6 +7808,7 @@ function listWritableFeishuSessions(query = '') {
 async function createSessionFromFeishu(title) {
   const sessionRecord = createSessionRecord({
     title: String(title || '').trim().slice(0, 120) || '飞书会话',
+    agentMode: 'local',
     originChannel: 'feishu',
   });
   await prepareAssistantContextForSessionStart(sessionRecord);
@@ -8244,7 +8395,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
     },
   });
-  await syncFeishuAdapterRuntime(desktopSettings.adapters, { pullRemoteState: true }).catch((error) => {
+  await enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(
+    desktopSettings.adapters,
+    { pullRemoteState: true },
+  )).catch((error) => {
     mossLog('error', 'feishu-adapter', 'Failed to synchronize Feishu Adapter', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -8759,11 +8913,53 @@ ipcMain.handle('agent:get-adapter-config', () => (
   maskAdapterSettings(readPersistedAdapterSettings())
 ));
 ipcMain.handle('agent:update-adapter-config', async (_event, payload = {}) => {
-  const previousAdapters = readPersistedAdapterSettings();
-  const merged = mergeAdapterSettings(previousAdapters, payload);
-  saveDesktopSettings({ ...desktopSettings, adapters: merged });
-  await syncFeishuAdapterRuntime(merged, { previousAdapters });
-  return maskAdapterSettings(readPersistedAdapterSettings());
+  return enqueueFeishuRuntimeTransition(async () => {
+    const previousAdapters = readPersistedAdapterSettings();
+    const configPatch = withoutFeishuRunLocation(payload);
+    const merged = mergeAdapterSettings(previousAdapters, configPatch);
+    saveDesktopSettings({ ...desktopSettings, adapters: merged });
+    await syncFeishuAdapterRuntime(merged, { previousAdapters });
+    return maskAdapterSettings(readPersistedAdapterSettings());
+  });
+});
+ipcMain.handle('agent:apply-adapter-runtime', async (_event, payload = {}) => {
+  if (payload.runLocation !== 'desktop' && payload.runLocation !== 'server') {
+    throw new Error('Feishu run location must be desktop or server.');
+  }
+  return enqueueFeishuRuntimeTransition(async () => {
+    const runLocation = payload.runLocation;
+    const previousAdapters = readPersistedAdapterSettings();
+    if (getFeishuRunLocation(previousAdapters) === runLocation) {
+      return {
+        config: maskAdapterSettings(previousAdapters),
+        status: getFeishuAdapterStatus(),
+      };
+    }
+    const merged = mergeAdapterSettings(previousAdapters, {
+      feishu: { runLocation },
+    });
+    saveDesktopSettings({ ...desktopSettings, adapters: merged });
+    try {
+      await syncFeishuAdapterRuntime(merged, { previousAdapters });
+    } catch (error) {
+      const failedAdapters = readPersistedAdapterSettings();
+      saveDesktopSettings({ ...desktopSettings, adapters: previousAdapters });
+      await syncFeishuAdapterRuntime(previousAdapters, {
+        previousAdapters: failedAdapters,
+      }).catch((rollbackError) => {
+        mossLog('error', 'feishu-adapter', 'Unable to restore the previous Feishu runtime', {
+          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      });
+      emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
+      throw error;
+    }
+    const config = maskAdapterSettings(readPersistedAdapterSettings());
+    const status = getFeishuAdapterStatus();
+    emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
+    emitToRenderer('agent:adapter-status', status);
+    return { config, status };
+  });
 });
 ipcMain.handle('agent:get-adapter-status', async () => (
   getFeishuRunLocation() === 'server'
@@ -8890,20 +9086,42 @@ ipcMain.handle('project:get-task', async (_event, { projectId, taskId } = {}) =>
   return getProjectCoordinatorTask(projectId, taskId);
 });
 
-ipcMain.handle('agent:list-sessions', async () => {
-  await Promise.allSettled(Array.from(sessions.values()).map((record) => (
-    syncSubAgentSessionsBestEffort(record)
-  )));
+async function synchronizeRemoteSessionsBestEffort() {
+  if (desktopSettings.remoteEnabled ?? false) {
+    await syncRemoteDirectSessionsFromServer().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== lastRemoteSessionSyncErrorMessage) {
+        lastRemoteSessionSyncErrorMessage = message;
+        mossLog('warn', 'remote-session-sync', 'Unable to synchronize Moss Server sessions', {
+          error: message,
+        });
+      }
+    });
+  }
+}
+
+function listVisibleSessionSummaries() {
   const currentMode = getDesktopAgentMode();
   const localEnabled = desktopSettings.localEnabled ?? true;
   const remoteEnabled = desktopSettings.remoteEnabled ?? false;
-  // 当两种模式都开启时，返回所有会话；否则只返回当前模式的会话
   const showAll = localEnabled && remoteEnabled;
-  const visibleSessions = [...sessions.values(), ...subAgentSessions.values()]
-    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode);
-  return visibleSessions
+  return [...sessions.values(), ...subAgentSessions.values()]
+    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+ipcMain.handle('agent:list-sessions', async () => {
+  await synchronizeRemoteSessionsBestEffort();
+  await Promise.allSettled(Array.from(sessions.values()).map((record) => (
+    syncSubAgentSessionsBestEffort(record)
+  )));
+  return listVisibleSessionSummaries();
+});
+
+ipcMain.handle('agent:sync-remote-sessions', async () => {
+  await synchronizeRemoteSessionsBestEffort();
+  return { ok: true };
 });
 
 ipcMain.handle('agent:create-session', async (_event, payload = {}) => {

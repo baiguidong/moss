@@ -32,6 +32,97 @@ function auth(config: Record<string, unknown>) {
 }
 
 describe('server Feishu adapter manager', () => {
+  test('tracks the Server sessions created by Feishu separately', () => {
+    const db = createDb()
+    const manager = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
+    db.prepare(`
+      INSERT INTO feishu_adapter_sessions (org_id, user_id, session_id, created_at)
+      VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+    `).run(
+      'org-1', 'user-1', 'feishu-session-1', Date.now(),
+      'org-1', 'user-2', 'other-user-session', Date.now(),
+    )
+
+    expect(manager.listFeishuSessionIds('org-1', 'user-1')).toEqual([
+      'feishu-session-1',
+    ])
+  })
+
+  test('keeps idle-ended Feishu sessions writable for transcript resume', () => {
+    const db = createDb()
+    const endedSession = {
+      sessionId: 'ended-session',
+      orgId: 'org-1',
+      userId: 'user-1',
+      desiredState: 'ended',
+      deletedAt: null,
+    }
+    const runtime = {
+      getSession: (sessionId: string) => sessionId === endedSession.sessionId
+        ? endedSession
+        : { ...endedSession, sessionId, desiredState: 'terminated' },
+    }
+    const manager = new AdapterProcessManager(
+      db as unknown as DatabaseSync,
+      runtime as unknown as RuntimeService,
+    )
+    const hosted = {
+      auth: { orgId: 'org-1', userId: 'user-1' },
+    }
+
+    expect((manager as any).getWritableSession(hosted, 'ended-session')).toBe(endedSession)
+    expect((manager as any).getWritableSession(hosted, 'terminated-session')).toBeNull()
+  })
+
+  test('preserves the origin of an existing Server session selected from Feishu', async () => {
+    const db = createDb()
+    const session = {
+      sessionId: 'desktop-session',
+      transcriptSessionId: 'desktop-session',
+      orgId: 'org-1',
+      userId: 'user-1',
+      role: 'user',
+      scopes: ['sessions:create'],
+      cwd: '/tmp/workspace',
+      runtime: { backend: 'host', profileMode: 'user', profileDir: '', transcriptDir: '', workspaceDir: '' },
+      status: 'ended',
+      desiredState: 'ended',
+      currentAttemptId: null,
+      transcriptPath: '',
+      title: 'Desktop session',
+      summary: null,
+      assistantName: null,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      endedAt: Date.now(),
+      deletedAt: null,
+    } satisfies SessionRecord
+    const runtime = {
+      getSession: (sessionId: string) => sessionId === session.sessionId ? session : null,
+    }
+    const manager = new AdapterProcessManager(
+      db as unknown as DatabaseSync,
+      runtime as unknown as RuntimeService,
+    )
+    const hosted = {
+      config: { appId: 'cli_test', allowedUsers: ['ou_user'] },
+      auth: { orgId: 'org-1', userId: 'user-1' },
+    }
+    const now = Date.now()
+    db.prepare(`
+      INSERT INTO feishu_adapter_conversations (
+        org_id, user_id, app_id, chat_id, open_id, active_session_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('org-1', 'user-1', 'cli_test', 'chat-1', 'ou_user', session.sessionId, now, now)
+
+    const current = await (manager as any).handleConversationRequest(hosted, {
+      type: 'conversation.current',
+      payload: { openId: 'ou_user', chatId: 'chat-1' },
+    })
+    expect(current.session.id).toBe(session.sessionId)
+    expect(current.session.originChannel).toBeUndefined()
+  })
+
   test('starts stopped and rejects incomplete client snapshots', async () => {
     const db = createDb()
     const manager = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
@@ -222,6 +313,7 @@ describe('server Feishu adapter manager', () => {
     const runtime = {
       createSession: async () => session,
       getSession: (sessionId: string) => sessionId === session.sessionId ? session : null,
+      acquireSessionTurn: async () => () => {},
       ensureSessionReady: async () => {
         await Bun.sleep(20)
         return { session, attempt: { attemptId: 'attempt-1' } }

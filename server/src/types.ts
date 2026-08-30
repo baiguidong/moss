@@ -210,6 +210,8 @@ export type SessionSummary = {
   runtime: SessionRuntimeInfo
   status: SessionStatus
   desiredState: DesiredSessionState
+  title: string | null
+  summary: string | null
   assistantName: string | null
   createdAt: number
   lastActiveAt: number
