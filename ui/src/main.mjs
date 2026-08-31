@@ -461,6 +461,7 @@ let remoteFeishuStatus = {
 let remoteSessionSyncPromise = null;
 let lastRemoteSessionSyncErrorMessage = '';
 let feishuRuntimeTransition = Promise.resolve();
+let remoteFeishuMemorySyncTimer = null;
 const feishuNotificationRetryTimers = new Map();
 const FEISHU_NOTIFICATION_RETRY_MAX_MS = 5 * 60_000;
 const feishuPairingFailures = new Map();
@@ -845,7 +846,6 @@ const {
   fetchRemoteFeishuAdapterStatus,
   getDesktopAgentMode,
   getRemoteDirectSettings,
-  getRemoteDirectWorkspace,
   isRemoteDirectModeEnabled,
   isRemoteDirectSessionNotFoundError,
   parseRemoteDirectError,
@@ -863,6 +863,13 @@ function saveDesktopSettings(nextSettings) {
   const snapshot = desktopSettingsStore.save(nextSettings);
   desktopSettingsState = snapshot.state;
   desktopSettings = snapshot.value;
+}
+
+function invalidateEmbeddedSettingsCache() {
+  if (!claudeRuntimeModulePromise) return;
+  void claudeRuntimeModulePromise
+    .then((mod) => mod.resetEmbeddedSettingsCache?.())
+    .catch(() => {});
 }
 
 function readJsonFile(filePath, fallbackValue) {
@@ -2865,7 +2872,11 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
-    environment: getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
+    environment: {
+      ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
+      MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
+      MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
+    },
     projectDir: sessionRecord?.id ? getLocalSessionEngineDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
@@ -2971,16 +2982,15 @@ function createRemoteDirectRuntime({
       }
 
       if (!created) {
-        const remoteDirectSettings = getRemoteDirectSettings();
-        const requestedRemoteWorkspace =
-          remoteDirectSettings.workspace || undefined;
+        const { profileMode } = getRemoteDirectSettings();
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
-          cwd: requestedRemoteWorkspace || undefined,
-          profileMode: remoteDirectSettings.profileMode,
+          profileMode,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
+          autoMemory: desktopSettings.autoMemory,
+          sessionMemory: desktopSettings.sessionMemory,
         });
       }
 
@@ -3238,7 +3248,14 @@ function refreshDesktopSettings(payload = {}) {
     });
   }
   saveDesktopSettings(nextSettings);
+  invalidateEmbeddedSettingsCache();
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
+  if (
+    Object.prototype.hasOwnProperty.call(payload, 'autoMemory') ||
+    Object.prototype.hasOwnProperty.call(payload, 'sessionMemory')
+  ) {
+    scheduleRemoteFeishuMemorySync();
+  }
 
   let skippedSessionCount = 0;
   const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
@@ -3246,10 +3263,10 @@ function refreshDesktopSettings(payload = {}) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
         sessionRecord.agentMode = getDesktopAgentMode(nextSettings);
-        sessionRecord.remoteWorkspace = getRemoteDirectWorkspace(nextSettings) || null;
       }
       if (!sessionRecord.runtime) continue;
       if (sessionRecord.busy) {
+        sessionRecord.pendingMcpRuntimeReload = true;
         skippedSessionCount += 1;
         continue;
       }
@@ -3457,7 +3474,7 @@ function hydratePersistedSessions() {
       remoteWorkspace: agentMode === 'remote-direct'
         ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
           ? row.remote_workspace.trim()
-          : getRemoteDirectWorkspace() || null)
+          : null)
         : null,
       agentMode,
       sessionDir: getLocalSessionDir(row.id),
@@ -3521,7 +3538,7 @@ function hydratePersistedSessions() {
       remoteWorkspace: agentMode === 'remote-direct'
         ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
           ? row.remote_workspace.trim()
-          : getRemoteDirectWorkspace() || null)
+          : null)
         : null,
       agentMode,
       sessionDir: getLocalSessionDir(row.id),
@@ -4591,7 +4608,10 @@ async function generateProjectSessionFinalization(project, sessionRecord, memory
       mcpServers: {},
       addDirs: [],
       workspaceDirectories: getSessionWorkspaceDirectories(sessionRecord),
-      environment: {},
+      environment: {
+        MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
+        MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
+      },
       projectDir: finalizerDir,
       taskScope: { kind: 'session', sessionId: finalizerId },
       coordinatorMode: false,
@@ -6327,7 +6347,7 @@ function ensureInsideRoot(rootPath, targetPath) {
 
 function getSessionWorkspaceRoot(sessionRecord) {
   const candidate = sessionRecord.agentMode === 'remote-direct'
-    ? sessionRecord.remoteWorkspace || getRemoteDirectWorkspace()
+    ? sessionRecord.remoteWorkspace
     : sessionRecord.workspace;
   return typeof candidate === 'string' && candidate.trim()
     ? path.resolve(candidate.trim())
@@ -6395,7 +6415,7 @@ function createSessionRecord({
     id,
     title: title || 'New Session',
     workspace: normalizedWorkspace,
-    remoteWorkspace: getRemoteDirectWorkspace() || null,
+    remoteWorkspace: null,
     agentMode,
     sessionDir,
     isCoordinatorMode: Boolean(normalizedProjectId),
@@ -7461,7 +7481,7 @@ async function listDirectoryEntries(sessionRecord, dirPath) {
 
   const root = getSessionWorkspaceRoot(sessionRecord);
   if (sessionRecord.agentMode === 'remote-direct' && !isAccessibleDirectory(root)) {
-    const remoteRoot = sessionRecord.remoteWorkspace || getRemoteDirectWorkspace() || '(remote workspace)';
+    const remoteRoot = sessionRecord.remoteWorkspace || '(remote workspace)';
     return {
       root: remoteRoot,
       path: remoteRoot,
@@ -8037,7 +8057,7 @@ function getFeishuRunLocation(adapters = readPersistedAdapterSettings()) {
   return getFeishuAdapterRunLocation(adapters);
 }
 
-function getRemoteFeishuConfig(adapters, settings = desktopSettings) {
+function getRemoteFeishuConfig(adapters) {
   const feishu = adapters?.feishu && typeof adapters.feishu === 'object'
     ? adapters.feishu
     : {};
@@ -8048,7 +8068,8 @@ function getRemoteFeishuConfig(adapters, settings = desktopSettings) {
   } = feishu;
   return {
     ...runtimeConfig,
-    defaultWorkDir: getRemoteDirectSettings(settings).workspace || '',
+    autoMemory: desktopSettings.autoMemory,
+    sessionMemory: desktopSettings.sessionMemory,
     pairing: adapters?.pairing && typeof adapters.pairing === 'object'
       ? adapters.pairing
       : { code: null, expiresAt: null, createdAt: null },
@@ -8070,8 +8091,8 @@ function normalizeFeishuServerDeployment(value) {
   };
 }
 
-function getFeishuServerConfigFingerprint(adapters, settings) {
-  const config = getRemoteFeishuConfig(adapters, settings);
+function getFeishuServerConfigFingerprint(adapters) {
+  const config = getRemoteFeishuConfig(adapters);
   return createHash('sha256').update(JSON.stringify({
     appId: typeof config.appId === 'string' ? config.appId.trim() : '',
     appSecret: typeof config.appSecret === 'string' ? config.appSecret : '',
@@ -8081,8 +8102,32 @@ function getFeishuServerConfigFingerprint(adapters, settings) {
     pairedUsers: Array.isArray(config.pairedUsers) ? config.pairedUsers : [],
     defaultWorkDir: typeof config.defaultWorkDir === 'string' ? config.defaultWorkDir.trim() : '',
     streamingCard: config.streamingCard === true,
+    autoMemory: config.autoMemory,
+    sessionMemory: config.sessionMemory,
     pairing: config.pairing && typeof config.pairing === 'object' ? config.pairing : {},
   })).digest('hex');
+}
+
+function scheduleRemoteFeishuMemorySync() {
+  if (remoteFeishuMemorySyncTimer) {
+    clearTimeout(remoteFeishuMemorySyncTimer);
+  }
+  if (getFeishuRunLocation() !== 'server') {
+    remoteFeishuMemorySyncTimer = null;
+    return;
+  }
+  remoteFeishuMemorySyncTimer = setTimeout(() => {
+    remoteFeishuMemorySyncTimer = null;
+    const adapters = readPersistedAdapterSettings();
+    if (!hasFeishuAdapterCredentials(adapters)) return;
+    void enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(adapters))
+      .catch((error) => {
+        mossLog('error', 'feishu-adapter', 'Failed to synchronize memory settings', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, 250);
+  remoteFeishuMemorySyncTimer.unref?.();
 }
 
 function getKnownFeishuServerDeployment(adapters = readPersistedAdapterSettings()) {
@@ -8096,7 +8141,6 @@ function getCurrentFeishuServerDeployment() {
     serverUrl: remote.serverUrl,
     credentialMode: remote.credentialMode,
     userEmail: remote.userEmail,
-    workspace: remote.workspace,
   };
 }
 
@@ -8118,8 +8162,6 @@ function getFeishuDeploymentSettings(deployment) {
       userEmail: deployment.userEmail,
       userPassword: credentials.userPassword,
       apiKey: credentials.apiKey,
-      workspace: deployment.workspace,
-      profileMode: 'user',
     },
   };
 }
@@ -8237,7 +8279,7 @@ async function syncFeishuAdapterRuntime(adapters, { pullRemoteState = false, pre
     }
     const targetSettings = getFeishuDeploymentSettings(targetDeployment);
     let deploymentAdapters = adapters;
-    const localFingerprint = getFeishuServerConfigFingerprint(adapters, targetSettings);
+    const localFingerprint = getFeishuServerConfigFingerprint(adapters);
     const shouldPullRemoteState = pullRemoteState
       && isSameFeishuServer(knownDeployment, targetDeployment)
       && (!knownDeployment.configFingerprint || knownDeployment.configFingerprint === localFingerprint);
@@ -8270,7 +8312,7 @@ async function syncFeishuAdapterRuntime(adapters, { pullRemoteState = false, pre
     };
     try {
       const started = await startRemoteFeishuAdapter(
-        getRemoteFeishuConfig(deploymentAdapters, targetSettings),
+        getRemoteFeishuConfig(deploymentAdapters),
         targetSettings,
       );
       remoteFeishuStatus = {
@@ -8280,7 +8322,7 @@ async function syncFeishuAdapterRuntime(adapters, { pullRemoteState = false, pre
       };
       setKnownFeishuServerDeployment({
         ...targetDeployment,
-        configFingerprint: getFeishuServerConfigFingerprint(deploymentAdapters, targetSettings),
+        configFingerprint: getFeishuServerConfigFingerprint(deploymentAdapters),
       });
       mergeRemoteFeishuOperationalState(started.status);
       return remoteFeishuStatus;

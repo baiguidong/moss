@@ -2,6 +2,10 @@ import { readFile } from 'fs/promises'
 import { SessionRunnerDaemon } from './sessionRunnerDaemon.js'
 import type { RunnerManifest } from './types.js'
 import { DirectEmbeddedBackend } from './backends/directEmbeddedBackend.js'
+import {
+  normalizeAutoMemorySettings,
+  normalizeSessionMemorySettings,
+} from '../../packages/direct-connect-protocol/src/index.js'
 import type {
   BackendSpawnOptions,
   BackendSystemSettings,
@@ -102,6 +106,16 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
       : undefined,
     assistantName:
       typeof value.assistantName === 'string' ? value.assistantName : undefined,
+    autoMemory:
+      value.autoMemory === undefined && value.auto_memory === undefined
+        ? undefined
+        : normalizeAutoMemorySettings(value.autoMemory ?? value.auto_memory),
+    sessionMemory:
+      value.sessionMemory === undefined && value.session_memory === undefined
+        ? undefined
+        : normalizeSessionMemorySettings(
+            value.sessionMemory ?? value.session_memory,
+          ),
     runtime: {
       backend: 'host',
       profileMode,

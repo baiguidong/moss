@@ -6,7 +6,12 @@ import { spawn } from 'child_process'
 import { join } from 'path'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
+import {
+  normalizeAutoMemorySettings,
+  normalizeSessionMemorySettings,
+} from '../../packages/direct-connect-protocol/src/index.js'
 import { getSystemSettings } from './systemSettings.js'
+import { validateAutoMemoryProfile } from './memorySettings.js'
 import { SessionTurnLock } from './sessionTurnLock.js'
 import type {
   AttemptRecord,
@@ -212,6 +217,10 @@ export class RuntimeService {
     if (!runtimeSettings.allowedProfileModes.includes(profileMode)) {
       throw new Error(`Profile mode "${profileMode}" is not allowed by server settings`)
     }
+    const normalizedAutoMemory = input.autoMemory
+      ? normalizeAutoMemorySettings(input.autoMemory)
+      : undefined
+    validateAutoMemoryProfile(profileMode, input.autoMemory)
     if (runtimeSettings.backend === 'docker' && !runtimeSettings.dockerImage.trim()) {
       throw new Error('Docker backend is enabled but no docker image is configured')
     }
@@ -223,8 +232,6 @@ export class RuntimeService {
     const workspaceDir = resolveSessionWorkspaceDir(
       this.options.config,
       sessionId,
-      input.userId,
-      profileMode,
       input.cwd,
     )
     const runtime: SessionRuntimeInfo = {
@@ -262,6 +269,10 @@ export class RuntimeService {
       desiredState: 'active',
       title: input.title,
       assistantName: input.assistantName,
+      autoMemory: normalizedAutoMemory,
+      sessionMemory: input.sessionMemory
+        ? normalizeSessionMemorySettings(input.sessionMemory)
+        : undefined,
     })
 
     try {
@@ -401,12 +412,6 @@ export class RuntimeService {
         ? getSessionRuntimeMountDirs(
             this.options.config,
             session.sessionId,
-            session.runtime.profileMode,
-            session.runtime.profileMode === 'user'
-              ? this.store
-                  .listUserSessions(session.orgId, session.userId)
-                  .map(userSession => userSession.sessionId)
-              : [],
           )
         : undefined
     const dangerouslySkipPermissions =
@@ -446,6 +451,12 @@ export class RuntimeService {
         scopes: session.scopes,
         dangerouslySkipPermissions,
         assistantName: options.assistantName,
+        autoMemory: session.autoMemory
+          ? normalizeAutoMemorySettings(session.autoMemory)
+          : undefined,
+        sessionMemory: session.sessionMemory
+          ? normalizeSessionMemorySettings(session.sessionMemory)
+          : undefined,
         mountDirs,
         runtime: {
           ...session.runtime,

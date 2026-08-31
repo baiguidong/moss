@@ -58,6 +58,7 @@ type DirectSessionOptions = {
   projectDir?: string
   workspaceDirectories?: string[]
   sourceJsonlFile?: string
+  environment?: Record<string, string>
 }
 type DirectSession = {
   send(
@@ -615,13 +616,17 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const settings = options.systemSettings ?? getSystemSettings()
     await writeManagedSessionSettings(profileDir, settings)
 
-    Object.assign(
-      process.env,
-      buildSessionEnv(options, {
-        MOSS_SESSION_RUNTIME_TYPE: 'host',
-        MOSS_CONFIG_DIR: profileDir,
-      }),
-    )
+    const processEnvironment = buildSessionEnv(options, {
+      MOSS_SESSION_RUNTIME_TYPE: 'host',
+      MOSS_CONFIG_DIR: profileDir,
+    })
+    // Auto-memory is session-scoped in the embedded backend. Do not copy it
+    // into process.env, where concurrent sessions could overwrite each other.
+    delete processEnvironment.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
+    delete processEnvironment.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
+    delete process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
+    delete process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
+    Object.assign(process.env, processEnvironment)
     applyManagedRuntimeEnv(settings)
 
     const { ClaudeSession, resumeClaudeSession } = await loadDirectRuntime()
@@ -646,6 +651,23 @@ export class DirectEmbeddedBackend implements SessionBackend {
       url: settings.url || undefined,
       apiKey: settings.apiKey || undefined,
       sessionId: options.sessionId,
+      environment: {
+        MOSS_CONFIG_DIR: profileDir,
+        ...(options.autoMemory
+          ? {
+              MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(
+                options.autoMemory,
+              ),
+            }
+          : {}),
+        ...(options.sessionMemory
+          ? {
+              MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(
+                options.sessionMemory,
+              ),
+            }
+          : {}),
+      },
       onPermissionRequest: async (tool, input, request) => {
         if (bypassPermissions) {
           return { behavior: 'allow' }

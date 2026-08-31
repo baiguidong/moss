@@ -57,9 +57,6 @@ export const EXPERIMENTAL = {
   // Agent 记忆快照：保存/恢复 agent 的记忆状态（需要 agents-platform stub）
   AGENT_MEMORY_SNAPSHOT: false,
 
-  // 自动提取记忆：对话结束后自动提炼关键信息写入记忆文件
-  EXTRACT_MEMORIES: false,
-
   // 后台 Session：允许多个 session 并行运行在后台
   BG_SESSIONS: true,
 

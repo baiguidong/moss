@@ -10,6 +10,12 @@ import { MOSS_SERVER_HOME } from './lib/env.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import type { RuntimeService } from './runtimeService.js'
 import type { SessionRecord, SessionSummary } from './types.js'
+import {
+  normalizeAutoMemorySettings,
+  normalizeSessionMemorySettings,
+  type AutoMemorySettings,
+  type SessionMemorySettings,
+} from '../../packages/direct-connect-protocol/src/index.js'
 
 type AdapterName = 'feishu'
 type ProcessKey = `${string}:${string}:${AdapterName}`
@@ -36,6 +42,8 @@ export type FeishuAdapterConfig = {
   defaultWorkDir?: string
   streamingCard?: boolean
   pairing?: PairingState
+  autoMemory: AutoMemorySettings
+  sessionMemory: SessionMemorySettings
 }
 
 export type AdapterProcessState = {
@@ -173,6 +181,8 @@ function normalizeConfig(value: unknown): FeishuAdapterConfig {
     pairedUsers,
     defaultWorkDir: normalizeText(value.defaultWorkDir),
     streamingCard: value.streamingCard === true,
+    autoMemory: normalizeAutoMemorySettings(value.autoMemory),
+    sessionMemory: normalizeSessionMemorySettings(value.sessionMemory),
     pairing: {
       code: typeof rawPairing.code === 'string' && rawPairing.code ? rawPairing.code : null,
       expiresAt: Number.isFinite(rawPairing.expiresAt) ? Number(rawPairing.expiresAt) : null,
@@ -1006,6 +1016,8 @@ export class AdapterProcessManager {
       role: hosted.auth.role,
       scopes: hosted.auth.scopes,
       profileMode: 'user',
+      autoMemory: hosted.config.autoMemory,
+      sessionMemory: hosted.config.sessionMemory,
     })
     this.db.prepare(`
       INSERT OR IGNORE INTO feishu_adapter_sessions (org_id, user_id, session_id, created_at)

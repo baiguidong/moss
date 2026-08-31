@@ -48,6 +48,7 @@ import {
 import { truncateEntrypointContent } from '../memdir/memdir.js'
 import { getAutoMemEntrypoint, isAutoMemoryEnabled } from '../memdir/paths.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { isAutoMemorySelectiveRecallEnabled } from '../services/autoMemorySettings.js'
 import {
   getCurrentProjectConfig,
   getManagedMossRulesDir,
@@ -1098,7 +1099,7 @@ export function getLargeMemoryFiles(files: MemoryFileInfo[]): MemoryFileInfo[] {
 }
 
 /**
- * When tengu_moth_copse is on, the findRelevantMemories prefetch surfaces
+ * When selective auto-memory recall is on, relevant-memory prefetch surfaces
  * memory files via attachments, so the MEMORY.md index is no longer injected
  * into the system prompt. Callsites that care about "what's actually in
  * context" (context builder, /context viz) should filter through this.
@@ -1106,10 +1107,7 @@ export function getLargeMemoryFiles(files: MemoryFileInfo[]): MemoryFileInfo[] {
 export function filterInjectedMemoryFiles(
   files: MemoryFileInfo[],
 ): MemoryFileInfo[] {
-  const skipMemoryIndex = getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_moth_copse',
-    false,
-  )
+  const skipMemoryIndex = isAutoMemorySelectiveRecallEnabled()
   if (!skipMemoryIndex) return files
   return files.filter(f => f.type !== 'AutoMem')
 }

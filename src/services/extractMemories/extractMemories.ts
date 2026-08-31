@@ -13,8 +13,9 @@
  * initExtractMemories() in beforeEach to get a fresh closure.
  */
 
-import { basename } from 'path'
-import { getIsRemoteMode } from '../../bootstrap/state.js'
+import { mkdir, readFile, rename, writeFile } from 'fs/promises'
+import { basename, join } from 'path'
+import { getIsRemoteMode, getSessionId } from '../../bootstrap/state.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { ENTRYPOINT_NAME } from '../../memdir/memdir.js'
 import {
@@ -52,9 +53,13 @@ import {
   createMemorySavedMessage,
   createUserMessage,
 } from '../../utils/messages.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
 import { logEvent } from '../analytics/index.js'
 import { sanitizeToolNameForAnalytics } from '../analytics/metadata.js'
+import {
+  getAutoMemorySettings,
+  isAutoMemoryExtractionEnabled,
+  isAutoMemorySelectiveRecallEnabled,
+} from '../autoMemorySettings.js'
 import { buildExtractAutoOnlyPrompt } from './prompts.js'
 
 // ============================================================================
@@ -266,6 +271,85 @@ type AppendSystemMessageFn = (
   msg: Exclude<SystemMessage, SystemLocalCommandMessage>,
 ) => void
 
+type PendingExtractionContext = {
+  context: REPLHookContext
+  appendSystemMessage?: AppendSystemMessageFn
+}
+
+type SessionExtractionState = {
+  lastMemoryMessageUuid?: string
+  inProgress: boolean
+  turnsSinceLastExtraction: number
+  pendingContext?: PendingExtractionContext
+  loaded: boolean
+  loadPromise?: Promise<void>
+  discardWhenIdle?: boolean
+}
+
+export type PersistedExtractionState = Pick<
+  SessionExtractionState,
+  'lastMemoryMessageUuid' | 'turnsSinceLastExtraction'
+>
+
+const EXTRACTION_STATE_DIR = '.extraction-state'
+
+function extractionStatePath(sessionId: string): string {
+  return join(
+    getAutoMemPath(),
+    EXTRACTION_STATE_DIR,
+    `${encodeURIComponent(sessionId)}.json`,
+  )
+}
+
+export async function readPersistedExtractionState(
+  sessionId: string,
+): Promise<PersistedExtractionState> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(extractionStatePath(sessionId), 'utf8'),
+    ) as Partial<PersistedExtractionState>
+    const turnsSinceLastExtraction =
+      typeof parsed.turnsSinceLastExtraction === 'number' &&
+      Number.isInteger(parsed.turnsSinceLastExtraction) &&
+      parsed.turnsSinceLastExtraction >= 0
+        ? parsed.turnsSinceLastExtraction
+        : 0
+    return {
+      ...(typeof parsed.lastMemoryMessageUuid === 'string'
+        ? { lastMemoryMessageUuid: parsed.lastMemoryMessageUuid }
+        : {}),
+      turnsSinceLastExtraction,
+    }
+  } catch {
+    return { turnsSinceLastExtraction: 0 }
+  }
+}
+
+export async function persistExtractionState(
+  sessionId: string,
+  state: PersistedExtractionState,
+): Promise<void> {
+  try {
+    const path = extractionStatePath(sessionId)
+    await mkdir(join(getAutoMemPath(), EXTRACTION_STATE_DIR), {
+      recursive: true,
+      mode: 0o700,
+    })
+    const temporaryPath = `${path}.${process.pid}.tmp`
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify({
+        lastMemoryMessageUuid: state.lastMemoryMessageUuid,
+        turnsSinceLastExtraction: state.turnsSinceLastExtraction,
+      })}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
+    await rename(temporaryPath, path)
+  } catch (error) {
+    logForDebugging(`[extractMemories] failed to persist cursor: ${error}`)
+  }
+}
+
 /** The active extractor function, set by initExtractMemories(). */
 let extractor:
   | ((
@@ -276,6 +360,7 @@ let extractor:
 
 /** The active drain function, set by initExtractMemories(). No-op until init. */
 let drainer: (timeoutMs?: number) => Promise<void> = async () => {}
+let discardSessionState: (sessionId: string) => void = () => {}
 
 /**
  * Initialize the memory extraction system.
@@ -289,27 +374,45 @@ export function initExtractMemories(): void {
   /** Every promise handed out by the extractor that hasn't settled yet.
    *  Coalesced calls that stash-and-return add fast-resolving promises
    *  (harmless); the call that starts real work adds a promise covering the
-   *  full trailing-run chain via runExtraction's recursive finally. */
+   *  full trailing-run chain. */
   const inFlightExtractions = new Set<Promise<void>>()
+  const sessionStates = new Map<string, SessionExtractionState>()
 
-  /** UUID of the last message processed — cursor so each run only
-   *  considers messages added since the previous extraction. */
-  let lastMemoryMessageUuid: string | undefined
-
-  /** True while runExtraction is executing — prevents overlapping runs. */
-  let inProgress = false
-
-  /** Counts eligible turns since the last extraction run. Resets to 0 after each run. */
-  let turnsSinceLastExtraction = 0
-
-  /** When a call arrives during an in-progress run, we stash the context here
-   *  and run one trailing extraction after the current one finishes. */
-  let pendingContext:
-    | {
-        context: REPLHookContext
-        appendSystemMessage?: AppendSystemMessageFn
+  async function getSessionState(): Promise<SessionExtractionState> {
+    const sessionId = getSessionId()
+    let state = sessionStates.get(sessionId)
+    if (!state) {
+      state = {
+        inProgress: false,
+        turnsSinceLastExtraction: 0,
+        loaded: false,
       }
-    | undefined
+      sessionStates.set(sessionId, state)
+    }
+    if (!state.loaded) {
+      state.loadPromise ??= readPersistedExtractionState(sessionId)
+        .then(persisted => {
+          state!.lastMemoryMessageUuid = persisted.lastMemoryMessageUuid
+          state!.turnsSinceLastExtraction =
+            persisted.turnsSinceLastExtraction
+        })
+        .finally(() => {
+          state!.loaded = true
+          delete state!.loadPromise
+        })
+      await state.loadPromise
+    }
+    return state
+  }
+  discardSessionState = sessionId => {
+    const state = sessionStates.get(sessionId)
+    if (!state) return
+    if (state.inProgress || state.loadPromise) {
+      state.discardWhenIdle = true
+      return
+    }
+    sessionStates.delete(sessionId)
+  }
 
   // --- Inner extraction logic ---
 
@@ -317,58 +420,59 @@ export function initExtractMemories(): void {
     context,
     appendSystemMessage,
     isTrailingRun,
+    state,
   }: {
     context: REPLHookContext
     appendSystemMessage?: AppendSystemMessageFn
     isTrailingRun?: boolean
+    state: SessionExtractionState
   }): Promise<void> {
     const { messages } = context
+    const sessionId = getSessionId()
     const memoryDir = getAutoMemPath()
     const newMessageCount = countModelVisibleMessagesSince(
       messages,
-      lastMemoryMessageUuid,
+      state.lastMemoryMessageUuid,
     )
 
     // Mutual exclusion: when the main agent wrote memories, skip the
     // forked agent and advance the cursor past this range so the next
     // extraction only considers messages after the main agent's write.
-    if (hasMemoryWritesSince(messages, lastMemoryMessageUuid)) {
+    if (hasMemoryWritesSince(messages, state.lastMemoryMessageUuid)) {
       logForDebugging(
         '[extractMemories] skipping — conversation already wrote to memory files',
       )
       const lastMessage = messages.at(-1)
       if (lastMessage?.uuid) {
-        lastMemoryMessageUuid = lastMessage.uuid
+        state.lastMemoryMessageUuid = lastMessage.uuid
       }
+      await persistExtractionState(sessionId, state)
       logEvent('tengu_extract_memories_skipped_direct_write', {
         message_count: newMessageCount,
       })
       return
     }
 
-    const skipIndex = getFeatureValue_CACHED_MAY_BE_STALE(
-      'tengu_moth_copse',
-      false,
-    )
+    const skipIndex = isAutoMemorySelectiveRecallEnabled()
 
     const canUseTool = createAutoMemCanUseTool(memoryDir)
     const cacheSafeParams = createCacheSafeParams(context)
 
-    // Only run extraction every N eligible turns (tengu_bramble_lintel, default 1).
+    // Only run extraction every configured number of eligible turns.
     // Trailing extractions (from stashed contexts) skip this check since they
     // process already-committed work that should not be throttled.
     if (!isTrailingRun) {
-      turnsSinceLastExtraction++
+      state.turnsSinceLastExtraction++
       if (
-        turnsSinceLastExtraction <
-        (getFeatureValue_CACHED_MAY_BE_STALE('tengu_bramble_lintel', null) ?? 1)
+        state.turnsSinceLastExtraction <
+        getAutoMemorySettings().extractionIntervalTurns
       ) {
+        await persistExtractionState(sessionId, state)
         return
       }
     }
-    turnsSinceLastExtraction = 0
+    state.turnsSinceLastExtraction = 0
 
-    inProgress = true
     const startTime = Date.now()
     try {
       logForDebugging(
@@ -407,8 +511,9 @@ export function initExtractMemories(): void {
       // reconsidered on the next extraction.
       const lastMessage = messages.at(-1)
       if (lastMessage?.uuid) {
-        lastMemoryMessageUuid = lastMessage.uuid
+        state.lastMemoryMessageUuid = lastMessage.uuid
       }
+      await persistExtractionState(sessionId, state)
 
       const writtenPaths = extractWrittenPaths(result.messages)
       const turnCount = count(result.messages, m => m.type === 'assistant')
@@ -467,25 +572,6 @@ export function initExtractMemories(): void {
       logEvent('tengu_extract_memories_error', {
         duration_ms: Date.now() - startTime,
       })
-    } finally {
-      inProgress = false
-
-      // If a call arrived while we were running, run a trailing extraction
-      // with the latest stashed context. The trailing run will compute its
-      // newMessageCount relative to the cursor we just advanced — so it only
-      // picks up messages added between the two calls, not the full history.
-      const trailing = pendingContext
-      pendingContext = undefined
-      if (trailing) {
-        logForDebugging(
-          '[extractMemories] running trailing extraction for stashed context',
-        )
-        await runExtraction({
-          context: trailing.context,
-          appendSystemMessage: trailing.appendSystemMessage,
-          isTrailingRun: true,
-        })
-      }
     }
   }
 
@@ -500,7 +586,7 @@ export function initExtractMemories(): void {
       return
     }
 
-    if (!getFeatureValue_CACHED_MAY_BE_STALE('tengu_passport_quail', false)) {
+    if (!isAutoMemoryExtractionEnabled()) {
       return
     }
 
@@ -517,16 +603,46 @@ export function initExtractMemories(): void {
     // If an extraction is already in progress, stash this context for a
     // trailing run (overwrites any previously stashed context — only the
     // latest matters since it has the most messages).
-    if (inProgress) {
+    const state = await getSessionState()
+    if (state.inProgress) {
       logForDebugging(
         '[extractMemories] extraction in progress — stashing for trailing run',
       )
       logEvent('tengu_extract_memories_coalesced', {})
-      pendingContext = { context, appendSystemMessage }
+      state.pendingContext = { context, appendSystemMessage }
       return
     }
 
-    await runExtraction({ context, appendSystemMessage })
+    state.inProgress = true
+    try {
+      await runExtraction({ context, appendSystemMessage, state })
+
+      // Calls arriving during any phase keep only the newest context. Each
+      // trailing pass advances the persisted cursor before another can run.
+      let trailing = state.pendingContext
+      state.pendingContext = undefined
+      while (trailing) {
+        logForDebugging(
+          '[extractMemories] running trailing extraction for stashed context',
+        )
+        await runExtraction({
+          context: trailing.context,
+          appendSystemMessage: trailing.appendSystemMessage,
+          isTrailingRun: true,
+          state,
+        })
+        trailing = state.pendingContext
+        state.pendingContext = undefined
+      }
+    } finally {
+      state.inProgress = false
+      if (
+        state.discardWhenIdle &&
+        sessionStates.get(getSessionId()) === state
+      ) {
+        sessionStates.delete(getSessionId())
+      }
+    }
   }
 
   extractor = async (context, appendSystemMessage) => {
@@ -575,4 +691,8 @@ export async function drainPendingExtraction(
   timeoutMs?: number,
 ): Promise<void> {
   await drainer(timeoutMs)
+}
+
+export function discardExtractMemoriesSessionState(sessionId: string): void {
+  discardSessionState(sessionId)
 }

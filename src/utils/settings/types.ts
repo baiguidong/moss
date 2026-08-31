@@ -646,6 +646,19 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory.',
         ),
+      autoMemory: z
+        .object({
+          enabled: z.boolean().optional(),
+          extractionEnabled: z.boolean().optional(),
+          extractionIntervalTurns: z.number().int().min(1).max(10_000).optional(),
+          selectiveRecallEnabled: z.boolean().optional(),
+          pastContextSearchEnabled: z.boolean().optional(),
+          dreamEnabled: z.boolean().optional(),
+          dreamMinHours: z.number().min(0.1).max(24 * 365).optional(),
+          dreamMinSessions: z.number().int().min(1).max(100_000).optional(),
+        })
+        .optional()
+        .describe('Moss automatic memory extraction and consolidation settings.'),
       autoMemoryDirectory: z
         .string()
         .optional()
@@ -696,6 +709,9 @@ export const SettingsSchema = lazySchema(() =>
             .describe(
               'Minimum tool calls between session memory updates.',
             ),
+          compactMinTokens: z.number().int().positive().optional(),
+          compactMinTextBlockMessages: z.number().int().positive().optional(),
+          compactMaxTokens: z.number().int().positive().optional(),
         })
         .optional()
         .describe('Per-session memory behavior and extraction thresholds.'),

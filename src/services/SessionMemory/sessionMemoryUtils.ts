@@ -4,6 +4,7 @@
  */
 
 import { isFsInaccessible } from '../../utils/errors.js'
+import { DEFAULT_SESSION_MEMORY_SETTINGS } from '../../../packages/direct-connect-protocol/src/index.js'
 import { getFsImplementation } from '../../utils/fsOperations.js'
 import { getSessionMemoryPath } from '../../utils/permissions/filesystem.js'
 import { sleep } from '../../utils/sleep.js'
@@ -31,14 +32,11 @@ export type SessionMemoryConfig = {
 
 // Default configuration values
 export const DEFAULT_SESSION_MEMORY_CONFIG: SessionMemoryConfig = {
-  minimumMessageTokensToInit: 10000,
-  minimumTokensBetweenUpdate: 5000,
-  toolCallsBetweenUpdates: 3,
-}
-
-// Current session memory configuration
-let sessionMemoryConfig: SessionMemoryConfig = {
-  ...DEFAULT_SESSION_MEMORY_CONFIG,
+  minimumMessageTokensToInit:
+    DEFAULT_SESSION_MEMORY_SETTINGS.minimumMessageTokensToInit,
+  minimumTokensBetweenUpdate:
+    DEFAULT_SESSION_MEMORY_SETTINGS.minimumTokensBetweenUpdate,
+  toolCallsBetweenUpdates: DEFAULT_SESSION_MEMORY_SETTINGS.toolCallsBetweenUpdates,
 }
 
 type SessionMemoryRuntimeState = {
@@ -46,6 +44,7 @@ type SessionMemoryRuntimeState = {
   extractionStartedAt?: number
   tokensAtLastExtraction: number
   initialized: boolean
+  config: SessionMemoryConfig
 }
 
 const sessionMemoryStates = new Map<string, SessionMemoryRuntimeState>()
@@ -57,6 +56,7 @@ function getState(): SessionMemoryRuntimeState {
     state = {
       tokensAtLastExtraction: 0,
       initialized: false,
+      config: { ...DEFAULT_SESSION_MEMORY_CONFIG },
     }
     sessionMemoryStates.set(sessionId, state)
   }
@@ -142,8 +142,9 @@ export async function getSessionMemoryContent(): Promise<string | null> {
 export function setSessionMemoryConfig(
   config: Partial<SessionMemoryConfig>,
 ): void {
-  sessionMemoryConfig = {
-    ...sessionMemoryConfig,
+  const state = getState()
+  state.config = {
+    ...state.config,
     ...config,
   }
 }
@@ -152,7 +153,7 @@ export function setSessionMemoryConfig(
  * Get the current session memory configuration
  */
 export function getSessionMemoryConfig(): SessionMemoryConfig {
-  return { ...sessionMemoryConfig }
+  return { ...getState().config }
 }
 
 /**
@@ -184,7 +185,7 @@ export function markSessionMemoryInitialized(): void {
 export function hasMetInitializationThreshold(
   currentTokenCount: number,
 ): boolean {
-  return currentTokenCount >= sessionMemoryConfig.minimumMessageTokensToInit
+  return currentTokenCount >= getState().config.minimumMessageTokensToInit
 }
 
 /**
@@ -196,7 +197,7 @@ export function hasMetUpdateThreshold(currentTokenCount: number): boolean {
   const tokensSinceLastExtraction =
     currentTokenCount - getState().tokensAtLastExtraction
   return (
-    tokensSinceLastExtraction >= sessionMemoryConfig.minimumTokensBetweenUpdate
+    tokensSinceLastExtraction >= getState().config.minimumTokensBetweenUpdate
   )
 }
 
@@ -204,14 +205,13 @@ export function hasMetUpdateThreshold(currentTokenCount: number): boolean {
  * Get the configured number of tool calls between updates
  */
 export function getToolCallsBetweenUpdates(): number {
-  return sessionMemoryConfig.toolCallsBetweenUpdates
+  return getState().config.toolCallsBetweenUpdates
 }
 
 /**
  * Reset session memory state (useful for testing)
  */
 export function resetSessionMemoryState(): void {
-  sessionMemoryConfig = { ...DEFAULT_SESSION_MEMORY_CONFIG }
   sessionMemoryStates.clear()
 }
 

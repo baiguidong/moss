@@ -395,6 +395,19 @@ export type DesktopSettings = {
     minimumMessageTokensToInit?: number;
     minimumTokensBetweenUpdate?: number;
     toolCallsBetweenUpdates?: number;
+    compactMinTokens?: number;
+    compactMinTextBlockMessages?: number;
+    compactMaxTokens?: number;
+  };
+  autoMemory?: {
+    enabled?: boolean;
+    extractionEnabled?: boolean;
+    extractionIntervalTurns?: number;
+    selectiveRecallEnabled?: boolean;
+    pastContextSearchEnabled?: boolean;
+    dreamEnabled?: boolean;
+    dreamMinHours?: number;
+    dreamMinSessions?: number;
   };
   managedRuntimes?: {
     node?: boolean;

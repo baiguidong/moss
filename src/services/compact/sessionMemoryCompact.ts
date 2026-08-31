@@ -16,10 +16,8 @@ import { processSessionStartHooks } from '../../utils/sessionStart.js'
 import { getTranscriptPath } from '../../utils/sessionStorage.js'
 import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
 import { extractDiscoveredToolNames } from '../../utils/toolSearch.js'
-import {
-  getDynamicConfig_BLOCKS_ON_INIT,
-} from '../analytics/featureFlags.js'
 import { logEvent } from '../analytics/index.js'
+import { getSessionMemorySettings } from '../sessionMemorySettings.js'
 import {
   isSessionMemoryEmpty,
   truncateSessionMemoryForCompact,
@@ -54,80 +52,16 @@ export type SessionMemoryCompactConfig = {
   maxTokens: number
 }
 
-// Default configuration values (exported for use in tests)
-export const DEFAULT_SM_COMPACT_CONFIG: SessionMemoryCompactConfig = {
-  minTokens: 10_000,
-  minTextBlockMessages: 5,
-  maxTokens: 40_000,
-}
-
-// Current configuration (starts with defaults)
-let smCompactConfig: SessionMemoryCompactConfig = {
-  ...DEFAULT_SM_COMPACT_CONFIG,
-}
-
-// Track whether config has been initialized from remote
-let configInitialized = false
-
-/**
- * Set the session memory compact configuration
- */
-export function setSessionMemoryCompactConfig(
-  config: Partial<SessionMemoryCompactConfig>,
-): void {
-  smCompactConfig = {
-    ...smCompactConfig,
-    ...config,
-  }
-}
-
 /**
  * Get the current session memory compact configuration
  */
 export function getSessionMemoryCompactConfig(): SessionMemoryCompactConfig {
-  return { ...smCompactConfig }
-}
-
-/**
- * Reset config state (useful for testing)
- */
-export function resetSessionMemoryCompactConfig(): void {
-  smCompactConfig = { ...DEFAULT_SM_COMPACT_CONFIG }
-  configInitialized = false
-}
-
-/**
- * Initialize configuration from remote config (feature flag).
- * Only fetches once per session - subsequent calls return immediately.
- */
-async function initSessionMemoryCompactConfig(): Promise<void> {
-  if (configInitialized) {
-    return
+  const settings = getSessionMemorySettings()
+  return {
+    minTokens: settings.compactMinTokens,
+    minTextBlockMessages: settings.compactMinTextBlockMessages,
+    maxTokens: settings.compactMaxTokens,
   }
-  configInitialized = true
-
-  // Load config from feature flag, merging with defaults
-  const remoteConfig = await getDynamicConfig_BLOCKS_ON_INIT<
-    Partial<SessionMemoryCompactConfig>
-  >('tengu_sm_compact_config', {})
-
-  // Only use remote values if they are explicitly set (positive numbers)
-  // This ensures sensible defaults aren't overridden by zero values
-  const config: SessionMemoryCompactConfig = {
-    minTokens:
-      remoteConfig.minTokens && remoteConfig.minTokens > 0
-        ? remoteConfig.minTokens
-        : DEFAULT_SM_COMPACT_CONFIG.minTokens,
-    minTextBlockMessages:
-      remoteConfig.minTextBlockMessages && remoteConfig.minTextBlockMessages > 0
-        ? remoteConfig.minTextBlockMessages
-        : DEFAULT_SM_COMPACT_CONFIG.minTextBlockMessages,
-    maxTokens:
-      remoteConfig.maxTokens && remoteConfig.maxTokens > 0
-        ? remoteConfig.maxTokens
-        : DEFAULT_SM_COMPACT_CONFIG.maxTokens,
-  }
-  setSessionMemoryCompactConfig(config)
 }
 
 /**
@@ -505,9 +439,6 @@ export async function trySessionMemoryCompaction(
   if (!shouldUseSessionMemoryCompaction()) {
     return null
   }
-
-  // Initialize config from remote (only fetches once)
-  await initSessionMemoryCompactConfig()
 
   // Wait for any in-progress session memory extraction to complete (with timeout)
   await waitForSessionMemoryExtraction()

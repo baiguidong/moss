@@ -48,9 +48,25 @@ export function buildSessionEnv(
     ...(options.assistantName
       ? { MOSS_ASSISTANT_NAME: options.assistantName }
       : {}),
+    ...(options.autoMemory
+      ? { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(options.autoMemory) }
+      : {}),
+    ...(options.sessionMemory
+      ? {
+          MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(
+            options.sessionMemory,
+          ),
+        }
+      : {}),
     ...Object.fromEntries(
       Object.entries(overrides).filter(([, value]) => value !== undefined),
     ),
+  }
+  if (!options.autoMemory) {
+    delete env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
+  }
+  if (!options.sessionMemory) {
+    delete env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
   }
   delete env.MOSS_SERVER_URL
   delete env.MOSS_SERVER_AUTH_TOKEN

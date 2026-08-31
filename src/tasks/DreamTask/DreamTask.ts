@@ -3,7 +3,10 @@
 // Shift+Down dialog. The dream agent itself is unchanged — this is pure UI
 // surfacing via the existing task registry.
 
-import { rollbackConsolidationLock } from '../../services/autoDream/consolidationLock.js'
+import {
+  rollbackConsolidationLock,
+  type ConsolidationLock,
+} from '../../services/autoDream/consolidationLock.js'
 import type { SetAppState, Task, TaskStateBase } from '../../Task.js'
 import { createTaskStateBase, generateTaskId } from '../../Task.js'
 import { registerTask, updateTaskState } from '../../utils/task/framework.js'
@@ -36,8 +39,8 @@ export type DreamTaskState = TaskStateBase & {
   /** Assistant text responses, tool uses collapsed. Prompt is NOT included. */
   turns: DreamTurn[]
   abortController?: AbortController
-  /** Stashed so kill can rewind the lock mtime (same path as fork-failure). */
-  priorMtime: number
+  /** Stashed so kill can rewind and release the cross-process lock. */
+  consolidationLock?: ConsolidationLock
 }
 
 export function isDreamTask(task: unknown): task is DreamTaskState {
@@ -53,7 +56,7 @@ export function registerDreamTask(
   setAppState: SetAppState,
   opts: {
     sessionsReviewing: number
-    priorMtime: number
+    consolidationLock?: ConsolidationLock
     abortController: AbortController
   },
 ): string {
@@ -67,7 +70,7 @@ export function registerDreamTask(
     filesTouched: [],
     turns: [],
     abortController: opts.abortController,
-    priorMtime: opts.priorMtime,
+    consolidationLock: opts.consolidationLock,
   }
   registerTask(task, setAppState)
   return id
@@ -134,11 +137,11 @@ export const DreamTask: Task = {
   type: 'dream',
 
   async kill(taskId, setAppState) {
-    let priorMtime: number | undefined
+    let consolidationLock: ConsolidationLock | undefined
     updateTaskState<DreamTaskState>(taskId, setAppState, task => {
       if (task.status !== 'running') return task
       task.abortController?.abort()
-      priorMtime = task.priorMtime
+      consolidationLock = task.consolidationLock
       return {
         ...task,
         status: 'killed',
@@ -147,11 +150,10 @@ export const DreamTask: Task = {
         abortController: undefined,
       }
     })
-    // Rewind the lock mtime so the next session can retry. Same path as the
-    // fork-failure catch in autoDream.ts. If updateTaskState was a no-op
-    // (already terminal), priorMtime stays undefined and we skip.
-    if (priorMtime !== undefined) {
-      await rollbackConsolidationLock(priorMtime)
+    // Rewind and release so another session can retry. Forced test runs have
+    // no lock, and already-terminal tasks leave consolidationLock undefined.
+    if (consolidationLock) {
+      await rollbackConsolidationLock(consolidationLock)
     }
   },
 }

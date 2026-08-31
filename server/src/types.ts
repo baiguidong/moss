@@ -1,5 +1,7 @@
 import { z } from 'zod/v4'
 import type {
+  AutoMemorySettings,
+  SessionMemorySettings,
   SessionProfileMode,
   SessionRuntimeBackend,
   SessionRuntimeInfo,
@@ -145,6 +147,8 @@ export type SessionRecord = {
   title: string | null
   summary: string | null
   assistantName: string | null
+  autoMemory?: AutoMemorySettings
+  sessionMemory?: SessionMemorySettings
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -228,6 +232,8 @@ export type SessionCreateInput = {
   scopes: string[]
   profileMode?: SessionProfileMode
   assistantName?: string
+  autoMemory?: AutoMemorySettings
+  sessionMemory?: SessionMemorySettings
 }
 
 export type RunnerManifest = {
@@ -246,6 +252,8 @@ export type RunnerManifest = {
     mountDirs?: string[]
     runtime: SessionRuntimeInfo
     assistantName?: string
+    autoMemory?: AutoMemorySettings
+    sessionMemory?: SessionMemorySettings
   }
   attempt: {
     attemptId: string

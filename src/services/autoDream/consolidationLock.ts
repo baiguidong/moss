@@ -1,12 +1,26 @@
-// Lock file whose mtime IS lastConsolidatedAt. Body is the holder's PID.
+// Checkpoint mtime is lastConsolidatedAt. A separate O_EXCL-created file
+// represents the currently running consolidation.
 //
 // Lives inside the memory dir (getAutoMemPath) so it keys on git-root
 // like memory does, and so it's writable even when the memory path comes
 // from an env/settings override whose parent may not be.
 
-import { mkdir, readFile, stat, unlink, utimes, writeFile } from 'fs/promises'
+import { randomUUID } from 'crypto'
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from 'fs/promises'
 import { join } from 'path'
-import { getOriginalCwd } from '../../bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getSessionProjectDir,
+} from '../../bootstrap/state.js'
 import { getAutoMemPath } from '../../memdir/paths.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isProcessRunning } from '../../utils/genericProcessUtils.js'
@@ -14,12 +28,48 @@ import { listCandidates } from '../../utils/listSessionsImpl.js'
 import { getProjectDir } from '../../utils/sessionStorage.js'
 
 const LOCK_FILE = '.consolidate-lock'
+const ACTIVE_LOCK_FILE = '.consolidate-active'
+const ACTIVITY_DIR = '.session-activity'
 
 // Stale past this even if the PID is live (PID reuse guard).
 const HOLDER_STALE_MS = 60 * 60 * 1000
 
 function lockPath(): string {
   return join(getAutoMemPath(), LOCK_FILE)
+}
+
+function activeLockPath(): string {
+  return join(getAutoMemPath(), ACTIVE_LOCK_FILE)
+}
+
+function activityDir(): string {
+  return join(getAutoMemPath(), ACTIVITY_DIR)
+}
+
+export async function recordMemorySessionActivity(sessionId: string): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return
+  const dir = activityDir()
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, sessionId), '', { mode: 0o600 })
+}
+
+async function listActivityMarkersSince(sinceMs: number): Promise<string[]> {
+  try {
+    const entries = await readdir(activityDir(), { withFileTypes: true })
+    const candidates = await Promise.all(
+      entries
+        .filter(entry => entry.isFile() && /^[a-zA-Z0-9_-]+$/.test(entry.name))
+        .map(async entry => ({
+          sessionId: entry.name,
+          mtime: (await stat(join(activityDir(), entry.name))).mtimeMs,
+        })),
+    )
+    return candidates
+      .filter(candidate => candidate.mtime > sinceMs)
+      .map(candidate => candidate.sessionId)
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -36,74 +86,134 @@ export async function readLastConsolidatedAt(): Promise<number> {
 }
 
 /**
- * Acquire: write PID → mtime = now. Returns the pre-acquire mtime
- * (for rollback), or null if blocked / lost a race.
+ * Atomically acquire the active lock, then advance the checkpoint mtime.
+ * Returns the prior checkpoint for rollback, or null if blocked / stale input.
  *
- *   Success → do nothing. mtime stays at now.
- *   Failure → rollbackConsolidationLock(priorMtime) rewinds mtime.
- *   Crash   → mtime stuck, dead PID → next process reclaims.
+ *   Success → releaseConsolidationLock; checkpoint stays at now.
+ *   Failure → rollbackConsolidationLock rewinds the checkpoint and releases.
+ *   Crash   → dead/stale active lock is reclaimed by the next process.
  */
-export async function tryAcquireConsolidationLock(): Promise<number | null> {
-  const path = lockPath()
+export type ConsolidationLock = {
+  priorMtime: number
+  token: string
+}
 
-  let mtimeMs: number | undefined
-  let holderPid: number | undefined
+async function releaseActiveLock(token: string): Promise<void> {
   try {
-    const [s, raw] = await Promise.all([stat(path), readFile(path, 'utf8')])
-    mtimeMs = s.mtimeMs
-    const parsed = parseInt(raw.trim(), 10)
-    holderPid = Number.isFinite(parsed) ? parsed : undefined
+    if ((await readFile(activeLockPath(), 'utf8')).trim() !== token) return
+    await unlink(activeLockPath())
   } catch {
-    // ENOENT — no prior lock.
+    // Already released or replaced by a new owner.
   }
+}
 
-  if (mtimeMs !== undefined && Date.now() - mtimeMs < HOLDER_STALE_MS) {
-    if (holderPid !== undefined && isProcessRunning(holderPid)) {
-      logForDebugging(
-        `[autoDream] lock held by live PID ${holderPid} (mtime ${Math.round((Date.now() - mtimeMs) / 1000)}s ago)`,
-      )
-      return null
-    }
-    // Dead PID or unparseable body — reclaim.
-  }
+export async function releaseConsolidationLock(
+  lock: ConsolidationLock,
+): Promise<void> {
+  await releaseActiveLock(lock.token)
+}
 
-  // Memory dir may not exist yet.
+export async function tryAcquireConsolidationLock(
+  expectedLastConsolidatedAt?: number,
+): Promise<ConsolidationLock | null> {
   await mkdir(getAutoMemPath(), { recursive: true })
-  await writeFile(path, String(process.pid))
+  const activePath = activeLockPath()
+  const token = `${process.pid}:${randomUUID()}`
 
-  // Two reclaimers both write → last wins the PID. Loser bails on re-read.
-  let verify: string
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await open(activePath, 'wx', 0o600)
+      try {
+        await handle.writeFile(token)
+      } finally {
+        await handle.close()
+      }
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+
+      let holderPid: number | undefined
+      let ageMs = 0
+      try {
+        const [activeStat, raw] = await Promise.all([
+          stat(activePath),
+          readFile(activePath, 'utf8'),
+        ])
+        ageMs = Date.now() - activeStat.mtimeMs
+        const parsed = parseInt(raw.trim().split(':', 1)[0] ?? '', 10)
+        holderPid = Number.isFinite(parsed) ? parsed : undefined
+      } catch {
+        continue
+      }
+
+      if (
+        ageMs < HOLDER_STALE_MS &&
+        (holderPid === undefined || isProcessRunning(holderPid))
+      ) {
+        logForDebugging(
+          `[autoDream] lock held by ${holderPid === undefined ? 'another process' : `live PID ${holderPid}`} (${Math.round(ageMs / 1000)}s ago)`,
+        )
+        return null
+      }
+
+      try {
+        await unlink(activePath)
+      } catch (unlinkError) {
+        if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw unlinkError
+        }
+      }
+    }
+  }
+
+  let ownsActiveLock = false
   try {
-    verify = await readFile(path, 'utf8')
+    ownsActiveLock = (await readFile(activePath, 'utf8')).trim() === token
   } catch {
     return null
   }
-  if (parseInt(verify.trim(), 10) !== process.pid) return null
+  if (!ownsActiveLock) return null
 
-  return mtimeMs ?? 0
+  try {
+    const priorMtime = await readLastConsolidatedAt()
+    if (
+      expectedLastConsolidatedAt !== undefined &&
+      priorMtime > expectedLastConsolidatedAt
+    ) {
+      await releaseActiveLock(token)
+      return null
+    }
+    await writeFile(lockPath(), token, { mode: 0o600 })
+    return { priorMtime, token }
+  } catch (error) {
+    await releaseActiveLock(token)
+    throw error
+  }
 }
 
 /**
- * Rewind mtime to pre-acquire after a failed fork. Clears the PID body —
- * otherwise our still-running process would look like it's holding.
- * priorMtime 0 → unlink (restore no-file).
+ * Rewind the checkpoint after a failed fork and release the active lock.
+ * A zero prior mtime restores the no-checkpoint state.
  */
 export async function rollbackConsolidationLock(
-  priorMtime: number,
+  lock: ConsolidationLock,
 ): Promise<void> {
   const path = lockPath()
   try {
-    if (priorMtime === 0) {
+    if ((await readFile(activeLockPath(), 'utf8')).trim() !== lock.token) return
+    if (lock.priorMtime === 0) {
       await unlink(path)
-      return
+    } else {
+      await writeFile(path, '')
+      const t = lock.priorMtime / 1000 // utimes wants seconds
+      await utimes(path, t, t)
     }
-    await writeFile(path, '')
-    const t = priorMtime / 1000 // utimes wants seconds
-    await utimes(path, t, t)
   } catch (e: unknown) {
     logForDebugging(
       `[autoDream] rollback failed: ${(e as Error).message} — next trigger delayed to minHours`,
     )
+  } finally {
+    await releaseActiveLock(lock.token)
   }
 }
 
@@ -118,23 +228,16 @@ export async function rollbackConsolidationLock(
 export async function listSessionsTouchedSince(
   sinceMs: number,
 ): Promise<string[]> {
-  const dir = getProjectDir(getOriginalCwd())
-  const candidates = await listCandidates(dir, true)
-  return candidates.filter(c => c.mtime > sinceMs).map(c => c.sessionId)
-}
-
-/**
- * Stamp from manual /dream. Optimistic — fires at prompt-build time,
- * no post-skill completion hook. Best-effort.
- */
-export async function recordConsolidation(): Promise<void> {
-  try {
-    // Memory dir may not exist yet (manual /dream before any auto-trigger).
-    await mkdir(getAutoMemPath(), { recursive: true })
-    await writeFile(lockPath(), String(process.pid))
-  } catch (e: unknown) {
-    logForDebugging(
-      `[autoDream] recordConsolidation write failed: ${(e as Error).message}`,
+  const [activitySessions, transcriptSessions] = await Promise.all([
+    listActivityMarkersSince(sinceMs),
+    listCandidates(
+      getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+      true,
     )
-  }
+      .then(candidates => candidates
+        .filter(candidate => candidate.mtime > sinceMs)
+        .map(candidate => candidate.sessionId))
+      .catch(() => []),
+  ])
+  return [...new Set([...activitySessions, ...transcriptSessions])]
 }

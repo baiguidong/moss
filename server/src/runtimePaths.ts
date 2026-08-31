@@ -31,35 +31,19 @@ export function getSessionWorkspaceDir(
 export function getSessionRuntimeMountDirs(
   config: ServerConfig,
   sessionId: string,
-  profileMode: SessionProfileMode,
-  userSessionIds: string[] = [],
 ): string[] {
-  const sessionIds =
-    profileMode === 'user'
-      ? [sessionId, ...userSessionIds]
-      : [sessionId]
-  return [...new Set(sessionIds.filter(Boolean))].map(id =>
-    getSessionDir(config, id),
-  )
-}
-
-export function getUserWorkspaceDir(config: ServerConfig, userId: string): string {
-  return join(config.dataDir, 'workspaces', 'users', userId)
+  return [getSessionDir(config, sessionId)]
 }
 
 export function resolveSessionWorkspaceDir(
   config: ServerConfig,
   sessionId: string,
-  userId: string,
-  profileMode: SessionProfileMode,
   requestedCwd?: string,
 ): string {
   return (
     requestedCwd?.trim() ||
     config.workspace ||
-    (profileMode === 'user'
-      ? getUserWorkspaceDir(config, userId)
-      : getSessionWorkspaceDir(config, sessionId))
+    getSessionWorkspaceDir(config, sessionId)
   )
 }
 

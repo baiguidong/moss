@@ -6,7 +6,15 @@ import { readFile, readdir, stat } from 'fs/promises'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
-import type { SessionProfileMode } from '../../packages/direct-connect-protocol/src/index.js'
+import {
+  autoMemorySettingsSchema,
+  normalizeAutoMemorySettings,
+  normalizeSessionMemorySettings,
+  sessionMemorySettingsSchema,
+  type AutoMemorySettings,
+  type SessionMemorySettings,
+  type SessionProfileMode,
+} from '../../packages/direct-connect-protocol/src/index.js'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
@@ -64,6 +72,8 @@ function serializeSession(session: {
   title?: string | null
   summary?: string | null
   assistantName?: string | null
+  autoMemory?: SessionRecord['autoMemory']
+  sessionMemory?: SessionRecord['sessionMemory']
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -82,6 +92,8 @@ function serializeSession(session: {
     title: session.title ?? null,
     summary: session.summary ?? null,
     assistantName: session.assistantName,
+    autoMemory: session.autoMemory,
+    sessionMemory: session.sessionMemory,
     createdAt: session.createdAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
@@ -506,6 +518,28 @@ function parseProfileMode(body: JsonBody): SessionProfileMode | undefined {
     return body.profile_mode
   }
   return undefined
+}
+
+function parseAutoMemorySettings(body: JsonBody): AutoMemorySettings | undefined {
+  const value = body.autoMemory ?? body.auto_memory
+  if (value === undefined) return undefined
+  const parsed = autoMemorySettingsSchema().safeParse(value)
+  if (!parsed.success) {
+    throw new HttpError(400, 'Invalid auto-memory settings')
+  }
+  return normalizeAutoMemorySettings(parsed.data)
+}
+
+function parseSessionMemorySettings(
+  body: JsonBody,
+): SessionMemorySettings | undefined {
+  const value = body.sessionMemory ?? body.session_memory
+  if (value === undefined) return undefined
+  const parsed = sessionMemorySettingsSchema().safeParse(value)
+  if (!parsed.success) {
+    throw new HttpError(400, 'Invalid session-memory settings')
+  }
+  return normalizeSessionMemorySettings(parsed.data)
 }
 
 function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
@@ -1295,6 +1329,8 @@ export function startServer(
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const profileMode = parseProfileMode(body)
+        const autoMemory = parseAutoMemorySettings(body)
+        const sessionMemory = parseSessionMemorySettings(body)
         const assistantName =
           typeof body.assistant_name === 'string' && body.assistant_name.trim()
             ? body.assistant_name.trim()
@@ -1308,6 +1344,8 @@ export function startServer(
           scopes: auth.scopes,
           profileMode,
           assistantName,
+          autoMemory,
+          sessionMemory,
         })
         writeJson(res, 200, {
           session_id: created.sessionId,

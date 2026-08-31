@@ -59,11 +59,13 @@ export const SUPPORTED_SETTINGS: Record<string, SettingConfig> = {
     source: 'settings',
     type: 'boolean',
     description: 'Enable auto-memory',
+    path: ['autoMemory', 'enabled'],
   },
   autoDreamEnabled: {
     source: 'settings',
     type: 'boolean',
     description: 'Enable background memory consolidation',
+    path: ['autoMemory', 'dreamEnabled'],
   },
   fileCheckpointingEnabled: {
     source: 'global',

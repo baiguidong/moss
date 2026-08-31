@@ -2,20 +2,11 @@
 // can read the auto-dream enabled state without dragging in the forked
 // agent / task registry / message builder chain that autoDream.ts pulls in.
 
-import { getInitialSettings } from '../../utils/settings/settings.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
+import { getAutoMemorySettings } from '../autoMemorySettings.js'
 
 /**
- * Whether background memory consolidation should run. User setting
- * (autoDreamEnabled in settings.json) overrides the feature flag default
- * when explicitly set; otherwise falls through to tengu_onyx_plover.
+ * Whether background memory consolidation should run.
  */
 export function isAutoDreamEnabled(): boolean {
-  const setting = getInitialSettings().autoDreamEnabled
-  if (setting !== undefined) return setting
-  const featureFlags = getFeatureValue_CACHED_MAY_BE_STALE<{ enabled?: unknown } | null>(
-    'tengu_onyx_plover',
-    null,
-  )
-  return gb?.enabled === true
+  return getAutoMemorySettings().dreamEnabled
 }

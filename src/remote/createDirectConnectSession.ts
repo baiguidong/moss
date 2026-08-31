@@ -7,6 +7,8 @@ import type { DirectConnectConfig } from './directConnectManager.js'
 import {
   attachSessionResponseSchema,
   connectResponseSchema,
+  type AutoMemorySettings,
+  type SessionMemorySettings,
   type SessionProfileMode,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { resolveDirectConnectAccessToken } from './authClient.js'
@@ -96,6 +98,8 @@ export async function createDirectConnectSession({
   dangerouslySkipPermissions,
   profileMode,
   assistantName,
+  autoMemory,
+  sessionMemory,
 }: {
   serverUrl: string
   authToken?: string
@@ -103,10 +107,12 @@ export async function createDirectConnectSession({
   username?: string
   email?: string
   password?: string
-  cwd: string
+  cwd?: string
   dangerouslySkipPermissions?: boolean
   profileMode?: SessionProfileMode
   assistantName?: string
+  autoMemory?: AutoMemorySettings
+  sessionMemory?: SessionMemorySettings
 }): Promise<{
   config: DirectConnectConfig
   workDir?: string
@@ -132,6 +138,8 @@ export async function createDirectConnectSession({
         }),
         ...(profileMode ? { profileMode } : {}),
         ...(assistantName && { assistant_name: assistantName }),
+        ...(autoMemory ? { autoMemory } : {}),
+        ...(sessionMemory ? { sessionMemory } : {}),
       }),
     })
   } catch (err) {

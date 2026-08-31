@@ -1,5 +1,4 @@
 // Extracted from dream.ts so auto-dream can be loaded independently.
-// feature flags (dream.ts is behind a feature()-gated require).
 
 import {
   DIR_EXISTS_GUIDANCE,

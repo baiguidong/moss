@@ -16,7 +16,15 @@ import type {
 } from './types.js'
 import type { SessionRuntimeInfo } from './backendTypes.js'
 import type {
+  AutoMemorySettings,
+  SessionMemorySettings,
   SessionRuntimeBackend,
+} from '../../packages/direct-connect-protocol/src/index.js'
+import {
+  autoMemorySettingsSchema,
+  normalizeAutoMemorySettings,
+  normalizeSessionMemorySettings,
+  sessionMemorySettingsSchema,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
 type SqlRow = Record<string, unknown>
@@ -35,6 +43,29 @@ function parseJsonArray(value: unknown): string[] {
   } catch {
     return []
   }
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function parseAutoMemorySettings(value: unknown): AutoMemorySettings | undefined {
+  const parsed = autoMemorySettingsSchema().safeParse(parseJsonValue(value))
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
+  return normalizeAutoMemorySettings(parsed.data)
+}
+
+function parseSessionMemorySettings(
+  value: unknown,
+): SessionMemorySettings | undefined {
+  const parsed = sessionMemorySettingsSchema().safeParse(parseJsonValue(value))
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
+  return normalizeSessionMemorySettings(parsed.data)
 }
 
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
@@ -72,6 +103,8 @@ function mapSession(row: SqlRow): SessionRecord {
     title: typeof row.title === 'string' ? row.title : null,
     summary: typeof row.summary === 'string' ? row.summary : null,
     assistantName: typeof row.assistant_name === 'string' ? row.assistant_name : null,
+    autoMemory: parseAutoMemorySettings(row.auto_memory_json),
+    sessionMemory: parseSessionMemorySettings(row.session_memory_json),
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -165,6 +198,8 @@ export class DirectConnectStore {
         title TEXT,
         summary TEXT,
         assistant_name TEXT,
+        auto_memory_json TEXT NOT NULL DEFAULT '{}',
+        session_memory_json TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         ended_at INTEGER,
@@ -227,6 +262,16 @@ export class DirectConnectStore {
     } catch {
       // Column already exists, ignore
     }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN auto_memory_json TEXT NOT NULL DEFAULT '{}'`)
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN session_memory_json TEXT NOT NULL DEFAULT '{}'`)
+    } catch {
+      // Column already exists, ignore
+    }
   }
 
   close(): void {
@@ -283,6 +328,8 @@ export class DirectConnectStore {
     desiredState: DesiredSessionState
     title?: string
     assistantName?: string
+    autoMemory?: AutoMemorySettings
+    sessionMemory?: SessionMemorySettings
   }): SessionRecord {
     const ts = now()
     this.db.prepare(`
@@ -291,8 +338,8 @@ export class DirectConnectStore {
         cwd, runtime_backend, profile_mode, docker_image, profile_dir,
         workspace_dir, transcript_dir, container_name,
         status, desired_state, transcript_path, title, assistant_name,
-        created_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        auto_memory_json, session_memory_json, created_at, last_active_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -313,6 +360,8 @@ export class DirectConnectStore {
       input.transcriptPath,
       input.title?.trim() || null,
       input.assistantName ?? null,
+      JSON.stringify(input.autoMemory ?? {}),
+      JSON.stringify(input.sessionMemory ?? {}),
       ts,
       ts,
     )

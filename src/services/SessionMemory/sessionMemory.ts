@@ -5,7 +5,6 @@
  */
 
 import { writeFile } from 'fs/promises'
-import memoize from 'lodash-es/memoize.js'
 import { getIsRemoteMode, getSessionId } from '../../bootstrap/state.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
@@ -45,7 +44,6 @@ import {
   loadSessionMemoryTemplate,
 } from './prompts.js'
 import {
-  DEFAULT_SESSION_MEMORY_CONFIG,
   getSessionMemoryConfig,
   getToolCallsBetweenUpdates,
   hasMetInitializationThreshold,
@@ -55,51 +53,17 @@ import {
   markExtractionStarted,
   markSessionMemoryInitialized,
   recordExtractionTokenCount,
-  type SessionMemoryConfig,
   setLastSummarizedMessageId,
   setSessionMemoryConfig,
 } from './sessionMemoryUtils.js'
 
 // ============================================================================
-// Feature Gate and Config (Cached - Non-blocking)
+// Feature gate and per-session configuration
 // ============================================================================
-// These functions return cached values from disk immediately without blocking
-// on feature flag initialization. Values may be stale but are updated in background.
 
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
-import {
-  getDynamicConfig_CACHED_MAY_BE_STALE,
-} from '../analytics/featureFlags.js'
-import { getInitialSettings } from '../../utils/settings/settings.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
-
-/**
- * Get session memory config from cache.
- * Returns immediately without blocking - value may be stale.
- */
-function getSessionMemoryRemoteConfig(): Partial<SessionMemoryConfig> {
-  return getDynamicConfig_CACHED_MAY_BE_STALE<Partial<SessionMemoryConfig>>(
-    'tengu_sm_config',
-    {},
-  )
-}
-
-function getPositiveIntegerSetting(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
-    return undefined
-  }
-  return value
-}
-
-function resolvePositiveIntegerConfig(
-  setting: unknown,
-  remote: number | undefined,
-  fallback: number,
-): number {
-  return getPositiveIntegerSetting(setting) ?? (remote && remote > 0
-    ? remote
-    : fallback)
-}
+import { getSessionMemorySettings } from '../sessionMemorySettings.js'
 
 // ============================================================================
 // Module State
@@ -284,38 +248,6 @@ async function setupSessionMemoryFile(
 }
 
 /**
- * Initialize session memory config from remote config (lazy initialization).
- * Memoized - only runs once per session, subsequent calls return immediately.
- * Uses cached config values - non-blocking.
- */
-const initSessionMemoryConfigIfNeeded = memoize((): void => {
-  // Load config from cache (non-blocking, may be stale)
-  const remoteConfig = getSessionMemoryRemoteConfig()
-  const settingsConfig = getInitialSettings().sessionMemory ?? {}
-
-  // Only use remote values if they are explicitly set (non-zero positive numbers)
-  // This ensures sensible defaults aren't overridden by zero values
-  const config: SessionMemoryConfig = {
-    minimumMessageTokensToInit: resolvePositiveIntegerConfig(
-      settingsConfig.minimumMessageTokensToInit,
-      remoteConfig.minimumMessageTokensToInit,
-      DEFAULT_SESSION_MEMORY_CONFIG.minimumMessageTokensToInit,
-    ),
-    minimumTokensBetweenUpdate: resolvePositiveIntegerConfig(
-      settingsConfig.minimumTokensBetweenUpdate,
-      remoteConfig.minimumTokensBetweenUpdate,
-      DEFAULT_SESSION_MEMORY_CONFIG.minimumTokensBetweenUpdate,
-    ),
-    toolCallsBetweenUpdates: resolvePositiveIntegerConfig(
-      settingsConfig.toolCallsBetweenUpdates,
-      remoteConfig.toolCallsBetweenUpdates,
-      DEFAULT_SESSION_MEMORY_CONFIG.toolCallsBetweenUpdates,
-    ),
-  }
-  setSessionMemoryConfig(config)
-})
-
-/**
  * Session memory post-sampling hook that extracts and updates session notes
  */
 // Track if we've logged the gate check failure this session (to avoid spam)
@@ -338,8 +270,12 @@ const extractSessionMemory = async function (
     return
   }
 
-  // Initialize config from remote (lazy, only once)
-  initSessionMemoryConfigIfNeeded()
+  const settings = getSessionMemorySettings()
+  setSessionMemoryConfig({
+    minimumMessageTokensToInit: settings.minimumMessageTokensToInit,
+    minimumTokensBetweenUpdate: settings.minimumTokensBetweenUpdate,
+    toolCallsBetweenUpdates: settings.toolCallsBetweenUpdates,
+  })
 
   if (!shouldExtractMemory(messages)) {
     return

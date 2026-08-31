@@ -22,7 +22,7 @@ import type { Message } from '../../types/message.js'
 import { logForDebugging } from '../../utils/debug.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { logEvent } from '../analytics/index.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
+import { getAutoMemorySettings } from '../autoMemorySettings.js'
 import { isAutoMemoryEnabled, getAutoMemPath } from '../../memdir/paths.js'
 import { isAutoDreamEnabled } from './config.js'
 import { getProjectDir } from '../../utils/sessionStorage.js'
@@ -30,14 +30,17 @@ import {
   getOriginalCwd,
   getIsRemoteMode,
   getSessionId,
+  getSessionProjectDir,
 } from '../../bootstrap/state.js'
 import { createAutoMemCanUseTool } from '../extractMemories/extractMemories.js'
 import { buildConsolidationPrompt } from './consolidationPrompt.js'
 import {
   readLastConsolidatedAt,
   listSessionsTouchedSince,
+  releaseConsolidationLock,
   tryAcquireConsolidationLock,
   rollbackConsolidationLock,
+  type ConsolidationLock,
 } from './consolidationLock.js'
 import {
   registerDreamTask,
@@ -58,35 +61,11 @@ type AutoDreamConfig = {
   minSessions: number
 }
 
-const DEFAULTS: AutoDreamConfig = {
-  minHours: 24,
-  minSessions: 5,
-}
-
-/**
- * Thresholds from tengu_onyx_plover. The enabled gate lives in config.ts
- * (isAutoDreamEnabled); this returns only the scheduling knobs. Defensive
- * per-field validation since GB cache can return stale wrong-type values.
- */
 function getConfig(): AutoDreamConfig {
-  const raw =
-    getFeatureValue_CACHED_MAY_BE_STALE<Partial<AutoDreamConfig> | null>(
-      'tengu_onyx_plover',
-      null,
-    )
+  const settings = getAutoMemorySettings()
   return {
-    minHours:
-      typeof raw?.minHours === 'number' &&
-      Number.isFinite(raw.minHours) &&
-      raw.minHours > 0
-        ? raw.minHours
-        : DEFAULTS.minHours,
-    minSessions:
-      typeof raw?.minSessions === 'number' &&
-      Number.isFinite(raw.minSessions) &&
-      raw.minSessions > 0
-        ? raw.minSessions
-        : DEFAULTS.minSessions,
+    minHours: settings.dreamMinHours,
+    minSessions: settings.dreamMinSessions,
   }
 }
 
@@ -117,12 +96,14 @@ let runner:
  * initExtractMemories), or per-test in beforeEach for a fresh closure.
  */
 export function initAutoDream(): void {
-  let lastSessionScanAt = 0
+  const lastSessionScanAtByMemoryRoot = new Map<string, number>()
+  const activeMemoryRoots = new Set<string>()
 
   runner = async function runAutoDream(context, appendSystemMessage) {
     const cfg = getConfig()
     const force = isForced()
     if (!force && !isGateOpen()) return
+    const memoryRoot = getAutoMemPath()
 
     // --- Time gate ---
     let lastAt: number
@@ -138,14 +119,15 @@ export function initAutoDream(): void {
     if (!force && hoursSince < cfg.minHours) return
 
     // --- Scan throttle ---
-    const sinceScanMs = Date.now() - lastSessionScanAt
+    const sinceScanMs =
+      Date.now() - (lastSessionScanAtByMemoryRoot.get(memoryRoot) ?? 0)
     if (!force && sinceScanMs < SESSION_SCAN_INTERVAL_MS) {
       logForDebugging(
         `[autoDream] scan throttle — time-gate passed but last scan was ${Math.round(sinceScanMs / 1000)}s ago`,
       )
       return
     }
-    lastSessionScanAt = Date.now()
+    lastSessionScanAtByMemoryRoot.set(memoryRoot, Date.now())
 
     // --- Session gate ---
     let sessionIds: string[]
@@ -167,104 +149,118 @@ export function initAutoDream(): void {
       return
     }
 
-    // --- Lock ---
-    // Under force, skip acquire entirely — use the existing mtime so
-    // kill's rollback is a no-op (rewinds to where it already is).
-    // The lock file stays untouched; next non-force turn sees it as-is.
-    let priorMtime: number | null
-    if (force) {
-      priorMtime = lastAt
-    } else {
-      try {
-        priorMtime = await tryAcquireConsolidationLock()
-      } catch (e: unknown) {
-        logForDebugging(
-          `[autoDream] lock acquire failed: ${(e as Error).message}`,
-        )
-        return
-      }
-      if (priorMtime === null) return
-    }
+    if (activeMemoryRoots.has(memoryRoot)) return
+    activeMemoryRoots.add(memoryRoot)
 
-    logForDebugging(
-      `[autoDream] firing — ${hoursSince.toFixed(1)}h since last, ${sessionIds.length} sessions to review`,
-    )
-    logEvent('tengu_auto_dream_fired', {
-      hours_since: Math.round(hoursSince),
-      sessions_since: sessionIds.length,
-    })
-
-    const setAppState =
-      context.toolUseContext.setAppStateForTasks ??
-      context.toolUseContext.setAppState
-    const abortController = new AbortController()
-    const taskId = registerDreamTask(setAppState, {
-      sessionsReviewing: sessionIds.length,
-      priorMtime,
-      abortController,
-    })
-
+    let consolidationLock: ConsolidationLock | undefined
+    let lockSettled = false
     try {
-      const memoryRoot = getAutoMemPath()
-      const transcriptDir = getProjectDir(getOriginalCwd())
-      // Tool constraints note goes in `extra`, not the shared prompt body —
-      // manual /dream runs in the main loop with normal permissions and this
-      // would be misleading there.
-      const extra = `
+      // --- Lock ---
+      // Forced test runs leave both the checkpoint and active lock untouched.
+      if (!force) {
+        try {
+          consolidationLock =
+            (await tryAcquireConsolidationLock(lastAt)) ?? undefined
+        } catch (e: unknown) {
+          logForDebugging(
+            `[autoDream] lock acquire failed: ${(e as Error).message}`,
+          )
+          return
+        }
+        if (!consolidationLock) return
+      }
+
+      logForDebugging(
+        `[autoDream] firing — ${hoursSince.toFixed(1)}h since last, ${sessionIds.length} sessions to review`,
+      )
+      logEvent('tengu_auto_dream_fired', {
+        hours_since: Math.round(hoursSince),
+        sessions_since: sessionIds.length,
+      })
+
+      const setAppState =
+        context.toolUseContext.setAppStateForTasks ??
+        context.toolUseContext.setAppState
+      const abortController = new AbortController()
+      const taskId = registerDreamTask(setAppState, {
+        sessionsReviewing: sessionIds.length,
+        consolidationLock,
+        abortController,
+      })
+
+      try {
+        const transcriptDir =
+          getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+        // Tool constraints are specific to the background fork, so keep them
+        // out of the reusable consolidation prompt body.
+        const extra = `
 
 **Tool constraints for this run:** Bash is restricted to read-only commands (\`ls\`, \`find\`, \`grep\`, \`cat\`, \`stat\`, \`wc\`, \`head\`, \`tail\`, and similar). Anything that writes, redirects to a file, or modifies state will be denied. Plan your exploration with this in mind — no need to probe.
 
 Sessions since last consolidation (${sessionIds.length}):
 ${sessionIds.map(id => `- ${id}`).join('\n')}`
-      const prompt = buildConsolidationPrompt(memoryRoot, transcriptDir, extra)
+        const prompt = buildConsolidationPrompt(memoryRoot, transcriptDir, extra)
 
-      const result = await runForkedAgent({
-        promptMessages: [createUserMessage({ content: prompt })],
-        cacheSafeParams: createCacheSafeParams(context),
-        canUseTool: createAutoMemCanUseTool(memoryRoot),
-        querySource: 'auto_dream',
-        forkLabel: 'auto_dream',
-        skipTranscript: true,
-        overrides: { abortController },
-        onMessage: makeDreamProgressWatcher(taskId, setAppState),
-      })
-
-      completeDreamTask(taskId, setAppState)
-      // Inline completion summary in the main transcript (same surface as
-      // extractMemories's "Saved N memories" message).
-      const dreamState = context.toolUseContext.getAppState().tasks?.[taskId]
-      if (
-        appendSystemMessage &&
-        isDreamTask(dreamState) &&
-        dreamState.filesTouched.length > 0
-      ) {
-        appendSystemMessage({
-          ...createMemorySavedMessage(dreamState.filesTouched),
-          verb: 'Improved',
+        const result = await runForkedAgent({
+          promptMessages: [createUserMessage({ content: prompt })],
+          cacheSafeParams: createCacheSafeParams(context),
+          canUseTool: createAutoMemCanUseTool(memoryRoot),
+          querySource: 'auto_dream',
+          forkLabel: 'auto_dream',
+          skipTranscript: true,
+          overrides: { abortController },
+          onMessage: makeDreamProgressWatcher(taskId, setAppState),
         })
+
+        completeDreamTask(taskId, setAppState)
+        lockSettled = true
+        // Inline completion summary in the main transcript (same surface as
+        // extractMemories's "Saved N memories" message).
+        const dreamState = context.toolUseContext.getAppState().tasks?.[taskId]
+        if (
+          appendSystemMessage &&
+          isDreamTask(dreamState) &&
+          dreamState.filesTouched.length > 0
+        ) {
+          appendSystemMessage({
+            ...createMemorySavedMessage(dreamState.filesTouched),
+            verb: 'Improved',
+          })
+        }
+        logForDebugging(
+          `[autoDream] completed — cache: read=${result.totalUsage.cache_read_input_tokens} created=${result.totalUsage.cache_creation_input_tokens}`,
+        )
+        logEvent('tengu_auto_dream_completed', {
+          cache_read: result.totalUsage.cache_read_input_tokens,
+          cache_created: result.totalUsage.cache_creation_input_tokens,
+          output: result.totalUsage.output_tokens,
+          sessions_reviewed: sessionIds.length,
+        })
+      } catch (e: unknown) {
+        // If the user killed from the bg-tasks dialog, DreamTask.kill already
+        // aborted, rolled back the lock, and set status=killed. Don't overwrite
+        // or double-rollback.
+        if (abortController.signal.aborted) {
+          lockSettled = true
+          logForDebugging('[autoDream] aborted by user')
+          return
+        }
+        logForDebugging(`[autoDream] fork failed: ${(e as Error).message}`)
+        logEvent('tengu_auto_dream_failed', {})
+        failDreamTask(taskId, setAppState)
+        if (consolidationLock) {
+          await rollbackConsolidationLock(consolidationLock)
+        }
+        lockSettled = true
       }
-      logForDebugging(
-        `[autoDream] completed — cache: read=${result.totalUsage.cache_read_input_tokens} created=${result.totalUsage.cache_creation_input_tokens}`,
-      )
-      logEvent('tengu_auto_dream_completed', {
-        cache_read: result.totalUsage.cache_read_input_tokens,
-        cache_created: result.totalUsage.cache_creation_input_tokens,
-        output: result.totalUsage.output_tokens,
-        sessions_reviewed: sessionIds.length,
-      })
-    } catch (e: unknown) {
-      // If the user killed from the bg-tasks dialog, DreamTask.kill already
-      // aborted, rolled back the lock, and set status=killed. Don't overwrite
-      // or double-rollback.
-      if (abortController.signal.aborted) {
-        logForDebugging('[autoDream] aborted by user')
-        return
+    } finally {
+      if (consolidationLock && !lockSettled) {
+        await rollbackConsolidationLock(consolidationLock)
       }
-      logForDebugging(`[autoDream] fork failed: ${(e as Error).message}`)
-      logEvent('tengu_auto_dream_failed', {})
-      failDreamTask(taskId, setAppState)
-      // Rewind mtime so time-gate passes again. Scan throttle is the backoff.
-      await rollbackConsolidationLock(priorMtime)
+      if (consolidationLock) {
+        await releaseConsolidationLock(consolidationLock)
+      }
+      activeMemoryRoots.delete(memoryRoot)
     }
   }
 }

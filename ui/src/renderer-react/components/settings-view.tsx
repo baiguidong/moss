@@ -131,6 +131,20 @@ const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemor
   minimumMessageTokensToInit: 10000,
   minimumTokensBetweenUpdate: 5000,
   toolCallsBetweenUpdates: 3,
+  compactMinTokens: 10000,
+  compactMinTextBlockMessages: 5,
+  compactMaxTokens: 40000,
+};
+
+const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> = {
+  enabled: true,
+  extractionEnabled: false,
+  extractionIntervalTurns: 1,
+  selectiveRecallEnabled: false,
+  pastContextSearchEnabled: false,
+  dreamEnabled: false,
+  dreamMinHours: 24,
+  dreamMinSessions: 5,
 };
 
 const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
@@ -1115,6 +1129,10 @@ export function SettingsView({
     ...DEFAULT_SESSION_MEMORY_SETTINGS,
     ...(settingsDraft?.sessionMemory || {}),
   };
+  const autoMemoryDraft = {
+    ...DEFAULT_AUTO_MEMORY_SETTINGS,
+    ...(settingsDraft?.autoMemory || {}),
+  };
 
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
@@ -1157,6 +1175,7 @@ export function SettingsView({
     settingsDraft?.remoteDirectCredentialMode,
     settingsDraft?.thinkingMode,
     settingsDraft?.sessionMemory,
+    settingsDraft?.autoMemory,
     buddyEnabled,
   ]);
 
@@ -1243,6 +1262,13 @@ export function SettingsView({
       ...patch,
     };
     updateSetting('sessionMemory', nextSessionMemory);
+  };
+
+  const updateAutoMemorySettings = (patch: Partial<NonNullable<DesktopSettings['autoMemory']>>) => {
+    updateSetting('autoMemory', {
+      ...autoMemoryDraft,
+      ...patch,
+    });
   };
 
   const copyText = (value: string) => {
@@ -1554,7 +1580,7 @@ export function SettingsView({
                             >
                               <select
                                 className={SELECT_CLASS_NAME}
-                                value={settingsDraft.remoteDirectProfileMode ?? 'session'}
+                                value={settingsDraft.remoteDirectProfileMode ?? 'user'}
                                 onChange={(event) => {
                                   updateSetting(
                                     'remoteDirectProfileMode',
@@ -1562,8 +1588,8 @@ export function SettingsView({
                                   );
                                 }}
                               >
-                                <option value="session">按会话</option>
-                                <option value="user">按用户</option>
+                                <option value="session">Session · 独立</option>
+                                <option value="user">User · 共享 Memory</option>
                               </select>
                             </SettingsRow>
 
@@ -1761,6 +1787,189 @@ export function SettingsView({
                             const value = Number.parseInt(event.target.value || '1', 10);
                             updateSessionMemorySettings({ toolCallsBetweenUpdates: value });
                           }}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="压缩保留 token 下限"
+                        description="使用会话记忆压缩时，至少保留的近期上下文 token 数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1000000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.compactMinTokens ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMinTokens}
+                          onChange={(event) => updateSessionMemorySettings({
+                            compactMinTokens: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="压缩保留消息下限"
+                        description="使用会话记忆压缩时，至少保留的近期文本消息数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.compactMinTextBlockMessages ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMinTextBlockMessages}
+                          onChange={(event) => updateSessionMemorySettings({
+                            compactMinTextBlockMessages: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="压缩保留 token 上限"
+                        description="使用会话记忆压缩时，近期上下文最多保留的 token 数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1000000}
+                          className={FIELD_CLASS_NAME}
+                          value={sessionMemoryDraft.compactMaxTokens ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMaxTokens}
+                          onChange={(event) => updateSessionMemorySettings({
+                            compactMaxTokens: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      长期记忆
+                    </div>
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="长期记忆"
+                        description="在本地或用户 profile 中保存可跨会话使用的记忆。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.enabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ enabled: checked })}
+                            label="长期记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="自动提取"
+                        description="每轮结束后从新增对话中提取值得长期保留的信息。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.extractionEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ extractionEnabled: checked })}
+                            label="自动提取长期记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 整理"
+                        description="达到时间和会话门槛后，在后台合并、修正和精简长期记忆。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.dreamEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ dreamEnabled: checked })}
+                            label="Dream 整理"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      高级设置
+                    </div>
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="按需检索"
+                        description="按当前问题选择相关记忆，不再把完整记忆索引固定放入上下文。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.selectiveRecallEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ selectiveRecallEnabled: checked })}
+                            label="按需检索长期记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="历史上下文搜索"
+                        description="允许 Agent 在需要时搜索长期记忆和当前会话的历史记录。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.pastContextSearchEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ pastContextSearchEnabled: checked })}
+                            label="历史上下文搜索"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="提取间隔"
+                        description="每累计多少轮会话执行一次自动提取。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          className={FIELD_CLASS_NAME}
+                          value={autoMemoryDraft.extractionIntervalTurns ?? DEFAULT_AUTO_MEMORY_SETTINGS.extractionIntervalTurns}
+                          onChange={(event) => updateAutoMemorySettings({
+                            extractionIntervalTurns: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 最短间隔"
+                        description="两次后台整理之间至少间隔的小时数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={0.1}
+                          max={8760}
+                          step={0.5}
+                          className={FIELD_CLASS_NAME}
+                          value={autoMemoryDraft.dreamMinHours ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinHours}
+                          onChange={(event) => updateAutoMemorySettings({
+                            dreamMinHours: Number(event.target.value || '0.1'),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 最少会话数"
+                        description="上次整理后至少有多少个其他会话活跃，才允许再次整理。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={100000}
+                          className={FIELD_CLASS_NAME}
+                          value={autoMemoryDraft.dreamMinSessions ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinSessions}
+                          onChange={(event) => updateAutoMemorySettings({
+                            dreamMinSessions: Number.parseInt(event.target.value || '1', 10),
+                          })}
                         />
                       </SettingsRow>
                     </SettingsGroup>

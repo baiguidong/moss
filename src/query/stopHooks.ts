@@ -1,6 +1,7 @@
 import { feature } from 'bun:bundle'
+import { getSessionId } from '../bootstrap/state.js'
 import { getShortcutDisplay } from '../keybindings/shortcutFormat.js'
-import { isExtractModeActive } from '../memdir/paths.js'
+import { isAutoMemoryEnabled, isExtractModeActive } from '../memdir/paths.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -38,10 +39,9 @@ import type { SystemPrompt } from '../utils/systemPromptType.js'
 import { getTaskListId, listTasks } from '../utils/tasks.js'
 import { getAgentName, getTeamName, isTeammate } from '../utils/teammate.js'
 
+import * as extractMemoriesModule from '../services/extractMemories/extractMemories.js'
+
 /* eslint-disable @typescript-eslint/no-require-imports */
-const extractMemoriesModule = feature('EXTRACT_MEMORIES')
-  ? (require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js'))
-  : null
 const jobClassifierModule = feature('TEMPLATES')
   ? (require('../jobs/classifier.js') as typeof import('../jobs/classifier.js'))
   : null
@@ -50,6 +50,7 @@ const jobClassifierModule = feature('TEMPLATES')
 
 import type { QuerySource } from '../constants/querySource.js'
 import { executeAutoDream } from '../services/autoDream/autoDream.js'
+import { recordMemorySessionActivity } from '../services/autoDream/consolidationLock.js'
 import { executePromptSuggestion } from '../services/PromptSuggestion/promptSuggestion.js'
 import { isBareMode, isEnvDefinedFalsy } from '../utils/envUtils.js'
 import {
@@ -134,25 +135,44 @@ export async function* handleStopHooks(
   // memory extraction, auto-dream). Scripted -p calls don't want auto-memory
   // or forked agents contending for resources during shutdown.
   if (!isBareMode()) {
+    let extractionPromise: Promise<void> | undefined
     // Inline env check for dead code elimination in external builds
     if (!isEnvDefinedFalsy(process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)) {
       void executePromptSuggestion(stopHookContext)
     }
     if (
-      feature('EXTRACT_MEMORIES') &&
       !toolUseContext.agentId &&
       isExtractModeActive()
     ) {
       // Fire-and-forget in both interactive and non-interactive. For -p/SDK,
       // print.ts drains the in-flight promise after flushing the response
       // but before gracefulShutdownSync (see drainPendingExtraction).
-      void extractMemoriesModule!.executeExtractMemories(
+      extractionPromise = extractMemoriesModule.executeExtractMemories(
         stopHookContext,
         toolUseContext.appendSystemMessage,
       )
+      void extractionPromise.catch(error => {
+        logForDebugging(
+          `[extractMemories] execution failed: ${errorMessage(error)}`,
+        )
+      })
     }
     if (!toolUseContext.agentId) {
-      void executeAutoDream(stopHookContext, toolUseContext.appendSystemMessage)
+      if (isAutoMemoryEnabled()) {
+        void recordMemorySessionActivity(getSessionId()).catch(error => {
+          logForDebugging(`[autoMemory] activity marker failed: ${errorMessage(error)}`)
+        })
+      }
+      void (async () => {
+        // Consolidation should see memories extracted from this completed turn.
+        await extractionPromise?.catch(() => {})
+        await executeAutoDream(
+          stopHookContext,
+          toolUseContext.appendSystemMessage,
+        )
+      })().catch(error => {
+        logForDebugging(`[autoDream] execution failed: ${errorMessage(error)}`)
+      })
     }
   }
 

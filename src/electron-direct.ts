@@ -103,7 +103,10 @@ import {
   saveMode,
 } from './utils/sessionStorage.js'
 import { discardMicrocompactSessionState } from './services/compact/microCompact.js'
-import { discardSessionSettingsCache } from './utils/settings/settingsCache.js'
+import {
+  discardSessionSettingsCache,
+  resetSettingsCache,
+} from './utils/settings/settingsCache.js'
 import { discardSessionHooksConfigSnapshot } from './utils/hooks/hooksConfigSnapshot.js'
 import { discardSessionFileChangedWatcher } from './utils/hooks/fileChangedWatcher.js'
 import { discardSessionEnvCache } from './utils/sessionEnvironment.js'
@@ -123,6 +126,11 @@ import {
   discardSessionMemoryRuntimeState,
   initSessionMemory,
 } from './services/SessionMemory/sessionMemory.js'
+import { initAutoDream } from './services/autoDream/autoDream.js'
+import {
+  discardExtractMemoriesSessionState,
+  initExtractMemories,
+} from './services/extractMemories/extractMemories.js'
 import {
   performMCPOAuthFlow,
   revokeServerTokens,
@@ -159,12 +167,18 @@ function initLocalAgentRuntimeOnce(): void {
   setQuestionPreviewFormat('markdown')
   if (localAgentRuntimeInitialized) return
   initSessionMemory()
+  initAutoDream()
+  initExtractMemories()
   localAgentRuntimeInitialized = true
 }
 
 export async function prewarmHeadlessGlobalInit(): Promise<void> {
   initLocalAgentRuntimeOnce()
   await prewarmHeadlessGlobalInitBase()
+}
+
+export function resetEmbeddedSettingsCache(): void {
+  resetSettingsCache()
 }
 
 function assertRemoteMcpConfig(
@@ -309,7 +323,7 @@ export interface ClaudeSessionOptions {
   addDirs?: string[]
   /** Desktop-managed writable workspaces, explicitly supplied by the session owner. */
   workspaceDirectories?: string[]
-  /** Environment variables exposed only to subprocesses started by this embedded session. */
+  /** Environment variables scoped to this embedded session and its subprocesses. */
   environment?: Record<string, string>
   /** Explicit task-list scope for file-backed task tools. */
   taskScope?: TaskScope
@@ -1168,6 +1182,7 @@ export class ClaudeSession {
     discardSessionStorageRecord(this.sessionId)
     discardSessionMemoryRuntimeState(this.sessionId)
     discardSessionMemoryState(this.sessionId)
+    discardExtractMemoriesSessionState(this.sessionId)
     discardMicrocompactSessionState(this.sessionId)
     discardSessionCostState(this.sessionId)
     discardSessionRegisteredHooks(this.sessionId)

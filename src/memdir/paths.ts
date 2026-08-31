@@ -1,45 +1,26 @@
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { isAbsolute, join, normalize, sep } from 'path'
-import { getIsNonInteractiveSession } from '../bootstrap/state.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
-  getMossConfigHomeDir,
-  isEnvDefinedFalsy,
-  isEnvTruthy,
-} from '../utils/envUtils.js'
-import {
-  getInitialSettings,
-  getSettingsForSource,
-} from '../utils/settings/settings.js'
+  getAutoMemorySettings,
+  isAutoMemoryExtractionEnabled,
+} from '../services/autoMemorySettings.js'
+import { getMossConfigHomeDir, isEnvTruthy } from '../utils/envUtils.js'
+import { getSettingsForSource } from '../utils/settings/settings.js'
 
 /**
  * Whether auto-memory features are enabled (memdir, agent memory, past session search).
- * Enabled by default. Priority chain (first defined wins):
- *   1. CLAUDE_CODE_DISABLE_AUTO_MEMORY env var (1/true → OFF, 0/false → ON)
- *   2. CLAUDE_CODE_SIMPLE (--bare) → OFF
- *   3. autoMemoryEnabled in settings.json (supports project-level opt-out)
- *   4. Default: enabled
+ * Enabled by default. --bare disables background memory work; normal sessions
+ * use the resolved Moss autoMemory.enabled setting.
  */
 export function isAutoMemoryEnabled(): boolean {
-  const envVal = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY
-  if (isEnvTruthy(envVal)) {
-    return false
-  }
-  if (isEnvDefinedFalsy(envVal)) {
-    return true
-  }
   // --bare / SIMPLE: prompts.ts already drops the memory section from the
   // system prompt via its SIMPLE early-return; this gate stops the other half
-  // (extractMemories turn-end fork, autoDream, /remember, /dream, team sync).
+  // (extractMemories turn-end fork, autoDream, and team sync).
   if (isEnvTruthy(process.env.CLAUDE_CODE_SIMPLE)) {
     return false
   }
-  const settings = getInitialSettings()
-  if (settings.autoMemoryEnabled !== undefined) {
-    return settings.autoMemoryEnabled
-  }
-  return true
+  return getAutoMemorySettings().enabled
 }
 
 /**
@@ -50,18 +31,11 @@ export function isAutoMemoryEnabled(): boolean {
  * skips that range (hasMemoryWritesSince in extractMemories.ts); when it
  * doesn't, the background agent catches anything missed.
  *
- * Callers must also gate on feature('EXTRACT_MEMORIES') — that check cannot
- * live inside this helper because feature() only tree-shakes when used
- * directly in an `if` condition.
+ * The extraction implementation is compiled into Moss; this setting controls
+ * whether it runs for the current local or server session.
  */
 export function isExtractModeActive(): boolean {
-  if (!getFeatureValue_CACHED_MAY_BE_STALE('tengu_passport_quail', false)) {
-    return false
-  }
-  return (
-    !getIsNonInteractiveSession() ||
-    getFeatureValue_CACHED_MAY_BE_STALE('tengu_slate_thimble', false)
-  )
+  return isAutoMemoryExtractionEnabled()
 }
 
 /**

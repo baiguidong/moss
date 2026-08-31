@@ -32,6 +32,85 @@ function auth(config: Record<string, unknown>) {
 }
 
 describe('server Feishu adapter manager', () => {
+  test('passes the deployment auto-memory settings into new sessions', async () => {
+    const db = createDb()
+    let createInput: Record<string, unknown> | undefined
+    const session = {
+      sessionId: 'feishu-session-1',
+      transcriptSessionId: 'feishu-session-1',
+      orgId: 'org-1',
+      userId: 'user-1',
+      role: 'user',
+      scopes: ['sessions:create'],
+      cwd: '/tmp/workspace',
+      runtime: { backend: 'host', profileMode: 'user', profileDir: '', transcriptDir: '', workspaceDir: '' },
+      status: 'creating',
+      desiredState: 'active',
+      currentAttemptId: null,
+      transcriptPath: '',
+      title: 'Feishu session',
+      summary: null,
+      assistantName: null,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      endedAt: null,
+      deletedAt: null,
+    } satisfies SessionRecord
+    const runtime = {
+      createSession: async (input: Record<string, unknown>) => {
+        createInput = input
+        return session
+      },
+    }
+    const manager = new AdapterProcessManager(
+      db as unknown as DatabaseSync,
+      runtime as unknown as RuntimeService,
+    )
+    const autoMemory = {
+      enabled: true,
+      extractionEnabled: true,
+      extractionIntervalTurns: 2,
+      selectiveRecallEnabled: true,
+      pastContextSearchEnabled: true,
+      dreamEnabled: true,
+      dreamMinHours: 12,
+      dreamMinSessions: 3,
+    }
+    const sessionMemory = {
+      enabled: true,
+      compactEnabled: true,
+      minimumMessageTokensToInit: 100,
+      minimumTokensBetweenUpdate: 50,
+      toolCallsBetweenUpdates: 2,
+      compactMinTokens: 1000,
+      compactMinTextBlockMessages: 3,
+      compactMaxTokens: 4000,
+    }
+
+    try {
+      await (manager as any).createSession({
+        config: {
+          appId: 'cli_test',
+          appSecret: 'secret',
+          autoMemory,
+          sessionMemory,
+        },
+        auth: {
+          orgId: 'org-1',
+          userId: 'user-1',
+          role: 'user',
+          scopes: ['sessions:create'],
+        },
+      })
+      expect(createInput?.autoMemory).toEqual(autoMemory)
+      expect(createInput?.sessionMemory).toEqual(sessionMemory)
+      expect(createInput?.profileMode).toBe('user')
+    } finally {
+      await manager.dispose()
+      db.close()
+    }
+  })
+
   test('tracks the Server sessions created by Feishu separately', () => {
     const db = createDb()
     const manager = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)

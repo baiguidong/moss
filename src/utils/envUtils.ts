@@ -1,17 +1,26 @@
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { join } from 'path'
+import { getSessionEnvironmentContext } from './sessionIdContext.js'
+
+function getMossConfigDirOverride(): string | undefined {
+  return (
+    getSessionEnvironmentContext()?.MOSS_CONFIG_DIR ??
+    process.env.MOSS_CONFIG_DIR
+  )
+}
 
 // Memoized: 150+ callers, many on hot paths. Keyed off the config-home env var
 // so tests that change it get a fresh value without explicit cache.clear.
 export const getMossConfigHomeDir = memoize(
   (): string => {
-    if (process.env.MOSS_CONFIG_DIR) {
-      return process.env.MOSS_CONFIG_DIR.normalize('NFC')
+    const configDir = getMossConfigDirOverride()
+    if (configDir) {
+      return configDir.normalize('NFC')
     }
     return join(homedir(), '.moss').normalize('NFC')
   },
-  () => process.env.MOSS_CONFIG_DIR ?? '',
+  () => getMossConfigDirOverride() ?? '',
 )
 
 export function getTeamsDir(): string {

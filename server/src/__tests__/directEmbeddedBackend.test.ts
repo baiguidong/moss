@@ -16,6 +16,11 @@ const originalEnv = {
   MOSS_MODEL_AUTH_TOKEN: process.env.MOSS_MODEL_AUTH_TOKEN,
   MOSS_SERVER_URL: process.env.MOSS_SERVER_URL,
   MOSS_SERVER_AUTH_TOKEN: process.env.MOSS_SERVER_AUTH_TOKEN,
+  MOSS_AUTO_MEMORY_SETTINGS: process.env.MOSS_AUTO_MEMORY_SETTINGS,
+  MOSS_RUNTIME_AUTO_MEMORY_SETTINGS:
+    process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS,
+  MOSS_RUNTIME_SESSION_MEMORY_SETTINGS:
+    process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS,
 }
 let tempRoot: string | undefined
 
@@ -98,11 +103,13 @@ describe('direct embedded backend model settings', () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-app-event-'))
     const eventUrl = 'file:///tmp/welcome.html'
     let createdWorkspaceDirectories: string[] | undefined
+    let createdEnvironment: Record<string, string> | undefined
 
     class FakeSession {
       constructor(
         private readonly options: {
           workspaceDirectories?: string[]
+          environment?: Record<string, string>
           onAppEvent?: (event: {
             type: string
             input?: Record<string, unknown>
@@ -110,6 +117,7 @@ describe('direct embedded backend model settings', () => {
         },
       ) {
         createdWorkspaceDirectories = options.workspaceDirectories
+        createdEnvironment = options.environment
       }
 
       async *send(
@@ -135,6 +143,9 @@ describe('direct embedded backend model settings', () => {
       resumeClaudeSession: async () => null,
     })
 
+    process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS = '{"enabled":false}'
+    process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS = '{"enabled":false}'
+
     const backend = new DirectEmbeddedBackend()
     const handle = await backend.spawn({
       sessionId: 'session-app-event',
@@ -147,12 +158,60 @@ describe('direct embedded backend model settings', () => {
         workspaceDir: join(tempRoot, 'workspace'),
       },
       systemSettings: makeSettings({}),
+      autoMemory: {
+        enabled: true,
+        extractionEnabled: true,
+        extractionIntervalTurns: 1,
+        selectiveRecallEnabled: false,
+        pastContextSearchEnabled: true,
+        dreamEnabled: true,
+        dreamMinHours: 24,
+        dreamMinSessions: 5,
+      },
+      sessionMemory: {
+        enabled: true,
+        compactEnabled: true,
+        minimumMessageTokensToInit: 100,
+        minimumTokensBetweenUpdate: 50,
+        toolCallsBetweenUpdates: 2,
+        compactMinTokens: 1000,
+        compactMinTextBlockMessages: 3,
+        compactMaxTokens: 4000,
+      },
     })
 
     try {
       expect(createdWorkspaceDirectories).toEqual([
         join(tempRoot, 'workspace'),
       ])
+      expect(createdEnvironment?.MOSS_CONFIG_DIR).toBe(
+        join(tempRoot, 'profile'),
+      )
+      expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS || '{}')).toEqual({
+        enabled: true,
+        extractionEnabled: true,
+        extractionIntervalTurns: 1,
+        selectiveRecallEnabled: false,
+        pastContextSearchEnabled: true,
+        dreamEnabled: true,
+        dreamMinHours: 24,
+        dreamMinSessions: 5,
+      })
+      expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS || '{}')).toEqual({
+        enabled: true,
+        compactEnabled: true,
+        minimumMessageTokensToInit: 100,
+        minimumTokensBetweenUpdate: 50,
+        toolCallsBetweenUpdates: 2,
+        compactMinTokens: 1000,
+        compactMinTextBlockMessages: 3,
+        compactMaxTokens: 4000,
+      })
+      expect(process.env.MOSS_AUTO_MEMORY_SETTINGS).toBe(
+        originalEnv.MOSS_AUTO_MEMORY_SETTINGS,
+      )
+      expect(process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS).toBeUndefined()
+      expect(process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS).toBeUndefined()
       const controlRequestPromise = waitForStdout(
         handle,
         message => message.type === 'control_request',

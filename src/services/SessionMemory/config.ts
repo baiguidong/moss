@@ -1,14 +1,9 @@
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
-import { getInitialSettings } from '../../utils/settings/settings.js'
+import { getSessionMemorySettings } from '../sessionMemorySettings.js'
 
 export function isSessionMemoryEnabled(): boolean {
-  const setting = getInitialSettings().sessionMemory?.enabled
-  if (setting !== undefined) return setting
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_session_memory', true)
+  return getSessionMemorySettings().enabled
 }
 
 export function isSessionMemoryCompactEnabled(): boolean {
-  const setting = getInitialSettings().sessionMemory?.compactEnabled
-  if (setting !== undefined) return setting
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_sm_compact', true)
+  return getSessionMemorySettings().compactEnabled
 }

@@ -70,6 +70,55 @@ describe('desktop settings', () => {
     expect(normalizeMossBaseUrl('https://example.com/v10')).toBe('https://example.com/v10');
   });
 
+  it('normalizes Moss auto-memory settings and legacy aliases', () => {
+    expect(normalizeDesktopSettings({
+      autoMemoryEnabled: false,
+      autoDreamEnabled: true,
+      autoMemory: {
+        enabled: true,
+        extractionEnabled: true,
+        extractionIntervalTurns: 2,
+        selectiveRecallEnabled: true,
+        pastContextSearchEnabled: true,
+        dreamMinHours: 6.5,
+        dreamMinSessions: 3,
+      },
+    }).autoMemory).toEqual({
+      enabled: true,
+      extractionEnabled: true,
+      extractionIntervalTurns: 2,
+      selectiveRecallEnabled: true,
+      pastContextSearchEnabled: true,
+      dreamEnabled: true,
+      dreamMinHours: 6.5,
+      dreamMinSessions: 3,
+    });
+  });
+
+  it('normalizes all Moss session-memory and compact settings', () => {
+    expect(normalizeDesktopSettings({
+      sessionMemory: {
+        enabled: true,
+        compactEnabled: true,
+        minimumMessageTokensToInit: 100,
+        minimumTokensBetweenUpdate: 50,
+        toolCallsBetweenUpdates: 2,
+        compactMinTokens: 4000,
+        compactMinTextBlockMessages: 3,
+        compactMaxTokens: 1000,
+      },
+    }).sessionMemory).toEqual({
+      enabled: true,
+      compactEnabled: true,
+      minimumMessageTokensToInit: 100,
+      minimumTokensBetweenUpdate: 50,
+      toolCallsBetweenUpdates: 2,
+      compactMinTokens: 4000,
+      compactMinTextBlockMessages: 3,
+      compactMaxTokens: 4000,
+    });
+  });
+
   it('does not persist remote login secrets in settings.json', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-desktop-settings-'));
     temporaryRoots.push(root);

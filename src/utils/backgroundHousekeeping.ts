@@ -1,11 +1,5 @@
-import { feature } from 'bun:bundle'
 import { initAutoDream } from '../services/autoDream/autoDream.js'
-
-/* eslint-disable @typescript-eslint/no-require-imports */
-const extractMemoriesModule = feature('EXTRACT_MEMORIES')
-  ? (require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js'))
-  : null
-/* eslint-enable @typescript-eslint/no-require-imports */
+import { initExtractMemories } from '../services/extractMemories/extractMemories.js'
 
 import { getIsInteractive, getLastInteractionTime } from '../bootstrap/state.js'
 import { cleanupOldMessageFilesInBackground } from './cleanup.js'
@@ -14,9 +8,7 @@ import { cleanupOldMessageFilesInBackground } from './cleanup.js'
 const DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION = 10 * 60 * 1000
 
 export function startBackgroundHousekeeping(): void {
-  if (feature('EXTRACT_MEMORIES')) {
-    extractMemoriesModule!.initExtractMemories()
-  }
+  initExtractMemories()
   initAutoDream()
   let needsCleanup = true
   async function runVerySlowOps(): Promise<void> {

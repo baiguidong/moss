@@ -34,6 +34,19 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     minimumMessageTokensToInit: 10000,
     minimumTokensBetweenUpdate: 5000,
     toolCallsBetweenUpdates: 3,
+    compactMinTokens: 10000,
+    compactMinTextBlockMessages: 5,
+    compactMaxTokens: 40000,
+  },
+  autoMemory: {
+    enabled: true,
+    extractionEnabled: false,
+    extractionIntervalTurns: 1,
+    selectiveRecallEnabled: false,
+    pastContextSearchEnabled: false,
+    dreamEnabled: false,
+    dreamMinHours: 24,
+    dreamMinSessions: 5,
   },
   managedRuntimes: {
     node: true,
@@ -60,7 +73,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   remoteDirectUserPassword: '',
   remoteDirectApiKey: '',
   remoteDirectWorkspace: '',
-  remoteDirectProfileMode: 'session',
+  remoteDirectProfileMode: 'user',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
@@ -440,6 +453,89 @@ export function normalizeDesktopSettings(input, existing = {}) {
       DEFAULT_DESKTOP_SETTINGS.sessionMemory.toolCallsBetweenUpdates,
       1,
       10_000,
+    ),
+    compactMinTokens: normalizePositiveInt(
+      sourceSessionMemory.compactMinTokens ?? existingSessionMemory.compactMinTokens,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMinTokens,
+      1,
+      1_000_000,
+    ),
+    compactMinTextBlockMessages: normalizePositiveInt(
+      sourceSessionMemory.compactMinTextBlockMessages ?? existingSessionMemory.compactMinTextBlockMessages,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMinTextBlockMessages,
+      1,
+      10_000,
+    ),
+    compactMaxTokens: normalizePositiveInt(
+      sourceSessionMemory.compactMaxTokens ?? existingSessionMemory.compactMaxTokens,
+      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMaxTokens,
+      1,
+      1_000_000,
+    ),
+  };
+  if (result.sessionMemory.compactMaxTokens < result.sessionMemory.compactMinTokens) {
+    result.sessionMemory.compactMaxTokens = result.sessionMemory.compactMinTokens;
+  }
+
+  const sourceAutoMemory = source.autoMemory && typeof source.autoMemory === 'object' ? source.autoMemory : {};
+  const existingAutoMemory = result.autoMemory && typeof result.autoMemory === 'object' ? result.autoMemory : {};
+  const normalizePositiveNumber = (value, fallback, min = 0.1, max = 1_000_000) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < min) return fallback;
+    return Math.min(parsed, max);
+  };
+  result.autoMemory = {
+    enabled:
+      sourceAutoMemory.enabled !== undefined
+        ? Boolean(sourceAutoMemory.enabled)
+        : source.autoMemoryEnabled !== undefined
+          ? Boolean(source.autoMemoryEnabled)
+          : existingAutoMemory.enabled !== undefined
+            ? Boolean(existingAutoMemory.enabled)
+            : DEFAULT_DESKTOP_SETTINGS.autoMemory.enabled,
+    extractionEnabled:
+      sourceAutoMemory.extractionEnabled !== undefined
+        ? Boolean(sourceAutoMemory.extractionEnabled)
+        : existingAutoMemory.extractionEnabled !== undefined
+          ? Boolean(existingAutoMemory.extractionEnabled)
+          : DEFAULT_DESKTOP_SETTINGS.autoMemory.extractionEnabled,
+    extractionIntervalTurns: normalizePositiveInt(
+      sourceAutoMemory.extractionIntervalTurns ?? existingAutoMemory.extractionIntervalTurns,
+      DEFAULT_DESKTOP_SETTINGS.autoMemory.extractionIntervalTurns,
+      1,
+      10_000,
+    ),
+    selectiveRecallEnabled:
+      sourceAutoMemory.selectiveRecallEnabled !== undefined
+        ? Boolean(sourceAutoMemory.selectiveRecallEnabled)
+        : existingAutoMemory.selectiveRecallEnabled !== undefined
+          ? Boolean(existingAutoMemory.selectiveRecallEnabled)
+          : DEFAULT_DESKTOP_SETTINGS.autoMemory.selectiveRecallEnabled,
+    pastContextSearchEnabled:
+      sourceAutoMemory.pastContextSearchEnabled !== undefined
+        ? Boolean(sourceAutoMemory.pastContextSearchEnabled)
+        : existingAutoMemory.pastContextSearchEnabled !== undefined
+          ? Boolean(existingAutoMemory.pastContextSearchEnabled)
+          : DEFAULT_DESKTOP_SETTINGS.autoMemory.pastContextSearchEnabled,
+    dreamEnabled:
+      sourceAutoMemory.dreamEnabled !== undefined
+        ? Boolean(sourceAutoMemory.dreamEnabled)
+        : source.autoDreamEnabled !== undefined
+          ? Boolean(source.autoDreamEnabled)
+          : existingAutoMemory.dreamEnabled !== undefined
+            ? Boolean(existingAutoMemory.dreamEnabled)
+            : DEFAULT_DESKTOP_SETTINGS.autoMemory.dreamEnabled,
+    dreamMinHours: normalizePositiveNumber(
+      sourceAutoMemory.dreamMinHours ?? existingAutoMemory.dreamMinHours,
+      DEFAULT_DESKTOP_SETTINGS.autoMemory.dreamMinHours,
+      0.1,
+      24 * 365,
+    ),
+    dreamMinSessions: normalizePositiveInt(
+      sourceAutoMemory.dreamMinSessions ?? existingAutoMemory.dreamMinSessions,
+      DEFAULT_DESKTOP_SETTINGS.autoMemory.dreamMinSessions,
+      1,
+      100_000,
     ),
   };
 

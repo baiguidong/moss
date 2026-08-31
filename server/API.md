@@ -46,11 +46,10 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 默认 session 目录结构：
 
-- `var/lib/sessions/<sessionId>/workspace/`: `profileMode=session` 的 session 工作目录；不传 `cwd` 且没有服务端默认 workspace 时 host/docker backend 都在这里执行
-- `var/lib/sessions/<sessionId>/profile/`: `profileMode=session` 的独立配置目录
-- `var/lib/workspaces/users/<userId>/`: `profileMode=user` 的用户共享工作目录；同一登录用户的 remote 会话复用该目录
+- `var/lib/sessions/<sessionId>/workspace/`: session 独立工作目录；不传 `cwd` 且没有服务端默认 workspace 时 host/docker backend 都在这里执行，与 `profileMode` 无关
+- `var/lib/sessions/<sessionId>/profile/`: `profileMode=session` 的独立 profile/Memory 目录
 - `var/lib/sessions/<sessionId>/transcripts/`: session transcript JSONL
-- `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享配置目录
+- `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享 profile/Memory 目录；同一登录用户的会话共享 Memory，但不共享 workspace
 - `var/lib/sessions/<sessionId>/attempts/<attemptId>/`: 单次 runner attempt 的 manifest、stdout/stderr、status，以及 docker backend 的 stdio manifest
 - `var/run/sockets/<attemptId>.sock`: server 与 runner attach 的本机 socket
 
@@ -610,20 +609,46 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 {
   "cwd": "/abs/path/project",
   "dangerously_skip_permissions": true,
-  "profileMode": "session"
+  "profileMode": "session",
+  "autoMemory": {
+    "enabled": true,
+    "extractionEnabled": true,
+    "extractionIntervalTurns": 1,
+    "selectiveRecallEnabled": true,
+    "pastContextSearchEnabled": true,
+    "dreamEnabled": true,
+    "dreamMinHours": 24,
+    "dreamMinSessions": 5
+  },
+  "sessionMemory": {
+    "enabled": true,
+    "compactEnabled": true,
+    "minimumMessageTokensToInit": 10000,
+    "minimumTokensBetweenUpdate": 5000,
+    "toolCallsBetweenUpdates": 3,
+    "compactMinTokens": 10000,
+    "compactMinTextBlockMessages": 5,
+    "compactMaxTokens": 40000
+  }
 }
 ```
 
-`cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
-未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，再按
-`profileMode` 选择目录：`session` 使用
-`~/.moss/server/var/lib/sessions/<sessionId>/workspace`，`user` 使用
-`~/.moss/server/var/lib/workspaces/users/<userId>`。
+`autoMemory` 可选，作为该 session 的运行时配置持久化并传给 host/docker backend；
+未传时继承运行环境中的 `MOSS_AUTO_MEMORY_SETTINGS`（JSON）。
+`sessionMemory` 同样可选，并可由 `MOSS_SESSION_MEMORY_SETTINGS`（JSON）进行全局覆盖。
+启用 `autoMemory.dreamEnabled` 时必须使用 `profileMode=user`，确保多会话共享同一份
+Memory；服务端会拒绝无法达到跨会话门槛的 `profileMode=session` 组合。
 
-Docker backend 不挂载整个 `~/.moss/server`。`session` profile mode 只挂载当前
-`~/.moss/server/var/lib/sessions/<sessionId>`；`user` profile mode 挂载同一用户的所有
-session 目录，并额外挂共享的 user profile/workspace 目录。显式传入且不在这些目录下的
-`cwd` 会单独挂载。
+`cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
+未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，始终使用
+`~/.moss/server/var/lib/sessions/<sessionId>/workspace`。`profileMode` 不参与
+workspace 选择，只控制 profile/Memory 范围：`session` 完全独立，`user` 在同一登录
+用户的会话间共享 Memory。
+
+Docker backend 不挂载整个 `~/.moss/server`，只挂载当前
+`~/.moss/server/var/lib/sessions/<sessionId>`。`profileMode=user` 时额外挂载该用户的
+共享 profile/Memory 目录，但不会挂载该用户的其他 session 目录。显式传入且不在这些
+目录下的 `cwd` 会单独挂载。
 
 示例响应：
 

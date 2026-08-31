@@ -1,4 +1,6 @@
 import type {
+  AutoMemorySettings,
+  SessionMemorySettings,
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import type { ThinkingMode } from './systemSettings.js'
@@ -29,6 +31,8 @@ export type BackendSpawnOptions = {
   mountDirs?: string[]
   runtime: SessionRuntimeInfo
   assistantName?: string
+  autoMemory?: AutoMemorySettings
+  sessionMemory?: SessionMemorySettings
   systemSettings?: BackendSystemSettings
 }
 

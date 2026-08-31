@@ -187,7 +187,9 @@ export function MemoryFileSelector(t0) {
     t5 = function handleToggleAutoMemory() {
       const newValue = !autoMemoryOn;
       updateSettingsForSource("userSettings", {
-        autoMemoryEnabled: newValue
+        autoMemory: {
+          enabled: newValue
+        }
       });
       setAutoMemoryOn(newValue);
       logEvent("tengu_auto_memory_toggled", {
@@ -205,7 +207,9 @@ export function MemoryFileSelector(t0) {
     t6 = function handleToggleAutoDream() {
       const newValue_0 = !autoDreamOn;
       updateSettingsForSource("userSettings", {
-        autoDreamEnabled: newValue_0
+        autoMemory: {
+          dreamEnabled: newValue_0
+        }
       });
       setAutoDreamOn(newValue_0);
       logEvent("tengu_auto_dream_toggled", {
@@ -323,7 +327,7 @@ export function MemoryFileSelector(t0) {
   }
   let t18;
   if ($[35] !== autoDreamOn || $[36] !== dreamStatus || $[37] !== focusedToggle || $[38] !== isDreamRunning || $[39] !== showDreamRow) {
-    t18 = showDreamRow && <ListItem isFocused={focusedToggle === 1} styled={false}><Text color={focusedToggle === 1 ? "suggestion" : undefined}>Auto-dream: {autoDreamOn ? "on" : "off"}{dreamStatus && <Text dimColor={true}> · {dreamStatus}</Text>}{!isDreamRunning && autoDreamOn && <Text dimColor={true}> · /dream to run</Text>}</Text></ListItem>;
+    t18 = showDreamRow && <ListItem isFocused={focusedToggle === 1} styled={false}><Text color={focusedToggle === 1 ? "suggestion" : undefined}>Auto-dream: {autoDreamOn ? "on" : "off"}{dreamStatus && <Text dimColor={true}> · {dreamStatus}</Text>}</Text></ListItem>;
     $[35] = autoDreamOn;
     $[36] = dreamStatus;
     $[37] = focusedToggle;

@@ -1,8 +1,12 @@
 import { getFsImplementation } from '../utils/fsOperations.js'
 import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
 
-import { getOriginalCwd } from '../bootstrap/state.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { getOriginalCwd, getSessionProjectDir } from '../bootstrap/state.js'
+import {
+  getAutoMemorySettings,
+  isAutoMemorySelectiveRecallEnabled,
+  isPastContextSearchEnabled,
+} from '../services/autoMemorySettings.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -11,10 +15,8 @@ import { GREP_TOOL_NAME } from '../tools/GrepTool/prompt.js'
 import { isReplModeEnabled } from '../tools/REPLTool/constants.js'
 import { logForDebugging } from '../utils/debug.js'
 import { hasEmbeddedSearchTools } from '../utils/embeddedTools.js'
-import { isEnvTruthy } from '../utils/envUtils.js'
 import { formatFileSize } from '../utils/format.js'
 import { getProjectDir } from '../utils/sessionStorage.js'
-import { getInitialSettings } from '../utils/settings/settings.js'
 import {
   MEMORY_FRONTMATTER_EXAMPLE,
   TRUSTING_RECALL_SECTION,
@@ -299,13 +301,13 @@ export function buildMemoryPrompt(params: {
 }
 
 /**
- * Build the "Searching past context" section if the feature gate is enabled.
+ * Build the "Searching past context" section when enabled in Moss settings.
  */
 export function buildSearchingPastContextSection(autoMemDir: string): string[] {
-  if (!getFeatureValue_CACHED_MAY_BE_STALE('tengu_coral_fern', false)) {
+  if (!isPastContextSearchEnabled()) {
     return []
   }
-  const projectDir = getProjectDir(getOriginalCwd())
+  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
   // Ant-native builds alias grep to embedded ugrep and remove the dedicated
   // Grep tool, so give the model a real shell invocation there.
   // In REPL mode, both Grep and Bash are hidden from direct use — the model
@@ -342,10 +344,7 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
 export async function loadMemoryPrompt(): Promise<string | null> {
   const autoEnabled = isAutoMemoryEnabled()
 
-  const skipIndex = getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_moth_copse',
-    false,
-  )
+  const skipIndex = isAutoMemorySelectiveRecallEnabled()
 
   // Cowork injects memory-policy text via env var; thread into all builders.
   const coworkExtraGuidelines =
@@ -373,12 +372,7 @@ export async function loadMemoryPrompt(): Promise<string | null> {
   }
 
   logEvent('tengu_memdir_disabled', {
-    disabled_by_env_var: isEnvTruthy(
-      process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY,
-    ),
-    disabled_by_setting:
-      !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY) &&
-      getInitialSettings().autoMemoryEnabled === false,
+    disabled_by_setting: !getAutoMemorySettings().enabled,
   })
   return null
 }
