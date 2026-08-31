@@ -23,6 +23,8 @@ import {
 } from '@/components/ui/select'
 import { getSessions, terminateSession } from '@/lib/api/sessions'
 import { getUsers } from '@/lib/api/auth'
+import { hasScope } from '@/lib/api/client'
+import { useAuth } from '@/lib/hooks/use-auth'
 import type { Session, AuthUser } from '@/lib/api/types'
 import { Search, ArrowRight, Loader2, Power, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -65,6 +67,7 @@ function SessionsSkeleton() {
 }
 
 export default function SessionsPage() {
+  const { user: currentUser, scopes } = useAuth()
   const [sessions, setSessions] = useState<Session[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -75,12 +78,16 @@ export default function SessionsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [terminatingId, setTerminatingId] = useState<string | null>(null)
+  const canListUsers = hasScope(scopes, 'admin:users')
 
   const fetchData = useCallback(async () => {
     try {
-      const [sessionsRes, usersRes] = await Promise.all([getSessions(), getUsers()])
+      const [sessionsRes, usersRes] = await Promise.all([
+        getSessions(),
+        canListUsers ? getUsers() : Promise.resolve(null),
+      ])
       setSessions(sessionsRes.sessions)
-      setUsers(usersRes.users)
+      setUsers(usersRes?.users ?? (currentUser ? [currentUser] : []))
     } catch (error) {
       console.error('Failed to fetch data:', error)
       toast.error('获取会话列表失败')
@@ -88,7 +95,7 @@ export default function SessionsPage() {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [])
+  }, [canListUsers, currentUser])
 
   useEffect(() => {
     fetchData()
