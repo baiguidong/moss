@@ -1,11 +1,7 @@
 import * as React from 'react';
 import {
   Bot,
-  Brain,
   Check,
-  FileText,
-  Image as ImageIcon,
-  Link2,
   LogIn,
   MessageSquare,
   Monitor,
@@ -14,10 +10,7 @@ import {
   RefreshCw,
   Search,
   Server,
-  Shield,
   SlidersHorizontal,
-  Store,
-  Sparkles,
   SunMedium,
   Trash2,
   TriangleAlert,
@@ -36,7 +29,8 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'advanced' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'feishu' | 'buddy' | 'appearance';
+type NavigationGroupId = 'basic' | 'integrations' | 'personalization' | 'advanced';
+type SectionId = 'basic-info' | 'model' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -56,9 +50,16 @@ type SettingsViewProps = {
 type SettingsSectionDefinition = {
   id: SectionId;
   title: string;
+  keywords: string[];
+};
+
+type SettingsNavigationGroup = {
+  id: NavigationGroupId;
+  title: string;
   icon: LucideIcon;
   iconGradientClassName: string;
   keywords: string[];
+  sections: SettingsSectionDefinition[];
 };
 
 type SettingsSectionProps = {
@@ -88,8 +89,8 @@ type ToggleProps = {
   label: string;
 };
 
-type SectionNavItemProps = {
-  section: SettingsSectionDefinition;
+type NavigationGroupButtonProps = {
+  group: SettingsNavigationGroup;
   active: boolean;
   onClick: () => void;
   compact?: boolean;
@@ -160,106 +161,108 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_mcp_output_token_limit: 25_000,
 };
 
-const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
+const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
   {
-    id: 'connection',
-    title: '连接',
-    icon: Link2,
-    iconGradientClassName: 'from-sky-400 to-blue-600',
-    keywords: ['连接', 'connection', 'remote', 'server', 'workspace', '认证', 'credential', 'url'],
-  },
-  {
-    id: 'runtime',
-    title: '运行环境',
+    id: 'basic',
+    title: '基础设置',
     icon: Monitor,
-    iconGradientClassName: 'from-slate-400 to-zinc-700',
-    keywords: ['运行环境', 'runtime', 'node', 'python', 'git', 'bash', '内置', 'managed', '环境'],
+    iconGradientClassName: 'from-sky-400 to-blue-600',
+    keywords: ['基础', '基本', '常规'],
+    sections: [
+      {
+        id: 'basic-info',
+        title: '基本信息',
+        keywords: ['连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash'],
+      },
+      {
+        id: 'model',
+        title: '模型',
+        keywords: ['文本模型', '图片模型', 'model', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url'],
+      },
+    ],
   },
   {
-    id: 'permission',
-    title: '权限',
-    icon: Shield,
-    iconGradientClassName: 'from-violet-400 to-fuchsia-600',
-    keywords: ['权限', 'permission', 'allow', 'turns', 'thinking', '轮次'],
+    id: 'integrations',
+    title: '扩展与集成',
+    icon: Wrench,
+    iconGradientClassName: 'from-lime-400 to-emerald-600',
+    keywords: ['扩展', '集成', 'integration'],
+    sections: [
+      {
+        id: 'mcp',
+        title: 'MCP',
+        keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
+      },
+      {
+        id: 'feishu',
+        title: '飞书',
+        keywords: ['飞书', 'feishu', '机器人', 'bot', '配对'],
+      },
+    ],
+  },
+  {
+    id: 'personalization',
+    title: '个性化',
+    icon: Palette,
+    iconGradientClassName: 'from-amber-400 to-orange-600',
+    keywords: ['个性化', 'personalization', '外观', 'buddy'],
+    sections: [
+      {
+        id: 'appearance',
+        title: '外观',
+        keywords: ['appearance', 'theme', 'background', 'collapse', '主题', '工具', '折叠'],
+      },
+      {
+        id: 'buddy',
+        title: 'Buddy',
+        keywords: ['buddy', 'pet', 'companion', '伴侣', '宠物'],
+      },
+    ],
   },
   {
     id: 'advanced',
     title: '高级设置',
     icon: SlidersHorizontal,
-    iconGradientClassName: 'from-cyan-400 to-blue-600',
-    keywords: ['高级', 'advanced', 'agent', 'scratchpad', 'plan', 'streaming', '网页搜索', 'compact', '记忆', 'memory', 'token', 'dream', '提取', '工具结果', 'mcp', '纠正'],
-  },
-  {
-    id: 'memory',
-    title: '记忆',
-    icon: Brain,
-    iconGradientClassName: 'from-teal-400 to-cyan-600',
-    keywords: ['记忆', 'memory', 'session', 'compact', 'summary', '上下文', '压缩'],
-  },
-  {
-    id: 'mcp',
-    title: 'MCP',
-    icon: Wrench,
-    iconGradientClassName: 'from-lime-400 to-emerald-600',
-    keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
-  },
-  {
-    id: 'skill-hub',
-    title: 'SkillHub',
-    icon: Store,
-    iconGradientClassName: 'from-indigo-400 to-sky-600',
-    keywords: ['skillhub', 'skill', '技能', 'market', 'hub', 'api', '公网'],
-  },
-  {
-    id: 'expert-hub',
-    title: '专家中心',
-    icon: Bot,
-    iconGradientClassName: 'from-rose-400 to-orange-600',
-    keywords: ['expert', 'experthub', '专家', '专家中心', 'agent', 'team', 'prompt', '清单'],
-  },
-  {
-    id: 'text-model',
-    title: '文本模型',
-    icon: Sparkles,
-    iconGradientClassName: 'from-emerald-400 to-teal-600',
-    keywords: ['文本模型', 'model', 'api', 'key', 'anthropic', 'claude', 'url'],
-  },
-  {
-    id: 'image-model',
-    title: '图片模型',
-    icon: ImageIcon,
-    iconGradientClassName: 'from-pink-400 to-rose-600',
-    keywords: ['图片模型', 'image', 'provider', 'api', 'key', 'url'],
-  },
-  {
-    id: 'prompt',
-    title: '系统提示',
-    icon: FileText,
-    iconGradientClassName: 'from-cyan-400 to-sky-600',
-    keywords: ['prompt', '系统提示', 'append', 'instruction'],
-  },
-  {
-    id: 'feishu',
-    title: '飞书',
-    icon: MessageSquare,
-    iconGradientClassName: 'from-emerald-400 to-green-600',
-    keywords: ['飞书', 'feishu', '机器人', 'bot', '配对'],
-  },
-  {
-    id: 'buddy',
-    title: 'Buddy',
-    icon: Bot,
-    iconGradientClassName: 'from-rose-400 to-orange-500',
-    keywords: ['buddy', 'pet', 'companion', '伴侣', '宠物'],
-  },
-  {
-    id: 'appearance',
-    title: '外观',
-    icon: Palette,
-    iconGradientClassName: 'from-amber-400 to-orange-600',
-    keywords: ['appearance', 'theme', 'background', 'tool', 'collapse', '外观', '主题', '工具', '折叠'],
+    iconGradientClassName: 'from-violet-400 to-fuchsia-600',
+    keywords: ['高级', 'advanced'],
+    sections: [
+      {
+        id: 'permission',
+        title: '权限',
+        keywords: ['permission', 'allow', '权限确认', 'bypass'],
+      },
+      {
+        id: 'memory',
+        title: '记忆',
+        keywords: ['memory', 'session', 'compact', 'summary', '上下文', '压缩', 'dream', '提取', '纠正'],
+      },
+      {
+        id: 'agent-execution',
+        title: 'Agent 与执行',
+        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
+      },
+      {
+        id: 'tool-performance',
+        title: '工具与性能',
+        keywords: ['tool', 'performance', 'streaming', '工具结果', 'mcp', '闲置', '性能'],
+      },
+      {
+        id: 'prompt',
+        title: '系统提示',
+        keywords: ['prompt', '系统提示', 'append', 'instruction'],
+      },
+      {
+        id: 'service-address',
+        title: '服务地址',
+        keywords: ['skillhub', 'skill', '专家中心', 'expert', 'experthub', 'market', 'api', '公网', '根地址'],
+      },
+    ],
   },
 ];
+
+const SECTION_GROUP_IDS = Object.fromEntries(
+  SETTINGS_NAVIGATION_GROUPS.flatMap((group) => group.sections.map((section) => [section.id, group.id])),
+) as Record<SectionId, NavigationGroupId>;
 
 const FIELD_CLASS_NAME =
   'h-9 rounded-xl border-sidebar-border bg-sidebar-accent/70 text-[13px] text-sidebar-foreground shadow-none placeholder:text-sidebar-foreground/45';
@@ -302,10 +305,10 @@ function Surface({ children, className }: SettingsGroupProps) {
 function SettingsSection({ id, title, children, sectionRef }: SettingsSectionProps) {
   return (
     <section id={id} ref={sectionRef} className="scroll-mt-6">
-      <div className="mb-3 px-1">
-        <p className="text-[13px] font-medium text-muted-foreground">
+      <div className="mb-4 px-1">
+        <h2 className="text-[15px] font-semibold text-foreground">
           {title}
-        </p>
+        </h2>
       </div>
       {children}
     </section>
@@ -378,9 +381,8 @@ function Toggle({ checked, onCheckedChange, label }: ToggleProps) {
   );
 }
 
-function SectionNavItem({ section, active, onClick, compact = false }: SectionNavItemProps) {
-  const Icon = section.icon;
-
+function NavigationGroupButton({ group, active, onClick, compact = false }: NavigationGroupButtonProps) {
+  const Icon = group.icon;
   return (
     <button
       type="button"
@@ -396,12 +398,12 @@ function SectionNavItem({ section, active, onClick, compact = false }: SectionNa
       <span
         className={cn(
           'flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-[0_10px_20px_-12px_rgba(15,23,42,0.6)]',
-          section.iconGradientClassName,
+          group.iconGradientClassName,
         )}
       >
         <Icon className="h-4 w-4" />
       </span>
-      <span className="text-[13px] font-medium">{section.title}</span>
+      <span className="text-sm font-medium">{group.title}</span>
     </button>
   );
 }
@@ -1111,30 +1113,45 @@ export function SettingsView({
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [remoteAuthError, setRemoteAuthError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
-  const [activeSection, setActiveSection] = React.useState<SectionId>('connection');
+  const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>('basic');
+  const [activeSection, setActiveSection] = React.useState<SectionId>('basic-info');
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
-    connection: null,
-    runtime: null,
-    permission: null,
-    advanced: null,
-    memory: null,
+    'basic-info': null,
+    model: null,
     mcp: null,
-    'skill-hub': null,
-    'expert-hub': null,
-    'text-model': null,
-    'image-model': null,
-    prompt: null,
     feishu: null,
-    buddy: null,
     appearance: null,
+    buddy: null,
+    permission: null,
+    memory: null,
+    'agent-execution': null,
+    'tool-performance': null,
+    prompt: null,
+    'service-address': null,
   });
 
-  const visibleSections = SECTION_DEFINITIONS.filter((section) => {
-    if (!deferredSearchQuery) return true;
-    const haystack = [section.title, ...section.keywords].join(' ').toLowerCase();
-    return haystack.includes(deferredSearchQuery);
+  const visibleNavigationGroups = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => {
+    if (!deferredSearchQuery) return [group];
+    const groupMatches = [group.title, ...group.keywords]
+      .join(' ')
+      .toLowerCase()
+      .includes(deferredSearchQuery);
+    const sections = groupMatches
+      ? group.sections
+      : group.sections.filter((section) => (
+          [section.title, ...section.keywords]
+            .join(' ')
+            .toLowerCase()
+            .includes(deferredSearchQuery)
+        ));
+    return sections.length > 0 ? [{ ...group, sections }] : [];
   });
+  const activeGroup = SETTINGS_NAVIGATION_GROUPS.find((group) => group.id === activeGroupId)
+    ?? SETTINGS_NAVIGATION_GROUPS[0];
+  const visibleSections = deferredSearchQuery
+    ? visibleNavigationGroups.flatMap((group) => group.sections)
+    : activeGroup.sections;
   const visibleSectionKey = visibleSections.map((section) => section.id).join('|');
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
@@ -1155,6 +1172,7 @@ export function SettingsView({
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
       setActiveSection(firstVisibleSectionId);
+      setActiveGroupId(SECTION_GROUP_IDS[firstVisibleSectionId]);
     }
   }, [activeSectionVisible, firstVisibleSectionId]);
 
@@ -1164,17 +1182,23 @@ export function SettingsView({
 
     const updateActive = () => {
       const threshold = container.scrollTop + 108;
-      let nextSection = firstVisibleSectionId || 'connection';
+      let nextSection = firstVisibleSectionId || 'basic-info';
 
-      for (const section of visibleSections) {
-        const element = sectionRefs.current[section.id];
-        if (!element) continue;
+      const positionedSections = visibleSections
+        .map((section) => ({ section, element: sectionRefs.current[section.id] }))
+        .filter((entry): entry is { section: SettingsSectionDefinition; element: HTMLElement } => Boolean(entry.element))
+        .sort((left, right) => left.element.offsetTop - right.element.offsetTop);
+
+      for (const { section, element } of positionedSections) {
         if (element.offsetTop <= threshold) {
           nextSection = section.id;
         }
       }
 
       setActiveSection((current) => (current === nextSection ? current : nextSection));
+      if (deferredSearchQuery) {
+        setActiveGroupId(SECTION_GROUP_IDS[nextSection]);
+      }
     };
 
     const raf = window.requestAnimationFrame(updateActive);
@@ -1188,6 +1212,7 @@ export function SettingsView({
     };
   }, [
     firstVisibleSectionId,
+    deferredSearchQuery,
     visibleSectionKey,
     settingsDraft?.remoteEnabled,
     settingsDraft?.thinkingMode,
@@ -1197,14 +1222,14 @@ export function SettingsView({
     buddyEnabled,
   ]);
 
-  const scrollToSection = (sectionId: SectionId) => {
-    setActiveSection(sectionId);
-    const container = scrollRef.current;
-    const section = sectionRefs.current[sectionId];
-    if (!container || !section) return;
-    container.scrollTo({
-      top: Math.max(0, section.offsetTop - 24),
-      behavior: 'smooth',
+  const selectNavigationGroup = (group: SettingsNavigationGroup) => {
+    const visibleGroup = visibleNavigationGroups.find((candidate) => candidate.id === group.id);
+    const targetSection = (deferredSearchQuery ? visibleGroup?.sections : group.sections)?.[0]?.id;
+    if (!targetSection) return;
+    setActiveGroupId(group.id);
+    setActiveSection(targetSection);
+    window.requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     });
   };
 
@@ -1330,14 +1355,17 @@ export function SettingsView({
               </div>
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-4 pb-4 [scrollbar-gutter:stable]">
-              {visibleSections.map((section) => (
-                <SectionNavItem
-                  key={section.id}
-                  section={section}
-                  active={section.id === activeSection}
-                  onClick={() => scrollToSection(section.id)}
-                />
-              ))}
+              {visibleNavigationGroups.map((group) => {
+                const groupActive = group.id === activeGroupId;
+                return (
+                  <NavigationGroupButton
+                    key={group.id}
+                    group={group}
+                    active={groupActive}
+                    onClick={() => selectNavigationGroup(group)}
+                  />
+                );
+              })}
             </nav>
           </aside>
 
@@ -1356,13 +1384,13 @@ export function SettingsView({
                   </div>
                   <div className="-mx-1 overflow-x-auto pb-1">
                     <div className="flex gap-2 px-1">
-                      {visibleSections.map((section) => (
-                        <SectionNavItem
-                          key={section.id}
-                          section={section}
+                      {visibleNavigationGroups.map((group) => (
+                        <NavigationGroupButton
+                          key={group.id}
+                          group={group}
                           compact
-                          active={section.id === activeSection}
-                          onClick={() => scrollToSection(section.id)}
+                          active={group.id === activeGroupId}
+                          onClick={() => selectNavigationGroup(group)}
                         />
                       ))}
                     </div>
@@ -1373,7 +1401,9 @@ export function SettingsView({
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
                   <div className="px-1">
-                    <h1 className="text-3xl font-semibold tracking-tight text-foreground">设置</h1>
+                    <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+                      {deferredSearchQuery ? '搜索设置' : activeGroup.title}
+                    </h1>
                   </div>
 
                   {settingsDraft.settingsParseError ? (
@@ -1417,14 +1447,17 @@ export function SettingsView({
                     </Surface>
                   ) : null}
 
-                {visibleSections.some((section) => section.id === 'connection') ? (
+                {visibleSections.some((section) => section.id === 'basic-info') ? (
                   <SettingsSection
-                    id="connection"
-                    title="连接"
+                    id="basic-info"
+                    title="基本信息"
                     sectionRef={(element) => {
-                      sectionRefs.current.connection = element;
+                      sectionRefs.current['basic-info'] = element;
                     }}
                   >
+                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                      连接
+                    </div>
                     <div className="space-y-3">
                       {/* 本地模式 */}
                       <SettingsGroup>
@@ -1560,17 +1593,10 @@ export function SettingsView({
                         ) : null}
                       </SettingsGroup>
                     </div>
-                  </SettingsSection>
-                ) : null}
 
-                {visibleSections.some((section) => section.id === 'runtime') ? (
-                  <SettingsSection
-                    id="runtime"
-                    title="运行环境"
-                    sectionRef={(element) => {
-                      sectionRefs.current.runtime = element;
-                    }}
-                  >
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      运行环境
+                    </div>
                     <RuntimeSettings
                       settingsDraft={settingsDraft}
                       updateSetting={updateSetting}
@@ -1600,6 +1626,19 @@ export function SettingsView({
                         </div>
                       </SettingsRow>
 
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'agent-execution') ? (
+                  <SettingsSection
+                    id="agent-execution"
+                    title="Agent 与执行"
+                    sectionRef={(element) => {
+                      sectionRefs.current['agent-execution'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
                       <SettingsRow
                         title="最大轮次"
                         controlClassName="sm:w-[112px]"
@@ -1655,19 +1694,7 @@ export function SettingsView({
                           />
                         </SettingsRow>
                       ) : null}
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
 
-                {visibleSections.some((section) => section.id === 'advanced') ? (
-                  <SettingsSection
-                    id="advanced"
-                    title="高级设置"
-                    sectionRef={(element) => {
-                      sectionRefs.current.advanced = element;
-                    }}
-                  >
-                    <SettingsGroup>
                       <SettingsRow
                         title="长任务自动转后台"
                         description="前台 Agent 运行超过 120 秒后自动转为后台任务。"
@@ -1692,34 +1719,6 @@ export function SettingsView({
                             checked={Boolean(advancedDraft.moss_scratchpad)}
                             onCheckedChange={(checked) => updateAdvancedSettings({ moss_scratchpad: checked })}
                             label="会话临时工作区"
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="闲置会话优化"
-                        description="会话闲置超过 60 分钟后清理较早的工具结果，降低恢复时的上下文开销。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(advancedDraft.moss_idle_session_cleanup)}
-                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_idle_session_cleanup: checked })}
-                            label="闲置会话优化"
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="流式工具执行"
-                        description="工具参数生成完成后提前开始执行，减少多工具任务的等待时间。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(advancedDraft.moss_streaming_tool_execution)}
-                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_streaming_tool_execution: checked })}
-                            label="流式工具执行"
                           />
                         </div>
                       </SettingsRow>
@@ -1752,11 +1751,46 @@ export function SettingsView({
                         </div>
                       </SettingsRow>
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
 
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      工具与性能
-                    </div>
+                {visibleSections.some((section) => section.id === 'tool-performance') ? (
+                  <SettingsSection
+                    id="tool-performance"
+                    title="工具与性能"
+                    sectionRef={(element) => {
+                      sectionRefs.current['tool-performance'] = element;
+                    }}
+                  >
                     <SettingsGroup>
+                      <SettingsRow
+                        title="闲置会话优化"
+                        description="会话闲置超过 60 分钟后清理较早的工具结果，降低恢复时的上下文开销。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_idle_session_cleanup)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_idle_session_cleanup: checked })}
+                            label="闲置会话优化"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="流式工具执行"
+                        description="工具参数生成完成后提前开始执行，减少多工具任务的等待时间。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_streaming_tool_execution)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_streaming_tool_execution: checked })}
+                            label="流式工具执行"
+                          />
+                        </div>
+                      </SettingsRow>
+
                       <SettingsRow
                         title="大型工具结果保护"
                         description="单轮工具结果过大时保存到会话目录，仅向模型提供预览和文件路径。"
@@ -1808,9 +1842,19 @@ export function SettingsView({
                         />
                       </SettingsRow>
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
 
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      记忆
+                {visibleSections.some((section) => section.id === 'memory') ? (
+                  <SettingsSection
+                    id="memory"
+                    title="记忆"
+                    sectionRef={(element) => {
+                      sectionRefs.current.memory = element;
+                    }}
+                  >
+                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                      调优参数
                     </div>
                     <SettingsGroup>
                       <SettingsRow
@@ -1998,17 +2042,9 @@ export function SettingsView({
                         />
                       </SettingsRow>
                     </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
-
-                {visibleSections.some((section) => section.id === 'memory') ? (
-                  <SettingsSection
-                    id="memory"
-                    title="记忆"
-                    sectionRef={(element) => {
-                      sectionRefs.current.memory = element;
-                    }}
-                  >
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      基础设置
+                    </div>
                     <SettingsGroup>
                       <SettingsRow
                         title="会话记忆"
@@ -2100,14 +2136,17 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'skill-hub') ? (
+                {visibleSections.some((section) => section.id === 'service-address') ? (
                   <SettingsSection
-                    id="skill-hub"
-                    title="SkillHub"
+                    id="service-address"
+                    title="服务地址"
                     sectionRef={(element) => {
-                      sectionRefs.current['skill-hub'] = element;
+                      sectionRefs.current['service-address'] = element;
                     }}
                   >
+                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                      SkillHub
+                    </div>
                     <SettingsGroup>
                       <SettingsRow
                         title="API 地址"
@@ -2126,17 +2165,10 @@ export function SettingsView({
                         />
                       </SettingsRow>
                     </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
 
-                {visibleSections.some((section) => section.id === 'expert-hub') ? (
-                  <SettingsSection
-                    id="expert-hub"
-                    title="专家中心"
-                    sectionRef={(element) => {
-                      sectionRefs.current['expert-hub'] = element;
-                    }}
-                  >
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      专家中心
+                    </div>
                     <SettingsGroup>
                       <SettingsRow
                         title="根地址"
@@ -2158,14 +2190,17 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'text-model') ? (
+                {visibleSections.some((section) => section.id === 'model') ? (
                   <SettingsSection
-                    id="text-model"
-                    title="文本模型"
+                    id="model"
+                    title="模型"
                     sectionRef={(element) => {
-                      sectionRefs.current['text-model'] = element;
+                      sectionRefs.current.model = element;
                     }}
                   >
+                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                      文本模型
+                    </div>
                     <SettingsGroup>
                       <SettingsRow
                         title="默认模型"
@@ -2215,17 +2250,10 @@ export function SettingsView({
                         </div>
                       </SettingsRow>
                     </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
 
-                {visibleSections.some((section) => section.id === 'image-model') ? (
-                  <SettingsSection
-                    id="image-model"
-                    title="图片模型"
-                    sectionRef={(element) => {
-                      sectionRefs.current['image-model'] = element;
-                    }}
-                  >
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      图片模型
+                    </div>
                     <SettingsGroup>
                       <SettingsRow
                         title="图片厂商"
