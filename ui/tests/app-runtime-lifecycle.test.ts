@@ -55,6 +55,22 @@ describe('App Runtime lifecycle', () => {
     await runtime.shutdown()
   })
 
+  it('does not expose Backend instances on a Host excluded by the manifest targets', async () => {
+    const runtime = await createRuntime('persistent-single', {}, async (source) => {
+      const manifestPath = path.join(source, 'app.moss.json')
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+      delete manifest.ui
+      manifest.backend.targets = ['server']
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    })
+    const appId = 'fixture.persistent-single'
+    expect((await runtime.getApp(appId))?.instances).toEqual([])
+    expect(runtime.instances.list(appId)).toEqual([])
+    expect(runtime.deployments.list(appId)).toEqual([])
+    await expect(runtime.setAppEnabled(appId, true)).rejects.toThrow('does not support target: desktop')
+    await runtime.shutdown()
+  })
+
   it('shares one on-demand process and stops it after the idle timeout', async () => {
     const runtime = await createRuntime('on-demand-single', { idleTimeoutMs: 80 })
     const appId = 'fixture.on-demand-single'
@@ -178,9 +194,11 @@ describe('App Runtime lifecycle', () => {
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true)
     await installVersion(runtime, '2.0.0', (manifest) => {
+      delete manifest.ui
       manifest.backend.targets = ['server']
     })
     await runtime.activateVersion(appId, '2.0.0')
+    expect((await runtime.getApp(appId))?.instances).toEqual([])
     expect(runtime.deployments.list(appId)).toEqual([])
     expect(runtime.supervisor.listStatuses()).toEqual([])
     await runtime.shutdown()

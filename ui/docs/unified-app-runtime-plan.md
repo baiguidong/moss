@@ -148,6 +148,7 @@ The single manifest remains `app.moss.json`.
 - `lifecycle` accepts only `on-demand` or `persistent`.
 - `instanceMode` accepts only `single` or `multiple`.
 - `targets` must contain at least one of `desktop` or `server`.
+- An App with `ui` and `backend` must include `desktop`; `server`-only is limited to Backend-only Apps until a remote App UI bridge exists.
 - Backend action names must be unique within the App.
 - Action input and output schemas must be valid JSON Schema.
 - Backend-only Apps must provide configuration metadata sufficient for the generic App management UI.

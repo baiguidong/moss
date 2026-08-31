@@ -29,7 +29,7 @@ apps/<app-name>/
     "apiVersion": 1,
     "lifecycle": "on-demand",
     "instanceMode": "single",
-    "targets": ["desktop", "server"],
+    "targets": ["desktop"],
     "actions": [{
       "name": "search",
       "inputSchema": "schemas/search.input.json",
@@ -41,6 +41,14 @@ apps/<app-name>/
 ```
 
 Use `persistent` only for services that must receive events or maintain a long-lived connection. Use `multiple` only when users need isolated named configurations. Backend dependencies must be bundled into `dist`; installed Apps run no install scripts.
+
+Use the smallest deployment target set that satisfies the product requirement:
+
+- Default to `["desktop"]`.
+- Add `server` only for an explicit remote, always-on, or unattended requirement and only when the Backend does not depend on Electron, a window, desktop-local paths, or other client-only resources.
+- Use `["server"]` only for an explicitly server-only Backend App that omits `ui`. App UI bridges currently address Desktop instances only, so an App with `ui` must also target `desktop`.
+
+`targets` is a capability contract, not a preferred runtime. The Host exposes Server deployment only when `server` is present. Server unavailability must not break a Backend that also targets Desktop.
 
 ## Entry
 

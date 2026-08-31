@@ -931,6 +931,7 @@ const {
   fetchRemoteDirectWorkspaceFile,
   fetchRemoteFeishuAdapterStatus,
   fetchRemoteApps,
+  fetchRemoteAppAvailability,
   getDesktopAgentMode,
   getRemoteDirectSettings,
   isRemoteDirectModeEnabled,
@@ -9829,25 +9830,37 @@ ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) =>
 
 ipcMain.handle('app:list', async () => {
   const results = [];
+  const storedApps = listAllStoredApps();
   let remoteApps = [];
+  let remoteAvailability = [];
   let remoteError = null;
+  let remoteAvailabilityError = null;
   const serverConfigured = Boolean(getRemoteDirectSettings().serverUrl);
   let serverAvailable = false;
   if (serverConfigured) {
     try {
       remoteApps = await fetchRemoteApps();
       serverAvailable = true;
+      const requestedPackages = storedApps
+        .filter((stored) => stored.currentVersion && stored.manifest?.backend?.targets?.includes('server'))
+        .map((stored) => ({ appId: stored.id, version: stored.currentVersion }));
+      if (requestedPackages.length) {
+        try { remoteAvailability = await fetchRemoteAppAvailability(requestedPackages); }
+        catch (error) { remoteAvailabilityError = error.message || String(error); }
+      }
     }
     catch (error) { remoteError = error.message || String(error); }
   }
+  const availabilityByPackage = new Map(remoteAvailability.map((entry) => [`${entry.appId}@${entry.version}`, entry]));
   const remoteById = new Map(remoteApps.map((entry) => [entry.installation?.appId || entry.manifest?.id, entry]));
-  for (const stored of listAllStoredApps()) {
+  for (const stored of storedApps) {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
     try { runtimeState = await desktopAppRuntime?.getApp(stored.id); } catch (error) {
       runtimeState = { error: error.message || String(error), installation: null, instances: [], deployments: [] };
     }
     const remoteState = remoteById.get(stored.id) || null;
+    const packageAvailability = availabilityByPackage.get(`${stored.id}@${stored.currentVersion}`) || null;
     remoteById.delete(stored.id);
     const deployments = [...(runtimeState?.deployments || []), ...(remoteState?.deployments || [])];
     const observedStates = deployments.map((item) => item.runtime?.state).filter(Boolean);
@@ -9875,6 +9888,9 @@ ipcMain.handle('app:list', async () => {
       remoteInstalled: Boolean(remoteState),
       serverConfigured,
       serverAvailable,
+      serverPackageAvailable: Boolean(packageAvailability?.available),
+      serverPackageError: packageAvailability?.reason
+        || (manifest?.backend?.targets?.includes('server') ? remoteAvailabilityError : null),
       serverEnabled: remoteState?.installation?.enabled || false,
       remoteError: remoteState ? remoteError : null,
       runtimeStatus: { state, error: runtimeState?.error || observedError },

@@ -31,6 +31,15 @@ try {
   prereleaseManifest.version = prereleaseVersion
   await fs.writeFile(prereleaseManifestPath, `${JSON.stringify(prereleaseManifest, null, 2)}\n`)
   await writePackageChecksums(prereleaseSource)
+  const desktopOnlyVersion = '1.2.0'
+  const desktopOnlySource = path.join(root, 'source', appId, 'versions', desktopOnlyVersion)
+  await fs.cp(source, desktopOnlySource, { recursive: true })
+  const desktopOnlyManifestPath = path.join(desktopOnlySource, 'app.moss.json')
+  const desktopOnlyManifest = JSON.parse(await fs.readFile(desktopOnlyManifestPath, 'utf8'))
+  desktopOnlyManifest.version = desktopOnlyVersion
+  desktopOnlyManifest.backend.targets = ['desktop']
+  await fs.writeFile(desktopOnlyManifestPath, `${JSON.stringify(desktopOnlyManifest, null, 2)}\n`)
+  await writePackageChecksums(desktopOnlySource)
   const config = {
     host: '127.0.0.1', port: 0, authMode: 'local' as const, tokenTtlSec: 3600,
     bootstrapAdmin: { username: 'admin' }, idleTimeoutMs: 1000, maxSessions: 1,
@@ -44,6 +53,10 @@ try {
   const first = await ServerAppRuntime.create(config, 'server-node-a')
   await first.installKnown(appId, version)
   await first.installKnown(appId, prereleaseVersion)
+  await assert.rejects(
+    () => first.installKnown(appId, desktopOnlyVersion),
+    /App does not support Server deployment/,
+  )
   assert.equal((await first.runtime.packages.get(appId, prereleaseVersion)).manifest.version, prereleaseVersion)
   await first.runtime.setInstanceEnabled(appId, instanceId, true)
   await first.runtime.setAppEnabled(appId, true)
@@ -78,6 +91,24 @@ try {
     const listResponse = await fetch(`${baseUrl}/api/v1/apps`, { headers })
     assert.equal(listResponse.status, 200)
     assert.equal(((await listResponse.json()) as { apps: unknown[] }).apps.length, 1)
+    const availabilityResponse = await fetch(`${baseUrl}/api/v1/apps/availability`, {
+      method: 'POST', headers, body: JSON.stringify({ packages: [
+        { appId, version },
+        { appId, version: desktopOnlyVersion },
+        { appId, version: '9.9.9' },
+      ] }),
+    })
+    assert.equal(availabilityResponse.status, 200)
+    assert.deepEqual((await availabilityResponse.json() as { packages: Array<{ available: boolean }> }).packages.map(item => item.available), [true, false, false])
+    const desktopOnlyInstallResponse = await fetch(`${baseUrl}/api/v1/apps/install`, {
+      method: 'POST', headers, body: JSON.stringify({ appId, version: desktopOnlyVersion }),
+    })
+    assert.equal(desktopOnlyInstallResponse.status, 400)
+    assert.equal((await desktopOnlyInstallResponse.json() as { code: string }).code, 'APP_INVALID_PACKAGE')
+    const invalidAvailabilityResponse = await fetch(`${baseUrl}/api/v1/apps/availability`, {
+      method: 'POST', headers, body: JSON.stringify({ packages: null }),
+    })
+    assert.equal(invalidAvailabilityResponse.status, 400)
     const malformedResponse = await fetch(`${baseUrl}/api/v1/apps/install`, {
       method: 'POST', headers, body: '{',
     })

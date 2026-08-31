@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
+import { appCanDeployToServer, appCanMoveInstance, availableInstanceTargets, backendForTarget } from "@/lib/app-runtime-targets";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
 function formatTimestamp(timestamp: number) {
@@ -40,24 +41,31 @@ function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disa
   );
 }
 
-function backendForTarget(app: StoredApp, target: "desktop" | "server") {
-  if (target === "server") return app.remoteInstalled ? app.serverBackend || null : app.backend || null;
-  return app.remoteOnly ? null : app.backend || null;
-}
-
 function configurationForTarget(app: StoredApp, target: "desktop" | "server") {
   return target === "server"
     ? app.remoteInstalled ? app.serverConfiguration || null : app.configuration
     : app.configuration;
 }
 
-function availableInstanceTargets(app: StoredApp): Array<"desktop" | "server"> {
-  const targets: Array<"desktop" | "server"> = [];
-  const desktop = backendForTarget(app, "desktop");
-  const server = backendForTarget(app, "server");
-  if (desktop?.instanceMode === "multiple" && desktop.targets.includes("desktop")) targets.push("desktop");
-  if (app.serverAvailable && server?.instanceMode === "multiple" && server.targets.includes("server")) targets.push("server");
-  return targets;
+async function setAppHostEnabled(app: StoredApp, target: "desktop" | "server", enabled: boolean) {
+  const appId = app.id || app.name;
+  const backend = backendForTarget(app, target);
+  const defaultInstance = backend?.instanceMode === "single"
+    ? app.instances?.find((instance) => (instance.target || "desktop") === target)
+    : null;
+  let enabledDefaultInstance = false;
+  try {
+    if (enabled && defaultInstance && !defaultInstance.enabled) {
+      await window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: defaultInstance.id, enabled: true, target });
+      enabledDefaultInstance = true;
+    }
+    return await window.agentDesktop.setAppEnabled({ appId, enabled, target });
+  } catch (error) {
+    if (enabledDefaultInstance) {
+      await window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: defaultInstance!.id, enabled: false, target }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 function fieldType(field: Record<string, any>) {
@@ -238,7 +246,7 @@ function AppInstanceRow({ app, instance, onChanged }: { app: StoredApp; instance
         <Toggle checked={instance.enabled} disabled={busy} label={instance.enabled ? "已启用" : "已停用"} onChange={(enabled) => run(() => window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: instance.id, enabled, target }))} />
         <Button variant="ghost" size="icon" className="h-8 w-8" title="重启" disabled={busy || !instance.enabled || (target === "server" ? !app.serverEnabled : !app.enabled)} onClick={() => run(() => window.agentDesktop.restartAppInstance({ appId, instanceId: instance.id, target }))}><RefreshCw className="h-4 w-4" /></Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="日志" onClick={openLogs}><SquareTerminal className="h-4 w-4" /></Button>
-        {backend?.targets.includes(target === "server" ? "desktop" : "server") && !app.remoteOnly && (
+        {appCanMoveInstance(app, target) && (
           <Button variant="ghost" size="icon" className="h-8 w-8" title={`移动到 ${target === "server" ? "Desktop" : "Server"}`} disabled={busy} onClick={() => {
             if (!window.confirm(`停止当前实例并移动到 ${target === "server" ? "Desktop" : "Server"}？`)) return;
             const deleteSourceCredentials = window.confirm("目标健康后删除来源密钥？");
@@ -358,7 +366,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
         {apps.length === 0 ? (
           <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">暂无 App</div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid items-start gap-3 xl:grid-cols-2 2xl:grid-cols-3">
             {apps.map((app) => {
               const appId = app.id || app.name;
               const isExpanded = expanded === appId;
@@ -366,31 +374,37 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const hasShortcut = sidebarShortcutIds?.has(appId) ?? false;
               const desktopBackend = backendForTarget(app, "desktop");
               const serverBackend = app.remoteInstalled ? backendForTarget(app, "server") : null;
+              const displayedBackend = desktopBackend || serverBackend || app.backend;
+              const canDeployToServer = appCanDeployToServer(app);
               const instanceTargets = availableInstanceTargets(app);
               return (
-                <section key={appId} className="min-w-0 rounded-md border border-border bg-card p-4">
+                <section key={appId} className={`min-w-0 rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
                   <div className="flex items-start gap-3">
                     <AppIcon icon={app.icon} />
                     <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
                     <div className="grid justify-items-end gap-2">
-                      {desktopBackend && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`Desktop ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => window.agentDesktop.setAppEnabled({ appId, enabled, target: "desktop" }))} />}
-                      {serverBackend && <Toggle checked={Boolean(app.serverEnabled)} disabled={busy === appId} label={`Server ${app.serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => window.agentDesktop.setAppEnabled({ appId, enabled, target: "server" }))} />}
+                      {desktopBackend && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`Desktop ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
+                      {serverBackend && <Toggle checked={Boolean(app.serverEnabled)} disabled={busy === appId} label={`Server ${app.serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "server", enabled))} />}
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <span>v{app.currentVersion || "-"}</span>
                     {app.remoteInstalled && app.serverVersion !== app.currentVersion && <span>Server v{app.serverVersion || "-"}</span>}
                     <span>{app.hasUi ? "UI" : "无 UI"}</span>
-                    <span>{app.hasBackend ? `${(desktopBackend || serverBackend)?.lifecycle === "persistent" ? "常驻" : "按需"} Backend` : "无 Backend"}</span>
+                    <span>{app.hasBackend ? `${displayedBackend?.lifecycle === "persistent" ? "常驻" : "按需"} Backend` : "无 Backend"}</span>
+                    {displayedBackend && <span>{displayedBackend.instanceMode === "multiple" ? "多实例" : "单实例"}</span>}
+                    {displayedBackend && <span>{displayedBackend.targets.map((target) => target === "desktop" ? "Desktop" : "Server").join(" / ")}</span>}
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>
                   </div>
                   {app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
                   <div className="mt-4 flex flex-wrap gap-2">
                     {app.hasUi && <Button size="sm" className="h-8" onClick={() => onLaunch(app.name)}><ExternalLink className="h-4 w-4" />打开</Button>}
-                    {desktopBackend?.targets.includes("server") && !app.remoteInstalled && app.currentVersion && app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />部署到 Server</Button>}
-                    {desktopBackend?.targets.includes("server") && !app.remoteInstalled && app.serverConfigured && !app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled title="请先连接 Moss Server"><ServerOff className="h-4 w-4" />Server 未连接</Button>}
-                    <Button size="sm" variant="outline" className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>
+                    {canDeployToServer && app.serverAvailable && app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />{app.remoteInstalled ? "同步到 Server" : "部署到 Server"}</Button>}
+                    {canDeployToServer && app.serverAvailable && !app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled title={app.serverPackageError || "Server 包源没有此版本"}><ServerOff className="h-4 w-4" />Server 无此版本</Button>}
+                    {canDeployToServer && app.serverConfigured && !app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled title="请先连接 Moss Server"><ServerOff className="h-4 w-4" />Server 未连接</Button>}
+                    {canDeployToServer && !app.serverConfigured && <Button size="sm" variant="outline" className="h-8" disabled title="请先在设置中配置 Moss Server"><ServerOff className="h-4 w-4" />Server 未配置</Button>}
+                    <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />{app.hasBackend && !app.hasUi ? "管理 Backend" : "管理"}</Button>
                     {!app.remoteOnly && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     {!app.remoteOnly && <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>}
                     <Button variant="ghost" size="icon" className="h-8 w-8" title={hasShortcut ? "移出侧栏" : "加入侧栏"} disabled={!app.hasUi} onClick={() => hasShortcut ? onRemoveShortcut?.(app.name) : onAddShortcut?.(app.name)}>{hasShortcut ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}</Button>
@@ -405,8 +419,18 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   {isExpanded && (
                     <div className="mt-4 border-t border-border pt-3">
                       <div className="flex items-center justify-between"><div className="text-xs font-medium">Backend 实例</div>{instanceTargets.length > 0 && <Button size="sm" variant="outline" className="h-7" onClick={() => setAddingInstance(addingInstance === appId ? null : appId)}><Plus className="h-3.5 w-3.5" />实例</Button>}</div>
-                      {!app.hasBackend ? <div className="py-3 text-xs text-muted-foreground">UI-only App</div> : (app.instances || []).map((instance) => <AppInstanceRow key={`${instance.target || "desktop"}:${instance.id}`} app={app} instance={instance} onChanged={onRefresh} />)}
+                      {!app.hasBackend
+                        ? <div className="py-3 text-xs text-muted-foreground">UI-only App</div>
+                        : (app.instances || []).length
+                          ? (app.instances || []).map((instance) => <AppInstanceRow key={`${instance.target || "desktop"}:${instance.id}`} app={app} instance={instance} onChanged={onRefresh} />)
+                          : <div className="py-3 text-xs text-muted-foreground">暂无实例</div>}
                       {addingInstance === appId && <NewInstanceForm app={app} onClose={() => setAddingInstance(null)} onChanged={onRefresh} />}
+                      {displayedBackend?.actions?.length ? (
+                        <div className="mt-3 border-t border-border pt-3">
+                          <div className="mb-2 text-xs font-medium">Backend 能力</div>
+                          <div className="flex flex-wrap gap-2">{displayedBackend.actions.map((action) => <code key={action.name} className="rounded bg-muted px-2 py-1 text-[11px]">{action.name}</code>)}</div>
+                        </div>
+                      ) : null}
                       {app.remoteInstalled && !app.remoteOnly && <div className="mt-3"><Button size="sm" variant="outline" className="h-7 text-destructive" onClick={() => {
                         if (!window.confirm("卸载 Server 上的这个 App？")) return;
                         const deleteData = window.confirm("同时删除 Server App 数据？");

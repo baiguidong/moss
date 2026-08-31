@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
+  fetchRemoteAppAvailability,
   fetchRemoteDirectSessions,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
@@ -94,6 +95,34 @@ describe('remote direct client settings', () => {
     })).rejects.toThrow(
       'Failed to connect to Moss Server at http://127.0.0.1:43127: fetch failed',
     );
+  });
+
+  it('checks known Server package versions with bearer auth', async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      if (String(input).endsWith('/api/v1/auth/token')) {
+        return new Response(JSON.stringify({ access_token: 'access-token' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        packages: [{ appId: 'example.app', version: '1.0.0', available: true }],
+      }), { status: 200 });
+    };
+
+    const packages = await fetchRemoteAppAvailability({
+      remoteDirect: {
+        serverUrl: 'https://moss.example.com',
+        credentialMode: 'api-key',
+        apiKey: 'server-key',
+      },
+    }, [{ appId: 'example.app', version: '1.0.0' }]);
+
+    expect(packages).toEqual([{ appId: 'example.app', version: '1.0.0', available: true }]);
+    expect(requests[1].url).toBe('https://moss.example.com/api/v1/apps/availability');
+    expect(requests[1].init.headers.authorization).toBe('Bearer access-token');
+    expect(JSON.parse(requests[1].init.body)).toEqual({
+      packages: [{ appId: 'example.app', version: '1.0.0' }],
+    });
   });
 
   it('lists authoritative Moss Server sessions with bearer auth', async () => {

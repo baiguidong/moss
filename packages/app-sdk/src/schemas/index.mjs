@@ -80,6 +80,17 @@ function normalizeBackend(backend) {
 
 export function validateAppManifest(rawManifest, options = {}) {
   const candidate = structuredClone(rawManifest)
+  if (
+    candidate?.ui
+    && candidate?.backend
+    && Array.isArray(candidate.backend.targets)
+    && !candidate.backend.targets.includes('desktop')
+  ) {
+    throw new AppServiceError(
+      APP_ERROR_CODES.invalidManifest,
+      'Apps with a UI must target desktop; Server-only Apps must omit ui',
+    )
+  }
   if (!validateManifestSchema(candidate)) {
     throw new AppServiceError(
       APP_ERROR_CODES.invalidManifest,

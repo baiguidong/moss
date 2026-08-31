@@ -145,6 +145,17 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 - 多页面、复杂状态、组件复用明显：使用 Vite + React。
 - 需要后端能力时，在 manifest 中声明可选 `backend`，并通过 `window.mossApp.actions.invoke(instanceId, action, input)` 调用已声明 action。
 
+#### Backend 部署目标（强制）
+
+`backend.targets` 是 App 对运行位置的明确能力声明，也是 Host 判断 App 是否具备“部署到 Server”能力的依据。App Builder 必须按实际需求选择最小范围，不能为了预留能力默认加入 `server`：
+
+- 没有 Backend：省略整个 `backend`，不要声明 `targets`。
+- 普通桌面 App：默认使用 `"targets": ["desktop"]`；此类 App 不允许部署到 Server，Host 不显示部署按钮。
+- 同时支持 Desktop 和 Server：仅当用户明确需要远程运行、长期在线或无人值守，并且 Backend 不依赖 Electron、窗口、桌面文件路径或其他仅本机资源时，使用 `"targets": ["desktop", "server"]`。
+- 仅 Server：只有用户明确要求服务端专用的 Backend-only App 时，才省略 `ui` 并使用 `"targets": ["server"]`。当前 App UI Bridge 只操作 Desktop Runtime，因此带 UI 的 App 必须包含 `desktop`。
+
+Server 是可选部署目标，不是 App Runtime 的默认依赖。允许部署到 Server 的 App 在 Server 未配置或不可用时，Desktop 能力仍必须正常工作；App UI 不得自行连接 Moss Server，也不得把 Server 离线当成 Desktop Backend 失败。Server 实例由宿主的 App 管理页操作，App UI 的 `mossApp.instances` 和 `mossApp.actions` 只访问 Desktop 实例。新建计划、自检和发布前都要核对 `targets` 与用户需求一致。
+
 界面和交互必须根据应用领域设计：
 
 - 首屏直接呈现主任务、当前状态和主操作，不用大段功能介绍代替工作区。
@@ -401,6 +412,8 @@ if (!rootEl) {
 - App 的 `app.moss.json` 是合法 JSON
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
 - App 声明的 `ui.entry` 不为空，并且能找到脚本入口或可见静态内容
+- Backend 的 `targets` 使用满足需求的最小集合；未明确需要远程运行时必须是 `["desktop"]`，不得默认加入 `server`
+- `targets` 不含 `server` 时，不实现或描述 Server 部署；包含 `server` 时，确认 Backend 不依赖桌面专属能力，并验证 Server 离线不影响 Desktop 运行
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
 - 检查 App 使用 Moss 桌面 token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级

@@ -69,6 +69,27 @@ export async function handleAppRoute(input: {
       writeJson(res, 200, { ok: true, app: await apps.installKnown(appId, version, body.activate === true) })
       return true
     }
+    if (pathname === '/api/v1/apps/availability' && req.method === 'POST') {
+      requireAppScope(authService, auth, 'apps:read')
+      const body = await readJson(req)
+      if (!Array.isArray(body.packages)) {
+        throw Object.assign(new Error('packages must be an array'), { statusCode: 400 })
+      }
+      const packages = body.packages
+      if (packages.length > 200) throw Object.assign(new Error('At most 200 App versions can be checked at once'), { statusCode: 400 })
+      const availability = await Promise.all(packages.map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw Object.assign(new Error('Each App version must be an object'), { statusCode: 400 })
+        }
+        const candidate = entry as JsonBody
+        const appId = text(candidate.appId)
+        const version = text(candidate.version)
+        if (!appId || !version) throw Object.assign(new Error('Each App version requires appId and version'), { statusCode: 400 })
+        return apps.getKnownPackageAvailability(appId, version)
+      }))
+      writeJson(res, 200, { packages: availability })
+      return true
+    }
 
     const instanceLogs = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/logs$/)
     if (instanceLogs && req.method === 'GET') {

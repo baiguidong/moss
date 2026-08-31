@@ -58,6 +58,8 @@ def validate(root, phase, report_root):
         if backend.get("instanceMode") not in {"single", "multiple"}: errors.append("Backend instanceMode is invalid")
         targets = backend.get("targets")
         if not isinstance(targets, list) or not targets or any(item not in {"desktop", "server"} for item in targets): errors.append("Backend targets are invalid")
+        if isinstance(ui, dict) and isinstance(targets, list) and "desktop" not in targets:
+            errors.append("Apps with a UI must include desktop in Backend targets")
         entry = safe_file(root, backend.get("entry"), "backend.entry", errors)
         actions = backend.get("actions")
         if not isinstance(actions, list): errors.append("Backend actions must be an array"); actions = []

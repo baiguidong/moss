@@ -201,7 +201,7 @@ export class AppRuntimeHost {
     if (!installation) return null
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    const instances = !backend
+    const instances = !backend || !backend.targets.includes(this.target)
       ? []
       : this.instances.list(appId).filter((instance) =>
         backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
@@ -242,7 +242,7 @@ export class AppRuntimeHost {
   async ensureDefaultInstance(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend || backend.instanceMode !== 'single') return null
+    if (!backend || backend.instanceMode !== 'single' || !backend.targets.includes(this.target)) return null
     const existing = this.instances.get(defaultInstanceId(appId))
     const instance = existing || await this.instances.create(appId, {
       displayName: 'Default', config: {}, secretRefs: {}, enabled: false,
@@ -273,6 +273,9 @@ export class AppRuntimeHost {
   async setAppEnabledNow(appId, enabled) {
     const packageInfo = await this.getActivePackage(appId)
     if (!packageInfo.manifest.backend) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'UI-only Apps do not have a Backend switch')
+    if (enabled && !packageInfo.manifest.backend.targets.includes(this.target)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${this.target}`)
+    }
     const previous = this.installations.get(appId)
     await this.installations.upsert(appId, { enabled: Boolean(enabled) })
     try {
@@ -289,7 +292,7 @@ export class AppRuntimeHost {
   async listInstances(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    const instances = !backend
+    const instances = !backend || !backend.targets.includes(this.target)
       ? []
       : this.instances.list(appId).filter((instance) =>
         backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
@@ -308,6 +311,9 @@ export class AppRuntimeHost {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
     if (!backend) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'UI-only Apps cannot create Backend instances')
+    if (!backend.targets.includes(this.target)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${this.target}`)
+    }
     if (backend.instanceMode !== 'multiple') throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'This App uses its single default instance')
     if (input.target && input.target !== this.target) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Instances can only be created on the current Host')
     if (input.targetId && input.targetId !== this.deploymentTargetId) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Instance targetId does not match the current Host')
@@ -556,7 +562,7 @@ export class AppRuntimeHost {
   async reconcileApp(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend) {
+    if (!backend || !backend.targets.includes(this.target)) {
       for (const deployment of this.deployments.list(appId)) await this.removeDeploymentRecord(deployment)
       return
     }

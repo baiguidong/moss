@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { AppBackendClient, createEnvelope, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
+import Ajv2020 from 'ajv/dist/2020.js'
+import { APP_MANIFEST_SCHEMA, AppBackendClient, createEnvelope, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
 
 const valid = {
   schemaVersion: 2,
@@ -33,6 +34,20 @@ describe('App manifest V2', () => {
         actions: [{ name: 'same' }, { name: 'same' }],
       },
     })).toThrow(/Duplicate Backend action/)
+  })
+
+  it('allows Server-only Backend Apps but rejects a UI whose Backend cannot run on Desktop', () => {
+    const serverBackend = {
+      entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+      lifecycle: 'persistent', instanceMode: 'single', targets: ['server'],
+      actions: [{ name: 'serve' }],
+    }
+    expect(validateAppManifest({ ...valid, ui: undefined, backend: serverBackend }).backend?.targets).toEqual(['server'])
+    expect(() => validateAppManifest({ ...valid, backend: serverBackend })).toThrow(
+      /Apps with a UI must target desktop/,
+    )
+    const validateSchema = new Ajv2020({ strict: false }).compile(APP_MANIFEST_SCHEMA)
+    expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
   })
 
   it('reports Backend initialization failures instead of leaving an unhandled rejection', async () => {

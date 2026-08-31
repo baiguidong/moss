@@ -733,6 +733,14 @@ App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用�
 
 Server 从可信包源获取并完整校验指定身份的包。更新版本只有在 `activate: true` 时切换；启动仍取决于 App 和实例开关。需要 `apps:manage`。
 
+### POST `/api/v1/apps/availability`
+
+```json
+{ "packages": [{ "appId": "example.app", "version": "1.0.0" }] }
+```
+
+批量检查可信包源中指定版本是否存在、完整有效并声明支持 Server；结果按输入顺序返回，并包含 `available` 及失败时的 `reason`。单次最多检查 200 个版本。需要 `apps:read`。
+
 ### GET `/api/v1/apps/:appId`
 
 返回一个 App 的完整运行状态。需要 `apps:read`。

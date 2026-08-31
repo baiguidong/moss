@@ -514,6 +514,8 @@ export type StoredApp = {
   remoteOnly?: boolean;
   serverConfigured?: boolean;
   serverAvailable?: boolean;
+  serverPackageAvailable?: boolean;
+  serverPackageError?: string | null;
   remoteError?: string | null;
   backend?: {
     lifecycle: 'on-demand' | 'persistent';

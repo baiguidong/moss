@@ -48,7 +48,7 @@ example-app/
     "apiVersion": 1,
     "lifecycle": "persistent",
     "instanceMode": "multiple",
-    "targets": ["desktop", "server"],
+    "targets": ["desktop"],
     "actions": [{ "name": "message.send" }],
     "configuration": {
       "schema": "schemas/config.schema.json",
@@ -60,6 +60,8 @@ example-app/
 ```
 
 `lifecycle` 为 `on-demand` 时，第一个 Action 启动共享进程，无待处理 Action 后按空闲超时退出。`persistent` 在 App 和实例开关都启用时常驻。`instanceMode: single` 使用默认实例；`multiple` 每个已启用实例拥有独立进程、配置、密钥、数据和日志。
+
+`backend.targets` 是部署能力声明，不是运行时偏好。默认只声明 `desktop`；只有 Backend 明确支持无桌面环境运行时才加入 `server`。App 管理界面仅在 `targets` 包含 `server` 且 Server 包源存在相同版本时提供部署入口，Server 未连接不影响同时支持 Desktop 的 App 在本机运行。当前 App UI Bridge 只操作 Desktop Runtime，因此带 `ui` 的 App Backend 必须包含 `desktop`；`["server"]` 仅用于 Backend-only App。
 
 ## 独立 App Repository
 
