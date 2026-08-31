@@ -4,7 +4,6 @@ import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
 import { getOriginalCwd, getSessionProjectDir } from '../bootstrap/state.js'
 import {
   getAutoMemorySettings,
-  isAutoMemorySelectiveRecallEnabled,
   isPastContextSearchEnabled,
 } from '../services/autoMemorySettings.js'
 import {
@@ -186,7 +185,6 @@ export function buildMemoryLines(
   displayName: string,
   memoryDir: string,
   extraGuidelines?: string[],
-  mainSessionRecallEnabled = false,
 ): string[] {
   const howToSave = [
     '## How to save memories',
@@ -206,16 +204,14 @@ export function buildMemoryLines(
     '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
   ]
 
-  const mainSessionRecall = mainSessionRecallEnabled
-    ? [
-        '## Main-session on-demand recall',
-        '',
-        `Treat the \`${ENTRYPOINT_NAME}\` already present in this conversation as a catalog, like the available-skills listing. In this main conversation, decide whether any listed memory is relevant to the user's request.`,
-        `When an entry is relevant, use ${FILE_READ_TOOL_NAME} to read the linked topic file before answering. Resolve relative links under \`${memoryDir}\`. Do not rely only on the index hook when the topic file can provide the authoritative saved detail.`,
-        'Do not invoke a separate model to select memories. The main conversation model owns the relevance decision and reads only the topic files it needs.',
-        '',
-      ]
-    : []
+  const mainSessionRecall = [
+    '## Main-session on-demand recall',
+    '',
+    `Treat the \`${ENTRYPOINT_NAME}\` already present in this conversation as a concise catalog, like the available-skills listing. Each entry contains a topic, a short description, and a link. In this main conversation, decide whether any listed memory is relevant to the user's request.`,
+    `When an entry is relevant, use ${FILE_READ_TOOL_NAME} to read the linked topic file before answering. Resolve relative links under \`${memoryDir}\`. Do not rely only on the catalog description when the topic file can provide the authoritative saved detail.`,
+    'Do not invoke a separate model to select memories. The main conversation model owns the relevance decision and reads only the topic files it needs.',
+    '',
+  ]
 
   const lines: string[] = [
     `# ${displayName}`,
@@ -343,7 +339,6 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
  */
 export async function loadMemoryPrompt(): Promise<string | null> {
   const autoEnabled = isAutoMemoryEnabled()
-  const mainSessionRecallEnabled = isAutoMemorySelectiveRecallEnabled()
 
   // Cowork injects memory-policy text via env var; thread into all builders.
   const coworkExtraGuidelines =
@@ -362,12 +357,7 @@ export async function loadMemoryPrompt(): Promise<string | null> {
       memory_type:
         'auto' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
-    return buildMemoryLines(
-      'auto memory',
-      autoDir,
-      extraGuidelines,
-      mainSessionRecallEnabled,
-    ).join('\n')
+    return buildMemoryLines('auto memory', autoDir, extraGuidelines).join('\n')
   }
 
   logEvent('tengu_memdir_disabled', {

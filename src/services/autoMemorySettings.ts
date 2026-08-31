@@ -53,10 +53,6 @@ export function isAutoMemoryExtractionEnabled(): boolean {
   return getAutoMemorySettings().extractionEnabled
 }
 
-export function isAutoMemorySelectiveRecallEnabled(): boolean {
-  return getAutoMemorySettings().selectiveRecallEnabled
-}
-
 export function isPastContextSearchEnabled(): boolean {
   return getAutoMemorySettings().pastContextSearchEnabled
 }

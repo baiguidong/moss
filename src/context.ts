@@ -2,12 +2,13 @@ import memoize from 'lodash-es/memoize.js'
 import { getAdditionalDirectoriesForMossMd } from './bootstrap/state.js'
 import { getLocalISODate } from './constants/common.js'
 import {
+  getAutoMemEntrypointCacheKey,
   getMossMds,
   getMemoryFiles,
 } from './utils/mossmd.js'
 import { getCwd } from './utils/cwd.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
-import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
+import { getMossConfigHomeDir, isBareMode } from './utils/envUtils.js'
 import { execFileNoThrow } from './utils/execFileNoThrow.js'
 import { getIsGit, gitExe } from './utils/git.js'
 import { shouldIncludeGitInstructions } from './utils/gitSettings.js'
@@ -172,12 +173,10 @@ export const getUserContext = memoize(
     const startTime = Date.now()
     logForDiagnosticsNoPII('info', 'user_context_started')
 
-    // MOSS_DISABLE_MOSS_MD: hard off, always.
     // --bare: skip auto-discovery (cwd walk), BUT honor explicit --add-dir.
     // --bare means "skip what I didn't ask for", not "ignore what I asked for".
     const shouldDisableMossMd =
-      isEnvTruthy(process.env.MOSS_DISABLE_MOSS_MD) ||
-      (isBareMode() && getAdditionalDirectoriesForMossMd().length === 0)
+      isBareMode() && getAdditionalDirectoriesForMossMd().length === 0
     // Await the async I/O (readFile/readdir directory walk) so the event
     // loop yields naturally at the first fs.readFile.
     const mossMd = shouldDisableMossMd
@@ -194,7 +193,7 @@ export const getUserContext = memoize(
       currentDate: `Today's date is ${getLocalISODate()}.`,
     }
   },
-  // Keyed by cwd + explicit addDirs: instruction discovery can include
-  // session-scoped assistant/project directories in embedded mode.
-  () => `${getCwd()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+  // Profile and memory state are session-scoped in the embedded runtime.
+  () =>
+    `${getMossConfigHomeDir()}:${getCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )

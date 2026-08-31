@@ -384,6 +384,10 @@ const sessionRegisteredHooks = new Map<
   string,
   Partial<Record<HookEvent, RegisteredHookMatcher[]>>
 >()
+const sessionSystemPromptSectionCaches = new Map<
+  string,
+  Map<string, string | null>
+>()
 
 function getRegisteredHooksForCurrentSession():
   | Partial<Record<HookEvent, RegisteredHookMatcher[]>>
@@ -623,6 +627,10 @@ export function discardSessionCostState(sessionId: string): void {
 
 export function discardSessionRegisteredHooks(sessionId: string): void {
   sessionRegisteredHooks.delete(sessionId)
+}
+
+export function discardSessionSystemPromptSectionCache(sessionId: string): void {
+  sessionSystemPromptSectionCaches.delete(sessionId)
 }
 
 export function addToTotalDurationState(
@@ -1003,6 +1011,7 @@ export function resetStateForTests(): void {
   costStateGlobalExtra.budgetContinuationCount = 0
   sessionCostStates.clear()
   sessionSwitched.clear()
+  sessionSystemPromptSectionCaches.clear()
 }
 
 // You shouldn't use this directly. See src/utils/model/modelStrings.ts::getModelStrings()
@@ -1534,6 +1543,15 @@ export function setIsRemoteMode(value: boolean): void {
 // System prompt section accessors
 
 export function getSystemPromptSectionCache(): Map<string, string | null> {
+  const sessionId = getSessionIdContext()
+  if (sessionId) {
+    let cache = sessionSystemPromptSectionCaches.get(sessionId)
+    if (!cache) {
+      cache = new Map()
+      sessionSystemPromptSectionCaches.set(sessionId, cache)
+    }
+    return cache
+  }
   return STATE.systemPromptSectionCache
 }
 
@@ -1541,11 +1559,11 @@ export function setSystemPromptSectionCacheEntry(
   name: string,
   value: string | null,
 ): void {
-  STATE.systemPromptSectionCache.set(name, value)
+  getSystemPromptSectionCache().set(name, value)
 }
 
 export function clearSystemPromptSectionState(): void {
-  STATE.systemPromptSectionCache.clear()
+  getSystemPromptSectionCache().clear()
 }
 
 // Last emitted date accessors (for detecting midnight date changes)

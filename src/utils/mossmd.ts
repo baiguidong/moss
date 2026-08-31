@@ -241,6 +241,18 @@ export type MemoryFileInfo = {
   rawContent?: string
 }
 
+export function getAutoMemEntrypointCacheKey(): string {
+  if (!isAutoMemoryEnabled()) return 'disabled'
+
+  const entrypoint = getAutoMemEntrypoint()
+  try {
+    const stats = getFsImplementation().statSync(entrypoint)
+    return `${entrypoint}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}:${stats.ino}`
+  } catch {
+    return `${entrypoint}:missing`
+  }
+}
+
 function pathInOriginalCwd(path: string): boolean {
   return pathInWorkingPath(path, getOriginalCwd())
 }
@@ -1035,7 +1047,7 @@ export const getMemoryFiles = memoize(
     return result
   },
   (forceIncludeExternal: boolean = false) =>
-    `${forceIncludeExternal}:${getOriginalCwd()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${forceIncludeExternal}:${getMossConfigHomeDir()}:${getOriginalCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 function isInstructionsMemoryType(

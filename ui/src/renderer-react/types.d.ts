@@ -403,7 +403,6 @@ export type DesktopSettings = {
     enabled?: boolean;
     extractionEnabled?: boolean;
     extractionIntervalTurns?: number;
-    selectiveRecallEnabled?: boolean;
     pastContextSearchEnabled?: boolean;
     dreamEnabled?: boolean;
     dreamMinHours?: number;

@@ -42,7 +42,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     enabled: true,
     extractionEnabled: false,
     extractionIntervalTurns: 1,
-    selectiveRecallEnabled: false,
     pastContextSearchEnabled: false,
     dreamEnabled: false,
     dreamMinHours: 24,
@@ -505,12 +504,6 @@ export function normalizeDesktopSettings(input, existing = {}) {
       1,
       10_000,
     ),
-    selectiveRecallEnabled:
-      sourceAutoMemory.selectiveRecallEnabled !== undefined
-        ? Boolean(sourceAutoMemory.selectiveRecallEnabled)
-        : existingAutoMemory.selectiveRecallEnabled !== undefined
-          ? Boolean(existingAutoMemory.selectiveRecallEnabled)
-          : DEFAULT_DESKTOP_SETTINGS.autoMemory.selectiveRecallEnabled,
     pastContextSearchEnabled:
       sourceAutoMemory.pastContextSearchEnabled !== undefined
         ? Boolean(sourceAutoMemory.pastContextSearchEnabled)

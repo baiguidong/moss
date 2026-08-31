@@ -7,7 +7,6 @@ export type AutoMemorySettings = {
   enabled: boolean
   extractionEnabled: boolean
   extractionIntervalTurns: number
-  selectiveRecallEnabled: boolean
   pastContextSearchEnabled: boolean
   dreamEnabled: boolean
   dreamMinHours: number
@@ -29,7 +28,6 @@ export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
   enabled: true,
   extractionEnabled: false,
   extractionIntervalTurns: 1,
-  selectiveRecallEnabled: false,
   pastContextSearchEnabled: false,
   dreamEnabled: false,
   dreamMinHours: 24,
@@ -71,7 +69,6 @@ export const autoMemorySettingsSchema = lazySchema(() =>
     enabled: z.boolean().optional(),
     extractionEnabled: z.boolean().optional(),
     extractionIntervalTurns: z.number().int().min(1).max(10_000).optional(),
-    selectiveRecallEnabled: z.boolean().optional(),
     pastContextSearchEnabled: z.boolean().optional(),
     dreamEnabled: z.boolean().optional(),
     dreamMinHours: z.number().min(0.1).max(24 * 365).optional(),

@@ -70,7 +70,6 @@ describe('server Feishu adapter manager', () => {
       enabled: true,
       extractionEnabled: true,
       extractionIntervalTurns: 2,
-      selectiveRecallEnabled: true,
       pastContextSearchEnabled: true,
       dreamEnabled: true,
       dreamMinHours: 12,

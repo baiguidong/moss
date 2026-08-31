@@ -614,7 +614,6 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
     "enabled": true,
     "extractionEnabled": true,
     "extractionIntervalTurns": 1,
-    "selectiveRecallEnabled": true,
     "pastContextSearchEnabled": true,
     "dreamEnabled": true,
     "dreamMinHours": 24,

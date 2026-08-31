@@ -56,6 +56,7 @@ import {
   discardSessionCostState,
   setQuestionPreviewFormat,
   discardSessionRegisteredHooks,
+  discardSessionSystemPromptSectionCache,
   switchSession,
 } from './bootstrap/state.js'
 import {
@@ -1186,6 +1187,7 @@ export class ClaudeSession {
     discardMicrocompactSessionState(this.sessionId)
     discardSessionCostState(this.sessionId)
     discardSessionRegisteredHooks(this.sessionId)
+    discardSessionSystemPromptSectionCache(this.sessionId)
     discardSessionSettingsCache(this.sessionId)
     discardSessionHooksConfigSnapshot(this.sessionId)
     discardSessionFileChangedWatcher(this.sessionId)

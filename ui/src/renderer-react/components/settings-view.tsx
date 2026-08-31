@@ -140,7 +140,6 @@ const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> =
   enabled: true,
   extractionEnabled: false,
   extractionIntervalTurns: 1,
-  selectiveRecallEnabled: false,
   pastContextSearchEnabled: false,
   dreamEnabled: false,
   dreamMinHours: 24,
@@ -1820,20 +1819,6 @@ export function SettingsView({
                       高级设置
                     </div>
                     <SettingsGroup>
-                      <SettingsRow
-                        title="主会话按需记忆"
-                        description="MEMORY.md 目录始终在主会话中，由当前模型判断并读取相关主题文件，不会额外调用筛选模型。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(autoMemoryDraft.selectiveRecallEnabled)}
-                            onCheckedChange={(checked) => updateAutoMemorySettings({ selectiveRecallEnabled: checked })}
-                            label="主会话按需记忆"
-                          />
-                        </div>
-                      </SettingsRow>
-
                       <SettingsRow
                         title="历史上下文搜索"
                         description="允许 Agent 在需要时搜索长期记忆和当前会话的历史记录。"
