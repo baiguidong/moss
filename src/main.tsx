@@ -84,7 +84,7 @@ import { getModelDeprecationWarning } from './utils/model/deprecation.js';
 import { getDefaultMainLoopModel, getUserSpecifiedModelSetting, normalizeModelStringForAPI, parseUserSpecifiedModel } from './utils/model/model.js';
 import { ensureModelStringsInitialized } from './utils/model/modelStrings.js';
 import { PERMISSION_MODES } from './utils/permissions/PermissionMode.js';
-import { checkAndDisableBypassPermissions, initializeToolPermissionContext, initialPermissionModeFromCLI, parseToolListFromCLI } from './utils/permissions/permissionSetup.js';
+import { initializeToolPermissionContext, initialPermissionModeFromCLI, parseToolListFromCLI } from './utils/permissions/permissionSetup.js';
 import { countFilesRoundedRg } from './utils/ripgrep.js';
 import { processSessionStartHooks, processSetupHooks } from './utils/sessionStart.js';
 import { cacheSessionTitle, getSessionIdFromLog, saveAgentSetting, saveMode, searchSessionsByCustomTitle, sessionIdExists } from './utils/sessionStorage.js';
@@ -1729,12 +1729,6 @@ async function run(): Promise<CommanderCommand> {
 
       // Init app state
       const headlessStore = createStore(headlessInitialState, onChangeAppState);
-
-      // Check if bypassPermissions should be disabled by local feature gates.
-      // This runs in parallel to the code below, to avoid blocking the main loop.
-      if (toolPermissionContext.mode === 'bypassPermissions' || allowDangerouslySkipPermissions) {
-        void checkAndDisableBypassPermissions(toolPermissionContext);
-      }
 
       // Set global state for session persistence
       if (options.sessionPersistence === false) {

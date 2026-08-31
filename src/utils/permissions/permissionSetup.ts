@@ -21,10 +21,6 @@ import { loadAllPermissionRulesFromDisk } from './permissionsLoader.js'
 
 import { resolve } from 'path'
 import {
-  checkSecurityRestrictionGate,
-  checkFeatureGate_CACHED_MAY_BE_STALE,
-} from 'src/services/analytics/featureFlags.js'
-import {
   addDirHelpMessage,
   validateDirectoryForWorkspace,
 } from '../../commands/add-dir/validation.js'
@@ -36,7 +32,6 @@ import {
   safeResolvePath,
 } from '../../utils/fsOperations.js'
 import { logForDebugging } from '../debug.js'
-import { gracefulShutdown } from '../gracefulShutdown.js'
 import type {
   PermissionRule,
   PermissionRuleSource,
@@ -324,20 +319,8 @@ export function initialPermissionModeFromCLI({
 }): { mode: PermissionMode; notification?: string } {
   const settings = getSettings_DEPRECATED() || {}
 
-  // Check feature flag gate first - highest precedence
-  const featureFlagDisableBypassPermissionsMode =
-    checkFeatureGate_CACHED_MAY_BE_STALE(
-      'tengu_disable_bypass_permissions_mode',
-    )
-
-  // Then check settings - lower precedence
-  const settingsDisableBypassPermissionsMode =
-    settings.permissions?.disableBypassPermissionsMode === 'disable'
-
-  // Feature gate takes precedence over settings
   const disableBypassPermissionsMode =
-    featureFlagDisableBypassPermissionsMode ||
-    settingsDisableBypassPermissionsMode
+    settings.permissions?.disableBypassPermissionsMode === 'disable'
 
   // Modes in order of priority
   const orderedModes: PermissionMode[] = []
@@ -363,18 +346,10 @@ export function initialPermissionModeFromCLI({
 
   for (const mode of orderedModes) {
     if (mode === 'bypassPermissions' && disableBypassPermissionsMode) {
-      if (featureFlagDisableBypassPermissionsMode) {
-        logForDebugging('bypassPermissions mode is disabled by feature gate', {
-          level: 'warn',
-        })
-        notification =
-          'Bypass permissions mode was disabled by your organization policy'
-      } else {
-        logForDebugging('bypassPermissions mode is disabled by settings', {
-          level: 'warn',
-        })
-        notification = 'Bypass permissions mode was disabled by settings'
-      }
+      logForDebugging('bypassPermissions mode is disabled by settings', {
+        level: 'warn',
+      })
+      notification = 'Bypass permissions mode was disabled by settings'
       continue // Skip this mode if it's disabled
     }
 
@@ -513,20 +488,18 @@ export async function initializeToolPermissionContext({
     })
   }
 
-  // Check if bypassPermissions mode is available (not disabled by feature gate or settings)
-  // Use cached values to avoid blocking on startup
-  const featureFlagDisableBypassPermissionsMode =
-    checkFeatureGate_CACHED_MAY_BE_STALE(
-      'tengu_disable_bypass_permissions_mode',
-    )
+  // Check if bypassPermissions mode is available under the merged settings.
   const settings = getSettings_DEPRECATED() || {}
-  const settingsDisableBypassPermissionsMode =
+  const disableBypassPermissionsMode =
     settings.permissions?.disableBypassPermissionsMode === 'disable'
+  const effectivePermissionMode =
+    permissionMode === 'bypassPermissions' && disableBypassPermissionsMode
+      ? 'default'
+      : permissionMode
   const isBypassPermissionsModeAvailable =
     (permissionMode === 'bypassPermissions' ||
       allowDangerouslySkipPermissions) &&
-    !featureFlagDisableBypassPermissionsMode &&
-    !settingsDisableBypassPermissionsMode
+    !disableBypassPermissionsMode
 
   // Load all permission rules from disk
   const rulesFromDisk = loadAllPermissionRulesFromDisk()
@@ -535,7 +508,7 @@ export async function initializeToolPermissionContext({
 
   let toolPermissionContext = applyPermissionRulesToPermissionContext(
     {
-      mode: permissionMode,
+      mode: effectivePermissionMode,
       additionalWorkingDirectories,
       alwaysAllowRules: { cliArg: parsedAllowedToolsCli },
       alwaysDenyRules: { cliArg: parsedDisallowedToolsCli },
@@ -587,29 +560,11 @@ export async function initializeToolPermissionContext({
 }
 
 /**
- * Core logic to check if bypassPermissions should be disabled by feature gate.
- */
-export function shouldDisableBypassPermissions(): Promise<boolean> {
-  return checkSecurityRestrictionGate('tengu_disable_bypass_permissions_mode')
-}
-
-/**
- * Checks if bypassPermissions mode is currently disabled by feature gate or settings.
- * This is a synchronous version that uses cached feature values.
+ * Checks if bypassPermissions mode is disabled by the merged settings.
  */
 export function isBypassPermissionsModeDisabled(): boolean {
-  const featureFlagDisableBypassPermissionsMode =
-    checkFeatureGate_CACHED_MAY_BE_STALE(
-      'tengu_disable_bypass_permissions_mode',
-    )
   const settings = getSettings_DEPRECATED() || {}
-  const settingsDisableBypassPermissionsMode =
-    settings.permissions?.disableBypassPermissionsMode === 'disable'
-
-  return (
-    featureFlagDisableBypassPermissionsMode ||
-    settingsDisableBypassPermissionsMode
-  )
+  return settings.permissions?.disableBypassPermissionsMode === 'disable'
 }
 
 /**
@@ -631,32 +586,6 @@ export function createDisabledBypassPermissionsContext(
     ...updatedContext,
     isBypassPermissionsModeAvailable: false,
   }
-}
-
-/**
- * Asynchronously checks if the bypassPermissions mode should be disabled by feature gate
- * and returns an updated toolPermissionContext if needed
- */
-export async function checkAndDisableBypassPermissions(
-  currentContext: ToolPermissionContext,
-): Promise<void> {
-  // Only proceed if bypassPermissions mode is available
-  if (!currentContext.isBypassPermissionsModeAvailable) {
-    return
-  }
-
-  const shouldDisable = await shouldDisableBypassPermissions()
-  if (!shouldDisable) {
-    return
-  }
-
-  // Gate is enabled, need to disable bypassPermissions mode
-  logForDebugging(
-    'bypassPermissions mode is being disabled by feature gate (async check)',
-    { level: 'warn' },
-  )
-
-  void gracefulShutdown(1, 'bypass_permissions_disabled')
 }
 
 /**

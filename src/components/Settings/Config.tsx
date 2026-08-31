@@ -33,7 +33,6 @@ import { getInitialSettings, getSettingsForSource, updateSettingsForSource } fro
 import { DEFAULT_OUTPUT_STYLE_NAME } from 'src/constants/outputStyles.js';
 import { isEnvTruthy, isRunningOnHomespace } from 'src/utils/envUtils.js';
 import type { LocalJSXCommandContext, CommandResultDisplay } from '../../commands.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js';
 import { getCliTeammateModeOverride, clearCliTeammateModeOverride } from '../../utils/swarm/backends/teammateModeSnapshot.js';
 import { getHardcodedTeammateModelFallback } from '../../utils/swarm/teammateModel.js';
@@ -357,7 +356,7 @@ export function Config({
         }));
       }
     }
-  }] : []), ...(getFeatureValue_CACHED_MAY_BE_STALE('tengu_chomp_inflection', false) ? [{
+  }] : []), {
     id: 'promptSuggestionEnabled',
     label: 'Prompt suggestions',
     value: promptSuggestionEnabled,
@@ -371,7 +370,7 @@ export function Config({
         promptSuggestionEnabled: enabled_1 ? undefined : false
       });
     }
-  }] : []), ...(isFileCheckpointingAvailable ? [{
+  }, ...(isFileCheckpointingAvailable ? [{
     id: 'fileCheckpointingEnabled',
     label: 'Rewind code (checkpoints)',
     value: globalConfig.fileCheckpointingEnabled,
@@ -413,7 +412,7 @@ export function Config({
         enabled: terminalProgressBarEnabled
       });
     }
-  }, ...(getFeatureValue_CACHED_MAY_BE_STALE('tengu_terminal_sidebar', false) ? [{
+  }, {
     id: 'showStatusInTerminalTab',
     label: 'Show status in terminal tab',
     value: globalConfig.showStatusInTerminalTab ?? false,
@@ -431,7 +430,7 @@ export function Config({
         enabled: showStatusInTerminalTab
       });
     }
-  }] : []), {
+  }, {
     id: 'showTurnDuration',
     label: 'Show turn duration',
     value: globalConfig.showTurnDuration,

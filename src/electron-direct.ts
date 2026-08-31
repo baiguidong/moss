@@ -737,11 +737,15 @@ export class ClaudeSession {
         return validationDecision
       }
 
-      // Desktop bypass mode is authoritative for permission checks. Keep tools
-      // that collect actual user input (for example AskUserQuestion) interactive.
+      // Honor the current permission context so managed settings can disable
+      // desktop bypass mode. Tools that collect user input remain interactive.
+      const activePermissionMode =
+        ctx.getAppState().toolPermissionContext.mode === 'bypassPermissions'
+          ? 'allow-all'
+          : 'default'
       if (
         shouldBypassDesktopToolPermission(
-          permissionMode,
+          activePermissionMode,
           tool.requiresUserInteraction?.() === true,
         )
       ) {

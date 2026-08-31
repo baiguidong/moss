@@ -79,14 +79,12 @@ import {
   getDefaultOpusModel,
   getDefaultSonnetModel,
   getSmallFastModel,
-  isNonCustomOpusModel,
 } from '../../utils/model/model.js'
 import {
   asSystemPrompt,
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
 import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
-import { getDynamicConfig_BLOCKS_ON_INIT } from '../analytics/featureFlags.js'
 import {
   currentLimits,
   extractQuotaStatusFromError,
@@ -210,7 +208,6 @@ import { withStreamingVCR, withVCR } from '../vcr.js'
 import { CLIENT_REQUEST_ID_HEADER, getAnthropicClient } from './client.js'
 import {
   API_ERROR_MESSAGE_PREFIX,
-  CUSTOM_OFF_SWITCH_MESSAGE,
   getAssistantMessageFromError,
   getErrorMessageIfRefusal,
 } from './errors.js'
@@ -995,28 +992,6 @@ async function* queryModel(
   StreamEvent | AssistantMessage | SystemAPIErrorMessage,
   void
 > {
-  // Check cheap conditions first — the off-switch await blocks on feature flag
-  // init (~10ms). For non-Opus models (haiku, sonnet) this skips the await
-  // entirely.
-  if (
-    isNonCustomOpusModel(options.model) &&
-    (
-      await getDynamicConfig_BLOCKS_ON_INIT<{ activated: boolean }>(
-        'tengu-off-switch',
-        {
-          activated: false,
-        },
-      )
-    ).activated
-  ) {
-    logEvent('tengu_off_switch_query', {})
-    yield getAssistantMessageFromError(
-      new Error(CUSTOM_OFF_SWITCH_MESSAGE),
-      options.model,
-    )
-    return
-  }
-
   // Derive previous request ID from the last assistant message in this query chain.
   // This is scoped per message array (main thread, subagent, teammate each have their own),
   // so concurrent agents don't clobber each other's request chain tracking.

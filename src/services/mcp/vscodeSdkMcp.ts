@@ -1,10 +1,6 @@
 import { logForDebugging } from 'src/utils/debug.js'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../utils/lazySchema.js'
-import {
-  checkFeatureGate_CACHED_MAY_BE_STALE,
-  getFeatureValue_CACHED_MAY_BE_STALE,
-} from '../analytics/featureFlags.js'
 import { logEvent } from '../analytics/index.js'
 import type { ConnectedMCPServer, MCPServerConnection } from './types.js'
 
@@ -67,29 +63,5 @@ export function setupVscodeSdkMcp(sdkClients: MCPServerConnection[]): void {
         )
       },
     )
-
-    // Send necessary experiment gates to VSCode immediately.
-    const gates: Record<string, boolean | string> = {
-      tengu_vscode_review_upsell: checkFeatureGate_CACHED_MAY_BE_STALE(
-        'tengu_vscode_review_upsell',
-      ),
-      tengu_vscode_onboarding: checkFeatureGate_CACHED_MAY_BE_STALE(
-        'tengu_vscode_onboarding',
-      ),
-      // Browser support.
-      tengu_quiet_fern: getFeatureValue_CACHED_MAY_BE_STALE(
-        'tengu_quiet_fern',
-        false,
-      ),
-      // In-band OAuth via claude_authenticate (vs. extension-native PKCE).
-      tengu_vscode_cc_auth: getFeatureValue_CACHED_MAY_BE_STALE(
-        'tengu_vscode_cc_auth',
-        false,
-      ),
-    }
-    void client.client.notification({
-      method: 'experiment_gates',
-      params: { gates },
-    })
   }
 }

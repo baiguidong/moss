@@ -4,19 +4,11 @@ import { fileHistoryEnabled } from 'src/utils/fileHistory.js'
 import {
   getInitialSettings,
   getSettings_DEPRECATED,
-  getSettingsForSource,
 } from 'src/utils/settings/settings.js'
 import { shouldOfferTerminalSetup } from '../../commands/terminalSetup/terminalSetup.js'
-import { color } from '../../components/design-system/color.js'
 import { getShortcutDisplay } from '../../keybindings/shortcutFormat.js'
-import { isCronEnabled } from '../../tools/ScheduleCronTool/prompt.js'
-import { is1PApiCustomer } from '../../utils/auth.js'
 import { countConcurrentSessions } from '../../utils/concurrentSessions.js'
 import { getGlobalConfig } from '../../utils/config.js'
-import {
-  getEffortEnvOverride,
-  modelSupportsEffort,
-} from '../../utils/effort.js'
 import { env } from '../../utils/env.js'
 import { getWorktreeCount } from '../../utils/git.js'
 import {
@@ -28,16 +20,12 @@ import {
   isVSCodeInstalled,
   isWindsurfInstalled,
 } from '../../utils/ide.js'
-import {
-  getMainLoopModel,
-  getUserSpecifiedModelSetting,
-} from '../../utils/model/model.js'
+import { getUserSpecifiedModelSetting } from '../../utils/model/model.js'
 import { getPlatform } from '../../utils/platform.js'
 import {
   getCurrentSessionAgentColor,
   isCustomTitleEnabled,
 } from '../../utils/sessionStorage.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
 import { getSessionsSinceLastShown } from './tipHistory.js'
 import type { Tip, TipContext } from './types.js'
 
@@ -388,81 +376,6 @@ const externalTips: Tip[] = [
         ? (Date.now() - config.lastPlanModeUse) / (1000 * 60 * 60 * 24)
         : Infinity
       return hasOpusPlanMode && daysSinceLastUse > 3
-    },
-  },
-  {
-    id: 'effort-high-nudge',
-    content: async ctx => {
-      const blue = color('suggestion', ctx.theme)
-      const cmd = blue('/effort high')
-      const variant = getFeatureValue_CACHED_MAY_BE_STALE<
-        'off' | 'copy_a' | 'copy_b'
-      >('tengu_tide_elm', 'off')
-      return variant === 'copy_b'
-        ? `Use ${cmd} for better one-shot answers. Moss thinks it through first.`
-        : `Working on something tricky? ${cmd} gives better first answers`
-    },
-    cooldownSessions: 3,
-    isRelevant: async () => {
-      if (!is1PApiCustomer()) return false
-      if (!modelSupportsEffort(getMainLoopModel())) return false
-      if (getSettingsForSource('policySettings')?.effortLevel !== undefined) {
-        return false
-      }
-      if (getEffortEnvOverride() !== undefined) return false
-      const persisted = getInitialSettings().effortLevel
-      if (persisted === 'high' || persisted === 'max') return false
-      return (
-        getFeatureValue_CACHED_MAY_BE_STALE<'off' | 'copy_a' | 'copy_b'>(
-          'tengu_tide_elm',
-          'off',
-        ) !== 'off'
-      )
-    },
-  },
-  {
-    id: 'subagent-fanout-nudge',
-    content: async ctx => {
-      const blue = color('suggestion', ctx.theme)
-      const variant = getFeatureValue_CACHED_MAY_BE_STALE<
-        'off' | 'copy_a' | 'copy_b'
-      >('tengu_tern_alloy', 'off')
-      return variant === 'copy_b'
-        ? `For big tasks, tell Moss to ${blue('use subagents')}. They work in parallel and keep your main thread clean.`
-        : `Say ${blue('"fan out subagents"')} and Moss sends a team. Each one digs deep so nothing gets missed.`
-    },
-    cooldownSessions: 3,
-    isRelevant: async () => {
-      if (!is1PApiCustomer()) return false
-      return (
-        getFeatureValue_CACHED_MAY_BE_STALE<'off' | 'copy_a' | 'copy_b'>(
-          'tengu_tern_alloy',
-          'off',
-        ) !== 'off'
-      )
-    },
-  },
-  {
-    id: 'loop-command-nudge',
-    content: async ctx => {
-      const blue = color('suggestion', ctx.theme)
-      const variant = getFeatureValue_CACHED_MAY_BE_STALE<
-        'off' | 'copy_a' | 'copy_b'
-      >('tengu_timber_lark', 'off')
-      return variant === 'copy_b'
-        ? `Use ${blue('/loop 5m check the deploy')} to run any prompt on a schedule. Set it and forget it.`
-        : `${blue('/loop')} runs any prompt on a recurring schedule. Great for monitoring deploys, babysitting PRs, or polling status.`
-    },
-    cooldownSessions: 3,
-    isRelevant: async () => {
-      if (!is1PApiCustomer()) return false
-      if (!isCronEnabled()) return false
-      return (
-        getFeatureValue_CACHED_MAY_BE_STALE<'off' | 'copy_a' | 'copy_b'>(
-          'tengu_timber_lark',
-          'off',
-        ) !== 'off'
-      )
     },
   },
 ]

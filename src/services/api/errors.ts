@@ -14,10 +14,7 @@ import type {
   UserMessage,
 } from 'src/types/message.js'
 import { getAnthropicApiKeyWithSource } from 'src/utils/auth.js'
-import {
-  createAssistantAPIErrorMessage,
-} from 'src/utils/messages.js'
-import { isNonCustomOpusModel } from 'src/utils/model/model.js'
+import { createAssistantAPIErrorMessage } from 'src/utils/messages.js'
 import { getModelStrings } from 'src/utils/model/modelStrings.js'
 import { getAPIProvider } from 'src/utils/model/providers.js'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
@@ -140,8 +137,6 @@ export const INVALID_API_KEY_ERROR_MESSAGE_EXTERNAL =
 export const ORG_DISABLED_ERROR_MESSAGE_ENV_KEY =
   'Your ANTHROPIC_API_KEY belongs to a disabled organization · Update or unset the environment variable'
 export const REPEATED_529_ERROR_MESSAGE = 'Repeated 529 Overloaded errors'
-export const CUSTOM_OFF_SWITCH_MESSAGE =
-  'Opus is experiencing high load, please use /model to switch to Sonnet'
 export const API_TIMEOUT_ERROR_MESSAGE = 'Request timed out'
 export function getPdfTooLargeErrorMessage(): string {
   const limits = `max ${API_PDF_MAX_PAGES} pages, ${formatFileSize(PDF_TARGET_RAW_SIZE)}`
@@ -400,17 +395,6 @@ export function getAssistantMessageFromError(
   if (error instanceof ImageSizeError || error instanceof ImageResizeError) {
     return createAssistantAPIErrorMessage({
       content: getImageTooLargeErrorMessage(),
-    })
-  }
-
-  // Check for emergency capacity off switch for Opus PAYG users
-  if (
-    error instanceof Error &&
-    error.message.includes(CUSTOM_OFF_SWITCH_MESSAGE)
-  ) {
-    return createAssistantAPIErrorMessage({
-      content: CUSTOM_OFF_SWITCH_MESSAGE,
-      error: 'rate_limit',
     })
   }
 
@@ -726,14 +710,6 @@ export function classifyAPIError(error: unknown): string {
     error.message.includes(REPEATED_529_ERROR_MESSAGE)
   ) {
     return 'repeated_529'
-  }
-
-  // Check for emergency capacity off switch
-  if (
-    error instanceof Error &&
-    error.message.includes(CUSTOM_OFF_SWITCH_MESSAGE)
-  ) {
-    return 'capacity_off_switch'
   }
 
   // Rate limiting

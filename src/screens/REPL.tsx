@@ -198,7 +198,6 @@ import { MCPConnectionManager } from 'src/services/mcp/MCPConnectionManager.js';
 import { useAwaySummary } from 'src/hooks/useAwaySummary.js';
 import { getTipToShowOnSpinner, recordShownTip } from 'src/services/tips/tipScheduler.js';
 import type { Theme } from 'src/utils/theme.js';
-import { checkAndDisableBypassPermissionsIfNeeded, useKickOffCheckAndDisableBypassPermissionsIfNeeded } from 'src/utils/permissions/bypassPermissionsKillswitch.js';
 import { SandboxManager } from 'src/utils/sandbox/sandbox-adapter.js';
 import { SANDBOX_NETWORK_ACCESS_TOOL_NAME } from 'src/cli/structuredIO.js';
 import { useFileHistorySnapshotInit } from 'src/hooks/useFileHistorySnapshotInit.js';
@@ -606,7 +605,6 @@ export function REPL({
   const proactiveActive = React.useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? PROACTIVE_NO_OP_SUBSCRIBE, proactiveModule?.isProactiveActive ?? PROACTIVE_FALSE);
 
   const localTools = useMemo(() => getTools(toolPermissionContext), [toolPermissionContext, proactiveActive]);
-  useKickOffCheckAndDisableBypassPermissionsIfNeeded();
   const [dynamicMcpConfig, setDynamicMcpConfig] = useState<Record<string, ScopedMcpServerConfig> | undefined>(initialDynamicMcpConfig);
   const onChangeDynamicMcpConfig = useCallback((config: Record<string, ScopedMcpServerConfig>) => {
     setDynamicMcpConfig(config);
@@ -983,12 +981,7 @@ export function REPL({
     }
   }, [sessionStatus, waitingFor]);
 
-  // 3P default: off while the spec stabilizes.
-  // Gated so we can roll back if the sidebar indicator conflicts with
-  // the title spinner in terminals that render both. When the flag is
-  // on, the user-facing config setting controls whether it's active.
-  const tabStatusGateEnabled = getFeatureValue_CACHED_MAY_BE_STALE('tengu_terminal_sidebar', false);
-  const showStatusInTerminalTab = tabStatusGateEnabled && (getGlobalConfig().showStatusInTerminalTab ?? false);
+  const showStatusInTerminalTab = getGlobalConfig().showStatusInTerminalTab ?? false;
   useTabStatus(titleDisabled || !showStatusInTerminalTab ? null : sessionStatus);
 
   // Register the leader's setToolUseConfirmQueue for in-process teammates
@@ -2357,9 +2350,7 @@ export function REPL({
       });
     }
     queryCheckpoint('query_context_loading_start');
-    const [, defaultSystemPrompt, baseUserContext, systemContext] = await Promise.all([
-    // IMPORTANT: do this after setMessages() above, to avoid UI jank
-    checkAndDisableBypassPermissionsIfNeeded(toolPermissionContext, setAppState), getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients), getUserContext(), getSystemContext()]);
+    const [defaultSystemPrompt, baseUserContext, systemContext] = await Promise.all([getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients), getUserContext(), getSystemContext()]);
     const userContext = {
       ...baseUserContext,
       ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
