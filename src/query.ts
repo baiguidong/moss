@@ -302,14 +302,30 @@ async function* queryLoop(
   // for what's included and why feature() gates are intentionally excluded.
   const config = buildQueryConfig()
 
-  // Fired once per user turn — the prompt is invariant across loop iterations,
-  // so per-iteration firing would ask sideQuery the same question N times.
-  // Consume point polls settledAt (never blocks). `using` disposes on all
-  // generator exit paths — see MemoryPrefetch for dispose/telemetry semantics.
+  // Select once per user turn and inject before the first main-model request.
+  // Correct recall is more important than overlapping this side query with a
+  // response that may finish before the selected memories can be consumed.
   using pendingMemoryPrefetch = startRelevantMemoryPrefetch(
     state.messages,
     state.toolUseContext,
   )
+  if (pendingMemoryPrefetch) {
+    const memoryAttachments = filterDuplicateMemoryAttachments(
+      await pendingMemoryPrefetch.promise,
+      state.toolUseContext.readFileState,
+    )
+    const memoryMessages = memoryAttachments.map(createAttachmentMessage)
+    for (const message of memoryMessages) {
+      yield message
+    }
+    if (memoryMessages.length > 0) {
+      state = {
+        ...state,
+        messages: [...state.messages, ...memoryMessages],
+      }
+    }
+    pendingMemoryPrefetch.consumedOnIteration = 0
+  }
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -1465,31 +1481,6 @@ async function* queryLoop(
       yield attachment
       toolResults.push(attachment)
     }
-
-    // Memory prefetch consume: only if settled and not already consumed on
-    // an earlier iteration. If not settled yet, skip (zero-wait) and retry
-    // next iteration — the prefetch gets as many chances as there are loop
-    // iterations before the turn ends. readFileState (cumulative across
-    // iterations) filters out memories the model already Read/Wrote/Edited
-    // — including in earlier iterations, which the per-iteration
-    // toolUseBlocks array would miss.
-    if (
-      pendingMemoryPrefetch &&
-      pendingMemoryPrefetch.settledAt !== null &&
-      pendingMemoryPrefetch.consumedOnIteration === -1
-    ) {
-      const memoryAttachments = filterDuplicateMemoryAttachments(
-        await pendingMemoryPrefetch.promise,
-        toolUseContext.readFileState,
-      )
-      for (const memAttachment of memoryAttachments) {
-        const msg = createAttachmentMessage(memAttachment)
-        yield msg
-        toolResults.push(msg)
-      }
-      pendingMemoryPrefetch.consumedOnIteration = turnCount - 1
-    }
-
 
     // Inject prefetched skill discovery. collectSkillDiscoveryPrefetch emits
     // hidden_by_main_turn — true when the prefetch resolved before this point

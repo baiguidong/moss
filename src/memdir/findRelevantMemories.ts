@@ -26,6 +26,38 @@ export function shouldSearchMemoriesForQuery(input: string): boolean {
   return input.trim().length > 0
 }
 
+export function parseSelectedMemoryFilenames(
+  text: string,
+  validFilenames: ReadonlySet<string>,
+): string[] {
+  try {
+    const parsed = jsonParse(text) as unknown
+    const selected =
+      typeof parsed === 'object' && parsed !== null && 'selected_memories' in parsed
+        ? (parsed as { selected_memories?: unknown }).selected_memories
+        : parsed
+    if (Array.isArray(selected)) {
+      return Array.from(
+        new Set(
+          selected.filter(
+            (filename): filename is string =>
+              typeof filename === 'string' && validFilenames.has(filename),
+          ),
+        ),
+      ).slice(0, 5)
+    }
+  } catch {
+    // Some compatible model gateways ignore output_format and return plain text.
+  }
+
+  return Array.from(validFilenames)
+    .map(filename => ({ filename, index: text.indexOf(filename) }))
+    .filter(candidate => candidate.index >= 0)
+    .sort((left, right) => left.index - right.index)
+    .slice(0, 5)
+    .map(candidate => candidate.filename)
+}
+
 /**
  * Find memory files relevant to a query by scanning memory file headers
  * and asking Sonnet to select the most relevant ones.
@@ -119,8 +151,7 @@ async function selectRelevantMemories(
       return []
     }
 
-    const parsed: { selected_memories: string[] } = jsonParse(textBlock.text)
-    return parsed.selected_memories.filter(f => validFilenames.has(f))
+    return parseSelectedMemoryFilenames(textBlock.text, validFilenames)
   } catch (e) {
     if (signal.aborted) {
       return []

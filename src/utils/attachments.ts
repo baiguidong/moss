@@ -2136,10 +2136,10 @@ export type MemoryPrefetch = {
 }
 
 /**
- * Starts the relevant memory search as an async prefetch.
+ * Starts the relevant memory search for the current turn.
  * Extracts the last real user prompt from messages (skipping isMeta system
- * injections) and kicks off a non-blocking search. Returns a Disposable
- * handle with settlement tracking. Bound with `using` in query.ts.
+ * injections) and returns a Disposable handle with settlement tracking.
+ * query.ts awaits this before the first main-model request.
  */
 export function startRelevantMemoryPrefetch(
   messages: ReadonlyArray<Message>,
