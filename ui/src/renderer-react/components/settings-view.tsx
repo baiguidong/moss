@@ -1821,15 +1821,15 @@ export function SettingsView({
                     </div>
                     <SettingsGroup>
                       <SettingsRow
-                        title="按需检索"
-                        description="按当前问题选择相关记忆，不再把完整记忆索引固定放入上下文。"
+                        title="主会话按需记忆"
+                        description="MEMORY.md 目录始终在主会话中，由当前模型判断并读取相关主题文件，不会额外调用筛选模型。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
                             checked={Boolean(autoMemoryDraft.selectiveRecallEnabled)}
                             onCheckedChange={(checked) => updateAutoMemorySettings({ selectiveRecallEnabled: checked })}
-                            label="按需检索长期记忆"
+                            label="主会话按需记忆"
                           />
                         </div>
                       </SettingsRow>

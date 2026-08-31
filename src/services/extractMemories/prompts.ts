@@ -48,36 +48,23 @@ function opener(newMessageCount: number, existingMemories: string): string {
 export function buildExtractAutoOnlyPrompt(
   newMessageCount: number,
   existingMemories: string,
-  skipIndex = false,
 ): string {
-  const howToSave = skipIndex
-    ? [
-        '## How to save memories',
-        '',
-        'Write each memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
-        '',
-        ...MEMORY_FRONTMATTER_EXAMPLE,
-        '',
-        '- Organize memory semantically by topic, not chronologically',
-        '- Update or remove memories that turn out to be wrong or outdated',
-        '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
-      ]
-    : [
-        '## How to save memories',
-        '',
-        'Saving a memory is a two-step process:',
-        '',
-        '**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
-        '',
-        ...MEMORY_FRONTMATTER_EXAMPLE,
-        '',
-        '**Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: `- [Title](file.md) — one-line hook`. It has no frontmatter. Never write memory content directly into `MEMORY.md`.',
-        '',
-        '- `MEMORY.md` is always loaded into your system prompt — lines after 200 will be truncated, so keep the index concise',
-        '- Organize memory semantically by topic, not chronologically',
-        '- Update or remove memories that turn out to be wrong or outdated',
-        '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
-      ]
+  const howToSave = [
+    '## How to save memories',
+    '',
+    'Saving a memory is a two-step process:',
+    '',
+    '**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
+    '',
+    ...MEMORY_FRONTMATTER_EXAMPLE,
+    '',
+    '**Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: `- [Title](file.md) — one-line hook`. It has no frontmatter. Never write memory content directly into `MEMORY.md`.',
+    '',
+    '- `MEMORY.md` is always loaded into your system prompt — lines after 200 will be truncated, so keep the index concise',
+    '- Organize memory semantically by topic, not chronologically',
+    '- Update or remove memories that turn out to be wrong or outdated',
+    '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
+  ]
 
   return [
     opener(newMessageCount, existingMemories),

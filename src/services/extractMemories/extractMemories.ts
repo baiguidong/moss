@@ -58,7 +58,6 @@ import { sanitizeToolNameForAnalytics } from '../analytics/metadata.js'
 import {
   getAutoMemorySettings,
   isAutoMemoryExtractionEnabled,
-  isAutoMemorySelectiveRecallEnabled,
 } from '../autoMemorySettings.js'
 import { buildExtractAutoOnlyPrompt } from './prompts.js'
 
@@ -453,8 +452,6 @@ export function initExtractMemories(): void {
       return
     }
 
-    const skipIndex = isAutoMemorySelectiveRecallEnabled()
-
     const canUseTool = createAutoMemCanUseTool(memoryDir)
     const cacheSafeParams = createCacheSafeParams(context)
 
@@ -480,7 +477,7 @@ export function initExtractMemories(): void {
       )
 
       // Pre-inject the memory directory manifest so the agent doesn't spend
-      // a turn on `ls`. Reuses findRelevantMemories' frontmatter scan.
+      // a turn on `ls`. Reuses the shared memory frontmatter scan.
       // Placed after the throttle gate so skipped turns don't pay the scan cost.
       const existingMemories = formatMemoryManifest(
         await scanMemoryFiles(memoryDir, createAbortController().signal),
@@ -489,7 +486,6 @@ export function initExtractMemories(): void {
       const userPrompt = buildExtractAutoOnlyPrompt(
         newMessageCount,
         existingMemories,
-        skipIndex,
       )
 
       const result = await runForkedAgent({

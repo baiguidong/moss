@@ -46,7 +46,7 @@ import type {
   UserMessage,
 } from '../types/message.js'
 import { toolToAPISchema } from './api.js'
-import { filterInjectedMemoryFiles, getMemoryFiles } from './mossmd.js'
+import { getMemoryFiles } from './mossmd.js'
 import { getContextWindowForModel } from './context.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
@@ -277,7 +277,7 @@ async function countMemoryFileTokens(): Promise<{
     return { memoryFileDetails: [], mossMdTokens: 0 }
   }
 
-  const memoryFilesData = filterInjectedMemoryFiles(await getMemoryFiles())
+  const memoryFilesData = await getMemoryFiles()
   const memoryFileDetails: MemoryFile[] = []
   let mossMdTokens = 0
 

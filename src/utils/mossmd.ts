@@ -48,7 +48,6 @@ import {
 import { truncateEntrypointContent } from '../memdir/memdir.js'
 import { getAutoMemEntrypoint, isAutoMemoryEnabled } from '../memdir/paths.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
-import { isAutoMemorySelectiveRecallEnabled } from '../services/autoMemorySettings.js'
 import {
   getCurrentProjectConfig,
   getManagedMossRulesDir,
@@ -1096,20 +1095,6 @@ export function resetGetMemoryFilesCache(
 
 export function getLargeMemoryFiles(files: MemoryFileInfo[]): MemoryFileInfo[] {
   return files.filter(f => f.content.length > MAX_MEMORY_CHARACTER_COUNT)
-}
-
-/**
- * When selective auto-memory recall is on, relevant-memory prefetch surfaces
- * memory files via attachments, so the MEMORY.md index is no longer injected
- * into the system prompt. Callsites that care about "what's actually in
- * context" (context builder, /context viz) should filter through this.
- */
-export function filterInjectedMemoryFiles(
-  files: MemoryFileInfo[],
-): MemoryFileInfo[] {
-  const skipMemoryIndex = isAutoMemorySelectiveRecallEnabled()
-  if (!skipMemoryIndex) return files
-  return files.filter(f => f.type !== 'AutoMem')
 }
 
 export const getMossMds = (

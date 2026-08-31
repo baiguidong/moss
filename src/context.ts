@@ -2,7 +2,6 @@ import memoize from 'lodash-es/memoize.js'
 import { getAdditionalDirectoriesForMossMd } from './bootstrap/state.js'
 import { getLocalISODate } from './constants/common.js'
 import {
-  filterInjectedMemoryFiles,
   getMossMds,
   getMemoryFiles,
 } from './utils/mossmd.js'
@@ -183,7 +182,7 @@ export const getUserContext = memoize(
     // loop yields naturally at the first fs.readFile.
     const mossMd = shouldDisableMossMd
       ? null
-      : getMossMds(filterInjectedMemoryFiles(await getMemoryFiles()))
+      : getMossMds(await getMemoryFiles())
     logForDiagnosticsNoPII('info', 'user_context_completed', {
       duration_ms: Date.now() - startTime,
       mossmd_length: mossMd?.length ?? 0,

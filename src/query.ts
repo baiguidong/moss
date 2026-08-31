@@ -54,9 +54,7 @@ import { generateToolUseSummary } from './services/toolUseSummary/toolUseSummary
 import { prependUserContext, appendSystemContext } from './utils/api.js'
 import {
   createAttachmentMessage,
-  filterDuplicateMemoryAttachments,
   getAttachmentMessages,
-  startRelevantMemoryPrefetch,
 } from './utils/attachments.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const skillPrefetch = feature('EXPERIMENTAL_SKILL_SEARCH')
@@ -301,31 +299,6 @@ async function* queryLoop(
   // Snapshot immutable env/feature/session state once at entry. See QueryConfig
   // for what's included and why feature() gates are intentionally excluded.
   const config = buildQueryConfig()
-
-  // Select once per user turn and inject before the first main-model request.
-  // Correct recall is more important than overlapping this side query with a
-  // response that may finish before the selected memories can be consumed.
-  using pendingMemoryPrefetch = startRelevantMemoryPrefetch(
-    state.messages,
-    state.toolUseContext,
-  )
-  if (pendingMemoryPrefetch) {
-    const memoryAttachments = filterDuplicateMemoryAttachments(
-      await pendingMemoryPrefetch.promise,
-      state.toolUseContext.readFileState,
-    )
-    const memoryMessages = memoryAttachments.map(createAttachmentMessage)
-    for (const message of memoryMessages) {
-      yield message
-    }
-    if (memoryMessages.length > 0) {
-      state = {
-        ...state,
-        messages: [...state.messages, ...memoryMessages],
-      }
-    }
-    pendingMemoryPrefetch.consumedOnIteration = 0
-  }
 
   // eslint-disable-next-line no-constant-condition
   while (true) {

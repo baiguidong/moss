@@ -12,6 +12,7 @@ import {
   logEvent,
 } from '../services/analytics/index.js'
 import { GREP_TOOL_NAME } from '../tools/GrepTool/prompt.js'
+import { FILE_READ_TOOL_NAME } from '../tools/FileReadTool/prompt.js'
 import { isReplModeEnabled } from '../tools/REPLTool/constants.js'
 import { logForDebugging } from '../utils/debug.js'
 import { hasEmbeddedSearchTools } from '../utils/embeddedTools.js'
@@ -185,38 +186,36 @@ export function buildMemoryLines(
   displayName: string,
   memoryDir: string,
   extraGuidelines?: string[],
-  skipIndex = false,
+  mainSessionRecallEnabled = false,
 ): string[] {
-  const howToSave = skipIndex
+  const howToSave = [
+    '## How to save memories',
+    '',
+    'Saving a memory is a two-step process:',
+    '',
+    '**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
+    '',
+    ...MEMORY_FRONTMATTER_EXAMPLE,
+    '',
+    `**Step 2** — add a pointer to that file in \`${ENTRYPOINT_NAME}\`. \`${ENTRYPOINT_NAME}\` is an index, not a memory — each entry should be one line, under ~150 characters: \`- [Title](file.md) — one-line hook\`. It has no frontmatter. Never write memory content directly into \`${ENTRYPOINT_NAME}\`.`,
+    '',
+    `- \`${ENTRYPOINT_NAME}\` is always loaded into your conversation context — lines after ${MAX_ENTRYPOINT_LINES} will be truncated, so keep the index concise`,
+    '- Keep the name, description, and type fields in memory files up-to-date with the content',
+    '- Organize memory semantically by topic, not chronologically',
+    '- Update or remove memories that turn out to be wrong or outdated',
+    '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
+  ]
+
+  const mainSessionRecall = mainSessionRecallEnabled
     ? [
-        '## How to save memories',
+        '## Main-session on-demand recall',
         '',
-        'Write each memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
+        `Treat the \`${ENTRYPOINT_NAME}\` already present in this conversation as a catalog, like the available-skills listing. In this main conversation, decide whether any listed memory is relevant to the user's request.`,
+        `When an entry is relevant, use ${FILE_READ_TOOL_NAME} to read the linked topic file before answering. Resolve relative links under \`${memoryDir}\`. Do not rely only on the index hook when the topic file can provide the authoritative saved detail.`,
+        'Do not invoke a separate model to select memories. The main conversation model owns the relevance decision and reads only the topic files it needs.',
         '',
-        ...MEMORY_FRONTMATTER_EXAMPLE,
-        '',
-        '- Keep the name, description, and type fields in memory files up-to-date with the content',
-        '- Organize memory semantically by topic, not chronologically',
-        '- Update or remove memories that turn out to be wrong or outdated',
-        '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
       ]
-    : [
-        '## How to save memories',
-        '',
-        'Saving a memory is a two-step process:',
-        '',
-        '**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:',
-        '',
-        ...MEMORY_FRONTMATTER_EXAMPLE,
-        '',
-        `**Step 2** — add a pointer to that file in \`${ENTRYPOINT_NAME}\`. \`${ENTRYPOINT_NAME}\` is an index, not a memory — each entry should be one line, under ~150 characters: \`- [Title](file.md) — one-line hook\`. It has no frontmatter. Never write memory content directly into \`${ENTRYPOINT_NAME}\`.`,
-        '',
-        `- \`${ENTRYPOINT_NAME}\` is always loaded into your conversation context — lines after ${MAX_ENTRYPOINT_LINES} will be truncated, so keep the index concise`,
-        '- Keep the name, description, and type fields in memory files up-to-date with the content',
-        '- Organize memory semantically by topic, not chronologically',
-        '- Update or remove memories that turn out to be wrong or outdated',
-        '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
-      ]
+    : []
 
   const lines: string[] = [
     `# ${displayName}`,
@@ -234,6 +233,7 @@ export function buildMemoryLines(
     '',
     ...WHEN_TO_ACCESS_SECTION,
     '',
+    ...mainSessionRecall,
     ...TRUSTING_RECALL_SECTION,
     '',
     '## Memory and other forms of persistence',
@@ -343,8 +343,7 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
  */
 export async function loadMemoryPrompt(): Promise<string | null> {
   const autoEnabled = isAutoMemoryEnabled()
-
-  const skipIndex = isAutoMemorySelectiveRecallEnabled()
+  const mainSessionRecallEnabled = isAutoMemorySelectiveRecallEnabled()
 
   // Cowork injects memory-policy text via env var; thread into all builders.
   const coworkExtraGuidelines =
@@ -367,7 +366,7 @@ export async function loadMemoryPrompt(): Promise<string | null> {
       'auto memory',
       autoDir,
       extraGuidelines,
-      skipIndex,
+      mainSessionRecallEnabled,
     ).join('\n')
   }
 
