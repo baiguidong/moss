@@ -35,7 +35,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'im-adapter' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'feishu' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -219,11 +219,11 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     keywords: ['prompt', '系统提示', 'append', 'instruction'],
   },
   {
-    id: 'im-adapter',
-    title: 'IM 接入',
+    id: 'feishu',
+    title: '飞书',
     icon: MessageSquare,
     iconGradientClassName: 'from-emerald-400 to-green-600',
-    keywords: ['IM', '接入', 'im', 'adapter', '飞书', 'feishu', '机器人', 'bot', '即时通讯'],
+    keywords: ['飞书', 'feishu', '机器人', 'bot', '配对'],
   },
   {
     id: 'buddy',
@@ -924,8 +924,8 @@ function RuntimeRow({
   onEnabledChange,
 }: {
   name: string;
-  description: string;
-  runtime: { path?: string; installed?: boolean; skipped?: boolean; resourceAvailable?: boolean };
+  description?: string;
+  runtime: { installed?: boolean; skipped?: boolean; resourceAvailable?: boolean };
   enabled: boolean;
   busy: boolean;
   onEnabledChange: (enabled: boolean) => void;
@@ -938,20 +938,15 @@ function RuntimeRow({
             <p className="text-[13px] font-medium text-foreground">{name}</p>
             <RuntimeStatusBadge runtime={runtime} />
           </div>
-          <p className="mt-1 text-xs leading-6 text-muted-foreground">{description}</p>
+          {description ? <p className="mt-1 text-xs leading-6 text-muted-foreground">{description}</p> : null}
         </div>
-        <div className="min-w-0 sm:w-[420px]">
-          <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1 truncate rounded-xl border border-sidebar-border bg-sidebar/70 px-3 py-2 font-mono text-xs text-sidebar-foreground/75">
-              {runtime.skipped ? '-' : runtime.path || '-'}
-            </div>
-            <Toggle
-              checked={enabled}
-              onCheckedChange={onEnabledChange}
-              label={name}
-            />
-            {busy ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-          </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <Toggle
+            checked={enabled}
+            onCheckedChange={onEnabledChange}
+            label={name}
+          />
+          {busy ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
         </div>
       </div>
     </div>
@@ -1040,7 +1035,6 @@ function RuntimeSettings({
       <SettingsGroup>
         <RuntimeRow
           name="Node.js"
-          description="用于运行 JavaScript/TypeScript 工具、MCP stdio server 和项目脚本。"
           runtime={node}
           enabled={runtimeSettings.node}
           busy={installingRuntime === 'node' || Boolean(status?.installing)}
@@ -1048,7 +1042,6 @@ function RuntimeSettings({
         />
         <RuntimeRow
           name="Python"
-          description="用于运行 Python 脚本、数据处理和 Python MCP server。"
           runtime={python}
           enabled={runtimeSettings.python}
           busy={installingRuntime === 'python' || Boolean(status?.installing)}
@@ -1111,7 +1104,7 @@ export function SettingsView({
     'text-model': null,
     'image-model': null,
     prompt: null,
-    'im-adapter': null,
+    feishu: null,
     buddy: null,
     appearance: null,
   });
@@ -1172,7 +1165,6 @@ export function SettingsView({
     firstVisibleSectionId,
     visibleSectionKey,
     settingsDraft?.remoteEnabled,
-    settingsDraft?.remoteDirectCredentialMode,
     settingsDraft?.thinkingMode,
     settingsDraft?.sessionMemory,
     settingsDraft?.autoMemory,
@@ -1452,20 +1444,33 @@ export function SettingsView({
                           <>
                             <SettingsRow
                               title="服务器地址"
-                              controlClassName="sm:w-[480px]"
+                              controlClassName="sm:w-[420px]"
+                            >
+                              <Input
+                                className={FIELD_CLASS_NAME}
+                                value={settingsDraft.remoteDirectServerUrl || ''}
+                                disabled={remoteAuthState === 'loading'}
+                                onChange={(event) => {
+                                  setRemoteAuthState('idle');
+                                  setRemoteAuthError('');
+                                  updateSetting('remoteDirectServerUrl', event.target.value);
+                                }}
+                                placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
+                              />
+                            </SettingsRow>
+
+                            <SettingsRow
+                              title="OAuth 认证"
+                              description="通过浏览器登录 Moss Server，无需手动填写密码或 API Key。"
+                              controlClassName="sm:w-[320px]"
                             >
                               <div className="space-y-2">
-                                <div className="flex min-w-0 gap-2">
-                                  <Input
-                                    className={cn(FIELD_CLASS_NAME, 'min-w-0 flex-1')}
-                                    value={settingsDraft.remoteDirectServerUrl || ''}
-                                    disabled={remoteAuthState === 'loading'}
-                                    onChange={(event) => {
-                                      setRemoteAuthError('');
-                                      updateSetting('remoteDirectServerUrl', event.target.value);
-                                    }}
-                                    placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
-                                  />
+                                <div className="flex items-center justify-end gap-3">
+                                  <span className="text-xs text-muted-foreground">
+                                    {remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
+                                      ? '已认证'
+                                      : '未认证'}
+                                  </span>
                                   <Button
                                     type="button"
                                     variant="outline"
@@ -1487,95 +1492,20 @@ export function SettingsView({
                                     )}
                                     {remoteAuthState === 'loading'
                                       ? '取消'
-                                      : remoteAuthState === 'success'
-                                        ? '已认证'
-                                        : settingsDraft.remoteDirectApiKey
-                                          ? '重新认证'
-                                          : '认证'}
+                                      : remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
+                                        ? '重新认证'
+                                        : '开始认证'}
                                   </Button>
                                 </div>
                                 {remoteAuthError ? (
-                                  <p className="text-xs text-destructive">{remoteAuthError}</p>
+                                  <p className="text-right text-xs text-destructive">{remoteAuthError}</p>
                                 ) : null}
                               </div>
                             </SettingsRow>
 
                             <SettingsRow
-                              title="凭据类型"
-                              controlClassName="sm:w-[180px]"
-                            >
-                              <select
-                                className={SELECT_CLASS_NAME}
-                                value={settingsDraft.remoteDirectCredentialMode ?? 'password'}
-                                onChange={(event) => {
-                                  updateSetting(
-                                    'remoteDirectCredentialMode',
-                                    event.target.value as DesktopSettings['remoteDirectCredentialMode'],
-                                  );
-                                }}
-                              >
-                                <option value="password">密码</option>
-                                <option value="api-key">API Key</option>
-                              </select>
-                            </SettingsRow>
-
-                            {settingsDraft.remoteDirectCredentialMode === 'api-key' ? (
-                              <SettingsRow
-                                title="API Key"
-                                controlClassName="sm:w-[360px]"
-                              >
-                                <Input
-                                  type="password"
-                                  className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
-                                  value={settingsDraft.remoteDirectApiKey || ''}
-                                  onChange={(event) => updateSetting('remoteDirectApiKey', event.target.value)}
-                                  placeholder="moss_live_..."
-                                />
-                              </SettingsRow>
-                            ) : (
-                              <>
-                                <SettingsRow
-                                  title="用户名或邮箱"
-                                  controlClassName="sm:w-[280px]"
-                                >
-                                  <Input
-                                    className={FIELD_CLASS_NAME}
-                                    value={settingsDraft.remoteDirectUserEmail || ''}
-                                    onChange={(event) => updateSetting('remoteDirectUserEmail', event.target.value)}
-                                    placeholder="请输入用户名或邮箱"
-                                  />
-                                </SettingsRow>
-
-                                <SettingsRow
-                                  title="密码"
-                                  controlClassName="sm:w-[280px]"
-                                >
-                                  <Input
-                                    type="password"
-                                    className={FIELD_CLASS_NAME}
-                                    value={settingsDraft.remoteDirectUserPassword || ''}
-                                    onChange={(event) => updateSetting('remoteDirectUserPassword', event.target.value)}
-                                    placeholder="请输入密码"
-                                  />
-                                </SettingsRow>
-                              </>
-                            )}
-
-                            <SettingsRow
-                              title="工作空间"
-                              controlClassName="sm:w-[320px]"
-                            >
-                              <Input
-                                className={FIELD_CLASS_NAME}
-                                value={settingsDraft.remoteDirectWorkspace || ''}
-                                onChange={(event) => updateSetting('remoteDirectWorkspace', event.target.value)}
-                                placeholder="/srv/moss/workspaces/default"
-                              />
-                            </SettingsRow>
-
-                            <SettingsRow
-                              title="会话目录模式"
-                              description="未指定工作空间时，按会话隔离或按登录用户共享。"
+                              title="记忆范围"
+                              description="Session 完全独立；User 在同一用户的会话间共享 Memory。"
                               controlClassName="sm:w-[180px]"
                             >
                               <select
@@ -1626,7 +1556,6 @@ export function SettingsView({
                     <SettingsGroup>
                       <SettingsRow
                         title="跳过常规权限确认"
-                        description="使用 CLI bypass 模式。普通操作直接执行，显式确认规则和敏感路径安全检查仍会询问。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
@@ -1640,7 +1569,6 @@ export function SettingsView({
 
                       <SettingsRow
                         title="最大轮次"
-                        description="当前仅 `local` 模式生效。"
                         controlClassName="sm:w-[112px]"
                       >
                         <Input
@@ -1658,7 +1586,6 @@ export function SettingsView({
 
                       <SettingsRow
                         title="思考模式"
-                        description="当前仅 `local` 模式生效。"
                         controlClassName="sm:w-[220px]"
                       >
                         <select
@@ -1999,7 +1926,6 @@ export function SettingsView({
                     <SettingsGroup>
                       <SettingsRow
                         title="API 地址"
-                        description="技能市场只访问这个 API Base；默认使用公网 SkillHub。"
                         controlClassName="sm:w-[360px]"
                       >
                         <Input
@@ -2028,8 +1954,7 @@ export function SettingsView({
                   >
                     <SettingsGroup>
                       <SettingsRow
-                        title="清单根地址"
-                        description="专家列表从这个目录读取 expert_center.json，失败时回退到本地缓存。"
+                        title="根地址"
                         controlClassName="sm:w-[520px]"
                       >
                         <Input
@@ -2209,15 +2134,15 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'im-adapter') ? (
+                {visibleSections.some((section) => section.id === 'feishu') ? (
                   <SettingsSection
-                    id="im-adapter"
-                    title="IM 接入"
+                    id="feishu"
+                    title="飞书"
                     sectionRef={(element) => {
-                      sectionRefs.current['im-adapter'] = element;
+                      sectionRefs.current.feishu = element;
                     }}
                   >
-                    <ImAdapterSettings />
+                    <FeishuSettings />
                   </SettingsSection>
                 ) : null}
 
@@ -2319,7 +2244,6 @@ export function SettingsView({
 
                       <SettingsRow
                         title="自动折叠工具调用"
-                        description="开启后，仅正在执行的工具保持展开；完成、失败及其他状态自动折叠为一行。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
@@ -2342,7 +2266,7 @@ export function SettingsView({
   );
 }
 
-function ImAdapterSettings() {
+function FeishuSettings() {
   const { config, isLoading, fetchConfig, updateConfig, applyRunLocation, generatePairingCode, removePairedUser } = useAdapterConfig()
 
   const [fsAppId, setFsAppId] = React.useState('')
@@ -2492,74 +2416,13 @@ function ImAdapterSettings() {
   if (isLoading) {
     return (
       <Surface className="p-6">
-        <p className="text-sm font-medium text-foreground">正在加载 IM 接入配置…</p>
+        <p className="text-sm font-medium text-foreground">正在加载飞书配置…</p>
       </Surface>
     )
   }
 
   return (
     <div className="space-y-5">
-      <SettingsGroup>
-        <SettingsRow title="IM 接入" description="配置飞书机器人接入，允许用户通过飞书与 AI 对话。" stacked>
-          <p className="text-xs leading-6 text-muted-foreground">在飞书创建机器人，填入凭据后用户即可通过 IM 与 Agent 交互。</p>
-        </SettingsRow>
-      </SettingsGroup>
-
-      {/* Pairing */}
-      <Surface>
-        <div className="flex items-center gap-2 border-b border-sidebar-border bg-sidebar-accent/58 px-4 py-3">
-          <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          <span className="text-[13px] font-medium text-foreground">配对管理</span>
-        </div>
-        <div className="space-y-4 p-4">
-          <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书机器人中输入该码即可绑定账号。</p>
-
-          <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
-              {pairingCode || isPairingActive ? '重新生成' : '生成配对码'}
-            </Button>
-            {pairingCode && isPairingActive && (
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{pairingCode}</span>
-                <span className="text-xs text-muted-foreground">60 分钟内有效</span>
-              </div>
-            )}
-            {!pairingCode && isPairingActive && (
-              <span className="text-xs text-muted-foreground">{minutesLeft} 分钟后过期</span>
-            )}
-          </div>
-
-          <div>
-            <p className="mb-2 text-[13px] font-medium text-foreground">已配对用户</p>
-            {allPairedUsers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">暂无已配对用户</p>
-            ) : (
-              <div className="space-y-2">
-                {allPairedUsers.map((user) => (
-                  <div
-                    key={String(user.userId)}
-                    className="flex items-center justify-between rounded-xl border border-sidebar-border bg-sidebar-accent/70 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">飞书</span>
-                      <span className="text-[13px] text-foreground">{user.displayName}</span>
-                      <span className="text-xs text-muted-foreground">{new Date(user.pairedAt).toLocaleDateString()}</span>
-                    </div>
-                    <button
-                      onClick={() => setPendingUnbind({ userId: user.userId })}
-                      className="text-xs text-destructive hover:underline"
-                    >
-                      解绑
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </Surface>
-
-      {/* Feishu config */}
       <Surface>
         <div className="border-b border-sidebar-border bg-sidebar-accent/58 px-4 py-2.5 text-[13px] font-medium text-foreground">
           飞书
@@ -2676,6 +2539,59 @@ function ImAdapterSettings() {
             </div>
           </label>
         </div>
+
+        <div className="border-t border-sidebar-border">
+          <div className="flex items-center gap-2 bg-sidebar-accent/35 px-4 py-3">
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            <span className="text-[13px] font-medium text-foreground">配对管理</span>
+          </div>
+          <div className="space-y-4 px-4 pb-4">
+            <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书机器人中输入该码即可绑定账号。</p>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
+                {pairingCode || isPairingActive ? '重新生成' : '生成配对码'}
+              </Button>
+              {pairingCode && isPairingActive && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{pairingCode}</span>
+                  <span className="text-xs text-muted-foreground">60 分钟内有效</span>
+                </div>
+              )}
+              {!pairingCode && isPairingActive && (
+                <span className="text-xs text-muted-foreground">{minutesLeft} 分钟后过期</span>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-[13px] font-medium text-foreground">已配对用户</p>
+              {allPairedUsers.length === 0 ? (
+                <p className="text-xs text-muted-foreground">暂无已配对用户</p>
+              ) : (
+                <div className="space-y-2">
+                  {allPairedUsers.map((user) => (
+                    <div
+                      key={String(user.userId)}
+                      className="flex items-center justify-between gap-3 rounded-md border border-sidebar-border bg-sidebar-accent/70 px-3 py-2"
+                    >
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">飞书</span>
+                        <span className="min-w-0 break-all text-[13px] text-foreground">{user.displayName}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(user.pairedAt).toLocaleDateString()}</span>
+                      </div>
+                      <button
+                        onClick={() => setPendingUnbind({ userId: user.userId })}
+                        className="shrink-0 text-xs text-destructive hover:underline"
+                      >
+                        解绑
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </Surface>
 
       {/* Save */}
@@ -2693,7 +2609,7 @@ function ImAdapterSettings() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { if (!isUnbinding) setPendingUnbind(null) }}>
           <div className="w-[360px] rounded-[20px] bg-background p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <p className="text-[13px] font-medium text-foreground">确认解绑</p>
-            <p className="mt-2 text-xs text-muted-foreground">确定要解绑该用户吗？解绑后该用户将无法再通过 IM 与 Agent 对话。</p>
+            <p className="mt-2 text-xs text-muted-foreground">确定要解绑该用户吗？解绑后该用户将无法再通过飞书与 Agent 对话。</p>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setPendingUnbind(null)} disabled={isUnbinding}>取消</Button>
               <Button size="sm" className="rounded-xl bg-destructive text-white hover:bg-destructive/90" onClick={handleUnbind} disabled={isUnbinding}>
