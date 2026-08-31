@@ -4,6 +4,7 @@ import {
   fetchRemoteDirectSessions,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
+  requestRemoteDirectAccessToken,
   startRemoteFeishuAdapter,
 } from '../src/remote-direct-client.mjs';
 
@@ -79,6 +80,20 @@ describe('remote direct client settings', () => {
     expect(JSON.parse(requests[1].init.body)).toEqual({
       config: { appId: 'cli_test', appSecret: 'secret' },
     });
+  });
+
+  it('reports the Moss Server address when the authentication endpoint is unreachable', async () => {
+    globalThis.fetch = async () => {
+      throw new TypeError('fetch failed');
+    };
+
+    await expect(requestRemoteDirectAccessToken({
+      authCenterUrl: 'http://127.0.0.1:43127',
+      credentialMode: 'api-key',
+      apiKey: 'server-key',
+    })).rejects.toThrow(
+      'Failed to connect to Moss Server at http://127.0.0.1:43127: fetch failed',
+    );
   });
 
   it('lists authoritative Moss Server sessions with bearer auth', async () => {

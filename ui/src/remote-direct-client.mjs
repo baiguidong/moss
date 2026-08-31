@@ -156,13 +156,19 @@ export async function requestRemoteDirectAccessToken({
     };
   }
 
-  const response = await fetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to Moss Server at ${normalizedAuthCenterUrl}: ${detail}`);
+  }
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;

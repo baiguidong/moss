@@ -9831,8 +9831,13 @@ ipcMain.handle('app:list', async () => {
   const results = [];
   let remoteApps = [];
   let remoteError = null;
-  if (getRemoteDirectSettings().serverUrl) {
-    try { remoteApps = await fetchRemoteApps(); }
+  const serverConfigured = Boolean(getRemoteDirectSettings().serverUrl);
+  let serverAvailable = false;
+  if (serverConfigured) {
+    try {
+      remoteApps = await fetchRemoteApps();
+      serverAvailable = true;
+    }
     catch (error) { remoteError = error.message || String(error); }
   }
   const remoteById = new Map(remoteApps.map((entry) => [entry.installation?.appId || entry.manifest?.id, entry]));
@@ -9868,8 +9873,10 @@ ipcMain.handle('app:list', async () => {
       ],
       deployments,
       remoteInstalled: Boolean(remoteState),
+      serverConfigured,
+      serverAvailable,
       serverEnabled: remoteState?.installation?.enabled || false,
-      remoteError,
+      remoteError: remoteState ? remoteError : null,
       runtimeStatus: { state, error: runtimeState?.error || observedError },
     });
   }
@@ -9896,6 +9903,8 @@ ipcMain.handle('app:list', async () => {
       serverConfiguration: remoteState.configuration || null,
       enabled: false, serverEnabled: remoteState.installation?.enabled || false,
       remoteInstalled: true, remoteOnly: true,
+      serverConfigured,
+      serverAvailable,
       instances: (remoteState.instances || []).map((item) => ({ ...item, target: 'server' })),
       deployments: remoteState.deployments || [], remoteError,
       runtimeStatus: {

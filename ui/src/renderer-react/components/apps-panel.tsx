@@ -5,11 +5,12 @@ import DOMPurify from "dompurify";
 import {
   Activity, AlertCircle, ArrowLeftRight, ChevronDown, ChevronRight, Download, ExternalLink, History,
   KeyRound, MonitorPlay, PanelLeft, PanelLeftClose, Pencil, Plus, RefreshCw, RotateCcw,
-  Settings2, ShieldCheck, SquareTerminal, Trash2, X,
+  ServerOff, Settings2, ShieldCheck, SquareTerminal, Trash2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
 function formatTimestamp(timestamp: number) {
@@ -55,7 +56,7 @@ function availableInstanceTargets(app: StoredApp): Array<"desktop" | "server"> {
   const desktop = backendForTarget(app, "desktop");
   const server = backendForTarget(app, "server");
   if (desktop?.instanceMode === "multiple" && desktop.targets.includes("desktop")) targets.push("desktop");
-  if (server?.instanceMode === "multiple" && server.targets.includes("server")) targets.push("server");
+  if (app.serverAvailable && server?.instanceMode === "multiple" && server.targets.includes("server")) targets.push("server");
   return targets;
 }
 
@@ -188,7 +189,7 @@ function statusLabel(state?: string) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error || "操作失败");
+  return cleanIpcErrorMessage(error);
 }
 
 function AppInstanceRow({ app, instance, onChanged }: { app: StoredApp; instance: AppInstance; onChanged: () => Promise<unknown> }) {
@@ -387,7 +388,8 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   {app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
                   <div className="mt-4 flex flex-wrap gap-2">
                     {app.hasUi && <Button size="sm" className="h-8" onClick={() => onLaunch(app.name)}><ExternalLink className="h-4 w-4" />打开</Button>}
-                    {desktopBackend?.targets.includes("server") && !app.remoteInstalled && app.currentVersion && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />部署到 Server</Button>}
+                    {desktopBackend?.targets.includes("server") && !app.remoteInstalled && app.currentVersion && app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />部署到 Server</Button>}
+                    {desktopBackend?.targets.includes("server") && !app.remoteInstalled && app.serverConfigured && !app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled title="请先连接 Moss Server"><ServerOff className="h-4 w-4" />Server 未连接</Button>}
                     <Button size="sm" variant="outline" className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>
                     {!app.remoteOnly && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     {!app.remoteOnly && <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>}
@@ -411,7 +413,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                         const deleteCredentials = window.confirm("同时删除 Server App 密钥？");
                         void run(appId, () => window.agentDesktop.uninstallAppOnServer({ appId, deleteData, deleteCredentials }));
                       }}><Trash2 className="h-3.5 w-3.5" />卸载 Server App</Button></div>}
-                      {app.remoteError && <div className="mt-3 text-xs text-destructive">{app.remoteError}</div>}
+                      {app.remoteError && <div className="mt-3 text-xs text-destructive">Server 不可用：{app.remoteError}</div>}
                       <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" />{(app.permissions || []).length ? app.permissions?.join(" · ") : "无额外权限"}</div>
                     </div>
                   )}

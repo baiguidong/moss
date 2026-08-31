@@ -331,19 +331,30 @@ export function getPublishedApp(appId, version = null) {
 }
 
 export function listAppsFromRegistry() {
-  return readAppRegistry().apps.map((app) => {
+  return readAppRegistry().apps.flatMap((app) => {
     const versions = listAppVersions(app.id)
     const current = versions.find((item) => item.isCurrent) || null
-    return {
+    const currentVersion = current?.version || app.currentVersion || null
+    if (!currentVersion) return []
+    let published
+    try {
+      published = getPublishedApp(app.id, currentVersion)
+    } catch {
+      return []
+    }
+    return [{
       ...app,
+      ...published,
       kind: 'app',
       name: app.id,
-      currentVersion: current?.version || app.currentVersion || null,
-      currentVersionId: current?.id || app.currentVersionId || null,
+      currentVersion,
+      currentVersionId: current?.id || currentVersion,
       latestVersion: versions[0]?.version || app.latestVersion || null,
       latestVersionId: versions[0]?.id || app.latestVersionId || null,
       versionCount: versions.length,
-    }
+      createdAt: app.createdAt,
+      updatedAt: app.updatedAt,
+    }]
   })
 }
 
