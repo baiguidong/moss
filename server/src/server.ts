@@ -7,10 +7,13 @@ import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
 import {
+  advancedSettingsSchema,
   autoMemorySettingsSchema,
+  normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
   sessionMemorySettingsSchema,
+  type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
   type SessionProfileMode,
@@ -74,6 +77,7 @@ function serializeSession(session: {
   title?: string | null
   summary?: string | null
   assistantName?: string | null
+  advancedSettings?: SessionRecord['advancedSettings']
   autoMemory?: SessionRecord['autoMemory']
   sessionMemory?: SessionRecord['sessionMemory']
   createdAt: number
@@ -94,6 +98,7 @@ function serializeSession(session: {
     title: session.title ?? null,
     summary: session.summary ?? null,
     assistantName: session.assistantName,
+    advancedSettings: session.advancedSettings,
     autoMemory: session.autoMemory,
     sessionMemory: session.sessionMemory,
     createdAt: session.createdAt,
@@ -530,6 +535,16 @@ function parseAutoMemorySettings(body: JsonBody): AutoMemorySettings | undefined
     throw new HttpError(400, 'Invalid auto-memory settings')
   }
   return normalizeAutoMemorySettings(parsed.data)
+}
+
+function parseAdvancedSettings(body: JsonBody): AdvancedSettings | undefined {
+  const value = body.advancedSettings ?? body.advanced_settings
+  if (value === undefined) return undefined
+  const parsed = advancedSettingsSchema().safeParse(value)
+  if (!parsed.success) {
+    throw new HttpError(400, 'Invalid advanced settings')
+  }
+  return normalizeAdvancedSettings(parsed.data)
 }
 
 function parseSessionMemorySettings(
@@ -1336,6 +1351,7 @@ export function startServer(
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
         const profileMode = parseProfileMode(body)
+        const advancedSettings = parseAdvancedSettings(body)
         const autoMemory = parseAutoMemorySettings(body)
         const sessionMemory = parseSessionMemorySettings(body)
         const assistantName =
@@ -1351,6 +1367,7 @@ export function startServer(
           scopes: auth.scopes,
           profileMode,
           assistantName,
+          advancedSettings,
           autoMemory,
           sessionMemory,
         })

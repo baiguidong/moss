@@ -48,6 +48,13 @@ export function buildSessionEnv(
     ...(options.assistantName
       ? { MOSS_ASSISTANT_NAME: options.assistantName }
       : {}),
+    ...(options.advancedSettings
+      ? {
+          MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(
+            options.advancedSettings,
+          ),
+        }
+      : {}),
     ...(options.autoMemory
       ? { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(options.autoMemory) }
       : {}),
@@ -64,6 +71,9 @@ export function buildSessionEnv(
   }
   if (!options.autoMemory) {
     delete env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
+  }
+  if (!options.advancedSettings) {
+    delete env.MOSS_RUNTIME_ADVANCED_SETTINGS
   }
   if (!options.sessionMemory) {
     delete env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS

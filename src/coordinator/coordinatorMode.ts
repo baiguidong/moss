@@ -1,6 +1,6 @@
 import { feature } from 'bun:bundle'
 import { ASYNC_AGENT_ALLOWED_TOOLS } from '../constants/tools.js'
-import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -16,14 +16,14 @@ import { TEAM_CREATE_TOOL_NAME } from '../tools/TeamCreateTool/constants.js'
 import { TEAM_DELETE_TOOL_NAME } from '../tools/TeamDeleteTool/constants.js'
 import { isEnvTruthy } from '../utils/envUtils.js'
 
-// Checks the same gate as isScratchpadEnabled() in
-// utils/permissions/filesystem.ts. Duplicated here because importing
+// Checks the same setting as isScratchpadEnabled() in
+// utils/permissions/filesystem.ts. Kept local because importing
 // filesystem.ts creates a circular dependency (filesystem -> permissions
 // -> ... -> coordinatorMode). The actual scratchpad path is passed in via
 // getCoordinatorUserContext's scratchpadDir parameter (dependency injection
 // from QueryEngine.ts, which lives higher in the dep graph).
-function isScratchpadGateEnabled(): boolean {
-  return checkFeatureGate_CACHED_MAY_BE_STALE('tengu_scratch')
+function isScratchpadEnabled(): boolean {
+  return getAdvancedSetting('moss_scratchpad')
 }
 
 const INTERNAL_WORKER_TOOLS = new Set([
@@ -106,7 +106,7 @@ export function getCoordinatorUserContext(
     content += `\n\nWorkers also have access to MCP tools from connected MCP servers: ${serverNames}`
   }
 
-  if (scratchpadDir && isScratchpadGateEnabled()) {
+  if (scratchpadDir && isScratchpadEnabled()) {
     content += `\n\nScratchpad directory: ${scratchpadDir}\nWorkers can read and write here without permission prompts. Use this for durable cross-worker knowledge — structure files however fits the work.`
   }
 

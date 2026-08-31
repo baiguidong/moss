@@ -274,6 +274,7 @@ export class SessionRunnerDaemon {
         mountDirs: this.manifest.session.mountDirs,
         runtime: this.manifest.session.runtime,
         assistantName: this.manifest.session.assistantName,
+        advancedSettings: this.manifest.session.advancedSettings,
         autoMemory: this.manifest.session.autoMemory,
         sessionMemory: this.manifest.session.sessionMemory,
       })

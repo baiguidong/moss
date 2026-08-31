@@ -3,6 +3,7 @@ import { SessionRunnerDaemon } from './sessionRunnerDaemon.js'
 import type { RunnerManifest } from './types.js'
 import { DirectEmbeddedBackend } from './backends/directEmbeddedBackend.js'
 import {
+  normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
@@ -106,6 +107,12 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
       : undefined,
     assistantName:
       typeof value.assistantName === 'string' ? value.assistantName : undefined,
+    advancedSettings:
+      value.advancedSettings === undefined && value.advanced_settings === undefined
+        ? undefined
+        : normalizeAdvancedSettings(
+            value.advancedSettings ?? value.advanced_settings,
+          ),
     autoMemory:
       value.autoMemory === undefined && value.auto_memory === undefined
         ? undefined

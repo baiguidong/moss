@@ -1,5 +1,5 @@
 import { getSessionId } from '../bootstrap/state.js'
-import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import type { SessionId } from '../types/ids.js'
 import { isEnvTruthy } from '../utils/envUtils.js'
 
@@ -27,8 +27,8 @@ export function buildQueryConfig(): QueryConfig {
   return {
     sessionId: getSessionId(),
     gates: {
-      streamingToolExecution: checkFeatureGate_CACHED_MAY_BE_STALE(
-        'tengu_streaming_tool_execution2',
+      streamingToolExecution: getAdvancedSetting(
+        'moss_streaming_tool_execution',
       ),
       emitToolUseSummaries: isEnvTruthy(
         process.env.CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES,

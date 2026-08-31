@@ -408,6 +408,18 @@ export type DesktopSettings = {
     dreamMinHours?: number;
     dreamMinSessions?: number;
   };
+  advanced?: {
+    moss_auto_background_agents?: boolean;
+    moss_scratchpad?: boolean;
+    moss_idle_session_cleanup?: boolean;
+    moss_streaming_tool_execution?: boolean;
+    moss_plan_mode_interview?: boolean;
+    moss_fast_web_search?: boolean;
+    moss_memory_learn_from_corrections?: boolean;
+    moss_large_tool_result_protection?: boolean;
+    moss_tool_result_budget_chars?: number;
+    moss_mcp_output_token_limit?: number;
+  };
   managedRuntimes?: {
     node?: boolean;
     python?: boolean;

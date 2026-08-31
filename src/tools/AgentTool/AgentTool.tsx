@@ -11,8 +11,8 @@ import { clearInvokedSkillsForAgent, getSdkAgentProgressSummariesEnabled } from 
 import { enhanceSystemPromptWithEnvDetails, getSystemPrompt } from '../../constants/prompts.js';
 import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js';
 import { startAgentSummarization } from '../../services/AgentSummary/agentSummary.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
+import { getAdvancedSetting, getAdvancedSettingsEnvironment } from '../../services/advancedSettings.js';
 import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { assembleToolPool } from '../../tools.js';
 import { asAgentId } from '../../types/ids.js';
@@ -75,9 +75,9 @@ const isBackgroundTasksDisabled =
 isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS);
 
 // Auto-background agent tasks after this many ms (0 = disabled)
-// Enabled by env var OR feature flag gate (checked lazily since GB may not be ready at module load)
+// Enabled by env var or the desktop/runtime advanced setting.
 function getAutoBackgroundMs(): number {
-  if (isEnvTruthy(process.env.CLAUDE_AUTO_BACKGROUND_TASKS) || getFeatureValue_CACHED_MAY_BE_STALE('tengu_auto_background_agents', false)) {
+  if (isEnvTruthy(process.env.CLAUDE_AUTO_BACKGROUND_TASKS) || getAdvancedSetting('moss_auto_background_agents')) {
     return 120_000;
   }
   return 0;
@@ -687,7 +687,10 @@ export const AgentTool = buildTool({
     ): ReturnType<typeof runAgent> => projectResourceSelection
       ? runWithSessionContextOverridesGenerator(
           {
-            environment: projectResourceSelection.environment,
+            environment: {
+              ...projectResourceSelection.environment,
+              ...getAdvancedSettingsEnvironment(),
+            },
             taskScope: workerTaskScope,
           },
           () => runAgent(params),

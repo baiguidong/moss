@@ -17,6 +17,8 @@ const originalEnv = {
   MOSS_SERVER_URL: process.env.MOSS_SERVER_URL,
   MOSS_SERVER_AUTH_TOKEN: process.env.MOSS_SERVER_AUTH_TOKEN,
   MOSS_AUTO_MEMORY_SETTINGS: process.env.MOSS_AUTO_MEMORY_SETTINGS,
+  MOSS_RUNTIME_ADVANCED_SETTINGS:
+    process.env.MOSS_RUNTIME_ADVANCED_SETTINGS,
   MOSS_RUNTIME_AUTO_MEMORY_SETTINGS:
     process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS,
   MOSS_RUNTIME_SESSION_MEMORY_SETTINGS:
@@ -143,6 +145,7 @@ describe('direct embedded backend model settings', () => {
       resumeClaudeSession: async () => null,
     })
 
+    process.env.MOSS_RUNTIME_ADVANCED_SETTINGS = '{"moss_scratchpad":false}'
     process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS = '{"enabled":false}'
     process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS = '{"enabled":false}'
 
@@ -158,6 +161,18 @@ describe('direct embedded backend model settings', () => {
         workspaceDir: join(tempRoot, 'workspace'),
       },
       systemSettings: makeSettings({}),
+      advancedSettings: {
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300_000,
+        moss_mcp_output_token_limit: 40_000,
+      },
       autoMemory: {
         enabled: true,
         extractionEnabled: true,
@@ -186,6 +201,18 @@ describe('direct embedded backend model settings', () => {
       expect(createdEnvironment?.MOSS_CONFIG_DIR).toBe(
         join(tempRoot, 'profile'),
       )
+      expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_ADVANCED_SETTINGS || '{}')).toEqual({
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300_000,
+        moss_mcp_output_token_limit: 40_000,
+      })
       expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS || '{}')).toEqual({
         enabled: true,
         extractionEnabled: true,
@@ -208,6 +235,7 @@ describe('direct embedded backend model settings', () => {
       expect(process.env.MOSS_AUTO_MEMORY_SETTINGS).toBe(
         originalEnv.MOSS_AUTO_MEMORY_SETTINGS,
       )
+      expect(process.env.MOSS_RUNTIME_ADVANCED_SETTINGS).toBeUndefined()
       expect(process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS).toBeUndefined()
       expect(process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS).toBeUndefined()
       const controlRequestPromise = waitForStdout(

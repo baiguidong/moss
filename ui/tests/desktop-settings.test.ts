@@ -117,6 +117,61 @@ describe('desktop settings', () => {
     });
   });
 
+  it('keeps advanced setting defaults and normalizes explicit overrides', () => {
+    expect(normalizeDesktopSettings({}).advanced).toEqual({
+      moss_auto_background_agents: false,
+      moss_scratchpad: false,
+      moss_idle_session_cleanup: false,
+      moss_streaming_tool_execution: false,
+      moss_plan_mode_interview: true,
+      moss_fast_web_search: false,
+      moss_memory_learn_from_corrections: false,
+      moss_large_tool_result_protection: false,
+      moss_tool_result_budget_chars: 200000,
+      moss_mcp_output_token_limit: 25000,
+    });
+
+    expect(normalizeDesktopSettings({
+      advanced: {
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300000,
+        moss_mcp_output_token_limit: 40000,
+      },
+    }).advanced).toEqual({
+      moss_auto_background_agents: true,
+      moss_scratchpad: true,
+      moss_idle_session_cleanup: true,
+      moss_streaming_tool_execution: true,
+      moss_plan_mode_interview: false,
+      moss_fast_web_search: true,
+      moss_memory_learn_from_corrections: true,
+      moss_large_tool_result_protection: true,
+      moss_tool_result_budget_chars: 300000,
+      moss_mcp_output_token_limit: 40000,
+    });
+
+    expect(normalizeDesktopSettings({
+      advanced: {
+        moss_auto_background_agents: 'false',
+        moss_plan_mode_interview: 'false',
+        moss_tool_result_budget_chars: -1,
+        moss_mcp_output_token_limit: 2_000_000,
+      },
+    }).advanced).toMatchObject({
+      moss_auto_background_agents: false,
+      moss_plan_mode_interview: true,
+      moss_tool_result_budget_chars: 200000,
+      moss_mcp_output_token_limit: 1000000,
+    });
+  });
+
   it('does not persist remote login secrets in settings.json', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-desktop-settings-'));
     temporaryRoots.push(root);

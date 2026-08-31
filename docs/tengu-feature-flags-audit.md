@@ -6,7 +6,8 @@
 
 项目中共确认：
 
-- 51 个使用 `tengu_*` 命名的源码运行时键。
+- 40 个使用 `tengu_*` 命名的源码运行时键。
+- 10 个原 `tengu_*` 候选已迁移为类型化的 `moss_*` 桌面高级设置。
 - 7 个只存在于旧 `bin/cli.js` 构建产物中的遗留键。
 - `logEvent('tengu_*', ...)` 是遥测事件名，不属于运行时开关；当前 `logEvent()` 为空操作。
 
@@ -31,23 +32,38 @@
 | 开关 | 当前默认值 | 功能 | 建议 |
 | --- | --- | --- | --- |
 | `tengu_amber_flint` | `true`，但整体功能默认关闭 | Agent Teams 总熔断。目前还需要 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 或 `--agent-teams` 才能启用。 | **高级设置**。整合成单一的“Agent 团队”设置，整体默认关闭。 |
-| `tengu_auto_background_agents` | `false` | 前台 Agent 运行超过 120 秒后自动转为后台任务。 | **高级设置**。 |
-| `tengu_scratch` | `false` | 创建会话级 scratchpad；协调者和 Worker 可以在其中免确认共享临时文件。 | **高级设置**。 |
 | `tengu_sedge_lantern` | `false` | 终端失焦 5 分钟后生成“离开期间摘要”。 | **高级设置**。注明会增加一次模型调用。 |
 | `tengu_destructive_command_warning` | `false` | 在 Bash/PowerShell 权限确认框中显示破坏性命令警告。 | **高级设置**。建议评估将正式默认值改为开启。 |
 | `tengu_immediate_model_command` | `false` | 查询运行过程中立即执行 `/model`、`/fast`、`/effort`，而不是等待当前轮次结束。 | **高级设置**。 |
 | `tengu_keybinding_customization_release` | `false` | 加载用户自定义快捷键配置。 | **高级设置**。 |
-| `tengu_plan_mode_interview_phase` | `true` | Plan Mode 使用分阶段访谈和提问流程。 | **高级设置**。 |
 | `tengu_willow_mode` | `"off"` | 大上下文闲置 75 分钟后提示用户使用 `/clear`。支持 `off`、`dialog`、`hint`、`hint_v2`。 | **高级设置**。使用枚举选择器。 |
 | `tengu_attribution_header` | `true` | API 请求附带版本、入口和 workload 路由信息。 | **高级设置**。作为隐私和接口兼容选项。 |
 | `tengu_amber_wren` | `{}` | 控制 Read 的大小与 token 限制。默认最大文件 256 KB、最大输出 25,000 token，另含范围提示参数。 | **高级设置**。拆为类型化数字/布尔设置，不暴露原始 JSON。 |
 | `tengu_cobalt_raccoon` | `false` | 禁止主动 compact，仅在 API 返回上下文超限后执行响应式 compact。 | **高级设置**。命名为“上下文压缩策略”。 |
-| `tengu_slate_heron` | `{ enabled: false, gapThresholdMinutes: 60, keepRecent: 5 }` | Prompt Cache 过期后清理旧工具结果，减少下次请求重传的 token。 | **高级设置**。拆为开关、时间阈值和保留数量。 |
 | `tengu_compact_streaming_retry` | `false` | compact 流式请求失败后再尝试一次，最多执行两次请求。 | **高级设置**或测试后直接固化开启。 |
 | `tengu_tool_pear` | `false` | 对支持的模型启用严格工具 JSON Schema，并发送 Structured Outputs beta header。 | **高级设置**。标记为实验性和模型兼容限定。 |
 | `tengu_fgts` | `false` | 第一方接口启用细粒度工具参数流，降低大参数工具调用的等待时间。 | **高级设置**。标记为第一方接口限定。 |
-| `tengu_streaming_tool_execution2` | `false` | 工具参数在流式响应中完成后提前开始执行工具。 | **高级设置**。标记为实验性。 |
-| `tengu_plum_vx3` | `false` | Web Search 改用小型快速模型、禁用 thinking，并强制选择 Web Search 工具。 | **高级设置**。可命名为“快速网页搜索”。 |
+
+## 已落地的桌面高级设置
+
+以下设置已迁移为语义化的 `moss_*` 键，并加入桌面客户端“设置 -> 高级设置”。缺失字段按原 `tengu` 默认值解析，不会在首次启动时改变既有行为。
+
+原“记忆”页面中的阈值、更新间隔、压缩保留范围、历史上下文搜索和 Dream 门槛也已统一移入“高级设置 -> 记忆”分组；“记忆”页面只保留会话记忆、长期记忆及其基础开关。底层配置字段和默认值保持不变。
+
+| 正式键 | 默认值 | 桌面显示名称 | 功能 |
+| --- | --- | --- | --- |
+| `moss_auto_background_agents` | `false` | 长任务自动转后台 | 前台 Agent 运行超过 120 秒后自动转为后台任务。 |
+| `moss_scratchpad` | `false` | 会话临时工作区 | 为 Agent 和 Coordinator Worker 提供隔离的会话级临时目录。 |
+| `moss_idle_session_cleanup` | `false` | 闲置会话优化 | 会话闲置 60 分钟后清理较早的工具结果，固定保留最近 5 个可压缩结果。 |
+| `moss_streaming_tool_execution` | `false` | 流式工具执行 | 工具参数在流式响应中完成后提前开始执行。 |
+| `moss_plan_mode_interview` | `true` | Plan 引导访谈 | Plan Mode 使用分阶段澄清、探索和计划生成流程。 |
+| `moss_fast_web_search` | `false` | 快速网页搜索 | Web Search 使用小型快速模型、关闭 thinking 并强制选择搜索工具。 |
+| `moss_memory_learn_from_corrections` | `false` | 从纠正中学习 | 用户拒绝或取消工具后，提醒 Agent 识别后续纠正和偏好并考虑写入长期记忆。 |
+| `moss_large_tool_result_protection` | `false` | 大型工具结果保护 | 单轮工具结果过大时将较大结果保存到会话目录，只向模型发送预览和文件路径。 |
+| `moss_tool_result_budget_chars` | `200000` | 单轮工具结果上限 | 大型工具结果保护启用时，限制一轮内直接发送给模型的聚合工具结果字符数。 |
+| `moss_mcp_output_token_limit` | `25000` | MCP 输出 token 上限 | 限制单次 MCP 工具结果发送给模型的 token 数。 |
+
+桌面配置保存在 `DesktopSettings.advanced`。本地会话通过 `MOSS_RUNTIME_ADVANCED_SETTINGS` 获取类型化快照；remote-direct 创建会话时通过 `advancedSettings` 协议字段发送，由服务端持久化，并传入 host、embedded 和 Docker backend。修改设置后从新会话开始生效，已运行的远程会话保持创建时快照。
 
 ## 已完成的正式设置清理
 
@@ -60,13 +76,15 @@
 - 默认关闭的 VSCode 实验 gate 转发已删除。
 - 默认关闭的 Opus 紧急停服分支及专用错误处理已删除。
 - 默认空白的顶部紧急提示组件及持久化字段已删除。
+- 10 个桌面高价值候选已改名为 `moss_*` 正式键，并完成本地及 remote-direct 设置传递。
+- 开启 `moss_streaming_tool_execution` 时自动禁止流式失败后的非流式重放，避免工具重复执行。
+- `ECONNRESET` 或 `EPIPE` 后自动关闭 keep-alive 并使用新连接重试，不再依赖运行时开关。
 
 ## 保留行为但不建议进入 UI
 
 | 开关 | 当前默认值 | 功能 | 建议 |
 | --- | --- | --- | --- |
 | `tengu_agent_list_attach` | `false` | 将动态 Agent 列表从工具 Schema 移到附件，避免 Agent/MCP/权限变化破坏 Prompt Cache。 | **内部配置**。验证兼容性后固化最佳路径。 |
-| `tengu_amber_prism` | `false` | 用户拒绝或取消工具后，提示模型关注用户纠正并考虑写入自动记忆。 | **删除**。属于模型提示实验。 |
 | `tengu_compact_cache_prefix` | `true` | compact 使用 forked-agent 路径复用主会话 Prompt Cache，失败时回退普通路径。 | **固化开启**。代码注释已有明确成本收益。 |
 | `tengu_compact_line_prefix_killswitch` | `false` | 关闭紧凑行号格式的反向熔断。默认实际行为是使用 `N\t`，而不是填充箭头格式。 | **固化紧凑格式**。 |
 | `tengu_read_dedup_killswitch` | `false` | 关闭重复 Read 去重的反向熔断。默认实际行为是相同文件未变化时不重复返回全文。 | **固化去重**。 |
@@ -75,14 +93,10 @@
 | `tengu_glacier_2xr` | `false` | 将延迟加载工具列表从每次请求头改为持久化增量附件。 | **内部配置**。测试后固化。 |
 | `tengu_chair_sermon` | `false` | 将 system-reminder 文本合并到 tool_result，修复消息排列导致的空响应和 API 兼容问题。 | **内部配置**。通过协议回归测试后固化。 |
 | `tengu_toolref_defer_j8m` | `false` | 移动 tool_reference 消息的相邻文本，避免异常的连续 Human turn 和错误停止序列。 | **内部配置**。通过协议回归测试后固化。 |
-| `tengu_hawthorn_steeple` | `false` | 启用单消息聚合工具结果预算；超限时把最大结果落盘并以预览替换。 | **内部配置**。属于资源保护机制。 |
-| `tengu_hawthorn_window` | `null` | 覆盖单消息工具结果预算，默认硬编码为 200,000 字符。 | **内部配置**。不单独暴露。 |
-| `tengu_satin_quoll` | `{}` | 覆盖各工具的落盘阈值，并使用 `mcp_tool` 字段覆盖 MCP 默认 25,000 token 上限。 | **内部配置**。当前同一对象混用字符和 token 单位，应拆分类型。 |
+| `tengu_satin_quoll` | `{}` | 覆盖各工具的落盘字符阈值。原 `mcp_tool` token 配置已拆为 `moss_mcp_output_token_limit`。 | **内部配置**。剩余字段继续使用字符单位，不暴露原始 JSON。 |
 | `tengu_marble_fox` | `false` | 对 1M 上下文且使用超过 25% 的会话附加 compact 提醒。 | **内部配置**。属于模型 Prompt 策略。 |
 | `tengu_otk_slot_v1` | `false` | 将默认最大输出降到 8K；触顶时用 64K 对同一请求重试一次。 | **内部配置**。属于服务容量与成本策略。 |
 | `tengu_prompt_cache_1h_config` | `{}` | 配置允许使用 1 小时 Prompt Cache 的 `querySource` allowlist。 | **内部配置**。第一方服务专用。 |
-| `tengu_disable_streaming_to_non_streaming_fallback` | `false` | 流式失败时禁止非流式重放，避免流式工具已开始后再次执行同一工具。 | **内部配置**。应根据工具执行语义固化。 |
-| `tengu_disable_keepalive_on_econnreset` | `false` | 遇到 ECONNRESET/EPIPE 后关闭 HTTP keep-alive，再创建客户端重试。 | **内部配置**。属于网络恢复策略。 |
 | `tengu_cork_m4q` | `false` | 改变 Shell 命令前缀分类器的 policy spec Prompt 布局，并启用 Prompt Cache。 | **内部配置**。不适合用户控制。 |
 | `tengu_paper_halyard` | `false` | 开启后跳过项目级和本地 MOSS.md/规则。 | **删除**。固定为 `false`，避免静默丢失项目指令。 |
 | `tengu_pebble_leaf_prune` | `false` | 避免 transcript 的进度/元数据分支被误判为可恢复会话叶子。 | **固化**。补充恢复测试后启用修复路径。 |
@@ -106,19 +120,7 @@
 | `tengu_terminal_panel` | `false` | `TERMINAL_PANEL=false` | 内置终端面板及快捷键提示。 | **删除**，或恢复终端面板后使用正式设置。 |
 | `tengu_turtle_carbon` | `true` | `ULTRATHINK` 未在本地 feature registry 声明 | 启用 `ultrathink` 关键词，将 effort 提升到 high。 | **删除或修复编译配置**，不要保留无效运行时开关。 |
 
-## 只存在于旧构建产物的遗留键
 
-下列键在本次清理前只存在于旧 `bin/cli.js`，当前 TypeScript 源码已经没有相应 `tengu` 读取。它们不应进入高级设置；本次重新构建后已从产物中清除。
-
-| 遗留开关 | 构建产物中的默认值 | 旧功能 | 当前替代 |
-| --- | --- | --- | --- |
-| `tengu_coral_fern` | `false` | 在记忆 Prompt 中增加“搜索过去上下文”的操作说明。 | `autoMemory.pastContextSearchEnabled`。 |
-| `tengu_moth_copse` | `false` | 不再注入完整 AutoMem 索引，改为按当前问题预取相关记忆。 | 当前自动记忆与 past-context 配置。 |
-| `tengu_onyx_plover` | `null` | Auto Dream 开关以及 `minHours`、`minSessions` 参数。 | `autoMemory.dreamEnabled`、`dreamMinHours`、`dreamMinSessions`。 |
-| `tengu_session_memory` | `true` | Session Memory 总开关。 | `sessionMemory.enabled`。 |
-| `tengu_sm_compact` | `true` | Session Memory compact 开关。 | `sessionMemory.compactEnabled`。 |
-| `tengu_sm_compact_config` | `{}` | Session Memory compact 的 token 和消息阈值。 | 类型化 `sessionMemory` 设置。 |
-| `tengu_sm_config` | `{}` | Session Memory 提取频率与阈值。 | 类型化 `sessionMemory` 设置。 |
 
 ## 高级设置落地原则
 
@@ -154,7 +156,7 @@ const effectiveValue = persistedValue ?? defaultValue
 
 ### 4. 不暴露原始 JSON 配置
 
-`tengu_amber_wren`、`tengu_slate_heron`、`tengu_satin_quoll`、`tengu_sage_compass` 等对象型配置必须拆成有校验的布尔、数字或枚举字段。特别是 `tengu_satin_quoll` 当前同时使用字符和 token 单位，不应原样迁移。
+`tengu_amber_wren`、`tengu_satin_quoll`、`tengu_sage_compass` 等对象型配置必须拆成有校验的布尔、数字或枚举字段。特别是 `tengu_satin_quoll` 当前同时使用字符和 token 单位，不应原样迁移。
 
 ### 5. 明确生效时机
 
@@ -164,13 +166,15 @@ const effectiveValue = persistedValue ?? defaultValue
 - 模型请求、Agent、工具 Schema、compact 策略从下一个新会话生效。
 - 编译功能缺失时隐藏对应设置，而不是展示一个无效开关。
 
-### 6. Desktop 设置必须传递给 Agent 运行时
+### 6. Desktop 设置传递给 Agent 运行时
 
-桌面端 `DesktopSettings` 与 Agent 进程读取的全局配置不是同一层。仅在 `settings-view.tsx` 增加控件不会自动影响 `getFeatureValue_CACHED_MAY_BE_STALE()`。实现时需要将类型化高级设置传入本地和远程 Agent 的启动/会话环境，或者统一到共享运行时设置协议中。
+已落地的 6 个设置通过 `DesktopSettings.advanced`、`MOSS_RUNTIME_ADVANCED_SETTINGS` 和 direct-connect `advancedSettings` 协议传递。后续新增设置应继续复用这条类型化链路，不能只在 `settings-view.tsx` 增加控件。
 
 ## 主要代码位置
 
 - `src/services/analytics/featureFlags.ts`：本地运行时开关解析与覆盖优先级。
+- `src/services/advancedSettings.ts`：`moss_*` 高级设置的会话级解析与环境覆盖。
+- `packages/direct-connect-protocol/src/index.ts`：本地与 remote-direct 共用的高级设置类型、默认值和校验。
 - `src/utils/config.ts`：当前 `featureFlagOverrides` 存储结构。
 - `scripts/features.js`：本地编译功能清单。
 - `ui/src/renderer-react/components/settings-view.tsx`：桌面端设置与高级设置界面。

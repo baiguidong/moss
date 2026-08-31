@@ -47,6 +47,18 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     dreamMinHours: 24,
     dreamMinSessions: 5,
   },
+  advanced: {
+    moss_auto_background_agents: false,
+    moss_scratchpad: false,
+    moss_idle_session_cleanup: false,
+    moss_streaming_tool_execution: false,
+    moss_plan_mode_interview: true,
+    moss_fast_web_search: false,
+    moss_memory_learn_from_corrections: false,
+    moss_large_tool_result_protection: false,
+    moss_tool_result_budget_chars: 200000,
+    moss_mcp_output_token_limit: 25000,
+  },
   managedRuntimes: {
     node: true,
     python: true,
@@ -531,6 +543,30 @@ export function normalizeDesktopSettings(input, existing = {}) {
       100_000,
     ),
   };
+
+  const sourceAdvanced = source.advanced && typeof source.advanced === 'object'
+    ? source.advanced
+    : {};
+  const existingAdvanced = result.advanced && typeof result.advanced === 'object'
+    ? result.advanced
+    : {};
+  result.advanced = Object.fromEntries(
+    Object.entries(DEFAULT_DESKTOP_SETTINGS.advanced).map(([key, fallback]) => [
+      key,
+      typeof fallback === 'boolean'
+        ? typeof sourceAdvanced[key] === 'boolean'
+          ? sourceAdvanced[key]
+          : typeof existingAdvanced[key] === 'boolean'
+            ? existingAdvanced[key]
+            : fallback
+        : normalizePositiveInt(
+            sourceAdvanced[key] ?? existingAdvanced[key],
+            fallback,
+            1,
+            key === 'moss_mcp_output_token_limit' ? 1_000_000 : 10_000_000,
+          ),
+    ]),
+  );
 
   const sourceManagedRuntimes = source.managedRuntimes && typeof source.managedRuntimes === 'object'
     ? source.managedRuntimes

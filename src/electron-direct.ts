@@ -4,9 +4,6 @@
  * 直接在当前 Node.js 进程中运行 QueryEngine，无 IPC/序列化开销。
  */
 
-// Enable interview phase for plan mode by default
-process.env.CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE = 'true'
-
 import { randomUUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'

@@ -24,6 +24,19 @@ export type SessionMemorySettings = {
   compactMaxTokens: number
 }
 
+export type AdvancedSettings = {
+  moss_auto_background_agents: boolean
+  moss_scratchpad: boolean
+  moss_idle_session_cleanup: boolean
+  moss_streaming_tool_execution: boolean
+  moss_plan_mode_interview: boolean
+  moss_fast_web_search: boolean
+  moss_memory_learn_from_corrections: boolean
+  moss_large_tool_result_protection: boolean
+  moss_tool_result_budget_chars: number
+  moss_mcp_output_token_limit: number
+}
+
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
   enabled: true,
   extractionEnabled: false,
@@ -43,6 +56,19 @@ export const DEFAULT_SESSION_MEMORY_SETTINGS: SessionMemorySettings = Object.fre
   compactMinTokens: 10_000,
   compactMinTextBlockMessages: 5,
   compactMaxTokens: 40_000,
+})
+
+export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
+  moss_auto_background_agents: false,
+  moss_scratchpad: false,
+  moss_idle_session_cleanup: false,
+  moss_streaming_tool_execution: false,
+  moss_plan_mode_interview: true,
+  moss_fast_web_search: false,
+  moss_memory_learn_from_corrections: false,
+  moss_large_tool_result_protection: false,
+  moss_tool_result_budget_chars: 200_000,
+  moss_mcp_output_token_limit: 25_000,
 })
 
 export type SessionRuntimeOptions = {
@@ -89,6 +115,21 @@ export const sessionMemorySettingsSchema = lazySchema(() =>
   }),
 )
 
+export const advancedSettingsSchema = lazySchema(() =>
+  z.object({
+    moss_auto_background_agents: z.boolean().optional(),
+    moss_scratchpad: z.boolean().optional(),
+    moss_idle_session_cleanup: z.boolean().optional(),
+    moss_streaming_tool_execution: z.boolean().optional(),
+    moss_plan_mode_interview: z.boolean().optional(),
+    moss_fast_web_search: z.boolean().optional(),
+    moss_memory_learn_from_corrections: z.boolean().optional(),
+    moss_large_tool_result_protection: z.boolean().optional(),
+    moss_tool_result_budget_chars: z.number().int().min(1).max(10_000_000).optional(),
+    moss_mcp_output_token_limit: z.number().int().min(1).max(1_000_000).optional(),
+  }),
+)
+
 export function normalizeAutoMemorySettings(value: unknown): AutoMemorySettings {
   const parsed = autoMemorySettingsSchema().safeParse(value)
   return parsed.success
@@ -105,6 +146,13 @@ export function normalizeSessionMemorySettings(value: unknown): SessionMemorySet
     normalized.compactMaxTokens = normalized.compactMinTokens
   }
   return normalized
+}
+
+export function normalizeAdvancedSettings(value: unknown): AdvancedSettings {
+  const parsed = advancedSettingsSchema().safeParse(value)
+  return parsed.success
+    ? { ...DEFAULT_ADVANCED_SETTINGS, ...parsed.data }
+    : { ...DEFAULT_ADVANCED_SETTINGS }
 }
 
 export const runtimeInfoSchema = lazySchema(() =>
@@ -141,6 +189,7 @@ export const attachSessionResponseSchema = lazySchema(() =>
       runtime: runtimeInfoSchema(),
       autoMemory: autoMemorySettingsSchema().optional(),
       sessionMemory: sessionMemorySettingsSchema().optional(),
+      advancedSettings: advancedSettingsSchema().optional(),
       status: z.string(),
       desiredState: z.string(),
       createdAt: z.number(),

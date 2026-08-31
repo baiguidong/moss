@@ -1,4 +1,5 @@
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
 
 export function getPlanModeV2AgentCount(): number {
@@ -37,10 +38,7 @@ export function isPlanModeInterviewPhaseEnabled(): boolean {
   if (isEnvTruthy(env)) return true
   if (isEnvDefinedFalsy(env)) return false
 
-  return getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_plan_mode_interview_phase',
-    true,
-  )
+  return getAdvancedSetting('moss_plan_mode_interview')
 }
 
 export type PewterLedgerVariant = 'trim' | 'cut' | 'cap' | null

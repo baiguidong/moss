@@ -1,5 +1,6 @@
 import { z } from 'zod/v4'
 import type {
+  AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
   SessionProfileMode,
@@ -151,6 +152,7 @@ export type SessionRecord = {
   title: string | null
   summary: string | null
   assistantName: string | null
+  advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
   createdAt: number
@@ -236,6 +238,7 @@ export type SessionCreateInput = {
   scopes: string[]
   profileMode?: SessionProfileMode
   assistantName?: string
+  advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
 }
@@ -256,6 +259,7 @@ export type RunnerManifest = {
     mountDirs?: string[]
     runtime: SessionRuntimeInfo
     assistantName?: string
+    advancedSettings?: AdvancedSettings
     autoMemory?: AutoMemorySettings
     sessionMemory?: SessionMemorySettings
   }

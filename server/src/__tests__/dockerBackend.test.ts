@@ -71,7 +71,7 @@ describe('docker backend mounts', () => {
   })
 })
 
-describe('session auto-memory environment', () => {
+describe('session runtime settings environment', () => {
   test('inherits the global value unless the session provides an override', () => {
     const prior = process.env.MOSS_AUTO_MEMORY_SETTINGS
     process.env.MOSS_AUTO_MEMORY_SETTINGS = JSON.stringify({ dreamEnabled: true })
@@ -104,15 +104,20 @@ describe('session auto-memory environment', () => {
   })
 
   test('does not inherit another session runtime snapshot', () => {
+    const priorAdvanced = process.env.MOSS_RUNTIME_ADVANCED_SETTINGS
     const priorAuto = process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
     const priorSession = process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
+    process.env.MOSS_RUNTIME_ADVANCED_SETTINGS = '{"moss_scratchpad":true}'
     process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS = '{"enabled":false}'
     process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS = '{"enabled":false}'
     try {
       const env = buildSessionEnv(makeOptions({}))
+      expect(env.MOSS_RUNTIME_ADVANCED_SETTINGS).toBeUndefined()
       expect(env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS).toBeUndefined()
       expect(env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS).toBeUndefined()
     } finally {
+      if (priorAdvanced === undefined) delete process.env.MOSS_RUNTIME_ADVANCED_SETTINGS
+      else process.env.MOSS_RUNTIME_ADVANCED_SETTINGS = priorAdvanced
       if (priorAuto === undefined) delete process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
       else process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS = priorAuto
       if (priorSession === undefined) delete process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS

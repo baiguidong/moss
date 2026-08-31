@@ -16,12 +16,15 @@ import type {
 } from './types.js'
 import type { SessionRuntimeInfo } from './backendTypes.js'
 import type {
+  AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
   SessionRuntimeBackend,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import {
+  advancedSettingsSchema,
   autoMemorySettingsSchema,
+  normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
   sessionMemorySettingsSchema,
@@ -58,6 +61,12 @@ function parseAutoMemorySettings(value: unknown): AutoMemorySettings | undefined
   const parsed = autoMemorySettingsSchema().safeParse(parseJsonValue(value))
   if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
   return normalizeAutoMemorySettings(parsed.data)
+}
+
+function parseAdvancedSettings(value: unknown): AdvancedSettings | undefined {
+  const parsed = advancedSettingsSchema().safeParse(parseJsonValue(value))
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
+  return normalizeAdvancedSettings(parsed.data)
 }
 
 function parseSessionMemorySettings(
@@ -103,6 +112,7 @@ function mapSession(row: SqlRow): SessionRecord {
     title: typeof row.title === 'string' ? row.title : null,
     summary: typeof row.summary === 'string' ? row.summary : null,
     assistantName: typeof row.assistant_name === 'string' ? row.assistant_name : null,
+    advancedSettings: parseAdvancedSettings(row.advanced_settings_json),
     autoMemory: parseAutoMemorySettings(row.auto_memory_json),
     sessionMemory: parseSessionMemorySettings(row.session_memory_json),
     createdAt: Number(row.created_at),
@@ -198,6 +208,7 @@ export class DirectConnectStore {
         title TEXT,
         summary TEXT,
         assistant_name TEXT,
+        advanced_settings_json TEXT NOT NULL DEFAULT '{}',
         auto_memory_json TEXT NOT NULL DEFAULT '{}',
         session_memory_json TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
@@ -259,6 +270,11 @@ export class DirectConnectStore {
     // Migration: add assistant_name column if it doesn't exist
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`)
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN advanced_settings_json TEXT NOT NULL DEFAULT '{}'`)
     } catch {
       // Column already exists, ignore
     }
@@ -328,6 +344,7 @@ export class DirectConnectStore {
     desiredState: DesiredSessionState
     title?: string
     assistantName?: string
+    advancedSettings?: AdvancedSettings
     autoMemory?: AutoMemorySettings
     sessionMemory?: SessionMemorySettings
   }): SessionRecord {
@@ -338,8 +355,9 @@ export class DirectConnectStore {
         cwd, runtime_backend, profile_mode, docker_image, profile_dir,
         workspace_dir, transcript_dir, container_name,
         status, desired_state, transcript_path, title, assistant_name,
-        auto_memory_json, session_memory_json, created_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        advanced_settings_json, auto_memory_json, session_memory_json,
+        created_at, last_active_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -360,6 +378,7 @@ export class DirectConnectStore {
       input.transcriptPath,
       input.title?.trim() || null,
       input.assistantName ?? null,
+      JSON.stringify(input.advancedSettings ?? {}),
       JSON.stringify(input.autoMemory ?? {}),
       JSON.stringify(input.sessionMemory ?? {}),
       ts,

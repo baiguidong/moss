@@ -26,6 +26,18 @@ describe('createDirectConnectSession', () => {
       serverUrl: 'https://moss.example.com',
       authToken: 'access-token',
       profileMode: 'user',
+      advancedSettings: {
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300_000,
+        moss_mcp_output_token_limit: 40_000,
+      },
       autoMemory: {
         enabled: true,
         extractionEnabled: true,
@@ -49,6 +61,18 @@ describe('createDirectConnectSession', () => {
 
     expect(requestBody).toEqual({
       profileMode: 'user',
+      advancedSettings: {
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300_000,
+        moss_mcp_output_token_limit: 40_000,
+      },
       autoMemory: {
         enabled: true,
         extractionEnabled: true,

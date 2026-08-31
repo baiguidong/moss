@@ -2977,6 +2977,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
       : [],
     environment: {
       ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
+      MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(desktopSettings.advanced),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
       MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
     },
@@ -3092,6 +3093,7 @@ function createRemoteDirectRuntime({
           profileMode,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
+          advancedSettings: desktopSettings.advanced,
           autoMemory: desktopSettings.autoMemory,
           sessionMemory: desktopSettings.sessionMemory,
         });

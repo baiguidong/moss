@@ -620,10 +620,12 @@ export class DirectEmbeddedBackend implements SessionBackend {
       MOSS_SESSION_RUNTIME_TYPE: 'host',
       MOSS_CONFIG_DIR: profileDir,
     })
-    // Auto-memory is session-scoped in the embedded backend. Do not copy it
-    // into process.env, where concurrent sessions could overwrite each other.
+    // Runtime settings are session-scoped in the embedded backend. Do not copy
+    // them into process.env, where concurrent sessions could overwrite each other.
+    delete processEnvironment.MOSS_RUNTIME_ADVANCED_SETTINGS
     delete processEnvironment.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
     delete processEnvironment.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
+    delete process.env.MOSS_RUNTIME_ADVANCED_SETTINGS
     delete process.env.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS
     delete process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
     Object.assign(process.env, processEnvironment)
@@ -653,6 +655,13 @@ export class DirectEmbeddedBackend implements SessionBackend {
       sessionId: options.sessionId,
       environment: {
         MOSS_CONFIG_DIR: profileDir,
+        ...(options.advancedSettings
+          ? {
+              MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(
+                options.advancedSettings,
+              ),
+            }
+          : {}),
         ...(options.autoMemory
           ? {
               MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(

@@ -14,11 +14,11 @@ import {
   BYTES_PER_TOKEN,
   DEFAULT_MAX_RESULT_SIZE_CHARS,
   MAX_TOOL_RESULT_BYTES,
-  MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
 } from '../constants/toolLimits.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logEvent } from '../services/analytics/index.js'
 import { sanitizeToolNameForAnalytics } from '../services/analytics/metadata.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import type { Message } from '../types/message.js'
 import { logForDebugging } from './debug.js'
 import { getErrnoCode, toError } from './errors.js'
@@ -419,32 +419,18 @@ export function cloneContentReplacementState(
 }
 
 /**
- * Resolve the per-message aggregate budget limit. feature flag override
- * (tengu_hawthorn_window) wins when present and a finite positive number;
- * otherwise falls back to the hardcoded constant. Defensive typeof/finite
- * check: feature flag cache returns `cached !== undefined ? cached : default`,
- * so a flag served as null/string/NaN leaks through.
+ * Resolve the per-message aggregate budget limit from the normalized desktop
+ * advanced settings snapshot.
  */
 export function getPerMessageBudgetLimit(): number {
-  const override = getFeatureValue_CACHED_MAY_BE_STALE<number | null>(
-    'tengu_hawthorn_window',
-    null,
-  )
-  if (
-    typeof override === 'number' &&
-    Number.isFinite(override) &&
-    override > 0
-  ) {
-    return override
-  }
-  return MAX_TOOL_RESULTS_PER_MESSAGE_CHARS
+  return getAdvancedSetting('moss_tool_result_budget_chars')
 }
 
 /**
  * Provision replacement state for a new conversation thread.
  *
- * Encapsulates the feature-flag gate + reconstruct-vs-fresh choice:
- *   - Flag off → undefined (query.ts skips enforcement entirely)
+ * Encapsulates the advanced-setting gate + reconstruct-vs-fresh choice:
+   *   - Setting off → undefined (query.ts skips enforcement entirely)
  *   - No initialMessages (cold start) → fresh
  *   - initialMessages present → reconstruct (freeze all candidate IDs so the
  *     budget never replaces content the model already saw unreplaced). Empty
@@ -455,10 +441,7 @@ export function provisionContentReplacementState(
   initialMessages?: Message[],
   initialContentReplacements?: ContentReplacementRecord[],
 ): ContentReplacementState | undefined {
-  const enabled = getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_hawthorn_steeple',
-    false,
-  )
+  const enabled = getAdvancedSetting('moss_large_tool_result_protection')
   if (!enabled) return undefined
   if (initialMessages) {
     return reconstructContentReplacementState(

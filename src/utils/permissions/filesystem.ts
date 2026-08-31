@@ -17,7 +17,7 @@ import {
   getOriginalCwd,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { checkFeatureGate_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { getCwd } from '../cwd.js'
@@ -340,10 +340,10 @@ function isProjectDirPath(absolutePath: string): boolean {
 /**
  * Checks if the scratchpad directory feature is enabled.
  * The scratchpad is a per-session directory for Claude to write temporary files.
- * Controlled by the tengu_scratch feature gate.
+ * Controlled by the moss_scratchpad advanced setting.
  */
 export function isScratchpadEnabled(): boolean {
-  return checkFeatureGate_CACHED_MAY_BE_STALE('tengu_scratch')
+  return getAdvancedSetting('moss_scratchpad')
 }
 
 /**

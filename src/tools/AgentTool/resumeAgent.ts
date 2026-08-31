@@ -3,6 +3,7 @@ import { getSdkAgentProgressSummariesEnabled } from '../../bootstrap/state.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
+import { getAdvancedSettingsEnvironment } from '../../services/advancedSettings.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { registerAsyncAgent } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { assembleToolPool } from '../../tools.js'
@@ -260,7 +261,10 @@ export async function resumeAgentBackground({
   ): ReturnType<typeof runAgent> => projectResourceSelection
     ? runWithSessionContextOverridesGenerator(
         {
-          environment: projectResourceSelection.environment,
+          environment: {
+            ...projectResourceSelection.environment,
+            ...getAdvancedSettingsEnvironment(),
+          },
           taskScope: workerTaskScope,
         },
         () => runAgent(params),

@@ -29,6 +29,18 @@ try {
       },
       status: 'creating',
       desiredState: 'active',
+      advancedSettings: {
+        moss_auto_background_agents: true,
+        moss_scratchpad: true,
+        moss_idle_session_cleanup: true,
+        moss_streaming_tool_execution: true,
+        moss_plan_mode_interview: false,
+        moss_fast_web_search: true,
+        moss_memory_learn_from_corrections: true,
+        moss_large_tool_result_protection: true,
+        moss_tool_result_budget_chars: 300_000,
+        moss_mcp_output_token_limit: 40_000,
+      },
       autoMemory: {
         enabled: true,
         extractionEnabled: true,
@@ -48,6 +60,18 @@ try {
         compactMinTextBlockMessages: 3,
         compactMaxTokens: 4000,
       },
+    })
+    assert.deepEqual(session.advancedSettings, {
+      moss_auto_background_agents: true,
+      moss_scratchpad: true,
+      moss_idle_session_cleanup: true,
+      moss_streaming_tool_execution: true,
+      moss_plan_mode_interview: false,
+      moss_fast_web_search: true,
+      moss_memory_learn_from_corrections: true,
+      moss_large_tool_result_protection: true,
+      moss_tool_result_budget_chars: 300_000,
+      moss_mcp_output_token_limit: 40_000,
     })
     assert.deepEqual(session.autoMemory, {
       enabled: true,
@@ -73,6 +97,7 @@ try {
   }
 
   const legacyDb = new DatabaseSync(dbPath)
+  legacyDb.exec('ALTER TABLE sessions DROP COLUMN advanced_settings_json')
   legacyDb.exec('ALTER TABLE sessions DROP COLUMN auto_memory_json')
   legacyDb.exec('ALTER TABLE sessions DROP COLUMN session_memory_json')
   legacyDb.close()
@@ -83,6 +108,10 @@ try {
       .prepare('PRAGMA table_info(sessions)')
       .all() as Array<{ name: string }>
     assert.equal(
+      columns.some(column => column.name === 'advanced_settings_json'),
+      true,
+    )
+    assert.equal(
       columns.some(column => column.name === 'auto_memory_json'),
       true,
     )
@@ -90,6 +119,7 @@ try {
       columns.some(column => column.name === 'session_memory_json'),
       true,
     )
+    assert.equal(migratedStore.getSession('session-1')?.advancedSettings, undefined)
     assert.equal(migratedStore.getSession('session-1')?.autoMemory, undefined)
     assert.equal(migratedStore.getSession('session-1')?.sessionMemory, undefined)
   } finally {

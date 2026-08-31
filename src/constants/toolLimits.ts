@@ -43,8 +43,7 @@ export const MAX_TOOL_RESULT_BYTES = MAX_TOOL_RESULT_TOKENS * BYTES_PER_TOKEN
  * This prevents N parallel tools from each hitting the per-tool max and
  * collectively producing e.g. 10 × 40K = 400K in one turn's user message.
  *
- * Overridable at runtime via feature flag tengu_hawthorn_window — see
- * getPerMessageBudgetLimit() in toolResultStorage.ts.
+ * This value is also the default for the typed desktop advanced setting.
  */
 export const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000
 

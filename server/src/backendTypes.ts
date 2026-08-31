@@ -1,4 +1,5 @@
 import type {
+  AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
   SessionRuntimeInfo,
@@ -31,6 +32,7 @@ export type BackendSpawnOptions = {
   mountDirs?: string[]
   runtime: SessionRuntimeInfo
   assistantName?: string
+  advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
   systemSettings?: BackendSystemSettings

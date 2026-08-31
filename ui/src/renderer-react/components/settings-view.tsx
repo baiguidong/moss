@@ -15,6 +15,7 @@ import {
   Search,
   Server,
   Shield,
+  SlidersHorizontal,
   Store,
   Sparkles,
   SunMedium,
@@ -35,7 +36,7 @@ import { PRESET_THEMES } from '@/theme/presets';
 import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type SectionId = 'connection' | 'runtime' | 'permission' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'feishu' | 'buddy' | 'appearance';
+type SectionId = 'connection' | 'runtime' | 'permission' | 'advanced' | 'memory' | 'mcp' | 'skill-hub' | 'expert-hub' | 'text-model' | 'image-model' | 'prompt' | 'feishu' | 'buddy' | 'appearance';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -146,6 +147,19 @@ const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> =
   dreamMinSessions: 5,
 };
 
+const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
+  moss_auto_background_agents: false,
+  moss_scratchpad: false,
+  moss_idle_session_cleanup: false,
+  moss_streaming_tool_execution: false,
+  moss_plan_mode_interview: true,
+  moss_fast_web_search: false,
+  moss_memory_learn_from_corrections: false,
+  moss_large_tool_result_protection: false,
+  moss_tool_result_budget_chars: 200_000,
+  moss_mcp_output_token_limit: 25_000,
+};
+
 const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
   {
     id: 'connection',
@@ -167,6 +181,13 @@ const SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     icon: Shield,
     iconGradientClassName: 'from-violet-400 to-fuchsia-600',
     keywords: ['权限', 'permission', 'allow', 'turns', 'thinking', '轮次'],
+  },
+  {
+    id: 'advanced',
+    title: '高级设置',
+    icon: SlidersHorizontal,
+    iconGradientClassName: 'from-cyan-400 to-blue-600',
+    keywords: ['高级', 'advanced', 'agent', 'scratchpad', 'plan', 'streaming', '网页搜索', 'compact', '记忆', 'memory', 'token', 'dream', '提取', '工具结果', 'mcp', '纠正'],
   },
   {
     id: 'memory',
@@ -1096,6 +1117,7 @@ export function SettingsView({
     connection: null,
     runtime: null,
     permission: null,
+    advanced: null,
     memory: null,
     mcp: null,
     'skill-hub': null,
@@ -1124,6 +1146,10 @@ export function SettingsView({
   const autoMemoryDraft = {
     ...DEFAULT_AUTO_MEMORY_SETTINGS,
     ...(settingsDraft?.autoMemory || {}),
+  };
+  const advancedDraft = {
+    ...DEFAULT_ADVANCED_SETTINGS,
+    ...(settingsDraft?.advanced || {}),
   };
 
   React.useEffect(() => {
@@ -1167,6 +1193,7 @@ export function SettingsView({
     settingsDraft?.thinkingMode,
     settingsDraft?.sessionMemory,
     settingsDraft?.autoMemory,
+    settingsDraft?.advanced,
     buddyEnabled,
   ]);
 
@@ -1258,6 +1285,13 @@ export function SettingsView({
   const updateAutoMemorySettings = (patch: Partial<NonNullable<DesktopSettings['autoMemory']>>) => {
     updateSetting('autoMemory', {
       ...autoMemoryDraft,
+      ...patch,
+    });
+  };
+
+  const updateAdvancedSettings = (patch: Partial<NonNullable<DesktopSettings['advanced']>>) => {
+    updateSetting('advanced', {
+      ...advancedDraft,
       ...patch,
     });
   };
@@ -1625,43 +1659,160 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'memory') ? (
+                {visibleSections.some((section) => section.id === 'advanced') ? (
                   <SettingsSection
-                    id="memory"
-                    title="记忆"
+                    id="advanced"
+                    title="高级设置"
                     sectionRef={(element) => {
-                      sectionRefs.current.memory = element;
+                      sectionRefs.current.advanced = element;
                     }}
                   >
                     <SettingsGroup>
                       <SettingsRow
-                        title="会话记忆"
-                        description="为每个会话维护独立摘要，用于长会话压缩和恢复当前上下文。"
+                        title="长任务自动转后台"
+                        description="前台 Agent 运行超过 120 秒后自动转为后台任务。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
-                            checked={Boolean(sessionMemoryDraft.enabled)}
-                            onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
-                            label="会话记忆"
+                            checked={Boolean(advancedDraft.moss_auto_background_agents)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_auto_background_agents: checked })}
+                            label="长任务自动转后台"
                           />
                         </div>
                       </SettingsRow>
 
                       <SettingsRow
-                        title="压缩时使用会话记忆"
-                        description="开启后，/compact 和自动压缩会优先使用当前会话摘要。"
+                        title="会话临时工作区"
+                        description="为 Agent 和 Coordinator Worker 提供隔离的临时文件目录。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
-                            checked={Boolean(sessionMemoryDraft.compactEnabled)}
-                            onCheckedChange={(checked) => updateSessionMemorySettings({ compactEnabled: checked })}
-                            label="压缩时使用会话记忆"
+                            checked={Boolean(advancedDraft.moss_scratchpad)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_scratchpad: checked })}
+                            label="会话临时工作区"
                           />
                         </div>
                       </SettingsRow>
 
+                      <SettingsRow
+                        title="闲置会话优化"
+                        description="会话闲置超过 60 分钟后清理较早的工具结果，降低恢复时的上下文开销。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_idle_session_cleanup)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_idle_session_cleanup: checked })}
+                            label="闲置会话优化"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="流式工具执行"
+                        description="工具参数生成完成后提前开始执行，减少多工具任务的等待时间。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_streaming_tool_execution)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_streaming_tool_execution: checked })}
+                            label="流式工具执行"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Plan 引导访谈"
+                        description="Plan Mode 使用分阶段澄清、探索和计划生成流程。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_plan_mode_interview)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_plan_mode_interview: checked })}
+                            label="Plan 引导访谈"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="快速网页搜索"
+                        description="网页搜索使用小型快速模型并关闭 thinking，降低搜索延迟和成本。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_fast_web_search)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_fast_web_search: checked })}
+                            label="快速网页搜索"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      工具与性能
+                    </div>
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="大型工具结果保护"
+                        description="单轮工具结果过大时保存到会话目录，仅向模型提供预览和文件路径。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_large_tool_result_protection)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_large_tool_result_protection: checked })}
+                            label="大型工具结果保护"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="单轮工具结果上限"
+                        description="一轮中可直接发送给模型的工具结果字符数；超出的较大结果将保存到文件。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10_000_000}
+                          step={10_000}
+                          disabled={!Boolean(advancedDraft.moss_large_tool_result_protection)}
+                          className={FIELD_CLASS_NAME}
+                          value={advancedDraft.moss_tool_result_budget_chars ?? DEFAULT_ADVANCED_SETTINGS.moss_tool_result_budget_chars}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_tool_result_budget_chars: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="MCP 输出 token 上限"
+                        description="限制单次 MCP 工具结果发送给模型的 token 数，避免大型响应占满上下文。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1_000_000}
+                          step={1_000}
+                          className={FIELD_CLASS_NAME}
+                          value={advancedDraft.moss_mcp_output_token_limit ?? DEFAULT_ADVANCED_SETTINGS.moss_mcp_output_token_limit}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_mcp_output_token_limit: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      记忆
+                    </div>
+                    <SettingsGroup>
                       <SettingsRow
                         title="初始化 token 阈值"
                         description="会话上下文达到该规模后，才开始创建 session-memory/summary.md。调小后更容易测试。"
@@ -1766,59 +1917,7 @@ export function SettingsView({
                           })}
                         />
                       </SettingsRow>
-                    </SettingsGroup>
 
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      长期记忆
-                    </div>
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="长期记忆"
-                        description="在本地或用户 profile 中保存可跨会话使用的记忆。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(autoMemoryDraft.enabled)}
-                            onCheckedChange={(checked) => updateAutoMemorySettings({ enabled: checked })}
-                            label="长期记忆"
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="自动提取"
-                        description="每轮结束后从新增对话中提取值得长期保留的信息。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(autoMemoryDraft.extractionEnabled)}
-                            onCheckedChange={(checked) => updateAutoMemorySettings({ extractionEnabled: checked })}
-                            label="自动提取长期记忆"
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="Dream 整理"
-                        description="达到时间和会话门槛后，在后台合并、修正和精简长期记忆。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(autoMemoryDraft.dreamEnabled)}
-                            onCheckedChange={(checked) => updateAutoMemorySettings({ dreamEnabled: checked })}
-                            label="Dream 整理"
-                          />
-                        </div>
-                      </SettingsRow>
-                    </SettingsGroup>
-
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      高级设置
-                    </div>
-                    <SettingsGroup>
                       <SettingsRow
                         title="历史上下文搜索"
                         description="允许 Agent 在需要时搜索长期记忆和当前会话的历史记录。"
@@ -1829,6 +1928,20 @@ export function SettingsView({
                             checked={Boolean(autoMemoryDraft.pastContextSearchEnabled)}
                             onCheckedChange={(checked) => updateAutoMemorySettings({ pastContextSearchEnabled: checked })}
                             label="历史上下文搜索"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="从纠正中学习"
+                        description="拒绝或取消工具操作后，提醒 Agent 识别后续纠正和偏好并考虑写入长期记忆。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_memory_learn_from_corrections)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_memory_learn_from_corrections: checked })}
+                            label="从纠正中学习"
                           />
                         </div>
                       </SettingsRow>
@@ -1883,6 +1996,93 @@ export function SettingsView({
                             dreamMinSessions: Number.parseInt(event.target.value || '1', 10),
                           })}
                         />
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'memory') ? (
+                  <SettingsSection
+                    id="memory"
+                    title="记忆"
+                    sectionRef={(element) => {
+                      sectionRefs.current.memory = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="会话记忆"
+                        description="为每个会话维护独立摘要，用于长会话压缩和恢复当前上下文。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(sessionMemoryDraft.enabled)}
+                            onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
+                            label="会话记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="压缩时使用会话记忆"
+                        description="开启后，/compact 和自动压缩会优先使用当前会话摘要。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(sessionMemoryDraft.compactEnabled)}
+                            onCheckedChange={(checked) => updateSessionMemorySettings({ compactEnabled: checked })}
+                            label="压缩时使用会话记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      长期记忆
+                    </div>
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="长期记忆"
+                        description="在本地或用户 profile 中保存可跨会话使用的记忆。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.enabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ enabled: checked })}
+                            label="长期记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="自动提取"
+                        description="每轮结束后从新增对话中提取值得长期保留的信息。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.extractionEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ extractionEnabled: checked })}
+                            label="自动提取长期记忆"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 整理"
+                        description="达到时间和会话门槛后，在后台合并、修正和精简长期记忆。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(autoMemoryDraft.dreamEnabled)}
+                            onCheckedChange={(checked) => updateAutoMemorySettings({ dreamEnabled: checked })}
+                            label="Dream 整理"
+                          />
+                        </div>
                       </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>

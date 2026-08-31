@@ -7,6 +7,7 @@ import { join } from 'path'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
 import {
+  normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
@@ -220,6 +221,9 @@ export class RuntimeService {
     const normalizedAutoMemory = input.autoMemory
       ? normalizeAutoMemorySettings(input.autoMemory)
       : undefined
+    const normalizedAdvancedSettings = input.advancedSettings
+      ? normalizeAdvancedSettings(input.advancedSettings)
+      : undefined
     validateAutoMemoryProfile(profileMode, input.autoMemory)
     if (runtimeSettings.backend === 'docker' && !runtimeSettings.dockerImage.trim()) {
       throw new Error('Docker backend is enabled but no docker image is configured')
@@ -269,6 +273,7 @@ export class RuntimeService {
       desiredState: 'active',
       title: input.title,
       assistantName: input.assistantName,
+      advancedSettings: normalizedAdvancedSettings,
       autoMemory: normalizedAutoMemory,
       sessionMemory: input.sessionMemory
         ? normalizeSessionMemorySettings(input.sessionMemory)
@@ -451,6 +456,9 @@ export class RuntimeService {
         scopes: session.scopes,
         dangerouslySkipPermissions,
         assistantName: options.assistantName,
+        advancedSettings: session.advancedSettings
+          ? normalizeAdvancedSettings(session.advancedSettings)
+          : undefined,
         autoMemory: session.autoMemory
           ? normalizeAutoMemorySettings(session.autoMemory)
           : undefined,

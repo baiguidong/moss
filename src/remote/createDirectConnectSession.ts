@@ -7,6 +7,7 @@ import type { DirectConnectConfig } from './directConnectManager.js'
 import {
   attachSessionResponseSchema,
   connectResponseSchema,
+  type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
   type SessionProfileMode,
@@ -98,6 +99,7 @@ export async function createDirectConnectSession({
   dangerouslySkipPermissions,
   profileMode,
   assistantName,
+  advancedSettings,
   autoMemory,
   sessionMemory,
 }: {
@@ -111,6 +113,7 @@ export async function createDirectConnectSession({
   dangerouslySkipPermissions?: boolean
   profileMode?: SessionProfileMode
   assistantName?: string
+  advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
 }): Promise<{
@@ -138,6 +141,7 @@ export async function createDirectConnectSession({
         }),
         ...(profileMode ? { profileMode } : {}),
         ...(assistantName && { assistant_name: assistantName }),
+        ...(advancedSettings ? { advancedSettings } : {}),
         ...(autoMemory ? { autoMemory } : {}),
         ...(sessionMemory ? { sessionMemory } : {}),
       }),

@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
-test('persists auto-memory settings and migrates existing databases in Node', async () => {
+test('persists session runtime settings and migrates existing databases in Node', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-server-db-test-'))
   try {
     const entrypoint = join(

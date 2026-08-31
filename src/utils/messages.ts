@@ -29,6 +29,7 @@ import {
   checkFeatureGate_CACHED_MAY_BE_STALE,
   getFeatureValue_CACHED_MAY_BE_STALE,
 } from '../services/analytics/featureFlags.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import {
   getImageTooLargeErrorMessage,
   getPdfInvalidErrorMessage,
@@ -177,12 +178,12 @@ const TOOL_REFERENCE_TURN_BOUNDARY = 'Tool loaded.'
 
 /**
  * Appends a memory correction hint to a rejection/cancellation message
- * when auto-memory is enabled and the feature flag is on.
+ * when auto-memory and correction learning are enabled.
  */
 export function withMemoryCorrectionHint(message: string): string {
   if (
     isAutoMemoryEnabled() &&
-    getFeatureValue_CACHED_MAY_BE_STALE('tengu_amber_prism', false)
+    getAdvancedSetting('moss_memory_learn_from_corrections')
   ) {
     return message + MEMORY_CORRECTION_HINT
   }
