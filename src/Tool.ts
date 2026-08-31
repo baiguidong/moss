@@ -315,17 +315,17 @@ export type MossAppEvent =
   | { type: 'image_edit'; input: MossImageEditInput }
 
 export type MossAppBuildInput = {
-  kind?: 'plugin-app'
+  kind?: 'app'
   name: string
 }
 
 export type MossAppPreviewInput = {
-  kind?: 'plugin-app'
+  kind?: 'app'
   buildDir?: string
 }
 
 export type MossAppPublishInput = {
-  kind?: 'plugin-app'
+  kind?: 'app'
   name: string
   buildDir?: string
   description: string
@@ -345,7 +345,7 @@ export type MossAppSaveInput = {
 }
 
 export type MossAppUpdateInput = {
-  kind?: 'plugin-app'
+  kind?: 'app'
   name: string
   description?: string
   buildDir?: string
@@ -353,7 +353,7 @@ export type MossAppUpdateInput = {
 }
 
 export type MossAppExtractToWorkspaceInput = {
-  kind?: 'plugin-app'
+  kind?: 'app'
   name: string
   versionId?: string
 }

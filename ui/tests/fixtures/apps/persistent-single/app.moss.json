@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "id": "fixture.persistent-single",
+  "version": "1.0.0",
+  "displayName": "Persistent Single",
+  "hostApi": "^1.0.0",
+  "ui": { "entry": "dist/ui/index.html" },
+  "backend": {
+    "entry": "dist/backend/main.mjs",
+    "runtime": "node",
+    "apiVersion": 1,
+    "lifecycle": "persistent",
+    "instanceMode": "single",
+    "targets": ["desktop", "server"],
+    "actions": [{ "name": "echo" }]
+  },
+  "permissions": []
+}

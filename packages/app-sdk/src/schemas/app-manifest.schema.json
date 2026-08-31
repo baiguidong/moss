@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moss.local/schemas/app-manifest-v2.json",
+  "title": "Moss App Manifest V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "version", "displayName", "hostApi", "permissions"],
+  "anyOf": [{ "required": ["ui"] }, { "required": ["backend"] }],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$" },
+    "version": { "type": "string" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "maxLength": 2000 },
+    "icon": { "type": "string" },
+    "hostApi": { "type": "string" },
+    "permissions": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry"],
+      "properties": {
+        "entry": { "type": "string", "minLength": 1 },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "width": { "type": "integer", "minimum": 320, "maximum": 3840 },
+            "height": { "type": "integer", "minimum": 240, "maximum": 2160 },
+            "resizable": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry", "runtime", "apiVersion", "lifecycle", "instanceMode", "targets", "actions"],
+      "properties": {
+        "entry": { "type": "string", "minLength": 1 },
+        "runtime": { "const": "node" },
+        "apiVersion": { "const": 1 },
+        "lifecycle": { "enum": ["on-demand", "persistent"] },
+        "instanceMode": { "enum": ["single", "multiple"] },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["desktop", "server"] }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$" },
+              "inputSchema": { "type": "string" },
+              "outputSchema": { "type": "string" },
+              "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 }
+            }
+          }
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": { "type": "string" },
+            "secrets": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

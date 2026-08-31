@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, screen, shell, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, screen, session, shell, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -44,23 +44,23 @@ import {
   APPS_DIR,
   APP_REGISTRY_PATH,
   APP_KINDS,
-  EXTENSIONS_DIR,
-  buildPluginAppFromWorkspace,
-  deletePluginApp,
-  getPublishedPluginApp,
+  buildAppFromWorkspace,
+  deleteApp,
+  getPublishedApp,
   installBuiltInAppFromBuild,
-  listPluginAppVersions,
-  readPluginAppManifestFromDir,
-  rollbackPluginAppToVersion,
+  listAppVersions,
+  readAppManifestFromDir,
+  rollbackAppToVersion,
 } from './app-platform.mjs';
 import {
-  allowPluginAppBundleRoot,
-  installPluginAppProtocol,
-  PLUGIN_APP_SCHEME,
-  revokePluginAppBundleRoot,
-  toPluginAppUrl,
-} from './plugin-app-protocol.mjs';
-import { ExtensionHost } from './extension-host.mjs';
+  allowAppUiBundleRoot,
+  installAppUiProtocol,
+  APP_UI_SCHEME,
+  revokeAppUiBundleRoot,
+  toAppUiUrl,
+} from './apps/app-ui-protocol.mjs';
+import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
+import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import {
   findAssistantDirByName,
   readAssistantContext,
@@ -210,7 +210,7 @@ protocol.registerSchemesAsPrivileged([
     },
   },
   {
-    scheme: PLUGIN_APP_SCHEME,
+    scheme: APP_UI_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -523,6 +523,8 @@ let browserViewManager = null;
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
+let desktopAppRuntime = null;
+let desktopAppShutdownComplete = false;
 let localAuditService = null;
 let localAuditScanTimer = null;
 let feishuAdapterProcessManager = null;
@@ -571,12 +573,15 @@ const projectTaskCancellationRequests = new Set();
 const sessionPromptQueues = new Map();
 const sessionSendQueues = new Map();
 const subAgentSyncTimers = new Map();
-const pluginAppWindows = new Map();
-const pluginAppWindowStates = new Map();
-const pendingEmbeddedPluginApps = new Map();
-const pendingEmbeddedPluginAppsByToken = new Map();
+const appWindows = new Map();
+const appWindowStates = new Map();
+const pendingEmbeddedApps = new Map();
+const pendingEmbeddedAppsByToken = new Map();
+const configuredAppSessions = new WeakSet();
 const pendingWebviewAttachments = [];
 const configuredRightBrowserContents = new WeakSet();
+const MAX_APP_STORAGE_BYTES = 1024 * 1024;
+const MAX_APP_STORAGE_KEY_LENGTH = 256;
 const debugWindows = new Map();
 const pendingMcpAuthCallbacks = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
@@ -925,6 +930,7 @@ const {
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
   fetchRemoteFeishuAdapterStatus,
+  fetchRemoteApps,
   getDesktopAgentMode,
   getRemoteDirectSettings,
   isRemoteDirectModeEnabled,
@@ -934,6 +940,14 @@ const {
   resumeRemoteDirectSession,
   startRemoteFeishuAdapter,
   stopRemoteFeishuAdapter,
+  installRemoteApp,
+  updateRemoteApp,
+  uninstallRemoteApp,
+  createRemoteAppInstance,
+  updateRemoteAppInstance,
+  removeRemoteAppInstance,
+  restartRemoteAppInstance,
+  fetchRemoteAppLogs,
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
 
 function getDesktopSettingsPayload(extra = {}) {
@@ -941,9 +955,17 @@ function getDesktopSettingsPayload(extra = {}) {
 }
 
 function saveDesktopSettings(nextSettings) {
+  const previousAppearance = JSON.stringify(desktopSettings?.appearance || {});
   const snapshot = desktopSettingsStore.save(nextSettings);
   desktopSettingsState = snapshot.state;
   desktopSettings = snapshot.value;
+  if (previousAppearance !== JSON.stringify(desktopSettings.appearance || {})) {
+    for (const state of appWindowStates.values()) {
+      if (!state.webContents?.isDestroyed()) {
+        state.webContents.send('app-ui:event:appearance', desktopSettings.appearance);
+      }
+    }
+  }
 }
 
 function invalidateEmbeddedSettingsCache() {
@@ -5084,7 +5106,7 @@ function getBootStatus() {
     bundledAppsWorkspaceDir: MOSS_BUNDLED_APPS_WORKSPACE_DIR,
     skillsDir: MOSS_SKILLS_DIR,
     assistantsDir: MOSS_ASSISTANTS_DIR,
-    extensionsDir: EXTENSIONS_DIR,
+    appRuntimeReady: Boolean(desktopAppRuntime),
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     userSettingsPath: localSettingsAuthConfig.path,
     userSettingsExists: localSettingsAuthConfig.exists,
@@ -5585,11 +5607,35 @@ async function requestToolPermission(sessionRecord, toolName, input, request = {
   );
 }
 
-function emitAppsChanged(payload = {}) {
-  emitToRenderer('app:changed', {
+async function emitAppsChanged(payload = {}) {
+  const broadcast = (nextPayload = payload) => emitToRenderer('app:changed', {
     timestamp: Date.now(),
-    ...payload,
+    ...nextPayload,
   });
+  const appId = payload.app?.id || payload.app?.name;
+  const version = payload.app?.currentVersion || payload.app?.publishedVersion;
+  if (desktopAppRuntime && appId && version) {
+    const previousVersion = desktopAppRuntime.installations.get(appId)?.activeVersion || null;
+    const versionChanged = Boolean(previousVersion && previousVersion !== version);
+    const openViews = versionChanged ? closePublishedAppViews(appId) : { standalone: false, embedded: false };
+    const activation = versionChanged
+      ? desktopAppRuntime.activateVersion(appId, version)
+      : desktopAppRuntime.registerInstalled(appId, version);
+    try {
+      await activation;
+      if (openViews.standalone) launchAppWindow(getPublishedApp(appId), { mode: 'published' });
+      broadcast();
+    } catch (error) {
+      mossLog('error', 'app-runtime', 'App version activation failed', { appId, version, error: error.message || String(error) });
+      if (previousVersion) rollbackAppToVersion(appId, previousVersion);
+      emitToRenderer('app:runtime-event', { type: 'activation-error', appId, version, error: error.message || String(error) });
+      if (openViews.standalone) launchAppWindow(getPublishedApp(appId), { mode: 'published' });
+      broadcast({ action: 'activation-error', appId, version, error: error.message || String(error) });
+      throw error;
+    }
+    return;
+  }
+  broadcast();
 }
 
 function shouldCopyBundledAppPath(sourcePath) {
@@ -5734,7 +5780,7 @@ async function initializeBundledApps() {
   for (const entry of entries) {
     const srcPath = path.join(srcDir, entry.name);
     try {
-      const manifest = readPluginAppManifestFromDir(srcPath);
+      const manifest = readAppManifestFromDir(srcPath);
       const workspaceAppDir = path.join(MOSS_BUNDLED_APPS_WORKSPACE_DIR, 'apps', manifest.id);
       await fsp.rm(workspaceAppDir, { recursive: true, force: true });
       await fsp.mkdir(path.dirname(workspaceAppDir), { recursive: true });
@@ -5743,7 +5789,7 @@ async function initializeBundledApps() {
         filter: shouldCopyBundledAppPath,
       });
 
-      const build = await buildPluginAppFromWorkspace(
+      const build = await buildAppFromWorkspace(
         MOSS_BUNDLED_APPS_WORKSPACE_DIR,
         manifest.id,
         { runPackageBuild: false },
@@ -5790,12 +5836,16 @@ function ensureAppDataDir(name) {
   return dataDir;
 }
 
-function createPluginAppWebContentsState(appEntry, targetWebContents, source, ownerWindow = null) {
-  const dataDir = ensureAppDataDir(appEntry.id || appEntry.name);
+function createAppWebContentsState(appEntry, targetWebContents, source, ownerWindow = null) {
+  const appId = appEntry.id || appEntry.name;
+  const dataDir = source?.mode === 'preview' && source.previewRoot
+    ? path.join(source.previewRoot, 'ui-data', appId)
+    : ensureAppDataDir(appId);
+  fs.mkdirSync(dataDir, { recursive: true });
   const state = {
-    id: appEntry.id || appEntry.name,
+    id: appId,
     name: appEntry.name || appEntry.id,
-    kind: APP_KINDS.pluginApp,
+    kind: APP_KINDS.app,
     window: ownerWindow,
     webContents: targetWebContents,
     source,
@@ -5803,123 +5853,136 @@ function createPluginAppWebContentsState(appEntry, targetWebContents, source, ow
     version: appEntry.version || null,
     dataDir,
     storagePath: path.join(dataDir, APP_STORAGE_FILENAME),
-    extensionLock: appEntry.extensionLock || {},
-    extensionHost: null,
-    extensionStatus: null,
     bundleToken: appEntry.bundleToken || null,
+    runtime: appEntry.runtime || desktopAppRuntime,
   };
-  pluginAppWindowStates.set(targetWebContents.id, state);
+  appWindowStates.set(targetWebContents.id, state);
   return state;
 }
 
-function createPluginAppWindowState(appEntry, appWindow, source) {
-  return createPluginAppWebContentsState(appEntry, appWindow.webContents, source, appWindow);
+function createAppWindowState(appEntry, appWindow, source) {
+  return createAppWebContentsState(appEntry, appWindow.webContents, source, appWindow);
 }
 
-function getPluginAppWindowStateBySender(sender) {
-  const state = pluginAppWindowStates.get(sender.id);
+function getAppWindowStateBySender(sender) {
+  const state = appWindowStates.get(sender.id);
   if (!state) {
     throw new Error('App runtime is not available for this window.');
   }
   return state;
 }
 
-async function ensurePluginExtensionHost(state) {
-  if (!state.extensionHost) {
-    state.extensionHost = new ExtensionHost({
-      extensionLock: state.extensionLock,
-      logger: console,
+function disposeAppWebContentsState(webContentsId) {
+  const state = appWindowStates.get(webContentsId);
+  if (!state) return;
+  if (state.source?.mode === 'preview') {
+    void state.runtime?.shutdown?.().finally(() => {
+      if (state.source.previewRoot) void fsp.rm(state.source.previewRoot, { recursive: true, force: true });
     });
   }
-  return state.extensionHost;
+  revokeAppUiBundleRoot(state.bundleToken);
+  appWindowStates.delete(webContentsId);
 }
 
-async function activatePluginExtensionsForWindow(state) {
-  const host = await ensurePluginExtensionHost(state);
-  try {
-    await host.activateAll();
-    const status = host.getStatus();
-    state.extensionStatus = status;
-    const targetWebContents = state.webContents || state.window?.webContents;
-    if (targetWebContents && !targetWebContents.isDestroyed()) {
-      targetWebContents.send('plugin-app:event:extensions', {
-        ok: true,
-        status,
-      });
-    }
-    return status;
-  } catch (error) {
-    const status = host.getStatus();
-    state.extensionStatus = status;
-    const targetWebContents = state.webContents || state.window?.webContents;
-    if (targetWebContents && !targetWebContents.isDestroyed()) {
-      targetWebContents.send('plugin-app:event:extensions', {
-        ok: false,
-        error: error.message || String(error),
-        status,
-      });
-    }
-    throw error;
-  }
-}
-
-function disposePluginAppWebContentsState(webContentsId) {
-  const state = pluginAppWindowStates.get(webContentsId);
-  if (!state) return;
-  if (state.extensionHost) {
-    void state.extensionHost.dispose();
-  }
-  revokePluginAppBundleRoot(state.bundleToken);
-  pluginAppWindowStates.delete(webContentsId);
-}
-
-function attachEmbeddedPluginAppWebContents(pending, targetWebContents, embedId) {
+function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
   if (!pending || !targetWebContents || targetWebContents.isDestroyed()) {
     throw new Error('Embedded App webContents is not available.');
   }
-  if (pluginAppWindowStates.has(targetWebContents.id)) {
+  if (appWindowStates.has(targetWebContents.id)) {
     return;
   }
 
   pending.webContentsId = targetWebContents.id;
-  createPluginAppWebContentsState(pending.appEntry, targetWebContents, {
+  createAppWebContentsState(pending.appEntry, targetWebContents, {
     mode: 'embedded',
     embedId,
   });
-  configurePluginAppWebContents(targetWebContents, pending.bundleToken);
+  configureAppWebContents(targetWebContents, pending.bundleToken);
   targetWebContents.once('destroyed', () => {
-    disposePluginAppWebContentsState(targetWebContents.id);
-    pendingEmbeddedPluginApps.delete(embedId);
-    pendingEmbeddedPluginAppsByToken.delete(pending.bundleToken);
-  });
-  targetWebContents.once('did-finish-load', () => {
-    const state = pluginAppWindowStates.get(targetWebContents.id);
-    if (!state) return;
-    activatePluginExtensionsForWindow(state).catch((error) => {
-      console.warn('[plugin-app] embedded extension activation failed:', error?.message || error);
-    });
+    disposeAppWebContentsState(targetWebContents.id);
+    pendingEmbeddedApps.delete(embedId);
+    pendingEmbeddedAppsByToken.delete(pending.bundleToken);
   });
 }
 
-function readPluginAppStorageSnapshot(state) {
+function readAppStorageSnapshot(state) {
   try {
     if (!fs.existsSync(state.storagePath)) return {};
+    if (fs.statSync(state.storagePath).size > MAX_APP_STORAGE_BYTES) {
+      throw new Error('App storage exceeds the size limit.');
+    }
     const parsed = JSON.parse(fs.readFileSync(state.storagePath, 'utf8'));
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
+  } catch (error) {
+    if (error?.message === 'App storage exceeds the size limit.') throw error;
     return {};
   }
 }
 
-function writePluginAppStorageSnapshot(state, snapshot) {
+function writeAppStorageSnapshot(state, snapshot) {
+  const serialized = `${JSON.stringify(snapshot, null, 2)}\n`;
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_APP_STORAGE_BYTES) {
+    throw new Error('App storage exceeds the 1 MiB size limit.');
+  }
   fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
-  fs.writeFileSync(state.storagePath, JSON.stringify(snapshot, null, 2), 'utf8');
+  const temporary = `${state.storagePath}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, serialized, { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(temporary, state.storagePath);
 }
 
-function isPluginAppUrlForToken(url, bundleToken) {
+const RESERVED_APP_STORAGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function normalizeAppStorageKey(key) {
+  const normalizedKey = String(key ?? '').trim();
+  if (
+    !normalizedKey
+    || normalizedKey.length > MAX_APP_STORAGE_KEY_LENGTH
+    || RESERVED_APP_STORAGE_KEYS.has(normalizedKey)
+  ) {
+    throw new Error('storage key is invalid');
+  }
+  return normalizedKey;
+}
+
+function validateAppStorageValue(value) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    throw new Error('storage value must be JSON-serializable');
+  }
+  if (serialized === undefined) throw new Error('storage value must be JSON-serializable');
+}
+
+function closePublishedAppViews(appId) {
+  let standalone = false;
+  let embedded = false;
+  for (const [key, win] of appWindows.entries()) {
+    if (key.startsWith(`${appId}:published`) && !win.isDestroyed()) {
+      standalone = true;
+      win.close();
+    }
+  }
+  for (const [embedId, pending] of pendingEmbeddedApps.entries()) {
+    if ((pending.appEntry?.id || pending.appEntry?.name) !== appId) continue;
+    embedded = true;
+    if (pending.webContentsId) {
+      const target = webContents.fromId(Number(pending.webContentsId));
+      if (target && !target.isDestroyed()) void target.loadURL('about:blank');
+      disposeAppWebContentsState(pending.webContentsId);
+    } else {
+      revokeAppUiBundleRoot(pending.bundleToken);
+    }
+    pendingEmbeddedApps.delete(embedId);
+    pendingEmbeddedAppsByToken.delete(pending.bundleToken);
+  }
+  return { standalone, embedded };
+}
+
+function isAppUrlForToken(url, bundleToken) {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== `${PLUGIN_APP_SCHEME}:`) return false;
+    if (parsed.protocol !== `${APP_UI_SCHEME}:`) return false;
     if (parsed.hostname === bundleToken) return true;
     const tokenFromLegacyPath = parsed.hostname === 'app'
       ? parsed.pathname.split('/').filter(Boolean)[0]
@@ -5930,10 +5993,10 @@ function isPluginAppUrlForToken(url, bundleToken) {
   }
 }
 
-function getPluginAppTokenFromUrl(url) {
+function getAppTokenFromUrl(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== `${PLUGIN_APP_SCHEME}:`) return '';
+    if (parsed.protocol !== `${APP_UI_SCHEME}:`) return '';
     if (parsed.hostname && parsed.hostname !== 'app') return parsed.hostname;
     return parsed.pathname.split('/').filter(Boolean)[0] || '';
   } catch {
@@ -5941,13 +6004,16 @@ function getPluginAppTokenFromUrl(url) {
   }
 }
 
-function preparePluginAppEntry(appEntry) {
+function prepareAppEntry(appEntry) {
+  if (!appEntry.manifest?.ui || !appEntry.filePath) {
+    throw new Error('This App has no UI to open. Manage its Backend from App Center.');
+  }
   const entryPath = path.resolve(appEntry.filePath || appEntry.entryPath);
   const bundleRoot = appEntry.bundleRoot || path.dirname(entryPath);
   const entryRelativePath = appEntry.entryRelativePath ||
     path.relative(bundleRoot, entryPath).split(path.sep).join('/');
-  const bundleToken = allowPluginAppBundleRoot(bundleRoot, entryRelativePath);
-  const entryUrl = toPluginAppUrl(bundleToken, entryRelativePath);
+  const bundleToken = allowAppUiBundleRoot(bundleRoot, entryRelativePath);
+  const entryUrl = toAppUiUrl(bundleToken, entryRelativePath);
   return {
     entryPath,
     bundleRoot,
@@ -5955,6 +6021,20 @@ function preparePluginAppEntry(appEntry) {
     bundleToken,
     entryUrl,
   };
+}
+
+function appSessionPartition(appId, preview = false) {
+  return preview
+    ? `moss-app-preview-${randomUUID()}`
+    : `moss-app-${String(appId).replace(/[^a-z0-9._-]/gi, '-')}`;
+}
+
+function configureAppSession(appSession) {
+  if (configuredAppSessions.has(appSession)) return;
+  configuredAppSessions.add(appSession);
+  installAppUiProtocol(appSession.protocol);
+  appSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  appSession.setPermissionCheckHandler(() => false);
 }
 
 async function openExternalUrl(href) {
@@ -6034,7 +6114,7 @@ function redactAuthFailureText(value) {
     .replace(/https?:\/\/[^\s"'<>]+/gi, '<redacted-url>');
 }
 
-function configurePluginAppWebContents(targetWebContents, bundleToken) {
+function configureAppWebContents(targetWebContents, bundleToken) {
   targetWebContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
       void shell.openExternal(url);
@@ -6042,7 +6122,7 @@ function configurePluginAppWebContents(targetWebContents, bundleToken) {
     return { action: 'deny' };
   });
   targetWebContents.on('will-navigate', (event, url) => {
-    if (url !== targetWebContents.getURL() && !isPluginAppUrlForToken(url, bundleToken)) {
+    if (url !== targetWebContents.getURL() && !isAppUrlForToken(url, bundleToken)) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
         void shell.openExternal(url);
@@ -6054,13 +6134,13 @@ function configurePluginAppWebContents(targetWebContents, bundleToken) {
   });
 }
 
-function launchPluginAppWindow(appEntry, source = {}) {
+function launchAppWindow(appEntry, source = {}) {
   const appId = appEntry.id || appEntry.name;
   const windowKey = `${appId}:${source.mode || appEntry.version || 'current'}`;
-  const existingWindow = pluginAppWindows.get(windowKey);
+  const existingWindow = appWindows.get(windowKey);
   if (existingWindow && !existingWindow.isDestroyed()) {
     if (source.mode === 'preview') {
-      pluginAppWindows.delete(windowKey);
+      appWindows.delete(windowKey);
       existingWindow.close();
     } else {
       if (existingWindow.isMinimized()) existingWindow.restore();
@@ -6070,72 +6150,91 @@ function launchPluginAppWindow(appEntry, source = {}) {
     }
   }
 
-  const appWindow = new BrowserWindow({
-    title: appEntry.displayName || appEntry.title || appId,
-    width: appEntry.width || appEntry.manifest?.window?.width || 1100,
-    height: appEntry.height || appEntry.manifest?.window?.height || 760,
-    resizable: appEntry.resizable !== false && appEntry.manifest?.window?.resizable !== false,
-    backgroundColor: '#0b1120',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'plugin-app-preload.mjs'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  const { bundleToken, entryUrl } = preparePluginAppEntry(appEntry);
-
-  pluginAppWindows.set(windowKey, appWindow);
-  createPluginAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
-  configurePluginAppWebContents(appWindow.webContents, bundleToken);
-  appWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
-  appWindow.on('closed', () => {
-    disposePluginAppWebContentsState(appWindow.webContents.id);
-    pluginAppWindows.delete(windowKey);
-  });
-  appWindow.webContents.once('did-finish-load', () => {
-    const state = pluginAppWindowStates.get(appWindow.webContents.id);
-    if (!state) return;
-    activatePluginExtensionsForWindow(state).catch((error) => {
-      console.warn('[plugin-app] extension activation failed:', error?.message || error);
+  const { bundleToken, entryUrl } = prepareAppEntry(appEntry);
+  let appWindow = null;
+  try {
+    const partition = appSessionPartition(appId, source.mode === 'preview');
+    configureAppSession(session.fromPartition(partition));
+    appWindow = new BrowserWindow({
+      title: appEntry.displayName || appEntry.title || appId,
+      width: appEntry.width || appEntry.manifest?.ui?.window?.width || 1100,
+      height: appEntry.height || appEntry.manifest?.ui?.window?.height || 760,
+      resizable: appEntry.resizable !== false && appEntry.manifest?.ui?.window?.resizable !== false,
+      backgroundColor: '#0b1120',
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'apps', 'app-preload.mjs'),
+        partition,
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
     });
-  });
-  void appWindow.loadURL(entryUrl);
-  return appWindow;
+
+    appWindows.set(windowKey, appWindow);
+    createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
+    configureAppWebContents(appWindow.webContents, bundleToken);
+    appWindow.on('closed', () => {
+      disposeAppWebContentsState(appWindow.webContents.id);
+      appWindows.delete(windowKey);
+    });
+    void appWindow.loadURL(entryUrl);
+    return appWindow;
+  } catch (error) {
+    appWindows.delete(windowKey);
+    if (appWindow && !appWindow.isDestroyed()) appWindow.close();
+    revokeAppUiBundleRoot(bundleToken);
+    throw error;
+  }
 }
 
-function previewPluginAppBuild(buildDir) {
+async function previewAppBuild(buildDir) {
   const resolvedBuildDir = path.resolve(buildDir);
-  const manifest = readPluginAppManifestFromDir(resolvedBuildDir);
-  const extensionLockPath = path.join(resolvedBuildDir, 'extension-lock.json');
-  const extensionLock = fs.existsSync(extensionLockPath)
-    ? JSON.parse(fs.readFileSync(extensionLockPath, 'utf8'))
-    : {};
-  const entryPath = ensureInsideRoot(resolvedBuildDir, path.join(resolvedBuildDir, manifest.entry));
+  const manifest = readAppManifestFromDir(resolvedBuildDir);
+  if (!manifest.ui) throw new Error('Backend-only Apps do not have a preview window. Use App Center after installation.');
+  const entryPath = ensureInsideRoot(resolvedBuildDir, path.join(resolvedBuildDir, manifest.ui.entry));
   if (!fs.existsSync(entryPath)) {
-    throw new Error(`App preview entry missing: ${manifest.entry}`);
+    throw new Error(`App preview entry missing: ${manifest.ui.entry}`);
   }
-  launchPluginAppWindow({
-    id: manifest.id,
-    name: manifest.id,
-    kind: APP_KINDS.pluginApp,
-    displayName: manifest.displayName,
-    title: manifest.displayName,
-    description: manifest.description,
-    icon: manifest.icon,
-    width: manifest.window?.width,
-    height: manifest.window?.height,
-    resizable: manifest.window?.resizable,
-    filePath: entryPath,
-    entryPath,
-    manifest,
-    extensionLock,
-    version: 'preview',
-  }, { mode: 'preview', buildDir: resolvedBuildDir });
+  const previewRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-app-preview-'));
+  let previewRuntime = null;
+  try {
+    previewRuntime = await createDesktopAppRuntime({
+      mossHome: previewRoot,
+      appsDir: path.join(previewRoot, 'apps'),
+      nodeExecutable: process.env.MOSS_NODE_PATH || process.execPath,
+      hostId: `preview-${randomUUID()}`,
+    });
+    await previewRuntime.installFromDirectory(resolvedBuildDir);
+    if (manifest.backend) {
+      if (manifest.backend.instanceMode === 'single') {
+        const previewInstance = previewRuntime.instances.list(manifest.id)[0];
+        await previewRuntime.setInstanceEnabled(manifest.id, previewInstance.id, true);
+      }
+      await previewRuntime.setAppEnabled(manifest.id, true);
+    }
+    return launchAppWindow({
+      id: manifest.id,
+      name: manifest.id,
+      kind: APP_KINDS.app,
+      displayName: manifest.displayName,
+      title: manifest.displayName,
+      description: manifest.description,
+      icon: manifest.icon,
+      width: manifest.ui.window?.width,
+      height: manifest.ui.window?.height,
+      resizable: manifest.ui.window?.resizable,
+      filePath: entryPath,
+      entryPath,
+      manifest,
+      runtime: previewRuntime,
+      version: 'preview',
+    }, { mode: 'preview', buildDir: resolvedBuildDir, previewRoot });
+  } catch (error) {
+    await previewRuntime?.shutdown?.().catch(() => {});
+    await fsp.rm(previewRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
@@ -7164,9 +7263,9 @@ async function syncWorkspaceWatcher(sessionRecord) {
  */
 const mossAppEventHandler = createMossAppEventHandler(
   {
-    previewPluginAppBuild,
-    launchPluginApp: (name) => {
-      launchPluginAppWindow(getPublishedPluginApp(name), { mode: 'published' })
+    previewAppBuild,
+    launchApp: (name) => {
+      launchAppWindow(getPublishedApp(name), { mode: 'published' })
     },
     openBrowser: (payload) => {
       emitToRenderer('browser:open', payload)
@@ -7392,7 +7491,7 @@ function createWindow() {
   mainWindow.maximize();
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    const token = getPluginAppTokenFromUrl(params?.src || '');
+    const token = getAppTokenFromUrl(params?.src || '');
     if (!token) {
       pendingWebviewAttachments.push({ kind: 'right-browser' });
       params.allowpopups = 'true';
@@ -7404,14 +7503,17 @@ function createWindow() {
       return;
     }
 
-    const pending = pendingEmbeddedPluginAppsByToken.get(token);
+    const pending = pendingEmbeddedAppsByToken.get(token);
     if (!pending) {
       event.preventDefault();
       return;
     }
 
-    pendingWebviewAttachments.push({ kind: 'plugin-app', token });
-    webPreferences.preload = path.join(__dirname, 'plugin-app-preload.mjs');
+    pendingWebviewAttachments.push({ kind: 'app-ui', token });
+    const partition = appSessionPartition(pending.appEntry?.id || pending.appEntry?.name);
+    configureAppSession(session.fromPartition(partition));
+    webPreferences.preload = path.join(__dirname, 'apps', 'app-preload.mjs');
+    webPreferences.partition = partition;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = false;
@@ -7420,15 +7522,15 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('did-attach-webview', (_event, targetWebContents) => {
-    const tokenFromUrl = getPluginAppTokenFromUrl(targetWebContents.getURL());
+    const tokenFromUrl = getAppTokenFromUrl(targetWebContents.getURL());
     let token = tokenFromUrl;
     const pendingAttachment = pendingWebviewAttachments.shift() || null;
     if (tokenFromUrl) {
       const staleIndex = pendingWebviewAttachments.findIndex(
-        (entry) => entry?.kind === 'plugin-app' && entry.token === tokenFromUrl,
+        (entry) => entry?.kind === 'app-ui' && entry.token === tokenFromUrl,
       );
       if (staleIndex >= 0) pendingWebviewAttachments.splice(staleIndex, 1);
-    } else if (pendingAttachment?.kind === 'plugin-app') {
+    } else if (pendingAttachment?.kind === 'app-ui') {
       token = pendingAttachment.token || '';
     }
     if (!token || (!tokenFromUrl && pendingAttachment?.kind === 'right-browser')) {
@@ -7436,12 +7538,12 @@ function createWindow() {
       return;
     }
 
-    const pending = pendingEmbeddedPluginAppsByToken.get(token);
+    const pending = pendingEmbeddedAppsByToken.get(token);
     if (!pending) return;
     try {
-      attachEmbeddedPluginAppWebContents(pending, targetWebContents, pending.embedId);
+      attachEmbeddedAppWebContents(pending, targetWebContents, pending.embedId);
     } catch (error) {
-      console.warn('[plugin-app] failed to attach embedded webview:', error?.message || error);
+      console.warn('[app-ui] failed to attach embedded webview:', error?.message || error);
     }
   });
 
@@ -8570,6 +8672,56 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // Initialize bundled apps from repo apps to ~/.moss/apps
   await initializeBundledApps();
 
+  await startManagedRuntimeInstall();
+  const managedNode = getManagedRuntimeStatus().node;
+  desktopAppRuntime = await createDesktopAppRuntime({
+    mossHome: MOSS_HOME,
+    appsDir: APPS_DIR,
+    nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
+    onEvent: (event) => {
+      emitToRenderer('app:runtime-event', event);
+      void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      for (const state of appWindowStates.values()) {
+        if (state.id !== event.appId || state.webContents?.isDestroyed()) continue;
+        state.webContents.send('app-ui:event:runtime', event);
+        if (event.type === 'backend-event' && event.name) {
+          state.webContents.send(`app-ui:event:${event.name}`, event.data);
+        }
+      }
+    },
+  });
+  for (const installed of listAllStoredApps()) {
+    if (!installed.currentVersion) continue;
+    await desktopAppRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
+      mossLog('error', 'app-runtime', 'Unable to register installed App', {
+        appId: installed.id,
+        error: error.message || String(error),
+      });
+    });
+  }
+  registerAppRuntimeIpc({
+    ipcMain,
+    dialog,
+    getRuntime: () => desktopAppRuntime,
+    emitChanged: emitAppsChanged,
+    installArchivePackage: (packageRoot) => publishAppFromBuild(packageRoot, {
+      reason: 'installed',
+      note: 'archive',
+      sourceRoot: packageRoot,
+    }),
+    remote: {
+      listApps: fetchRemoteApps,
+      installApp: installRemoteApp,
+      updateApp: updateRemoteApp,
+      uninstallApp: uninstallRemoteApp,
+      createInstance: createRemoteAppInstance,
+      updateInstance: updateRemoteAppInstance,
+      removeInstance: removeRemoteAppInstance,
+      restartInstance: restartRemoteAppInstance,
+      getLogs: fetchRemoteAppLogs,
+    },
+  });
+
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerSkillStoreIpcHandlers();
@@ -8621,7 +8773,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // Initialize custom protocols used by workspace media and plugin apps.
   try {
     installMediaProtocol(protocol);
-    installPluginAppProtocol(protocol);
+    installAppUiProtocol(protocol);
   } catch (err) {
     mossLog('error', 'app', 'Failed to initialize custom protocols', { error: err.message });
   }
@@ -8662,7 +8814,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   feishuAdapterProcessManager?.dispose();
   feishuAdapterProcessManager = null;
   if (localAuditScanTimer) {
@@ -8671,6 +8823,14 @@ app.on('before-quit', () => {
   }
   localAuditService?.close?.();
   localAuditService = null;
+  if (desktopAppRuntime && !desktopAppShutdownComplete) {
+    event.preventDefault();
+    void desktopAppRuntime.shutdown().finally(() => {
+      desktopAppShutdownComplete = true;
+      desktopAppRuntime = null;
+      app.quit();
+    });
+  }
 });
 
 ipcMain.handle('agent:get-status', () => getBootStatus());
@@ -9666,14 +9826,90 @@ ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) =>
 });
 
 ipcMain.handle('app:list', async () => {
-  return listAllStoredApps().map(({ filePath, entryPath, versionDir, manifest, extensionLock, ...appEntry }) => appEntry);
+  const results = [];
+  let remoteApps = [];
+  let remoteError = null;
+  if (getRemoteDirectSettings().serverUrl) {
+    try { remoteApps = await fetchRemoteApps(); }
+    catch (error) { remoteError = error.message || String(error); }
+  }
+  const remoteById = new Map(remoteApps.map((entry) => [entry.installation?.appId || entry.manifest?.id, entry]));
+  for (const stored of listAllStoredApps()) {
+    const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
+    let runtimeState = null;
+    try { runtimeState = await desktopAppRuntime?.getApp(stored.id); } catch (error) {
+      runtimeState = { error: error.message || String(error), installation: null, instances: [], deployments: [] };
+    }
+    const remoteState = remoteById.get(stored.id) || null;
+    remoteById.delete(stored.id);
+    const deployments = [...(runtimeState?.deployments || []), ...(remoteState?.deployments || [])];
+    const observedStates = deployments.map((item) => item.runtime?.state).filter(Boolean);
+    const observedError = deployments.map((item) => item.runtime?.lastError).find(Boolean) || null;
+    const state = observedStates.includes('crash-loop') ? 'crash-loop'
+      : observedStates.includes('error') ? 'error'
+        : observedStates.includes('running') ? 'running'
+          : 'stopped';
+    results.push({
+      ...appEntry,
+      hasUi: Boolean(manifest?.ui),
+      hasBackend: Boolean(manifest?.backend || remoteState?.manifest?.backend),
+      backend: manifest?.backend || null,
+      serverBackend: remoteState?.manifest?.backend || null,
+      serverVersion: remoteState?.installation?.activeVersion || null,
+      permissions: [...new Set([...(manifest?.permissions || []), ...(remoteState?.manifest?.permissions || [])])],
+      enabled: runtimeState?.installation?.enabled || false,
+      configuration: runtimeState?.configuration || null,
+      serverConfiguration: remoteState?.configuration || null,
+      instances: [
+        ...(runtimeState?.instances || []).map((item) => ({ ...item, target: 'desktop' })),
+        ...(remoteState?.instances || []).map((item) => ({ ...item, target: 'server' })),
+      ],
+      deployments,
+      remoteInstalled: Boolean(remoteState),
+      serverEnabled: remoteState?.installation?.enabled || false,
+      remoteError,
+      runtimeStatus: { state, error: runtimeState?.error || observedError },
+    });
+  }
+  for (const [appId, remoteState] of remoteById) {
+    const manifest = remoteState.manifest;
+    results.push({
+      id: appId, name: appId, kind: 'app',
+      displayName: manifest?.displayName || appId,
+      title: manifest?.displayName || appId,
+      description: manifest?.description || '', icon: manifest?.icon || '',
+      width: manifest?.ui?.window?.width || 1100,
+      height: manifest?.ui?.window?.height || 760,
+      resizable: manifest?.ui?.window?.resizable !== false,
+      createdAt: remoteState.installation?.createdAt || Date.now(),
+      updatedAt: remoteState.installation?.updatedAt || Date.now(),
+      currentVersion: remoteState.installation?.activeVersion,
+      currentVersionId: remoteState.installation?.activeVersion,
+      versionCount: 1,
+      hasUi: false,
+      hasBackend: Boolean(manifest?.backend), backend: manifest?.backend || null,
+      serverBackend: manifest?.backend || null,
+      serverVersion: remoteState.installation?.activeVersion || null,
+      permissions: manifest?.permissions || [], configuration: remoteState.configuration || null,
+      serverConfiguration: remoteState.configuration || null,
+      enabled: false, serverEnabled: remoteState.installation?.enabled || false,
+      remoteInstalled: true, remoteOnly: true,
+      instances: (remoteState.instances || []).map((item) => ({ ...item, target: 'server' })),
+      deployments: remoteState.deployments || [], remoteError,
+      runtimeStatus: {
+        state: remoteState.deployments?.some((item) => item.runtime?.state === 'running') ? 'running' : 'stopped',
+        error: remoteState.deployments?.map((item) => item.runtime?.lastError).find(Boolean) || null,
+      },
+    });
+  }
+  return results;
 });
 
 ipcMain.handle('app:list-versions', async (_event, { name }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) return [];
-    return listPluginAppVersions(registryEntry.id || name);
+    return listAppVersions(registryEntry.id || name);
   } catch {
     return [];
   }
@@ -9683,7 +9919,7 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
-    launchPluginAppWindow(getPublishedPluginApp(registryEntry.id || name), { mode: 'published' });
+    launchAppWindow(getPublishedApp(registryEntry.id || name), { mode: 'published' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -9694,8 +9930,8 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
-    const appEntry = getPublishedPluginApp(registryEntry.id || name);
-    const { bundleToken, entryUrl } = preparePluginAppEntry(appEntry);
+    const appEntry = getPublishedApp(registryEntry.id || name);
+    const { bundleToken, entryUrl } = prepareAppEntry(appEntry);
     const embedId = randomUUID();
     const pending = {
       embedId,
@@ -9705,13 +9941,13 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
       webContentsId: null,
       createdAt: Date.now(),
     };
-    pendingEmbeddedPluginApps.set(embedId, pending);
-    pendingEmbeddedPluginAppsByToken.set(bundleToken, pending);
+    pendingEmbeddedApps.set(embedId, pending);
+    pendingEmbeddedAppsByToken.set(bundleToken, pending);
     return {
       ok: true,
       embedId,
       url: entryUrl,
-      preload: path.join(__dirname, 'plugin-app-preload.mjs'),
+      preload: path.join(__dirname, 'apps', 'app-preload.mjs'),
       app: {
         id: appEntry.id || appEntry.name,
         name: appEntry.name || appEntry.id,
@@ -9726,10 +9962,10 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
 
 ipcMain.handle('app:embedded-attach', async (_event, { embedId, webContentsId }) => {
   try {
-    const pending = pendingEmbeddedPluginApps.get(embedId);
+    const pending = pendingEmbeddedApps.get(embedId);
     if (!pending) throw new Error('Embedded App session was not found.');
     const targetWebContents = webContents.fromId(Number(webContentsId));
-    attachEmbeddedPluginAppWebContents(pending, targetWebContents, embedId);
+    attachEmbeddedAppWebContents(pending, targetWebContents, embedId);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -9737,15 +9973,15 @@ ipcMain.handle('app:embedded-attach', async (_event, { embedId, webContentsId })
 });
 
 ipcMain.handle('app:embedded-close', async (_event, { embedId }) => {
-  const pending = pendingEmbeddedPluginApps.get(embedId);
+  const pending = pendingEmbeddedApps.get(embedId);
   if (!pending) return { ok: true };
   if (pending.webContentsId) {
-    disposePluginAppWebContentsState(pending.webContentsId);
+    disposeAppWebContentsState(pending.webContentsId);
   } else {
-    revokePluginAppBundleRoot(pending.bundleToken);
+    revokeAppUiBundleRoot(pending.bundleToken);
   }
-  pendingEmbeddedPluginApps.delete(embedId);
-  pendingEmbeddedPluginAppsByToken.delete(pending.bundleToken);
+  pendingEmbeddedApps.delete(embedId);
+  pendingEmbeddedAppsByToken.delete(pending.bundleToken);
   return { ok: true };
 });
 
@@ -9753,9 +9989,9 @@ ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
-    const rolledBack = rollbackPluginAppToVersion(registryEntry.id || name, versionId);
-    launchPluginAppWindow(getPublishedPluginApp(registryEntry.id || name), { mode: 'published' });
-    emitAppsChanged({
+    const appId = registryEntry.id || name;
+    const rolledBack = rollbackAppToVersion(appId, versionId);
+    await emitAppsChanged({
       action: 'rolled-back',
       app: rolledBack,
       versionId,
@@ -9769,17 +10005,22 @@ ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
   }
 });
 
-ipcMain.handle('app:delete', async (_event, { name }) => {
+ipcMain.handle('app:delete', async (_event, { name, deleteData = false, deleteCredentials = false }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
-    for (const [key, win] of pluginAppWindows.entries()) {
-      if (key.startsWith(`${registryEntry.id || name}:`) && !win.isDestroyed()) {
-        win.close();
-      }
+    const appId = registryEntry.id || name;
+    closePublishedAppViews(appId);
+    for (const [key, win] of appWindows.entries()) {
+      if (key.startsWith(`${appId}:`) && !win.isDestroyed()) win.close();
     }
-    await deletePluginApp(registryEntry.id || name);
-    emitAppsChanged({ action: 'deleted', name });
+    if (desktopAppRuntime) {
+      await desktopAppRuntime.uninstall(appId, { deleteData, deleteCredentials });
+      await deleteApp(appId);
+    } else {
+      await deleteApp(appId);
+    }
+    await emitAppsChanged({ action: 'deleted', name });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -9844,28 +10085,8 @@ ipcMain.on('debug:close', (event) => {
   }
 });
 
-function pluginCapabilityAllows(state, kind, name) {
-  const caps = state.manifest?.capabilities || {};
-  const allowed = caps[kind];
-  if (allowed === true) return true;
-  if (Array.isArray(allowed)) {
-    return allowed.includes(name) || allowed.includes('*');
-  }
-  return false;
-}
-
-function auditPluginAppCall(state, type, name, ok, detail = {}) {
-  mossLog(ok ? 'info' : 'warn', 'plugin-app', `${state.id} ${type} ${name}`, {
-    appId: state.id,
-    type,
-    name,
-    ok,
-    ...detail,
-  });
-}
-
-ipcMain.handle('plugin-app:get-info', async (event) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
+ipcMain.handle('app-ui:get-info', async (event) => {
+  const state = getAppWindowStateBySender(event.sender);
   return {
     id: state.id,
     name: state.name,
@@ -9873,92 +10094,99 @@ ipcMain.handle('plugin-app:get-info', async (event) => {
     displayName: state.manifest?.displayName || state.name,
     description: state.manifest?.description || '',
     version: state.version,
-    capabilities: state.manifest?.capabilities || {},
-    extensionDependencies: state.manifest?.extensionDependencies || {},
-    dataDir: state.dataDir,
+    hasUi: Boolean(state.manifest?.ui),
+    hasBackend: Boolean(state.manifest?.backend),
+    backend: state.manifest?.backend || null,
+    permissions: state.manifest?.permissions || [],
+    appearance: desktopSettings.appearance,
   };
 });
 
-ipcMain.handle('plugin-app:list-versions', async (event) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  return listPluginAppVersions(state.id);
+ipcMain.handle('app-ui:list-versions', async (event) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return listAppVersions(state.id);
 });
 
-ipcMain.handle('plugin-app:extensions:get-status', async (event) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  if (state.extensionStatus) return state.extensionStatus;
-  const host = await ensurePluginExtensionHost(state);
-  return host.getStatus();
+ipcMain.handle('app-ui:get-installation-state', async (event) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime?.getApp(state.id);
 });
 
-ipcMain.handle('plugin-app:storage:get', async (event, { key }) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
-  const storage = readPluginAppStorageSnapshot(state);
-  return storage[String(key || '')];
+ipcMain.handle('app-ui:instances:list', async (event) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime?.listInstances(state.id) || [];
 });
 
-ipcMain.handle('plugin-app:storage:set', async (event, { key, value }) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
-  const normalizedKey = String(key || '').trim();
-  if (!normalizedKey) throw new Error('storage key is required');
-  const storage = readPluginAppStorageSnapshot(state);
+ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.createInstance(state.id, input);
+});
+
+ipcMain.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.updateInstance(state.id, instanceId, patch);
+});
+
+ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
+});
+
+ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.clearInstanceCredentials(state.id, instanceId);
+});
+
+ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, ...options }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  await state.runtime.removeInstance(state.id, instanceId, options);
+  return { ok: true };
+});
+
+ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.getInstanceStatus(state.id, instanceId);
+});
+
+ipcMain.handle('app-ui:actions:invoke', async (event, { instanceId, name, input, requestId, timeoutMs }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
+});
+
+ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
+});
+
+ipcMain.handle('app-ui:storage:get', async (event, { key }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  const normalizedKey = normalizeAppStorageKey(key);
+  const storage = readAppStorageSnapshot(state);
+  return storage[normalizedKey];
+});
+
+ipcMain.handle('app-ui:storage:set', async (event, { key, value }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  const normalizedKey = normalizeAppStorageKey(key);
+  validateAppStorageValue(value);
+  const storage = readAppStorageSnapshot(state);
   storage[normalizedKey] = value;
-  writePluginAppStorageSnapshot(state, storage);
+  writeAppStorageSnapshot(state, storage);
   return { ok: true, key: normalizedKey };
 });
 
-ipcMain.handle('plugin-app:storage:remove', async (event, { key }) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
-  const normalizedKey = String(key || '').trim();
-  const storage = readPluginAppStorageSnapshot(state);
+ipcMain.handle('app-ui:storage:remove', async (event, { key }) => {
+  const state = getAppWindowStateBySender(event.sender);
+  const normalizedKey = normalizeAppStorageKey(key);
+  const storage = readAppStorageSnapshot(state);
   delete storage[normalizedKey];
-  writePluginAppStorageSnapshot(state, storage);
+  writeAppStorageSnapshot(state, storage);
   return { ok: true, key: normalizedKey };
 });
 
-ipcMain.handle('plugin-app:storage:list', async (event) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  if (!state.manifest?.capabilities?.storage) throw new Error('storage capability is not enabled for this app');
-  return Object.keys(readPluginAppStorageSnapshot(state));
-});
-
-ipcMain.handle('plugin-app:commands:execute', async (event, { command, args }) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  const name = String(command || '').trim();
-  if (!pluginCapabilityAllows(state, 'commands', name)) {
-    auditPluginAppCall(state, 'command', name, false, { reason: 'capability_denied' });
-    throw new Error(`Command is not allowed by app capabilities: ${name}`);
-  }
-  const host = await ensurePluginExtensionHost(state);
-  try {
-    const result = await host.executeCommand(name, args || {});
-    auditPluginAppCall(state, 'command', name, true);
-    return result;
-  } catch (error) {
-    auditPluginAppCall(state, 'command', name, false, { error: error.message });
-    throw error;
-  }
-});
-
-ipcMain.handle('plugin-app:tools:call', async (event, { name, args }) => {
-  const state = getPluginAppWindowStateBySender(event.sender);
-  const toolName = String(name || '').trim();
-  if (!pluginCapabilityAllows(state, 'tools', toolName)) {
-    auditPluginAppCall(state, 'tool', toolName, false, { reason: 'capability_denied' });
-    throw new Error(`Tool is not allowed by app capabilities: ${toolName}`);
-  }
-  const host = await ensurePluginExtensionHost(state);
-  try {
-    const result = await host.callTool(toolName, args || {});
-    auditPluginAppCall(state, 'tool', toolName, true);
-    return result;
-  } catch (error) {
-    auditPluginAppCall(state, 'tool', toolName, false, { error: error.message });
-    throw error;
-  }
+ipcMain.handle('app-ui:storage:list', async (event) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return Object.keys(readAppStorageSnapshot(state));
 });
 
 registerFileSystemIpcHandlers({

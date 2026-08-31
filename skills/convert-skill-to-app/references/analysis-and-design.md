@@ -38,9 +38,9 @@ For each capability, determine:
 
 Classify implementation:
 
-- `visual`: deterministic UI and typed Extension action.
-- `ai-assisted`: dedicated interaction plus model reasoning provided by the generated Extension.
-- `manual`: safe automation is unavailable in current App/Extension constraints.
+- `visual`: deterministic UI and a typed App Backend action.
+- `ai-assisted`: dedicated interaction plus model reasoning provided by the App Backend.
+- `manual`: safe automation is unavailable in current App constraints.
 - `excluded`: outside requested scope or unsuitable, with an explicit reason.
 
 ## Product Brief
@@ -57,7 +57,7 @@ Recommend the smallest navigation model that supports the workflows. A single fo
 
 Specify the main task, current state, and primary action that the first viewport must expose. Supply domain language from the Skill and suggested user-facing labels instead of internal implementation terms.
 
-List the required states for the App Builder: first use, no data, loading, long-running work, partial completion, validation errors, Extension missing, dependency missing, permission denied, operation failure, and success.
+List the required states for the App Builder: first use, no data, loading, long-running work, partial completion, validation errors, Backend stopped, dependency missing, permission denied, operation failure, and success.
 
 ## Input and Output Modeling
 
@@ -73,7 +73,7 @@ Use appropriate controls:
 
 Specify result-rendering requirements from actual outputs: tables for repeated records, metrics for counts, progress for stages, logs for execution detail, file links for artifacts, diffs for changes, and focused summaries for completion. Tell the App Builder to retain raw output only as a secondary diagnostic view.
 
-Normalize Extension responses per action. A practical base shape is:
+Normalize Backend responses per action. A practical base shape is:
 
 ```json
 {
@@ -92,7 +92,7 @@ Actions may extend this shape, but their UI must not depend on parsing human pro
 
 Classify a capability as AI-assisted only when it inherently requires interpretation, generation, summarization, classification, or conversational recovery.
 
-Describe a purpose-specific assistant surface for the App Builder. Define the minimal context contract: relevant current form values, selected records, previous result, and errors. Require a schema for model responses and validate it in the Extension before returning it to the UI.
+Describe a purpose-specific assistant surface for the App Builder. Define the minimal context contract: relevant current form values, selected records, previous result, and errors. Require a schema for model responses and validate it in the Backend before returning it to the UI.
 
 Never allow model output to become a command string. Convert accepted model suggestions into the same typed App actions available to ordinary controls. Require the user to confirm write, install, network-submit, and destructive actions.
 
@@ -100,14 +100,14 @@ When no provider or credentials contract is available, record the workflow as a 
 
 ## Coverage Report
 
-Write `generated/skill-app-analysis.json` before App implementation. Treat initial generated targets as a planned mapping, then reconcile the report after the App Builder and this toolkit have produced their respective files. Keep it as an auditable map between the Skill, App, and Extension.
+Write `generated/skill-app-analysis.json` before App implementation. Treat initial generated targets as a planned mapping, then reconcile the report after the App Builder and this toolkit have produced their respective files. Keep it as an auditable map between the Skill and the self-contained App.
 
 The report must include:
 
 - Target Skill identity and source fingerprint.
 - Product concept and recommended information architecture for App Builder.
 - Every discovered capability and its disposition.
-- Generated Extension action names.
+- Declared App Backend action names.
 - Required environment and dependencies.
 - Security and portability notes.
 - Reviewed source files and relevant unresolved imports.

@@ -6,6 +6,7 @@ import { ensureServerDirectories } from './config.js'
 import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
+import { ServerAppRuntime } from './apps/serverAppRuntime.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -36,9 +37,10 @@ export async function startStandaloneDirectConnectServer(
     serverInstanceId: instance.instanceId,
   })
   await runtime.reconcileOnStartup()
+  const appRuntime = await ServerAppRuntime.create(config, instance.instanceId)
 
   const logger = createServerLogger()
-  const server = startServer(config, runtime, authService, logger)
+  const server = startServer(config, runtime, authService, logger, appRuntime)
   const actualPort = (await server.ready) ?? config.port
   const connectHost =
     config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host
@@ -63,6 +65,7 @@ export async function startStandaloneDirectConnectServer(
     stopped = true
     clearInterval(heartbeatTimer)
     await server.stop()
+    await appRuntime.shutdown()
     store.stopServerInstance(instance.instanceId)
     store.close()
   }

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "id": "fixture.ui-only",
+  "version": "1.0.0",
+  "displayName": "UI Only",
+  "hostApi": "^1.0.0",
+  "ui": { "entry": "dist/ui/index.html" },
+  "permissions": []
+}

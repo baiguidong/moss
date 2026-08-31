@@ -6,686 +6,232 @@ import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import semver from 'semver'
+import {
+  AppPackageStore,
+  createPackageChecksums,
+  validateAppPackage,
+  writePackageChecksums,
+} from '../../packages/app-runtime/src/index.mjs'
+import { validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
 
 const execFileAsync = promisify(execFile)
-
 const MOSS_HOME = path.join(os.homedir(), '.moss')
 export const APPS_DIR = path.join(MOSS_HOME, 'apps')
-export const PLUGIN_APPS_DIR = APPS_DIR
 export const APP_REGISTRY_PATH = path.join(MOSS_HOME, 'app-registry.json')
-export const EXTENSIONS_DIR = path.join(MOSS_HOME, 'extensions')
 const WORKSPACE_APPS_SUBDIR = 'apps'
-const PLUGIN_BUILD_SUBDIR = 'build'
+const BUILD_SUBDIR = 'build'
 
-export const APP_KINDS = Object.freeze({
-  pluginApp: 'plugin-app',
-})
+export const APP_KINDS = Object.freeze({ app: 'app' })
 
-function now() {
-  return Date.now()
-}
-
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
-}
-
+function now() { return Date.now() }
+function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); return dir }
 function readJsonFile(filePath, fallback = null) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
-  } catch {
-    return fallback
-  }
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')) } catch { return fallback }
 }
-
 function writeJsonFile(filePath, value) {
   ensureDir(path.dirname(filePath))
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  fs.renameSync(temporary, filePath)
 }
-
 function slugifyId(input) {
-  return String(input || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
+  return String(input || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80)
 }
-
-function ensureRelativeSafe(relativePath, fieldName) {
-  const value = String(relativePath || '').trim()
-  if (!value) throw new Error(`${fieldName} is required`)
-  const normalized = path.normalize(value)
-  if (!normalized || normalized === '.' || path.isAbsolute(normalized) || normalized.startsWith('..')) {
-    throw new Error(`${fieldName} must be a relative path inside the app bundle`)
-  }
-  return normalized
-}
-
 function ensureInsideRoot(rootPath, targetPath) {
-  const resolvedRoot = path.resolve(rootPath)
-  const resolvedTarget = path.resolve(targetPath)
-  const relative = path.relative(resolvedRoot, resolvedTarget)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Path is outside the allowed root.')
-  }
-  return resolvedTarget
+  const root = path.resolve(rootPath)
+  const target = path.resolve(targetPath)
+  const relative = path.relative(root, target)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Path is outside the App package')
+  return target
 }
-
-function sha256File(filePath) {
-  const hash = createHash('sha256')
-  hash.update(fs.readFileSync(filePath))
-  return `sha256-${hash.digest('base64')}`
+function readAppIconData(packageRoot, relativePath) {
+  if (!relativePath) return ''
+  const iconPath = ensureInsideRoot(packageRoot, path.join(packageRoot, relativePath))
+  const extension = path.extname(iconPath).toLowerCase()
+  const mime = ({
+    '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  })[extension]
+  if (!mime || !fs.existsSync(iconPath) || !fs.statSync(iconPath).isFile()) return ''
+  return `data:${mime};base64,${fs.readFileSync(iconPath).toString('base64')}`
 }
-
-function listFilesRecursive(rootDir) {
-  const result = []
-  if (!fs.existsSync(rootDir)) return result
-  const visit = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        visit(fullPath)
-      } else if (entry.isFile()) {
-        result.push(fullPath)
-      }
-    }
-  }
-  visit(rootDir)
-  return result.sort()
+async function copyDir(source, destination) {
+  await fsp.rm(destination, { recursive: true, force: true })
+  await fsp.mkdir(path.dirname(destination), { recursive: true })
+  await fsp.cp(source, destination, { recursive: true, errorOnExist: true, force: false })
 }
-
-async function copyDir(src, dest) {
-  await fsp.rm(dest, { recursive: true, force: true })
-  await fsp.mkdir(dest, { recursive: true })
-  await fsp.cp(src, dest, { recursive: true })
-}
-
 async function tarDirectory(sourceDir, outPath) {
   await fsp.rm(outPath, { force: true })
   try {
-    await execFileAsync('tar', ['-czf', outPath, '-C', sourceDir, '.'], {
-      maxBuffer: 10 * 1024 * 1024,
-    })
+    await execFileAsync('tar', ['-czf', outPath, '-C', sourceDir, '.'], { maxBuffer: 20 * 1024 * 1024 })
     return true
-  } catch {
-    return false
-  }
+  } catch { return false }
 }
 
 export function readAppRegistry() {
-  const parsed = readJsonFile(APP_REGISTRY_PATH, { version: 1, apps: [] })
-  return {
-    version: 1,
-    apps: Array.isArray(parsed?.apps) ? parsed.apps : [],
-  }
+  const parsed = readJsonFile(APP_REGISTRY_PATH, {})
+  return { version: 2, apps: Array.isArray(parsed?.apps) ? parsed.apps : [] }
 }
-
 export function writeAppRegistry(registry) {
-  writeJsonFile(APP_REGISTRY_PATH, {
-    version: 1,
-    apps: Array.isArray(registry?.apps) ? registry.apps : [],
-  })
+  writeJsonFile(APP_REGISTRY_PATH, { version: 2, apps: Array.isArray(registry?.apps) ? registry.apps : [] })
 }
-
 export function upsertAppRegistryEntry(entry) {
   const registry = readAppRegistry()
-  const apps = registry.apps.filter(app => app.id !== entry.id)
-  apps.push({
-    ...entry,
-    updatedAt: Number(entry.updatedAt) || now(),
-  })
-  apps.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-  writeAppRegistry({ version: 1, apps })
-  return entry
+  const existing = registry.apps.find((item) => item.id === entry.id)
+  const apps = registry.apps.filter((item) => item.id !== entry.id)
+  const next = { ...existing, ...entry, id: entry.id, kind: 'app', updatedAt: Number(entry.updatedAt) || now() }
+  apps.push(next)
+  apps.sort((a, b) => b.updatedAt - a.updatedAt)
+  writeAppRegistry({ apps })
+  return next
+}
+export function removeAppRegistryEntry(appId) {
+  writeAppRegistry({ apps: readAppRegistry().apps.filter((item) => item.id !== appId) })
 }
 
-export function removeAppRegistryEntry(id) {
-  const registry = readAppRegistry()
-  writeAppRegistry({
-    version: 1,
-    apps: registry.apps.filter(app => app.id !== id),
-  })
+export function getAppRoot(appId) {
+  const id = slugifyId(appId)
+  if (!id) throw new Error('App id is required')
+  return path.join(APPS_DIR, id)
 }
-
-export function getPluginAppRoot(appId) {
-  const normalizedId = slugifyId(appId)
-  if (!normalizedId) throw new Error('App id is required')
-  return path.join(APPS_DIR, normalizedId)
+export function getAppVersionDir(appId, version) {
+  if (!semver.valid(String(version || ''))) throw new Error(`Invalid App version: ${version}`)
+  return path.join(getAppRoot(appId), 'versions', version)
 }
+export function getAppCurrentPath(appId) { return path.join(getAppRoot(appId), 'current.json') }
+export function getWorkspaceAppDir(workspace, appId) { return path.join(workspace, WORKSPACE_APPS_SUBDIR, slugifyId(appId)) }
+export function getAppWorkspaceBuildDir(workspace, appId) { return path.join(getWorkspaceAppDir(workspace, appId), BUILD_SUBDIR) }
+export function getAppManifestPath(workspace, appId) { return path.join(getWorkspaceAppDir(workspace, appId), 'app.moss.json') }
 
-export function getPluginAppVersionDir(appId, version) {
-  return path.join(getPluginAppRoot(appId), 'versions', version)
+export function validateAppManifestV2(rawManifest) { return validateAppManifest(rawManifest) }
+export function readAppManifestFromWorkspace(workspace, appId) {
+  const manifestPath = getAppManifestPath(workspace, appId)
+  const manifest = readJsonFile(manifestPath)
+  if (!manifest) throw new Error(`Missing or invalid App manifest: ${manifestPath}`)
+  return validateAppManifest(manifest)
 }
-
-export function getPluginAppCurrentPath(appId) {
-  return path.join(getPluginAppRoot(appId), 'current.json')
-}
-
-export function getWorkspacePluginAppDir(workspace, appId) {
-  const normalizedId = slugifyId(appId)
-  if (!normalizedId) throw new Error('App name/id is required for workspace paths')
-  return path.join(workspace, WORKSPACE_APPS_SUBDIR, normalizedId)
-}
-
-export function getPluginAppWorkspaceBuildDir(workspace, appId) {
-  if (appId) return path.join(getWorkspacePluginAppDir(workspace, appId), PLUGIN_BUILD_SUBDIR)
-  throw new Error('App name/id is required for workspace build paths')
-}
-
-export function getPluginAppManifestPath(workspace, appId) {
-  if (appId) {
-    const nextPath = path.join(getWorkspacePluginAppDir(workspace, appId), 'app.moss.json')
-    if (fs.existsSync(nextPath)) return nextPath
-    return nextPath
-  }
-  throw new Error('App name/id is required for manifest lookup')
-}
-
-export function validatePluginAppManifest(rawManifest) {
-  const errors = []
-  const manifest = rawManifest && typeof rawManifest === 'object' ? rawManifest : {}
-  const id = slugifyId(manifest.id)
-  if (!id) errors.push('id is required and must contain a-z, 0-9, dot, underscore, or dash')
-  if (manifest.kind !== APP_KINDS.pluginApp) errors.push('kind must be "plugin-app"')
-  if (manifest.schemaVersion !== 1) errors.push('schemaVersion must be 1')
-  const entry = String(manifest.entry || '').trim()
-  if (!entry) errors.push('entry is required')
-  else {
-    try {
-      ensureRelativeSafe(entry, 'entry')
-    } catch (error) {
-      errors.push(error.message)
-    }
-  }
-  if (!manifest.displayName && !manifest.name) errors.push('displayName is required')
-  const deps = manifest.extensionDependencies || {}
-  if (deps && (typeof deps !== 'object' || Array.isArray(deps))) errors.push('extensionDependencies must be an object')
-  const capabilities = manifest.capabilities || {}
-  if (capabilities && (typeof capabilities !== 'object' || Array.isArray(capabilities))) errors.push('capabilities must be an object')
-
-  if (errors.length > 0) {
-    const error = new Error(`Invalid app.moss.json: ${errors.join('; ')}`)
-    error.validationErrors = errors
-    throw error
-  }
-
-  return {
-    schemaVersion: 1,
-    id,
-    kind: APP_KINDS.pluginApp,
-    displayName: String(manifest.displayName || manifest.name || id).trim(),
-    description: String(manifest.description || '').trim(),
-    icon: String(manifest.icon || '').trim(),
-    entry: ensureRelativeSafe(entry, 'entry'),
-    window: {
-      width: Number(manifest.window?.width) || Number(manifest.width) || 900,
-      height: Number(manifest.window?.height) || Number(manifest.height) || 700,
-      resizable: manifest.window?.resizable !== false && manifest.resizable !== false,
-    },
-    capabilities,
-    extensionDependencies: deps || {},
-  }
-}
-
-export function readPluginAppManifestFromWorkspace(workspace, appId = '') {
-  const manifestPath = getPluginAppManifestPath(workspace, appId)
-  const parsed = readJsonFile(manifestPath)
-  if (!parsed) throw new Error(`Missing or invalid app manifest: ${manifestPath}`)
-  return validatePluginAppManifest(parsed)
-}
-
-export function readPluginAppManifestFromDir(rootDir) {
+export function readAppManifestFromDir(rootDir) {
   const manifestPath = path.join(rootDir, 'app.moss.json')
-  const parsed = readJsonFile(manifestPath)
-  if (!parsed) throw new Error(`Missing or invalid app manifest: ${manifestPath}`)
-  return validatePluginAppManifest(parsed)
+  const manifest = readJsonFile(manifestPath)
+  if (!manifest) throw new Error(`Missing or invalid App manifest: ${manifestPath}`)
+  return validateAppManifest(manifest)
 }
 
-export function listInstalledExtensions() {
-  const extensions = []
-  if (!fs.existsSync(EXTENSIONS_DIR)) return extensions
-  for (const idEntry of fs.readdirSync(EXTENSIONS_DIR, { withFileTypes: true })) {
-    if (!idEntry.isDirectory()) continue
-    const extensionId = idEntry.name
-    const idDir = path.join(EXTENSIONS_DIR, extensionId)
-    for (const versionEntry of fs.readdirSync(idDir, { withFileTypes: true })) {
-      if (!versionEntry.isDirectory()) continue
-      const root = path.join(idDir, versionEntry.name)
-      const manifest = readJsonFile(path.join(root, 'extension.moss.json'))
-      if (!manifest) continue
-      extensions.push({
-        id: String(manifest.id || extensionId),
-        version: String(manifest.version || versionEntry.name),
-        root,
-        manifest,
-      })
-    }
-  }
-  return extensions
-}
-
-export function resolveExtensionDependencies(dependencies = {}) {
-  const installed = listInstalledExtensions()
-  const lock = {}
-  const warnings = []
-
-  for (const [extensionId, range] of Object.entries(dependencies || {})) {
-    const candidates = installed
-      .filter(ext => ext.id === extensionId && semver.valid(ext.version))
-      .filter(ext => semver.satisfies(ext.version, String(range || '*')))
-      .sort((a, b) => semver.rcompare(a.version, b.version))
-    const selected = candidates[0]
-    if (!selected) {
-      warnings.push(`Missing extension ${extensionId}@${range}`)
-      continue
-    }
-    const manifestPath = path.join(selected.root, 'extension.moss.json')
-    lock[extensionId] = {
-      version: selected.version,
-      root: selected.root,
-      integrity: fs.existsSync(manifestPath) ? sha256File(manifestPath) : null,
-    }
-  }
-
-  return { lock, warnings }
-}
-
-function detectPluginAppDist(buildRoot) {
-  const candidates = [
-    path.join(buildRoot, 'dist'),
-  ]
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate
-  }
-  return null
-}
-
-async function runPackageBuild(buildRoot, report, options = {}) {
-  const packagePath = path.join(buildRoot, 'package.json')
-  if (!fs.existsSync(packagePath)) {
-    report.warnings.push('package.json not found; using existing dist or static src/public HTML fallback')
-    return
-  }
-  if (options.runPackageBuild === false) {
-    report.warnings.push('package.json found; skipped package build for startup initialization')
-    return
-  }
-  const pkg = readJsonFile(packagePath, {})
-  if (!pkg?.scripts?.build) {
-    report.warnings.push('package.json has no build script; using existing dist or static src/public HTML fallback')
-    return
-  }
+async function runPackageBuild(sourceRoot, report, options) {
+  const packagePath = path.join(sourceRoot, 'package.json')
+  if (!fs.existsSync(packagePath) || options.runPackageBuild === false) return
+  const packageJson = readJsonFile(packagePath, {})
+  if (!packageJson?.scripts?.build) return
   try {
-    await execFileAsync('npm', ['run', 'build'], {
-      cwd: buildRoot,
-      timeout: 120_000,
-      maxBuffer: 20 * 1024 * 1024,
-    })
+    await execFileAsync('npm', ['run', 'build'], { cwd: sourceRoot, timeout: 120_000, maxBuffer: 20 * 1024 * 1024 })
     report.steps.push('npm run build completed')
   } catch (error) {
-    report.errors.push(`npm run build failed: ${error.stderr || error.stdout || error.message}`)
-    throw new Error('App frontend build failed')
+    report.errors.push(String(error.stderr || error.stdout || error.message))
+    throw new Error('App build failed')
   }
 }
 
-async function materializeFallbackDist(buildRoot, distDir, report) {
-  const candidates = [
-    path.join(buildRoot, 'src', 'index.html'),
-    path.join(buildRoot, 'public', 'index.html'),
-    path.join(buildRoot, 'index.html'),
-  ]
-  const sourceHtml = candidates.find(candidate => fs.existsSync(candidate))
-  if (!sourceHtml) {
-    throw new Error('No dist directory or fallback index.html found for App')
-  }
-  await fsp.rm(distDir, { recursive: true, force: true })
-  await fsp.mkdir(distDir, { recursive: true })
-  await fsp.copyFile(sourceHtml, path.join(distDir, 'index.html'))
-  report.warnings.push(`Used static HTML fallback: ${path.relative(buildRoot, sourceHtml)}`)
+async function materializeUiFallback(sourceRoot, manifest, report) {
+  if (!manifest.ui) return
+  const target = path.join(sourceRoot, manifest.ui.entry)
+  if (fs.existsSync(target)) return
+  const source = [path.join(sourceRoot, 'src/index.html'), path.join(sourceRoot, 'public/index.html'), path.join(sourceRoot, 'index.html')]
+    .find((candidate) => fs.existsSync(candidate))
+  if (!source) return
+  await fsp.mkdir(path.dirname(target), { recursive: true })
+  await fsp.copyFile(source, target)
+  report.warnings.push(`Used static UI fallback: ${path.relative(sourceRoot, source)}`)
 }
 
-function validatePluginAppEntryHtml(entryPath, report) {
-  const html = fs.readFileSync(entryPath, 'utf8')
-  if (!html.trim()) {
-    throw new Error('Built entry is empty: dist/index.html')
+export async function buildAppFromWorkspace(workspace, appId, options = {}) {
+  const manifestPath = getAppManifestPath(workspace, appId)
+  const sourceRoot = path.dirname(manifestPath)
+  const manifest = readAppManifestFromWorkspace(workspace, appId)
+  const artifactDir = getAppWorkspaceBuildDir(workspace, manifest.id)
+  const temporary = `${artifactDir}.${randomUUID()}.tmp`
+  const report = { ok: false, kind: 'app', appId: manifest.id, version: manifest.version, steps: [], warnings: [], errors: [] }
+  await runPackageBuild(sourceRoot, report, options)
+  await materializeUiFallback(sourceRoot, manifest, report)
+  await fsp.rm(temporary, { recursive: true, force: true })
+  await fsp.mkdir(temporary, { recursive: true })
+  try {
+    for (const directory of ['dist', 'schemas', 'assets']) {
+      const source = path.join(sourceRoot, directory)
+      if (fs.existsSync(source)) await fsp.cp(source, path.join(temporary, directory), { recursive: true })
+    }
+    await fsp.writeFile(path.join(temporary, 'app.moss.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+    report.ok = true
+    await fsp.writeFile(path.join(temporary, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`)
+    await writePackageChecksums(temporary)
+    await validateAppPackage(temporary)
+    await fsp.rm(artifactDir, { recursive: true, force: true })
+    await fsp.rename(temporary, artifactDir)
+  } catch (error) {
+    await fsp.rm(temporary, { recursive: true, force: true })
+    throw error
   }
-  if (!/<body[\s>]/i.test(html)) {
-    throw new Error('Built entry must include a <body> element')
-  }
-  const hasScript = /<script\b/i.test(html)
-  const bodyMatch = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)
-  const bodyText = String(bodyMatch?.[1] || '')
-    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, '')
-    .trim()
-  const hasRootMount = /\bid=["']root["']/i.test(html) || /\bid=["']app["']/i.test(html)
-  if (!hasScript && !bodyText && !hasRootMount) {
-    throw new Error('Built entry has no visible content or script mount point')
-  }
-  if (hasRootMount && !hasScript) {
-    report.warnings.push('Built entry has a root mount point but no script tag; the app may render blank')
-  }
-}
-
-export async function buildPluginAppFromWorkspace(workspace, appId = '', options = {}) {
-  const manifest = readPluginAppManifestFromWorkspace(workspace, appId)
-  const manifestPath = getPluginAppManifestPath(workspace, appId || manifest.id)
-  const buildRoot = path.dirname(manifestPath)
-  const artifactDir = getPluginAppWorkspaceBuildDir(workspace, manifest.id)
-  const report = {
-    ok: false,
-    kind: APP_KINDS.pluginApp,
-    appId: manifest.id,
-    startedAt: now(),
-    completedAt: null,
-    steps: [],
-    warnings: [],
-    errors: [],
-  }
-
-  await runPackageBuild(buildRoot, report, options)
-
-  await fsp.rm(artifactDir, { recursive: true, force: true })
-  await fsp.mkdir(artifactDir, { recursive: true })
-
-  let sourceDist = detectPluginAppDist(buildRoot)
-  if (!sourceDist) {
-    sourceDist = path.join(artifactDir, 'dist')
-    await materializeFallbackDist(buildRoot, sourceDist, report)
-  }
-
-  const artifactDist = path.join(artifactDir, 'dist')
-  if (path.resolve(sourceDist) !== path.resolve(artifactDist)) {
-    await copyDir(sourceDist, artifactDist)
-  }
-
-  const entryPath = ensureInsideRoot(artifactDir, path.join(artifactDir, manifest.entry))
-  if (!fs.existsSync(entryPath)) {
-    throw new Error(`Built entry does not exist: ${manifest.entry}`)
-  }
-  validatePluginAppEntryHtml(entryPath, report)
-
-  const { lock, warnings } = resolveExtensionDependencies(manifest.extensionDependencies)
-  report.warnings.push(...warnings)
-  if (warnings.length > 0) {
-    report.errors.push(...warnings)
-    report.completedAt = now()
-    await fsp.mkdir(artifactDir, { recursive: true })
-    writeJsonFile(path.join(artifactDir, 'build-report.json'), report)
-    throw new Error(`App extension dependencies are not satisfied: ${warnings.join('; ')}`)
-  }
-
-  const checksums = {}
-  for (const filePath of listFilesRecursive(artifactDist)) {
-    checksums[path.relative(artifactDir, filePath)] = sha256File(filePath)
-  }
-
-  writeJsonFile(path.join(artifactDir, 'app.moss.json'), manifest)
-  writeJsonFile(path.join(artifactDir, 'extension-lock.json'), lock)
-  writeJsonFile(path.join(artifactDir, 'checksums.json'), checksums)
-  report.ok = true
-  report.completedAt = now()
-  writeJsonFile(path.join(artifactDir, 'build-report.json'), report)
-
   return {
     ok: true,
-    kind: APP_KINDS.pluginApp,
+    kind: 'app',
     appId: manifest.id,
+    version: manifest.version,
     buildDir: artifactDir,
-    filePath: entryPath,
-    entry: entryPath,
-    extensionLockPath: path.join(artifactDir, 'extension-lock.json'),
+    filePath: manifest.ui ? path.join(artifactDir, manifest.ui.entry) : null,
+    entry: manifest.ui ? path.join(artifactDir, manifest.ui.entry) : null,
     buildReportPath: path.join(artifactDir, 'build-report.json'),
     warnings: report.warnings,
   }
 }
 
-function getNextVersion(existingVersions) {
-  const patch = existingVersions
-    .map(version => semver.valid(version) ? semver.parse(version).patch : 0)
-    .reduce((max, value) => Math.max(max, value), 0) + 1
-  return `0.0.${patch}`
-}
-
-export function listPluginAppVersions(appId) {
-  const versionsDir = path.join(getPluginAppRoot(appId), 'versions')
+export function listAppVersions(appId) {
+  const versionsDir = path.join(getAppRoot(appId), 'versions')
   if (!fs.existsSync(versionsDir)) return []
-  const current = readJsonFile(getPluginAppCurrentPath(appId), {})?.version || null
+  const current = readJsonFile(getAppCurrentPath(appId), {})?.version || null
   return fs.readdirSync(versionsDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
-      const version = entry.name
-      const dir = path.join(versionsDir, version)
-      const manifest = readJsonFile(path.join(dir, 'app.moss.json'), {})
-      const report = readJsonFile(path.join(dir, 'build-report.json'), {})
-      const stat = fs.statSync(dir)
+    .filter((entry) => entry.isDirectory() && semver.valid(entry.name))
+    .map((entry) => {
+      const root = path.join(versionsDir, entry.name)
+      const manifest = readJsonFile(path.join(root, 'app.moss.json'), {})
+      const report = {
+        ...readJsonFile(path.join(root, 'build-report.json'), {}),
+        ...readJsonFile(path.join(getAppRoot(appId), 'version-metadata', `${entry.name}.json`), {}),
+      }
+      const stat = fs.statSync(root)
       return {
-        id: version,
-        version,
-        createdAt: Number(report.completedAt) || stat.birthtimeMs || stat.ctimeMs || now(),
+        id: entry.name,
+        version: entry.name,
+        createdAt: Number(report.completedAt || report.publishedAt) || stat.birthtimeMs || stat.ctimeMs,
         reason: String(report.reason || 'published'),
         note: String(report.note || ''),
         description: String(manifest.description || ''),
-        width: Number(manifest.window?.width) || 900,
-        height: Number(manifest.window?.height) || 700,
-        resizable: manifest.window?.resizable !== false,
-        isCurrent: version === current,
+        width: Number(manifest.ui?.window?.width) || 1100,
+        height: Number(manifest.ui?.window?.height) || 760,
+        resizable: manifest.ui?.window?.resizable !== false,
+        hasUi: Boolean(manifest.ui),
+        hasBackend: Boolean(manifest.backend),
+        isCurrent: entry.name === current,
         isLatest: false,
-        kind: APP_KINDS.pluginApp,
-        extensionLock: readJsonFile(path.join(dir, 'extension-lock.json'), {}),
-        checksumStatus: fs.existsSync(path.join(dir, 'checksums.json')) ? 'present' : 'missing',
+        kind: 'app',
+        checksumStatus: fs.existsSync(path.join(root, 'checksums.json')) ? 'present' : 'missing',
       }
     })
     .sort((a, b) => semver.rcompare(a.version, b.version))
     .map((entry, index) => ({ ...entry, isLatest: index === 0 }))
 }
 
-function readBuildFingerprint(buildDir) {
-  const fingerprint = {
-    manifest: readJsonFile(path.join(buildDir, 'app.moss.json'), {}),
-    checksums: readJsonFile(path.join(buildDir, 'checksums.json'), {}),
-    extensionLock: readJsonFile(path.join(buildDir, 'extension-lock.json'), {}),
-  }
-  return createHash('sha256')
-    .update(JSON.stringify(fingerprint))
-    .digest('hex')
+async function packageFingerprint(root) {
+  const checksums = await createPackageChecksums(root)
+  return createHash('sha256').update(JSON.stringify(checksums)).digest('hex')
 }
 
-function getPublishedAppFingerprint(appId, version) {
-  try {
-    return readBuildFingerprint(getPluginAppVersionDir(appId, version))
-  } catch {
-    return ''
-  }
-}
-
-export async function publishPluginAppFromBuild(buildDir, options = {}) {
-  const resolvedBuildDir = path.resolve(buildDir)
-  const manifest = readPluginAppManifestFromDir(resolvedBuildDir)
-  const distDir = path.join(resolvedBuildDir, 'dist')
-  if (!fs.existsSync(distDir) || !fs.statSync(distDir).isDirectory()) {
-    throw new Error(`App build is missing dist directory: ${resolvedBuildDir}`)
-  }
-  const versions = listPluginAppVersions(manifest.id).map(entry => entry.version)
-  const version = getNextVersion(versions)
-  const versionDir = getPluginAppVersionDir(manifest.id, version)
-  const report = readJsonFile(path.join(resolvedBuildDir, 'build-report.json'), {})
-  report.reason = options.reason || 'published'
-  report.note = options.note || ''
-  report.publishedAt = now()
-  report.version = version
-
-  await fsp.rm(versionDir, { recursive: true, force: true })
-  await fsp.mkdir(versionDir, { recursive: true })
-  await copyDir(distDir, path.join(versionDir, 'dist'))
-  for (const file of ['app.moss.json', 'extension-lock.json', 'checksums.json']) {
-    await fsp.copyFile(path.join(resolvedBuildDir, file), path.join(versionDir, file))
-  }
-  writeJsonFile(path.join(versionDir, 'build-report.json'), report)
-
-  const sourceTarPath = path.join(versionDir, 'source.tar.gz')
-  const buildRoot = path.dirname(resolvedBuildDir)
-  await tarDirectory(buildRoot, sourceTarPath)
-
-  writeJsonFile(getPluginAppCurrentPath(manifest.id), { version, updatedAt: now() })
-  const app = {
-    id: manifest.id,
-    name: manifest.id,
-    kind: APP_KINDS.pluginApp,
-    displayName: manifest.displayName,
-    title: manifest.displayName,
-    description: options.description || manifest.description,
-    icon: manifest.icon,
-    width: manifest.window.width,
-    height: manifest.window.height,
-    resizable: manifest.window.resizable,
-    createdAt: now(),
-    updatedAt: now(),
-    currentVersion: version,
-    currentVersionId: version,
-    latestVersion: version,
-    latestVersionId: version,
-    versionCount: versions.length + 1,
-    publishedVersion: version,
-    extensionDependencies: manifest.extensionDependencies,
-    capabilitySummary: Object.keys(manifest.capabilities || {}),
-    runtimeStatus: { state: 'ready' },
-  }
-  upsertAppRegistryEntry(app)
-  return app
-}
-
-export async function installBuiltInAppFromBuild(buildDir, options = {}) {
-  const resolvedBuildDir = path.resolve(buildDir)
-  const manifest = readPluginAppManifestFromDir(resolvedBuildDir)
-  const fingerprint = readBuildFingerprint(resolvedBuildDir)
-  const versions = listPluginAppVersions(manifest.id)
-  const existingVersion = versions.find(version =>
-    getPublishedAppFingerprint(manifest.id, version.version) === fingerprint
-  )
-
-  if (existingVersion) {
-    const existingEntry = readAppRegistry().apps.find(app => app.id === manifest.id) || {}
-    let currentVersion = readJsonFile(getPluginAppCurrentPath(manifest.id), {})?.version || ''
-    if (!currentVersion) {
-      currentVersion = existingVersion.version
-      writeJsonFile(getPluginAppCurrentPath(manifest.id), {
-        version: currentVersion,
-        updatedAt: now(),
-      })
-    }
-    const published = getPublishedPluginApp(manifest.id, currentVersion)
-    const app = {
-      id: manifest.id,
-      name: manifest.id,
-      kind: APP_KINDS.pluginApp,
-      displayName: published.displayName,
-      title: published.displayName,
-      description: options.description || published.description,
-      icon: published.icon,
-      width: published.width,
-      height: published.height,
-      resizable: published.resizable,
-      createdAt: Number(existingEntry.createdAt) || now(),
-      updatedAt: now(),
-      currentVersion,
-      currentVersionId: currentVersion,
-      latestVersion: versions[0]?.version || existingVersion.version,
-      latestVersionId: versions[0]?.id || existingVersion.version,
-      versionCount: versions.length,
-      publishedVersion: currentVersion,
-      extensionDependencies: published.manifest.extensionDependencies,
-      capabilitySummary: Object.keys(published.manifest.capabilities || {}),
-      runtimeStatus: getPluginAppRuntimeStatus(manifest.id),
-    }
-    upsertAppRegistryEntry(app)
-    return { ...app, skipped: true }
-  }
-
-  return publishPluginAppFromBuild(resolvedBuildDir, {
-    description: options.description || manifest.description,
-    reason: options.reason || 'installed',
-    note: options.note || 'bundled',
-  })
-}
-
-export function getPublishedPluginApp(appId, version = null) {
-  const currentVersion = version || readJsonFile(getPluginAppCurrentPath(appId), {})?.version
-  if (!currentVersion) throw new Error(`App has no current version: ${appId}`)
-  const versionDir = getPluginAppVersionDir(appId, currentVersion)
-  const manifest = readPluginAppManifestFromDir(versionDir)
-  const entryPath = ensureInsideRoot(versionDir, path.join(versionDir, manifest.entry))
-  if (!fs.existsSync(entryPath)) throw new Error(`App entry missing: ${manifest.entry}`)
+function registryEntryFromPublished(published, previous = {}) {
+  const versions = listAppVersions(published.id)
+  const latest = versions[0]
   return {
-    id: manifest.id,
-    name: manifest.id,
-    kind: APP_KINDS.pluginApp,
-    displayName: manifest.displayName,
-    title: manifest.displayName,
-    description: manifest.description,
-    icon: manifest.icon,
-    width: manifest.window.width,
-    height: manifest.window.height,
-    resizable: manifest.window.resizable,
-    version: currentVersion,
-    versionDir,
-    filePath: entryPath,
-    entryPath,
-    manifest,
-    extensionLock: readJsonFile(path.join(versionDir, 'extension-lock.json'), {}),
-  }
-}
-
-export function listPluginAppsFromRegistry() {
-  const registry = readAppRegistry()
-  return registry.apps
-    .filter(app => app.kind === APP_KINDS.pluginApp)
-    .map(app => {
-      const versions = listPluginAppVersions(app.id)
-      const current = versions.find(version => version.isCurrent) || versions[0] || null
-      const latest = versions[0] || null
-      return {
-        ...app,
-        name: app.id,
-        title: app.displayName || app.title || app.id,
-        currentVersion: current?.version || app.currentVersion || null,
-        currentVersionId: current?.id || app.currentVersionId || null,
-        latestVersion: latest?.version || app.latestVersion || null,
-        latestVersionId: latest?.id || app.latestVersionId || null,
-        versionCount: versions.length,
-        runtimeStatus: getPluginAppRuntimeStatus(app.id),
-      }
-    })
-}
-
-export function getPluginAppRuntimeStatus(appId) {
-  try {
-    const published = getPublishedPluginApp(appId)
-    const missing = Object.entries(published.manifest.extensionDependencies || {})
-      .filter(([extensionId]) => !published.extensionLock?.[extensionId])
-      .map(([extensionId]) => extensionId)
-    if (missing.length > 0) {
-      return { state: 'missing-extension', missingExtensions: missing }
-    }
-    return { state: 'ready' }
-  } catch (error) {
-    return { state: 'error', error: error.message }
-  }
-}
-
-export function rollbackPluginAppToVersion(appId, version) {
-  const versionDir = getPluginAppVersionDir(appId, version)
-  if (!fs.existsSync(versionDir)) throw new Error(`Unknown App version: ${version}`)
-  writeJsonFile(getPluginAppCurrentPath(appId), { version, updatedAt: now() })
-  const published = getPublishedPluginApp(appId, version)
-  const versions = listPluginAppVersions(appId)
-  const app = {
-    id: appId,
-    name: appId,
-    kind: APP_KINDS.pluginApp,
+    ...previous,
+    id: published.id,
+    name: published.id,
+    kind: 'app',
     displayName: published.displayName,
     title: published.displayName,
     description: published.description,
@@ -693,86 +239,167 @@ export function rollbackPluginAppToVersion(appId, version) {
     width: published.width,
     height: published.height,
     resizable: published.resizable,
+    hasUi: Boolean(published.manifest.ui),
+    hasBackend: Boolean(published.manifest.backend),
+    backend: published.manifest.backend || null,
+    permissions: published.manifest.permissions,
+    createdAt: previous.createdAt || now(),
     updatedAt: now(),
-    currentVersion: version,
-    currentVersionId: version,
-    latestVersion: versions[0]?.version || version,
-    latestVersionId: versions[0]?.id || version,
+    currentVersion: published.version,
+    currentVersionId: published.version,
+    latestVersion: latest?.version || published.version,
+    latestVersionId: latest?.id || published.version,
     versionCount: versions.length,
-    extensionDependencies: published.manifest.extensionDependencies,
-    capabilitySummary: Object.keys(published.manifest.capabilities || {}),
-    runtimeStatus: getPluginAppRuntimeStatus(appId),
+    publishedVersion: published.version,
   }
-  upsertAppRegistryEntry(app)
-  return app
 }
 
-export async function deletePluginApp(appId) {
-  await fsp.rm(getPluginAppRoot(appId), { recursive: true, force: true })
+export async function publishAppFromBuild(buildDir, options = {}) {
+  const resolvedBuildDir = path.resolve(buildDir)
+  const source = await validateAppPackage(resolvedBuildDir)
+  const store = new AppPackageStore({ appsDir: APPS_DIR })
+  await store.installFromDirectory(source.root)
+  writeJsonFile(path.join(getAppRoot(source.manifest.id), 'version-metadata', `${source.manifest.version}.json`), {
+    reason: options.reason || 'published',
+    note: options.note || '',
+    publishedAt: now(),
+  })
+  writeJsonFile(getAppCurrentPath(source.manifest.id), { version: source.manifest.version, updatedAt: now() })
+  const sourceRoot = options.sourceRoot
+    ? path.resolve(options.sourceRoot)
+    : path.dirname(path.resolve(buildDir))
+  await fsp.mkdir(path.join(getAppRoot(source.manifest.id), 'sources'), { recursive: true })
+  await tarDirectory(sourceRoot, path.join(getAppRoot(source.manifest.id), 'sources', `${source.manifest.version}.tar.gz`))
+  const published = getPublishedApp(source.manifest.id)
+  return upsertAppRegistryEntry(registryEntryFromPublished(
+    published,
+    readAppRegistry().apps.find((item) => item.id === source.manifest.id),
+  ))
+}
+
+export async function installBuiltInAppFromBuild(buildDir, options = {}) {
+  const source = await validateAppPackage(path.resolve(buildDir))
+  const versions = listAppVersions(source.manifest.id)
+  const existing = versions.find((item) => item.version === source.manifest.version)
+  if (existing) {
+    const currentFingerprint = await packageFingerprint(getAppVersionDir(source.manifest.id, existing.version))
+    if (currentFingerprint !== await packageFingerprint(source.root)) {
+      throw new Error(`Bundled App version ${source.manifest.version} is immutable and has different contents`)
+    }
+    if (!readJsonFile(getAppCurrentPath(source.manifest.id), {})?.version) {
+      writeJsonFile(getAppCurrentPath(source.manifest.id), { version: existing.version, updatedAt: now() })
+    }
+    const published = getPublishedApp(source.manifest.id)
+    const app = upsertAppRegistryEntry(registryEntryFromPublished(
+      published,
+      readAppRegistry().apps.find((item) => item.id === source.manifest.id),
+    ))
+    return { ...app, skipped: true }
+  }
+  return publishAppFromBuild(source.root, { ...options, reason: options.reason || 'installed', note: options.note || 'bundled' })
+}
+
+export function getPublishedApp(appId, version = null) {
+  const currentVersion = version || readJsonFile(getAppCurrentPath(appId), {})?.version
+  if (!currentVersion) throw new Error(`App has no active version: ${appId}`)
+  const versionDir = getAppVersionDir(appId, currentVersion)
+  const manifest = readAppManifestFromDir(versionDir)
+  if (manifest.id !== appId || manifest.version !== currentVersion) {
+    throw new Error(`Stored App package identity mismatch: expected ${appId}@${currentVersion}`)
+  }
+  const entryPath = manifest.ui ? ensureInsideRoot(versionDir, path.join(versionDir, manifest.ui.entry)) : null
+  if (entryPath && !fs.existsSync(entryPath)) throw new Error(`App UI entry is missing: ${manifest.ui.entry}`)
+  return {
+    id: manifest.id,
+    name: manifest.id,
+    kind: 'app',
+    displayName: manifest.displayName,
+    title: manifest.displayName,
+    description: manifest.description,
+    icon: readAppIconData(versionDir, manifest.icon),
+    width: manifest.ui?.window.width || 1100,
+    height: manifest.ui?.window.height || 760,
+    resizable: manifest.ui?.window.resizable !== false,
+    version: currentVersion,
+    versionDir,
+    bundleRoot: versionDir,
+    entryRelativePath: manifest.ui?.entry || null,
+    filePath: entryPath,
+    entryPath,
+    manifest,
+  }
+}
+
+export function listAppsFromRegistry() {
+  return readAppRegistry().apps.map((app) => {
+    const versions = listAppVersions(app.id)
+    const current = versions.find((item) => item.isCurrent) || null
+    return {
+      ...app,
+      kind: 'app',
+      name: app.id,
+      currentVersion: current?.version || app.currentVersion || null,
+      currentVersionId: current?.id || app.currentVersionId || null,
+      latestVersion: versions[0]?.version || app.latestVersion || null,
+      latestVersionId: versions[0]?.id || app.latestVersionId || null,
+      versionCount: versions.length,
+    }
+  })
+}
+
+export function getAppRuntimeStatus(appId) {
+  try { getPublishedApp(appId); return { state: 'stopped' } }
+  catch (error) { return { state: 'error', error: error.message } }
+}
+
+export function rollbackAppToVersion(appId, version) {
+  const versionDir = getAppVersionDir(appId, version)
+  if (!fs.existsSync(versionDir)) throw new Error(`Unknown App version: ${version}`)
+  writeJsonFile(getAppCurrentPath(appId), { version, updatedAt: now() })
+  const published = getPublishedApp(appId, version)
+  return upsertAppRegistryEntry(registryEntryFromPublished(
+    published,
+    readAppRegistry().apps.find((item) => item.id === appId),
+  ))
+}
+
+export async function deleteApp(appId) {
+  await fsp.rm(getAppRoot(appId), { recursive: true, force: true })
   removeAppRegistryEntry(appId)
 }
 
-export async function extractPluginAppToWorkspace(appId, sessionRecord, version = null) {
+export async function extractAppToWorkspace(appId, sessionRecord, version = null) {
   if (!sessionRecord?.workspace) throw new Error('Session workspace is required for App extraction')
-  const published = getPublishedPluginApp(appId, version)
-  const buildRoot = getWorkspacePluginAppDir(sessionRecord.workspace, appId)
-  await fsp.rm(buildRoot, { recursive: true, force: true })
-  await fsp.mkdir(buildRoot, { recursive: true })
-
-  const sourceTar = path.join(published.versionDir, 'source.tar.gz')
+  const published = getPublishedApp(appId, version)
+  const destination = getWorkspaceAppDir(sessionRecord.workspace, appId)
+  await fsp.rm(destination, { recursive: true, force: true })
+  await fsp.mkdir(destination, { recursive: true })
+  const sourceTar = path.join(getAppRoot(appId), 'sources', `${published.version}.tar.gz`)
   if (fs.existsSync(sourceTar)) {
-    try {
-      await execFileAsync('tar', ['-xzf', sourceTar, '-C', buildRoot], { maxBuffer: 10 * 1024 * 1024 })
-    } catch {
-      await copyDir(path.join(published.versionDir, 'dist'), path.join(buildRoot, 'dist'))
-    }
+    await execFileAsync('tar', ['-xzf', sourceTar, '-C', destination], { maxBuffer: 20 * 1024 * 1024 })
   } else {
-    await copyDir(path.join(published.versionDir, 'dist'), path.join(buildRoot, 'dist'))
+    for (const item of ['dist', 'schemas', 'assets', 'app.moss.json']) {
+      const source = path.join(published.versionDir, item)
+      if (fs.existsSync(source)) await fsp.cp(source, path.join(destination, item), { recursive: true })
+    }
   }
-  await fsp.copyFile(path.join(published.versionDir, 'app.moss.json'), path.join(buildRoot, 'app.moss.json'))
-  const htmlCandidates = [
-    path.join(buildRoot, 'src', 'index.html'),
-    path.join(buildRoot, 'public', 'index.html'),
-    path.join(buildRoot, 'index.html'),
-    path.join(buildRoot, published.manifest.entry),
-    path.join(buildRoot, PLUGIN_BUILD_SUBDIR, published.manifest.entry),
-  ]
-  const htmlPath = htmlCandidates.find(candidate => fs.existsSync(candidate)) ||
-    path.join(buildRoot, published.manifest.entry)
   return {
-    app: {
-      id: appId,
-      name: appId,
-      kind: APP_KINDS.pluginApp,
-      title: published.displayName,
-      displayName: published.displayName,
-      currentVersion: published.version,
-      extractedVersion: published.version,
-    },
-    metadataPath: path.join(buildRoot, 'app.moss.json'),
-    htmlPath,
+    app: { id: appId, name: appId, kind: 'app', title: published.displayName, displayName: published.displayName, currentVersion: published.version, extractedVersion: published.version },
+    metadataPath: path.join(destination, 'app.moss.json'),
+    htmlPath: published.manifest.ui ? path.join(destination, published.manifest.ui.entry) : null,
   }
 }
 
-export function createDefaultPluginAppManifest({ id, displayName, description = '' }) {
+export function createDefaultAppManifest({ id, displayName, description = '' }) {
   const appId = slugifyId(id || displayName || `app-${randomUUID().slice(0, 8)}`)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: appId,
-    kind: APP_KINDS.pluginApp,
+    version: '0.1.0',
     displayName: displayName || appId,
     description,
-    entry: 'dist/index.html',
-    window: {
-      width: 1100,
-      height: 760,
-      resizable: true,
-    },
-    capabilities: {
-      storage: true,
-      commands: [],
-      tools: [],
-    },
-    extensionDependencies: {},
+    hostApi: '^1.0.0',
+    ui: { entry: 'dist/ui/index.html', window: { width: 1100, height: 760, resizable: true } },
+    permissions: [],
   }
 }

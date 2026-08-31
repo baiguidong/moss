@@ -3,9 +3,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export const PLUGIN_APP_SCHEME = 'moss-app';
+export const APP_UI_SCHEME = 'moss-app';
 
 const allowedBundles = new Map();
+const installedProtocols = new WeakSet();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -110,10 +111,10 @@ function decodeRequest(requestUrl) {
   };
 }
 
-export function registerPluginAppScheme(protocol) {
+export function registerAppUiScheme(protocol) {
   protocol.registerSchemesAsPrivileged([
     {
-      scheme: PLUGIN_APP_SCHEME,
+      scheme: APP_UI_SCHEME,
       privileges: {
         standard: true,
         secure: true,
@@ -125,8 +126,10 @@ export function registerPluginAppScheme(protocol) {
   ]);
 }
 
-export function installPluginAppProtocol(protocol) {
-  protocol.handle(PLUGIN_APP_SCHEME, async (request) => {
+export function installAppUiProtocol(protocol) {
+  if (installedProtocols.has(protocol)) return;
+  installedProtocols.add(protocol);
+  protocol.handle(APP_UI_SCHEME, async (request) => {
     let bundle;
     let filePath;
     try {
@@ -162,7 +165,7 @@ export function installPluginAppProtocol(protocol) {
   });
 }
 
-export function allowPluginAppBundleRoot(root, entry = 'dist/index.html') {
+export function allowAppUiBundleRoot(root, entry = 'dist/index.html') {
   const token = randomUUID();
   allowedBundles.set(token, {
     root: path.resolve(root),
@@ -171,20 +174,20 @@ export function allowPluginAppBundleRoot(root, entry = 'dist/index.html') {
   return token;
 }
 
-export function revokePluginAppBundleRoot(token) {
+export function revokeAppUiBundleRoot(token) {
   if (token) allowedBundles.delete(token);
 }
 
-export function toPluginAppUrl(token, entry = 'dist/index.html') {
+export function toAppUiUrl(token, entry = 'dist/index.html') {
   const normalizedEntry = normalizeRelativeBundlePath(entry, 'index.html');
-  return `${PLUGIN_APP_SCHEME}://${token}/${encodeBundlePath(normalizedEntry)}`;
+  return `${APP_UI_SCHEME}://${token}/${encodeBundlePath(normalizedEntry)}`;
 }
 
 export default {
-  PLUGIN_APP_SCHEME,
-  registerPluginAppScheme,
-  installPluginAppProtocol,
-  allowPluginAppBundleRoot,
-  revokePluginAppBundleRoot,
-  toPluginAppUrl,
+  APP_UI_SCHEME,
+  registerAppUiScheme,
+  installAppUiProtocol,
+  allowAppUiBundleRoot,
+  revokeAppUiBundleRoot,
+  toAppUiUrl,
 };

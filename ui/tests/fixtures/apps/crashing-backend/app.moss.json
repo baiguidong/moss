@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "id": "fixture.crashing-backend",
+  "version": "1.0.0",
+  "displayName": "Crashing Backend",
+  "hostApi": "^1.0.0",
+  "backend": {
+    "entry": "dist/backend/main.mjs",
+    "runtime": "node",
+    "apiVersion": 1,
+    "lifecycle": "persistent",
+    "instanceMode": "single",
+    "targets": ["desktop"],
+    "actions": []
+  },
+  "permissions": []
+}

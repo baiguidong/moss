@@ -25,7 +25,7 @@ const subjectReferenceSchema = z.strictObject({
 
 const mossActionSchema = z.strictObject({
   action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'browser_open', 'connector_cli_setup', 'connector_mcp_authenticate', 'image_generate', 'image_edit']),
-  kind: z.literal('plugin-app').optional().describe('App kind. Only plugin-app is supported.'),
+  kind: z.literal('app').optional().describe('App artifact kind.'),
   name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -169,7 +169,7 @@ Parameter requirements:
         event = {
           type: 'app_build',
           input: {
-            kind: 'plugin-app',
+            kind: 'app',
             name: input.name,
           },
         }
@@ -181,7 +181,7 @@ Parameter requirements:
         }
         event = {
           type: 'app_preview',
-          input: { kind: 'plugin-app', buildDir: input.buildDir },
+          input: { kind: 'app', buildDir: input.buildDir },
         }
         break
 
@@ -198,7 +198,7 @@ Parameter requirements:
         event = {
           type: 'app_publish',
           input: {
-            kind: 'plugin-app',
+            kind: 'app',
             name: input.name,
             buildDir: input.buildDir,
             description: input.description,
@@ -227,7 +227,7 @@ Parameter requirements:
         event = {
           type: 'app_update',
           input: {
-            kind: 'plugin-app',
+            kind: 'app',
             name: input.name,
             description: input.description,
             buildDir: input.buildDir,

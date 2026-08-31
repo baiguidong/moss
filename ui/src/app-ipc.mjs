@@ -13,13 +13,13 @@ import * as path from 'node:path'
 import * as fs from 'node:fs'
 import os from 'node:os';
 import {
-  buildPluginAppFromWorkspace,
-  extractPluginAppToWorkspace,
-  getPluginAppWorkspaceBuildDir,
-  listPluginAppsFromRegistry,
-  listPluginAppVersions,
-  publishPluginAppFromBuild,
-  readPluginAppManifestFromDir,
+  buildAppFromWorkspace,
+  extractAppToWorkspace,
+  getAppWorkspaceBuildDir,
+  listAppsFromRegistry,
+  listAppVersions,
+  publishAppFromBuild,
+  readAppManifestFromDir,
 } from './app-platform.mjs'
 
 // ============================================================================
@@ -325,8 +325,8 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
 
 const MOSS_HOME = path.join(os.homedir(), '.moss')
 export function listAllStoredApps() {
-  const pluginApps = listPluginAppsFromRegistry()
-  return pluginApps.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  const apps = listAppsFromRegistry()
+  return apps.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 }
 
 // ============================================================================
@@ -411,7 +411,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     }
     const buildDir = input.buildDir
       ? path.resolve(sessionRecord.workspace, input.buildDir)
-      : getPluginAppWorkspaceBuildDir(sessionRecord.workspace, input.name)
+      : getAppWorkspaceBuildDir(sessionRecord.workspace, input.name)
     const relativePath = path.relative(sessionRecord.workspace, buildDir)
     if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
       throw new Error('App buildDir must stay inside the current session workspace')
@@ -419,7 +419,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     return buildDir
   }
 
-  const slugifyPluginAppId = (value) => String(value || '')
+  const slugifyAppId = (value) => String(value || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
@@ -427,18 +427,18 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     .slice(0, 80)
 
   const requireBuildManifestForName = (buildDir, name) => {
-    const manifest = readPluginAppManifestFromDir(buildDir)
-    const requestedId = slugifyPluginAppId(name)
+    const manifest = readAppManifestFromDir(buildDir)
+    const requestedId = slugifyAppId(name)
     if (requestedId && manifest.id !== requestedId) {
       throw new Error(`App build id "${manifest.id}" does not match requested name "${name}"`)
     }
     return manifest
   }
 
-  const findRegisteredPluginApp = (name) => {
+  const findRegisteredApp = (name) => {
     const normalizedName = String(name || '').trim()
-    const normalizedId = slugifyPluginAppId(normalizedName)
-    return listPluginAppsFromRegistry().find(entry =>
+    const normalizedId = slugifyAppId(normalizedName)
+    return listAppsFromRegistry().find(entry =>
       entry.name === normalizedName ||
       entry.id === normalizedName ||
       entry.id === normalizedId
@@ -452,42 +452,42 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           if (!sessionRecord?.workspace) {
             throw new Error('Session workspace is required for App build')
           }
-          return await buildPluginAppFromWorkspace(sessionRecord.workspace, event.input.name)
+          return await buildAppFromWorkspace(sessionRecord.workspace, event.input.name)
         }
 
         case 'app_preview': {
           const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
-          readPluginAppManifestFromDir(buildDir)
-          windows.previewPluginAppBuild(buildDir)
+          readAppManifestFromDir(buildDir)
+          await windows.previewAppBuild(buildDir)
           return { ok: true, buildDir }
         }
 
         case 'app_publish': {
           const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
           requireBuildManifestForName(buildDir, event.input.name)
-          const app = await publishPluginAppFromBuild(buildDir, {
+          const app = await publishAppFromBuild(buildDir, {
             description: event.input.description,
             reason: event.input.reason,
           })
-          events.emitAppsChanged({ action: 'created', app })
+          await events.emitAppsChanged({ action: 'created', app })
           return { ok: true, app }
         }
 
         case 'app_launch': {
-          const app = findRegisteredPluginApp(event.input.name)
+          const app = findRegisteredApp(event.input.name)
           if (!app) throw new Error(`Unknown App: ${event.input.name}`)
-          windows.launchPluginApp?.(app.id)
+          windows.launchApp?.(app.id)
           return { ok: true, app }
         }
 
         case 'app_update': {
           const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
           requireBuildManifestForName(buildDir, event.input.name)
-          const app = await publishPluginAppFromBuild(buildDir, {
+          const app = await publishAppFromBuild(buildDir, {
             description: event.input.description,
             reason: event.input.reason || 'updated',
           })
-          events.emitAppsChanged({ action: 'updated', app })
+          await events.emitAppsChanged({ action: 'updated', app })
           return { ok: true, app }
         }
 
@@ -495,9 +495,9 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           if (!sessionRecord) {
             throw new Error('Session context is required for app_extract_to_workspace')
           }
-          const app = findRegisteredPluginApp(event.input.name)
+          const app = findRegisteredApp(event.input.name)
           if (!app) throw new Error(`Unknown App: ${event.input.name}`)
-          const extracted = await extractPluginAppToWorkspace(app.id, sessionRecord, event.input.versionId)
+          const extracted = await extractAppToWorkspace(app.id, sessionRecord, event.input.versionId)
           return {
             ok: true,
             app: extracted.app,
@@ -507,8 +507,8 @@ export function createMossAppEventHandler(windows, events, options = {}) {
         }
 
         case 'app_get_versions': {
-          const app = findRegisteredPluginApp(event.input.name)
-          return { ok: true, versions: app ? listPluginAppVersions(app.id) : [] }
+          const app = findRegisteredApp(event.input.name)
+          return { ok: true, versions: app ? listAppVersions(app.id) : [] }
         }
 
         case 'browser_open': {

@@ -709,6 +709,64 @@ Docker backend 不挂载整个 `~/.moss/server`，只挂载当前
 
 需要 `Authorization: Bearer <token>` header。
 
+## Apps API
+
+App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用这些接口，不需要使用 Moss 命令行。Server 只从 `server.json` 的 `apps.sourceDir` 获取管理员预先放置的已知 App 版本，不接受任意代码上传。
+
+权限：
+
+- `apps:read`：查看 App、实例和状态。
+- `apps:manage`：安装、启停、配置、创建/删除实例和卸载。
+- `apps:deploy`：调用 Action 和重启实例。
+- `apps:logs`：读取实例日志。
+- `*`：包含以上全部权限。
+
+### GET `/api/v1/apps`
+
+返回 Server 已安装 App、Manifest、配置 schema、实例、deployment 和观察到的进程状态。需要 `apps:read`。
+
+### POST `/api/v1/apps/install`
+
+```json
+{ "appId": "example.app", "version": "1.0.0", "activate": true }
+```
+
+Server 从可信包源获取并完整校验指定身份的包。更新版本只有在 `activate: true` 时切换；启动仍取决于 App 和实例开关。需要 `apps:manage`。
+
+### GET `/api/v1/apps/:appId`
+
+返回一个 App 的完整运行状态。需要 `apps:read`。
+
+### PATCH `/api/v1/apps/:appId`
+
+可提交 `enabled` 或 `activeVersion`。版本激活失败会自动回滚。需要 `apps:manage`。
+
+### DELETE `/api/v1/apps/:appId`
+
+查询参数 `delete_data=true` 和 `delete_credentials=true` 分别控制数据与密钥删除；默认都保留。需要 `apps:manage`。
+
+### GET/POST `/api/v1/apps/:appId/instances`
+
+列出或创建实例。创建体可包含 `id`、`displayName`、`config`、`secrets` 和 `enabled`。读取需要 `apps:read`，创建需要 `apps:manage`。
+
+### PATCH/DELETE `/api/v1/apps/:appId/instances/:instanceId`
+
+更新实例名称、配置、密钥或开关，或删除多实例 App 的实例。停用实例后可提交 `clearCredentials: true` 清除单实例来源密钥。删除同样使用 `delete_data` 和 `delete_credentials` 查询参数，默认保留。需要 `apps:manage`。
+
+### POST `/api/v1/apps/:appId/instances/:instanceId/restart`
+
+清除当前 crash-loop 计数并重启本节点拥有的实例。需要 `apps:deploy`。
+
+### POST `/api/v1/apps/:appId/instances/:instanceId/actions/:action`
+
+请求体为 `{ "input": ..., "timeoutMs": 30000 }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:deploy`。
+
+### GET `/api/v1/apps/:appId/instances/:instanceId/logs?limit=500`
+
+返回轮转、限量并脱敏的实例日志。需要 `apps:logs`。
+
+更完整的安装、包结构和 Desktop/Server 部署说明见 `ui/docs/app-runtime.md`。
+
 ## Notes
 
 - `AuthService.verifyAccessToken()` 已经是进程内调用，server 不再反向 fetch 外部 auth-center。

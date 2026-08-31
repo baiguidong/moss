@@ -71,11 +71,6 @@ clear ownership boundaries.
     data/
     bundled-workspace/
 
-  extensions/
-    installed/
-    cache/
-    data/
-
   assistants/
     system/
     hub/
@@ -130,8 +125,6 @@ migration.
 | `apps/installed/` | app platform | durable | explicit uninstall only |
 | `apps/builds/` | app builder | rebuildable | prune old builds by version policy |
 | `apps/data/` | app platform | durable | app-scoped delete/export |
-| `extensions/installed/` | extension platform | durable | explicit uninstall only |
-| `extensions/cache/` | extension platform | rebuildable | safe TTL cleanup |
 | `assistants/` | assistant store | durable | uninstall only, preserve custom |
 | `skills/` | skill store | durable | uninstall only, preserve custom |
 | `plugins/marketplaces/` | plugin marketplace | rebuildable source cache | refresh/prune by marketplace version |
@@ -156,7 +149,6 @@ Current desktop paths can map into the logical layout without moving data first:
 | `~/.moss/generated-apps/` | `apps/builds/` |
 | `~/.moss/bundled-apps-workspace/` | `apps/bundled-workspace/` |
 | `~/.moss/apps/` | `apps/installed/` |
-| `~/.moss/extensions/` | `extensions/installed/` |
 | `~/.moss/skills/` | `skills/custom/` plus legacy skill root |
 | `~/.moss/assistants/` | `assistants/custom/` plus legacy assistant root |
 | `~/.moss/logs/` | `observability/logs/` |
@@ -182,7 +174,6 @@ desktopPaths.sessions.root
 desktopPaths.apps.installed
 desktopPaths.apps.builds
 desktopPaths.apps.data
-desktopPaths.extensions.installed
 desktopPaths.skills.root
 desktopPaths.assistants.root
 desktopPaths.runtime.tmp
@@ -269,7 +260,6 @@ These should not be first migration targets:
 | `~/.moss/settings.json` | Contains user configuration and currently some credentials. Keychain migration should happen before or alongside this. |
 | `~/.moss/projects/` | Large and important for transcript/session resume behavior. Needs a compatibility index and retention policy. |
 | `~/.moss/apps/` | Installed apps are user-visible durable assets. Migrate with app registry compatibility. |
-| `~/.moss/extensions/` | Installed extensions may be dependencies of apps. Migrate with extension registry compatibility. |
 | `~/.moss/skills/` | User and hub skills are durable capability packages. Needs system/hub/custom split. |
 | `~/.moss/assistants/` | User and system assistants are durable. Needs system/hub/custom split. |
 | `~/.moss/memory/` | Human-readable long-term context. Never migrate without explicit backup. |

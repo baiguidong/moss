@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "id": "fixture.slow-backend",
+  "version": "1.0.0",
+  "displayName": "Slow Backend",
+  "hostApi": "^1.0.0",
+  "backend": {
+    "entry": "dist/backend/main.mjs",
+    "runtime": "node",
+    "apiVersion": 1,
+    "lifecycle": "on-demand",
+    "instanceMode": "single",
+    "targets": ["desktop"],
+    "actions": [{ "name": "wait", "timeoutMs": 200 }]
+  },
+  "permissions": []
+}

@@ -29,11 +29,10 @@
     },
     "app": {
       "type": "object",
-      "required": ["id", "displayName", "extensionId"],
+      "required": ["id", "displayName"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
-        "displayName": { "type": "string", "minLength": 1 },
-        "extensionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+        "displayName": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": true
     },
@@ -115,7 +114,7 @@
           "disposition": {
             "enum": ["visual", "ai-assisted", "manual", "excluded"]
           },
-          "extensionAction": { "type": ["string", "null"] },
+          "backendAction": { "type": ["string", "null"] },
           "implementationSources": {
             "type": "array",
             "items": { "type": "string", "minLength": 1 },

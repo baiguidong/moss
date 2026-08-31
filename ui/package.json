@@ -70,6 +70,28 @@
         ]
       },
       {
+        "from": "../packages/app-sdk",
+        "to": "packages/app-sdk",
+        "filter": ["package.json", "src/**/*"]
+      },
+      {
+        "from": "../packages/app-runtime",
+        "to": "packages/app-runtime",
+        "filter": ["package.json", "src/**/*"]
+      },
+      {
+        "from": "../node_modules",
+        "to": "node_modules",
+        "filter": [
+          "ajv/**/*",
+          "fast-deep-equal/**/*",
+          "fast-uri/**/*",
+          "json-schema-traverse/**/*",
+          "require-from-string/**/*",
+          "semver/**/*"
+        ]
+      },
+      {
         "from": "../skills",
         "to": "skills",
         "filter": [

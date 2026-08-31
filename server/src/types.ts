@@ -77,6 +77,9 @@ export const serverFileConfigSchema = lazySchema(() =>
     }).default({
       level: 'info',
     }),
+    apps: z.object({
+      sourceDir: z.string().min(1).optional(),
+    }).default({}),
   }),
 )
 
@@ -110,6 +113,7 @@ export type ServerConfig = {
   resumeOnMissingRuntime: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   auditFile?: string
+  appSourceDir?: string
 }
 
 export type SessionStatus =

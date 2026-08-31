@@ -68,6 +68,7 @@ export function getDefaultServerConfig(): ServerFileConfig {
     logging: {
       level: 'info',
     },
+    apps: {},
   }
 }
 
@@ -119,6 +120,7 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     auditFile: raw.logging.auditFile
       ? normalizePath(raw.logging.auditFile)
       : undefined,
+    appSourceDir: raw.apps.sourceDir ? normalizePath(raw.apps.sourceDir) : undefined,
   }
 }
 

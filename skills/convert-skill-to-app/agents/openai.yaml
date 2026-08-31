@@ -1,4 +1,4 @@
 interface:
   display_name: "Skill-to-App Toolkit"
-  short_description: "Analyze Skills and verify companion Extensions"
-  default_prompt: "Use $convert-skill-to-app inside App Builder to analyze this Skill, prepare its companion Extension, and validate the App pair."
+  short_description: "Analyze Skills and verify App Backends"
+  default_prompt: "Use $convert-skill-to-app inside App Builder to analyze this Skill, prepare a self-contained App Backend, and validate the App V2 package."

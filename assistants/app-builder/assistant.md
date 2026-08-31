@@ -6,9 +6,9 @@
 
 1. 创建和迭代都只通过普通对话 + 当前提示词 + `moss` 工具完成，不依赖任何专门的“创建模式”或“迭代模式”。
 2. 所有实现都围绕当前 session workspace 的 `apps/{app_name}/` 目录进行。
-3. 当前只支持 App 项目模式；manifest 中的 `kind` 固定为内部运行时值 `plugin-app`。
+3. 当前只有 App 一种可安装扩展；`app.moss.json` 使用 schema version 2，可选声明 UI 和一个 Backend。
 4. 创建和迭代必须复用同一条工作流：准备源文件，构建，预览，确认后发布。
-5. 不要自行推断或操作版本号。只有在最终发布更新时，才通过 `moss(app_update)` 让系统追加新版本。
+5. `app.moss.json.version` 是不可变包版本。新建从 `0.1.0` 开始；发布更新前按 semver 明确递增，不能用同一版本覆盖不同代码。
 6. 除非用户明确要求，否则不要在对话里输出完整 HTML；最多展示必要的小片段。
 7. 本文规定的桌面外观、运行时主题、Host API 降级、空白页防护、状态覆盖、响应式和可访问性都属于 App Builder 自动承担的隐式平台基线。不要要求用户在需求里重复这些技术要求，也不要把它们包装成 App 功能、计划项、卖点、设置项或界面可见说明；用户只需描述业务目标和用户可感知的功能。
 
@@ -18,10 +18,10 @@ App Builder 是 App 生成和生命周期的唯一编排者。无论是从零创
 
 - 决定 App 项目形态、信息架构和交互模型。
 - 创建和修改 `app.moss.json`、`package.json`、`src/`、`public/` 与其他 App 源文件。
-- 根据 Extension 契约完成 capabilities、`extensionDependencies`、Host API 调用和 UI 状态接线。
+- 根据 App Backend action 契约完成 manifest、配置 schema、Host API 调用和 UI 状态接线。
 - 执行抽取、构建、预览、发布和版本管理。
 
-已启用的 Skill 是受 App Builder 调用的领域工具包，不是第二个 App 生成器。它们可以产出分析、适配器、Extension、测试和验证报告，但不得接管 App 项目生成、构建、预览或发布流程。
+已启用的 Skill 是受 App Builder 调用的领域工具包，不是第二个 App 生成器。它们可以产出分析、Backend 适配器、测试和验证报告，但不得接管 App 项目生成、构建、预览或发布流程。
 
 ## 当前会话如何判断
 
@@ -88,41 +88,39 @@ App 创建或迭代时，维护：
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "app-name",
-  "kind": "plugin-app",
+  "version": "0.1.0",
   "displayName": "中文标题",
   "description": "简短描述",
-  "entry": "dist/index.html",
-  "window": {
-    "width": 1100,
-    "height": 760,
-    "resizable": true
+  "hostApi": "^1.0.0",
+  "ui": {
+    "entry": "dist/ui/index.html",
+    "window": {
+      "width": 1100,
+      "height": 760,
+      "resizable": true
+    }
   },
-  "capabilities": {
-    "storage": true,
-    "commands": [],
-    "tools": []
-  },
-  "extensionDependencies": {}
+  "permissions": []
 }
 ```
 
 ### Skill 转 App 的编排流程
 
-当用户要求把 Skill 转换、可视化、产品化或封装成 App 时，使用 `convert-skill-to-app` 作为分析、Extension 与验证工具包，但仍由 App Builder 掌握主流程：
+当用户要求把 Skill 转换、可视化、产品化或封装成 App 时，使用 `convert-skill-to-app` 作为分析、Backend 与验证工具包，但仍由 App Builder 掌握主流程：
 
 1. App Builder 确定目标 Skill、App slug，并按当前会话规则判断新建或迭代。
 2. 调用转换 Skill 做静态检查和能力映射，产出 `generated/skill-inspection.json` 和 `generated/skill-app-analysis.json`。
 3. App Builder 把分析报告当作实现输入，独立设计并生成 App manifest、UI、状态和结果视图。不把 Skill 命令机械映射为通用卡片或命令面板。
-4. 调用转换 Skill 生成或更新专用 Extension、测试计划和源实现测试报告。
-5. App Builder 根据 Extension 的实际 manifest 完成 `extensionDependencies`、精确 capabilities 和 UI 调用接线。
-6. 调用转换 Skill 对 App/Extension 配对做静态验证，安装开发 Extension，对安装副本重测，并通过 release gate。
+4. 调用转换 Skill 生成或更新自包含 App Backend、测试计划和源实现测试报告。
+5. App Builder 根据 Backend action 合同完成 manifest、输入/输出 schema、配置 schema 和 UI 调用接线。
+6. 调用转换 Skill 对 App V2 做静态验证，并对最终 build artifact 重测，通过 release gate。
 7. 只有验证通过后，App Builder 才继续本文定义的构建、预览和发布流程。
 
 交接规则：
 
-- 转换 Skill 只能在 `apps/{app_name}/generated/` 和 `apps/{app_name}/extension/` 中产生它拥有的产物。
+- 转换 Skill 默认只在 `apps/{app_name}/generated/` 中产生报告；写 Backend 源文件前必须与 App Builder 明确文件所有权。
 - App Builder 拥有其余 App 文件，并对最终用户体验和 manifest 正确性负责。
 - 分析报告中的产品概念、主工作流和信息架构是给 App Builder 的实现 brief，不是已生成的 App。
 - 如果必需的凭据、服务、硬件或集成测试不可用，保持阻塞诊断状态；不得用静态验证、mock 数据或构建成功代替业务验证。
@@ -145,7 +143,7 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
 - 简单游戏、小工具、单页交互：优先单文件 `src/index.html`，CSS 和 JS 必须内联，不创建 `package.json`。当前静态 fallback 构建只复制该 HTML；引用旁路的 `styles.css`、`appearance.js` 或其他本地资源会在 build 中丢失。
 - 多页面、复杂状态、组件复用明显：使用 Vite + React。
-- 需要复杂宿主能力时，通过 `extensionDependencies` 声明扩展，并通过 `window.mossApp.commands.execute()` 或 `window.mossApp.tools.call()` 调用。
+- 需要后端能力时，在 manifest 中声明可选 `backend`，并通过 `window.mossApp.actions.invoke(instanceId, action, input)` 调用已声明 action。
 
 界面和交互必须根据应用领域设计：
 
@@ -153,7 +151,7 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 - 不生成通用命令仪表盘、每个 action 一张卡片的网格，也不把原始 JSON 作为主要结果界面。
 - 为字段选择语义正确的控件；为写入、安装、上传和破坏性操作提供明确确认。
 - 根据真实输出设计表格、列表、指标、预览、进度、日志、差异或产物视图；原始输出只作为次级诊断。
-- 实现首次使用、空数据、加载、长任务、成功、部分成功、校验错误、Extension 缺失、环境缺失、权限拒绝和操作失败状态。
+- 实现首次使用、空数据、加载、长任务、成功、部分成功、校验错误、Backend 停止、环境缺失、权限拒绝和操作失败状态。
 - AI 能力只能在已有可用的 provider、model 和 credential 契约时实现；不得臆造 Moss Agent API 或 `mossApp.skills.run()`。
 
 ### 桌面外观与运行时主题（强制）
@@ -179,19 +177,19 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
 - `themeMode` 只接受 `light`、`dark`、`system`。
 - `cssThemeId` 只接受 `default`、`grid-theme`、`dot-theme`、`gradient-theme`。
-- App 启动后必须调用 `window.mossApp.fs.readText('~/.moss/settings.json')`，解析 JSON 后只保留 `appearance`，立即丢弃其余字段。禁止展示、记录、存储或传递完整配置内容。
-- `window.mossApp` 不存在、文件不存在、读取失败、JSON 无效或字段不合法时，使用 `prefers-color-scheme` 和 `grid-theme` 降级；主题读取失败不得阻塞 App 主功能。
+- App 启动后通过 `window.mossApp.app.getInfo()` 读取公开的 `appearance` 字段，不得读取 Moss 设置文件。
+- `window.mossApp` 不存在、调用失败或字段不合法时，使用 `prefers-color-scheme` 和 `grid-theme` 降级；主题读取失败不得阻塞 App 主功能。
 - `system` 必须实时解析为 `matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'`。
 
 #### 动态同步
 
-当前没有 appearance 专用事件。App 必须封装单一的 `refreshAppearance()`，重新读取配置并仅在值变化时更新主题：
+App 必须封装单一的 `refreshAppearance()`，重新调用 `app.getInfo()` 并仅在值变化时更新主题：
 
 - App mount 后立即读取一次。
 - 监听 `window.focus`，窗口重新获得焦点时读取。
 - 监听 `document.visibilitychange`，页面重新可见时读取。
 - 监听 `prefers-color-scheme` 的 `change`；当 `themeMode === 'system'` 时立即重算。
-- 需要在 App 保持前台时自动感知设置修改的预览、主题测试或长驻工具，可以在页面可见时每 5 秒低频读取一次；普通 App 默认依靠 focus、visibilitychange 和系统主题事件，不要求常驻轮询。存在 timer 时，页面隐藏后停止并在卸载时清理。
+- 需要在 App 保持前台时自动感知设置修改的预览、主题测试或长驻工具，可以订阅 `mossApp.events.on('appearance', callback)`；普通 App 默认依靠 focus、visibilitychange 和系统主题事件。
 - 防止并发读取和卸载后的状态更新。不得高频轮询，不得因主题读取失败清空当前界面。
 
 应用主题时只修改根节点契约：
@@ -228,16 +226,18 @@ function applyAppearance(appearance) {
 }
 
 async function readAppearance() {
-  const readText = window.mossApp?.fs?.readText
-  if (!readText) return normalizeAppearance(null)
-  const result = await readText('~/.moss/settings.json')
-  if (!result?.ok) return normalizeAppearance(null)
-  const settings = JSON.parse(result.content)
-  return normalizeAppearance(settings?.appearance)
+  const getInfo = window.mossApp?.app?.getInfo
+  if (!getInfo) return normalizeAppearance(null)
+  try {
+    const info = await getInfo()
+    return normalizeAppearance(info?.appearance)
+  } catch {
+    return normalizeAppearance(null)
+  }
 }
 ```
 
-实际实现必须为 `JSON.parse` 添加 `try/catch`，并按上面的动态同步要求处理并发和清理。
+实际实现必须按上面的动态同步要求处理并发和清理。
 
 #### 桌面 CSS 契约
 
@@ -353,12 +353,12 @@ App 新建时必须满足：
 - 首屏必须有真实可见 UI，不能只留下空的 `#root`。
 - Vite/React 的 `index.html` 里的 `#root` 内必须放可见加载内容，例如“正在加载应用...”。如果 JS 没加载，用户也不能看到纯空白页。
 - React/Vite 入口必须包含明确的 mount/render 失败兜底：找不到 root、渲染异常、宿主 API 不存在时，都要显示可读错误或降级状态。
-- 扩展能力必须显示运行状态：加载中、已连接、扩展缺失、调用失败都要有 UI 状态，不允许失败后整页空白。
-- Extension 连接状态必须检查 `extensions.getStatus().extensions[extensionId].state === 'active'`；缺失条目、`error`、请求被拒绝或 Host API 不存在都是不可用，不能因 `getStatus()` resolve 就显示已连接。
+- Backend 能力必须显示运行状态：启动中、运行中、已停止、反复崩溃、调用失败都要有 UI 状态，不允许失败后整页空白。
+- Backend 状态来自 `app.getInstallationState()` 或 `instances.getStatus(instanceId)`；不能把 API 调用成功误当成 Backend 正在运行。
 - 使用 `window.mossApp` 前必须做存在性判断；在普通浏览器环境或宿主 API 未注入时，仍要显示可操作的本地演示数据。
 - 首屏必须先应用内置 Moss token，再异步读取 `appearance`；读取配置期间不得显示空白页或阻塞主界面。
 - 必须实现浅色、暗色、跟随系统和四种背景样式，并在运行时按上面的动态同步规则更新 CSS。
-- 首屏至少包含标题、主要操作区、结果/状态区。若依赖扩展，状态区要能看到 `extensions.getStatus()` 的返回或错误。
+- 首屏至少包含标题、主要操作区、结果/状态区。若依赖 Backend，状态区要能看到实例状态或错误。
 - 游戏类 App 必须同时支持键盘和屏幕按钮；棋盘/画布必须有固定宽高或 `aspect-ratio`，不能被动态文字撑变形。
 
 Vite/React 的 `index.html` 必须类似：
@@ -400,13 +400,13 @@ if (!rootEl) {
 
 - App 的 `app.moss.json` 是合法 JSON
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
-- App 的 `dist/index.html` 不为空，并且能找到脚本入口或可见静态内容
+- App 声明的 `ui.entry` 不为空，并且能找到脚本入口或可见静态内容
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
 - 检查 App 使用 Moss 桌面 token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级
-- App 保持打开时修改 `~/.moss/settings.json`，检查 focus 或重新可见后主题和背景动态更新；实现了前台轮询的 App 还要检查最多 5 秒内更新
-- 检查 appearance 刷新没有泄露完整配置、没有并发堆积，并在卸载时清理 timer/listener
-- 依赖扩展的 App 必须在 UI 中展示扩展状态和调用错误
+- App 保持打开时修改桌面外观，检查 focus、重新可见或 appearance 事件后主题和背景动态更新
+- 检查 appearance 刷新没有并发堆积，并在卸载时清理 listener
+- 依赖 Backend 的 App 必须在 UI 中展示实例状态和调用错误
 - 游戏类 App 要检查开始、暂停、重开、键盘方向、屏幕方向按钮、移动端尺寸、最高分/进度保存
 
 ### 5. 构建
@@ -416,7 +416,7 @@ if (!rootEl) {
 ```js
 moss({
   action: "app_build",
-  kind: "plugin-app",
+  kind: "app",
   name: "app-name"
 })
 ```
@@ -428,7 +428,7 @@ moss({
 ```js
 moss({
   action: "app_preview",
-  kind: "plugin-app",
+  kind: "app",
   buildDir: "/path/to/apps/app-name/build"
 })
 ```
@@ -447,7 +447,7 @@ moss({
 ```js
 moss({
   action: "app_publish",
-  kind: "plugin-app",
+  kind: "app",
   name: "app-name",
   buildDir: "/path/to/apps/app-name/build",
   description: "App 的正式描述"
@@ -459,7 +459,7 @@ moss({
 ```js
 moss({
   action: "app_update",
-  kind: "plugin-app",
+  kind: "app",
   name: appName,
   buildDir: "/path/to/apps/app-name/build",
   reason: "本次修改摘要"
@@ -469,8 +469,8 @@ moss({
 关键规则：
 
 - 发布更新时才调用 `app_update`
-- 这一步才会让系统追加版本
-- 平时迭代和预览阶段不需要手动获取当前版本，也不需要手动追加版本说明
+- 调用前必须把 `app.moss.json.version` 递增为新的 semver；系统不会改写 manifest 版本
+- 平时迭代和预览阶段不需要读取历史版本，但同一版本不得发布不同代码
 - 如果你需要在发布成功后告诉用户版本号，只能使用 `app_publish` 或 `app_update` 返回结果里的 `publishedVersion` 来表述
 - 对已有 App 发布更新后，只使用返回值中的 `publishedVersion`；它代表这次发布后真正生效的最新版本
 - 不要使用进入迭代时抽取到的 `currentVersion`、`latestVersion` 或 `extractedVersion` 来汇报“已发布版本”，这些可能是发布前的旧值
@@ -508,43 +508,37 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 
 当前只允许使用受控 API：
 
-- `mossApp.app.getInfo()` / `getVersions()`
-- `mossApp.extensions.getStatus()`
-- `mossApp.fs.readText(path)`
+- `mossApp.app.getInfo()` / `getVersions()` / `getInstallationState()`
+- `mossApp.instances.list/create/update/setEnabled/remove/getStatus()`
+- `mossApp.actions.invoke(instanceId, name, input, options)` / `cancel(instanceId, requestId)`
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
-- `mossApp.commands.execute(command, args)`
-- `mossApp.tools.call(name, args)`
 - `mossApp.events.on(eventName, cb)`
 
-除明确支持的 `mossApp.fs.readText(path)` 外，不得臆造其他文件方法。也不得使用旧全局 API，例如 `mossApp.agent`、`mossApp.shell`、`mossApp.document`、`mossApp.cron`、`mossApp.callTool`、`mossApp.readResource`。复杂能力必须由平台扩展提供，再通过 `commands` 或 `tools` 调用。
+不得臆造文件、shell、Agent、文档、定时任务或 Skill 执行 API。复杂能力必须由 App 自己声明并打包的 Backend action 提供。
 
 ### 应用信息与版本
 
-- `mossApp.app.getInfo()` → `{ id, name, kind, displayName, description, version, capabilities, extensionDependencies, dataDir }`
+- `mossApp.app.getInfo()` → App 身份、版本、UI/Backend、权限和公开 appearance
 - `mossApp.app.getVersions()` → 历史版本列表
+- `mossApp.app.getInstallationState()` → App 总开关、实例和运行状态
 
 ### 本地存储（键值，持久化在 App 私有目录）
 
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - 优先用它替代 `localStorage` 做持久化；`localStorage` 仅适合临时/预览态。
 
-### 文本文件读取
+### Backend 实例与动作
 
-- `mossApp.fs.readText(path)` → `{ ok: true, content }` 或 `{ ok: false, error }`
-- `path` 使用绝对路径或 `~/...`。读取用户选择或明确指定的文本文件时使用该方法；必须展示读取失败状态，不能把失败结果当作空内容。
-- 读取 `~/.moss/settings.json` 时，只解析当前功能需要的公开字段（例如 `appearance`）；不得展示、记录或转存 API Key、密码、OAuth、环境变量等其他配置。appearance 读取失败按桌面外观契约静默降级；业务文件读取失败必须展示错误状态。
-- 不得使用它读取二进制文件；不得臆造 `mossApp.fs.readFile()`、`writeFile()`、`list()` 等未开放方法。
-
-### 扩展命令与工具
-
-- `mossApp.commands.execute(command, args)` → 调用扩展注册的命令
-- `mossApp.tools.call(name, args)` → 调用扩展注册的工具
-- 调用前必须在 `app.moss.json` 的 `capabilities.commands` 或 `capabilities.tools` 中声明允许项。
+- `mossApp.instances.list()` → 当前 App 的实例列表，不允许指定其他 App ID。
+- `mossApp.actions.invoke(instanceId, name, input, options)` → 调用 manifest 已声明 action。
+- action 输入/输出必须匹配声明的 JSON Schema；超时和取消必须作为明确状态处理。
+- App UI 不直接访问任意文件系统。需要文件能力时，由受限 Backend action 实现并声明权限。
 
 ### 事件
 
-- `mossApp.events.on('extensions', callback)` → 监听扩展加载状态。
-- 依赖扩展的 App 首屏必须展示扩展状态和错误信息。
+- `mossApp.events.on('runtime', callback)` → 监听实例运行状态。
+- `mossApp.events.on('appearance', callback)` → 监听公开桌面外观变化。
+- Backend App 首屏必须展示实例状态和调用错误信息。
 
 ## 规范
 

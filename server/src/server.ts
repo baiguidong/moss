@@ -25,6 +25,8 @@ import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { AdapterProcessManager } from './adapterProcessManager.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
+import { handleAppRoute } from './apps/appRoutes.js'
+import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -671,6 +673,7 @@ export function startServer(
   runtime: RuntimeService,
   authService: AuthService,
   logger: ServerLogger = createServerLogger(),
+  appRuntime?: ServerAppRuntime,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -875,6 +878,10 @@ export function startServer(
       const auth = authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
+      }
+
+      if (appRuntime && await handleAppRoute({ req, res, url, auth, authService, apps: appRuntime })) {
+        return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/bootstrap') {

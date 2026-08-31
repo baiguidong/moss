@@ -24,8 +24,10 @@ const watchedFiles = [
   path.join(uiRoot, 'src', 'browser-view-manager.mjs'),
   path.join(uiRoot, 'src', 'local-audit-engine.mjs'),
   path.join(uiRoot, 'src', 'local-audit-service.mjs'),
-  path.join(uiRoot, 'src', 'plugin-app-preload.mjs'),
-  path.join(uiRoot, 'src', 'plugin-app-protocol.mjs'),
+  path.join(uiRoot, 'src', 'apps', 'app-preload.mjs'),
+  path.join(uiRoot, 'src', 'apps', 'app-ui-protocol.mjs'),
+  path.join(uiRoot, 'src', 'apps', 'desktop-app-runtime.mjs'),
+  path.join(uiRoot, 'src', 'apps', 'app-runtime-ipc.mjs'),
 ];
 const command = process.argv[2] || 'start';
 

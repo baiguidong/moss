@@ -448,6 +448,7 @@ export default function App() {
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
+  const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
@@ -1198,10 +1199,13 @@ export default function App() {
     });
 
     const offAppsChanged = window.agentDesktop.onAppsChanged((payload) => {
-      const changedName = payload?.app?.name;
+      const changedName = payload?.appId || payload?.app?.id || payload?.app?.name;
       if (changedName && selectedAssistant?.name === 'app-builder-assistant') {
         setSelectedAppName(changedName);
         void loadAppVersions(changedName);
+      }
+      if (changedName && changedName === embeddedAppName) {
+        setEmbeddedAppRevision((value) => value + 1);
       }
       void refreshApps();
     });
@@ -1255,7 +1259,7 @@ export default function App() {
       offAssistantsChanged();
       window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
     };
-  }, [applyDesktopSettings, dismissPermissionNotice, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1903,8 +1907,13 @@ export default function App() {
   }, [activeSessionId, openPreviewDrawer]);
 
   const handleLaunchApp = React.useCallback(async (name: string) => {
-    await window.agentDesktop.launchApp({ name });
-  }, []);
+    try {
+      const result = await window.agentDesktop.launchApp({ name });
+      if (!result?.ok) throw new Error(result?.error || 'App 打开失败');
+    } catch (error: any) {
+      showPermissionNotice(`App 打开失败：${cleanIpcErrorMessage(error?.message || String(error))}`, 'error', 6000);
+    }
+  }, [showPermissionNotice]);
 
   const handleOpenEmbeddedApp = React.useCallback((name: string) => {
     setEmbeddedAppName(name);
@@ -2059,24 +2068,32 @@ export default function App() {
     setActiveView('chat');
   }, [navigateToHome, createAndOpenSession, installedAssistants]);
 
-  const handleDeleteApp = React.useCallback(async (name: string) => {
-    await window.agentDesktop.deleteApp({ name });
+  const handleDeleteApp = React.useCallback(async (name: string, options: { deleteData?: boolean; deleteCredentials?: boolean } = {}) => {
+    const result = await window.agentDesktop.deleteApp({ name, ...options });
+    if (!result?.ok) {
+      showPermissionNotice(`App 卸载失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`, 'error', 6000);
+      return;
+    }
     setVersionsByApp((prev) => {
       const next = { ...prev };
       delete next[name];
       return next;
     });
     await refreshApps();
-  }, [refreshApps]);
+  }, [refreshApps, showPermissionNotice]);
 
   const handleRollbackApp = React.useCallback(async (name: string, versionId: string) => {
     const result = await window.agentDesktop.rollbackApp({ name, versionId });
+    if (!result?.ok) {
+      showPermissionNotice(`App 回滚失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`, 'error', 6000);
+      return;
+    }
     if (result?.app?.name) {
       setSelectedAppName(result.app.name);
     }
     await refreshApps();
     await loadAppVersions(name);
-  }, [loadAppVersions, refreshApps]);
+  }, [loadAppVersions, refreshApps, showPermissionNotice]);
 
   const autoSaveSettings = React.useCallback(async (key: keyof DesktopSettings, value: any) => {
     try {
@@ -2365,6 +2382,7 @@ export default function App() {
             />
           ) : activeView === 'embedded-app' && embeddedAppName ? (
             <EmbeddedAppView
+              key={`${embeddedAppName}:${embeddedAppRevision}`}
               appName={embeddedAppName}
             />
           ) : activeView === 'apps' ? (
@@ -2376,6 +2394,7 @@ export default function App() {
               onIterate={handleIterateExistingApp}
               onLoadVersions={loadAppVersions}
               onRollback={handleRollbackApp}
+              onRefresh={refreshApps}
               sidebarShortcutIds={sidebarAppShortcutIds}
               onAddShortcut={handleAddAppShortcut}
               onRemoveShortcut={handleRemoveAppShortcut}

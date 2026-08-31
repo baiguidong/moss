@@ -1,0 +1,22 @@
+{
+  "name": "@moss/app-runtime",
+  "version": "1.0.0",
+  "type": "module",
+  "types": "./src/index.d.mts",
+  "exports": {
+    ".": { "types": "./src/index.d.mts", "import": "./src/index.mjs" },
+    "./manifest": { "types": "./src/index.d.mts", "import": "./src/manifest/index.mjs" },
+    "./packages": { "types": "./src/index.d.mts", "import": "./src/packages/index.mjs" },
+    "./state": { "types": "./src/index.d.mts", "import": "./src/state/index.mjs" },
+    "./process": { "types": "./src/index.d.mts", "import": "./src/process/index.mjs" },
+    "./actions": { "types": "./src/index.d.mts", "import": "./src/actions/index.mjs" },
+    "./events": { "types": "./src/index.d.mts", "import": "./src/events/index.mjs" },
+    "./logging": { "types": "./src/index.d.mts", "import": "./src/logging/index.mjs" },
+    "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" }
+  },
+  "dependencies": {
+    "@moss/app-sdk": "1.0.0",
+    "ajv": "^8.18.0",
+    "semver": "^7.7.4"
+  }
+}

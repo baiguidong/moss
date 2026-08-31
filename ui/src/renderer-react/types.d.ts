@@ -476,7 +476,7 @@ export type ManagedRuntimeStatus = {
 
 export type StoredApp = {
   id?: string;
-  kind?: 'plugin-app';
+  kind?: 'app';
   name: string;
   displayName?: string;
   title: string;
@@ -493,13 +493,56 @@ export type StoredApp = {
   currentVersionId?: string | null;
   currentVersion?: string | null;
   publishedVersion?: string | null;
-  extensionDependencies?: Record<string, string>;
-  capabilitySummary?: string[];
+  hasUi?: boolean;
+  hasBackend?: boolean;
+  enabled?: boolean;
+  serverEnabled?: boolean;
+  serverVersion?: string | null;
+  remoteInstalled?: boolean;
+  remoteOnly?: boolean;
+  remoteError?: string | null;
+  backend?: {
+    lifecycle: 'on-demand' | 'persistent';
+    instanceMode: 'single' | 'multiple';
+    targets: Array<'desktop' | 'server'>;
+    actions: Array<{ name: string }>;
+  } | null;
+  serverBackend?: {
+    lifecycle: 'on-demand' | 'persistent';
+    instanceMode: 'single' | 'multiple';
+    targets: Array<'desktop' | 'server'>;
+    actions: Array<{ name: string }>;
+  } | null;
+  permissions?: string[];
+  configuration?: {
+    schema?: Record<string, any> | null;
+    secrets?: Record<string, any> | null;
+  } | null;
+  serverConfiguration?: {
+    schema?: Record<string, any> | null;
+    secrets?: Record<string, any> | null;
+  } | null;
+  instances?: AppInstance[];
+  deployments?: AppDeploymentStatus[];
   runtimeStatus?: {
-    state: 'ready' | 'missing-extension' | 'permission-required' | 'error';
-    missingExtensions?: string[];
+    state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'crash-loop';
     error?: string;
   };
+};
+
+export type AppInstance = {
+  id: string;
+  appId: string;
+  displayName: string;
+  config: Record<string, any>;
+  secretRefs?: Record<string, { configured: boolean; masked: string }>;
+  enabled: boolean;
+  target?: 'desktop' | 'server';
+};
+
+export type AppDeploymentStatus = {
+  deployment: { key: string; instanceId: string; targetType: 'desktop' | 'server'; targetId: string; generation: number };
+  runtime: { state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'crash-loop'; lastError?: string | null };
 };
 
 export type AppVersion = {
@@ -514,8 +557,9 @@ export type AppVersion = {
   resizable: boolean;
   isCurrent?: boolean;
   isLatest?: boolean;
-  kind?: 'plugin-app';
-  extensionLock?: Record<string, unknown>;
+  kind?: 'app';
+  hasUi?: boolean;
+  hasBackend?: boolean;
   checksumStatus?: string;
 };
 
@@ -892,7 +936,21 @@ declare global {
       attachEmbeddedApp: (payload: { embedId: string; webContentsId: number }) => Promise<{ ok: boolean; error?: string }>;
       closeEmbeddedApp: (payload: { embedId: string }) => Promise<{ ok: boolean; error?: string }>;
       rollbackApp: (payload: { name: string; versionId: string }) => Promise<{ ok: boolean; app: StoredApp; error?: string }>;
-      deleteApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
+      deleteApp: (payload: { name: string; deleteData?: boolean; deleteCredentials?: boolean }) => Promise<{ ok: boolean; error?: string }>;
+      installAppArchive: () => Promise<{ ok: boolean; canceled?: boolean; app?: StoredApp; error?: string }>;
+      installAppOnServer: (payload: { appId: string; version: string }) => Promise<any>;
+      uninstallAppOnServer: (payload: { appId: string; deleteData?: boolean; deleteCredentials?: boolean }) => Promise<any>;
+      getAppRuntimeState: (payload: { appId: string; target?: 'desktop' | 'server' }) => Promise<any>;
+      setAppEnabled: (payload: { appId: string; enabled: boolean; target?: 'desktop' | 'server' }) => Promise<any>;
+      listAppInstances: (payload: { appId: string; target?: 'desktop' | 'server' }) => Promise<AppInstance[]>;
+      createAppInstance: (payload: { appId: string; displayName: string; config?: Record<string, any>; secrets?: Record<string, string>; enabled?: boolean; target?: 'desktop' | 'server' }) => Promise<AppInstance>;
+      updateAppInstance: (payload: { appId: string; instanceId: string; displayName?: string; config?: Record<string, any>; secrets?: Record<string, string>; target?: 'desktop' | 'server' }) => Promise<AppInstance>;
+      setAppInstanceEnabled: (payload: { appId: string; instanceId: string; enabled: boolean; target?: 'desktop' | 'server' }) => Promise<any>;
+      clearAppInstanceCredentials: (payload: { appId: string; instanceId: string; target?: 'desktop' | 'server' }) => Promise<any>;
+      removeAppInstance: (payload: { appId: string; instanceId: string; deleteData?: boolean; deleteCredentials?: boolean; target?: 'desktop' | 'server' }) => Promise<{ ok: boolean }>;
+      restartAppInstance: (payload: { appId: string; instanceId: string; target?: 'desktop' | 'server' }) => Promise<any>;
+      getAppInstanceLogs: (payload: { appId: string; instanceId: string; limit?: number; target?: 'desktop' | 'server' }) => Promise<any[]>;
+      moveAppInstance: (payload: { appId: string; instanceId: string; from: 'desktop' | 'server'; to: 'desktop' | 'server'; secrets?: Record<string, string>; deleteSourceCredentials?: boolean }) => Promise<any>;
       saveApp: (payload: { sessionId: string; launch?: boolean }) => Promise<{ ok: boolean; app?: StoredApp; error?: string }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
       readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<WorkspacePreviewData>;

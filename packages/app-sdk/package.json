@@ -1,0 +1,17 @@
+{
+  "name": "@moss/app-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "types": "./src/index.d.mts",
+  "exports": {
+    ".": { "types": "./src/index.d.mts", "import": "./src/index.mjs" },
+    "./protocol": { "types": "./src/index.d.mts", "import": "./src/protocol/index.mjs" },
+    "./client": { "types": "./src/index.d.mts", "import": "./src/client/index.mjs" },
+    "./schemas": { "types": "./src/index.d.mts", "import": "./src/schemas/index.mjs" },
+    "./testing": { "types": "./src/index.d.mts", "import": "./src/testing/index.mjs" }
+  },
+  "dependencies": {
+    "ajv": "^8.18.0",
+    "semver": "^7.7.4"
+  }
+}

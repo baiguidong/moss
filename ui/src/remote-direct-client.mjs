@@ -265,6 +265,71 @@ export function stopRemoteFeishuAdapter(settings) {
   return requestRemoteFeishuAdapter(settings, 'stop', { method: 'POST' });
 }
 
+async function requestRemoteApps(settings, path = '', { method = 'GET', body } = {}) {
+  const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
+  let response;
+  try {
+    response = await fetch(`${serverUrl}/api/v1/apps${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch (error) {
+    throw new Error(`Failed to connect to the Moss Server App Runtime: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) throw new Error(await parseRemoteDirectError('Moss Server App Runtime request failed', response));
+  return response.json();
+}
+
+export async function fetchRemoteApps(settings) {
+  const result = await requestRemoteApps(settings);
+  return Array.isArray(result?.apps) ? result.apps : [];
+}
+
+export function installRemoteApp(settings, appId, version) {
+  return requestRemoteApps(settings, '/install', { method: 'POST', body: { appId, version, activate: true } });
+}
+
+export function updateRemoteApp(settings, appId, patch) {
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}`, { method: 'PATCH', body: patch });
+}
+
+export function uninstallRemoteApp(settings, appId, options = {}) {
+  const query = new URLSearchParams({
+    delete_data: options.deleteData ? 'true' : 'false',
+    delete_credentials: options.deleteCredentials ? 'true' : 'false',
+  });
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}?${query}`, { method: 'DELETE' });
+}
+
+export function createRemoteAppInstance(settings, appId, input) {
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances`, { method: 'POST', body: input });
+}
+
+export function updateRemoteAppInstance(settings, appId, instanceId, patch) {
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}`, { method: 'PATCH', body: patch });
+}
+
+export function removeRemoteAppInstance(settings, appId, instanceId, options = {}) {
+  const query = new URLSearchParams({
+    delete_data: options.deleteData ? 'true' : 'false',
+    delete_credentials: options.deleteCredentials ? 'true' : 'false',
+  });
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}?${query}`, { method: 'DELETE' });
+}
+
+export function restartRemoteAppInstance(settings, appId, instanceId) {
+  return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/restart`, { method: 'POST' });
+}
+
+export async function fetchRemoteAppLogs(settings, appId, instanceId, limit = 500) {
+  const result = await requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/logs?limit=${encodeURIComponent(limit)}`);
+  return Array.isArray(result?.logs) ? result.logs : [];
+}
+
 export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
   let response;
   try {
@@ -464,6 +529,15 @@ export function createRemoteDirectClient({ getSettings }) {
     fetchRemoteFeishuAdapterStatus: (settings) => fetchRemoteFeishuAdapterStatus(currentSettings(settings)),
     startRemoteFeishuAdapter: (config, settings) => startRemoteFeishuAdapter(currentSettings(settings), config),
     stopRemoteFeishuAdapter: (settings) => stopRemoteFeishuAdapter(currentSettings(settings)),
+    fetchRemoteApps: (settings) => fetchRemoteApps(currentSettings(settings)),
+    installRemoteApp: (appId, version, settings) => installRemoteApp(currentSettings(settings), appId, version),
+    updateRemoteApp: (appId, patch, settings) => updateRemoteApp(currentSettings(settings), appId, patch),
+    uninstallRemoteApp: (appId, options, settings) => uninstallRemoteApp(currentSettings(settings), appId, options),
+    createRemoteAppInstance: (appId, input, settings) => createRemoteAppInstance(currentSettings(settings), appId, input),
+    updateRemoteAppInstance: (appId, instanceId, patch, settings) => updateRemoteAppInstance(currentSettings(settings), appId, instanceId, patch),
+    removeRemoteAppInstance: (appId, instanceId, options, settings) => removeRemoteAppInstance(currentSettings(settings), appId, instanceId, options),
+    restartRemoteAppInstance: (appId, instanceId, settings) => restartRemoteAppInstance(currentSettings(settings), appId, instanceId),
+    fetchRemoteAppLogs: (appId, instanceId, limit, settings) => fetchRemoteAppLogs(currentSettings(settings), appId, instanceId, limit),
     fetchRemoteDirectSessions,
     fetchRemoteDirectSessionInfo,
     fetchRemoteDirectSessionContext,
