@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { shouldAdoptSessionHistory } from '../src/shared/session-history-reconcile.mjs';
+import {
+  mergeInterruptedSessionHistory,
+  shouldAdoptSessionHistory,
+} from '../src/shared/session-history-reconcile.mjs';
 
 const user = (text: string) => ({ type: 'user', prompt: text });
 const assistant = (text: string, uuid?: string) => ({
@@ -34,5 +37,39 @@ describe('session history reconciliation', () => {
     const current = [user('keep this'), assistant('stable')];
     const candidate = [user('different'), assistant('stable')];
     expect(shouldAdoptSessionHistory(current, candidate)).toBe(false);
+  });
+
+  it('merges an interrupted transcript after the latest persisted user prompt', () => {
+    const current = [
+      user('publish this'),
+      user('publish this'),
+      user('publish this'),
+    ];
+    const candidate = [
+      {
+        type: 'user',
+        uuid: 'runtime-user-1',
+        message: { content: 'publish this' },
+      },
+      assistant('starting upload', 'answer-1'),
+      {
+        type: 'assistant',
+        uuid: 'tool-1',
+        message: { content: [{ type: 'tool_use', name: 'Write' }] },
+      },
+    ];
+
+    expect(mergeInterruptedSessionHistory(current, candidate)).toEqual([
+      ...current,
+      candidate[1],
+      candidate[2],
+    ]);
+  });
+
+  it('keeps persisted history when an orphan transcript belongs to another prompt', () => {
+    const current = [user('keep this')];
+    const candidate = [user('different'), assistant('unrelated')];
+
+    expect(mergeInterruptedSessionHistory(current, candidate)).toEqual(current);
   });
 });

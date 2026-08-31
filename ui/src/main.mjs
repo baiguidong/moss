@@ -95,7 +95,10 @@ import {
   allowMediaRoot,
 } from './media-protocol.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
-import { shouldAdoptSessionHistory } from './shared/session-history-reconcile.mjs';
+import {
+  mergeInterruptedSessionHistory,
+  shouldAdoptSessionHistory,
+} from './shared/session-history-reconcile.mjs';
 import {
   isSubAgentFailureEntry,
   resolveSubAgentStatus,
@@ -425,6 +428,84 @@ async function loadDisplayHistoryFromLocalTranscript(sessionRecord) {
     }
   }
   return history;
+}
+
+async function findLatestLocalTranscriptSessionId(sessionRecord) {
+  if (!sessionRecord?.id || sessionRecord.agentMode === 'remote-direct') return null;
+
+  let entries;
+  try {
+    entries = await fsp.readdir(getLocalSessionEngineDir(sessionRecord.id), {
+      withFileTypes: true,
+    });
+  } catch {
+    return null;
+  }
+
+  const candidates = await Promise.all(entries
+    .filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'))
+    .map(async (entry) => {
+      const engineSessionId = entry.name.slice(0, -'.jsonl'.length);
+      try {
+        normalizeSessionDirName(engineSessionId);
+        const transcriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(
+          normalizeSessionDirName(sessionRecord.id),
+          engineSessionId,
+        );
+        const stats = await fsp.stat(transcriptPath);
+        return { engineSessionId, modifiedAt: stats.mtimeMs };
+      } catch {
+        return null;
+      }
+    }));
+
+  return candidates
+    .filter(Boolean)
+    .sort((left, right) => (
+      right.modifiedAt - left.modifiedAt ||
+      right.engineSessionId.localeCompare(left.engineSessionId)
+    ))[0]?.engineSessionId || null;
+}
+
+async function recoverInterruptedLocalSession(sessionRecord) {
+  if (
+    !sessionRecord ||
+    sessionRecord.agentMode === 'remote-direct' ||
+    sessionRecord.underlyingSessionId
+  ) {
+    return false;
+  }
+
+  const recoveredSessionId = await findLatestLocalTranscriptSessionId(sessionRecord);
+  if (!recoveredSessionId) return false;
+
+  sessionRecord.underlyingSessionId = recoveredSessionId;
+  const candidateHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
+  if (!Array.isArray(candidateHistory) || candidateHistory.length === 0) {
+    sessionRecord.underlyingSessionId = null;
+    return false;
+  }
+
+  const mergedHistory = mergeInterruptedSessionHistory(
+    sessionRecord.history,
+    candidateHistory,
+  );
+  if (mergedHistory === sessionRecord.history) {
+    sessionRecord.underlyingSessionId = null;
+    return false;
+  }
+
+  syncSessionRecordHistory(sessionRecord, mergedHistory, {
+    sessionId: recoveredSessionId,
+  });
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  mossLog('info', 'session', 'Recovered interrupted local session transcript', {
+    sessionId: sessionRecord.id,
+    underlyingSessionId: recoveredSessionId,
+    recoveredEntries: candidateHistory.length,
+  });
+  return true;
 }
 
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
@@ -3587,6 +3668,21 @@ function hydratePersistedSessions() {
 
 hydratePersistedSessions();
 
+const interruptedSessionRecoveryPromise = Promise.allSettled(
+  Array.from(sessions.values()).map(async (sessionRecord) => {
+    if (await recoverInterruptedLocalSession(sessionRecord)) {
+      emitSessionHistory(sessionRecord);
+    }
+  }),
+).then((results) => {
+  const failures = results.filter(result => result.status === 'rejected');
+  if (failures.length > 0) {
+    mossLog('warn', 'session', 'Some interrupted sessions could not be recovered', {
+      failureCount: failures.length,
+    });
+  }
+});
+
 function getPackageMetadata() {
   try {
     const packageJsonPath = path.join(repoRoot, 'package.json');
@@ -3897,6 +3993,7 @@ function appendRuntimeMessageToSession(sessionRecord, message) {
   sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
+  schedulePersistSession(sessionRecord);
 }
 
 function buildVisibleUserEvent(prompt, attachments = []) {
@@ -4050,7 +4147,9 @@ async function loadSessionHistoryFromSource(sessionRecord) {
     return Array.isArray(sessionRecord.history) ? sessionRecord.history : [];
   }
   if (!sessionRecord?.underlyingSessionId) {
-    return sessionRecord.history;
+    if (!(await recoverInterruptedLocalSession(sessionRecord))) {
+      return sessionRecord.history;
+    }
   }
 
   if (sessionRecord.runtime) {
@@ -4241,6 +4340,14 @@ async function runSessionPromptNow({
     }
   }
   const runtime = await ensureRuntime(sessionRecord, runtimeSystemPrompt);
+  if (
+    sessionRecord.agentMode !== 'remote-direct' &&
+    typeof runtime?.sessionId === 'string' &&
+    runtime.sessionId.trim()
+  ) {
+    maybeUpdateUnderlyingSessionId(sessionRecord, runtime.sessionId);
+    schedulePersistSession(sessionRecord, true);
+  }
   const cronIdsBeforeTurn = await readMossCronTaskIds();
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
@@ -9154,6 +9261,7 @@ function listVisibleSessionSummaries() {
 }
 
 ipcMain.handle('agent:list-sessions', async () => {
+  await interruptedSessionRecoveryPromise;
   await synchronizeRemoteSessionsBestEffort();
   await Promise.allSettled(Array.from(sessions.values()).map((record) => (
     syncSubAgentSessionsBestEffort(record)
@@ -9190,6 +9298,7 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
 });
 
 ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
+  await interruptedSessionRecoveryPromise;
   const sessionRecord = getSessionRecord(sessionId);
   const history = await loadSessionHistoryFromSource(sessionRecord);
   const openedMessageCount = countSessionMessages(history);

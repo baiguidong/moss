@@ -14,9 +14,6 @@ function extractContentText(content) {
 function getHistoryEventToken(event) {
   if (!event || typeof event !== 'object') return null;
 
-  const uuid = normalizeText(event.uuid || event.id);
-  if (uuid) return `id:${uuid}`;
-
   if (event.type === 'user') {
     if (event.isMeta || event.isVisibleInTranscriptOnly) return null;
     const content = event?.message?.content;
@@ -26,6 +23,9 @@ function getHistoryEventToken(event) {
     const text = normalizeText(event.prompt) || extractContentText(content);
     return text ? `user:${text}` : null;
   }
+
+  const uuid = normalizeText(event.uuid || event.id);
+  if (uuid) return `id:${uuid}`;
 
   if (event.type === 'assistant') {
     const text = extractContentText(event?.message?.content);
@@ -70,4 +70,30 @@ export function shouldAdoptSessionHistory(currentHistory, candidateHistory) {
     if (requiredIndex === requiredTokens.length) return true;
   }
   return false;
+}
+
+export function mergeInterruptedSessionHistory(currentHistory, candidateHistory) {
+  const current = Array.isArray(currentHistory) ? currentHistory : [];
+  const candidate = Array.isArray(candidateHistory) ? candidateHistory : [];
+
+  if (shouldAdoptSessionHistory(current, candidate)) {
+    return candidate;
+  }
+
+  const latestCurrentUserToken = current
+    .map(getHistoryEventToken)
+    .findLast(token => token?.startsWith('user:'));
+  const candidateUserIndex = candidate.findIndex(event => (
+    getHistoryEventToken(event) === latestCurrentUserToken
+  ));
+
+  if (!latestCurrentUserToken || candidateUserIndex < 0) {
+    return current;
+  }
+
+  return [
+    ...current,
+    ...candidate.slice(0, candidateUserIndex),
+    ...candidate.slice(candidateUserIndex + 1),
+  ];
 }
