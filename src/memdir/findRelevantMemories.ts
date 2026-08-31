@@ -22,6 +22,10 @@ Return a list of filenames for the memories that will clearly be useful to Claud
 - If a list of recently-used tools is provided, do not select memories that are usage reference or API documentation for those tools (Claude Code is already exercising them). DO still select memories containing warnings, gotchas, or known issues about those tools — active use is exactly when those matter.
 `
 
+export function shouldSearchMemoriesForQuery(input: string): boolean {
+  return input.trim().length > 0
+}
+
 /**
  * Find memory files relevant to a query by scanning memory file headers
  * and asking Sonnet to select the most relevant ones.
