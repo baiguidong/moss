@@ -156,7 +156,6 @@ export {
   buildConnectUrl,
   parseConnectUrl,
 } from '../packages/direct-connect-protocol/src/index.js'
-export { runConnectHeadless } from './remote/connectHeadless.js'
 
 let localAgentRuntimeInitialized = false
 

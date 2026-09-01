@@ -49,6 +49,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   },
   advanced: {
     moss_auto_background_agents: false,
+    moss_hive_evidence: false,
     moss_scratchpad: false,
     moss_idle_session_cleanup: false,
     moss_streaming_tool_execution: false,

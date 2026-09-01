@@ -150,6 +150,7 @@ const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> =
 
 const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_auto_background_agents: false,
+  moss_hive_evidence: false,
   moss_scratchpad: false,
   moss_idle_session_cleanup: false,
   moss_streaming_tool_execution: false,
@@ -243,7 +244,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'agent-execution',
         title: 'Agent 与执行',
-        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
+        keywords: ['agent', 'verification', '验证', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
       },
       {
         id: 'tool-performance',
@@ -1709,6 +1710,20 @@ export function SettingsView({
                             checked={Boolean(advancedDraft.moss_auto_background_agents)}
                             onCheckedChange={(checked) => updateAdvancedSettings({ moss_auto_background_agents: checked })}
                             label="长任务自动转后台"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="独立验证 Agent"
+                        description="让新会话在完成非简单实现前调用后台验证 Agent；会增加验证时间和模型调用成本。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_hive_evidence)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_hive_evidence: checked })}
+                            label="独立验证 Agent"
                           />
                         </div>
                       </SettingsRow>

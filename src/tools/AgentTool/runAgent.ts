@@ -3,7 +3,7 @@ import type { UUID } from 'crypto'
 import { randomUUID } from 'crypto'
 import uniqBy from 'lodash-es/uniqBy.js'
 import { logForDebugging } from 'src/utils/debug.js'
-import { getProjectRoot, getSessionId } from '../../bootstrap/state.js'
+import { getProjectRoot } from '../../bootstrap/state.js'
 import { getCommand, getSkillToolCommands, hasCommand } from '../../commands.js'
 import {
   DEFAULT_AGENT_PROMPT,
@@ -66,14 +66,11 @@ import {
   asSystemPrompt,
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
-import {
-  isPerfettoTracingEnabled,
-  registerAgent as registerPerfettoAgent,
-  unregisterAgent as unregisterPerfettoAgent,
-} from '../../utils/telemetry/perfettoTracing.js'
 import type { ContentReplacementState } from '../../utils/toolResultStorage.js'
 import { createAgentId } from '../../utils/uuid.js'
+import { createReadOnlyWorkspaceSandboxConfig } from '../../utils/sandbox/sandbox-adapter.js'
 import { resolveAgentTools } from './agentToolUtils.js'
+import { applyAgentPermissionConstraints } from './agentPermissionContext.js'
 import {
   AgentExecutionError,
   getAgentExecutionFailure,
@@ -346,12 +343,6 @@ export async function* runAgent({
     setAgentTranscriptSubdir(agentId, transcriptSubdir)
   }
 
-  // Register agent in Perfetto trace for hierarchy visualization
-  if (isPerfettoTracingEnabled()) {
-    const parentId = toolUseContext.agentId ?? getSessionId()
-    registerPerfettoAgent(agentId, agentDefinition.agentType, parentId)
-  }
-
   // Handle message forking for context sharing
   // Filter out incomplete tool calls from parent messages to avoid API errors
   const contextMessages: Message[] = forkContextMessages
@@ -393,26 +384,11 @@ export async function* runAgent({
       ? systemContextNoGit
       : baseSystemContext
 
-  // Override permission mode if agent defines one
-  // However, don't override if parent is in bypassPermissions or acceptEdits mode - those should always take precedence
-  // For async agents, also set shouldAvoidPermissionPrompts since they can't show UI
+  // For async agents, also set shouldAvoidPermissionPrompts since they can't show UI.
   const agentPermissionMode = agentDefinition.permissionMode
   const agentGetAppState = () => {
     const state = toolUseContext.getAppState()
     let toolPermissionContext = permissionContextOverride ?? state.toolPermissionContext
-
-    // Override permission mode if agent defines one unless the parent already
-    // grants bypass or edit permissions.
-    if (
-      agentPermissionMode &&
-      state.toolPermissionContext.mode !== 'bypassPermissions' &&
-      state.toolPermissionContext.mode !== 'acceptEdits'
-    ) {
-      toolPermissionContext = {
-        ...toolPermissionContext,
-        mode: agentPermissionMode,
-      }
-    }
 
     // Set flag to auto-deny prompts for agents that can't show UI
     // Use explicit canShowPermissionPrompts if provided, otherwise:
@@ -458,6 +434,12 @@ export async function* runAgent({
         },
       }
     }
+
+    toolPermissionContext = applyAgentPermissionConstraints(
+      agentDefinition,
+      toolPermissionContext,
+      state.toolPermissionContext,
+    )
 
     // Override effort level if agent defines one
     const effortValue =
@@ -684,6 +666,11 @@ export async function* runAgent({
     shareSetResponseLength: true, // Both sync and async contribute to response metrics
     criticalSystemReminder_EXPERIMENTAL:
       agentDefinition.criticalSystemReminder_EXPERIMENTAL,
+    requireCanUseTool: agentDefinition.enforcePermissionMode,
+    bashSandboxConfig: agentDefinition.readOnlyWorkspace
+      ? createReadOnlyWorkspaceSandboxConfig(getProjectRoot())
+      : undefined,
+    allowReadOnlyTools: agentDefinition.readOnlyWorkspace,
     contentReplacementState,
   })
 
@@ -832,8 +819,6 @@ export async function* runAgent({
     agentToolUseContext.readFileState.clear()
     // Release the cloned fork context messages
     initialMessages.length = 0
-    // Release perfetto agent registry entry
-    unregisterPerfettoAgent(agentId)
     // Release transcript subdir mapping
     clearAgentTranscriptSubdir(agentId)
     // Kill any background bash tasks this agent spawned. Without this, a

@@ -1,7 +1,5 @@
-import { feature } from 'bun:bundle'
 import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { readdir, readFile, stat } from 'fs/promises'
-import memoize from 'lodash-es/memoize.js'
 import { join } from 'path'
 import type { QuerySource } from 'src/constants/querySource.js'
 import { TICK_TAG } from '../constants/xml.js'
@@ -147,18 +145,8 @@ export function attachErrorLogSink(newSink: ErrorLogSink): void {
  * - Debug: Run `claude --debug` or `tail -f ~/.moss/debug/latest`
  * - In-memory: Call `getInMemoryErrors()` to get recent errors for the current session
  */
-const isHardFailMode = memoize((): boolean => {
-  return process.argv.includes('--hard-fail')
-})
-
 export function logError(error: unknown): void {
   const err = toError(error)
-  if (feature('HARD_FAIL') && isHardFailMode()) {
-    // biome-ignore lint/suspicious/noConsole:: intentional crash output
-    console.error('[HARD FAIL] logError called with:', err.stack || err.message)
-    // eslint-disable-next-line custom-rules/no-process-exit
-    process.exit(1)
-  }
   try {
     // Check if error reporting should be disabled
     if (

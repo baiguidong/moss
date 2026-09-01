@@ -1,14 +1,13 @@
-import { feature } from 'bun:bundle'
 import memoize from 'lodash-es/memoize.js'
 import { basename } from 'path'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { z } from 'zod/v4'
 import { getAdditionalDirectoriesForMossMd } from '../../bootstrap/state.js'
-import { isAutoMemoryEnabled } from '../../memdir/paths.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../../services/analytics/index.js'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import {
   type McpServerConfig,
   McpServerConfigSchema,
@@ -44,10 +43,6 @@ import {
   setAgentColor,
 } from './agentColorManager.js'
 import { type AgentMemoryScope, loadAgentMemoryPrompt } from './agentMemory.js'
-import {
-  checkAgentMemorySnapshot,
-  initializeFromSnapshot,
-} from './agentMemorySnapshot.js'
 import { getBuiltInAgents } from './builtInAgents.js'
 
 // Type for MCP server specification in agent definitions
@@ -109,6 +104,12 @@ export type BaseAgentDefinition = {
   model?: string
   effort?: EffortValue
   permissionMode?: PermissionMode
+  /** Enforce permissionMode even when the parent grants broader permissions.
+   * Built-in agents use this as a security boundary; it is not parsed from
+   * user-defined agent files. */
+  enforcePermissionMode?: boolean
+  /** Run Bash with writes restricted to temporary directories. Built-in only. */
+  readOnlyWorkspace?: boolean
   maxTurns?: number // Maximum number of agentic turns before stopping
   filename?: string // Original filename without .md extension (for user/project/managed agents)
   baseDir?: string
@@ -118,7 +119,6 @@ export type BaseAgentDefinition = {
   initialPrompt?: string // Prepended to the first user turn (slash commands work)
   memory?: AgentMemoryScope // Persistent memory scope
   isolation?: 'worktree' // Run in an isolated git worktree
-  pendingSnapshotUpdate?: { snapshotTimestamp: string }
   /** Omit the project-instruction hierarchy from the agent's userContext. Read-only agents
    * (Explore, Plan) don't need commit/PR/lint guidelines — the main agent has
    * full instructions and interprets their output. Saves ~5-15 Gtok/week across
@@ -229,45 +229,6 @@ export function filterAgentsByMcpRequirements(
   return agents.filter(agent => hasRequiredMcpServers(agent, availableServers))
 }
 
-/**
- * Check for and initialize agent memory from project snapshots.
- * For agents with memory enabled, copies snapshot to local if no local memory exists.
- * For agents with newer snapshots, logs a debug message (user prompt TODO).
- */
-async function initializeAgentMemorySnapshots(
-  agents: CustomAgentDefinition[],
-): Promise<void> {
-  await Promise.all(
-    agents.map(async agent => {
-      if (agent.memory !== 'user') return
-      const result = await checkAgentMemorySnapshot(
-        agent.agentType,
-        agent.memory,
-      )
-      switch (result.action) {
-        case 'initialize':
-          logForDebugging(
-            `Initializing ${agent.agentType} memory from project snapshot`,
-          )
-          await initializeFromSnapshot(
-            agent.agentType,
-            agent.memory,
-            result.snapshotTimestamp!,
-          )
-          break
-        case 'prompt-update':
-          agent.pendingSnapshotUpdate = {
-            snapshotTimestamp: result.snapshotTimestamp!,
-          }
-          logForDebugging(
-            `Newer snapshot available for ${agent.agentType} memory (snapshot: ${result.snapshotTimestamp})`,
-          )
-          break
-      }
-    }),
-  )
-}
-
 export const getAgentDefinitionsWithOverrides = memoize(
   async (cwd: string): Promise<AgentDefinitionsResult> => {
     // Simple mode: skip custom agents, only return built-ins
@@ -316,10 +277,6 @@ export const getAgentDefinitionsWithOverrides = memoize(
         })
         .filter(agent => agent !== null)
 
-      if (feature('AGENT_MEMORY_SNAPSHOT') && isAutoMemoryEnabled()) {
-        await initializeAgentMemorySnapshots(customAgents)
-      }
-
       const builtInAgents = getBuiltInAgents()
 
       const allAgentsList: AgentDefinition[] = [
@@ -356,7 +313,7 @@ export const getAgentDefinitionsWithOverrides = memoize(
     }
   },
   (cwd: string) =>
-    `${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}:${getAdvancedSetting('moss_hive_evidence')}`,
 )
 
 export function clearAgentDefinitionsCache(): void {

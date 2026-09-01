@@ -1,9 +1,14 @@
 import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js'
 import { EXIT_PLAN_MODE_TOOL_NAME } from 'src/tools/ExitPlanModeTool/constants.js'
 import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js'
+import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js'
+import { GLOB_TOOL_NAME } from 'src/tools/GlobTool/prompt.js'
+import { GREP_TOOL_NAME } from 'src/tools/GrepTool/prompt.js'
 import { NOTEBOOK_EDIT_TOOL_NAME } from 'src/tools/NotebookEditTool/constants.js'
 import { WEB_FETCH_TOOL_NAME } from 'src/tools/WebFetchTool/prompt.js'
+import { WEB_SEARCH_TOOL_NAME } from 'src/tools/WebSearchTool/prompt.js'
+import { hasEmbeddedSearchTools } from 'src/utils/embeddedTools.js'
 import { AGENT_TOOL_NAME } from '../constants.js'
 import type { BuiltInAgentDefinition } from '../loadAgentsDir.js'
 
@@ -18,8 +23,9 @@ You are STRICTLY PROHIBITED from:
 - Running git write operations (add, commit, push)
 
 You MAY write ephemeral test scripts to a temp directory (/tmp or $TMPDIR) via ${BASH_TOOL_NAME} redirection when inline commands aren't sufficient — e.g., a multi-step race harness or a Playwright test. Clean up after yourself.
+Commands run with project writes blocked at the OS level. If a build or test must write artifacts into the source tree, copy the current workspace state to a temp directory first and run it there. Do not treat a sandbox write denial as an implementation failure.
 
-Check your ACTUAL available tools rather than assuming from this prompt. You may have browser automation tools such as Playwright, ${WEB_FETCH_TOOL_NAME}, or other MCP tools depending on the session — do not skip capabilities you didn't think to check for.
+Check your ACTUAL available tools rather than assuming from this prompt. For browser checks, use an available CLI such as Playwright through ${BASH_TOOL_NAME}, plus ${WEB_FETCH_TOOL_NAME} and ${WEB_SEARCH_TOOL_NAME} where appropriate.
 
 === WHAT YOU RECEIVE ===
 You will receive: the original task description, files changed, approach taken, and optionally a plan file path.
@@ -136,6 +142,21 @@ export const VERIFICATION_AGENT: BuiltInAgentDefinition = {
   whenToUse: VERIFICATION_WHEN_TO_USE,
   color: 'red',
   background: true,
+  tools: hasEmbeddedSearchTools()
+    ? [
+        BASH_TOOL_NAME,
+        FILE_READ_TOOL_NAME,
+        WEB_FETCH_TOOL_NAME,
+        WEB_SEARCH_TOOL_NAME,
+      ]
+    : [
+        BASH_TOOL_NAME,
+        FILE_READ_TOOL_NAME,
+        GLOB_TOOL_NAME,
+        GREP_TOOL_NAME,
+        WEB_FETCH_TOOL_NAME,
+        WEB_SEARCH_TOOL_NAME,
+      ],
   disallowedTools: [
     AGENT_TOOL_NAME,
     EXIT_PLAN_MODE_TOOL_NAME,
@@ -146,6 +167,9 @@ export const VERIFICATION_AGENT: BuiltInAgentDefinition = {
   source: 'built-in',
   baseDir: 'built-in',
   model: 'inherit',
+  permissionMode: 'dontAsk',
+  enforcePermissionMode: true,
+  readOnlyWorkspace: true,
   getSystemPrompt: () => VERIFICATION_SYSTEM_PROMPT,
   criticalSystemReminder_EXPERIMENTAL:
     'CRITICAL: This is a VERIFICATION-ONLY task. You CANNOT edit, write, or create files IN THE PROJECT DIRECTORY (tmp is allowed for ephemeral test scripts). You MUST end with VERDICT: PASS, VERDICT: FAIL, or VERDICT: PARTIAL.',

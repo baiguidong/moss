@@ -678,6 +678,36 @@ async function hasPermissionsToUseToolInner(
     return toolPermissionResult
   }
 
+  if (context.allowReadOnlyTools) {
+    try {
+      if (tool.isReadOnly(input as never)) {
+        return {
+          behavior: 'allow',
+          updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
+          decisionReason: {
+            type: 'other',
+            reason: 'Read-only tool is allowed for this agent',
+          },
+        }
+      }
+    } catch {
+      // Treat tools that cannot classify this input as requiring permission.
+    }
+  }
+
+  // A per-agent Bash sandbox is an OS-level permission boundary. The caller
+  // forces Bash through this policy even if the model requests an opt-out.
+  if (tool.name === BASH_TOOL_NAME && context.bashSandboxConfig) {
+    return {
+      behavior: 'allow',
+      updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
+      decisionReason: {
+        type: 'other',
+        reason: 'Command is restricted by the agent Bash sandbox',
+      },
+    }
+  }
+
   // 2a. Check if mode allows the tool to run
   // IMPORTANT: Call getAppState() to get the latest value
   appState = context.getAppState()

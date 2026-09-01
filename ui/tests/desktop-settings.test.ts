@@ -120,6 +120,7 @@ describe('desktop settings', () => {
   it('keeps advanced setting defaults and normalizes explicit overrides', () => {
     expect(normalizeDesktopSettings({}).advanced).toEqual({
       moss_auto_background_agents: false,
+      moss_hive_evidence: false,
       moss_scratchpad: false,
       moss_idle_session_cleanup: false,
       moss_streaming_tool_execution: false,
@@ -138,6 +139,7 @@ describe('desktop settings', () => {
     expect(normalizeDesktopSettings({
       advanced: {
         moss_auto_background_agents: true,
+        moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
         moss_streaming_tool_execution: true,
@@ -154,6 +156,7 @@ describe('desktop settings', () => {
       },
     }).advanced).toEqual({
       moss_auto_background_agents: true,
+      moss_hive_evidence: true,
       moss_scratchpad: true,
       moss_idle_session_cleanup: true,
       moss_streaming_tool_execution: true,
@@ -172,6 +175,7 @@ describe('desktop settings', () => {
     expect(normalizeDesktopSettings({
       advanced: {
         moss_auto_background_agents: 'false',
+        moss_hive_evidence: 'true',
         moss_plan_mode_interview: 'false',
         moss_tool_result_budget_chars: -1,
         moss_mcp_output_token_limit: 2_000_000,
@@ -182,6 +186,7 @@ describe('desktop settings', () => {
       },
     }).advanced).toMatchObject({
       moss_auto_background_agents: false,
+      moss_hive_evidence: false,
       moss_plan_mode_interview: true,
       moss_tool_result_budget_chars: 200000,
       moss_mcp_output_token_limit: 1000000,

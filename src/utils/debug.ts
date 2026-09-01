@@ -161,8 +161,7 @@ function getDebugWriter(): BufferedWriter {
         ensuredDir = dir
         if (isDebugMode()) {
           // immediateMode: must stay sync. Async writes are lost on direct
-          // process.exit() and keep the event loop alive in beforeExit
-          // handlers (infinite loop with Perfetto tracing). See #22257.
+          // process.exit() and keep the event loop alive in beforeExit handlers.
           if (needMkdir) {
             try {
               getFsImplementation().mkdirSync(dir)

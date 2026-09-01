@@ -2,6 +2,7 @@ import type {
   ToolResultBlockParam,
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/index.mjs'
+import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type {
   ElicitRequestURLParams,
   ElicitResult,
@@ -245,6 +246,11 @@ export type ToolUseContext = {
   /** When true, canUseTool must always be called even when hooks auto-approve.
    *  Used by speculation for overlay file path rewriting. */
   requireCanUseTool?: boolean
+  /** Per-agent Bash sandbox policy. When present, Bash cannot opt out of the
+   * sandbox and permission checks may rely on this OS-level boundary. */
+  bashSandboxConfig?: Partial<SandboxRuntimeConfig>
+  /** Allow tools in a restricted agent pool to self-identify as read-only. */
+  allowReadOnlyTools?: boolean
   messages: Message[]
   fileReadingLimits?: {
     maxTokens?: number

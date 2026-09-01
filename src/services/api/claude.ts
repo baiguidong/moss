@@ -1422,7 +1422,6 @@ async function* queryModel(
   const startIncludingRetries = Date.now()
   let start = Date.now()
   let attemptNumber = 0
-  const attemptStartTimes: number[] = []
   let stream: Stream<BetaRawMessageStreamEvent> | undefined = undefined
   let streamRequestId: string | null | undefined = undefined
   let clientRequestId: string | undefined = undefined
@@ -1666,7 +1665,6 @@ async function* queryModel(
         attemptNumber = attempt
         isFastModeRequest = context.fastMode ?? false
         start = Date.now()
-        attemptStartTimes.push(start)
         // Client has been created by withRetry's getClient() call. This fires
         // once per attempt; on retries the client is usually cached (withRetry
         // only calls getClient() again after auth errors), so the delta from
@@ -2741,7 +2739,6 @@ async function* queryModel(
       llmSpan,
       globalCacheStrategy,
       requestSetupMs: start - startIncludingRetries,
-      attemptStartTimes,
       fastMode: isFastModeRequest,
       previousRequestId,
       betas: lastRequestBetas,

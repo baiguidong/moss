@@ -296,6 +296,10 @@ export type SubagentContextOverrides = {
   /** When true, canUseTool must always be called even when hooks auto-approve.
    *  Used by speculation for overlay file path rewriting. */
   requireCanUseTool?: boolean
+  /** Override the Bash sandbox policy for this subagent. */
+  bashSandboxConfig?: ToolUseContext['bashSandboxConfig']
+  /** Allow tools in this subagent's restricted pool to run when read-only. */
+  allowReadOnlyTools?: boolean
   /** Override replacement state — used by resumeAgentBackground to thread
    * state reconstructed from the resumed sidechain so the same results
    * are re-replaced (prompt cache stability). */
@@ -455,6 +459,8 @@ export function createSubagentContext(
     criticalSystemReminder_EXPERIMENTAL:
       overrides?.criticalSystemReminder_EXPERIMENTAL,
     requireCanUseTool: overrides?.requireCanUseTool,
+    bashSandboxConfig: overrides?.bashSandboxConfig,
+    allowReadOnlyTools: overrides?.allowReadOnlyTools,
   }
 }
 

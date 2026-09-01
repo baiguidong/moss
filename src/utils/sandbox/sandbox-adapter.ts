@@ -23,6 +23,7 @@ import {
 import { rmSync, statSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { memoize } from 'lodash-es'
+import { tmpdir } from 'os'
 import { join, resolve, sep } from 'path'
 import {
   getAdditionalDirectoriesForMossMd,
@@ -399,6 +400,35 @@ let worktreeMainRepoPath: string | null | undefined
 // Bare-repo files at cwd that didn't exist at config time and should be
 // scrubbed if they appear after a sandboxed command. See anthropics/claude-code#29316.
 const bareGitRepoScrubPaths: string[] = []
+
+export function createReadOnlyWorkspaceSandboxConfig(
+  workspace: string,
+  baseFilesystem?: SandboxRuntimeConfig['filesystem'],
+): Partial<SandboxRuntimeConfig> {
+  let filesystem = baseFilesystem
+  if (!filesystem) {
+    const previousScrubPaths = [...bareGitRepoScrubPaths]
+    try {
+      filesystem = convertToSandboxRuntimeConfig(
+        getSettings_DEPRECATED(),
+      ).filesystem
+    } finally {
+      bareGitRepoScrubPaths.splice(
+        0,
+        bareGitRepoScrubPaths.length,
+        ...previousScrubPaths,
+      )
+    }
+  }
+
+  return {
+    filesystem: {
+      ...filesystem,
+      allowWrite: [tmpdir()],
+      denyWrite: [...filesystem.denyWrite, workspace],
+    },
+  }
+}
 
 /**
  * Delete bare-repo files planted at cwd during a sandboxed command, before

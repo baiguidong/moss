@@ -8,6 +8,10 @@ import { getMaxMcpOutputTokens } from '../utils/mcpValidation.js'
 import { withMemoryCorrectionHint } from '../utils/messages.js'
 import { isPlanModeInterviewPhaseEnabled } from '../utils/planModeV2.js'
 import { getDefaultFileReadingLimits } from '../tools/FileReadTool/limits.js'
+import {
+  clearAgentDefinitionsCache,
+  getAgentDefinitionsWithOverrides,
+} from '../tools/AgentTool/loadAgentsDir.js'
 import { getAttributionHeader } from '../constants/system.js'
 import {
   getPerMessageBudgetLimit,
@@ -21,6 +25,7 @@ import {
 const originalFeatureFlagOverrides = process.env.MOSS_FEATURE_FLAG_OVERRIDES
 
 afterEach(() => {
+  clearAgentDefinitionsCache()
   if (originalFeatureFlagOverrides === undefined) {
     delete process.env.MOSS_FEATURE_FLAG_OVERRIDES
   } else {
@@ -41,6 +46,7 @@ describe('advanced settings', () => {
       )
       expect(settings).toEqual({
         moss_auto_background_agents: false,
+        moss_hive_evidence: false,
         moss_scratchpad: false,
         moss_idle_session_cleanup: false,
         moss_streaming_tool_execution: false,
@@ -72,6 +78,7 @@ describe('advanced settings', () => {
           MOSS_CONFIG_DIR: configDir,
           [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
             moss_auto_background_agents: true,
+            moss_hive_evidence: true,
             moss_scratchpad: true,
             moss_idle_session_cleanup: true,
             moss_streaming_tool_execution: true,
@@ -90,6 +97,7 @@ describe('advanced settings', () => {
       )
       expect(settings).toEqual({
         moss_auto_background_agents: true,
+        moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
         moss_streaming_tool_execution: true,
@@ -119,6 +127,36 @@ describe('advanced settings', () => {
       expect(interviewEnabled).toBe(false)
     } finally {
       await rm(configDir, { recursive: true, force: true })
+    }
+  })
+
+  test('isolates cached agent definitions by hive evidence setting', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'moss-agent-cache-session-'))
+    const getDefinitions = (sessionId: string, enabled: boolean) =>
+      runWithSessionIdContext(
+        asSessionId(sessionId),
+        undefined,
+        () => getAgentDefinitionsWithOverrides(cwd),
+        undefined,
+        {
+          [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
+            moss_hive_evidence: enabled,
+          }),
+        },
+      )
+
+    try {
+      clearAgentDefinitionsCache()
+      const disabled = getDefinitions('agent-cache-disabled', false)
+      const disabledAgain = getDefinitions('agent-cache-disabled-again', false)
+      const enabled = getDefinitions('agent-cache-enabled', true)
+
+      expect(disabledAgain).toBe(disabled)
+      expect(enabled).not.toBe(disabled)
+      await Promise.all([disabled, enabled])
+    } finally {
+      clearAgentDefinitionsCache()
+      await rm(cwd, { recursive: true, force: true })
     }
   })
 

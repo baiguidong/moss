@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'child_process'
+import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import { constants as fsConstants, readFileSync, unlinkSync } from 'fs'
 import { type FileHandle, mkdir, open, realpath } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
@@ -165,6 +166,7 @@ export type ExecOptions = {
   ) => void
   preventCwdChanges?: boolean
   shouldUseSandbox?: boolean
+  sandboxConfig?: Partial<SandboxRuntimeConfig>
   shouldAutoBackground?: boolean
   /** When provided, stdout is piped (not sent to file) and this callback fires on each data chunk. */
   onStdout?: (data: string) => void
@@ -185,6 +187,7 @@ export async function exec(
     onProgress,
     preventCwdChanges,
     shouldUseSandbox,
+    sandboxConfig,
     shouldAutoBackground,
     onStdout,
   } = options ?? {}
@@ -258,7 +261,7 @@ export async function exec(
     commandString = await SandboxManager.wrapWithSandbox(
       commandString,
       sandboxBinShell,
-      undefined,
+      sandboxConfig,
       abortSignal,
     )
     // Create sandbox temp directory for sandboxed processes with secure permissions

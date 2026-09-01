@@ -69,7 +69,6 @@ export function endLLMRequestSpan(
     hasToolCall?: boolean
     ttftMs?: number
     requestSetupMs?: number
-    attemptStartTimes?: number[]
   },
 ): void {
   return

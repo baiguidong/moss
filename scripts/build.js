@@ -38,9 +38,18 @@ if (!['all', 'node', 'electron-direct', 'server'].includes(target)) {
   process.exit(1)
 }
 
-const enabledFeatures = Object.entries({ ...RECOMMENDED, ...EXPERIMENTAL, ...NATIVE_REQUIRED, ...INTERNAL_ONLY })
+const enabledFeatures = Object.entries({
+  ...RECOMMENDED,
+  ...EXPERIMENTAL,
+  ...NATIVE_REQUIRED,
+  ...INTERNAL_ONLY,
+})
   .filter(([, v]) => v)
   .map(([k]) => k)
+const featureArgs = enabledFeatures.flatMap(featureName => [
+  '--feature',
+  featureName,
+])
 
 const defines = [
   `--define=MACRO.VERSION="2.1.88"`,
@@ -51,7 +60,6 @@ const defines = [
 ]
 
 const aliases = [
-  '--alias=bun:bundle=./scripts/bun-bundle-feature.js',
   '--alias=@ant/claude-for-chrome-mcp=./vendor/@ant/claude-for-chrome-mcp/index.js',
   '--alias=@anthropic-ai/bedrock-sdk=./vendor/@anthropic-ai/bedrock-sdk/index.mjs',
   '--alias=@anthropic-ai/foundry-sdk=./vendor/@anthropic-ai/foundry-sdk/index.mjs',
@@ -88,6 +96,7 @@ if (buildBunCli) {
     '--outfile=bin/cli.js',
     '--target=bun',
     ...aliases,
+    ...featureArgs,
     ...defines,
   ])
 }
@@ -99,6 +108,7 @@ if (buildNodeCli) {
     '--outfile=bin/cli-node.js',
     '--target=node',
     ...aliases,
+    ...featureArgs,
     ...defines,
   ])
   sanitizePaths('bin/cli-node.js')
@@ -112,6 +122,7 @@ if (buildElectronDirect) {
     '--target=node',
     '--format=esm',
     ...aliases,
+    ...featureArgs,
     ...defines,
   ])
   sanitizePaths('ui/electron-direct.mjs')
@@ -136,6 +147,7 @@ build('bin/moss-server.mjs', [
   '--target=node',
   '--format=esm',
   ...aliases,
+  ...featureArgs,
   ...defines,
 ])
 sanitizePaths('bin/moss-server.mjs')
@@ -155,6 +167,7 @@ build('bin/moss-session-runner.mjs', [
   '--target=node',
   '--format=esm',
   ...aliases,
+  ...featureArgs,
   ...defines,
 ])
 sanitizePaths('bin/moss-session-runner.mjs')

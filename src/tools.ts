@@ -15,12 +15,13 @@ const SleepTool =
   feature('PROACTIVE')
     ? require('./tools/SleepTool/SleepTool.js').SleepTool
     : null
-// AGENT_TRIGGERS: Always enable for electron-direct (bun bundler feature flag not working)
-const cronTools = [
-  require('./tools/ScheduleCronTool/CronCreateTool.js').CronCreateTool,
-  require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
-  require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
-]
+const cronTools = feature('AGENT_TRIGGERS')
+  ? [
+      require('./tools/ScheduleCronTool/CronCreateTool.js').CronCreateTool,
+      require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
+      require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
+    ]
+  : []
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import { TaskOutputTool } from './tools/TaskOutputTool/TaskOutputTool.js'
 import { WebSearchTool } from './tools/WebSearchTool/WebSearchTool.js'
@@ -70,10 +71,6 @@ export {
 } from './constants/tools.js'
 import { feature } from 'bun:bundle'
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
-const TerminalCaptureTool = feature('TERMINAL_PANEL')
-  ? require('./tools/TerminalCaptureTool/TerminalCaptureTool.js')
-      .TerminalCaptureTool
-  : null
 const WebBrowserTool = feature('WEB_BROWSER_TOOL')
   ? require('./tools/WebBrowserTool/WebBrowserTool.js').WebBrowserTool
   : null
@@ -159,7 +156,6 @@ export function getAllBaseTools(): Tools {
     TaskGetTool,
     TaskUpdateTool,
     TaskListTool,
-    ...(TerminalCaptureTool ? [TerminalCaptureTool] : []),
     ...(isEnvTruthy(process.env.ENABLE_LSP_TOOL) ? [LSPTool] : []),
     ...(isWorktreeModeEnabled() ? [EnterWorktreeTool, ExitWorktreeTool] : []),
     getSendMessageTool(),

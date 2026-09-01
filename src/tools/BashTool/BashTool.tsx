@@ -607,7 +607,8 @@ export const BashTool = buildTool({
         preventCwdChanges,
         isMainThread,
         toolUseId: toolUseContext.toolUseId,
-        agentId: toolUseContext.agentId
+        agentId: toolUseContext.agentId,
+        sandboxConfig: toolUseContext.bashSandboxConfig
       });
 
       // Consume the generator and capture the return value
@@ -773,7 +774,8 @@ async function* runShellCommand({
   preventCwdChanges,
   isMainThread,
   toolUseId,
-  agentId
+  agentId,
+  sandboxConfig
 }: {
   input: BashToolInput;
   abortController: AbortController;
@@ -783,6 +785,7 @@ async function* runShellCommand({
   isMainThread?: boolean;
   toolUseId?: string;
   agentId?: AgentId;
+  sandboxConfig?: ToolUseContext['bashSandboxConfig'];
 }): AsyncGenerator<{
   type: 'progress';
   output: string;
@@ -834,7 +837,8 @@ async function* runShellCommand({
       }
     },
     preventCwdChanges,
-    shouldUseSandbox: shouldUseSandbox(input),
+    shouldUseSandbox: sandboxConfig !== undefined || shouldUseSandbox(input),
+    sandboxConfig,
     shouldAutoBackground
   });
 

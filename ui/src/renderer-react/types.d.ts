@@ -410,6 +410,7 @@ export type DesktopSettings = {
   };
   advanced?: {
     moss_auto_background_agents?: boolean;
+    moss_hive_evidence?: boolean;
     moss_scratchpad?: boolean;
     moss_idle_session_cleanup?: boolean;
     moss_streaming_tool_execution?: boolean;

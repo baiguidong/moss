@@ -1,8 +1,8 @@
 import { feature } from 'bun:bundle'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
-import { getSessionCoordinatorMode } from '../../utils/sessionCoordinatorContext.js'
 import { CLAUDE_CODE_GUIDE_AGENT } from './built-in/claudeCodeGuideAgent.js'
 import { EXPLORE_AGENT } from './built-in/exploreAgent.js'
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
@@ -30,21 +30,6 @@ export function getBuiltInAgents(): AgentDefinition[] {
     return []
   }
 
-  // Use lazy require inside the function body to avoid circular dependency
-  // issues at module init time. The coordinatorMode module depends on tools
-  // which depend on AgentTool which imports this file.
-  if (feature('COORDINATOR_MODE')) {
-    const coordinatorMode = getSessionCoordinatorMode()
-      ?? isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE)
-    if (coordinatorMode) {
-      /* eslint-disable @typescript-eslint/no-require-imports */
-      const { getCoordinatorAgents } =
-        require('../../coordinator/workerAgent.js') as typeof import('../../coordinator/workerAgent.js')
-      /* eslint-enable @typescript-eslint/no-require-imports */
-      return getCoordinatorAgents()
-    }
-  }
-
   const agents: AgentDefinition[] = [
     GENERAL_PURPOSE_AGENT,
     STATUSLINE_SETUP_AGENT,
@@ -66,7 +51,7 @@ export function getBuiltInAgents(): AgentDefinition[] {
 
   if (
     feature('VERIFICATION_AGENT') &&
-    getFeatureValue_CACHED_MAY_BE_STALE('tengu_hive_evidence', false)
+    getAdvancedSetting('moss_hive_evidence')
   ) {
     agents.push(VERIFICATION_AGENT)
   }

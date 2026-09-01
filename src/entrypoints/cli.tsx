@@ -32,28 +32,6 @@ async function main(): Promise<void> {
   } = await import('../utils/startupProfiler.js');
   profileCheckpoint('cli_entry');
 
-  // Fast-path for --dump-system-prompt: output the rendered system prompt and exit.
-  // Used by prompt sensitivity evals to extract the system prompt at a specific commit.
-  // Build-gated with feature flag.
-  if (feature('DUMP_SYSTEM_PROMPT') && args[0] === '--dump-system-prompt') {
-    profileCheckpoint('cli_dump_system_prompt_path');
-    const {
-      enableConfigs
-    } = await import('../utils/config.js');
-    enableConfigs();
-    const {
-      getMainLoopModel
-    } = await import('../utils/model/model.js');
-    const modelIdx = args.indexOf('--model');
-    const model = modelIdx !== -1 && args[modelIdx + 1] || getMainLoopModel();
-    const {
-      getSystemPrompt
-    } = await import('../constants/prompts.js');
-    const prompt = await getSystemPrompt([], model);
-    // biome-ignore lint/suspicious/noConsole:: intentional console output
-    console.log(prompt.join('\n'));
-    return;
-  }
   // Fast-path for `claude ps|logs|attach|kill` and `--bg`/`--background`.
   // Session management against the ~/.moss/sessions/ registry. Flag
   // literals are inlined so bg.js only loads when actually dispatching.

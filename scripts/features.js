@@ -1,11 +1,11 @@
 /**
  * Moss Feature Flags
  *
- * 用法：在 package.json 的 build 脚本里，把想开启的 feature 加入 --define 参数：
- *   --define 'feature("FEATURE_NAME")=true'
+ * 用法：将开关设为 true，scripts/build.js 会为 Bun 添加对应的 --feature 参数：
+ *   --feature FEATURE_NAME
  *
  * 注意：这些 flag 是编译期宏（DCE），修改后需要重新执行 bun run build。
- * 对于 Node.js 构建（build:node），feature() 是运行时 stub，修改 stub 即可无需重建。
+ * Bun 和 Node.js 目标都会在构建时内联 feature() 的结果。
  */
 
 // =============================================================================
@@ -14,17 +14,17 @@
 
 export const RECOMMENDED = {
 
-  // 自动检测终端主题（深色/浅色），无需手动设置
-  AUTO_THEME: true,
+  // 终端自动主题（缺少 OSC 11 systemThemeWatcher；桌面系统主题为独立实现）
+  AUTO_THEME: false,
 
   // Token 用量实时追踪，在输入框底部显示剩余 token 预算
   TOKEN_BUDGET: true,
 
-  // 响应式自动压缩：上下文接近上限时自动触发 compact，比手动更智能
-  REACTIVE_COMPACT: true,
+  // 响应式压缩策略（缺少 reactiveCompact 核心实现）
+  REACTIVE_COMPACT: false,
 
-  // 缓存微压缩：对重复内容使用缓存结果，加快压缩速度
-  CACHED_MICROCOMPACT: true,
+  // 缓存微压缩（cachedMicrocompact 仍为 stub，且缺少 cachedMCConfig）
+  CACHED_MICROCOMPACT: false,
 
   // 压缩前的提醒提示：在 compact 前给 Claude 附加提示，提升压缩质量
   COMPACTION_REMINDERS: true,
@@ -54,14 +54,11 @@ export const RECOMMENDED = {
 
 export const EXPERIMENTAL = {
 
-  // Agent 记忆快照：保存/恢复 agent 的记忆状态（需要 agents-platform stub）
-  AGENT_MEMORY_SNAPSHOT: false,
+  // CLI 进程级后台 Session（缺少 cli/bg 与 taskSummary；后台 Task 不受此开关控制）
+  BG_SESSIONS: false,
 
-  // 后台 Session：允许多个 session 并行运行在后台
-  BG_SESSIONS: true,
-
-  // 主动建议：Claude 主动提出下一步操作建议（实验性，可能影响响应速度）
-  PROACTIVE: true,
+  // 主动建议（当前缺少 proactive 与 SleepTool 实现）
+  PROACTIVE: false,
 
   // Skill 快速搜索：输入 / 时模糊搜索可用 skill
   QUICK_SEARCH: true,
@@ -70,16 +67,19 @@ export const EXPERIMENTAL = {
   EXPERIMENTAL_SKILL_SEARCH: false,
 
   // 内置 Explore/Plan 子 Agent：把探索和规划拆给专用子 agent 处理
-  BUILTIN_EXPLORE_PLAN_AGENTS: false,
+  BUILTIN_EXPLORE_PLAN_AGENTS: true,
+
+  // 独立验证 Agent：编入产物，由 moss_hive_evidence 高级设置按会话启用
+  VERIFICATION_AGENT: true,
 
   // MCP 富文本输出：MCP 工具结果支持格式化展示（表格、代码块等）
   MCP_RICH_OUTPUT: true,
 
-  // MCP Skill：通过 MCP 服务器暴露 skill，扩展 /skill 能力
-  MCP_SKILLS: true,
+  // 从 skill:// MCP resource 发现 Skill（当前缺少 mcpSkills 实现）
+  MCP_SKILLS: false,
 
-  // Workflow 脚本：支持 .workflow 格式的多步骤脚本（WorkflowTool 为 stub，功能受限）
-  WORKFLOW_SCRIPTS: true,
+  // Workflow 脚本（WorkflowTool、LocalWorkflowTask 与相关 UI 均缺失）
+  WORKFLOW_SCRIPTS: false,
 
   // 定时任务（Cron）工具：让 Claude 创建和管理 cron 触发的 agent 任务
   AGENT_TRIGGERS: true,
@@ -93,16 +93,15 @@ export const EXPERIMENTAL = {
   // Prompt 缓存中断检测：检测并提示 prompt cache 失效，帮助优化 token 成本
   PROMPT_CACHE_BREAK_DETECTION: false,
 
-  // OpenTelemetry 会话追踪：记录交互、模型请求和工具调用 span
-  // 运行时需显式设置 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1，
-  // 并配置 CLAUDE_CODE_ENABLE_TELEMETRY 与 OTEL_TRACES_EXPORTER
-  ENHANCED_TELEMETRY_BETA: true,
+  // Bash AST 权限解析：使用仓库内的纯 TypeScript parser；会改变权限判定，先验证 shadow
+  TREE_SITTER_BASH: false,
+
+  // Bash AST 影子模式：运行新 parser 并记录差异，但仍以旧权限判定为准
+  TREE_SITTER_BASH_SHADOW: false,
 
   // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
   COORDINATOR_MODE: true,
 
-  // Buddy 伴侣精灵：在终端显示像素风格的小动物陪伴图标（纯彩蛋）
-  BUDDY: true,
 };
 
 // =============================================================================
@@ -111,17 +110,9 @@ export const EXPERIMENTAL = {
 
 export const NATIVE_REQUIRED = {
 
-  // 粘贴剪切板图片：Ctrl+V 直接粘贴截图给 Claude 分析（仅 macOS）
-  // 依赖：macOS 系统剪贴板 API，无额外二进制
+  // macOS 原生剪贴板图片快速路径；失败时回退到现有 osascript 实现
+  // 可选依赖：image-processor-napi（当前未安装，开启开关不会获得原生加速）
   NATIVE_CLIPBOARD_IMAGE: false,
-
-  // Tree-sitter Bash 解析：更精准地解析 bash 命令结构，提升权限判断准确性
-  // 依赖：vendor/tree-sitter/ 目录下的 WASM 文件（目前 vendor 中未包含）
-  TREE_SITTER_BASH: false,
-
-  // Tree-sitter 影子模式：用于对比旧解析器与 tree-sitter 的结果差异（测试用）
-  // 依赖：同上
-  TREE_SITTER_BASH_SHADOW: false,
 
   // 语音模式：通过麦克风语音输入（仅 macOS）
   // 依赖：audio-capture-napi 原生模块（当前未包含）
@@ -137,18 +128,7 @@ export const NATIVE_REQUIRED = {
 // =============================================================================
 
 export const INTERNAL_ONLY = {
-  DIRECT_CONNECT: true,      // 直连服务
-
-  // --- 内部工具 ---
-  DUMP_SYSTEM_PROMPT: false,      // 输出 system prompt（内部 eval 用）
-  HARD_FAIL: false,               // 强制失败模式（测试用）
-  PERFETTO_TRACING: false,        // Perfetto 性能追踪
-
-  // --- 内部 IDE/平台集成 ---
-  TERMINAL_PANEL: false,     // IDE 终端面板
-
   // --- 其他内部功能 ---
-  VERIFICATION_AGENT: false,      // 验证 agent（需要内部服务）
   IS_LIBC_GLIBC: false,           // 构建环境标记
   IS_LIBC_MUSL: false,            // 构建环境标记
   FORK_SUBAGENT: false,           // Fork 子 agent（实验性，不稳定）

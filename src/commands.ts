@@ -41,11 +41,6 @@ const forkCmd = feature('FORK_SUBAGENT')
       require('./commands/fork/index.js') as typeof import('./commands/fork/index.js')
     ).default
   : null
-const buddy = feature('BUDDY')
-  ? (
-      require('./commands/buddy/index.js') as typeof import('./commands/buddy/index.js')
-    ).default
-  : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
@@ -130,7 +125,6 @@ const COMMANDS = memoize((): Command[] => [
   terminalSetup,
   vim,
   ...(forkCmd ? [forkCmd] : []),
-  ...(buddy ? [buddy] : []),
   ...(proactive ? [proactive] : []),
   ...(voiceCommand ? [voiceCommand] : []),
   permissions,

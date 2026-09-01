@@ -163,6 +163,7 @@ describe('direct embedded backend model settings', () => {
       systemSettings: makeSettings({}),
       advancedSettings: {
         moss_auto_background_agents: true,
+        moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
         moss_streaming_tool_execution: true,
@@ -172,6 +173,10 @@ describe('direct embedded backend model settings', () => {
         moss_large_tool_result_protection: true,
         moss_tool_result_budget_chars: 300_000,
         moss_mcp_output_token_limit: 40_000,
+        moss_file_read_max_size_bytes: 512_000,
+        moss_file_read_max_tokens: 50_000,
+        moss_request_attribution_enabled: false,
+        moss_context_compaction_strategy: 'reactive',
       },
       autoMemory: {
         enabled: true,
@@ -203,6 +208,7 @@ describe('direct embedded backend model settings', () => {
       )
       expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_ADVANCED_SETTINGS || '{}')).toEqual({
         moss_auto_background_agents: true,
+        moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
         moss_streaming_tool_execution: true,
@@ -212,6 +218,10 @@ describe('direct embedded backend model settings', () => {
         moss_large_tool_result_protection: true,
         moss_tool_result_budget_chars: 300_000,
         moss_mcp_output_token_limit: 40_000,
+        moss_file_read_max_size_bytes: 512_000,
+        moss_file_read_max_tokens: 50_000,
+        moss_request_attribution_enabled: false,
+        moss_context_compaction_strategy: 'reactive',
       })
       expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_AUTO_MEMORY_SETTINGS || '{}')).toEqual({
         enabled: true,

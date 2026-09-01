@@ -37,7 +37,7 @@ import { stopCapturingEarlyInput } from './utils/earlyInput.js';
 import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
 import { getInitialFastModeSetting, isFastModeEnabled } from './utils/fastMode.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
-import { createSystemMessage, createUserMessage } from './utils/messages.js';
+import { createUserMessage } from './utils/messages.js';
 import { getPlatform } from './utils/platform.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
 import { settingsChangeDetector } from './utils/settings/changeDetector.js';
@@ -63,14 +63,14 @@ import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEve
 import { getOriginalCwd, setAdditionalDirectoriesForMossMd, setMainLoopModelOverride, setMainThreadAgentType } from './bootstrap/state.js';
 import { getCommands } from './commands.js';
 import type { StatsStore } from './context/stats.js';
-import { launchInvalidSettingsDialog, launchResumeChooser, launchSnapshotUpdateDialog } from './dialogLaunchers.js';
+import { launchInvalidSettingsDialog, launchResumeChooser } from './dialogLaunchers.js';
 import { SHOW_CURSOR } from './ink/termio/dec.js';
 import { exitWithError, getRenderContext, renderAndRun, showSetupScreens } from './interactiveHelpers.js';
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { getMcpToolsCommandsAndResources, prefetchAllMcpResources } from './services/mcp/client.js';
 import { initBundledSkills } from './skills/bundled/index.js';
 import type { AgentColorName } from './tools/AgentTool/agentColorManager.js';
-import { getActiveAgentsFromList, getAgentDefinitionsWithOverrides, isBuiltInAgent, isCustomAgent, parseAgentsFromJson } from './tools/AgentTool/loadAgentsDir.js';
+import { getActiveAgentsFromList, getAgentDefinitionsWithOverrides, isBuiltInAgent, parseAgentsFromJson } from './tools/AgentTool/loadAgentsDir.js';
 import type { LogOption } from './types/logs.js';
 import type { Message as MessageType } from './types/message.js';
 import { loadConversationForResume } from './utils/conversationRecovery.js';
@@ -111,7 +111,7 @@ import { setCwd } from 'src/utils/Shell.js';
 import { type ProcessedResume, processResumedConversation } from 'src/utils/sessionRestore.js';
 import { parseSettingSourcesFlag } from 'src/utils/settings/constants.js';
 import { plural } from 'src/utils/stringUtils.js';
-import { getInitialMainLoopModel, getIsNonInteractiveSession, getSessionId, setAllowedSettingSources, setClientType, setCwdState, setDirectConnectServerUrl, setFlagSettingsPath, setInitialMainLoopModel, setIsInteractive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled } from './bootstrap/state.js';
+import { getInitialMainLoopModel, getIsNonInteractiveSession, getSessionId, setAllowedSettingSources, setClientType, setFlagSettingsPath, setInitialMainLoopModel, setIsInteractive, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionPersistenceDisabled } from './bootstrap/state.js';
 
 import { migrateBypassPermissionsAcceptedToSettings } from './migrations/migrateBypassPermissionsAcceptedToSettings.js';
 import { migrateEnableAllProjectMcpServersToSettings } from './migrations/migrateEnableAllProjectMcpServersToSettings.js';
@@ -121,7 +121,6 @@ import { migrateSonnet1mToSonnet45 } from './migrations/migrateSonnet1mToSonnet4
 import { migrateSonnet45ToSonnet46 } from './migrations/migrateSonnet45ToSonnet46.js';
 import { resetProToOpusDefault } from './migrations/resetProToOpusDefault.js';
 /* eslint-enable @typescript-eslint/no-require-imports */
-import { createDirectConnectSession, DirectConnectError } from './remote/createDirectConnectSession.js';
 import { getAssistantSystemPrompt } from './utils/localMossAssets.js';
 import { initializeLspServerManager } from './services/lsp/manager.js';
 import { shouldEnablePromptSuggestion } from './services/PromptSuggestion/promptSuggestion.js';
@@ -378,26 +377,6 @@ function initializeEntrypoint(isNonInteractive: boolean): void {
   process.env.CLAUDE_CODE_ENTRYPOINT = isNonInteractive ? 'sdk-cli' : 'cli';
 }
 
-// Set by early argv processing when `claude open <url>` is detected (interactive mode only)
-type PendingConnect = {
-  url: string | undefined;
-  authToken: string | undefined;
-  apiKey: string | undefined;
-  userEmail: string | undefined;
-  userPassword: string | undefined;
-  profileMode: 'session' | 'user' | undefined;
-  dangerouslySkipPermissions: boolean;
-};
-const _pendingConnect: PendingConnect | undefined = feature('DIRECT_CONNECT') ? {
-  url: undefined,
-  authToken: undefined,
-  apiKey: undefined,
-  userEmail: undefined,
-  userPassword: undefined,
-  profileMode: undefined,
-  dangerouslySkipPermissions: false
-} : undefined;
-
 export async function main() {
   profileCheckpoint('main_function_start');
 
@@ -421,74 +400,6 @@ export async function main() {
     process.exit(0);
   });
   profileCheckpoint('main_warning_handler_initialized');
-
-  // Check for cc:// or cc+unix:// URL in argv — rewrite so the main command
-  // handles it, giving the full interactive TUI instead of a stripped-down subcommand.
-  // For headless (-p), we rewrite to the internal `open` subcommand.
-  if (feature('DIRECT_CONNECT')) {
-    const rawCliArgs = process.argv.slice(2);
-    const ccIdx = rawCliArgs.findIndex(a => a.startsWith('cc://') || a.startsWith('cc+unix://'));
-    if (ccIdx !== -1 && _pendingConnect) {
-      const ccUrl = rawCliArgs[ccIdx]!;
-      const {
-        parseConnectUrl
-      } = await import('../packages/direct-connect-protocol/src/index.js');
-      const parsed = parseConnectUrl(ccUrl);
-      _pendingConnect.dangerouslySkipPermissions = rawCliArgs.includes('--dangerously-skip-permissions');
-      const apiKeyFlagIdx = rawCliArgs.indexOf('--api-key');
-      if (apiKeyFlagIdx !== -1) {
-        _pendingConnect.apiKey = rawCliArgs[apiKeyFlagIdx + 1];
-      }
-      const userEmailFlagIdx = rawCliArgs.indexOf('--user-email');
-      if (userEmailFlagIdx !== -1) {
-        _pendingConnect.userEmail = rawCliArgs[userEmailFlagIdx + 1];
-      }
-      const userPasswordFlagIdx = rawCliArgs.indexOf('--user-password');
-      if (userPasswordFlagIdx !== -1) {
-        _pendingConnect.userPassword = rawCliArgs[userPasswordFlagIdx + 1];
-      }
-      const profileModeFlagIdx = rawCliArgs.indexOf('--profile-mode');
-      if (profileModeFlagIdx !== -1) {
-        const value = rawCliArgs[profileModeFlagIdx + 1];
-        _pendingConnect.profileMode = value === 'user' ? 'user' : value === 'session' ? 'session' : undefined;
-      }
-      if (rawCliArgs.includes('-p') || rawCliArgs.includes('--print')) {
-        // Headless: rewrite to internal `open` subcommand
-        const stripped = rawCliArgs.filter((_, i) => i !== ccIdx);
-        const dspIdx = stripped.indexOf('--dangerously-skip-permissions');
-        if (dspIdx !== -1) {
-          stripped.splice(dspIdx, 1);
-        }
-        process.argv = [process.argv[0]!, process.argv[1]!, 'open', ccUrl, ...stripped];
-      } else {
-        // Interactive: strip cc:// URL and flags, run main command
-        _pendingConnect.url = parsed.serverUrl;
-        _pendingConnect.authToken = parsed.authToken;
-        const stripped = rawCliArgs.filter((_, i) => i !== ccIdx);
-        const dspIdx = stripped.indexOf('--dangerously-skip-permissions');
-        if (dspIdx !== -1) {
-          stripped.splice(dspIdx, 1);
-        }
-        const apiIdx = stripped.indexOf('--api-key');
-        if (apiIdx !== -1) {
-          stripped.splice(apiIdx, 2);
-        }
-        const emailIdx = stripped.indexOf('--user-email');
-        if (emailIdx !== -1) {
-          stripped.splice(emailIdx, 2);
-        }
-        const passwordIdx = stripped.indexOf('--user-password');
-        if (passwordIdx !== -1) {
-          stripped.splice(passwordIdx, 2);
-        }
-        const profileModeIdx = stripped.indexOf('--profile-mode');
-        if (profileModeIdx !== -1) {
-          stripped.splice(profileModeIdx, 2);
-        }
-        process.argv = [process.argv[0]!, process.argv[1]!, ...stripped];
-      }
-    }
-  }
 
   // Check for -p/--print and --init-only flags early to set isInteractiveSession before init()
   // This is needed because telemetry initialization calls auth functions that need this flag
@@ -1451,24 +1362,6 @@ async function run(): Promise<CommanderCommand> {
       const onboardingShown = await showSetupScreens(root, permissionMode, allowDangerouslySkipPermissions, commands);
       logForDebugging(`[STARTUP] showSetupScreens() completed in ${Date.now() - setupScreensStart}ms`);
 
-      // Check for pending agent memory snapshot updates in --agent mode.
-      if (feature('AGENT_MEMORY_SNAPSHOT') && mainThreadAgentDefinition && isCustomAgent(mainThreadAgentDefinition) && mainThreadAgentDefinition.memory && mainThreadAgentDefinition.pendingSnapshotUpdate) {
-        const agentDef = mainThreadAgentDefinition;
-        const choice = await launchSnapshotUpdateDialog(root, {
-          agentType: agentDef.agentType,
-          scope: agentDef.memory!,
-          snapshotTimestamp: agentDef.pendingSnapshotUpdate!.snapshotTimestamp
-        });
-        if (choice === 'merge') {
-          const {
-            buildMergePrompt
-          } = await import('./components/agents/SnapshotUpdateDialog.js');
-          const mergePrompt = buildMergePrompt(agentDef.agentType, agentDef.memory!);
-          inputPrompt = inputPrompt ? `${mergePrompt}\n\n${inputPrompt}` : mergePrompt;
-        }
-        agentDef.pendingSnapshotUpdate = undefined;
-      }
-
       if (onboardingShown) {
         resetUserCache();
       }
@@ -2044,47 +1937,6 @@ async function run(): Promise<CommanderCommand> {
         logError(error);
         process.exit(1);
       }
-    } else if (feature('DIRECT_CONNECT') && _pendingConnect?.url) {
-      // `claude connect <url>` — full interactive TUI connected to a remote server
-      let directConnectConfig;
-      try {
-        const session = await createDirectConnectSession({
-          serverUrl: _pendingConnect.url,
-          authToken: _pendingConnect.authToken,
-          apiKey: _pendingConnect.apiKey,
-          email: _pendingConnect.userEmail,
-          password: _pendingConnect.userPassword,
-          cwd: getOriginalCwd(),
-          dangerouslySkipPermissions: _pendingConnect.dangerouslySkipPermissions,
-          profileMode: _pendingConnect.profileMode
-        });
-        if (session.workDir) {
-          setOriginalCwd(session.workDir);
-          setCwdState(session.workDir);
-        }
-        setDirectConnectServerUrl(_pendingConnect.url);
-        directConnectConfig = session.config;
-      } catch (err) {
-        return await exitWithError(root, err instanceof DirectConnectError ? err.message : String(err), () => gracefulShutdown(1));
-      }
-      const connectInfoMessage = createSystemMessage(`Connected to server at ${_pendingConnect.url}\nSession: ${directConnectConfig.sessionId}`, 'info');
-      await launchRepl(root, {
-        getFpsMetrics,
-        stats,
-        initialState
-      }, {
-        debug: debug || debugToStderr,
-        commands,
-        initialTools: [],
-        initialMessages: [connectInfoMessage],
-        mcpClients: [],
-        autoConnectIdeFlag: ide,
-        mainThreadAgentDefinition,
-        disableSlashCommands,
-        directConnectConfig,
-        thinkingConfig
-      }, renderAndRun);
-      return;
     } else if (options.resume || options.fromPr) {
       // Handle resume flow from file, session ID, or interactive selector.
 
@@ -2250,9 +2102,6 @@ async function run(): Promise<CommanderCommand> {
   // Enable SDK URL for all builds but hide from help
   program.addOption(new Option('--sdk-url <url>', 'Use remote WebSocket endpoint for SDK I/O streaming (only with -p and stream-json format)').hideHelp());
 
-  if (feature('HARD_FAIL')) {
-    program.addOption(new Option('--hard-fail', 'Crash on logError calls instead of silently logging').hideHelp());
-  }
   profileCheckpoint('run_main_options_built');
 
   // -p/--print mode: skip subcommand registration. The 52 subcommands
@@ -2261,11 +2110,9 @@ async function run(): Promise<CommanderCommand> {
   // default action. The subcommand registration path was measured at ~65ms
   // on baseline — mostly the isBridgeEnabled() call (25ms settings Zod parse
   // + 40ms sync keychain subprocess), both hidden by the try/catch that
-  // always returns false before enableConfigs(). cc:// URLs are rewritten to
-  // `open` at main() line ~851 BEFORE this runs, so argv check is safe here.
+  // always returns false before enableConfigs().
   const isPrintMode = process.argv.includes('-p') || process.argv.includes('--print');
-  const isCcUrl = process.argv.some(a => a.startsWith('cc://') || a.startsWith('cc+unix://'));
-  if (isPrintMode && !isCcUrl) {
+  if (isPrintMode) {
     profileCheckpoint('run_before_parse');
     await program.parseAsync(process.argv);
     profileCheckpoint('run_after_parse');
@@ -2326,104 +2173,6 @@ async function run(): Promise<CommanderCommand> {
     } = await import('./cli/handlers/mcp.js');
     await mcpResetChoicesHandler();
   });
-
-  // moss server
-  if (feature('DIRECT_CONNECT')) {
-    program.command('server').description('Start the standalone Moss server').action(async () => {
-      const { existsSync } = await import('fs');
-      const { dirname, join } = await import('path');
-      const { fileURLToPath } = await import('url');
-      const { spawn } = await import('child_process');
-      const currentDir = dirname(fileURLToPath(import.meta.url));
-      const candidates = [
-        process.env.MOSS_SERVER_ENTRY,
-        join(currentDir, 'moss-server.mjs'),
-        join(currentDir, '..', 'bin', 'moss-server.mjs'),
-        join(process.cwd(), 'bin', 'moss-server.mjs')
-      ].filter((value): value is string => Boolean(value));
-      const serverEntry = candidates.find(candidate => existsSync(candidate));
-      if (!serverEntry) {
-        throw new Error('Missing bin/moss-server.mjs. Run `bun run --cwd server build` first.');
-      }
-      const server = spawn(process.execPath, [serverEntry], {
-        stdio: 'inherit',
-        env: process.env
-      });
-      await new Promise<void>((resolveServer, rejectServer) => {
-        const forwardSignal = (signal: NodeJS.Signals) => {
-          if (!server.killed) server.kill(signal);
-        };
-        const onSigint = () => forwardSignal('SIGINT');
-        const onSigterm = () => forwardSignal('SIGTERM');
-        const cleanup = () => {
-          process.off('SIGINT', onSigint);
-          process.off('SIGTERM', onSigterm);
-        };
-        process.once('SIGINT', onSigint);
-        process.once('SIGTERM', onSigterm);
-        server.once('error', error => {
-          cleanup();
-          rejectServer(error);
-        });
-        server.once('exit', code => {
-          cleanup();
-          if (code === 0 || code === null) resolveServer();
-          else rejectServer(new Error(`Moss server exited with code ${code}`));
-        });
-      });
-    });
-  }
-
-  // moss connect — subcommand only handles -p (headless) mode.
-  // Interactive mode (without -p) is handled by early argv rewriting in main()
-  // which redirects to the main command with full TUI support.
-  if (feature('DIRECT_CONNECT')) {
-    program.command('open <cc-url>').description('Connect to a Moss server (internal — use cc:// URLs)').option('-p, --print [prompt]', 'Print mode (headless)').option('--output-format <format>', 'Output format: text, json, stream-json', 'text').option('--api-key <key>', 'API key used to get an access token').option('--user-email <email>', 'User email used to get an access token').option('--user-password <pwd>', 'User password used to get an access token').option('--profile-mode <mode>', 'Profile mode: session | user').action(async (ccUrl: string, opts: {
-      print?: string | boolean;
-      outputFormat: string;
-      apiKey?: string;
-      userEmail?: string;
-      userPassword?: string;
-      profileMode?: string;
-    }) => {
-      const {
-        parseConnectUrl
-      } = await import('../packages/direct-connect-protocol/src/index.js');
-      const {
-        serverUrl,
-        authToken
-      } = parseConnectUrl(ccUrl);
-      let connectConfig;
-      try {
-        const session = await createDirectConnectSession({
-          serverUrl,
-          authToken,
-          apiKey: opts.apiKey,
-          email: opts.userEmail,
-          password: opts.userPassword,
-          cwd: getOriginalCwd(),
-          dangerouslySkipPermissions: _pendingConnect?.dangerouslySkipPermissions,
-          profileMode: opts.profileMode === 'user' ? 'user' : opts.profileMode === 'session' ? 'session' : undefined
-        });
-        if (session.workDir) {
-          setOriginalCwd(session.workDir);
-          setCwdState(session.workDir);
-        }
-        setDirectConnectServerUrl(serverUrl);
-        connectConfig = session.config;
-      } catch (err) {
-        // biome-ignore lint/suspicious/noConsole: intentional error output
-        console.error(err instanceof DirectConnectError ? err.message : String(err));
-        process.exit(1);
-      }
-      const {
-        runConnectHeadless
-      } = await import('./remote/connectHeadless.js');
-      const prompt = typeof opts.print === 'string' ? opts.print : '';
-      const interactive = opts.print === true;
-      await runConnectHeadless(connectConfig, prompt, opts.outputFormat, interactive);
-    });
-  }
 
   // Agents command - list configured agents
   program.command('agents').description('List configured agents').option('--setting-sources <sources>', 'Comma-separated list of setting sources to load (user, project, local).').action(async () => {
