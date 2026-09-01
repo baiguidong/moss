@@ -35,6 +35,7 @@ export type SessionSummary = {
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
+  autoCollapseToolCalls?: boolean | null;
   isSubAgent?: boolean;
   parentSessionId?: string | null;
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
@@ -901,6 +902,7 @@ declare global {
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
+      setSessionAutoCollapseToolCalls: (payload: { sessionId: string; enabled: boolean }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
       listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;

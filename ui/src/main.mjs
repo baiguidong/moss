@@ -735,6 +735,11 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN auto_collapse_tool_calls INTEGER`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -764,7 +769,8 @@ const persistSessionStmt = (() => {
       project_task_status TEXT,
       project_task_prompt TEXT,
       project_task_error TEXT,
-      project_task_completed_at INTEGER
+      project_task_completed_at INTEGER,
+      auto_collapse_tool_calls INTEGER
     )
   `);
   sessionDb.exec(`
@@ -774,9 +780,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -805,7 +811,8 @@ const persistSessionStmt = (() => {
       project_task_status = excluded.project_task_status,
       project_task_prompt = excluded.project_task_prompt,
       project_task_error = excluded.project_task_error,
-      project_task_completed_at = excluded.project_task_completed_at
+      project_task_completed_at = excluded.project_task_completed_at,
+      auto_collapse_tool_calls = excluded.auto_collapse_tool_calls
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -838,7 +845,8 @@ const loadSessionsStmt = sessionDb.prepare(`
     project_task_status,
     project_task_prompt,
     project_task_error,
-    project_task_completed_at
+    project_task_completed_at,
+    auto_collapse_tool_calls
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -871,7 +879,8 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     project_task_status,
     project_task_prompt,
     project_task_error,
-    project_task_completed_at
+    project_task_completed_at,
+    auto_collapse_tool_calls
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -3427,6 +3436,9 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.projectTaskPrompt || null,
     sessionRecord.projectTaskError || null,
     Number.isFinite(sessionRecord.projectTaskCompletedAt) ? sessionRecord.projectTaskCompletedAt : null,
+    typeof sessionRecord.autoCollapseToolCalls === 'boolean'
+      ? (sessionRecord.autoCollapseToolCalls ? 1 : 0)
+      : null,
   ];
 }
 
@@ -3496,6 +3508,9 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     projectTaskError: sessionRecord.projectTaskError || '',
     projectTaskCompletedAt: Number.isFinite(sessionRecord.projectTaskCompletedAt)
       ? sessionRecord.projectTaskCompletedAt
+      : null,
+    autoCollapseToolCalls: typeof sessionRecord.autoCollapseToolCalls === 'boolean'
+      ? sessionRecord.autoCollapseToolCalls
       : null,
   };
 }
@@ -3629,6 +3644,9 @@ function hydratePersistedSessions() {
       projectTaskCompletedAt: Number.isFinite(row.project_task_completed_at)
         ? row.project_task_completed_at
         : null,
+      autoCollapseToolCalls: row.auto_collapse_tool_calls == null
+        ? null
+        : Boolean(row.auto_collapse_tool_calls),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3689,6 +3707,9 @@ function hydratePersistedSessions() {
       projectTaskPrompt: '',
       projectTaskError: '',
       projectTaskCompletedAt: null,
+      autoCollapseToolCalls: row.auto_collapse_tool_calls == null
+        ? null
+        : Boolean(row.auto_collapse_tool_calls),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3938,6 +3959,9 @@ function getSessionSummary(sessionRecord) {
       ? sessions.get(sessionRecord.sourceSessionId)?.title || null
       : null,
     cronTaskId: sessionRecord.cronTaskId || null,
+    autoCollapseToolCalls: typeof sessionRecord.autoCollapseToolCalls === 'boolean'
+      ? sessionRecord.autoCollapseToolCalls
+      : null,
     isSubAgent: Boolean(sessionRecord.isSubAgent),
     parentSessionId: sessionRecord.parentSessionId || null,
     sessionRole: sessionRecord.sessionRole || 'chat',
@@ -6671,6 +6695,7 @@ function createSessionRecord({
     projectTaskPrompt: '',
     projectTaskError: '',
     projectTaskCompletedAt: null,
+    autoCollapseToolCalls: null,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -9726,6 +9751,17 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
     tasks: snapshotSessionTasks(sessionRecord),
   };
+});
+
+ipcMain.handle('agent:set-session-auto-collapse-tool-calls', (_event, { sessionId, enabled } = {}) => {
+  if (typeof enabled !== 'boolean') {
+    throw new Error('Auto-collapse setting must be a boolean.');
+  }
+  const sessionRecord = getSessionRecord(sessionId);
+  sessionRecord.autoCollapseToolCalls = enabled;
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  return getSessionSummary(sessionRecord);
 });
 
 async function removeSubAgentSessionRecords(parentSessionId) {

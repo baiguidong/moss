@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'bun:test';
 import {
   getToolExecutionState,
+  resolveAutoCollapseToolCalls,
   shouldAutoCollapseToolCall,
 } from '../src/renderer-react/components/chat/tool-display-settings';
 
 describe('tool display settings', () => {
+  it('uses the session setting before the global default', () => {
+    expect(resolveAutoCollapseToolCalls(true, false)).toBe(true);
+    expect(resolveAutoCollapseToolCalls(false, true)).toBe(false);
+    expect(resolveAutoCollapseToolCalls(null, true)).toBe(true);
+    expect(resolveAutoCollapseToolCalls(undefined, false)).toBe(false);
+  });
+
   it('keeps the current expanded behavior when automatic collapse is disabled', () => {
     expect(shouldAutoCollapseToolCall({
       enabled: false,

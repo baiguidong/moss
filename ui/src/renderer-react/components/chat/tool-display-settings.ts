@@ -13,6 +13,13 @@ const ToolDisplaySettingsContext = React.createContext<ToolDisplaySettings>({
 
 export type ToolExecutionState = "running" | "completed" | "failed";
 
+export function resolveAutoCollapseToolCalls(
+  sessionOverride: boolean | null | undefined,
+  globalDefault: boolean,
+) {
+  return sessionOverride ?? globalDefault;
+}
+
 export function getToolExecutionState({
   status,
   failed,

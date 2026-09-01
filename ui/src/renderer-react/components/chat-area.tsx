@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
+import { ToolDisplaySettingsProvider } from "@/components/chat/tool-display-settings";
 import { FilePreview } from "@/components/file-preview";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
@@ -113,8 +114,9 @@ function SessionTabBar({
   rightCollapsed,
   onToggleLeft,
   onToggleRight,
-  showToolCalls,
-  onToggleToolCalls,
+  autoCollapseToolCalls,
+  onToggleAutoCollapseToolCalls,
+  toolDisplaySettingBusy,
   outline,
   onJumpToOutlineItem,
   messages,
@@ -128,8 +130,9 @@ function SessionTabBar({
   rightCollapsed: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
-  showToolCalls: boolean;
-  onToggleToolCalls: () => void;
+  autoCollapseToolCalls: boolean;
+  onToggleAutoCollapseToolCalls?: () => void;
+  toolDisplaySettingBusy: boolean;
   outline: OutlineEntry[];
   onJumpToOutlineItem: (messageId: string) => void;
   messages: TranscriptRenderMessage[];
@@ -274,12 +277,17 @@ function SessionTabBar({
           <Button
             variant="ghost"
             size="icon"
-            className={cn("h-8 w-8 rounded-full", !showToolCalls && "text-primary")}
-            onClick={onToggleToolCalls}
-            title={showToolCalls ? "切换为紧凑工具视图" : "显示工具调用细节"}
-            aria-label="切换工具调用显示"
+            className={cn("h-8 w-8 rounded-full", autoCollapseToolCalls && "text-primary")}
+            onClick={onToggleAutoCollapseToolCalls}
+            disabled={!onToggleAutoCollapseToolCalls || toolDisplaySettingBusy}
+            title={autoCollapseToolCalls
+              ? "当前会话：关闭完成后自动折叠"
+              : "当前会话：完成后自动折叠工具调用"}
+            aria-label={autoCollapseToolCalls
+              ? "关闭当前会话的工具调用自动折叠"
+              : "开启当前会话的工具调用自动折叠"}
           >
-            <Wrench className="h-4 w-4" />
+            <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
           </Button>
           <Button
             variant="ghost"
@@ -2013,6 +2021,9 @@ export function ChatArea({
   onForkSession,
   forkingSession = false,
   forkDisabledReason,
+  autoCollapseToolCalls = false,
+  onToggleAutoCollapseToolCalls,
+  toolDisplaySettingBusy = false,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -2063,37 +2074,16 @@ export function ChatArea({
   onForkSession?: () => void;
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
+  autoCollapseToolCalls?: boolean;
+  onToggleAutoCollapseToolCalls?: () => void;
+  toolDisplaySettingBusy?: boolean;
 }) {
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
 
-  const [showToolCalls, setShowToolCalls] = React.useState(() => {
-    try {
-      const visibilityVersion = localStorage.getItem("ui.showToolCalls.v2");
-      if (visibilityVersion !== "1") {
-        localStorage.setItem("ui.showToolCalls", "1");
-        localStorage.setItem("ui.showToolCalls.v2", "1");
-        return true;
-      }
-      return localStorage.getItem("ui.showToolCalls") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const handleToggleToolCalls = React.useCallback(() => {
-    setShowToolCalls((prev) => {
-      try {
-        localStorage.setItem("ui.showToolCalls", prev ? "0" : "1");
-        localStorage.setItem("ui.showToolCalls.v2", "1");
-      } catch {}
-      return !prev;
-    });
-  }, []);
-
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
-    setShowToolCalls(true);
     const groupTimer = window.setTimeout(() => {
       virtualListRef.current?.scrollToTool(focusedToolUseId);
     }, 60);
@@ -2184,8 +2174,9 @@ export function ChatArea({
         rightCollapsed={rightCollapsed}
         onToggleLeft={onToggleLeftSidebar}
         onToggleRight={onToggleRightSidebar}
-        showToolCalls={showToolCalls}
-        onToggleToolCalls={handleToggleToolCalls}
+        autoCollapseToolCalls={autoCollapseToolCalls}
+        onToggleAutoCollapseToolCalls={onToggleAutoCollapseToolCalls}
+        toolDisplaySettingBusy={toolDisplaySettingBusy}
         outline={outline}
         onJumpToOutlineItem={handleJumpToOutlineItem}
         messages={messages}
@@ -2194,24 +2185,25 @@ export function ChatArea({
         forkDisabledReason={forkDisabledReason}
       />
 
-      <MessageListPane
-        key={sessionId || "default"}
-        ref={virtualListRef}
-        className="flex-1"
-        messages={messages}
-        workspace={sessionWorkspace}
-        loading={loading}
-        hideToolCalls={!showToolCalls}
-        focusedToolUseId={focusedToolUseId}
-        footer={pendingPlanApproval ? (
-          <PlanApprovalCard
-            pendingPlanApproval={pendingPlanApproval}
-            busy={planDecisionBusy || loading}
-            onApprove={onApprovePlan}
-            onReject={onRejectPlan}
-          />
-        ) : undefined}
-      />
+      <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
+        <MessageListPane
+          key={sessionId || "default"}
+          ref={virtualListRef}
+          className="flex-1"
+          messages={messages}
+          workspace={sessionWorkspace}
+          loading={loading}
+          focusedToolUseId={focusedToolUseId}
+          footer={pendingPlanApproval ? (
+            <PlanApprovalCard
+              pendingPlanApproval={pendingPlanApproval}
+              busy={planDecisionBusy || loading}
+              onApprove={onApprovePlan}
+              onReject={onRejectPlan}
+            />
+          ) : undefined}
+        />
+      </ToolDisplaySettingsProvider>
 
 
       <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">

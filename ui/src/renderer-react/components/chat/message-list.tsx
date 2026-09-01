@@ -448,21 +448,16 @@ export const VirtualMessageList = React.forwardRef<
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     onAtBottomChange?: (atBottom: boolean) => void;
-    hideToolCalls?: boolean;
     focusedToolUseId?: string;
   }
 >(function VirtualMessageList(
-  { messages, workspace, loading, footer, emptyState, onAtBottomChange, hideToolCalls, focusedToolUseId },
+  { messages, workspace, loading, footer, emptyState, onAtBottomChange, focusedToolUseId },
   ref,
 ) {
-  const { renderItems: allRenderItems, resultMap, childToolCallsByParent } = React.useMemo(
+  const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
     () => buildRenderModel(messages),
     [messages],
   );
-
-  const renderItems = hideToolCalls
-    ? allRenderItems.filter((item) => item.kind !== "tool_group")
-    : allRenderItems;
   const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
   const atBottomRef = React.useRef(true);
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
@@ -582,7 +577,6 @@ export const MessageListPane = React.forwardRef<
     loading?: boolean;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
-    hideToolCalls?: boolean;
     focusedToolUseId?: string;
     className?: string;
   }

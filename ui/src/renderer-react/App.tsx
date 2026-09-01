@@ -4,7 +4,10 @@ import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { ChatArea } from '@/components/chat-area';
-import { ToolDisplaySettingsProvider } from '@/components/chat/tool-display-settings';
+import {
+  resolveAutoCollapseToolCalls,
+  ToolDisplaySettingsProvider,
+} from '@/components/chat/tool-display-settings';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { SkillHubView } from '@/components/skill-hub-view';
 import { ExpertHubView } from '@/components/expert-hub-view';
@@ -458,6 +461,8 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [forkingSessionId, setForkingSessionId] = React.useState<string | null>(null);
   const forkSessionRequestRef = React.useRef(false);
+  const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
+  const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
@@ -1309,6 +1314,11 @@ export default function App() {
     () => countSessionMessages(activeDetail?.history || []),
     [activeDetail?.history],
   );
+  const globalAutoCollapseToolCalls = desktopSettings?.appearance.autoCollapseToolCalls ?? false;
+  const activeAutoCollapseToolCalls = resolveAutoCollapseToolCalls(
+    activeDetail?.autoCollapseToolCalls,
+    globalAutoCollapseToolCalls,
+  );
 
   const forkDisabledReason = React.useMemo(() => {
     if (!activeDetail) return '会话尚未加载完成';
@@ -1579,6 +1589,42 @@ export default function App() {
       setForkingSessionId(null);
     }
   }, [openSession, persistSessionAgentModes, sessionAgentModes, showPermissionNotice]);
+
+  const handleToggleSessionAutoCollapseToolCalls = React.useCallback(async () => {
+    const sessionId = activeSessionIdRef.current;
+    const detail = activeDetailRef.current;
+    if (!sessionId || !detail || toolDisplaySettingRequestRef.current) return;
+
+    const enabled = !resolveAutoCollapseToolCalls(
+      detail.autoCollapseToolCalls,
+      desktopSettings?.appearance.autoCollapseToolCalls ?? false,
+    );
+    toolDisplaySettingRequestRef.current = sessionId;
+    setToolDisplaySettingSessionId(sessionId);
+    try {
+      const summary = await window.agentDesktop.setSessionAutoCollapseToolCalls({ sessionId, enabled });
+      setSummaries((prev) => upsertSummary(prev, summary));
+      if (activeSessionIdRef.current === sessionId) {
+        setActiveDetail((current) => {
+          if (!current || current.id !== sessionId) return current;
+          const next = { ...current, ...summary };
+          activeDetailRef.current = next;
+          return next;
+        });
+      }
+    } catch (error) {
+      showPermissionNotice(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        6000,
+      );
+    } finally {
+      if (toolDisplaySettingRequestRef.current === sessionId) {
+        toolDisplaySettingRequestRef.current = null;
+      }
+      setToolDisplaySettingSessionId((current) => current === sessionId ? null : current);
+    }
+  }, [desktopSettings?.appearance.autoCollapseToolCalls, showPermissionNotice]);
 
   const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
     if (activeDetailRef.current?.projectId) {
@@ -2334,6 +2380,9 @@ export default function App() {
                 onForkSession={handleForkSession}
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
+                autoCollapseToolCalls={activeAutoCollapseToolCalls}
+                onToggleAutoCollapseToolCalls={handleToggleSessionAutoCollapseToolCalls}
+                toolDisplaySettingBusy={toolDisplaySettingSessionId === activeSessionId}
                 onSend={handleSend}
                 onStop={handleStop}
                 onOpenChildSession={(sessionId) => { void openSession(sessionId); }}

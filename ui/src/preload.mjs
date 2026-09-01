@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
+  setSessionAutoCollapseToolCalls: (payload) => ipcRenderer.invoke('agent:set-session-auto-collapse-tool-calls', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
   listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
