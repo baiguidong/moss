@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import { logEvent } from '../../services/analytics/index.js'
 import { logForDebugging } from '../debug.js'
 import {
@@ -38,31 +38,31 @@ function logLoadOnce(success: boolean): void {
   if (logged) return
   logged = true
   logForDebugging(
-    success ? 'tree-sitter: native module loaded' : 'tree-sitter: unavailable',
+    success ? 'bash AST parser available' : 'bash AST parser unavailable',
   )
   logEvent('tengu_tree_sitter_load', { success })
 }
 
+export function isBashAstPermissionsEnabled(): boolean {
+  return getAdvancedSetting('moss_bash_ast_permissions')
+}
+
 /**
- * Awaits WASM init (Parser.init + Language.load). Must be called before
- * parseCommand/parseCommandRaw for the parser to be available. Idempotent.
+ * Initializes the parser when Bash AST permissions are enabled. Idempotent.
  */
 export async function ensureInitialized(): Promise<void> {
-  if (feature('TREE_SITTER_BASH') || feature('TREE_SITTER_BASH_SHADOW')) {
+  if (isBashAstPermissionsEnabled()) {
     await ensureParserInitialized()
   }
 }
 
 export async function parseCommand(
   command: string,
+  astEnabled = isBashAstPermissionsEnabled(),
 ): Promise<ParsedCommandData | null> {
   if (!command || command.length > MAX_COMMAND_LENGTH) return null
 
-  // Gate: disabled builds fall back to legacy regex/shell-quote path.
-  // Guarding the whole body inside the positive
-  // branch lets Bun DCE the NAPI import AND keeps telemetry honest — we
-  // only fire tengu_tree_sitter_load when a load was genuinely attempted.
-  if (feature('TREE_SITTER_BASH')) {
+  if (astEnabled) {
     await ensureParserInitialized()
     const mod = getParserModule()
     logLoadOnce(mod !== null)
@@ -85,7 +85,7 @@ export async function parseCommand(
 
 /**
  * SECURITY: Sentinel for "parser was loaded and attempted, but aborted"
- * (timeout / node budget / Rust panic). Distinct from `null` (module not
+ * (timeout / node budget / parser exception). Distinct from `null` (parser not
  * loaded). Adversarial input can trigger abort under MAX_COMMAND_LENGTH:
  * `(( a[0][0]... ))` with ~2800 subscripts hits PARSE_TIMEOUT_MICROS.
  * Callers MUST treat this as fail-closed (too-complex), NOT route to legacy.
@@ -98,14 +98,15 @@ export const PARSE_ABORTED = Symbol('parse-aborted')
  *
  * Returns:
  *   - Node: parse succeeded
- *   - null: module not loaded / feature off / empty / over-length
- *   - PARSE_ABORTED: module loaded but parse failed (timeout/panic)
+ *   - null: setting off / parser unavailable / empty / over-length
+ *   - PARSE_ABORTED: parser enabled but parsing failed (timeout/exception)
  */
 export async function parseCommandRaw(
   command: string,
+  astEnabled = isBashAstPermissionsEnabled(),
 ): Promise<Node | null | typeof PARSE_ABORTED> {
   if (!command || command.length > MAX_COMMAND_LENGTH) return null
-  if (feature('TREE_SITTER_BASH') || feature('TREE_SITTER_BASH_SHADOW')) {
+  if (astEnabled) {
     await ensureParserInitialized()
     const mod = getParserModule()
     logLoadOnce(mod !== null)

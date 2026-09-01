@@ -1,9 +1,9 @@
-import memoize from 'lodash-es/memoize.js'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import {
   extractOutputRedirections,
   splitCommandWithOperators,
 } from './commands.js'
-import type { Node } from './parser.js'
+import { parseCommand, type Node } from './parser.js'
 import {
   analyzeCommand,
   type TreeSitterAnalysis,
@@ -237,19 +237,9 @@ class TreeSitterParsedCommand implements IParsedCommand {
   }
 }
 
-const getTreeSitterAvailable = memoize(async (): Promise<boolean> => {
-  try {
-    const { parseCommand } = await import('./parser.js')
-    const testResult = await parseCommand('echo test')
-    return testResult !== null
-  } catch {
-    return false
-  }
-})
-
 /**
  * Build a TreeSitterParsedCommand from a pre-parsed AST root. Lets callers
- * that already have the tree skip the redundant native.parse that
+ * that already have the tree skip the redundant parser pass that
  * ParsedCommand.parse would do.
  */
 export function buildParsedCommandFromRoot(
@@ -267,17 +257,16 @@ export function buildParsedCommandFromRoot(
   )
 }
 
-async function doParse(command: string): Promise<IParsedCommand | null> {
+async function doParse(
+  command: string,
+  astEnabled: boolean,
+): Promise<IParsedCommand | null> {
   if (!command) return null
 
-  const treeSitterAvailable = await getTreeSitterAvailable()
-  if (treeSitterAvailable) {
+  if (astEnabled) {
     try {
-      const { parseCommand } = await import('./parser.js')
-      const data = await parseCommand(command)
+      const data = await parseCommand(command, astEnabled)
       if (data) {
-        // Native NAPI parser returns plain JS objects (no WASM handles);
-        // nothing to free — extract directly.
         return buildParsedCommandFromRoot(command, data.rootNode)
       }
     } catch {
@@ -291,16 +280,17 @@ async function doParse(command: string): Promise<IParsedCommand | null> {
 
 // Single-entry cache: legacy callers (bashCommandIsSafeAsync,
 // buildSegmentWithoutRedirections) may call ParsedCommand.parse repeatedly
-// with the same command string. Each parse() is ~1 native.parse + ~6 tree
+// with the same command string. Each parse() includes the parser plus ~6 tree
 // walks, so caching the most recent command skips the redundant work.
 // Size-1 bound avoids leaking TreeSitterParsedCommand instances.
 let lastCmd: string | undefined
+let lastAstEnabled: boolean | undefined
 let lastResult: Promise<IParsedCommand | null> | undefined
 
 /**
  * ParsedCommand provides methods for working with shell commands.
- * Uses tree-sitter when available for quote-aware parsing,
- * falls back to regex-based parsing otherwise.
+ * Uses the Bash AST parser when the advanced setting is enabled and falls
+ * back to regex-based parsing otherwise.
  */
 export const ParsedCommand = {
   /**
@@ -308,11 +298,17 @@ export const ParsedCommand = {
    * Returns null if parsing fails completely.
    */
   parse(command: string): Promise<IParsedCommand | null> {
-    if (command === lastCmd && lastResult !== undefined) {
+    const astEnabled = getAdvancedSetting('moss_bash_ast_permissions')
+    if (
+      command === lastCmd &&
+      astEnabled === lastAstEnabled &&
+      lastResult !== undefined
+    ) {
       return lastResult
     }
     lastCmd = command
-    lastResult = doParse(command)
+    lastAstEnabled = astEnabled
+    lastResult = doParse(command, astEnabled)
     return lastResult
   },
 }

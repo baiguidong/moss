@@ -13,6 +13,8 @@ import {
   getAgentDefinitionsWithOverrides,
 } from '../tools/AgentTool/loadAgentsDir.js'
 import { getAttributionHeader } from '../constants/system.js'
+import { ParsedCommand } from '../utils/bash/ParsedCommand.js'
+import { parseForSecurity } from '../utils/bash/ast.js'
 import {
   getPerMessageBudgetLimit,
   provisionContentReplacementState,
@@ -46,6 +48,7 @@ describe('advanced settings', () => {
       )
       expect(settings).toEqual({
         moss_auto_background_agents: false,
+        moss_bash_ast_permissions: false,
         moss_hive_evidence: false,
         moss_scratchpad: false,
         moss_idle_session_cleanup: false,
@@ -78,6 +81,7 @@ describe('advanced settings', () => {
           MOSS_CONFIG_DIR: configDir,
           [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
             moss_auto_background_agents: true,
+            moss_bash_ast_permissions: true,
             moss_hive_evidence: true,
             moss_scratchpad: true,
             moss_idle_session_cleanup: true,
@@ -97,6 +101,7 @@ describe('advanced settings', () => {
       )
       expect(settings).toEqual({
         moss_auto_background_agents: true,
+        moss_bash_ast_permissions: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
@@ -158,6 +163,73 @@ describe('advanced settings', () => {
       clearAgentDefinitionsCache()
       await rm(cwd, { recursive: true, force: true })
     }
+  })
+
+  test('controls Bash AST parsing per session without leaking cached mode', async () => {
+    const command = 'printf parser-mode-cache-test | wc -c'
+    const parseWithSetting = <T>(
+      sessionId: string,
+      enabled: boolean,
+      operation: () => T,
+    ) =>
+      runWithSessionIdContext(
+        asSessionId(sessionId),
+        undefined,
+        operation,
+        undefined,
+        {
+          [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
+            moss_bash_ast_permissions: enabled,
+          }),
+        },
+      )
+
+    const disabledSecurity = await parseWithSetting(
+      'bash-ast-disabled',
+      false,
+      () => parseForSecurity(command),
+    )
+    expect(disabledSecurity.kind).toBe('parse-unavailable')
+
+    const legacyParsed = await parseWithSetting(
+      'bash-ast-cache-disabled',
+      false,
+      () => ParsedCommand.parse(command),
+    )
+    expect(legacyParsed?.getTreeSitterAnalysis()).toBeNull()
+
+    const enabledSecurity = await parseWithSetting(
+      'bash-ast-enabled',
+      true,
+      () => parseForSecurity(command),
+    )
+    expect(enabledSecurity.kind).toBe('simple')
+
+    const astParsed = await parseWithSetting(
+      'bash-ast-cache-enabled',
+      true,
+      () => ParsedCommand.parse(command),
+    )
+    expect(astParsed?.getTreeSitterAnalysis()).not.toBeNull()
+
+    const legacyParsedAgain = await parseWithSetting(
+      'bash-ast-cache-disabled-again',
+      false,
+      () => ParsedCommand.parse(command),
+    )
+    expect(legacyParsedAgain?.getTreeSitterAnalysis()).toBeNull()
+
+    const concurrentCommand = 'printf parser-concurrent-mode | wc -c'
+    const [concurrentAst, concurrentLegacy] = await Promise.all([
+      parseWithSetting('bash-ast-concurrent-enabled', true, () =>
+        ParsedCommand.parse(concurrentCommand),
+      ),
+      parseWithSetting('bash-ast-concurrent-disabled', false, () =>
+        ParsedCommand.parse(concurrentCommand),
+      ),
+    ])
+    expect(concurrentAst?.getTreeSitterAnalysis()).not.toBeNull()
+    expect(concurrentLegacy?.getTreeSitterAnalysis()).toBeNull()
   })
 
   test('drives memory and tool runtime behavior from the session snapshot', async () => {

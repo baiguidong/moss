@@ -26,6 +26,7 @@ export type SessionMemorySettings = {
 
 export type AdvancedSettings = {
   moss_auto_background_agents: boolean
+  moss_bash_ast_permissions: boolean
   moss_hive_evidence: boolean
   moss_scratchpad: boolean
   moss_idle_session_cleanup: boolean
@@ -65,6 +66,7 @@ export const DEFAULT_SESSION_MEMORY_SETTINGS: SessionMemorySettings = Object.fre
 
 export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_auto_background_agents: false,
+  moss_bash_ast_permissions: false,
   moss_hive_evidence: false,
   moss_scratchpad: false,
   moss_idle_session_cleanup: false,
@@ -128,6 +130,7 @@ export const sessionMemorySettingsSchema = lazySchema(() =>
 export const advancedSettingsSchema = lazySchema(() =>
   z.object({
     moss_auto_background_agents: z.boolean().optional(),
+    moss_bash_ast_permissions: z.boolean().optional(),
     moss_hive_evidence: z.boolean().optional(),
     moss_scratchpad: z.boolean().optional(),
     moss_idle_session_cleanup: z.boolean().optional(),

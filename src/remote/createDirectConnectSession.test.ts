@@ -28,6 +28,7 @@ describe('createDirectConnectSession', () => {
       profileMode: 'user',
       advancedSettings: {
         moss_auto_background_agents: true,
+        moss_bash_ast_permissions: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
@@ -68,6 +69,7 @@ describe('createDirectConnectSession', () => {
       profileMode: 'user',
       advancedSettings: {
         moss_auto_background_agents: true,
+        moss_bash_ast_permissions: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,

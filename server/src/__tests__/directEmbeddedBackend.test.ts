@@ -163,6 +163,7 @@ describe('direct embedded backend model settings', () => {
       systemSettings: makeSettings({}),
       advancedSettings: {
         moss_auto_background_agents: true,
+        moss_bash_ast_permissions: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
@@ -208,6 +209,7 @@ describe('direct embedded backend model settings', () => {
       )
       expect(JSON.parse(createdEnvironment?.MOSS_RUNTIME_ADVANCED_SETTINGS || '{}')).toEqual({
         moss_auto_background_agents: true,
+        moss_bash_ast_permissions: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,

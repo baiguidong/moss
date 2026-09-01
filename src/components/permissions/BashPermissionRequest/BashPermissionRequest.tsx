@@ -146,9 +146,8 @@ function BashPermissionRequestInner({
   const isCompound = toolUseConfirm.permissionResult.decisionReason?.type === 'subcommandResults';
 
   // Editable prefix — initialize synchronously with the best prefix we can
-  // extract without tree-sitter, then refine via tree-sitter for compound
-  // commands. The sync path matters because TREE_SITTER_BASH is feature-gated;
-  // when unavailable, the async refinement below resolves to [] and this initial
+  // extract without the AST parser, then refine when Bash AST permissions are
+  // enabled. When disabled, the async refinement resolves to [] and this initial
   // value is what the user sees.
   //
   // Lazy initializer: this runs regex + split on every render if left in

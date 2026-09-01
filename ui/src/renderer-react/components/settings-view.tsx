@@ -150,6 +150,7 @@ const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> =
 
 const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_auto_background_agents: false,
+  moss_bash_ast_permissions: false,
   moss_hive_evidence: false,
   moss_scratchpad: false,
   moss_idle_session_cleanup: false,
@@ -234,7 +235,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'permission',
         title: '权限',
-        keywords: ['permission', 'allow', '权限确认', 'bypass'],
+        keywords: ['permission', 'allow', '权限确认', 'bypass', 'bash', 'ast', '命令解析'],
       },
       {
         id: 'memory',
@@ -1627,6 +1628,20 @@ export function SettingsView({
                             checked={Boolean(settingsDraft.bypassPermissions)}
                             onCheckedChange={(checked) => updateSetting('bypassPermissions', checked)}
                             label="跳过常规权限确认"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="实验性 Bash AST 权限解析"
+                        description="使用结构化 Bash 解析器判定子命令、重定向和权限规则；复杂命令可能需要更多确认，新会话生效。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_bash_ast_permissions)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_bash_ast_permissions: checked })}
+                            label="实验性 Bash AST 权限解析"
                           />
                         </div>
                       </SettingsRow>

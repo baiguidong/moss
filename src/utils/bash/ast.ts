@@ -1,9 +1,10 @@
 /**
- * AST-based bash command analysis using tree-sitter.
+ * AST-based Bash command analysis using the repository's pure TypeScript
+ * tree-sitter-compatible parser.
  *
  * This module replaces the shell-quote + hand-rolled char-walker approach in
  * bashSecurity.ts / commands.ts. Instead of detecting parser differentials
- * one-by-one, we parse with tree-sitter-bash and walk the tree with an
+ * one-by-one, we build a tree-sitter-bash-compatible AST and walk it with an
  * EXPLICIT allowlist of node types. Any node type not in the allowlist causes
  * the entire command to be classified as 'too-complex', which means it goes
  * through the normal permission prompt flow.
@@ -375,8 +376,8 @@ const DOLLAR = String.fromCharCode(0x24)
 /**
  * Parse a bash command string and extract a flat list of simple commands.
  * Returns 'too-complex' if the command uses any shell feature we can't
- * statically analyze. Returns 'parse-unavailable' if tree-sitter WASM isn't
- * loaded — caller should fall back to conservative behavior.
+ * statically analyze. Returns 'parse-unavailable' if Bash AST permissions are
+ * disabled or the parser is unavailable, so callers can use legacy behavior.
  */
 export async function parseForSecurity(
   cmd: string,

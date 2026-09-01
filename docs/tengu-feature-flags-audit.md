@@ -9,8 +9,8 @@ Feature/gate 复核日期：2026-09-01
 项目中共确认：
 
 - 初始审计确认 40 个使用 `tengu_*` 命名的源码运行时键。
-- 当前 TypeScript 源码剩余 25 个 `tengu_*` 运行时键。
-- 14 个原 `tengu_*` 候选已迁移为 15 个类型化的 `moss_*` 桌面高级设置。
+- 当前 TypeScript 源码剩余 24 个 `tengu_*` 运行时键。
+- 15 个原 `tengu_*` 候选已迁移为 16 个类型化的 `moss_*` 桌面高级设置。
 - 7 个只存在于旧 `bin/cli.js` 构建产物中的遗留键。
 - `logEvent('tengu_*', ...)` 是遥测事件名，不属于运行时开关；当前 `logEvent()` 为空操作。
 
@@ -51,13 +51,14 @@ Feature/gate 复核日期：2026-09-01
 
 ## 已落地的桌面高级设置
 
-以下 15 个设置已迁移为语义化的 `moss_*` 键，并加入桌面客户端“设置 -> 高级设置”。缺失字段按原 `tengu` 默认值解析，不会在首次启动时改变既有行为。
+以下 16 个设置已迁移为语义化的 `moss_*` 键，并加入桌面客户端“设置 -> 高级设置”。缺失字段按原 `tengu` 默认值解析，不会在首次启动时改变既有行为。
 
 原“记忆”页面中的阈值、更新间隔、压缩保留范围、历史上下文搜索和 Dream 门槛也已统一移入“高级设置 -> 记忆”分组；“记忆”页面只保留会话记忆、长期记忆及其基础开关。底层配置字段和默认值保持不变。
 
 | 正式键 | 默认值 | 桌面显示名称 | 功能 |
 | --- | --- | --- | --- |
 | `moss_auto_background_agents` | `false` | 长任务自动转后台 | 前台 Agent 运行超过 120 秒后自动转为后台任务。 |
+| `moss_bash_ast_permissions` | `false` | 实验性 Bash AST 权限解析 | 使用内置纯 TypeScript AST parser 结构化分析 Bash 子命令、重定向和权限规则；复杂命令可能需要更多确认。 |
 | `moss_hive_evidence` | `false` | 独立验证 Agent | 为非简单实现注册后台验证 Agent、注入验证契约，并在连续完成多个任务但没有验证步骤时给出提示。 |
 | `moss_scratchpad` | `false` | 会话临时工作区 | 为 Agent 和 Coordinator Worker 提供隔离的会话级临时目录。 |
 | `moss_idle_session_cleanup` | `false` | 闲置会话优化 | 会话闲置 60 分钟后清理较早的工具结果，固定保留最近 5 个可压缩结果。 |
@@ -86,7 +87,8 @@ Feature/gate 复核日期：2026-09-01
 - 默认关闭的 VSCode 实验 gate 转发已删除。
 - 默认关闭的 Opus 紧急停服分支及专用错误处理已删除。
 - 默认空白的顶部紧急提示组件及持久化字段已删除。
-- 15 个桌面高级设置已使用 `moss_*` 正式键，并完成本地及 remote-direct 设置传递。
+- 16 个桌面高级设置已使用 `moss_*` 正式键，并完成本地及 remote-direct 设置传递。
+- Bash AST parser 已固定编入产物，由默认关闭的 `moss_bash_ast_permissions` 按会话控制；原编译开关、Shadow 分支和配套运行时 gate 已删除。
 - Verification Agent 已编入产物，由默认关闭的 `moss_hive_evidence` 按会话控制，不再读取 `tengu_hive_evidence`；Agent 定义缓存按该会话设置隔离，验证进程仅暴露只读工具，并以 OS sandbox 禁止写入项目目录。
 - `FORK_SUBAGENT` 已编入产物：普通终端和桌面 `local-agent` chat 会话可将完整上下文分叉给后台 Agent；非交互 CLI/SDK 和 Coordinator 会话继续禁用该路径。
 - 桌面会话顶栏已提供会话分支按钮。本地模式复制主线程 transcript，并为托管工作区创建独立副本；remote-direct 通过 Moss Server 的 turn lock 创建独立远程会话。项目、子 Agent、定时任务、空白和执行中会话不允许分叉。
@@ -149,17 +151,15 @@ Feature/gate 复核日期：2026-09-01
 | 运行时开关 | 外层 feature 与开启条件 | 实际功能和开启价值 | 当前阻塞或副作用 | 后续建议 |
 | --- | --- | --- | --- | --- |
 | `tengu_amber_quartz_disabled`，默认 `false` | `VOICE_MODE=false`。需将 feature 设为 `true` 并重新构建；该 gate 是反向 killswitch，保持 `false` 才表示允许语音。 | 控制 Voice Mode 是否可见和可用。完整实现后语音输入有明确价值。 | 当前 `hasVoiceAuth()` 固定返回 `false`，即使 feature 开启也无法使用；`audio-capture-napi` 原生模块当前未包含。 | **删除运行时 gate，保持 feature 关闭**。恢复授权与原生依赖后再决定是否增加正式语音设置。当前没有开启价值。 |
-| `tengu_birch_trellis`，默认 `true` | `TREE_SITTER_BASH_SHADOW=false`。需开启 feature 并重新构建。 | 使用仓库内纯 TypeScript Bash AST parser 分析命令，将结果与旧解析器比较并记录差异。 | Shadow 模式始终回到旧解析器，不改变权限判定；代价是每次 Bash 权限检查多执行一次解析和遥测。 | **可在验证构建中开启**。收集差异并完成权限回归后，再决定是否启用 `TREE_SITTER_BASH` 正式路径。 |
 | `tengu_collage_kaleidoscope`，默认 `true` | `NATIVE_CLIPBOARD_IMAGE=false`。需先提供 `image-processor-napi`，再开启 feature 并重建。 | macOS 直接读取剪贴板图片，源码估算约 5ms 冷启动、热路径低于 1ms，明显快于约 1.5s 的 `osascript`；失败时已有回退。 | `image-processor-napi` 当前未安装；现在开启只会捕获模块加载失败并回退到 `osascript`，没有性能收益。 | **保持关闭**。补齐并验证原生模块打包后再开启；保留现有回退路径。 |
 | `tengu_turtle_carbon`，默认 `true` | `ULTRATHINK` 未在 feature registry 声明。必须先声明 feature、设置构建值并重建，不能只修改现有配置。 | 识别输入中的 `ultrathink`，为当前轮附加 high effort，并提供彩色高亮和通知。 | 开启后还会把支持 effort 模型的默认 effort 改为 medium，并非只增加快捷词；项目已有正式 effort 设置和 `/effort`，隐式关键词的增量价值有限。当前 `bin/cli.js` 虽残留 gate 字符串，但函数会立即返回 `false`，行为不可达。 | **低至中等价值，不建议默认开启**。删除 gate；若仍保留功能，应显式注册 `ULTRATHINK` feature，并拆开“关键词触发”和“改变默认 effort”两种行为。 |
 
 ### Feature 功能的后续处理优先级
 
-1. 开启 `TREE_SITTER_BASH_SHADOW` 的验证构建，收集与旧权限解析器的差异后再评估正式路径。
-2. 补齐并验证 `image-processor-napi` 打包后再开启 `NATIVE_CLIPBOARD_IMAGE`。
-3. `VOICE_MODE` 和 `ULTRATHINK` 当前分别受完整性和已有正式替代能力限制，暂不建议开启。
+1. 补齐并验证 `image-processor-napi` 打包后再开启 `NATIVE_CLIPBOARD_IMAGE`。
+2. `VOICE_MODE` 和 `ULTRATHINK` 当前分别受完整性和已有正式替代能力限制，暂不建议开启。
 
-其余 4 个 `tengu_*` 读取仍按上述建议后续处理；本次已将 `tengu_hive_evidence` 迁移为正式高级设置。
+其余 3 个 `tengu_*` 读取仍按上述建议后续处理；本次已将 `tengu_hive_evidence` 和 Bash AST 权限解析迁移为正式高级设置。
 
 ## 高级设置落地原则
 
@@ -207,7 +207,7 @@ const effectiveValue = persistedValue ?? defaultValue
 
 ### 6. Desktop 设置传递给 Agent 运行时
 
-已落地的 15 个设置通过 `DesktopSettings.advanced`、`MOSS_RUNTIME_ADVANCED_SETTINGS` 和 direct-connect `advancedSettings` 协议传递。后续新增设置应继续复用这条类型化链路，不能只在 `settings-view.tsx` 增加控件。
+已落地的 16 个设置通过 `DesktopSettings.advanced`、`MOSS_RUNTIME_ADVANCED_SETTINGS` 和 direct-connect `advancedSettings` 协议传递。后续新增设置应继续复用这条类型化链路，不能只在 `settings-view.tsx` 增加控件。
 
 ## 主要代码位置
 

@@ -102,12 +102,6 @@ export const EXPERIMENTAL = {
   // Ultrathink 快捷模式：识别 ultrathink 关键词并临时提高推理强度
   ULTRATHINK: false,
 
-  // Bash AST 权限解析：使用仓库内的纯 TypeScript parser；会改变权限判定，先验证 shadow
-  TREE_SITTER_BASH: false,
-
-  // Bash AST 影子模式：运行新 parser 并记录差异，但仍以旧权限判定为准
-  TREE_SITTER_BASH_SHADOW: false,
-
   // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
   COORDINATOR_MODE: true,
 
