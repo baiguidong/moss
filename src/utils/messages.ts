@@ -3873,14 +3873,6 @@ You have exited plan mode. You can now make edits, run tools, and take actions.$
         }),
       ])
     }
-    case 'ultrathink_effort': {
-      return wrapMessagesInSystemReminder([
-        createUserMessage({
-          content: `The user has requested reasoning effort level: ${attachment.level}. Apply this to the current turn.`,
-          isMeta: true,
-        }),
-      ])
-    }
     case 'deferred_tools_delta': {
       const parts: string[] = []
       if (attachment.addedLines.length > 0) {

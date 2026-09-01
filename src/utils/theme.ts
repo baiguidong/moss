@@ -68,21 +68,6 @@ export type Theme = {
   rate_limit_empty: string
   fastMode: string
   fastModeShimmer: string
-  // Rainbow colors for ultrathink keyword highlighting
-  rainbow_red: string
-  rainbow_orange: string
-  rainbow_yellow: string
-  rainbow_green: string
-  rainbow_blue: string
-  rainbow_indigo: string
-  rainbow_violet: string
-  rainbow_red_shimmer: string
-  rainbow_orange_shimmer: string
-  rainbow_yellow_shimmer: string
-  rainbow_green_shimmer: string
-  rainbow_blue_shimmer: string
-  rainbow_indigo_shimmer: string
-  rainbow_violet_shimmer: string
 }
 
 export const THEME_NAMES = [
@@ -168,20 +153,6 @@ const lightTheme: Theme = {
   rate_limit_empty: 'rgb(39,47,111)', // Dark blue
   fastMode: 'rgb(255,106,0)', // Electric orange
   fastModeShimmer: 'rgb(255,150,50)', // Lighter orange for shimmer
-  rainbow_red: 'rgb(235,95,87)',
-  rainbow_orange: 'rgb(245,139,87)',
-  rainbow_yellow: 'rgb(250,195,95)',
-  rainbow_green: 'rgb(145,200,130)',
-  rainbow_blue: 'rgb(130,170,220)',
-  rainbow_indigo: 'rgb(155,130,200)',
-  rainbow_violet: 'rgb(200,130,180)',
-  rainbow_red_shimmer: 'rgb(250,155,147)',
-  rainbow_orange_shimmer: 'rgb(255,185,137)',
-  rainbow_yellow_shimmer: 'rgb(255,225,155)',
-  rainbow_green_shimmer: 'rgb(185,230,180)',
-  rainbow_blue_shimmer: 'rgb(180,205,240)',
-  rainbow_indigo_shimmer: 'rgb(195,180,230)',
-  rainbow_violet_shimmer: 'rgb(230,180,210)',
 }
 
 /**
@@ -247,20 +218,6 @@ const lightAnsiTheme: Theme = {
   rate_limit_empty: 'ansi:black',
   fastMode: 'ansi:red',
   fastModeShimmer: 'ansi:redBright',
-  rainbow_red: 'ansi:red',
-  rainbow_orange: 'ansi:redBright',
-  rainbow_yellow: 'ansi:yellow',
-  rainbow_green: 'ansi:green',
-  rainbow_blue: 'ansi:cyan',
-  rainbow_indigo: 'ansi:blue',
-  rainbow_violet: 'ansi:magenta',
-  rainbow_red_shimmer: 'ansi:redBright',
-  rainbow_orange_shimmer: 'ansi:yellow',
-  rainbow_yellow_shimmer: 'ansi:yellowBright',
-  rainbow_green_shimmer: 'ansi:greenBright',
-  rainbow_blue_shimmer: 'ansi:cyanBright',
-  rainbow_indigo_shimmer: 'ansi:blueBright',
-  rainbow_violet_shimmer: 'ansi:magentaBright',
 }
 
 /**
@@ -326,20 +283,6 @@ const darkAnsiTheme: Theme = {
   rate_limit_empty: 'ansi:white',
   fastMode: 'ansi:redBright',
   fastModeShimmer: 'ansi:redBright',
-  rainbow_red: 'ansi:red',
-  rainbow_orange: 'ansi:redBright',
-  rainbow_yellow: 'ansi:yellow',
-  rainbow_green: 'ansi:green',
-  rainbow_blue: 'ansi:cyan',
-  rainbow_indigo: 'ansi:blue',
-  rainbow_violet: 'ansi:magenta',
-  rainbow_red_shimmer: 'ansi:redBright',
-  rainbow_orange_shimmer: 'ansi:yellow',
-  rainbow_yellow_shimmer: 'ansi:yellowBright',
-  rainbow_green_shimmer: 'ansi:greenBright',
-  rainbow_blue_shimmer: 'ansi:cyanBright',
-  rainbow_indigo_shimmer: 'ansi:blueBright',
-  rainbow_violet_shimmer: 'ansi:magentaBright',
 }
 
 /**
@@ -405,20 +348,6 @@ const lightDaltonizedTheme: Theme = {
   rate_limit_empty: 'rgb(23,46,114)', // Dark blue
   fastMode: 'rgb(255,106,0)', // Electric orange (color-blind safe)
   fastModeShimmer: 'rgb(255,150,50)', // Lighter orange for shimmer
-  rainbow_red: 'rgb(235,95,87)',
-  rainbow_orange: 'rgb(245,139,87)',
-  rainbow_yellow: 'rgb(250,195,95)',
-  rainbow_green: 'rgb(145,200,130)',
-  rainbow_blue: 'rgb(130,170,220)',
-  rainbow_indigo: 'rgb(155,130,200)',
-  rainbow_violet: 'rgb(200,130,180)',
-  rainbow_red_shimmer: 'rgb(250,155,147)',
-  rainbow_orange_shimmer: 'rgb(255,185,137)',
-  rainbow_yellow_shimmer: 'rgb(255,225,155)',
-  rainbow_green_shimmer: 'rgb(185,230,180)',
-  rainbow_blue_shimmer: 'rgb(180,205,240)',
-  rainbow_indigo_shimmer: 'rgb(195,180,230)',
-  rainbow_violet_shimmer: 'rgb(230,180,210)',
 }
 
 /**
@@ -484,20 +413,6 @@ const darkTheme: Theme = {
   rate_limit_empty: 'rgb(80,83,112)', // Medium blue-purple
   fastMode: 'rgb(255,120,20)', // Electric orange for dark bg
   fastModeShimmer: 'rgb(255,165,70)', // Lighter orange for shimmer
-  rainbow_red: 'rgb(235,95,87)',
-  rainbow_orange: 'rgb(245,139,87)',
-  rainbow_yellow: 'rgb(250,195,95)',
-  rainbow_green: 'rgb(145,200,130)',
-  rainbow_blue: 'rgb(130,170,220)',
-  rainbow_indigo: 'rgb(155,130,200)',
-  rainbow_violet: 'rgb(200,130,180)',
-  rainbow_red_shimmer: 'rgb(250,155,147)',
-  rainbow_orange_shimmer: 'rgb(255,185,137)',
-  rainbow_yellow_shimmer: 'rgb(255,225,155)',
-  rainbow_green_shimmer: 'rgb(185,230,180)',
-  rainbow_blue_shimmer: 'rgb(180,205,240)',
-  rainbow_indigo_shimmer: 'rgb(195,180,230)',
-  rainbow_violet_shimmer: 'rgb(230,180,210)',
 }
 
 /**
@@ -563,20 +478,6 @@ const darkDaltonizedTheme: Theme = {
   rate_limit_empty: 'rgb(69,92,115)', // Dark blue
   fastMode: 'rgb(255,120,20)', // Electric orange for dark bg (color-blind safe)
   fastModeShimmer: 'rgb(255,165,70)', // Lighter orange for shimmer
-  rainbow_red: 'rgb(235,95,87)',
-  rainbow_orange: 'rgb(245,139,87)',
-  rainbow_yellow: 'rgb(250,195,95)',
-  rainbow_green: 'rgb(145,200,130)',
-  rainbow_blue: 'rgb(130,170,220)',
-  rainbow_indigo: 'rgb(155,130,200)',
-  rainbow_violet: 'rgb(200,130,180)',
-  rainbow_red_shimmer: 'rgb(250,155,147)',
-  rainbow_orange_shimmer: 'rgb(255,185,137)',
-  rainbow_yellow_shimmer: 'rgb(255,225,155)',
-  rainbow_green_shimmer: 'rgb(185,230,180)',
-  rainbow_blue_shimmer: 'rgb(180,205,240)',
-  rainbow_indigo_shimmer: 'rgb(195,180,230)',
-  rainbow_violet_shimmer: 'rgb(230,180,210)',
 }
 
 export function getTheme(themeName: ThemeName): Theme {

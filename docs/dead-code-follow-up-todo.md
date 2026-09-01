@@ -44,9 +44,8 @@
 
 - [ ] 为 `COMMIT_ATTRIBUTION` 补提交、worktree、session restore 和 compact 清理的集成测试。
 - [ ] 为 `HOOK_PROMPTS` 补交互、非交互、取消和超时测试。
-- [ ] 为 `ULTRATHINK` 补关键词识别、普通输入和显式 effort 设置的优先级测试。
 
-上述三个 feature 已在 `scripts/features.js` 的 `EXPERIMENTAL` 中登记，当前均为 `false`，因此不会改变现有构建行为。
+上述两个 feature 已在 `scripts/features.js` 的 `EXPERIMENTAL` 中登记，当前均为 `false`，因此不会改变现有构建行为。
 
 ## P5：契约型 No-op 审计
 

@@ -1,4 +1,3 @@
-import { isUltrathinkEnabled } from './thinking.js'
 import { getInitialSettings } from './settings/settings.js'
 import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
@@ -243,7 +242,7 @@ export type OpusDefaultEffortConfig = {
 const OPUS_DEFAULT_EFFORT_CONFIG: OpusDefaultEffortConfig = {
   dialogTitle: 'We recommend medium effort for Opus',
   dialogDescription:
-    'Effort determines how long Claude thinks for when completing your task. We recommend medium effort for most tasks to balance speed and intelligence and maximize rate limits. Use ultrathink to trigger high effort when needed.',
+    'Effort determines how long Claude thinks for when completing your task. We recommend medium effort for most tasks to balance speed and intelligence and maximize rate limits.',
 }
 
 export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
@@ -252,16 +251,11 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 
 // @[MODEL LAUNCH]: Update the default effort levels for new models
 export function getDefaultEffortForModel(
-  model: string,
+  _model: string,
 ): EffortValue | undefined {
   // IMPORTANT: Do not change the default effort level without notifying
   // the model launch DRI and research. Default effort is a sensitive setting
   // that can greatly affect model quality and bashing.
-
-  // When ultrathink feature is on, default effort to medium (ultrathink bumps to high)
-  if (isUltrathinkEnabled() && modelSupportsEffort(model)) {
-    return 'medium'
-  }
 
   // Fallback to undefined, which means we don't set an effort level. This
   // should resolve to high effort level in the API.

@@ -1,10 +1,10 @@
 import type { TextBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
+import figures from 'figures';
 import React, { useContext, useMemo } from 'react';
-import { Box } from '../../ink.js';
+import { Box, Text } from '../../ink.js';
 import { logError } from '../../utils/log.js';
 import { countCharInString } from '../../utils/stringUtils.js';
 import { MessageActionsSelectedContext } from '../messageActions.js';
-import { HighlightedThinkingText } from './HighlightedThinkingText.js';
 type Props = {
   addMargin: boolean;
   param: TextBlockParam;
@@ -41,6 +41,9 @@ export function UserPromptMessage({
     return null;
   }
   return <Box flexDirection="column" marginTop={addMargin ? 1 : 0} backgroundColor={isSelected ? 'messageActionsBackground' : 'userMessageBackground'} paddingRight={1}>
-      <HighlightedThinkingText text={displayText} />
+      <Text>
+        <Text color={isSelected ? 'suggestion' : 'subtle'}>{figures.pointer} </Text>
+        <Text color="text">{displayText}</Text>
+      </Text>
     </Box>;
 }

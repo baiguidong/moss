@@ -9,7 +9,7 @@ Feature/gate 复核日期：2026-09-01
 项目中共确认：
 
 - 初始审计确认 40 个使用 `tengu_*` 命名的源码运行时键。
-- 当前 TypeScript 源码剩余 24 个 `tengu_*` 运行时键。
+- 当前 TypeScript 源码剩余 23 个 `tengu_*` 运行时键。
 - 15 个原 `tengu_*` 候选已迁移为 16 个类型化的 `moss_*` 桌面高级设置。
 - 7 个只存在于旧 `bin/cli.js` 构建产物中的遗留键。
 - `logEvent('tengu_*', ...)` 是遥测事件名，不属于运行时开关；当前 `logEvent()` 为空操作。
@@ -152,14 +152,13 @@ Feature/gate 复核日期：2026-09-01
 | --- | --- | --- | --- | --- |
 | `tengu_amber_quartz_disabled`，默认 `false` | `VOICE_MODE=false`。需将 feature 设为 `true` 并重新构建；该 gate 是反向 killswitch，保持 `false` 才表示允许语音。 | 控制 Voice Mode 是否可见和可用。完整实现后语音输入有明确价值。 | 当前 `hasVoiceAuth()` 固定返回 `false`，即使 feature 开启也无法使用；`audio-capture-napi` 原生模块当前未包含。 | **删除运行时 gate，保持 feature 关闭**。恢复授权与原生依赖后再决定是否增加正式语音设置。当前没有开启价值。 |
 | `tengu_collage_kaleidoscope`，默认 `true` | `NATIVE_CLIPBOARD_IMAGE=false`。需先提供 `image-processor-napi`，再开启 feature 并重建。 | macOS 直接读取剪贴板图片，源码估算约 5ms 冷启动、热路径低于 1ms，明显快于约 1.5s 的 `osascript`；失败时已有回退。 | `image-processor-napi` 当前未安装；现在开启只会捕获模块加载失败并回退到 `osascript`，没有性能收益。 | **保持关闭**。补齐并验证原生模块打包后再开启；保留现有回退路径。 |
-| `tengu_turtle_carbon`，默认 `true` | `ULTRATHINK` 未在 feature registry 声明。必须先声明 feature、设置构建值并重建，不能只修改现有配置。 | 识别输入中的 `ultrathink`，为当前轮附加 high effort，并提供彩色高亮和通知。 | 开启后还会把支持 effort 模型的默认 effort 改为 medium，并非只增加快捷词；项目已有正式 effort 设置和 `/effort`，隐式关键词的增量价值有限。当前 `bin/cli.js` 虽残留 gate 字符串，但函数会立即返回 `false`，行为不可达。 | **低至中等价值，不建议默认开启**。删除 gate；若仍保留功能，应显式注册 `ULTRATHINK` feature，并拆开“关键词触发”和“改变默认 effort”两种行为。 |
 
 ### Feature 功能的后续处理优先级
 
 1. 补齐并验证 `image-processor-napi` 打包后再开启 `NATIVE_CLIPBOARD_IMAGE`。
-2. `VOICE_MODE` 和 `ULTRATHINK` 当前分别受完整性和已有正式替代能力限制，暂不建议开启。
+2. `VOICE_MODE` 当前受功能完整性限制，暂不建议开启。
 
-其余 3 个 `tengu_*` 读取仍按上述建议后续处理；本次已将 `tengu_hive_evidence` 和 Bash AST 权限解析迁移为正式高级设置。
+其余 2 个 `tengu_*` 读取仍按上述建议后续处理；本次已将 `tengu_hive_evidence` 和 Bash AST 权限解析迁移为正式高级设置。
 
 ## 高级设置落地原则
 

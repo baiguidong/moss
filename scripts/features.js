@@ -99,9 +99,6 @@ export const EXPERIMENTAL = {
   // Hook 交互提示：允许 Hook 通过标准输入输出向用户发起补充提问
   HOOK_PROMPTS: false,
 
-  // Ultrathink 快捷模式：识别 ultrathink 关键词并临时提高推理强度
-  ULTRATHINK: false,
-
   // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
   COORDINATOR_MODE: true,
 

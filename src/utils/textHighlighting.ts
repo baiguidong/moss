@@ -14,7 +14,6 @@ export type TextHighlight = {
   color: keyof Theme | undefined
   dimColor?: boolean
   inverse?: boolean
-  shimmerColor?: keyof Theme
   priority: number
 }
 
