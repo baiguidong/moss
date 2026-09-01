@@ -20,7 +20,6 @@ import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js';
 import { asSessionId } from '../types/ids.js';
 import type { LogOption } from '../types/logs.js';
 import type { Message } from '../types/message.js';
-import { agenticSessionSearch } from '../utils/agenticSessionSearch.js';
 import { updateSessionName } from '../utils/concurrentSessions.js';
 import { loadConversationForResume } from '../utils/conversationRecovery.js';
 import { checkCrossProjectResume } from '../utils/crossProjectResume.js';
@@ -301,7 +300,7 @@ export function ResumeConversation({
   if (filteredLogs.length === 0) {
     return <NoConversationsMessage />;
   }
-  return <LogSelector logs={filteredLogs} maxHeight={rows} onCancel={onCancel} onSelect={onSelect} onLogsChanged={isResumeWithRenameEnabled ? () => loadLogs(showAllProjects) : undefined} onLoadMore={loadMoreLogs} initialSearchQuery={initialSearchQuery} showAllProjects={showAllProjects} onToggleAllProjects={handleToggleAllProjects} onAgenticSearch={agenticSessionSearch} />;
+  return <LogSelector logs={filteredLogs} maxHeight={rows} onCancel={onCancel} onSelect={onSelect} onLogsChanged={isResumeWithRenameEnabled ? () => loadLogs(showAllProjects) : undefined} onLoadMore={loadMoreLogs} initialSearchQuery={initialSearchQuery} showAllProjects={showAllProjects} onToggleAllProjects={handleToggleAllProjects} />;
 }
 function NoConversationsMessage() {
   const $ = _c(2);

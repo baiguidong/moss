@@ -1067,8 +1067,6 @@ export function isModeSetRequest(
  *
  * These message types have specific handlers in useInboxPoller that route them
  * to the correct queues (workerPermissions, workerSandboxPermissions, etc.).
- * If getTeammateMailboxAttachments consumes them first, they get bundled as
- * raw text in attachments and never reach their intended handlers.
  */
 export function isStructuredProtocolMessage(messageText: string): boolean {
   try {

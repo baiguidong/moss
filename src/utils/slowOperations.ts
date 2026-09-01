@@ -8,7 +8,6 @@ import {
 } from 'fs'
 // biome-ignore lint: This file IS the cloneDeep wrapper - it must import the original
 import lodashCloneDeep from 'lodash-es/cloneDeep.js'
-import { addSlowOperation } from '../bootstrap/state.js'
 import { logForDebugging } from './debug.js'
 
 // Extended WriteFileOptions to include 'flush' which is available in Node.js 20.1.0+
@@ -48,8 +47,8 @@ export { SLOW_OPERATION_THRESHOLD_MS }
 let isLogging = false
 
 /**
- * Extract the first stack frame outside this file, so the DevBar warning
- * points at the actual caller instead of a useless `Object{N keys}`.
+ * Extract the first stack frame outside this file, so the debug entry points
+ * at the actual caller instead of a useless `Object{N keys}`.
  * Only called when an operation was actually slow — never on the fast path.
  */
 export function callerFrame(stack: string | undefined): string {
@@ -112,7 +111,6 @@ class AntSlowLogger {
         logForDebugging(
           `[SLOW OPERATION DETECTED] ${description} (${duration.toFixed(1)}ms)`,
         )
-        addSlowOperation(description, duration)
       } finally {
         isLogging = false
       }

@@ -705,9 +705,3 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     }
   }
 }
-
-// Export for type checking
-export const emitAppsChanged = () => {}
-
-// Placeholder for backward compatibility - actual emitAppsChanged is in main.mjs
-export function noop() {}

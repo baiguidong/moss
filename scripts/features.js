@@ -93,6 +93,15 @@ export const EXPERIMENTAL = {
   // Prompt 缓存中断检测：检测并提示 prompt cache 失效，帮助优化 token 成本
   PROMPT_CACHE_BREAK_DETECTION: false,
 
+  // Git 提交归因：记录文件与提示词归因，并将归因信息写入提交/PR 元数据
+  COMMIT_ATTRIBUTION: false,
+
+  // Hook 交互提示：允许 Hook 通过标准输入输出向用户发起补充提问
+  HOOK_PROMPTS: false,
+
+  // Ultrathink 快捷模式：识别 ultrathink 关键词并临时提高推理强度
+  ULTRATHINK: false,
+
   // Bash AST 权限解析：使用仓库内的纯 TypeScript parser；会改变权限判定，先验证 shadow
   TREE_SITTER_BASH: false,
 

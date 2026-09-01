@@ -96,9 +96,7 @@ export function Onboarding({
       return customApiKeyTruncated;
     }
   }, []);
-  function handleApiKeyDone(approved: boolean) {
-    if (approved) {
-    }
+  function handleApiKeyDone() {
     goToNextStep();
   }
   const steps: OnboardingStep[] = [];
