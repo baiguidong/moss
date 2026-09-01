@@ -243,6 +243,15 @@ export type SessionCreateInput = {
   sessionMemory?: SessionMemorySettings
 }
 
+export type SessionForkInput = {
+  title?: string
+  dangerouslySkipPermissions: boolean
+  userId: string
+  orgId: string
+  role: string
+  scopes: string[]
+}
+
 export type RunnerManifest = {
   config: ServerConfig
   session: {

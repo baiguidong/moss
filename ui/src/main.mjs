@@ -100,6 +100,10 @@ import {
   shouldAdoptSessionHistory,
 } from './shared/session-history-reconcile.mjs';
 import {
+  cloneSessionTranscriptJsonl,
+  getUniqueForkTitle,
+} from './shared/session-fork.mjs';
+import {
   isSubAgentFailureEntry,
   resolveSubAgentStatus,
 } from './shared/subagent-lifecycle.mjs';
@@ -572,6 +576,7 @@ const projectCoordinatorTaskRuns = new Map();
 const projectTaskCancellationRequests = new Set();
 const sessionPromptQueues = new Map();
 const sessionSendQueues = new Map();
+const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
 const appWindows = new Map();
 const appWindowStates = new Map();
@@ -927,6 +932,7 @@ const {
   fetchRemoteDirectSessionContext,
   fetchRemoteDirectSessionInfo,
   fetchRemoteDirectSessions,
+  forkRemoteDirectSession,
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
   fetchRemoteFeishuAdapterStatus,
@@ -9458,6 +9464,149 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
       tasks: snapshotSessionTasks(sessionRecord),
     },
   };
+});
+
+function assertSessionCanFork(sessionRecord) {
+  if (sessionRecord.isSubAgent) {
+    throw new Error('子会话不能继续分叉。');
+  }
+  if (sessionRecord.projectId) {
+    throw new Error('项目会话由项目协调器管理，暂不支持分叉。');
+  }
+  if (sessionRecord.sessionKind === 'cron') {
+    throw new Error('定时任务会话不能分叉。');
+  }
+  if (sessionRecord.busy) {
+    throw new Error('会话正在执行任务，请等待当前回复完成后再分叉。');
+  }
+  if (countSessionMessages(sessionRecord.history) === 0) {
+    throw new Error('空会话不能分叉。');
+  }
+}
+
+function finalizeForkedSessionRecord(sessionRecord, sourceSession, history) {
+  sessionRecord.isCoordinatorMode = Boolean(sourceSession.isCoordinatorMode);
+  sessionRecord.history = history;
+  sessionRecord.messageCount = countSessionMessages(history);
+  sessionRecord.pendingPlanApproval = derivePendingPlanApproval(history);
+  sessionRecord.preview = deriveSessionPreview(history);
+  sessionRecord.updatedAt = Date.now();
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  return {
+    summary: getSessionSummary(sessionRecord),
+    detail: getSessionDetailPayload(sessionRecord),
+  };
+}
+
+ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
+  await interruptedSessionRecoveryPromise;
+  const sourceSession = getSessionRecord(sessionId);
+  if (sessionForksInProgress.has(sourceSession.id)) {
+    throw new Error('该会话正在创建分支。');
+  }
+  sessionForksInProgress.add(sourceSession.id);
+  try {
+    await loadSessionHistoryFromSource(sourceSession);
+    assertSessionCanFork(sourceSession);
+
+    const title = getUniqueForkTitle(
+      sourceSession.title,
+      [...sessions.values()].map(record => record.title),
+    );
+
+    if (sourceSession.agentMode === 'remote-direct') {
+      if (!sourceSession.underlyingSessionId) {
+        throw new Error('远程会话尚未建立，不能分叉。');
+      }
+      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      const result = await forkRemoteDirectSession({
+        serverUrl,
+        authToken,
+        sessionId: sourceSession.underlyingSessionId,
+        title,
+        dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+      });
+      const remoteSession = result?.session;
+      if (!remoteSession?.sessionId) {
+        throw new Error('Moss Server fork response missing session ID.');
+      }
+
+      const forked = createSessionRecord({
+        title,
+        assistantName: sourceSession.assistantName,
+        connectorIds: sourceSession.connectorIds,
+        agentMode: 'remote-direct',
+        sourceSessionId: sourceSession.id,
+      });
+      closeWorkspaceWatcher(forked);
+      forked.underlyingSessionId = remoteSession.sessionId;
+      applyRemoteSessionWorkspace(forked, remoteSession.workDir);
+      forked.historyLoadedFromSource = false;
+      return finalizeForkedSessionRecord(
+        forked,
+        sourceSession,
+        structuredClone(sourceSession.history),
+      );
+    }
+
+    if (!sourceSession.underlyingSessionId) {
+      throw new Error('本地会话 transcript 尚未建立，不能分叉。');
+    }
+    const sourceTranscriptPath = getLocalSessionTranscriptPath(sourceSession);
+    if (!sourceTranscriptPath) {
+      throw new Error('找不到当前会话 transcript。');
+    }
+    const rawTranscript = await fsp.readFile(sourceTranscriptPath, 'utf8');
+    const usesManagedWorkspace = path.resolve(sourceSession.workspace) === path.resolve(
+      createDefaultWorkspacePath(sourceSession.id),
+    );
+    const forked = createSessionRecord({
+      workspace: usesManagedWorkspace ? undefined : sourceSession.workspace,
+      title,
+      assistantName: sourceSession.assistantName,
+      connectorIds: sourceSession.connectorIds,
+      agentMode: 'local',
+      sourceSessionId: sourceSession.id,
+    });
+
+    try {
+      if (usesManagedWorkspace) {
+        await fsp.cp(sourceSession.workspace, forked.workspace, {
+          recursive: true,
+          force: true,
+        });
+      }
+      const forkSessionId = randomUUID();
+      const forkTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(
+        normalizeSessionDirName(forked.id),
+        forkSessionId,
+      );
+      const forkJsonl = cloneSessionTranscriptJsonl(rawTranscript, {
+        sourceSessionId: sourceSession.underlyingSessionId,
+        targetSessionId: forkSessionId,
+        title,
+      });
+      await fsp.writeFile(forkTranscriptPath, forkJsonl, { encoding: 'utf8', mode: 0o600 });
+      forked.underlyingSessionId = forkSessionId;
+      forked.historyLoadedFromSource = true;
+      const history = await loadDisplayHistoryFromLocalTranscript(forked);
+      return finalizeForkedSessionRecord(
+        forked,
+        sourceSession,
+        Array.isArray(history) ? history : structuredClone(sourceSession.history),
+      );
+    } catch (error) {
+      closeWorkspaceWatcher(forked);
+      sessions.delete(forked.id);
+      deletePersistedSession(forked.id);
+      await fsp.rm(getLocalSessionDir(forked.id), { recursive: true, force: true });
+      emitToRenderer('agent:session-removed', { sessionId: forked.id });
+      throw error;
+    }
+  } finally {
+    sessionForksInProgress.delete(sourceSession.id);
+  }
 });
 
 ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {

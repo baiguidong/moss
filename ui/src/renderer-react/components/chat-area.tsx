@@ -10,6 +10,7 @@ import {
   Copy,
   FileText,
   FolderOpen,
+  GitFork,
   Plus,
   Send,
   Square,
@@ -117,6 +118,9 @@ function SessionTabBar({
   outline,
   onJumpToOutlineItem,
   messages,
+  onFork,
+  forking,
+  forkDisabledReason,
 }: {
   title: string;
   messageCount: number;
@@ -129,6 +133,9 @@ function SessionTabBar({
   outline: OutlineEntry[];
   onJumpToOutlineItem: (messageId: string) => void;
   messages: TranscriptRenderMessage[];
+  onFork?: () => void;
+  forking?: boolean;
+  forkDisabledReason?: string | null;
 }) {
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
@@ -172,7 +179,7 @@ function SessionTabBar({
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
-        <div ref={outlineRef} className="relative min-w-0 max-w-[calc(100%-9rem)]">
+        <div ref={outlineRef} className="relative min-w-0 flex-1">
           <button
             type="button"
             className="w-full min-w-0 rounded-full border border-border/75 bg-card/88 px-4 py-1.5 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.7)] transition-colors hover:bg-card"
@@ -231,6 +238,25 @@ function SessionTabBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full"
+                  onClick={onFork}
+                  disabled={!onFork || forking || Boolean(forkDisabledReason)}
+                  aria-label={forking ? "正在分叉会话" : "分叉当前会话"}
+                >
+                  <GitFork className={cn("h-4 w-4", forking && "animate-pulse")} />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {forkDisabledReason || (forking ? "正在分叉会话" : "分叉当前会话")}
+            </TooltipContent>
+          </Tooltip>
           <Button
             variant="ghost"
             size="icon"
@@ -1984,6 +2010,9 @@ export function ChatArea({
   composerAttachments,
   onComposerAttachmentsChange,
   contextUsage,
+  onForkSession,
+  forkingSession = false,
+  forkDisabledReason,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -2031,6 +2060,9 @@ export function ChatArea({
   composerAttachments?: Array<{ name: string; path: string }>;
   onComposerAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
   contextUsage?: ContextUsageInfo | null;
+  onForkSession?: () => void;
+  forkingSession?: boolean;
+  forkDisabledReason?: string | null;
 }) {
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
@@ -2157,6 +2189,9 @@ export function ChatArea({
         outline={outline}
         onJumpToOutlineItem={handleJumpToOutlineItem}
         messages={messages}
+        onFork={onForkSession}
+        forking={forkingSession}
+        forkDisabledReason={forkDisabledReason}
       />
 
       <MessageListPane

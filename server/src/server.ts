@@ -1244,6 +1244,43 @@ export function startServer(
         return
       }
 
+      const sessionForkMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/fork$/)
+      if (req.method === 'POST' && sessionForkMatch) {
+        authService.requireScope(auth, 'sessions:create')
+        const sessionId = sessionForkMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) {
+          throw new HttpError(404, 'Session not found')
+        }
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        const body = await readJsonBody(req)
+        const title =
+          typeof body.title === 'string' && body.title.trim()
+            ? body.title.trim()
+            : undefined
+        const releaseTurn = await runtime.acquireSessionTurn(sessionId)
+        let created
+        try {
+          created = await runtime.forkSession(sessionId, {
+            title,
+            dangerouslySkipPermissions: body.dangerously_skip_permissions === true,
+            userId: auth.userId,
+            orgId: auth.orgId,
+            role: auth.role,
+            scopes: auth.scopes,
+          })
+        } finally {
+          releaseTurn()
+        }
+        writeJson(res, 200, {
+          session: serializeSession(created),
+          ws_url: buildWsUrl(server, config, created.sessionId),
+        })
+        return
+      }
+
       const sessionTerminateMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/terminate$/)
       if (req.method === 'POST' && sessionTerminateMatch) {
         const sessionId = sessionTerminateMatch[1] || ''

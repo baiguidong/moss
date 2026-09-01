@@ -88,6 +88,8 @@ Feature/gate 复核日期：2026-09-01
 - 默认空白的顶部紧急提示组件及持久化字段已删除。
 - 15 个桌面高级设置已使用 `moss_*` 正式键，并完成本地及 remote-direct 设置传递。
 - Verification Agent 已编入产物，由默认关闭的 `moss_hive_evidence` 按会话控制，不再读取 `tengu_hive_evidence`；Agent 定义缓存按该会话设置隔离，验证进程仅暴露只读工具，并以 OS sandbox 禁止写入项目目录。
+- `FORK_SUBAGENT` 已编入产物：普通终端和桌面 `local-agent` chat 会话可将完整上下文分叉给后台 Agent；非交互 CLI/SDK 和 Coordinator 会话继续禁用该路径。
+- 桌面会话顶栏已提供会话分支按钮。本地模式复制主线程 transcript，并为托管工作区创建独立副本；remote-direct 通过 Moss Server 的 turn lock 创建独立远程会话。项目、子 Agent、定时任务、空白和执行中会话不允许分叉。
 - 已删除仅供本地 CLI 使用的 `DIRECT_CONNECT` 编译开关、`server`/`open` 命令和 `cc://` 参数入口；桌面本地及 remote-direct 路径保持独立。
 - Read 文件大小与输出 token 上限已拆为两个类型化数值设置，不再读取 `tengu_amber_wren` 原始对象。
 - 请求归因信息已改由 `moss_request_attribution_enabled` 控制；`CLAUDE_CODE_ATTRIBUTION_HEADER` 仍保持最高优先级。

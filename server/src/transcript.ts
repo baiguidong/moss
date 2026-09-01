@@ -1,4 +1,4 @@
-import { readFile } from 'fs/promises'
+import { readFile, writeFile } from 'fs/promises'
 import {
   isTranscriptMessage,
   type TranscriptEntry,
@@ -29,6 +29,67 @@ async function readTranscriptEntries(filePath: string): Promise<TranscriptReadRe
   }
 
   return { entries, lineCount, parseErrorCount }
+}
+
+const FORK_OMITTED_ENTRY_TYPES = new Set([
+  'attribution-snapshot',
+  'file-history-snapshot',
+  'queue-operation',
+  'worktree-state',
+])
+
+export async function cloneSessionTranscript(
+  sourcePath: string,
+  targetPath: string,
+  sourceSessionId: string,
+  targetSessionId: string,
+  title: string,
+): Promise<number> {
+  const { entries } = await readTranscriptEntries(sourcePath)
+  const cloned: TranscriptEntry[] = []
+  let messageCount = 0
+
+  for (const entry of entries) {
+    if (entry.isSidechain || FORK_OMITTED_ENTRY_TYPES.has(entry.type || '')) {
+      continue
+    }
+    if (entry.type === 'content-replacement' && entry.agentId) {
+      continue
+    }
+    if (entry.type === 'custom-title' || entry.type === 'ai-title') {
+      continue
+    }
+
+    const next = structuredClone(entry)
+    if (typeof next.sessionId === 'string') {
+      next.sessionId = targetSessionId
+    }
+    if (isTranscriptMessage(next)) {
+      messageCount += 1
+      delete next.slug
+      next.forkedFrom = {
+        sessionId: sourceSessionId,
+        messageUuid: next.uuid,
+      }
+    }
+    cloned.push(next)
+  }
+
+  if (messageCount === 0) {
+    throw new Error('No conversation to fork')
+  }
+
+  cloned.push({
+    type: 'custom-title',
+    sessionId: targetSessionId,
+    customTitle: title,
+  })
+  await writeFile(
+    targetPath,
+    `${cloned.map(entry => JSON.stringify(entry)).join('\n')}\n`,
+    'utf8',
+  )
+  return messageCount
 }
 
 function latestMetadata(

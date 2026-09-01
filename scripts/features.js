@@ -102,6 +102,9 @@ export const EXPERIMENTAL = {
   // Coordinator 模式：启用 coordinator swarm 多 worker 编排模式
   COORDINATOR_MODE: true,
 
+  // Fork 子 agent：普通交互会话可将完整上下文分叉到后台 worker
+  FORK_SUBAGENT: true,
+
 };
 
 // =============================================================================
@@ -131,5 +134,4 @@ export const INTERNAL_ONLY = {
   // --- 其他内部功能 ---
   IS_LIBC_GLIBC: false,           // 构建环境标记
   IS_LIBC_MUSL: false,            // 构建环境标记
-  FORK_SUBAGENT: false,           // Fork 子 agent（实验性，不稳定）
 };

@@ -456,6 +456,8 @@ export default function App() {
   const [installedConnectors, setInstalledConnectors] = React.useState<InstalledConnector[]>([]);
   const [draftConnectorIds, setDraftConnectorIds] = React.useState<string[]>([]);
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
+  const [forkingSessionId, setForkingSessionId] = React.useState<string | null>(null);
+  const forkSessionRequestRef = React.useRef(false);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
@@ -1308,6 +1310,16 @@ export default function App() {
     [activeDetail?.history],
   );
 
+  const forkDisabledReason = React.useMemo(() => {
+    if (!activeDetail) return '会话尚未加载完成';
+    if (activeDetail.busy) return '请等待当前回复完成后再分叉';
+    if (activeDetail.isSubAgent) return '子会话不能继续分叉';
+    if (activeDetail.projectId) return '项目会话由项目协调器管理，暂不支持分叉';
+    if (activeDetail.sessionKind === 'cron') return '定时任务会话不能分叉';
+    if (visibleChatMessageCount === 0) return '空会话不能分叉';
+    return null;
+  }, [activeDetail, visibleChatMessageCount]);
+
   const sidebarSessions = React.useMemo(
     () => baseSidebarSessions.map((session) => {
       const pendingCount = questionRequests.filter((request) => request.sessionId === session.id).length;
@@ -1539,6 +1551,34 @@ export default function App() {
     if (!opened) return;
     setActiveView('chat');
   }, [openSession]);
+
+  const handleForkSession = React.useCallback(async () => {
+    const sourceSessionId = activeSessionIdRef.current;
+    if (!sourceSessionId || forkSessionRequestRef.current) return;
+    forkSessionRequestRef.current = true;
+    setForkingSessionId(sourceSessionId);
+    try {
+      const created = await window.agentDesktop.forkSession({ sessionId: sourceSessionId });
+      setSummaries((prev) => upsertSummary(prev, created.summary));
+      const sourceMode = sessionAgentModes.get(sourceSessionId)
+        ?? created.summary.agentMode
+        ?? 'local';
+      persistSessionAgentModes(
+        new Map(sessionAgentModes).set(created.summary.id, sourceMode),
+      );
+      await openSession(created.summary.id);
+      showPermissionNotice(`已创建会话分支：${created.summary.title}`, 'info', 3500);
+    } catch (error) {
+      showPermissionNotice(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        6000,
+      );
+    } finally {
+      forkSessionRequestRef.current = false;
+      setForkingSessionId(null);
+    }
+  }, [openSession, persistSessionAgentModes, sessionAgentModes, showPermissionNotice]);
 
   const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
     if (activeDetailRef.current?.projectId) {
@@ -2291,6 +2331,9 @@ export default function App() {
                 onToggleRightSidebar={() => toggleSidebar('right')}
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
+                onForkSession={handleForkSession}
+                forkingSession={forkingSessionId === activeSessionId}
+                forkDisabledReason={forkDisabledReason}
                 onSend={handleSend}
                 onStop={handleStop}
                 onOpenChildSession={(sessionId) => { void openSession(sessionId); }}

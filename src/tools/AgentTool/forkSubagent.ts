@@ -24,16 +24,33 @@ import type { BuiltInAgentDefinition } from './loadAgentsDir.js'
  *   the parent's full conversation context and system prompt
  * - All agent spawns run in the background (async) for a unified
  *   `<task-notification>` interaction model
- * - `/fork <directive>` slash command is available
  *
  * Mutually exclusive with coordinator mode — coordinator already owns the
  * orchestration role and has its own delegation model.
  */
+export function supportsForkSubagentRuntime({
+  coordinatorMode,
+  nonInteractive,
+  entrypoint,
+}: {
+  coordinatorMode: boolean
+  nonInteractive: boolean
+  entrypoint: string | undefined
+}): boolean {
+  if (coordinatorMode) return false
+  // The embedded desktop engine is headless from Ink's perspective, but it
+  // has its own UI for background tasks and permission prompts. Keep fork
+  // disabled for print/SDK sessions that cannot surface those interactions.
+  return !nonInteractive || entrypoint === 'local-agent'
+}
+
 export function isForkSubagentEnabled(): boolean {
   if (feature('FORK_SUBAGENT')) {
-    if (isCoordinatorMode()) return false
-    if (getIsNonInteractiveSession()) return false
-    return true
+    return supportsForkSubagentRuntime({
+      coordinatorMode: isCoordinatorMode(),
+      nonInteractive: getIsNonInteractiveSession(),
+      entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT,
+    })
   }
   return false
 }

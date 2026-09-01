@@ -528,6 +528,37 @@ export async function resumeRemoteDirectSession({ serverUrl, authToken, sessionI
   };
 }
 
+export async function forkRemoteDirectSession({ serverUrl, authToken, sessionId, title, dangerouslySkipPermissions = false }) {
+  let response;
+  try {
+    response = await fetch(
+      `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/fork`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${authToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          title,
+          dangerously_skip_permissions: dangerouslySkipPermissions,
+        }),
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError(`Failed to fork remote session ${sessionId}`, response),
+    );
+  }
+
+  return response.json();
+}
+
 export function createRemoteDirectClient({ getSettings }) {
   const currentSettings = (settings) => settings ?? getSettings();
   return {
@@ -556,6 +587,7 @@ export function createRemoteDirectClient({ getSettings }) {
     fetchRemoteDirectSessions,
     fetchRemoteDirectSessionInfo,
     fetchRemoteDirectSessionContext,
+    forkRemoteDirectSession,
     fetchRemoteDirectWorkspaceDir,
     fetchRemoteDirectWorkspaceFile,
     resumeRemoteDirectSession,

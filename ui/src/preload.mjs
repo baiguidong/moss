@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
   syncRemoteSessions: () => ipcRenderer.invoke('agent:sync-remote-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
+  forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),

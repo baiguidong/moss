@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import {
   fetchRemoteAppAvailability,
   fetchRemoteDirectSessions,
+  forkRemoteDirectSession,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
   requestRemoteDirectAccessToken,
@@ -153,5 +154,31 @@ describe('remote direct client settings', () => {
     }]);
     expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions');
     expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
+  });
+
+  it('forks a remote session with bearer auth', async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        session: { sessionId: 'fork-1', title: 'Research (Fork)' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    const result = await forkRemoteDirectSession({
+      serverUrl: 'https://moss.example.com',
+      authToken: 'access-token',
+      sessionId: 'source/1',
+      title: 'Research (Fork)',
+      dangerouslySkipPermissions: true,
+    });
+
+    expect(result.session.sessionId).toBe('fork-1');
+    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions/source%2F1/fork');
+    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
+    expect(JSON.parse(requests[0].init.body)).toEqual({
+      title: 'Research (Fork)',
+      dangerously_skip_permissions: true,
+    });
   });
 });

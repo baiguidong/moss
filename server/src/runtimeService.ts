@@ -19,9 +19,11 @@ import type {
   RunnerManifest,
   ServerConfig,
   SessionCreateInput,
+  SessionForkInput,
   SessionRecord,
   SessionSummary,
 } from './types.js'
+import { cloneSessionTranscript } from './transcript.js'
 import {
   getAttachPath,
   getAttemptManifestPath,
@@ -284,6 +286,94 @@ export class RuntimeService {
       await this.spawnAttempt(created, {
         dangerouslySkipPermissions: input.dangerouslySkipPermissions,
         assistantName: input.assistantName,
+      })
+    } catch (error) {
+      this.store.markSessionEnded(created.sessionId, 'failed', 'active')
+      throw error
+    }
+    return this.store.getSession(created.sessionId) ?? created
+  }
+
+  async forkSession(
+    sourceSessionId: string,
+    input: SessionForkInput,
+  ): Promise<SessionRecord> {
+    const source = this.store.getSession(sourceSessionId)
+    if (!source) {
+      throw new Error('Session not found')
+    }
+    const active = this.store.listSessions({
+      orgId: input.orgId,
+      activeOnly: true,
+    })
+    if (
+      this.options.config.maxSessions > 0 &&
+      active.length >= this.options.config.maxSessions
+    ) {
+      throw new Error(
+        `Maximum concurrent sessions reached (${this.options.config.maxSessions})`,
+      )
+    }
+
+    const sessionId = randomUUID()
+    const profileMode = source.runtime.profileMode
+    const transcriptPath = getTranscriptPath(
+      this.options.config,
+      sessionId,
+      sessionId,
+    )
+    const transcriptDir = getSessionTranscriptDir(this.options.config, sessionId)
+    const profileDir = getProfileDir(
+      this.options.config,
+      sessionId,
+      input.userId,
+      profileMode,
+    )
+    const title = input.title?.trim() || `${source.title || 'Session'} (Fork)`
+    const runtime: SessionRuntimeInfo = {
+      ...source.runtime,
+      profileDir,
+      transcriptDir,
+      containerName: undefined,
+    }
+
+    await Promise.all([
+      mkdir(profileDir, { recursive: true }),
+      mkdir(transcriptDir, { recursive: true }),
+      mkdir(source.cwd, { recursive: true }),
+    ])
+    await cloneSessionTranscript(
+      source.transcriptPath,
+      transcriptPath,
+      source.transcriptSessionId,
+      sessionId,
+      title,
+    )
+
+    const created = this.store.createSession({
+      sessionId,
+      transcriptSessionId: sessionId,
+      transcriptPath,
+      userId: input.userId,
+      orgId: input.orgId,
+      role: input.role,
+      scopes: input.scopes,
+      cwd: source.cwd,
+      runtime,
+      status: 'creating',
+      desiredState: 'active',
+      title,
+      assistantName: source.assistantName ?? undefined,
+      advancedSettings: source.advancedSettings,
+      autoMemory: source.autoMemory,
+      sessionMemory: source.sessionMemory,
+    })
+
+    try {
+      await this.spawnAttempt(created, {
+        dangerouslySkipPermissions: input.dangerouslySkipPermissions,
+        resumeTranscriptSessionId: sessionId,
+        assistantName: source.assistantName ?? undefined,
       })
     } catch (error) {
       this.store.markSessionEnded(created.sessionId, 'failed', 'active')

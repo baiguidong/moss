@@ -36,11 +36,6 @@ const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
       require('./services/skillSearch/localSearch.js') as typeof import('./services/skillSearch/localSearch.js')
     ).clearSkillIndexCache
   : null
-const forkCmd = feature('FORK_SUBAGENT')
-  ? (
-      require('./commands/fork/index.js') as typeof import('./commands/fork/index.js')
-    ).default
-  : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
@@ -124,7 +119,6 @@ const COMMANDS = memoize((): Command[] => [
   rewind,
   terminalSetup,
   vim,
-  ...(forkCmd ? [forkCmd] : []),
   ...(proactive ? [proactive] : []),
   ...(voiceCommand ? [voiceCommand] : []),
   permissions,
