@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { buildRenderModel } from "@/components/chat/message-list";
 import {
+  getExplorationSummary,
+  groupToolCallsForDisplay,
+  isExplorationToolCall,
+  shouldExpandExploredGroup,
+} from "@/components/chat/tool-call-group";
+import {
   getDiffPatchText,
   getDiffStats,
   getStructuredDiffStats,
@@ -31,6 +37,42 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("separates built-in exploration tools without grouping business search tools", () => {
+    const model = buildRenderModel(buildMainChatRenderMessagesFromHistory([
+      assistantTool("read-1", "Read", { file_path: "/repo/src/one.ts" }),
+      assistantTool("search-1", "Grep", { pattern: "TODO", path: "/repo/src" }),
+      assistantTool("business-1", "mcp__mail__search_messages", { query: "invoice" }),
+      assistantTool("bash-1", "Bash", { command: "bun test" }),
+      assistantTool("glob-1", "Glob", { pattern: "**/*.test.ts" }),
+    ]));
+    const toolGroup = model.renderItems.find((item) => item.kind === "tool_group");
+    const toolCalls = toolGroup?.kind === "tool_group" ? toolGroup.toolCalls : [];
+
+    expect(isExplorationToolCall(toolCalls[0]!)).toBe(true);
+    expect(isExplorationToolCall(toolCalls[2]!)).toBe(false);
+    toolCalls[1]!.status = "error";
+    expect(getExplorationSummary(toolCalls, model.resultMap)).toEqual({
+      read: 1,
+      search: 2,
+      failed: 1,
+      running: 2,
+    });
+    expect(groupToolCallsForDisplay(toolCalls).map((run) => ({
+      kind: run.kind,
+      ids: run.toolCalls.map((toolCall) => toolCall.toolUseId),
+    }))).toEqual([
+      { kind: "exploration", ids: ["read-1", "search-1"] },
+      { kind: "tools", ids: ["business-1", "bash-1"] },
+      { kind: "exploration", ids: ["glob-1"] },
+    ]);
+  });
+
+  it("lets the display switch control only the Explored parent", () => {
+    expect(shouldExpandExploredGroup(true, false)).toBe(false);
+    expect(shouldExpandExploredGroup(false, false)).toBe(true);
+    expect(shouldExpandExploredGroup(true, true)).toBe(true);
+  });
+
   it("keeps sibling tool calls and attaches their results by tool_use_id", () => {
     const messages = buildMainChatRenderMessagesFromHistory([
       {

@@ -226,7 +226,7 @@ function renderTranscriptItem(
 ) {
   if (item.kind === "tool_group") {
     return (
-      <div key={item.id} className="group mb-5 min-w-0 w-full">
+      <div key={item.id} className="group mb-3 min-w-0 w-full">
         <ToolCallGroup
           toolCalls={item.toolCalls}
           resultMap={resultMap}
@@ -400,7 +400,7 @@ function VirtuosoHeader() {
 
 function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
   return (
-    <div className="mx-auto w-full max-w-[980px] px-3 pb-4 pt-1 sm:px-4">
+    <div className="mx-auto w-full max-w-[1180px] px-3 pb-4 pt-1 sm:px-4">
       {context?.loading && <LoadingIndicator />}
       {context?.footer}
     </div>
@@ -506,7 +506,7 @@ export const VirtualMessageList = React.forwardRef<
   if (renderItems.length === 0) {
     return (
       <WorkspacePathProvider workspace={workspace || ""}>
-        <div className="mx-auto w-full max-w-[980px] px-3 py-3 sm:px-4">
+        <div className="mx-auto w-full max-w-[1180px] px-3 py-3 sm:px-4">
           {emptyState || (
             <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">
               暂无消息
@@ -547,7 +547,7 @@ export const VirtualMessageList = React.forwardRef<
           );
           return (
             <div
-              className="mx-auto w-full max-w-[980px] min-w-0 px-3 py-0.5 sm:px-4"
+              className="mx-auto w-full max-w-[1180px] min-w-0 px-3 py-0.5 sm:px-4"
               onContextMenu={(e) => {
                 const selection = window.getSelection()?.toString() ?? "";
                 const messageText = extractItemCopyText(item);
@@ -642,7 +642,7 @@ export function MessageList({
 
   return (
     <WorkspacePathProvider workspace={workspace || ""}>
-    <div className="mx-auto flex w-full max-w-[980px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
+    <div className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
       {renderItems.length > 0 ? (
         renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent))
       ) : (

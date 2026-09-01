@@ -171,7 +171,7 @@ function SessionTabBar({
 
   return (
     <div className="shrink-0 border-b border-border/70 bg-background/88 px-3 py-2 backdrop-blur sm:px-4">
-      <div className="mx-auto flex max-w-[980px] min-w-0 items-center justify-between gap-3">
+      <div className="mx-auto flex max-w-[1180px] min-w-0 items-center justify-between gap-3">
         <Button
           variant="ghost"
           size="icon"
@@ -2207,7 +2207,7 @@ export function ChatArea({
 
 
       <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
-        <div className="mx-auto max-w-[980px] min-w-0">
+        <div className="mx-auto max-w-[1180px] min-w-0">
           {childSessions.length > 0 ? (
             <div
               className="mb-2 flex h-10 min-w-0 items-center justify-start overflow-hidden text-[11px] text-muted-foreground"

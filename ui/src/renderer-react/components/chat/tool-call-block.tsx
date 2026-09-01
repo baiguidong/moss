@@ -19,6 +19,10 @@ import {
   useToolDisplaySettings,
 } from "@/components/chat/tool-display-settings";
 import {
+  TOOL_CALL_FRAME_CLASS_NAME,
+  TOOL_CALL_HEADER_CLASS_NAME,
+} from "@/components/chat/tool-call-frame";
+import {
   extractShellResult,
   extractTextContent,
   formatLocator,
@@ -285,12 +289,14 @@ export function ToolCallBlock({
   children,
   focused = false,
   expandForFocus = false,
+  defaultCollapsed = false,
 }: {
   toolCall: ToolUseRenderMessage;
   result?: ToolResultRenderMessage;
   children?: React.ReactNode;
   focused?: boolean;
   expandForFocus?: boolean;
+  defaultCollapsed?: boolean;
 }) {
   const { autoCollapseToolCalls } = useToolDisplaySettings();
   const kind = getToolKind(toolCall.toolName, toolCall.input);
@@ -355,27 +361,32 @@ export function ToolCallBlock({
     failed,
     hasResult,
   });
+  const focusRequested = focused || expandForFocus;
   const [collapsed, setCollapsed] = React.useState(
-    shouldAutoCollapse && !focused && !expandForFocus,
+    (defaultCollapsed || shouldAutoCollapse) && !focusRequested,
   );
-  const [outputExpanded, setOutputExpanded] = React.useState(focused || expandForFocus);
+  const [outputExpanded, setOutputExpanded] = React.useState(focusRequested);
   const autoCollapseWasEnabledRef = React.useRef(autoCollapseToolCalls);
+  const focusWasRequestedRef = React.useRef(focusRequested);
 
   React.useEffect(() => {
-    if (focused || expandForFocus) {
+    if (focusRequested) {
       setCollapsed(false);
       setOutputExpanded(true);
+    } else if (defaultCollapsed) {
+      if (focusWasRequestedRef.current) setCollapsed(true);
     } else if (autoCollapseToolCalls) {
       setCollapsed(shouldAutoCollapse);
     } else if (autoCollapseWasEnabledRef.current) {
       setCollapsed(false);
     }
     autoCollapseWasEnabledRef.current = autoCollapseToolCalls;
+    focusWasRequestedRef.current = focusRequested;
   }, [
     autoCollapseToolCalls,
-    expandForFocus,
+    defaultCollapsed,
     failed,
-    focused,
+    focusRequested,
     hasResult,
     shouldAutoCollapse,
     toolCall.status,
@@ -399,13 +410,13 @@ export function ToolCallBlock({
     <div
       data-tool-use-id={toolCall.toolUseId}
       className={cn(
-        "group/tool-call min-w-0 overflow-hidden rounded-md border border-[color:var(--color-repl-border)] bg-[var(--color-repl-bg)] transition-colors",
+        TOOL_CALL_FRAME_CLASS_NAME,
         focused && "ring-1 ring-[color:var(--color-repl-fg)]/20",
       )}
     >
       <div
         className={cn(
-          "flex min-h-9 min-w-0 items-start gap-2 bg-[var(--color-repl-header-bg)] px-3 py-2",
+          TOOL_CALL_HEADER_CLASS_NAME,
           hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}
       >
@@ -458,7 +469,7 @@ export function ToolCallBlock({
       </div>
 
       {hasResponse && !collapsed ? (
-        <div className="min-w-0 bg-[var(--color-repl-bg)] px-3 py-2">
+        <div className="min-w-0 bg-[var(--color-repl-bg)] px-2.5 py-1.5">
           <div className="ml-3.5 min-w-0">
             <TranscriptOutput
               segments={segments}
