@@ -37,6 +37,10 @@ describe('createDirectConnectSession', () => {
         moss_large_tool_result_protection: true,
         moss_tool_result_budget_chars: 300_000,
         moss_mcp_output_token_limit: 40_000,
+        moss_file_read_max_size_bytes: 512_000,
+        moss_file_read_max_tokens: 50_000,
+        moss_request_attribution_enabled: false,
+        moss_context_compaction_strategy: 'reactive',
       },
       autoMemory: {
         enabled: true,
@@ -72,6 +76,10 @@ describe('createDirectConnectSession', () => {
         moss_large_tool_result_protection: true,
         moss_tool_result_budget_chars: 300_000,
         moss_mcp_output_token_limit: 40_000,
+        moss_file_read_max_size_bytes: 512_000,
+        moss_file_read_max_tokens: 50_000,
+        moss_request_attribution_enabled: false,
+        moss_context_compaction_strategy: 'reactive',
       },
       autoMemory: {
         enabled: true,

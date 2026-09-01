@@ -3,7 +3,6 @@ import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { Box, Text } from 'src/ink.js';
 import { getPlatform } from 'src/utils/platform.js';
-import { isKeybindingCustomizationEnabled } from '../../keybindings/loadUserBindings.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js';
 import { getNewlineInstructions } from './utils.js';
@@ -301,7 +300,7 @@ export function PromptInputHelpMenu(props) {
   }
   let t43;
   if ($[82] !== dimColor) {
-    t43 = isKeybindingCustomizationEnabled() && <Box><Text dimColor={dimColor}>/keybindings to customize</Text></Box>;
+    t43 = <Box><Text dimColor={dimColor}>/keybindings to customize</Text></Box>;
     $[82] = dimColor;
     $[83] = t43;
   } else {

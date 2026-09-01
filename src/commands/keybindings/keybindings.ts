@@ -2,21 +2,14 @@ import { mkdir, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import {
   getKeybindingsPath,
-  isKeybindingCustomizationEnabled,
+  initializeKeybindingWatcher,
+  reloadKeybindings,
 } from '../../keybindings/loadUserBindings.js'
 import { generateKeybindingsTemplate } from '../../keybindings/template.js'
 import { getErrnoCode } from '../../utils/errors.js'
 import { editFileInEditor } from '../../utils/promptEditor.js'
 
 export async function call(): Promise<{ type: 'text'; value: string }> {
-  if (!isKeybindingCustomizationEnabled()) {
-    return {
-      type: 'text',
-      value:
-        'Keybinding customization is not enabled. This feature is currently in preview.',
-    }
-  }
-
   const keybindingsPath = getKeybindingsPath()
 
   // Write template with 'wx' flag (exclusive create) — fails with EEXIST if
@@ -36,12 +29,22 @@ export async function call(): Promise<{ type: 'text'; value: string }> {
     }
   }
 
+  await initializeKeybindingWatcher()
+
   // Open in editor
   const result = await editFileInEditor(keybindingsPath)
+  await reloadKeybindings()
+  const fileStatus = fileExists ? 'Found' : 'Created'
   if (result.error) {
     return {
       type: 'text',
-      value: `${fileExists ? 'Opened' : 'Created'} ${keybindingsPath}. Could not open in editor: ${result.error}`,
+      value: `${fileStatus} ${keybindingsPath}. Could not open in editor: ${result.error}`,
+    }
+  }
+  if (result.content === null) {
+    return {
+      type: 'text',
+      value: `${fileStatus} ${keybindingsPath}. No editor is available. Set VISUAL or EDITOR and run /keybindings again.`,
     }
   }
   return {

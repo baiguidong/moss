@@ -1,13 +1,12 @@
 import {
   advancedSettingsSchema,
   DEFAULT_ADVANCED_SETTINGS,
-  normalizeAdvancedSettings,
   type AdvancedSettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { getSessionEnvironmentContext } from '../utils/sessionIdContext.js'
 import {
-  getFeatureValue_CACHED_MAY_BE_STALE,
-  hasFeatureFlagEnvOverride,
+  getFeatureFlagConfigOverrides,
+  getFeatureFlagEnvOverrides,
 } from './analytics/featureFlags.js'
 
 export const MOSS_RUNTIME_ADVANCED_SETTINGS_ENV =
@@ -19,51 +18,56 @@ const ADVANCED_SETTING_KEYS = Object.keys(
   DEFAULT_ADVANCED_SETTINGS,
 ) as AdvancedSettingKey[]
 
+function applySettingValue<Key extends AdvancedSettingKey>(
+  target: Partial<AdvancedSettings>,
+  source: Partial<AdvancedSettings>,
+  key: Key,
+): void {
+  const value = source[key]
+  if (value !== undefined) target[key] = value
+}
+
+function parseSettingEntries(value: unknown): Partial<AdvancedSettings> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  const parsed = advancedSettingsSchema().safeParse(value)
+  if (parsed.success) return parsed.data
+
+  const source = value as Record<string, unknown>
+  const settings: Partial<AdvancedSettings> = {}
+  for (const key of ADVANCED_SETTING_KEYS) {
+    if (!(key in source)) continue
+    const entry = advancedSettingsSchema().safeParse({ [key]: source[key] })
+    if (entry.success) applySettingValue(settings, entry.data, key)
+  }
+  return settings
+}
+
 function parseEnvironmentSettings(
   raw: string | undefined,
 ): Partial<AdvancedSettings> {
   if (!raw) return {}
   try {
-    const parsed = advancedSettingsSchema().safeParse(JSON.parse(raw))
-    return parsed.success ? parsed.data : {}
+    return parseSettingEntries(JSON.parse(raw))
   } catch {
     return {}
   }
 }
 
-function applySettingValue<Key extends AdvancedSettingKey>(
-  target: AdvancedSettings,
-  source: AdvancedSettings,
-  key: Key,
-): void {
-  target[key] = source[key]
-}
-
 export function getAdvancedSettings(): AdvancedSettings {
-  const featureValues = Object.fromEntries(
-    ADVANCED_SETTING_KEYS.map(key => [
-      key,
-      getFeatureValue_CACHED_MAY_BE_STALE(
-        key,
-        DEFAULT_ADVANCED_SETTINGS[key],
-      ),
-    ]),
-  ) as AdvancedSettings
+  const featureValues = parseSettingEntries(getFeatureFlagConfigOverrides())
   const sessionOverrides = parseEnvironmentSettings(
     getSessionEnvironmentContext()?.[MOSS_RUNTIME_ADVANCED_SETTINGS_ENV] ??
       process.env[MOSS_RUNTIME_ADVANCED_SETTINGS_ENV],
   )
-  const merged = normalizeAdvancedSettings({
+  const environmentOverrides = parseSettingEntries(
+    getFeatureFlagEnvOverrides(),
+  )
+  const merged: AdvancedSettings = {
+    ...DEFAULT_ADVANCED_SETTINGS,
     ...featureValues,
     ...sessionOverrides,
-  })
-
-  // Explicit process environment overrides remain the highest-precedence
-  // mechanism for diagnostics and managed deployments.
-  for (const key of ADVANCED_SETTING_KEYS) {
-    if (hasFeatureFlagEnvOverride(key)) {
-      applySettingValue(merged, featureValues, key)
-    }
+    ...environmentOverrides,
   }
   return merged
 }

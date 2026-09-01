@@ -35,6 +35,10 @@ export type AdvancedSettings = {
   moss_large_tool_result_protection: boolean
   moss_tool_result_budget_chars: number
   moss_mcp_output_token_limit: number
+  moss_file_read_max_size_bytes: number
+  moss_file_read_max_tokens: number
+  moss_request_attribution_enabled: boolean
+  moss_context_compaction_strategy: 'proactive' | 'reactive'
 }
 
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
@@ -69,6 +73,10 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_large_tool_result_protection: false,
   moss_tool_result_budget_chars: 200_000,
   moss_mcp_output_token_limit: 25_000,
+  moss_file_read_max_size_bytes: 256 * 1024,
+  moss_file_read_max_tokens: 25_000,
+  moss_request_attribution_enabled: true,
+  moss_context_compaction_strategy: 'proactive',
 })
 
 export type SessionRuntimeOptions = {
@@ -127,6 +135,10 @@ export const advancedSettingsSchema = lazySchema(() =>
     moss_large_tool_result_protection: z.boolean().optional(),
     moss_tool_result_budget_chars: z.number().int().min(1).max(10_000_000).optional(),
     moss_mcp_output_token_limit: z.number().int().min(1).max(1_000_000).optional(),
+    moss_file_read_max_size_bytes: z.number().int().min(1).max(1_000_000_000).optional(),
+    moss_file_read_max_tokens: z.number().int().min(1).max(1_000_000).optional(),
+    moss_request_attribution_enabled: z.boolean().optional(),
+    moss_context_compaction_strategy: z.enum(['proactive', 'reactive']).optional(),
   }),
 )
 

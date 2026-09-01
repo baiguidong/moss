@@ -3,16 +3,12 @@
  *
  * Loads keybindings from ~/.moss/keybindings.json and watches
  * for changes to reload them automatically.
- *
- * NOTE: User keybinding customization is controlled by a release feature flag.
- * When disabled, users always use the default bindings.
  */
 
 import chokidar, { type FSWatcher } from 'chokidar'
 import { readFileSync } from 'fs'
-import { readFile, stat } from 'fs/promises'
+import { mkdir, readFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logEvent } from '../services/analytics/index.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -28,21 +24,6 @@ import {
   type KeybindingWarning,
   validateBindings,
 } from './validate.js'
-
-/**
- * Check if keybinding customization is enabled.
- *
- * Returns true if the tengu_keybinding_customization_release feature flag gate is enabled.
- *
- * This function is exported so other parts of the codebase (e.g., /doctor)
- * can check the same condition consistently.
- */
-export function isKeybindingCustomizationEnabled(): boolean {
-  return getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_keybinding_customization_release',
-    false,
-  )
-}
 
 /**
  * Time in milliseconds to wait for file writes to stabilize.
@@ -125,16 +106,9 @@ function getDefaultParsedBindings(): ParsedBinding[] {
 /**
  * Load and parse keybindings from user config file.
  * Returns merged default + user bindings along with validation warnings.
- *
- * When the release flag is disabled, always returns default bindings only.
  */
 export async function loadKeybindings(): Promise<KeybindingsLoadResult> {
   const defaultBindings = getDefaultParsedBindings()
-
-  // Skip user config loading for external users
-  if (!isKeybindingCustomizationEnabled()) {
-    return { bindings: defaultBindings, warnings: [] }
-  }
 
   const userPath = getKeybindingsPath()
 
@@ -250,9 +224,6 @@ export function loadKeybindingsSync(): ParsedBinding[] {
 /**
  * Load keybindings synchronously with validation warnings.
  * Uses cached values if available.
- *
- * For external users, always returns default bindings only.
- * User customization is currently gated to Anthropic employees.
  */
 export function loadKeybindingsSyncWithWarnings(): KeybindingsLoadResult {
   if (cachedBindings) {
@@ -260,13 +231,6 @@ export function loadKeybindingsSyncWithWarnings(): KeybindingsLoadResult {
   }
 
   const defaultBindings = getDefaultParsedBindings()
-
-  // Skip user config loading for external users
-  if (!isKeybindingCustomizationEnabled()) {
-    cachedBindings = defaultBindings
-    cachedWarnings = []
-    return { bindings: cachedBindings, warnings: cachedWarnings }
-  }
 
   const userPath = getKeybindingsPath()
 
@@ -345,34 +309,19 @@ export function loadKeybindingsSyncWithWarnings(): KeybindingsLoadResult {
 /**
  * Initialize file watching for keybindings.json.
  * Call this once when the app starts.
- *
- * For external users, this is a no-op since user customization is disabled.
  */
 export async function initializeKeybindingWatcher(): Promise<void> {
   if (initialized || disposed) return
 
-  // Skip file watching for external users
-  if (!isKeybindingCustomizationEnabled()) {
-    logForDebugging(
-      '[keybindings] Skipping file watcher - user customization disabled',
-    )
-    return
-  }
-
   const userPath = getKeybindingsPath()
   const watchDir = dirname(userPath)
 
-  // Only watch if parent directory exists
   try {
-    const stats = await stat(watchDir)
-    if (!stats.isDirectory()) {
-      logForDebugging(
-        `[keybindings] Not watching: ${watchDir} is not a directory`,
-      )
-      return
-    }
-  } catch {
-    logForDebugging(`[keybindings] Not watching: ${watchDir} does not exist`)
+    await mkdir(watchDir, { recursive: true })
+  } catch (error) {
+    logForDebugging(
+      `[keybindings] Not watching: unable to create ${watchDir}: ${errorMessage(error)}`,
+    )
     return
   }
 
@@ -419,16 +368,19 @@ export function disposeKeybindingWatcher(): void {
  */
 export const subscribeToKeybindingChanges = keybindingsChanged.subscribe
 
+export async function reloadKeybindings(): Promise<KeybindingsLoadResult> {
+  const result = await loadKeybindings()
+  cachedBindings = result.bindings
+  cachedWarnings = result.warnings
+  keybindingsChanged.emit(result)
+  return result
+}
+
 async function handleChange(path: string): Promise<void> {
   logForDebugging(`[keybindings] Detected change to ${path}`)
 
   try {
-    const result = await loadKeybindings()
-    cachedBindings = result.bindings
-    cachedWarnings = result.warnings
-
-    // Notify all listeners with the full result
-    keybindingsChanged.emit(result)
+    await reloadKeybindings()
   } catch (error) {
     logForDebugging(`[keybindings] Error reloading: ${errorMessage(error)}`)
   }

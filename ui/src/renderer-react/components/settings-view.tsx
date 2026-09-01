@@ -159,6 +159,10 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_large_tool_result_protection: false,
   moss_tool_result_budget_chars: 200_000,
   moss_mcp_output_token_limit: 25_000,
+  moss_file_read_max_size_bytes: 256 * 1024,
+  moss_file_read_max_tokens: 25_000,
+  moss_request_attribution_enabled: true,
+  moss_context_compaction_strategy: 'proactive',
 };
 
 const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
@@ -244,12 +248,12 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'tool-performance',
         title: '工具与性能',
-        keywords: ['tool', 'performance', 'streaming', '工具结果', 'mcp', '闲置', '性能'],
+        keywords: ['tool', 'performance', 'streaming', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'],
       },
       {
         id: 'prompt',
         title: '系统提示',
-        keywords: ['prompt', '系统提示', 'append', 'instruction'],
+        keywords: ['prompt', '系统提示', 'append', 'instruction', '归因', 'attribution'],
       },
       {
         id: 'service-address',
@@ -1841,6 +1845,42 @@ export function SettingsView({
                           })}
                         />
                       </SettingsRow>
+
+                      <SettingsRow
+                        title="Read 文件大小上限"
+                        description="Read 工具可直接读取的完整文件大小上限，单位为字节；超过后需按范围读取。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1_000_000_000}
+                          step={65_536}
+                          className={FIELD_CLASS_NAME}
+                          value={advancedDraft.moss_file_read_max_size_bytes ?? DEFAULT_ADVANCED_SETTINGS.moss_file_read_max_size_bytes}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_file_read_max_size_bytes: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Read 输出 token 上限"
+                        description="限制 Read 工具单次返回的内容 token 数，避免读取大文件占满上下文。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1_000_000}
+                          step={1_000}
+                          className={FIELD_CLASS_NAME}
+                          value={advancedDraft.moss_file_read_max_tokens ?? DEFAULT_ADVANCED_SETTINGS.moss_file_read_max_tokens}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_file_read_max_tokens: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>
                 ) : null}
@@ -2046,6 +2086,23 @@ export function SettingsView({
                       基础设置
                     </div>
                     <SettingsGroup>
+                      <SettingsRow
+                        title="上下文压缩策略"
+                        description="主动压缩更稳定；响应式压缩会尽量使用完整上下文，仅在接口返回超限后恢复。"
+                        controlClassName="sm:w-[220px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={advancedDraft.moss_context_compaction_strategy ?? DEFAULT_ADVANCED_SETTINGS.moss_context_compaction_strategy}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_context_compaction_strategy: event.target.value as 'proactive' | 'reactive',
+                          })}
+                        >
+                          <option value="proactive">主动压缩（推荐）</option>
+                          <option value="reactive">超限后压缩</option>
+                        </select>
+                      </SettingsRow>
+
                       <SettingsRow
                         title="会话记忆"
                         description="为每个会话维护独立摘要，用于长会话压缩和恢复当前上下文。"
@@ -2344,6 +2401,21 @@ export function SettingsView({
                         />
                       </SettingsRow>
                     </Surface>
+                    <SettingsGroup className="mt-3">
+                      <SettingsRow
+                        title="发送请求归因信息"
+                        description="在系统提示中附带版本、入口和 workload 信息；关闭可提高自定义接口兼容性。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_request_attribution_enabled)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_request_attribution_enabled: checked })}
+                            label="发送请求归因信息"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 

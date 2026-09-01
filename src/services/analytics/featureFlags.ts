@@ -9,6 +9,7 @@ const refreshed = createSignal()
 
 let envOverrides: Record<string, unknown> | null = null
 let envOverridesParsed = false
+let envOverridesRaw: string | undefined
 
 function callSafe(listener: FeatureFlagRefreshListener): void {
   try {
@@ -36,9 +37,11 @@ function parseOverrideObject(raw: string): Record<string, unknown> | null {
 }
 
 function getEnvOverrides(): Record<string, unknown> | null {
-  if (!envOverridesParsed) {
+  const raw = process.env.MOSS_FEATURE_FLAG_OVERRIDES
+  if (!envOverridesParsed || raw !== envOverridesRaw) {
     envOverridesParsed = true
-    const raw = process.env.MOSS_FEATURE_FLAG_OVERRIDES
+    envOverridesRaw = raw
+    envOverrides = null
     if (raw) {
       try {
         envOverrides = parseOverrideObject(raw)
@@ -72,16 +75,15 @@ function getLocalFeatureValue<T>(feature: string, defaultValue: T): T {
   return defaultValue
 }
 
-export function hasFeatureFlagEnvOverride(feature: string): boolean {
-  const overrides = getEnvOverrides()
-  return overrides !== null && feature in overrides
-}
-
 export function getAllFeatureFlags(): Record<string, unknown> {
   return {
     ...(getConfigOverrides() ?? {}),
     ...(getEnvOverrides() ?? {}),
   }
+}
+
+export function getFeatureFlagEnvOverrides(): Record<string, unknown> {
+  return { ...(getEnvOverrides() ?? {}) }
 }
 
 export function getFeatureFlagConfigOverrides(): Record<string, unknown> {

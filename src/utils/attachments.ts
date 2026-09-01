@@ -1562,18 +1562,13 @@ async function getNestedMemoryAttachmentsForFile(
       originalCwd,
     )
 
-    const skipProjectLevel = getFeatureValue_CACHED_MAY_BE_STALE(
-      'tengu_paper_halyard',
-      false,
-    )
-
     // Phase 3: Process nested directories (CWD → target)
     // Each directory gets project instructions plus unconditional and conditional rules.
     for (const dir of nestedDirs) {
-      const memoryFiles = (
-        await getMemoryFilesForNestedDirectory(dir, filePath, processedPaths)
-      ).filter(
-        f => !skipProjectLevel || (f.type !== 'Project' && f.type !== 'Local'),
+      const memoryFiles = await getMemoryFilesForNestedDirectory(
+        dir,
+        filePath,
+        processedPaths,
       )
       attachments.push(
         ...memoryFilesToAttachments(memoryFiles, toolUseContext, filePath),
@@ -1583,14 +1578,10 @@ async function getNestedMemoryAttachmentsForFile(
     // Phase 4: Process CWD-level directories (root → CWD)
     // Only conditional rules (unconditional rules are already loaded eagerly)
     for (const dir of cwdLevelDirs) {
-      const conditionalRules = (
-        await getConditionalRulesForCwdLevelDirectory(
-          dir,
-          filePath,
-          processedPaths,
-        )
-      ).filter(
-        f => !skipProjectLevel || (f.type !== 'Project' && f.type !== 'Local'),
+      const conditionalRules = await getConditionalRulesForCwdLevelDirectory(
+        dir,
+        filePath,
+        processedPaths,
       )
       attachments.push(
         ...memoryFilesToAttachments(conditionalRules, toolUseContext, filePath),

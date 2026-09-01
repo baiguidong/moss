@@ -1,4 +1,3 @@
-import { feature } from 'bun:bundle'
 import type { Anthropic } from '@anthropic-ai/sdk'
 import {
   getSystemPrompt,
@@ -8,12 +7,12 @@ import { microcompactMessages } from 'src/services/compact/microCompact.js'
 import { getSdkBetas } from '../bootstrap/state.js'
 import { getCommandName } from '../commands.js'
 import { getSystemContext } from '../context.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
   AUTOCOMPACT_BUFFER_TOKENS,
   getEffectiveContextWindowSize,
   isAutoCompactEnabled,
   MANUAL_COMPACT_BUFFER_TOKENS,
+  usesReactiveCompactStrategy,
 } from '../services/compact/autoCompact.js'
 import {
   countMessagesTokensWithAPI,
@@ -1004,15 +1003,9 @@ export async function analyzeContextUsage(
   // Reserved space after messages (not counted in actualUsage shown to user).
   // Under reactive-only mode (cobalt_raccoon), proactive autocompact never
   // fires and the reserved buffer is a lie — skip it entirely and let Free
-  // space fill the grid. feature() guard keeps the flag string out of
-  // external builds.
+  // space fill the grid.
   let reservedTokens = 0
-  let skipReservedBuffer = false
-  if (feature('REACTIVE_COMPACT')) {
-    if (getFeatureValue_CACHED_MAY_BE_STALE('tengu_cobalt_raccoon', false)) {
-      skipReservedBuffer = true
-    }
-  }
+  const skipReservedBuffer = usesReactiveCompactStrategy()
   if (skipReservedBuffer) {
     // No buffer category pushed — reactive compaction is transparent and
     // doesn't need a visible reservation in the grid.

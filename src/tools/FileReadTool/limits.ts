@@ -12,9 +12,7 @@
  * dropped but mean tokens rose — the throw path yields a ~100-byte error
  * tool-result while truncation yields ~25K tokens of content at the cap.
  */
-import memoize from 'lodash-es/memoize.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
-import { MAX_OUTPUT_SIZE } from 'src/utils/file.js'
+import { getAdvancedSetting } from 'src/services/advancedSettings.js'
 export const DEFAULT_MAX_OUTPUT_TOKENS = 25000
 
 /**
@@ -41,52 +39,17 @@ export type FileReadingLimits = {
 
 /**
  * Default limits for Read tool when the ToolUseContext doesn't supply an
- * override. Memoized so the feature flag value is fixed at first call — avoids
- * the cap changing mid-session as the flag refreshes in the background.
+ * override. Desktop settings are session-scoped snapshots, so this must be
+ * resolved inside the active session context instead of cached globally.
  *
- * Precedence for maxTokens: env var > feature flag > DEFAULT_MAX_OUTPUT_TOKENS.
- * (Env var is a user-set override, should beat experiment infrastructure.)
- *
- * Defensive: each field is individually validated; invalid values fall
- * through to the hardcoded defaults (no route to cap=0).
+ * Precedence for maxTokens: env var > session advanced setting.
  */
-export const getDefaultFileReadingLimits = memoize((): FileReadingLimits => {
-  const override =
-    getFeatureValue_CACHED_MAY_BE_STALE<Partial<FileReadingLimits> | null>(
-      'tengu_amber_wren',
-      {},
-    )
-
-  const maxSizeBytes =
-    typeof override?.maxSizeBytes === 'number' &&
-    Number.isFinite(override.maxSizeBytes) &&
-    override.maxSizeBytes > 0
-      ? override.maxSizeBytes
-      : MAX_OUTPUT_SIZE
-
+export function getDefaultFileReadingLimits(): FileReadingLimits {
   const envMaxTokens = getEnvMaxTokens()
-  const maxTokens =
-    envMaxTokens ??
-    (typeof override?.maxTokens === 'number' &&
-    Number.isFinite(override.maxTokens) &&
-    override.maxTokens > 0
-      ? override.maxTokens
-      : DEFAULT_MAX_OUTPUT_TOKENS)
-
-  const includeMaxSizeInPrompt =
-    typeof override?.includeMaxSizeInPrompt === 'boolean'
-      ? override.includeMaxSizeInPrompt
-      : undefined
-
-  const targetedRangeNudge =
-    typeof override?.targetedRangeNudge === 'boolean'
-      ? override.targetedRangeNudge
-      : undefined
 
   return {
-    maxSizeBytes,
-    maxTokens,
-    includeMaxSizeInPrompt,
-    targetedRangeNudge,
+    maxSizeBytes: getAdvancedSetting('moss_file_read_max_size_bytes'),
+    maxTokens:
+      envMaxTokens ?? getAdvancedSetting('moss_file_read_max_tokens'),
   }
-})
+}

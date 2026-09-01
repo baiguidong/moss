@@ -12,7 +12,7 @@ import { hasExactErrorMessage } from '../../utils/errors.js'
 import type { CacheSafeParams } from '../../utils/forkedAgent.js'
 import { logError } from '../../utils/log.js'
 import { tokenCountWithEstimation } from '../../utils/tokens.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/featureFlags.js'
+import { getAdvancedSetting } from '../advancedSettings.js'
 import { getMaxOutputTokensForModel } from '../api/claude.js'
 import { notifyCompaction } from '../api/promptCacheBreakDetection.js'
 import { setLastSummarizedMessageId } from '../SessionMemory/sessionMemoryUtils.js'
@@ -157,6 +157,11 @@ export function isAutoCompactEnabled(): boolean {
   return userConfig.autoCompactEnabled
 }
 
+export function usesReactiveCompactStrategy(): boolean {
+  if (!feature('REACTIVE_COMPACT')) return false
+  return getAdvancedSetting('moss_context_compaction_strategy') === 'reactive'
+}
+
 export async function shouldAutoCompact(
   messages: Message[],
   model: string,
@@ -172,15 +177,12 @@ export async function shouldAutoCompact(
   }
 
   // Reactive-only mode: suppress proactive autocompact, let reactive compact
-  // catch the API's prompt-too-long. feature() wrapper keeps the flag string
-  // behind the configured build gate.
+  // catch the API's prompt-too-long. The helper also checks build support.
   // Note: returning false here also means autoCompactIfNeeded never reaches
   // trySessionMemoryCompaction in the query loop — the /compact call site
   // still tries session memory first. Revisit if reactive-only graduates.
-  if (feature('REACTIVE_COMPACT')) {
-    if (getFeatureValue_CACHED_MAY_BE_STALE('tengu_cobalt_raccoon', false)) {
-      return false
-    }
+  if (usesReactiveCompactStrategy()) {
+    return false
   }
 
   const tokenCount = tokenCountWithEstimation(messages)

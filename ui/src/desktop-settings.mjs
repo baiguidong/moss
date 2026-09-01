@@ -58,6 +58,10 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     moss_large_tool_result_protection: false,
     moss_tool_result_budget_chars: 200000,
     moss_mcp_output_token_limit: 25000,
+    moss_file_read_max_size_bytes: 256 * 1024,
+    moss_file_read_max_tokens: 25000,
+    moss_request_attribution_enabled: true,
+    moss_context_compaction_strategy: 'proactive',
   },
   managedRuntimes: {
     node: true,
@@ -551,21 +555,33 @@ export function normalizeDesktopSettings(input, existing = {}) {
     ? result.advanced
     : {};
   result.advanced = Object.fromEntries(
-    Object.entries(DEFAULT_DESKTOP_SETTINGS.advanced).map(([key, fallback]) => [
-      key,
-      typeof fallback === 'boolean'
-        ? typeof sourceAdvanced[key] === 'boolean'
-          ? sourceAdvanced[key]
-          : typeof existingAdvanced[key] === 'boolean'
-            ? existingAdvanced[key]
-            : fallback
-        : normalizePositiveInt(
-            sourceAdvanced[key] ?? existingAdvanced[key],
-            fallback,
-            1,
-            key === 'moss_mcp_output_token_limit' ? 1_000_000 : 10_000_000,
-          ),
-    ]),
+    Object.entries(DEFAULT_DESKTOP_SETTINGS.advanced).map(([key, fallback]) => {
+      const candidate = sourceAdvanced[key] ?? existingAdvanced[key];
+      if (typeof fallback === 'boolean') {
+        return [
+          key,
+          typeof sourceAdvanced[key] === 'boolean'
+            ? sourceAdvanced[key]
+            : typeof existingAdvanced[key] === 'boolean'
+              ? existingAdvanced[key]
+              : fallback,
+        ];
+      }
+      if (typeof fallback === 'number') {
+        const maximum = key === 'moss_file_read_max_size_bytes'
+          ? 1_000_000_000
+          : key === 'moss_mcp_output_token_limit' || key === 'moss_file_read_max_tokens'
+            ? 1_000_000
+            : 10_000_000;
+        return [key, normalizePositiveInt(candidate, fallback, 1, maximum)];
+      }
+      return [
+        key,
+        candidate === 'proactive' || candidate === 'reactive'
+          ? candidate
+          : fallback,
+      ];
+    }),
   );
 
   const sourceManagedRuntimes = source.managedRuntimes && typeof source.managedRuntimes === 'object'

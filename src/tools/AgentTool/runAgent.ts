@@ -13,7 +13,6 @@ import type { QuerySource } from '../../constants/querySource.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
 import {
   connectToServer,
@@ -374,11 +373,8 @@ export async function* runAgent({
   // Project instructions — the main agent has full context and interprets output.
   // Dropping mossMd here saves ~5-15 Gtok/week across 34M+ Explore spawns.
   // Explicit override.userContext from callers is preserved untouched.
-  // Kill-switch defaults true; flip tengu_slim_subagent_mossmd=false to revert.
   const shouldOmitMossMd =
-    agentDefinition.omitMossMd &&
-    !override?.userContext &&
-    getFeatureValue_CACHED_MAY_BE_STALE('tengu_slim_subagent_mossmd', true)
+    agentDefinition.omitMossMd && !override?.userContext
   const { mossMd: _omittedMossMd, ...userContextNoMossMd } =
     baseUserContext
   const resolvedUserContext = shouldOmitMossMd

@@ -129,6 +129,10 @@ describe('desktop settings', () => {
       moss_large_tool_result_protection: false,
       moss_tool_result_budget_chars: 200000,
       moss_mcp_output_token_limit: 25000,
+      moss_file_read_max_size_bytes: 256 * 1024,
+      moss_file_read_max_tokens: 25000,
+      moss_request_attribution_enabled: true,
+      moss_context_compaction_strategy: 'proactive',
     });
 
     expect(normalizeDesktopSettings({
@@ -143,6 +147,10 @@ describe('desktop settings', () => {
         moss_large_tool_result_protection: true,
         moss_tool_result_budget_chars: 300000,
         moss_mcp_output_token_limit: 40000,
+        moss_file_read_max_size_bytes: 512000,
+        moss_file_read_max_tokens: 50000,
+        moss_request_attribution_enabled: false,
+        moss_context_compaction_strategy: 'reactive',
       },
     }).advanced).toEqual({
       moss_auto_background_agents: true,
@@ -155,6 +163,10 @@ describe('desktop settings', () => {
       moss_large_tool_result_protection: true,
       moss_tool_result_budget_chars: 300000,
       moss_mcp_output_token_limit: 40000,
+      moss_file_read_max_size_bytes: 512000,
+      moss_file_read_max_tokens: 50000,
+      moss_request_attribution_enabled: false,
+      moss_context_compaction_strategy: 'reactive',
     });
 
     expect(normalizeDesktopSettings({
@@ -163,12 +175,20 @@ describe('desktop settings', () => {
         moss_plan_mode_interview: 'false',
         moss_tool_result_budget_chars: -1,
         moss_mcp_output_token_limit: 2_000_000,
+        moss_file_read_max_size_bytes: 2_000_000_000,
+        moss_file_read_max_tokens: '50000',
+        moss_request_attribution_enabled: 'false',
+        moss_context_compaction_strategy: 'unknown',
       },
     }).advanced).toMatchObject({
       moss_auto_background_agents: false,
       moss_plan_mode_interview: true,
       moss_tool_result_budget_chars: 200000,
       moss_mcp_output_token_limit: 1000000,
+      moss_file_read_max_size_bytes: 1000000000,
+      moss_file_read_max_tokens: 50000,
+      moss_request_attribution_enabled: true,
+      moss_context_compaction_strategy: 'proactive',
     });
   });
 

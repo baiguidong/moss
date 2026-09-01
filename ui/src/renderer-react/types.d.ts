@@ -419,6 +419,10 @@ export type DesktopSettings = {
     moss_large_tool_result_protection?: boolean;
     moss_tool_result_budget_chars?: number;
     moss_mcp_output_token_limit?: number;
+    moss_file_read_max_size_bytes?: number;
+    moss_file_read_max_tokens?: number;
+    moss_request_attribution_enabled?: boolean;
+    moss_context_compaction_strategy?: 'proactive' | 'reactive';
   };
   managedRuntimes?: {
     node?: boolean;

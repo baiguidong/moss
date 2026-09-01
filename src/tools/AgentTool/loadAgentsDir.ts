@@ -122,7 +122,7 @@ export type BaseAgentDefinition = {
   /** Omit the project-instruction hierarchy from the agent's userContext. Read-only agents
    * (Explore, Plan) don't need commit/PR/lint guidelines — the main agent has
    * full instructions and interprets their output. Saves ~5-15 Gtok/week across
-   * 34M+ Explore spawns. Kill-switch: tengu_slim_subagent_mossmd. */
+   * 34M+ Explore spawns. */
   omitMossMd?: boolean
 }
 

@@ -1,6 +1,5 @@
 import { isUltrathinkEnabled } from './thinking.js'
 import { getInitialSettings } from './settings/settings.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js'
 import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -237,27 +236,18 @@ export function getEffortValueDescription(value: EffortValue): string {
 }
 
 export type OpusDefaultEffortConfig = {
-  enabled: boolean
   dialogTitle: string
   dialogDescription: string
 }
 
-const OPUS_DEFAULT_EFFORT_CONFIG_DEFAULT: OpusDefaultEffortConfig = {
-  enabled: true,
+const OPUS_DEFAULT_EFFORT_CONFIG: OpusDefaultEffortConfig = {
   dialogTitle: 'We recommend medium effort for Opus',
   dialogDescription:
     'Effort determines how long Claude thinks for when completing your task. We recommend medium effort for most tasks to balance speed and intelligence and maximize rate limits. Use ultrathink to trigger high effort when needed.',
 }
 
 export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
-  const config = getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_grey_step2',
-    OPUS_DEFAULT_EFFORT_CONFIG_DEFAULT,
-  )
-  return {
-    ...OPUS_DEFAULT_EFFORT_CONFIG_DEFAULT,
-    ...config,
-  }
+  return OPUS_DEFAULT_EFFORT_CONFIG
 }
 
 // @[MODEL LAUNCH]: Update the default effort levels for new models

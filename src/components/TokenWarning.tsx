@@ -1,9 +1,7 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { Box, Text } from '../ink.js';
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js';
-import { calculateTokenWarningState, getEffectiveContextWindowSize, isAutoCompactEnabled } from '../services/compact/autoCompact.js';
+import { calculateTokenWarningState, getEffectiveContextWindowSize, isAutoCompactEnabled, usesReactiveCompactStrategy } from '../services/compact/autoCompact.js';
 import { useCompactWarningSuppression } from '../services/compact/compactWarningHook.js';
 import { getUpgradeMessage } from '../utils/model/contextWindowUpgradeCheck.js';
 type Props = {
@@ -52,12 +50,7 @@ export function TokenWarning(t0) {
   }
   const upgradeMessage = t3;
   let displayPercentLeft = percentLeft;
-  let reactiveOnlyMode = false;
-  if (feature("REACTIVE_COMPACT")) {
-    if (getFeatureValue_CACHED_MAY_BE_STALE("tengu_cobalt_raccoon", false)) {
-      reactiveOnlyMode = true;
-    }
-  }
+  const reactiveOnlyMode = usesReactiveCompactStrategy();
   if (reactiveOnlyMode) {
     const effectiveWindow = getEffectiveContextWindowSize(model);
     let t4;
