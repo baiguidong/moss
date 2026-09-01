@@ -366,7 +366,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
         {apps.length === 0 ? (
           <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">暂无 App</div>
         ) : (
-          <div className="grid items-start gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
             {apps.map((app) => {
               const appId = app.id || app.name;
               const isExpanded = expanded === appId;
@@ -378,7 +378,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const canDeployToServer = appCanDeployToServer(app);
               const instanceTargets = availableInstanceTargets(app);
               return (
-                <section key={appId} className={`min-w-0 rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
+                <section key={appId} className={`flex min-w-0 flex-col rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
                   <div className="flex items-start gap-3">
                     <AppIcon icon={app.icon} />
                     <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
@@ -398,7 +398,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     <span>{formatTimestamp(app.updatedAt)}</span>
                   </div>
                   {app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="mt-auto flex flex-wrap gap-2 pt-4">
                     {app.hasUi && <Button size="sm" className="h-8" onClick={() => onLaunch(app.name)}><ExternalLink className="h-4 w-4" />打开</Button>}
                     {canDeployToServer && app.serverAvailable && app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />{app.remoteInstalled ? "同步到 Server" : "部署到 Server"}</Button>}
                     {canDeployToServer && app.serverAvailable && !app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled title={app.serverPackageError || "Server 包源没有此版本"}><ServerOff className="h-4 w-4" />Server 无此版本</Button>}
