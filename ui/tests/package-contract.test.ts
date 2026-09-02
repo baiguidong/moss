@@ -115,9 +115,12 @@ describe('desktop package contract', () => {
   test('installs adapter dependencies in every clean CI build that compiles adapters', () => {
     const ciSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+    const serverCiJob = ciSource.split('  package-server-linux-amd64:')[1] || '';
     const serverReleaseJob = releaseSource.split('  build-server-linux-amd64:')[1]
       ?.split('\n  publish-release:')[0] || '';
-    expect(ciSource.match(/bun install --frozen-lockfile --cwd adapters/g)?.length).toBe(3);
+    expect(ciSource.match(/bun install --frozen-lockfile --cwd adapters/g)?.length).toBe(4);
+    expect(serverCiJob).toContain('needs: quality');
+    expect(serverCiJob).toContain('bun install --frozen-lockfile --cwd adapters');
     expect(serverReleaseJob).toContain('bun install --frozen-lockfile --cwd adapters');
   });
 });
