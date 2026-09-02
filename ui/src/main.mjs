@@ -245,17 +245,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(uiRoot, '..');
-const cliPath = path.join(repoRoot, 'cli-node.js');
-// In packaged app, electron-direct.mjs is copied to ui root (inside asar)
-// In dev, it's in repo root. Check ui root first.
-let sdkPath = path.join(uiRoot, 'electron-direct.mjs');
-try {
-  if (!fs.existsSync(sdkPath)) {
-    sdkPath = path.join(repoRoot, 'electron-direct.mjs');
-  }
-} catch {
-  sdkPath = path.join(repoRoot, 'electron-direct.mjs');
-}
+const sdkPath = path.join(__dirname, 'generated', 'electron-direct.mjs');
 const rendererHtml = path.join(uiRoot, 'dist', 'renderer', 'index.html');
 const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.env.VITE_DEV_SERVER_URL).trim();
 const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
@@ -5195,10 +5185,8 @@ function getBootStatus() {
   return {
     repoRoot,
     uiRoot,
-    cliPath,
     sdkPath,
     mossHome: process.env.MOSS_HOME || null,
-    cliReady: true, // 核心改动：不再依赖外部 cli-node.js，因为逻辑已经由 electron-direct.mjs 嵌入
     sdkReady: hasFile(sdkPath),
     sessionsCount: sessions.size,
     defaultBypassPermissions: DEFAULT_BYPASS_PERMISSIONS,

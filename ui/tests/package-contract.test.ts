@@ -40,6 +40,10 @@ describe('desktop package contract', () => {
   });
 
   test('packages native image processing and physical ripgrep resources', () => {
+    expect(desktopPackage.build.files).toContain('src/**/*');
+    const buildSource = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
+    expect(buildSource).toContain("--outfile=ui/src/generated/electron-direct.mjs");
+    expect(buildSource).not.toContain('bin/cli-node.js');
     const rootModules = desktopPackage.build.extraResources.find(
       (entry: { from?: string }) => entry.from === '../node_modules',
     );

@@ -22,6 +22,7 @@ bin/cli.js
 bin/moss-server.mjs
 bin/direct-connect-session-runner.mjs
 ui/electron-direct.mjs
+ui/src/generated/electron-direct.mjs
 bin/
 server.json
 

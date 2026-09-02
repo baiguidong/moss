@@ -63,7 +63,13 @@ function digestFile(filePath, algorithm, encoding) {
 }
 
 async function verifySharpChild(resourcesDir) {
-  const requireFromApp = createRequire(path.join(resourcesDir, 'app.asar', 'electron-direct.mjs'));
+  const requireFromApp = createRequire(path.join(
+    resourcesDir,
+    'app.asar',
+    'src',
+    'generated',
+    'electron-direct.mjs',
+  ));
   const sharp = requireFromApp('sharp');
   const output = await sharp({
     create: { width: 2, height: 2, channels: 4, background: '#2f855a' },
@@ -310,7 +316,7 @@ async function main() {
   const asarPath = requireFile(path.join(paths.resourcesDir, 'app.asar'), 'app.asar');
   const asarEntries = new Set(listPackage(asarPath));
   for (const entry of [
-    '/electron-direct.mjs',
+    '/src/generated/electron-direct.mjs',
     '/src/main.mjs',
     '/src/preload.mjs',
     '/dist/renderer/index.html',

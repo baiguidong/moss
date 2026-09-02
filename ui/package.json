@@ -60,8 +60,7 @@
       "dist/renderer/**/*",
       "src/**/*",
       "index.html",
-      "package.json",
-      "electron-direct.mjs"
+      "package.json"
     ],
     "extraResources": [
       {

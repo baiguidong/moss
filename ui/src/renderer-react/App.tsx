@@ -1062,8 +1062,8 @@ export default function App() {
             appearance: appearanceRef.current,
           });
         }
-        if (!status.cliReady) {
-          setBootError('缺少 cli-node.js。先在仓库根目录执行 bun run build:node。');
+        if (!status.sdkReady) {
+          setBootError('缺少嵌入式代码会话运行时，请重新构建或安装 Moss。');
         }
         applyDesktopSettings(nextSettings);
         await Promise.all([

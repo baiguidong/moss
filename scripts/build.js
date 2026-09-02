@@ -29,7 +29,6 @@ function sanitizePaths(outfile) {
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
 const target = targetArg ? targetArg.slice('--target='.length) : 'all'
 const buildBunCli = target === 'all'
-const buildNodeCli = target === 'all' || target === 'node'
 const buildElectronDirect = target !== 'server'
 const buildServer = target !== 'electron-direct'
 
@@ -109,24 +108,12 @@ if (buildBunCli) {
   ])
 }
 
-if (buildNodeCli) {
-  // bin/cli-node.js（node target，测试 / electron-sdk 子进程用）
-  build('bin/cli-node.js', [
-    'build', 'src/entrypoints/cli.tsx',
-    '--outfile=bin/cli-node.js',
-    '--target=node',
-    ...aliases,
-    ...featureArgs,
-    ...defines,
-  ])
-  sanitizePaths('bin/cli-node.js')
-}
-
 if (buildElectronDirect) {
-  // ui/electron-direct.mjs（供 Electron 桌面端打包）
-  build('ui/electron-direct.mjs', [
+  // Keep the generated runtime under src/ so electron-builder's cross-platform
+  // file collector includes it consistently through the existing src/**/* rule.
+  build('ui/src/generated/electron-direct.mjs', [
     'build', 'src/electron-direct.ts',
-    '--outfile=ui/electron-direct.mjs',
+    '--outfile=ui/src/generated/electron-direct.mjs',
     '--target=node',
     '--format=esm',
     '--external=sharp',
@@ -134,7 +121,7 @@ if (buildElectronDirect) {
     ...featureArgs,
     ...defines,
   ])
-  sanitizePaths('ui/electron-direct.mjs')
+  sanitizePaths('ui/src/generated/electron-direct.mjs')
 }
 
 if (!buildServer) {
