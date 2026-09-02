@@ -52,6 +52,11 @@ function requireDirectory(dirPath, label) {
   return dirPath;
 }
 
+export function normalizeAsarEntry(entry) {
+  const normalized = String(entry).replaceAll('\\', '/');
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
+}
+
 function digestFile(filePath, algorithm, encoding) {
   return new Promise((resolve, reject) => {
     const hash = createHash(algorithm);
@@ -314,7 +319,7 @@ async function main() {
   requireDirectory(paths.appDir, 'packaged app');
   requireFile(paths.executable, 'packaged executable');
   const asarPath = requireFile(path.join(paths.resourcesDir, 'app.asar'), 'app.asar');
-  const asarEntries = new Set(listPackage(asarPath));
+  const asarEntries = new Set(listPackage(asarPath).map(normalizeAsarEntry));
   for (const entry of [
     '/dist/runtime/electron-direct.mjs',
     '/src/main.mjs',

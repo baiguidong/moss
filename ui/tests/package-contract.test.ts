@@ -10,7 +10,7 @@ import {
   SUPPORTED_RUNTIME_TARGETS,
 } from '../src/runtime/runtime-manifest.mjs';
 import { targetArch } from '../scripts/after-pack.mjs';
-import { assertUnsignedPe } from '../scripts/verify-package.mjs';
+import { assertUnsignedPe, normalizeAsarEntry } from '../scripts/verify-package.mjs';
 
 const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(uiRoot, '..');
@@ -117,6 +117,12 @@ describe('desktop package contract', () => {
     } finally {
       rmSync(temporary, { recursive: true, force: true });
     }
+  });
+
+  test('normalizes ASAR entry paths on Windows and POSIX', () => {
+    expect(normalizeAsarEntry('\\dist\\runtime\\electron-direct.mjs'))
+      .toBe('/dist/runtime/electron-direct.mjs');
+    expect(normalizeAsarEntry('/src/main.mjs')).toBe('/src/main.mjs');
   });
 
   test('installs adapter dependencies in every clean CI build that compiles adapters', () => {
