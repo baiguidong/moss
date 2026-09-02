@@ -180,6 +180,51 @@ function ModeratorAvatar() {
   );
 }
 
+function ModeratorWorkingMessage({
+  delegations,
+  onSelectMember,
+}: {
+  delegations: Array<{ turn: GroupRoomTurn; member: GroupRoomMember; task: string }>;
+  onSelectMember: (memberId: string) => void;
+}) {
+  return (
+    <article data-group-room-moderator-working className="flex gap-3">
+      <img
+        src="./build/icon.png"
+        alt="主持人正在工作"
+        className="h-7 w-7 shrink-0 rounded-sm object-contain animate-spin"
+        style={{ animationDuration: "2s" }}
+      />
+      <div className="min-w-0 max-w-[85%] [overflow-wrap:anywhere]">
+        <div className="mb-1 text-[11px] text-muted-foreground">主持人 · working...</div>
+        <div className="space-y-2 rounded-md border border-border bg-muted/25 px-3 py-2 text-left text-sm leading-6">
+          {delegations.length === 0 ? (
+            <span className="text-muted-foreground">正在判断下一步…</span>
+          ) : (
+            <>
+              <div>已委派以下成员，正在执行：</div>
+              <div className="space-y-1.5">
+                {delegations.map(({ turn, member, task }) => (
+                  <button
+                    key={turn.id}
+                    type="button"
+                    onClick={() => onSelectMember(member.id)}
+                    className="block max-w-full rounded-md border border-border bg-background px-2 py-1 text-left text-xs hover:bg-muted"
+                    title={`${member.displayName}：${turn.assignment.slice(0, 1_000)}`}
+                  >
+                    <span className="font-medium">{member.displayName}</span>
+                    <span className="text-muted-foreground"> · {turn.status === "running" ? "执行中" : "等待中"} · {task}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 type CreateRoomFormProps = {
   resources: { inviteables: GroupRoomInviteable[]; connectors: GroupRoomResourceConnector[]; skills: GroupRoomResourceSkill[] };
   busy: boolean;
@@ -766,7 +811,6 @@ export function GroupRoomsView({
       task: turn.assignment.length > 240 ? `${turn.assignment.slice(0, 240)}…` : turn.assignment,
     }))
     .filter((entry): entry is { turn: GroupRoomTurn; member: GroupRoomMember; task: string } => Boolean(entry.member));
-  const activeDelegateNames = activeDelegations.map(({ member }) => member.displayName);
   const memberTranscript = room && selectedMember
     ? buildGroupRoomMemberTranscript({ room, memberId: selectedMember.id, streams, liveTraces })
     : [];
@@ -899,31 +943,6 @@ export function GroupRoomsView({
               </div>
             ) : null}
 
-            {!selectedMember && room.status === "running" && activeDelegations.length > 0 ? (
-              <div data-group-room-delegation-status className="shrink-0 border-b border-emerald-500/25 bg-emerald-500/5 px-3 py-2 sm:px-4">
-                <div className="mx-auto flex w-full max-w-[1180px] min-w-0 items-start gap-2">
-                  <Bot className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-medium text-foreground">主持人已委派，正在执行</div>
-                    <div className="mt-1 flex min-w-0 flex-wrap gap-1.5">
-                      {activeDelegations.map(({ turn, member, task }) => (
-                        <button
-                          key={turn.id}
-                          type="button"
-                          onClick={() => setSelectedMemberId(member.id)}
-                          className="max-w-full rounded-md border border-emerald-500/25 bg-background px-2 py-1 text-left text-[11px] hover:bg-emerald-500/10"
-                          title={`${member.displayName}：${turn.assignment.slice(0, 1_000)}`}
-                        >
-                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{member.displayName}</span>
-                          <span className="text-muted-foreground"> · {turn.status === "running" ? "执行中" : "等待中"} · {task}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
             {selectedMember ? (
               <div data-group-room-message-scroll className="flex min-h-0 flex-1 overflow-hidden" aria-label={`${selectedMember.displayName} 执行会话`}>
                 <MessageListPane
@@ -958,6 +977,9 @@ export function GroupRoomsView({
                         </article>
                       );
                     })}
+                    {room.status === "running" ? (
+                      <ModeratorWorkingMessage delegations={activeDelegations} onSelectMember={setSelectedMemberId} />
+                    ) : null}
                     {room.activeRun?.turns.map((turn) => streams[turn.id] ? (
                       <article key={`stream-${turn.id}`} className="flex gap-3 opacity-75">
                         <MemberAvatar member={room.members.find((entry) => entry.id === turn.memberId)!} />
@@ -986,9 +1008,7 @@ export function GroupRoomsView({
                   </select>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
                     {room.status === "running"
-                      ? activeDelegateNames.length > 0
-                        ? `主持人已委派：${activeDelegateNames.join("、")}`
-                        : "主持人正在判断下一步"
+                      ? "可继续发送补充，主持人将在安全边界读取"
                       : "消息将发送给主持人，由主持人决定是否委派专家"}
                   </span>
                 </div>
