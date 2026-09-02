@@ -1,6 +1,6 @@
 # Moss Group Room Coordinator 重构计划（V2）
 
-状态：V2 已实现；类型检查、全量 UI 测试、全仓测试、生产构建和 macOS ARM64 未签名安装包校验通过；待真实模型桌面验收（2026-09-02）
+状态：V2 已实现；自动化验证、macOS ARM64 未签名安装包校验与真实模型桌面验收通过（2026-09-02）
 适用范围：桌面端本地 Group Room
 替代方案：废弃 Group Room 自建的 JSON 决策循环，复用 Moss 已有 Coordinator、AgentTool 和任务通知体系
 
@@ -117,7 +117,7 @@ memberId
 
 Prompt 负责告诉模型如何调度，工具入口负责保证身份不变量：
 
-- `Agent.name` 必须是当前 roster 中的 `memberId`；
+- `Agent.name` 必须是当前 roster 中的 `memberId`；Coordinator 原生保证 worker 后台运行，不依赖在所有 feature 组合下都可见的 `run_in_background` 参数；
 - `expert_id` 必须与该成员绑定的专家一致；
 - `connector_ids`、`skill_ids` 必须是该成员已授权集合的子集；
 - 同一 `memberId` 已创建 worker 后，再次调用 `Agent` 必须拒绝并提示改用 `SendMessage`；
@@ -337,11 +337,24 @@ Prompt 负责告诉模型如何调度，工具入口负责保证身份不变量�
 ### 11.1 2026-09-02 自动化验证记录
 
 - `bun run --cwd ui check`：通过。
-- `bun run --cwd ui test`：313 项通过；CI 与 Release 已改为执行该完整集合，不再遗漏 `ui/src/group-room`。
-- `bun test`：757 项通过（修正本次新增断言后最终复跑）。
+- `bun run --cwd ui test`：314 项通过；CI 与 Release 已改为执行该完整集合，不再遗漏 `ui/src/group-room`。
+- `bun test`：762 项通过（包含 Coordinator 工具范围、成员标题和 abort listener 生命周期回归）。
 - `bun run build:node` 与 `bun run --cwd ui build:renderer`：通过。
 - `CSC_IDENTITY_AUTO_DISCOVERY=false bun run --cwd ui dist:mac`：通过；实际包内验证 Node `v22.22.2`、Python `3.13.15`、ripgrep `14.1.1`、Sharp `0.34.5`、116 个连接器，并确认 DMG/应用未进行分发签名。
 - Windows x64 由同一包校验脚本在 CI 的原生 Windows runner 执行；本地 macOS 不伪造 Windows 安装包结果。
+
+### 11.2 2026-09-02 真实模型调试验收记录
+
+- 使用开发模式、现有本地模型配置和独立测试房间完成真实请求；创建和打开空房间未触发模型或成员。
+- 简单问题由主持人直接回答；重启后的主持人工具列表包含 `Read`、`Edit`、`Write`、`Bash`、`Agent`、`SendMessage`、`TaskStop` 等正常主会话能力，已由主持人自行读取根目录 `package.json` 并返回 `moss / 2.1.88`。
+- 首次真实委派暴露 `run_in_background` 被 fork feature 从 Agent schema 隐藏、但房间校验仍强制要求该字段的问题；已改为依赖 Coordinator 原生后台生命周期并回归成功。
+- 主持人先自主选择“代码检查员”，收到初审后又自主选择“反方审阅员”交叉复核，没有固定人数或轮数判断。
+- 成员运行期间输入框可继续提交补充要求；消息显示为排队并在安全边界自动进入主持人下一轮，不再锁死输入。
+- 点击停止后，主持人立即转为空闲，运行中成员标记为失败/停止；未出现迟到结果覆盖停止状态。
+- 应用重启后恢复了 `memberId → native agentId` 映射；主持人通过 `SendMessage` 续接已完成的“代码检查员”，没有新建第三个 worker，结果自动通知主持人并由主持人用中文收敛。
+- 成员子任务标题不再暴露内部 `memberId`；点击运行中或已完成成员时，在群聊主区域内打开只读成员线程，返回后仍停留在原群聊，不再跳到普通会话。
+- 群列表折叠改为独立窄栏，避免覆盖正常会话标题栏按钮；群设置提供显式折叠/展开入口、完整滚动区域和响应式宽度约束。
+- 长时间成员审查暴露 `StreamingToolExecutor` 未释放父级 abort listener 的告警；已在完成和丢弃路径释放监听器，并增加回归测试。
 
 ## 12. 实施约束与评审重点
 

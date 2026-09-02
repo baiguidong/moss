@@ -11,6 +11,8 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   Settings2,
@@ -247,7 +249,7 @@ function AddMembersDialog({ room, resources, busy, onClose, onAdd }: {
   </div>;
 }
 
-function GroupRoomSettings({ room, resources, busy, globalBypassPermissions, onSave, onEditMember, onRefreshMember, onRemoveMember, onAddMember }: {
+function GroupRoomSettings({ room, resources, busy, globalBypassPermissions, onSave, onEditMember, onRefreshMember, onRemoveMember, onAddMember, onToggleRightSidebar }: {
   room: GroupRoom;
   resources: Resources;
   busy: boolean;
@@ -257,6 +259,7 @@ function GroupRoomSettings({ room, resources, busy, globalBypassPermissions, onS
   onRefreshMember: (id: string) => Promise<void>;
   onRemoveMember: (id: string) => Promise<void>;
   onAddMember: () => void;
+  onToggleRightSidebar: () => void;
 }) {
   const [title, setTitle] = React.useState(room.title);
   const [topic, setTopic] = React.useState(room.topic);
@@ -270,7 +273,11 @@ function GroupRoomSettings({ room, resources, busy, globalBypassPermissions, onS
   }, [room]);
   const disabled = busy || room.status === "running";
   return <aside className="flex h-full min-h-0 flex-col bg-background">
-    <header className="flex h-14 shrink-0 items-center border-b border-border px-4"><div className="min-w-0 flex-1"><div className="text-sm font-semibold">群设置</div><div className="text-xs text-muted-foreground">固定成员 · Coordinator 主持</div></div><Button size="sm" disabled={disabled} onClick={() => void onSave({ title, topic, workspace, settings: { permissionMode, moderatorInstructions } })}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}保存</Button></header>
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
+      <div className="min-w-0 flex-1"><div className="text-sm font-semibold">群设置</div><div className="truncate text-xs text-muted-foreground">固定成员 · Coordinator 主持</div></div>
+      <Button size="sm" disabled={disabled} onClick={() => void onSave({ title, topic, workspace, settings: { permissionMode, moderatorInstructions } })}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}保存</Button>
+      <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={onToggleRightSidebar} title="折叠群设置"><PanelRightClose className="h-4 w-4" /></Button>
+    </header>
     <ScrollArea className="min-h-0 flex-1"><div className="space-y-6 p-4">
       {room.status === "running" ? <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700">主持人正在工作，配置暂时只读。</div> : null}
       <section className="space-y-2"><div className="text-xs font-semibold text-muted-foreground">基本信息</div><Input disabled={disabled} value={title} onChange={(event) => setTitle(event.target.value)} /><Textarea disabled={disabled} value={topic} onChange={(event) => setTopic(event.target.value)} className="min-h-20" /><div className="flex gap-2"><Input disabled={disabled} value={workspace} onChange={(event) => setWorkspace(event.target.value)} /><Button variant="outline" disabled={disabled} onClick={async () => { const value = await window.agentDesktop.pickDirectory(); if (value) setWorkspace(value); }}>选择</Button></div></section>
@@ -399,14 +406,14 @@ export function GroupRoomsView({
         {expanded.has(entry.id) ? <div className="ml-8 border-l border-border py-1 pl-2">{(entry.members || (entry.id === liveRoom?.id ? liveRoom.members : [])).map((member) => <div key={member.id} className="flex h-7 items-center gap-2 truncate text-xs text-muted-foreground"><MemberAvatar member={member} /><span className="truncate">{member.displayName}</span></div>)}</div> : null}
         {menuRoomId === entry.id ? <div className="absolute right-1 top-10 z-20 w-36 rounded-md border border-border bg-popover p-1 shadow-lg"><button className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted" onClick={() => { const title = window.prompt("新的群名称", entry.title)?.trim(); setMenuRoomId(null); if (title) void run(async () => { const detail = unwrap(await window.agentDesktop.groupRooms.get({ roomId: entry.id })); const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: entry.id, updates: { title }, expectedRevision: detail.revision })); if (liveRoom?.id === entry.id) setRoom(updated); await loadRooms(); }); }}>重命名</button><button disabled={index === 0} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, -1)}><ChevronUp className="h-3.5 w-3.5" />上移</button><button disabled={index === liveRooms.length - 1} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, 1)}><ChevronDown className="h-3.5 w-3.5" />下移</button><button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-destructive hover:bg-muted" onClick={() => { setMenuRoomId(null); if (!window.confirm(`删除群聊“${entry.title}”及其完整会话记录？`)) return; void run(async () => { unwrap(await window.agentDesktop.groupRooms.delete({ roomId: entry.id })); const next = await loadRooms(); if (liveRoom?.id === entry.id) { setRoom(null); if (next[0]) { await loadRoom(next[0].id); await onOpenSession(next[0].sessionId); } else setCreating(true); } }); }}><Trash2 className="h-3.5 w-3.5" />删除</button></div> : null}
       </div>)}</div></ScrollArea>
-    </aside> : <Button size="icon" variant="outline" className="absolute left-2 top-2 z-20 hidden lg:inline-flex" onClick={() => setListCollapsed(false)} title="展开群列表"><PanelLeftOpen className="h-4 w-4" /></Button>}
+    </aside> : <aside className="hidden h-full w-12 shrink-0 flex-col items-center border-r border-border pt-2 lg:flex"><Button size="icon" variant="ghost" onClick={() => setListCollapsed(false)} title="展开群列表"><PanelLeftOpen className="h-4 w-4" /></Button></aside>}
 
     <main className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{error ? <div className="absolute left-4 right-4 top-3 z-40 rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow">{error}</div> : null}{liveRoom && activeSessionId === liveRoom.sessionId ? chatContent : <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">{liveRooms.length ? "选择一个群聊" : "创建第一个群聊"}</div>}</main>
 
-    {liveRoom && !rightCollapsed ? <><div className="relative hidden w-3 shrink-0 cursor-col-resize before:absolute before:inset-y-4 before:left-1/2 before:w-px before:bg-border lg:block" onMouseDown={onResizeRight} /><div className="min-h-0 shrink-0 overflow-hidden border-l border-border" style={{ width: rightWidth }}><GroupRoomSettings room={liveRoom} resources={resources} busy={busy} globalBypassPermissions={globalBypassPermissions} onAddMember={() => setAddingMember(true)} onEditMember={setResourceMemberId} onRefreshMember={async (memberId) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.refreshMemberSource({ roomId: liveRoom.id, memberId, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} onRemoveMember={async (memberId) => { const member = liveRoom.members.find((item) => item.id === memberId); if (!member || !window.confirm(`从群聊移除“${member.displayName}”？`)) return; await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.removeMember({ roomId: liveRoom.id, memberId, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} onSave={async (updates) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: liveRoom.id, updates, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} /></div></> : null}
+    {liveRoom && !rightCollapsed ? <><div className="relative hidden w-3 shrink-0 cursor-col-resize before:absolute before:inset-y-4 before:left-1/2 before:w-px before:bg-border lg:block" onMouseDown={onResizeRight} /><div className="min-h-0 shrink-0 overflow-hidden border-l border-border" style={{ width: `min(${rightWidth}px, 42vw)` }}><GroupRoomSettings room={liveRoom} resources={resources} busy={busy} globalBypassPermissions={globalBypassPermissions} onToggleRightSidebar={onToggleRightSidebar} onAddMember={() => setAddingMember(true)} onEditMember={setResourceMemberId} onRefreshMember={async (memberId) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.refreshMemberSource({ roomId: liveRoom.id, memberId, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} onRemoveMember={async (memberId) => { const member = liveRoom.members.find((item) => item.id === memberId); if (!member || !window.confirm(`从群聊移除“${member.displayName}”？`)) return; await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.removeMember({ roomId: liveRoom.id, memberId, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} onSave={async (updates) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: liveRoom.id, updates, expectedRevision: liveRoom.revision })); setRoom(updated); await loadRooms(); }); }} /></div></> : null}
 
     {liveRoom && resourceMemberId ? (() => { const member = liveRoom.members.find((item) => item.id === resourceMemberId); return member ? <MemberResourceDialog room={liveRoom} member={member} resources={resources} busy={busy} onClose={() => setResourceMemberId(null)} onSave={async (connectors, skills) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.updateMemberGrants({ roomId: liveRoom.id, memberId: member.id, grants: { connectors, skills }, expectedRevision: liveRoom.revision })); setRoom(updated); setResourceMemberId(null); await loadRooms(); }); }} /> : null; })() : null}
     {liveRoom && addingMember ? <AddMembersDialog room={liveRoom} resources={resources} busy={busy} onClose={() => setAddingMember(false)} onAdd={async (input) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.addMembers({ roomId: liveRoom.id, members: { invitationIds: input.invitationIds, customMembers: input.customMembers, connectorGrants: input.connectorGrants }, expectedRevision: liveRoom.revision })); setRoom(updated); setAddingMember(false); await loadRooms(); }); }} /> : null}
-    {liveRoom && rightCollapsed ? <button className="sr-only" onClick={onToggleRightSidebar}>展开群设置</button> : null}
+    {liveRoom && rightCollapsed ? <aside className="hidden h-full w-12 shrink-0 flex-col items-center border-l border-border pt-2 lg:flex"><Button size="icon" variant="ghost" onClick={onToggleRightSidebar} title="展开群设置"><PanelRightOpen className="h-4 w-4" /></Button></aside> : null}
   </div>;
 }

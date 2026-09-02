@@ -1,6 +1,8 @@
+import { feature } from 'bun:bundle'
 import { z } from 'zod/v4'
 import type { Tool, ToolUseContext } from '../../Tool.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
+import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js'
 import { findTeammateTaskByAgentId } from '../../tasks/InProcessTeammateTask/InProcessTeammateTask.js'
 import {
   isLocalAgentTask,
@@ -526,7 +528,9 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     shouldDefer: true,
 
     isEnabled() {
-      return isAgentSwarmsEnabled()
+      if (isAgentSwarmsEnabled()) return true
+      if (feature('COORDINATOR_MODE')) return isCoordinatorMode()
+      return false
     },
 
     isReadOnly(input) {

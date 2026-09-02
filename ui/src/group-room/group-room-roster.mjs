@@ -4,6 +4,17 @@ function stringList(value) {
     : [];
 }
 
+export function buildGroupRoomChildSessionTitle({ memberName, agentName, description, agentType }) {
+  const displayName = typeof memberName === 'string' ? memberName.trim() : '';
+  const stableName = typeof agentName === 'string' ? agentName.trim() : '';
+  const rawDescription = typeof description === 'string' ? description.trim() : '';
+  const taskDescription = rawDescription && rawDescription !== stableName ? rawDescription : '';
+  if (displayName) return `${displayName}${taskDescription ? ` · ${taskDescription}` : ''}`;
+  if (taskDescription) return taskDescription;
+  const fallbackType = typeof agentType === 'string' ? agentType.trim() : '';
+  return fallbackType || '子会话';
+}
+
 export function extractPersistedWorkerMappings(history, members) {
   const allowedNames = new Set((Array.isArray(members) ? members : []).map((member) => member.id));
   const launches = [];
@@ -54,7 +65,6 @@ export function validateGroupRoomRosterToolUse({ toolName, input, members, exist
       return `成员 ${member.displayName} 必须使用 general-purpose，并将 expert_id 设置为 ${member.id}。`;
     }
     if (payload.team_name) return '群聊成员必须作为原生后台 worker 运行，不能加入临时 team。';
-    if (payload.run_in_background !== true) return '群聊成员必须以 run_in_background=true 启动，才能由主持人持续沟通。';
     if (payload.isolation) return '群聊成员共享房间工作区，不能启用独立 worktree。';
     const allowedConnectors = new Set(member.connectorIds || []);
     const allowedSkills = new Set(member.skillIds || []);

@@ -44,6 +44,7 @@ import { GroupRoomController } from './group-room/group-room-controller.mjs';
 import { registerGroupRoomIpcHandlers } from './group-room/group-room-ipc.mjs';
 import { isGroupRoomOnlySettingsUpdate } from './group-room/group-room-feature-flag.mjs';
 import {
+  buildGroupRoomChildSessionTitle,
   extractPersistedWorkerMappings,
   validateGroupRoomRosterToolUse,
 } from './group-room/group-room-roster.mjs';
@@ -3087,8 +3088,9 @@ function buildGroupRoomSystemPrompt(sessionRecord, descriptor = getGroupRoomRunt
     'You are the room moderator and the only user-facing speaker. Use your normal tools to inspect or modify the workspace whenever that is the best way to handle the request.',
     'The roster below is fixed. Never create a worker outside it and never create a second worker for the same member.',
     'Do not activate members just because the room was created. On each user request, decide whether to answer or act yourself, activate only relevant members, or start all members for an initial broad briefing when that materially improves the discussion.',
-    'The first Agent call for a member creates that member. Set name to memberId, subagent_type to general-purpose, expert_id to the same memberId, run_in_background=true, connector_ids and skill_ids to subsets of that member grants, and omit team_name. Include a self-contained Room Brief: room topic, latest user request, relevant prior conclusions, desired output, constraints, the user language to use, and how the result will be used.',
+    'The first Agent call for a member creates that member as a native background worker. Set name to memberId, set description to a short human-readable task summary (never a memberId), set subagent_type to general-purpose, expert_id to the same memberId, connector_ids and skill_ids to subsets of that member grants, and omit team_name. If the Agent schema exposes run_in_background, set it to true; Coordinator mode otherwise provides the same background lifecycle automatically. Include a self-contained Room Brief: room topic, latest user request, relevant prior conclusions, desired output, constraints, the user language to use, and how the result will be used.',
     'After a member has been created, continue that same member only with SendMessage using memberId as to. Never call Agent again for that member.',
+    'Every Agent or SendMessage instruction must explicitly require the member to use the current user language for all progress commentary and the final result. Do not translate member output in code; language consistency is part of the model instruction.',
     'You decide delegation, parallelism, follow-up questions, cross-review, conflict resolution, and convergence from the evidence. There is no fixed round count and no requirement to consult every member. Before a high-impact review or conclusion, seek another relevant opinion when it would materially improve reliability.',
     'Do not expose routing as synthetic chat messages. Tool progress already shows which member is working. Return one coherent moderator answer in the user language, naming member contributions only when useful.',
     'Allowed roster and grants:',
@@ -7282,14 +7284,12 @@ async function syncSubAgentSessionsForParent(parentSession) {
           .find((member) => member.id === meta.agentName)?.displayName || meta.agentName;
       } catch {}
     }
-    const taskDescription = typeof meta?.description === 'string' ? meta.description.trim() : '';
-    const title = roomMemberName
-      ? `${roomMemberName}${taskDescription ? ` · ${taskDescription}` : ''}`
-      : taskDescription
-        ? taskDescription
-        : typeof meta?.agentType === 'string' && meta.agentType.trim()
-          ? meta.agentType.trim()
-          : '子会话';
+    const title = buildGroupRoomChildSessionTitle({
+      memberName: roomMemberName,
+      agentName: meta?.agentName,
+      description: meta?.description,
+      agentType: meta?.agentType,
+    });
     const workspace = createDefaultWorkspacePath(id);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),

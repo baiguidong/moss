@@ -18,6 +18,9 @@ type MessageUpdate = {
 
 type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'
 
+const EXECUTOR_COMPLETED = Symbol('streaming_tool_executor_completed')
+const EXECUTOR_DISCARDED = Symbol('streaming_tool_executor_discarded')
+
 type TrackedTool = {
   id: string
   block: ToolUseBlock
@@ -47,6 +50,7 @@ export class StreamingToolExecutor {
   // Aborting this does NOT abort the parent — query.ts won't end the turn.
   private siblingAbortController: AbortController
   private discarded = false
+  private disposed = false
   // Signal to wake up getRemainingResults when progress is available
   private progressAvailableResolve?: () => void
 
@@ -68,6 +72,13 @@ export class StreamingToolExecutor {
    */
   discard(): void {
     this.discarded = true
+    this.dispose(EXECUTOR_DISCARDED)
+  }
+
+  private dispose(reason: typeof EXECUTOR_COMPLETED | typeof EXECUTOR_DISCARDED): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.siblingAbortController.abort(reason)
   }
 
   /**
@@ -306,6 +317,8 @@ export class StreamingToolExecutor {
         () => {
           if (
             toolAbortController.signal.reason !== 'sibling_error' &&
+            toolAbortController.signal.reason !== EXECUTOR_COMPLETED &&
+            toolAbortController.signal.reason !== EXECUTOR_DISCARDED &&
             !this.toolUseContext.abortController.signal.aborted &&
             !this.discarded
           ) {
@@ -451,41 +464,43 @@ export class StreamingToolExecutor {
    * Also yields progress messages as they become available
    */
   async *getRemainingResults(): AsyncGenerator<MessageUpdate, void> {
-    if (this.discarded) {
-      return
-    }
+    try {
+      if (this.discarded) return
 
-    while (this.hasUnfinishedTools()) {
-      await this.processQueue()
+      while (this.hasUnfinishedTools()) {
+        await this.processQueue()
+
+        for (const result of this.getCompletedResults()) {
+          yield result
+        }
+
+        // If we still have executing tools but nothing completed, wait for any to complete
+        // OR for progress to become available
+        if (
+          this.hasExecutingTools() &&
+          !this.hasCompletedResults() &&
+          !this.hasPendingProgress()
+        ) {
+          const executingPromises = this.tools
+            .filter(t => t.status === 'executing' && t.promise)
+            .map(t => t.promise!)
+
+          // Also wait for progress to become available
+          const progressPromise = new Promise<void>(resolve => {
+            this.progressAvailableResolve = resolve
+          })
+
+          if (executingPromises.length > 0) {
+            await Promise.race([...executingPromises, progressPromise])
+          }
+        }
+      }
 
       for (const result of this.getCompletedResults()) {
         yield result
       }
-
-      // If we still have executing tools but nothing completed, wait for any to complete
-      // OR for progress to become available
-      if (
-        this.hasExecutingTools() &&
-        !this.hasCompletedResults() &&
-        !this.hasPendingProgress()
-      ) {
-        const executingPromises = this.tools
-          .filter(t => t.status === 'executing' && t.promise)
-          .map(t => t.promise!)
-
-        // Also wait for progress to become available
-        const progressPromise = new Promise<void>(resolve => {
-          this.progressAvailableResolve = resolve
-        })
-
-        if (executingPromises.length > 0) {
-          await Promise.race([...executingPromises, progressPromise])
-        }
-      }
-    }
-
-    for (const result of this.getCompletedResults()) {
-      yield result
+    } finally {
+      this.dispose(EXECUTOR_COMPLETED)
     }
   }
 

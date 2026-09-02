@@ -4,6 +4,9 @@ import uniqBy from 'lodash-es/uniqBy.js'
 import { COORDINATOR_MODE_ALLOWED_TOOLS } from '../constants/tools.js'
 import { isMcpTool } from '../services/mcp/utils.js'
 import type { Tool, ToolPermissionContext, Tools } from '../Tool.js'
+import { TEAM_CREATE_TOOL_NAME } from '../tools/TeamCreateTool/constants.js'
+import { TEAM_DELETE_TOOL_NAME } from '../tools/TeamDeleteTool/constants.js'
+import { getTaskScopeContext } from './sessionIdContext.js'
 
 // MCP tool name suffixes for PR activity subscription. These are lightweight
 // orchestration actions the coordinator calls directly rather than delegating
@@ -33,6 +36,11 @@ const coordinatorModeModule = feature('COORDINATOR_MODE')
  * management is orchestration.
  */
 export function applyCoordinatorToolFilter(tools: Tools): Tools {
+  if (getTaskScopeContext()?.kind === 'group-room') {
+    return tools.filter(
+      tool => tool.name !== TEAM_CREATE_TOOL_NAME && tool.name !== TEAM_DELETE_TOOL_NAME,
+    )
+  }
   return tools.filter(
     t =>
       COORDINATOR_MODE_ALLOWED_TOOLS.has(t.name) ||

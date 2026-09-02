@@ -473,6 +473,9 @@ export default function App() {
   const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
+  const [groupChildSessionId, setGroupChildSessionId] = React.useState<string | null>(null);
+  const [groupChildDetail, setGroupChildDetail] = React.useState<SessionDetail | null>(null);
+  const [groupChildLoading, setGroupChildLoading] = React.useState(false);
   const [input, setInput] = React.useState('');
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
@@ -1295,6 +1298,49 @@ export default function App() {
       : [],
     [activeSessionId, summaries],
   );
+
+  const openGroupChildSession = React.useCallback(async (sessionId: string) => {
+    setGroupChildSessionId(sessionId);
+    setGroupChildLoading(true);
+    try {
+      const detail = await window.agentDesktop.getSession({ sessionId });
+      setGroupChildDetail(detail);
+    } catch (error) {
+      setGroupChildSessionId(null);
+      setGroupChildDetail(null);
+      showPermissionNotice(`打开成员会话失败：${cleanIpcErrorMessage(error)}`, 'error', 5000);
+    } finally {
+      setGroupChildLoading(false);
+    }
+  }, [showPermissionNotice]);
+
+  React.useEffect(() => {
+    if (!groupChildSessionId) return;
+    const childSummary = summaries.find((session) => session.id === groupChildSessionId);
+    if (!childSummary || childSummary.parentSessionId !== activeSessionId) {
+      setGroupChildSessionId(null);
+      setGroupChildDetail(null);
+      setGroupChildLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const detail = await window.agentDesktop.getSession({ sessionId: groupChildSessionId });
+        if (!cancelled) setGroupChildDetail(detail);
+      } catch {
+        // A child transcript can be between filesystem sync steps; retain the
+        // last readable snapshot and retry while it is running.
+      }
+    };
+    void refresh();
+    if (childSummary.subagentStatus !== 'running' && !childSummary.busy) return () => { cancelled = true; };
+    const timer = window.setInterval(() => { void refresh(); }, 1_200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeSessionId, groupChildSessionId, summaries]);
   const sidebarAppShortcuts = React.useMemo(
     () => apps.filter((app) => appShortcutIds.has(getStoredAppKey(app))),
     [apps, appShortcutIds]
@@ -2511,7 +2557,13 @@ export default function App() {
                   toolDisplaySettingBusy={toolDisplaySettingSessionId === activeSessionId}
                   onSend={handleSend}
                   onStop={handleStop}
-                  onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
+                  onOpenChildSession={(sessionId) => { void openGroupChildSession(sessionId); }}
+                  childSessionDetail={groupChildDetail}
+                  childSessionLoading={groupChildLoading}
+                  onCloseChildSession={() => {
+                    setGroupChildSessionId(null);
+                    setGroupChildDetail(null);
+                  }}
                   installedAssistants={[]}
                   selectedAssistant={null}
                   installedConnectors={[]}
