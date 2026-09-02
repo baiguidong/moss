@@ -3,6 +3,7 @@ import { afterEach, describe, test } from 'node:test';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { createGroupRoomDataPaths } from './group-room-layout.mjs';
 import { GroupRoomStore } from './group-room-store.mjs';
@@ -167,6 +168,24 @@ describe('GroupRoomStore', () => {
     reopened.close();
   });
 
+  test('migrates the old hidden 120k token default to unlimited', async () => {
+    const { store, paths } = await createStore();
+    const room = store.createRoom({
+      topic: 'Legacy token budget',
+      workspace: path.join(paths.root, 'workspace'),
+      settings: { tokenBudget: 120_000 },
+      members: [member('A', 'a')],
+    });
+    store.close();
+    const legacy = new DatabaseSync(paths.databasePath);
+    legacy.prepare('UPDATE group_room_schema SET version = 2').run();
+    legacy.close();
+
+    const reopened = new GroupRoomStore({ paths });
+    assert.equal(reopened.getRoom(room.id).settings.tokenBudget, 0);
+    reopened.close();
+  });
+
   test('persists stable private trace records and promotes queued intervention', async () => {
     const { store, paths } = await createStore();
     const room = store.createRoom({
@@ -236,7 +255,7 @@ describe('GroupRoomStore', () => {
 
     assert.equal(room.members.length, 1);
     assert.equal(room.settings.permissionMode, 'ask');
-    assert.equal(room.settings.tokenBudget, 1_000_000);
+    assert.equal(room.settings.tokenBudget, 0);
     assert.equal(Object.hasOwn(room.settings, 'mode'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionPolicy'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionRounds'), false);
@@ -516,7 +535,7 @@ describe('GroupRoomStore', () => {
     store.close();
   });
 
-  test('migrates the legacy hidden 120k token default so one cached turn does not force finalization', async () => {
+  test('does not force finalization for a large cached turn when token budget is unlimited', async () => {
     const { store, paths } = await createStore();
     const moderationCaptures = [];
     const { controller, finished } = controllerFixture(store, paths, [], {
@@ -536,8 +555,6 @@ describe('GroupRoomStore', () => {
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    store.updateRoom(room.id, { settings: { ...room.settings, tokenBudget: 120_000 } });
-
     await controller.dispatch(room.id, { content: 'Inspect without premature finalization' });
     await finished;
 

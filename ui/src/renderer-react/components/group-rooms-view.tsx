@@ -194,6 +194,12 @@ type CreateRoomFormProps = {
     connectorGrants: GroupRoomConnectorGrant[];
     settings: {
       permissionMode: "inherit" | "ask" | "allow-all";
+      maxAgentTurns: number;
+      maxModeratorSteps: number;
+      turnTimeoutMs: number;
+      runTimeoutMs: number;
+      tokenBudget: number;
+      summaryThresholdChars: number;
     };
   }) => Promise<void>;
 };
@@ -205,6 +211,12 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
   const [invitationIds, setInvitationIds] = React.useState<string[]>([]);
   const [connectorIds, setConnectorIds] = React.useState<string[]>([]);
   const [permissionMode, setPermissionMode] = React.useState<"inherit" | "ask" | "allow-all">("inherit");
+  const [maxAgentTurns, setMaxAgentTurns] = React.useState("12");
+  const [maxModeratorSteps, setMaxModeratorSteps] = React.useState("16");
+  const [turnTimeoutMinutes, setTurnTimeoutMinutes] = React.useState("15");
+  const [runTimeoutMinutes, setRunTimeoutMinutes] = React.useState("45");
+  const [tokenBudget, setTokenBudget] = React.useState("");
+  const [summaryThresholdChars, setSummaryThresholdChars] = React.useState("120000");
   const [customMembers, setCustomMembers] = React.useState<Array<{ id: string; displayName: string; role: string; prompt: string; skillIds: string[] }>>([]);
   const expertPickerOptions = React.useMemo(() => inviteableOptions(resources.inviteables), [resources.inviteables]);
   const connectorPickerOptions = React.useMemo(() => connectorOptions(resources.connectors), [resources.connectors]);
@@ -228,7 +240,22 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
     .filter((item) => invitationIds.includes(item.id))
     .reduce((total, item) => total + (item.type === "team" ? item.members.length : 1), customMembers.length);
   const customMembersValid = customMembers.every((member) => member.displayName.trim() && member.prompt.trim());
-  const canCreate = topic.trim() && workspace.trim() && participantCount >= 1 && participantCount <= 32 && customMembersValid && !busy;
+  const parsedTokenBudget = Number(tokenBudget);
+  const tokenBudgetValid = !tokenBudget.trim()
+    || (Number.isInteger(parsedTokenBudget) && parsedTokenBudget >= 1_000 && parsedTokenBudget <= 2_000_000);
+  const parsedMaxAgentTurns = Number(maxAgentTurns);
+  const parsedMaxModeratorSteps = Number(maxModeratorSteps);
+  const parsedTurnTimeoutMinutes = Number(turnTimeoutMinutes);
+  const parsedRunTimeoutMinutes = Number(runTimeoutMinutes);
+  const parsedSummaryThresholdChars = Number(summaryThresholdChars);
+  const runtimeLimitsValid = (
+    Number.isInteger(parsedMaxAgentTurns) && parsedMaxAgentTurns >= 1 && parsedMaxAgentTurns <= 50
+    && Number.isInteger(parsedMaxModeratorSteps) && parsedMaxModeratorSteps >= 2 && parsedMaxModeratorSteps <= 64
+    && Number.isFinite(parsedTurnTimeoutMinutes) && parsedTurnTimeoutMinutes >= 0.5 && parsedTurnTimeoutMinutes <= 30
+    && Number.isFinite(parsedRunTimeoutMinutes) && parsedRunTimeoutMinutes >= 1 && parsedRunTimeoutMinutes <= 90
+    && Number.isInteger(parsedSummaryThresholdChars) && parsedSummaryThresholdChars >= 40_000 && parsedSummaryThresholdChars <= 1_000_000
+  );
+  const canCreate = Boolean(topic.trim() && workspace.trim() && participantCount >= 1 && participantCount <= 32 && customMembersValid && tokenBudgetValid && runtimeLimitsValid && !busy);
   return (
     <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-6">
@@ -254,7 +281,15 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
             connectorGrants: resources.connectors
               .filter((connector) => connectorIds.includes(connector.id))
               .map(selectedConnectorGrant),
-            settings: { permissionMode },
+            settings: {
+              permissionMode,
+              maxAgentTurns: parsedMaxAgentTurns,
+              maxModeratorSteps: parsedMaxModeratorSteps,
+              turnTimeoutMs: parsedTurnTimeoutMinutes * 60_000,
+              runTimeoutMs: parsedRunTimeoutMinutes * 60_000,
+              tokenBudget: tokenBudget.trim() ? parsedTokenBudget : 0,
+              summaryThresholdChars: parsedSummaryThresholdChars,
+            },
           })}
         >
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -278,6 +313,45 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
                 <option value="ask">群内确认</option>
                 <option value="allow-all">群内允许</option>
               </select>
+            </div>
+            <div className="space-y-3 rounded-md border border-border p-3">
+              <div>
+                <h3 className="text-xs font-semibold">运行边界</h3>
+                <p className="mt-1 text-[11px] text-muted-foreground">这些参数只负责资源和故障保护；由主持人自行决定委派对象、并行方式和何时收敛。</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">单成员最大模型轮次</span>
+                  <Input aria-label="单成员最大模型轮次" type="number" min={1} max={50} step={1} value={maxAgentTurns} onChange={(event) => setMaxAgentTurns(event.target.value)} className="h-8 text-xs" />
+                  <span className="block text-[10px] text-muted-foreground">默认 12，范围 1–50</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">主持决策步数上限</span>
+                  <Input aria-label="主持决策步数上限" type="number" min={2} max={64} step={1} value={maxModeratorSteps} onChange={(event) => setMaxModeratorSteps(event.target.value)} className="h-8 text-xs" />
+                  <span className="block text-[10px] text-muted-foreground">默认 16，范围 2–64</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">成员任务超时（分钟）</span>
+                  <Input aria-label="成员任务超时（分钟）" type="number" min={0.5} max={30} step={0.5} value={turnTimeoutMinutes} onChange={(event) => setTurnTimeoutMinutes(event.target.value)} className="h-8 text-xs" />
+                  <span className="block text-[10px] text-muted-foreground">默认 15，范围 0.5–30</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">单次请求超时（分钟）</span>
+                  <Input aria-label="单次请求超时（分钟）" type="number" min={1} max={90} step={1} value={runTimeoutMinutes} onChange={(event) => setRunTimeoutMinutes(event.target.value)} className="h-8 text-xs" />
+                  <span className="block text-[10px] text-muted-foreground">默认 45，范围 1–90</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">上下文摘要阈值（字符）</span>
+                  <Input aria-label="上下文摘要阈值（字符）" type="number" min={40_000} max={1_000_000} step={10_000} value={summaryThresholdChars} onChange={(event) => setSummaryThresholdChars(event.target.value)} className="h-8 text-xs" />
+                  <span className="block text-[10px] text-muted-foreground">默认 120,000，范围 40,000–1,000,000</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-muted-foreground">单次请求 Token 上限</span>
+                  <Input aria-label="单次请求 Token 上限" type="number" min={1_000} max={2_000_000} step={10_000} value={tokenBudget} onChange={(event) => setTokenBudget(event.target.value)} placeholder="不限制" className="h-8 text-xs" />
+                  <span className={cn("block text-[10px]", tokenBudgetValid ? "text-muted-foreground" : "text-destructive")}>{tokenBudgetValid ? "默认不限制；可设 1,000–2,000,000" : "请输入 1,000–2,000,000，或留空"}</span>
+                </label>
+              </div>
+              {!runtimeLimitsValid ? <p className="text-xs text-destructive">运行边界参数超出允许范围，请按字段提示修正。</p> : null}
             </div>
           </section>
 

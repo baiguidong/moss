@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const ROOM_STATUSES = new Set(['idle', 'running', 'paused', 'deleting']);
 const RUN_MODES = new Set(['orchestrated', 'conversation', 'parallel']);
 
@@ -253,11 +253,26 @@ export class GroupRoomStore {
     const row = this.#db.prepare('SELECT version FROM group_room_schema LIMIT 1').get();
     if (!row) {
       this.#db.prepare('INSERT INTO group_room_schema(version) VALUES (?)').run(SCHEMA_VERSION);
-    } else if (Number(row.version) === 1) {
+      return;
+    }
+    let version = Number(row.version);
+    if (version === 1) {
       try { this.#db.exec("ALTER TABLE group_room_turns ADD COLUMN trace_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
-      this.#db.prepare('UPDATE group_room_schema SET version = ?').run(SCHEMA_VERSION);
-    } else if (Number(row.version) !== SCHEMA_VERSION) {
-      throw new Error(`Unsupported Group Room schema version: ${row.version}`);
+      this.#db.prepare('UPDATE group_room_schema SET version = 2').run();
+      version = 2;
+    }
+    if (version === 2) {
+      const updateSettings = this.#db.prepare('UPDATE group_rooms SET settings_json = ? WHERE id = ?');
+      for (const room of this.#db.prepare('SELECT id, settings_json FROM group_rooms').all()) {
+        const settings = asJson(room.settings_json, {});
+        if (Number(settings.tokenBudget) !== 120_000) continue;
+        updateSettings.run(JSON.stringify({ ...settings, tokenBudget: 0 }), room.id);
+      }
+      this.#db.prepare('UPDATE group_room_schema SET version = 3').run();
+      version = 3;
+    }
+    if (version !== SCHEMA_VERSION) {
+      throw new Error(`Unsupported Group Room schema version: ${version}`);
     }
   }
 

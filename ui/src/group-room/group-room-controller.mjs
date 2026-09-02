@@ -94,11 +94,8 @@ function tokenUsage(usage) {
 
 function effectiveTokenBudget(settings = {}) {
   const configured = Number(settings.tokenBudget);
-  // 120k was the original hidden default and is too small for one normal
-  // tool-using turn once cached input is included. Preserve deliberately
-  // smaller test/admin overrides, but migrate that exact legacy default.
-  if (configured === 120_000) return 1_000_000;
-  return clampNumber(configured, 1_000_000, 1_000, 2_000_000);
+  if (!Number.isFinite(configured) || configured <= 0) return 0;
+  return Math.max(1_000, Math.min(2_000_000, configured));
 }
 
 function normalizedRoomSettings(settings = {}) {
@@ -460,9 +457,9 @@ export class GroupRoomController {
         if (control.softInterventions.length > 0) this.#promoteSoftInterventions(roomId, control);
         const forceFinish = Boolean(control.forceFinishReason)
           || control.moderatorSteps >= control.maxModeratorSteps
-          || control.totalTokens >= control.tokenBudget;
+          || (control.tokenBudget > 0 && control.totalTokens >= control.tokenBudget);
         if (!control.forceFinishReason && forceFinish) {
-          control.forceFinishReason = control.totalTokens >= control.tokenBudget
+          control.forceFinishReason = control.tokenBudget > 0 && control.totalTokens >= control.tokenBudget
             ? 'Room token budget reached'
             : 'Moderator step limit reached';
         }
@@ -534,7 +531,7 @@ export class GroupRoomController {
           break;
         }
 
-        if (control.totalTokens >= control.tokenBudget) {
+        if (control.tokenBudget > 0 && control.totalTokens >= control.tokenBudget) {
           control.budgetReached = true;
           control.forceFinishReason = 'Room token budget reached';
           continue;
@@ -574,7 +571,7 @@ export class GroupRoomController {
           control.blockingFailure = connectorFailure;
           control.forceFinishReason = connectorFailure;
         }
-        if (control.totalTokens >= control.tokenBudget) {
+        if (control.tokenBudget > 0 && control.totalTokens >= control.tokenBudget) {
           control.budgetReached = true;
           control.forceFinishReason = 'Room token budget reached';
         }
