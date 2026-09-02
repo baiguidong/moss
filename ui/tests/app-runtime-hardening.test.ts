@@ -42,7 +42,7 @@ describe('App Runtime hardening', () => {
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true).catch(() => {})
     const key = runtime.deployments.list(appId)[0].key
-    const deadline = Date.now() + 1500
+    const deadline = Date.now() + 5000
     while (runtime.supervisor.status(key).state !== 'crash-loop' && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20))
     }

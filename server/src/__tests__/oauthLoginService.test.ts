@@ -399,6 +399,7 @@ describe('OAuth browser login service', () => {
       const process = Bun.spawn(['node', output.path], {
         stdout: 'pipe',
         stderr: 'pipe',
+        env: { ...Bun.env, NODE_NO_WARNINGS: '1' },
       })
       const [exitCode, stderr] = await Promise.all([
         process.exited,
