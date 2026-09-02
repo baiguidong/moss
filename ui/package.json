@@ -1,6 +1,6 @@
 {
   "name": "moss-desktop",
-  "version": "0.0.3",
+  "version": "2.1.88",
   "description": "Moss - AI coding agent desktop client",
   "author": "Moss AI Team",
   "private": true,
@@ -9,17 +9,18 @@
   "scripts": {
     "build:direct": "node scripts/build-direct.mjs",
     "build:adapters": "node scripts/build-adapters.mjs",
-    "build:renderer": "vite build && mkdir -p dist/renderer/build && cp -r build/* dist/renderer/build/",
+    "build:renderer": "vite build && node scripts/copy-build-resources.mjs",
     "runtimes:download": "node scripts/download-runtimes.mjs",
     "runtimes:download:all": "node scripts/download-runtimes.mjs --all",
     "start": "node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
-    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/adapter-settings.mjs && node --check src/adapter-process-manager.mjs && node --check src/desktop-settings.mjs && node --check src/desktop-mcp-settings.mjs && node --check src/remote-direct-client.mjs && node --check src/remote-session-reconcile.mjs && node --check src/remote-direct-oauth.mjs && node --check src/remote-direct-auth-window.mjs && node --check src/moss-cron-scheduler.mjs && node --check src/file-system-ipc.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && node --check scripts/build-adapters.mjs && node --check scripts/download-runtimes.mjs && tsc --noEmit",
-    "dist:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --win --publish never",
-    "dist:mac": "node scripts/download-runtimes.mjs && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --mac --publish never",
-    "release:win": "node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --win --publish always",
-    "release:mac": "node scripts/download-runtimes.mjs && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && vite build && electron-builder --mac --publish always"
+    "check": "node --check src/main.mjs && node --check src/preload.mjs && node --check src/adapter-settings.mjs && node --check src/adapter-process-manager.mjs && node --check src/desktop-settings.mjs && node --check src/desktop-mcp-settings.mjs && node --check src/remote-direct-client.mjs && node --check src/remote-session-reconcile.mjs && node --check src/remote-direct-oauth.mjs && node --check src/remote-direct-auth-window.mjs && node --check src/moss-cron-scheduler.mjs && node --check src/file-system-ipc.mjs && node --check src/update-capabilities.mjs && node --check src/runtime/runtime-manifest.mjs && node --check scripts/dev.mjs && node --check scripts/build-direct.mjs && node --check scripts/build-adapters.mjs && node --check scripts/clean-installers.mjs && node --check scripts/copy-build-resources.mjs && node --check scripts/download-runtimes.mjs && node --check scripts/after-pack.mjs && node --check scripts/verify-package.mjs && tsc --noEmit",
+    "verify:package": "node scripts/verify-package.mjs",
+    "dist:win": "node scripts/clean-installers.mjs && node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && bun run build:renderer && electron-builder --win --x64 --publish never && node scripts/verify-package.mjs --platform=win32 --arch=x64",
+    "dist:mac": "node scripts/clean-installers.mjs && node scripts/download-runtimes.mjs --target=darwin-arm64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && bun run build:renderer && electron-builder --mac --arm64 --publish never && node scripts/verify-package.mjs --platform=darwin --arch=arm64",
+    "release:win": "node scripts/clean-installers.mjs && node scripts/download-runtimes.mjs --target=win32-x64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && bun run build:renderer && electron-builder --win --x64 --publish never && node scripts/verify-package.mjs --platform=win32 --arch=x64",
+    "release:mac": "node scripts/clean-installers.mjs && node scripts/download-runtimes.mjs --target=darwin-arm64 && node scripts/build-direct.mjs && node scripts/build-adapters.mjs && bun run build:renderer && electron-builder --mac --arm64 --publish never && node scripts/verify-package.mjs --platform=darwin --arch=arm64"
   },
   "build": {
     "appId": "com.moss.ai",
@@ -28,12 +29,14 @@
       "output": "dist/installers",
       "buildResources": "build"
     },
+    "afterPack": "scripts/after-pack.mjs",
     "icon": "build/icon",
     "asarUnpack": [
       "**/node_modules/sharp/**",
       "**/node_modules/@img/**"
     ],
     "dmg": {
+      "sign": false,
       "background": null,
       "iconSize": 100,
       "contents": [
@@ -56,7 +59,6 @@
     "files": [
       "dist/renderer/**/*",
       "src/**/*",
-      "vendor/ripgrep/**/*",
       "index.html",
       "package.json",
       "electron-direct.mjs"
@@ -88,7 +90,10 @@
           "fast-uri/**/*",
           "json-schema-traverse/**/*",
           "require-from-string/**/*",
-          "semver/**/*"
+          "semver/**/*",
+          "sharp/**/*",
+          "detect-libc/**/*",
+          "@img/**/*"
         ]
       },
       {
@@ -134,6 +139,13 @@
         ]
       },
       {
+        "from": "../vendor/ripgrep",
+        "to": "ripgrep",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "dist/adapters",
         "to": "adapters",
         "filter": [
@@ -143,28 +155,35 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "identity": null,
       "target": [
         "dmg",
         "zip"
       ],
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "notarize": false
     },
     "win": {
+      "cscLink": "",
+      "verifyUpdateCodeSignature": false,
       "target": [
         "nsis",
         "portable"
       ]
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true
     },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    },
     "publish": {
       "provider": "github",
-      "owner": "sudoprivacy",
+      "owner": "baiguidong",
       "repo": "moss"
     }
   },

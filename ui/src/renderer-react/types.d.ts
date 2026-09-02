@@ -1357,7 +1357,7 @@ declare global {
       autoUpdate: {
         check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: { updateInfo?: { version: string; releaseDate?: string; releaseNotes?: string } }; msg?: string }>;
         download: () => Promise<{ success: boolean; msg?: string }>;
-        quitAndInstall: () => Promise<void>;
+        quitAndInstall: () => Promise<{ success: boolean; msg?: string }>;
         getDownloadedFilePath: () => Promise<{ success: boolean; data?: { path: string | null } }>;
         getMirrorStatus: () => Promise<{ success: boolean; data?: { useMirror: boolean; reason: string } }>;
         onStatus: (callback: (evt: AutoUpdateStatus) => void) => () => void;

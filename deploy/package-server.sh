@@ -11,12 +11,11 @@ SHARP_VERSION="${SHARP_VERSION:-0.34.5}"
 SHARP_LIBVIPS_VERSION="${SHARP_LIBVIPS_VERSION:-1.2.4}"
 BUILD_CACHE="${MOSS_SERVER_BUILD_CACHE:-${HOME}/.cache/moss-server-build}"
 
-case "$VERSION" in
-  ''|*[!0-9A-Za-z._+-]*)
-    echo "Invalid version: $VERSION" >&2
-    exit 1
-    ;;
-esac
+SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|([0-9]*[A-Za-z-][0-9A-Za-z-]*))(\.((0|[1-9][0-9]*)|([0-9]*[A-Za-z-][0-9A-Za-z-]*)))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+[[ "$VERSION" =~ $SEMVER_PATTERN ]] || {
+  echo "Invalid version: $VERSION" >&2
+  exit 1
+}
 
 case "$ARCH" in
   amd64) NODE_ARCH=x64 ;;

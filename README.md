@@ -84,6 +84,9 @@ Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Se
 
 ```bash
 # 在仓库根目录执行，生成 electron-direct.mjs 和相关依赖
+bun install
+bun install --cwd admin
+bun install --cwd adapters
 bun run build:node
 ```
 
@@ -124,17 +127,17 @@ bun run build:node
 ```bash
 cd ui
 
-# 打包 Windows (exe)
+# 打包 Windows x64 (exe)
 bun run dist:win
 
-# 打包 macOS (dmg)
+# 打包 macOS Apple Silicon / arm64 (dmg + zip)
 bun run dist:mac
-
-# 打包所有平台
-bun run dist:all
 ```
 
 生成的安装包将位于 `ui/dist/installers` 目录下。
+打包命令会下载并校验内置 Node、Python（Windows 还包括 PortableGit），
+并在生成安装包后实际运行 Node、Python、Sharp 和 ripgrep，检查连接器目录与
+其他必需资源。当前桌面安装包不执行 macOS/Windows 代码签名或 macOS 公证。
 
 ### 3. Docker Runtime 镜像
 

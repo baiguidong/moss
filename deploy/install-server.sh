@@ -11,6 +11,7 @@ ADMIN_USERNAME="${MOSS_ADMIN_USERNAME:-}"
 ADMIN_PASSWORD="${MOSS_ADMIN_PASSWORD:-}"
 NON_INTERACTIVE="${MOSS_NON_INTERACTIVE:-0}"
 INSTALLER_REFRESHED="${MOSS_INSTALLER_REFRESHED:-0}"
+INSTALL_LOCK_FD=9
 OFFLINE=0
 UPGRADE=0
 
@@ -70,14 +71,12 @@ case "$(uname -m)" in
   *) die "only x86_64/amd64 is currently supported" ;;
 esac
 
-case "$RELEASE_TAG" in
-  v[0-9A-Za-z]*) VERSION="${RELEASE_TAG#v}" ;;
-  *) die "invalid or unstamped release tag: $RELEASE_TAG" ;;
-esac
-case "$VERSION" in
-  ''|*[!0-9A-Za-z._+-]*) die "invalid release version: $VERSION" ;;
-esac
+VERSION="${RELEASE_TAG#v}"
+SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|([0-9]*[A-Za-z-][0-9A-Za-z-]*))(\.((0|[1-9][0-9]*)|([0-9]*[A-Za-z-][0-9A-Za-z-]*)))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+[[ "$RELEASE_TAG" == v* && "$VERSION" =~ $SEMVER_PATTERN ]] \
+  || die "invalid or unstamped release tag: $RELEASE_TAG"
 case "$REPOSITORY" in
+  *[!A-Za-z0-9_./-]*|*/*/*|/*|*/|'') die "invalid or unstamped GitHub repository: $REPOSITORY" ;;
   */*) ;;
   *) die "invalid or unstamped GitHub repository: $REPOSITORY" ;;
 esac
@@ -85,7 +84,7 @@ case "$SERVICE_NAME" in
   ''|*[!A-Za-z0-9_.@-]*) die "invalid systemd service name: $SERVICE_NAME" ;;
 esac
 
-for command_name in curl docker getent install stat systemctl tar; do
+for command_name in curl docker find flock getent install realpath stat systemctl tar; do
   command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
 done
 if command -v sha256sum >/dev/null 2>&1; then
@@ -105,6 +104,12 @@ case "$INSTALL_USER_HOME" in
   /*) ;;
   *) die "install user has no absolute home directory: $INSTALL_USER" ;;
 esac
+case "$INSTALL_USER_HOME" in
+  *[[:space:]]*) die "install user home must not contain whitespace" ;;
+esac
+case "$INSTALL_USER_HOME" in
+  *[!A-Za-z0-9_./-]*) die "install user home contains unsupported characters" ;;
+esac
 
 DEFAULT_INSTALL_DIR="${INSTALL_USER_HOME%/}/.moss/server"
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
@@ -115,10 +120,26 @@ esac
 case "$INSTALL_DIR" in
   *[[:space:]]*) die "install directory must not contain whitespace" ;;
 esac
+case "$INSTALL_DIR" in
+  *[!A-Za-z0-9_./-]*) die "install directory contains unsupported characters" ;;
+esac
+[ ! -L "$INSTALL_DIR" ] || die "install directory must not be a symbolic link"
+INSTALL_DIR="$(realpath -m -- "$INSTALL_DIR")"
 [ "$INSTALL_DIR" != / ] || die "refusing to install into /"
+
+if [ "$INSTALLER_REFRESHED" = 1 ] && flock -n 9 2>/dev/null; then
+  : # The refreshed child inherited the lock from this installer version.
+else
+  exec 9>/run/lock/moss-server-install.lock
+  flock -n "$INSTALL_LOCK_FD" || die "another Moss Server installation is already running"
+  export MOSS_INSTALL_LOCK_FD="$INSTALL_LOCK_FD"
+fi
 
 MARKER_PATH="$INSTALL_DIR/.moss-server-install"
 CONFIG_PATH="$INSTALL_DIR/server.json"
+[ -d "$INSTALL_DIR" ] && INSTALL_DIR_PREEXISTED=1 || INSTALL_DIR_PREEXISTED=0
+[ ! -L "$MARKER_PATH" ] || die "install marker must not be a symbolic link"
+[ ! -L "$CONFIG_PATH" ] || die "server config must not be a symbolic link"
 EXISTING_INSTALL=0
 if [ -f "$MARKER_PATH" ] || [ -f "$CONFIG_PATH" ]; then
   EXISTING_INSTALL=1
@@ -129,12 +150,33 @@ if [ -f "$MARKER_PATH" ] || [ -f "$CONFIG_PATH" ]; then
     [ -n "$PASSWD_ENTRY" ] || die "existing install user does not exist: $INSTALL_USER"
     INSTALL_USER_HOME="$(printf '%s\n' "$PASSWD_ENTRY" | awk -F: 'NR == 1 { print $6 }')"
     INSTALL_USER_GROUP="$(id -gn "$INSTALL_USER")"
+    case "$INSTALL_USER_HOME" in
+      /*) ;;
+      *) die "install user has no absolute home directory: $INSTALL_USER" ;;
+    esac
+    case "$INSTALL_USER_HOME" in
+      *[[:space:]]*) die "install user home must not contain whitespace" ;;
+    esac
+    case "$INSTALL_USER_HOME" in
+      *[!A-Za-z0-9_./-]*) die "install user home contains unsupported characters" ;;
+    esac
   fi
+fi
+if [ "$EXISTING_INSTALL" = 1 ] && [ ! -f "$MARKER_PATH" ]; then
+  die "existing server config is not managed by this installer: $CONFIG_PATH"
+fi
+if [ "$EXISTING_INSTALL" = 0 ] && [ "$INSTALL_DIR_PREEXISTED" = 1 ] \
+  && find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  die "install directory is not empty and is not managed by this installer: $INSTALL_DIR"
 fi
 PREVIOUS_RUNTIME_IMAGE=""
 if [ -f "$MARKER_PATH" ]; then
+  MARKER_REPOSITORY="$(awk -F= '$1 == "repository" { print substr($0, index($0, "=") + 1); exit }' "$MARKER_PATH")"
   MARKER_SERVICE_NAME="$(awk -F= '$1 == "service_name" { print substr($0, index($0, "=") + 1); exit }' "$MARKER_PATH")"
   PREVIOUS_RUNTIME_IMAGE="$(awk -F= '$1 == "runtime_image" { print substr($0, index($0, "=") + 1); exit }' "$MARKER_PATH")"
+  if [ -n "$MARKER_REPOSITORY" ] && [ "$MARKER_REPOSITORY" != "$REPOSITORY" ]; then
+    die "installation belongs to $MARKER_REPOSITORY, not $REPOSITORY"
+  fi
   if [ -n "$MARKER_SERVICE_NAME" ] && [ "$MARKER_SERVICE_NAME" != "$SERVICE_NAME" ]; then
     die "installation is managed by $MARKER_SERVICE_NAME.service, not $SERVICE_NAME.service"
   fi
@@ -157,6 +199,9 @@ if [ "$UPGRADE" = 1 ] && [ "$OFFLINE" = 0 ] && [ "$INSTALLER_REFRESHED" != 1 ]; 
   MOSS_INSTALL_DIR="$INSTALL_DIR" \
   MOSS_SERVICE_NAME="$SERVICE_NAME" \
   MOSS_REPOSITORY="$REPOSITORY" \
+  MOSS_DOWNLOAD_BASE="${MOSS_DOWNLOAD_BASE:-}" \
+  MOSS_INSTALLER_URL="${MOSS_INSTALLER_URL:-}" \
+  MOSS_INSTALL_LOCK_FD="$INSTALL_LOCK_FD" \
     bash "$LATEST_INSTALLER" --upgrade --non-interactive
   STATUS=$?
   set -e
@@ -165,22 +210,41 @@ if [ "$UPGRADE" = 1 ] && [ "$OFFLINE" = 0 ] && [ "$INSTALLER_REFRESHED" != 1 ]; 
 fi
 
 INSTALLED_TAG=""
+INSTALLED_TARGET=""
 if [ -L "$INSTALL_DIR/current" ]; then
   INSTALLED_TARGET="$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)"
   INSTALLED_TAG="${INSTALLED_TARGET##*/}"
 fi
-if [ "$EXISTING_INSTALL" = 1 ] && [ "$INSTALLED_TAG" = "$RELEASE_TAG" ]; then
-  log "Moss Server $RELEASE_TAG is already installed; no changes needed"
-  exit 0
-fi
-
+case "$INSTALLED_TARGET" in
+  ''|"$INSTALL_DIR"/releases/*) ;;
+  *) die "current release points outside the managed releases directory" ;;
+esac
 EXISTING_UNIT_ENV=""
 if systemctl cat "$SERVICE_NAME.service" >/dev/null 2>&1; then
+  [ "$EXISTING_INSTALL" = 1 ] \
+    || die "$SERVICE_NAME.service already exists and is not managed by this installer"
   EXISTING_UNIT_ENV="$(systemctl cat "$SERVICE_NAME.service" \
     | awk -F= '$1 == "EnvironmentFile" { print substr($0, index($0, "=") + 1); exit }')"
-  if [ -n "$EXISTING_UNIT_ENV" ] && [ "$EXISTING_UNIT_ENV" != "$INSTALL_DIR/moss-server.env" ]; then
+  if [ "$EXISTING_UNIT_ENV" != "$INSTALL_DIR/moss-server.env" ]; then
     die "$SERVICE_NAME.service belongs to another installation: $EXISTING_UNIT_ENV"
   fi
+fi
+
+if [ "$EXISTING_INSTALL" = 1 ] && [ "$INSTALLED_TAG" = "$RELEASE_TAG" ]; then
+  INSTALLED_NODE="$INSTALL_DIR/current/node/bin/node"
+  INSTALLED_PORT=""
+  if [ -x "$INSTALLED_NODE" ] && [ -f "$CONFIG_PATH" ]; then
+    INSTALLED_PORT="$($INSTALLED_NODE -p \
+      "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).server.port" \
+      "$CONFIG_PATH" 2>/dev/null || true)"
+  fi
+  if systemctl is-active --quiet "$SERVICE_NAME.service" \
+    && [[ "$INSTALLED_PORT" =~ ^[0-9]+$ ]] \
+    && curl --fail --silent "http://127.0.0.1:$INSTALLED_PORT/healthz" >/dev/null; then
+    log "Moss Server $RELEASE_TAG is already installed and healthy; no changes needed"
+    exit 0
+  fi
+  log "Moss Server $RELEASE_TAG is not healthy; reinstalling the release"
 fi
 
 ARCHIVE_NAME="moss-server-$VERSION-linux-$ARCH.tar.gz"
@@ -189,7 +253,26 @@ RUNTIME_TAG_VERSION="${VERSION//+/_}"
 RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-$ARCH"
 CHECKSUM_NAME="SHA256SUMS-server"
 WORK_DIR="$(mktemp -d)"
-cleanup() { rm -rf "$WORK_DIR"; }
+RUNTIME_IMAGE_BACKUP_TAG=""
+RUNTIME_IMAGE_LOADED=0
+cleanup_work_dir() {
+  local status="${1:-0}"
+  if [ "$RUNTIME_IMAGE_LOADED" = 1 ] && [ "$status" -ne 0 ]; then
+    docker image rm "$RUNTIME_IMAGE" >/dev/null 2>&1 || true
+    if [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
+      docker tag "$RUNTIME_IMAGE_BACKUP_TAG" "$RUNTIME_IMAGE" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
+    docker image rm "$RUNTIME_IMAGE_BACKUP_TAG" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$WORK_DIR"
+}
+cleanup() {
+  local status=$?
+  cleanup_work_dir "$status"
+  exit "$status"
+}
 trap cleanup EXIT
 
 if [ "$OFFLINE" = 1 ]; then
@@ -243,7 +326,10 @@ NODE_BINARY="$PACKAGE_ROOT/node/bin/node"
 "$NODE_BINARY" --no-warnings -e "require('node:sqlite')"
 test -f "$PACKAGE_ROOT/app/bin/moss-server.mjs" || die "server entrypoint is missing"
 test -f "$PACKAGE_ROOT/app/bin/moss-session-runner.mjs" || die "session runner is missing"
+test -f "$PACKAGE_ROOT/app/adapters/feishu.mjs" || die "Feishu adapter is missing"
 test -f "$PACKAGE_ROOT/app/admin/dist/index.html" || die "admin frontend is missing"
+[ "$(cat "$PACKAGE_ROOT/VERSION")" = "$VERSION" ] \
+  || die "server package version does not match release $RELEASE_TAG"
 
 docker info >/dev/null 2>&1 || die "Docker daemon is not available"
 DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
@@ -261,8 +347,13 @@ DOCKER_GROUP_ENTRY="$(getent group "$DOCKER_GROUP_ID" || true)"
 [ -n "$DOCKER_GROUP_ENTRY" ] || die "Docker socket group does not exist: $DOCKER_GROUP_ID"
 DOCKER_GROUP="${DOCKER_GROUP_ENTRY%%:*}"
 
+if docker image inspect "$RUNTIME_IMAGE" >/dev/null 2>&1; then
+  RUNTIME_IMAGE_BACKUP_TAG="moss-runtime-install-backup:$RUNTIME_TAG_VERSION-$ARCH-$$"
+  docker tag "$RUNTIME_IMAGE" "$RUNTIME_IMAGE_BACKUP_TAG"
+fi
 log "Loading Docker runtime image: $RUNTIME_IMAGE"
 docker load -i "$SOURCE_DIR/$RUNTIME_ARCHIVE_NAME" >/dev/null
+RUNTIME_IMAGE_LOADED=1
 docker image inspect "$RUNTIME_IMAGE" >/dev/null 2>&1 \
   || die "runtime archive did not load $RUNTIME_IMAGE"
 docker run --rm "$RUNTIME_IMAGE" node --no-warnings -e \
@@ -328,10 +419,17 @@ install -d -m 0700 -o "$INSTALL_USER" -g "$INSTALL_USER_GROUP" \
 
 RELEASE_DIR="$INSTALL_DIR/releases/$RELEASE_TAG"
 NEW_RELEASE_DIR="$INSTALL_DIR/releases/.$RELEASE_TAG.new.$$"
+REPLACED_RELEASE_DIR="$INSTALL_DIR/releases/.$RELEASE_TAG.replaced.$$"
 PREVIOUS_TARGET="$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)"
 SETTINGS_PATH="$INSTALL_DIR/settings.json"
 SETTINGS_EXISTED=0
 SETTINGS_BACKUP="$WORK_DIR/settings.json.backup"
+CONFIG_EXISTED=0
+CONFIG_BACKUP="$WORK_DIR/server.json.backup"
+if [ -f "$CONFIG_PATH" ]; then
+  CONFIG_EXISTED=1
+  cp -a "$CONFIG_PATH" "$CONFIG_BACKUP"
+fi
 if [ -f "$SETTINGS_PATH" ]; then
   SETTINGS_EXISTED=1
   cp -a "$SETTINGS_PATH" "$SETTINGS_BACKUP"
@@ -339,8 +437,169 @@ fi
 rm -rf "$NEW_RELEASE_DIR"
 cp -a "$PACKAGE_ROOT" "$NEW_RELEASE_DIR"
 chown -R "$INSTALL_USER:$INSTALL_USER_GROUP" "$NEW_RELEASE_DIR"
-rm -rf "$RELEASE_DIR"
+
+ENV_PATH="$INSTALL_DIR/moss-server.env"
+UNIT_PATH="/etc/systemd/system/$SERVICE_NAME.service"
+UNINSTALL_PATH="$INSTALL_DIR/uninstall-server.sh"
+[ ! -L "$SETTINGS_PATH" ] || die "server settings must not be a symbolic link"
+[ ! -L "$ENV_PATH" ] || die "service environment file must not be a symbolic link"
+[ ! -L "$UNIT_PATH" ] || die "systemd unit must not be a symbolic link"
+[ ! -L "$UNINSTALL_PATH" ] || die "uninstaller must not be a symbolic link"
+ENV_EXISTED=0
+UNIT_EXISTED=0
+UNINSTALL_EXISTED=0
+MARKER_EXISTED=0
+SERVICE_WAS_ACTIVE=0
+UNIT_WAS_ENABLED=0
+ENV_BACKUP="$WORK_DIR/moss-server.env.backup"
+UNIT_BACKUP="$WORK_DIR/moss-server.service.backup"
+UNINSTALL_BACKUP="$WORK_DIR/uninstall-server.sh.backup"
+MARKER_BACKUP="$WORK_DIR/moss-server-install.backup"
+if [ -f "$ENV_PATH" ]; then
+  ENV_EXISTED=1
+  cp -a "$ENV_PATH" "$ENV_BACKUP"
+fi
+if [ -f "$UNIT_PATH" ]; then
+  UNIT_EXISTED=1
+  cp -a "$UNIT_PATH" "$UNIT_BACKUP"
+fi
+if [ -f "$UNINSTALL_PATH" ]; then
+  UNINSTALL_EXISTED=1
+  cp -a "$UNINSTALL_PATH" "$UNINSTALL_BACKUP"
+fi
+if [ -f "$MARKER_PATH" ]; then
+  MARKER_EXISTED=1
+  cp -a "$MARKER_PATH" "$MARKER_BACKUP"
+fi
+if systemctl is-active --quiet "$SERVICE_NAME.service"; then
+  SERVICE_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet "$SERVICE_NAME.service"; then
+  UNIT_WAS_ENABLED=1
+fi
+TRANSACTION_ACTIVE=0
+RELEASE_INSTALLED=0
+RELEASE_REPLACED=0
+restore_previous_release() {
+  local restore_status=0
+  systemctl stop "$SERVICE_NAME.service" >/dev/null 2>&1 || true
+
+  if [ "$SETTINGS_EXISTED" = 1 ]; then
+    cp -a "$SETTINGS_BACKUP" "$SETTINGS_PATH" || restore_status=1
+  else
+    rm -f "$SETTINGS_PATH" || restore_status=1
+  fi
+  if [ "$CONFIG_EXISTED" = 1 ]; then
+    cp -a "$CONFIG_BACKUP" "$CONFIG_PATH" || restore_status=1
+  else
+    rm -f "$CONFIG_PATH" || restore_status=1
+  fi
+  if [ "$ENV_EXISTED" = 1 ]; then
+    cp -a "$ENV_BACKUP" "$ENV_PATH" || restore_status=1
+  else
+    rm -f "$ENV_PATH" || restore_status=1
+  fi
+  if [ "$UNIT_EXISTED" = 1 ]; then
+    cp -a "$UNIT_BACKUP" "$UNIT_PATH" || restore_status=1
+  else
+    rm -f "$UNIT_PATH" || restore_status=1
+  fi
+  if [ "$UNINSTALL_EXISTED" = 1 ]; then
+    cp -a "$UNINSTALL_BACKUP" "$UNINSTALL_PATH" || restore_status=1
+  else
+    rm -f "$UNINSTALL_PATH" || restore_status=1
+  fi
+  if [ "$MARKER_EXISTED" = 1 ]; then
+    cp -a "$MARKER_BACKUP" "$MARKER_PATH" || restore_status=1
+  else
+    rm -f "$MARKER_PATH" || restore_status=1
+  fi
+
+  if [ "$RELEASE_INSTALLED" = 1 ]; then
+    rm -rf "$RELEASE_DIR" || restore_status=1
+  fi
+  if [ "$RELEASE_REPLACED" = 1 ] && [ -d "$REPLACED_RELEASE_DIR" ]; then
+    mv "$REPLACED_RELEASE_DIR" "$RELEASE_DIR" || restore_status=1
+  fi
+
+  if [ -n "$PREVIOUS_TARGET" ] && [ -d "$PREVIOUS_TARGET" ]; then
+    ln -sfn "$PREVIOUS_TARGET" "$INSTALL_DIR/.current.rollback" \
+      && mv -Tf "$INSTALL_DIR/.current.rollback" "$INSTALL_DIR/current" \
+      || restore_status=1
+    for link_name in bin admin adapters; do
+      ln -sfn "current/app/$link_name" "$INSTALL_DIR/.$link_name.rollback" \
+        && mv -Tf "$INSTALL_DIR/.$link_name.rollback" "$INSTALL_DIR/$link_name" \
+        || restore_status=1
+    done
+  else
+    rm -f "$INSTALL_DIR/current" || restore_status=1
+    for link_name in bin admin adapters; do
+      [ ! -L "$INSTALL_DIR/$link_name" ] \
+        || rm -f "$INSTALL_DIR/$link_name" \
+        || restore_status=1
+    done
+  fi
+
+  systemctl daemon-reload >/dev/null 2>&1 || restore_status=1
+  if [ "$UNIT_WAS_ENABLED" = 1 ]; then
+    systemctl enable "$SERVICE_NAME.service" >/dev/null 2>&1 || restore_status=1
+  else
+    systemctl disable "$SERVICE_NAME.service" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$PREVIOUS_TARGET" ] && [ -d "$PREVIOUS_TARGET" ] \
+    && [ "$SERVICE_WAS_ACTIVE" = 1 ]; then
+    systemctl reset-failed "$SERVICE_NAME.service" >/dev/null 2>&1 || true
+    systemctl restart "$SERVICE_NAME.service" >/dev/null 2>&1 || restore_status=1
+    if [ "$restore_status" = 0 ]; then
+      local restored=0
+      for _ in $(seq 1 30); do
+        if curl --fail --silent "http://127.0.0.1:$PORT/healthz" >/dev/null; then
+          restored=1
+          break
+        fi
+        sleep 1
+      done
+      [ "$restored" = 1 ] || restore_status=1
+    fi
+  elif [ "$EXISTING_INSTALL" = 0 ]; then
+    rm -rf \
+      "$INSTALL_DIR/current" "$INSTALL_DIR/releases" \
+      "$INSTALL_DIR/bin" "$INSTALL_DIR/admin" "$INSTALL_DIR/adapters" \
+      "$INSTALL_DIR/skills" "$INSTALL_DIR/assistants" "$INSTALL_DIR/var" \
+      "$MARKER_PATH" "$CONFIG_PATH" "$SETTINGS_PATH" "$ENV_PATH" \
+      "$UNINSTALL_PATH" || restore_status=1
+    if [ "$INSTALL_DIR_PREEXISTED" = 0 ]; then
+      rmdir "$INSTALL_DIR" 2>/dev/null || true
+    fi
+  fi
+  return "$restore_status"
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ] && [ "$TRANSACTION_ACTIVE" = 1 ]; then
+    log "Installation failed; restoring the previous release"
+    if ! restore_previous_release; then
+      log "ERROR: automatic rollback failed; inspect $SERVICE_NAME.service"
+    fi
+  fi
+  cleanup_work_dir "$status"
+  exit "$status"
+}
+trap cleanup EXIT
+
+TRANSACTION_ACTIVE=1
+if systemctl cat "$SERVICE_NAME.service" >/dev/null 2>&1; then
+  systemctl stop "$SERVICE_NAME.service" || true
+fi
+if [ -e "$RELEASE_DIR" ]; then
+  rm -rf "$REPLACED_RELEASE_DIR"
+  mv "$RELEASE_DIR" "$REPLACED_RELEASE_DIR"
+  RELEASE_REPLACED=1
+fi
 mv "$NEW_RELEASE_DIR" "$RELEASE_DIR"
+RELEASE_INSTALLED=1
 
 if [ "$EXISTING_INSTALL" = 0 ]; then
   CONFIG_PATH="$CONFIG_PATH" INSTALL_DIR="$INSTALL_DIR" PORT="$PORT" \
@@ -420,7 +679,6 @@ done
 chmod 0600 "$CONFIG_PATH" "$SETTINGS_PATH"
 chown "$INSTALL_USER:$INSTALL_USER_GROUP" "$CONFIG_PATH" "$SETTINGS_PATH"
 
-ENV_PATH="$INSTALL_DIR/moss-server.env"
 cat > "$ENV_PATH" <<EOF
 HOME=$INSTALL_USER_HOME
 MOSS_SERVER_HOME=$INSTALL_DIR
@@ -432,11 +690,6 @@ MOSS_HIDE_BOOTSTRAP_SECRETS=1
 NODE_ENV=production
 EOF
 chmod 0600 "$ENV_PATH"
-
-UNIT_PATH="/etc/systemd/system/$SERVICE_NAME.service"
-if systemctl cat "$SERVICE_NAME.service" >/dev/null 2>&1; then
-  systemctl stop "$SERVICE_NAME.service" || true
-fi
 
 ln -sfn "releases/$RELEASE_TAG" "$INSTALL_DIR/.current.new"
 mv -Tf "$INSTALL_DIR/.current.new" "$INSTALL_DIR/current"
@@ -469,7 +722,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
-cat > "$INSTALL_DIR/uninstall-server.sh" <<EOF
+cat > "$UNINSTALL_PATH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 [ "\$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 1; }
@@ -485,39 +738,13 @@ else
   echo 'Moss Server program removed; configuration and data retained in $INSTALL_DIR.'
 fi
 EOF
-chmod 0755 "$INSTALL_DIR/uninstall-server.sh"
+chmod 0755 "$UNINSTALL_PATH"
 chown -R "$INSTALL_USER:$INSTALL_USER_GROUP" "$INSTALL_DIR"
-
-restore_previous_release() {
-  if [ "$SETTINGS_EXISTED" = 1 ]; then
-    cp -a "$SETTINGS_BACKUP" "$SETTINGS_PATH"
-  else
-    rm -f "$SETTINGS_PATH"
-  fi
-  if [ -z "$PREVIOUS_TARGET" ] || [ ! -d "$PREVIOUS_TARGET" ]; then
-    systemctl stop "$SERVICE_NAME.service" || true
-    return 0
-  fi
-
-  ln -sfn "$PREVIOUS_TARGET" "$INSTALL_DIR/.current.rollback"
-  mv -Tf "$INSTALL_DIR/.current.rollback" "$INSTALL_DIR/current"
-  systemctl daemon-reload
-  systemctl reset-failed "$SERVICE_NAME.service" 2>/dev/null || true
-  systemctl restart "$SERVICE_NAME.service" || return 1
-  for _ in $(seq 1 30); do
-    if curl --fail --silent "http://127.0.0.1:$PORT/healthz" >/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME.service" >/dev/null
 if ! systemctl restart "$SERVICE_NAME.service"; then
-  restore_previous_release || die "service failed to start and rollback failed"
-  die "service failed to start; previous release restored"
+  die "service failed to start"
 fi
 
 HEALTH_URL="http://127.0.0.1:$PORT/healthz"
@@ -532,7 +759,6 @@ done
 if [ "$HEALTHY" != 1 ]; then
   systemctl status "$SERVICE_NAME.service" --no-pager >&2 || true
   journalctl -u "$SERVICE_NAME.service" -n 50 --no-pager >&2 || true
-  restore_previous_release || die "health check failed and rollback failed"
   die "health check failed: $HEALTH_URL"
 fi
 
@@ -556,6 +782,8 @@ runtime_image=$RUNTIME_IMAGE
 EOF
 chmod 0600 "$MARKER_PATH" "$CONFIG_PATH" "$SETTINGS_PATH"
 chown "$INSTALL_USER:$INSTALL_USER_GROUP" "$MARKER_PATH" "$CONFIG_PATH" "$SETTINGS_PATH"
+rm -rf "$REPLACED_RELEASE_DIR"
+TRANSACTION_ACTIVE=0
 
 log "Installed Moss Server $RELEASE_TAG"
 log "Docker runtime: $RUNTIME_IMAGE"

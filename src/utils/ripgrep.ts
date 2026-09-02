@@ -56,10 +56,10 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
   }
 
   const rgRoot = path.resolve(__dirname, 'vendor', 'ripgrep')
-  const command =
-    process.platform === 'win32'
-      ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')
-      : path.resolve(rgRoot, `${process.arch}-${process.platform}`, 'rg')
+  const configuredBuiltin = process.env.MOSS_RIPGREP_PATH?.trim()
+  const command = configuredBuiltin || (process.platform === 'win32'
+    ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')
+    : path.resolve(rgRoot, `${process.arch}-${process.platform}`, 'rg'))
 
   return { mode: 'builtin', command, args: [] }
 })

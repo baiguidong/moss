@@ -21,3 +21,11 @@ bin/direct-connect-session-runner.mjs
 ui/electron-direct.mjs
 bin/
 server.json
+
+# Downloaded/package-local desktop build inputs. Canonical metadata and ripgrep
+# binaries live in ui/src/runtime/runtime-manifest.mjs and vendor/ripgrep.
+ui/resources/runtimes/*.tmp
+ui/resources/runtimes/node-win32-*.zip
+ui/resources/runtimes/python-win32-*.tar.gz
+ui/resources/runtimes/portablegit-win32-*.7z.exe
+/ui/vendor/ripgrep/

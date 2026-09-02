@@ -64,16 +64,15 @@ export function UpdateModal() {
     setAutoUpdateDownloadedPath(null);
   };
 
-  const openReleasePage = () => {
+  const openReleasePage = async () => {
     if (!releasePageUrl) return;
-    window.open(releasePageUrl, '_blank');
+    await window.agentDesktop.shell.openExternal(releasePageUrl);
   };
 
-  const showInFolder = () => {
+  const showInFolder = async () => {
     const pathToShow = downloadPath || autoUpdateDownloadedPath;
     if (!pathToShow) return;
-    // Can't directly show in folder from renderer, just highlight the path
-    console.log('Show in folder:', pathToShow);
+    await window.agentDesktop.shell.showItemInFolder(pathToShow);
   };
 
   const checkForUpdates = async () => {
@@ -317,16 +316,16 @@ export function UpdateModal() {
 
                     <div className="flex gap-2">
                       {hasCompatibleAsset && (
-                        <>
-                          <Button size="sm" variant="outline" onClick={startManualDownload}>
-                            <Download className="h-3.5 w-3.5 mr-1" />
-                            下载
-                          </Button>
-                          <Button size="sm" onClick={startAutoDownload}>
-                            <Play className="h-3.5 w-3.5 mr-1" />
-                            下载并安装
-                          </Button>
-                        </>
+                        <Button size="sm" variant="outline" onClick={startManualDownload}>
+                          <Download className="h-3.5 w-3.5 mr-1" />
+                          下载
+                        </Button>
+                      )}
+                      {autoUpdateInfo && (
+                        <Button size="sm" onClick={startAutoDownload}>
+                          <Play className="h-3.5 w-3.5 mr-1" />
+                          下载并安装
+                        </Button>
                       )}
                       {releasePageUrl && (
                         <Button size="sm" variant="ghost" onClick={openReleasePage}>

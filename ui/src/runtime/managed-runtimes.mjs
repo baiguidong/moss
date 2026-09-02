@@ -5,14 +5,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import electron from 'electron';
 import { mossLog } from '../log-ipc.mjs';
+import { MANAGED_RUNTIME_VERSIONS } from './runtime-manifest.mjs';
 
 const { app } = electron;
 
-export const MANAGED_RUNTIME_VERSIONS = Object.freeze({
-  node: '22.22.2',
-  python: '3.13',
-  git: '2.47.1.windows.1',
-});
+export { MANAGED_RUNTIME_VERSIONS };
 
 const RUNTIME_HOME = path.join(os.homedir(), '.moss', 'runtimes');
 const REGISTRY_PATH = path.join(RUNTIME_HOME, 'registry.json');

@@ -51,8 +51,16 @@ const featureArgs = enabledFeatures.flatMap(featureName => [
   featureName,
 ])
 
+const packageMetadata = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
+const buildVersion = String(packageMetadata.version || '').trim()
+const semverPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+if (!semverPattern.test(buildVersion)) {
+  console.error(`Invalid package version: ${buildVersion || '(empty)'}`)
+  process.exit(1)
+}
+
 const defines = [
-  `--define=MACRO.VERSION="2.1.88"`,
+  `--define=MACRO.VERSION=${JSON.stringify(buildVersion)}`,
   `--define=MACRO.BUILD_TIME="${new Date().toISOString()}"`,
   `--define=MACRO.FEEDBACK_CHANNEL=""`,
   `--define=MACRO.ISSUES_EXPLAINER=""`,
@@ -121,6 +129,7 @@ if (buildElectronDirect) {
     '--outfile=ui/electron-direct.mjs',
     '--target=node',
     '--format=esm',
+    '--external=sharp',
     ...aliases,
     ...featureArgs,
     ...defines,

@@ -88,6 +88,7 @@ import {
 } from './runtime/managed-runtimes.mjs';
 import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
 import { autoUpdaterService } from './auto-updater-service.mjs';
+import { supportsAutomaticUpdates } from './update-capabilities.mjs';
 import { registerDocumentIpcHandlers } from './process/bridge/document-bridge.mjs';
 import { registerLibreOfficeIpcHandlers } from './process/bridge/libreoffice-bridge.mjs';
 import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-history-bridge.mjs';
@@ -530,6 +531,20 @@ process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
 // Desktop builds must not depend on the user's shell PATH for ripgrep. The
 // agent bundle falls back to vendor/ripgrep when this is truthy.
 process.env.USE_BUILTIN_RIPGREP = '1';
+process.env.MOSS_RIPGREP_PATH = app.isPackaged
+  ? path.join(
+      process.resourcesPath,
+      'ripgrep',
+      `${process.arch}-${process.platform}`,
+      process.platform === 'win32' ? 'rg.exe' : 'rg',
+    )
+  : path.join(
+      repoRoot,
+      'vendor',
+      'ripgrep',
+      `${process.arch}-${process.platform}`,
+      process.platform === 'win32' ? 'rg.exe' : 'rg',
+    );
 
 let mainWindow = null;
 let browserViewManager = null;
@@ -7667,19 +7682,24 @@ function createWindow() {
 // Set main window reference for update IPC after window creation
 function initializeAutoUpdater() {
   setMainWindowRef(mainWindow);
+  const automaticUpdatesEnabled = supportsAutomaticUpdates();
+  if (automaticUpdatesEnabled) {
+    // Initialize auto-updater service only on platforms where unsigned builds
+    // can install an update without an OS code-signature requirement.
+    autoUpdaterService.initialize((status) => {
+      mainWindow?.webContents.send('auto-update:status', status);
+    });
 
-  // Initialize auto-updater service
-  autoUpdaterService.initialize((status) => {
-    mainWindow?.webContents.send('auto-update:status', status);
-  });
-
-  // Auto-check for updates after startup (skip in dev/CI)
-  const skipAutoUpdate = process.env.MOSS_DISABLE_AUTO_UPDATE === 'true' || process.env.CI === 'true';
-  if (!skipAutoUpdate) {
-    setTimeout(() => {
-      mossLog('info', 'Update', 'Starting auto-update check...');
-      autoUpdaterService.checkForUpdatesAndNotify();
-    }, 3000);
+    // Auto-check for updates after startup (skip in dev/CI)
+    const skipAutoUpdate = process.env.MOSS_DISABLE_AUTO_UPDATE === 'true' || process.env.CI === 'true';
+    if (!skipAutoUpdate) {
+      setTimeout(() => {
+        mossLog('info', 'Update', 'Starting auto-update check...');
+        autoUpdaterService.checkForUpdatesAndNotify();
+      }, 3000);
+    }
+  } else {
+    mossLog('info', 'Update', 'Automatic installation disabled for unsigned builds; using manual release downloads.');
   }
 
   // Set up application menu with "Check for Updates..."

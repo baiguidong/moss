@@ -11,8 +11,13 @@ import semver from 'semver';
 import { autoUpdaterService } from './auto-updater-service.mjs';
 import { MAX_DOWNLOAD_REDIRECTS } from './download-utils.mjs';
 import { mossLog } from './log-ipc.mjs';
+import {
+  pickRecommendedReleaseAsset,
+  supportsAutomaticUpdates,
+  UNSIGNED_AUTO_UPDATE_MESSAGE,
+} from './update-capabilities.mjs';
 
-const DEFAULT_REPO = 'moss-ai/moss';
+const DEFAULT_REPO = 'baiguidong/moss';
 const DEFAULT_USER_AGENT = 'Moss';
 const ALLOWED_ASSET_EXTS = ['.exe', '.msi', '.dmg', '.zip', '.AppImage', '.deb', '.rpm'];
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
@@ -85,43 +90,9 @@ const fetchGitHubReleases = async (repo) => {
   }
 };
 
-const scoreAsset = (asset) => {
-  const { platform, arch } = process;
-  const nameLower = asset.name.toLowerCase();
-  const ext = path.extname(asset.name);
-
-  let score = 0;
-
-  const platformHints = platform === 'win32' ? ['win', 'win32', 'windows'] : platform === 'darwin' ? ['mac', 'darwin', 'osx'] : ['linux'];
-  const archHints = arch === 'arm64' ? ['arm64', 'aarch64'] : ['x64', 'x86_64', 'amd64'];
-
-  if (platformHints.some((hint) => nameLower.includes(hint))) score += 20;
-  if (archHints.some((hint) => nameLower.includes(hint))) score += 10;
-
-  if (platform === 'win32') {
-    if (ext === '.exe') score += 100;
-    if (ext === '.msi') score += 90;
-    if (ext === '.zip') score += 50;
-  } else if (platform === 'darwin') {
-    if (ext === '.dmg') score += 100;
-    if (ext === '.zip') score += 70;
-  } else {
-    if (ext === '.AppImage') score += 100;
-    if (ext === '.deb') score += 90;
-    if (ext === '.rpm') score += 80;
-    if (ext === '.zip') score += 40;
-  }
-
-  return score;
-};
-
 const pickRecommendedAsset = (assets) => {
   if (!assets.length) return undefined;
-  const scored = assets
-    .map((asset) => ({ asset, score: scoreAsset(asset) }))
-    .filter((item) => item.score >= 0)
-    .sort((a, b) => b.score - a.score);
-  return scored[0]?.asset;
+  return pickRecommendedReleaseAsset(assets);
 };
 
 const mapRelease = (rel) => {
@@ -322,7 +293,7 @@ export function initUpdateIpcHandlers() {
     }
   });
 
-  // update.check - check for updates via GitHub Releases (stable only)
+  // update.check - check for updates via GitHub Releases
   ipcMain.handle('update:check', async (_event, params) => {
     try {
       const currentVersion = app.getVersion();
@@ -334,9 +305,9 @@ export function initUpdateIpcHandlers() {
 
       const releases = await fetchGitHubReleases(DEFAULT_REPO);
 
-      // Only stable releases (no prerelease)
+      const includePrerelease = Boolean(params?.includePrerelease);
       const candidates = releases
-        .filter((r) => !r.draft && !r.prerelease)
+        .filter((r) => !r.draft && (includePrerelease || !r.prerelease))
         .map(mapRelease)
         .filter((r) => r !== null)
         .sort((a, b) => (semver.gt(b.version, a.version) ? 1 : -1));
@@ -408,7 +379,10 @@ export function initUpdateIpcHandlers() {
   // autoUpdate.check - check using electron-updater
   ipcMain.handle('auto-update:check', async (_event, params) => {
     try {
-      autoUpdaterService.setAllowPrerelease(false); // stable only
+      if (!supportsAutomaticUpdates()) {
+        return { success: false, msg: UNSIGNED_AUTO_UPDATE_MESSAGE };
+      }
+      autoUpdaterService.setAllowPrerelease(Boolean(params?.includePrerelease));
 
       const result = await autoUpdaterService.checkForUpdates();
       if (result.success && result.updateInfo) {
@@ -436,6 +410,9 @@ export function initUpdateIpcHandlers() {
   // autoUpdate.download - download using electron-updater
   ipcMain.handle('auto-update:download', async () => {
     try {
+      if (!supportsAutomaticUpdates()) {
+        return { success: false, msg: UNSIGNED_AUTO_UPDATE_MESSAGE };
+      }
       const result = await autoUpdaterService.downloadUpdate();
       return { success: result.success, msg: result.error };
     } catch (err) {
@@ -446,9 +423,14 @@ export function initUpdateIpcHandlers() {
   // autoUpdate.quitAndInstall
   ipcMain.handle('auto-update:quit-and-install', async () => {
     try {
+      if (!supportsAutomaticUpdates()) {
+        return { success: false, msg: UNSIGNED_AUTO_UPDATE_MESSAGE };
+      }
       autoUpdaterService.quitAndInstall();
+      return { success: true };
     } catch (err) {
       mossLog('error', 'Update', 'quitAndInstall failed:', err);
+      return { success: false, msg: err instanceof Error ? err.message : String(err) };
     }
   });
 
