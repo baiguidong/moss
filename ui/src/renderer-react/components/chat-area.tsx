@@ -2155,7 +2155,7 @@ export function ChatArea({
 
   if (!hasActiveSession) {
     return (
-      <div className="flex h-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
+      <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
         <HomeLanding
           value={value}
           selectedAppName={selectedAppName}
@@ -2189,7 +2189,7 @@ export function ChatArea({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
+    <div className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
         title={sessionTitle}
         messageCount={sessionMessageCount}
