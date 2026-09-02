@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SessionTreeChildItem } from "@/components/session-tree-child-item";
 import type { StoredApp } from "../types";
 
 export interface SidebarSession {
@@ -109,8 +110,6 @@ function SessionItem({
   onRename,
   onTogglePin,
   childSessions = [],
-  depth = 0,
-  isLastChild = false,
 }: {
   session: SidebarSession;
   isActive: boolean;
@@ -119,8 +118,6 @@ function SessionItem({
   onRename: (newTitle: string) => void;
   onTogglePin: () => void;
   childSessions?: SidebarSession[];
-  depth?: number;
-  isLastChild?: boolean;
 }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(session.title);
@@ -167,23 +164,8 @@ function SessionItem({
           ? "border-primary/25 bg-primary/10 shadow-[0_8px-24px_-24px_rgba(0,0,0,0.65)]"
           : "border-transparent bg-transparent hover:border-sidebar-border/70 hover:bg-sidebar-accent/80",
       )}
-      style={depth > 0 ? { marginLeft: depth * 14, width: `calc(100% - ${depth * 14}px)` } : undefined}
     >
       <div className="flex h-full min-w-0 items-center gap-1 overflow-hidden">
-        {depth > 0 ? (
-          <span
-            aria-hidden="true"
-            className="relative h-full w-4 shrink-0 text-sidebar-foreground/25"
-          >
-            <span
-              className={cn(
-                "absolute left-1 top-0 w-px bg-current",
-                isLastChild ? "h-1/2" : "h-full",
-              )}
-            />
-            <span className="absolute left-1 top-1/2 h-px w-2.5 bg-current" />
-          </span>
-        ) : null}
         {!session.isSubAgent ? <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -643,16 +625,14 @@ export function AppSidebar({
                                 onTogglePin={() => onTogglePin(node.session.id)}
                               />
                               {node.children.map((child, childIndex) => (
-                                <SessionItem
+                                <SessionTreeChildItem
                                   key={child.id}
-                                  session={child}
-                                  depth={1}
+                                  title={child.title}
+                                  busy={child.busy}
+                                  status={child.subagentStatus}
                                   isLastChild={childIndex === node.children.length - 1}
                                   isActive={activeSessionId === child.id}
                                   onClick={() => onSelectSession(child.id)}
-                                  onDelete={() => onDeleteSession(child.id)}
-                                  onRename={(newTitle) => onRenameSession(child.id, newTitle)}
-                                  onTogglePin={() => onTogglePin(child.id)}
                                 />
                               ))}
                             </React.Fragment>
@@ -698,16 +678,14 @@ export function AppSidebar({
                                 onTogglePin={() => onTogglePin(node.session.id)}
                               />
                               {node.children.map((child, childIndex) => (
-                                <SessionItem
+                                <SessionTreeChildItem
                                   key={child.id}
-                                  session={child}
-                                  depth={1}
+                                  title={child.title}
+                                  busy={child.busy}
+                                  status={child.subagentStatus}
                                   isLastChild={childIndex === node.children.length - 1}
                                   isActive={activeSessionId === child.id}
                                   onClick={() => onSelectSession(child.id)}
-                                  onDelete={() => onDeleteSession(child.id)}
-                                  onRename={(newTitle) => onRenameSession(child.id, newTitle)}
-                                  onTogglePin={() => onTogglePin(child.id)}
                                 />
                               ))}
                             </React.Fragment>

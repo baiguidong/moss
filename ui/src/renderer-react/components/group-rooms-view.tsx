@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import {
+  Bot,
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   GripVertical,
   LoaderCircle,
@@ -25,6 +25,7 @@ import {
   type ProjectResourceOption,
 } from "@/components/projects/project-resource-picker";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SessionTreeChildItem } from "@/components/session-tree-child-item";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
@@ -290,6 +291,8 @@ export function GroupRoomsView({
   activeSessionId,
   sessions,
   chatContent,
+  activeChildSessionId,
+  onOpenChildSession,
   listCollapsed,
   onListCollapsedChange,
   rightCollapsed,
@@ -302,6 +305,8 @@ export function GroupRoomsView({
   activeSessionId: string | null;
   sessions: SessionSummary[];
   chatContent: React.ReactNode;
+  activeChildSessionId?: string | null;
+  onOpenChildSession: (sessionId: string) => void;
   listCollapsed: boolean;
   onListCollapsedChange: (collapsed: boolean) => void;
   rightCollapsed: boolean;
@@ -318,7 +323,6 @@ export function GroupRoomsView({
   const [creating, setCreating] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
-  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [menuRoomId, setMenuRoomId] = React.useState<string | null>(null);
   const [resourceMemberId, setResourceMemberId] = React.useState<string | null>(null);
   const [addingMember, setAddingMember] = React.useState(false);
@@ -378,6 +382,13 @@ export function GroupRoomsView({
   });
   const activeSession = sessions.find((entry) => entry.id === room?.sessionId);
   const liveRoom = room && activeSession ? { ...room, status: activeSession.busy || activeWorkerParents.has(activeSession.id) ? "running" as const : "idle" as const, preview: activeSession.preview, messageCount: activeSession.messageCount, updatedAt: activeSession.updatedAt } : room;
+  const childSessionsByParent = new Map<string, SessionSummary[]>();
+  for (const session of sessions) {
+    if (!session.isSubAgent || !session.parentSessionId) continue;
+    const children = childSessionsByParent.get(session.parentSessionId) || [];
+    children.push(session);
+    childSessionsByParent.set(session.parentSessionId, children);
+  }
 
   const reorder = async (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
@@ -402,11 +413,14 @@ export function GroupRoomsView({
   return <div className="absolute inset-0 flex min-h-0 min-w-0 overflow-hidden bg-background">
     {!listCollapsed ? <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-border lg:flex">
       <header className="flex h-14 items-center gap-1 border-b border-border px-2"><span className="min-w-0 flex-1 px-1 text-sm font-semibold">群聊</span><Button size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><Plus className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => void run(loadRooms)} title="刷新"><RefreshCw className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => onListCollapsedChange(true)} title="折叠群列表" aria-label="折叠群列表"><PanelLeftClose className="h-4 w-4" /></Button></header>
-      <ScrollArea className="min-h-0 flex-1"><div className="space-y-1 p-2">{liveRooms.map((entry, index) => <div key={entry.id} draggable onDragStart={() => setDraggedRoomId(entry.id)} onDragEnd={() => setDraggedRoomId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedRoomId) void reorder(draggedRoomId, entry.id); }} className={cn("group relative rounded-md", draggedRoomId === entry.id && "opacity-50")}>
-        <div className={cn("flex h-12 items-center rounded-md", liveRoom?.id === entry.id ? "bg-primary/10" : "hover:bg-muted")}><GripVertical className="ml-1 h-4 w-4 cursor-grab text-muted-foreground/60" /><button className="flex h-full w-7 items-center justify-center" onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(entry.id)) next.delete(entry.id); else next.add(entry.id); return next; })}><ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded.has(entry.id) && "rotate-90")} /></button><button className="flex h-full min-w-0 flex-1 items-center gap-2 text-left" onClick={() => void selectRoom(entry)}><span className={cn("h-2 w-2 rounded-full", entry.status === "running" ? "bg-emerald-500" : "bg-muted-foreground/40")} /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{entry.title}</span><span className="block truncate text-[10px] text-muted-foreground">{entry.preview || formatTime(entry.updatedAt)}</span></span></button><Button size="icon" variant="ghost" className="mr-1 h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => setMenuRoomId(menuRoomId === entry.id ? null : entry.id)}><MoreHorizontal className="h-4 w-4" /></Button></div>
-        {expanded.has(entry.id) ? <div className="ml-8 border-l border-border py-1 pl-2">{(entry.members || (entry.id === liveRoom?.id ? liveRoom.members : [])).map((member) => <div key={member.id} className="flex h-7 items-center gap-2 truncate text-xs text-muted-foreground"><MemberAvatar member={member} /><span className="truncate">{member.displayName}</span></div>)}</div> : null}
-        {menuRoomId === entry.id ? <div className="absolute right-1 top-10 z-20 w-36 rounded-md border border-border bg-popover p-1 shadow-lg"><button className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted" onClick={() => { const title = window.prompt("新的群名称", entry.title)?.trim(); setMenuRoomId(null); if (title) void run(async () => { const detail = unwrap(await window.agentDesktop.groupRooms.get({ roomId: entry.id })); const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: entry.id, updates: { title }, expectedRevision: detail.revision })); if (liveRoom?.id === entry.id) setRoom(updated); await loadRooms(); }); }}>重命名</button><button disabled={index === 0} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, -1)}><ChevronUp className="h-3.5 w-3.5" />上移</button><button disabled={index === liveRooms.length - 1} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, 1)}><ChevronDown className="h-3.5 w-3.5" />下移</button><button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-destructive hover:bg-muted" onClick={() => { setMenuRoomId(null); if (!window.confirm(`删除群聊“${entry.title}”及其完整会话记录？`)) return; void run(async () => { unwrap(await window.agentDesktop.groupRooms.delete({ roomId: entry.id })); const next = await loadRooms(); if (liveRoom?.id === entry.id) { setRoom(null); if (next[0]) { await loadRoom(next[0].id); await onOpenSession(next[0].sessionId); } else setCreating(true); } }); }}><Trash2 className="h-3.5 w-3.5" />删除</button></div> : null}
-      </div>)}</div></ScrollArea>
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"><div className="w-full min-w-0 space-y-1 overflow-hidden p-2">{liveRooms.map((entry, index) => {
+        const children = childSessionsByParent.get(entry.sessionId) || [];
+        return <div key={entry.id} draggable onDragStart={() => setDraggedRoomId(entry.id)} onDragEnd={() => setDraggedRoomId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedRoomId) void reorder(draggedRoomId, entry.id); }} className={cn("group relative rounded-md", draggedRoomId === entry.id && "opacity-50")}>
+          <div className={cn("flex h-12 items-center rounded-md", liveRoom?.id === entry.id ? "bg-primary/10" : "hover:bg-muted")}><GripVertical className="ml-1 h-4 w-4 cursor-grab text-muted-foreground/60" /><button className="flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-left" onClick={() => void selectRoom(entry)}><span className={cn("h-2 w-2 rounded-full", entry.status === "running" ? "bg-emerald-500" : "bg-muted-foreground/40")} /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{entry.title}</span><span className="block truncate text-[10px] text-muted-foreground">{entry.preview || formatTime(entry.updatedAt)}</span></span>{children.length ? <span className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground" title={`${children.length} 个子会话`}><Bot className="h-3 w-3" />{children.length}</span> : null}</button><Button size="icon" variant="ghost" className="mr-1 h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => setMenuRoomId(menuRoomId === entry.id ? null : entry.id)}><MoreHorizontal className="h-4 w-4" /></Button></div>
+          {children.map((child, childIndex) => <SessionTreeChildItem key={child.id} title={child.title} busy={child.busy} status={child.subagentStatus} isActive={activeChildSessionId === child.id} isLastChild={childIndex === children.length - 1} onClick={() => { void (async () => { if (activeSessionId !== entry.sessionId) await selectRoom(entry); onOpenChildSession(child.id); })(); }} />)}
+          {menuRoomId === entry.id ? <div className="absolute right-1 top-10 z-20 w-36 rounded-md border border-border bg-popover p-1 shadow-lg"><button className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted" onClick={() => { const title = window.prompt("新的群名称", entry.title)?.trim(); setMenuRoomId(null); if (title) void run(async () => { const detail = unwrap(await window.agentDesktop.groupRooms.get({ roomId: entry.id })); const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: entry.id, updates: { title }, expectedRevision: detail.revision })); if (liveRoom?.id === entry.id) setRoom(updated); await loadRooms(); }); }}>重命名</button><button disabled={index === 0} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, -1)}><ChevronUp className="h-3.5 w-3.5" />上移</button><button disabled={index === liveRooms.length - 1} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, 1)}><ChevronDown className="h-3.5 w-3.5" />下移</button><button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-destructive hover:bg-muted" onClick={() => { setMenuRoomId(null); if (!window.confirm(`删除群聊“${entry.title}”及其完整会话记录？`)) return; void run(async () => { unwrap(await window.agentDesktop.groupRooms.delete({ roomId: entry.id })); const next = await loadRooms(); if (liveRoom?.id === entry.id) { setRoom(null); if (next[0]) { await loadRoom(next[0].id); await onOpenSession(next[0].sessionId); } else setCreating(true); } }); }}><Trash2 className="h-3.5 w-3.5" />删除</button></div> : null}
+        </div>;
+      })}</div></div>
     </aside> : null}
 
     <main className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{error ? <div className="absolute left-4 right-4 top-3 z-40 rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow">{error}</div> : null}{liveRoom && activeSessionId === liveRoom.sessionId ? chatContent : <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">{liveRooms.length ? "选择一个群聊" : "创建第一个群聊"}</div>}</main>
