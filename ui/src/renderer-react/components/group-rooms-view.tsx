@@ -19,6 +19,7 @@ import {
   Settings2,
   Trash2,
   TriangleAlert,
+  User,
   UsersRound,
   WandSparkles,
   X,
@@ -27,6 +28,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { MessageListPane } from "@/components/chat/message-list";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import {
   ProjectResourcePicker,
@@ -158,6 +160,16 @@ function MemberAvatar({ member }: { member: GroupRoomMember }) {
   );
 }
 
+function HumanAvatar() {
+  return (
+    <Avatar data-group-room-human-avatar className="h-7 w-7 shrink-0">
+      <AvatarFallback className="bg-muted text-muted-foreground">
+        <User className="h-4 w-4" />
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
 type CreateRoomFormProps = {
   resources: { inviteables: GroupRoomInviteable[]; connectors: GroupRoomResourceConnector[]; skills: GroupRoomResourceSkill[] };
   busy: boolean;
@@ -210,7 +222,7 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
   const customMembersValid = customMembers.every((member) => member.displayName.trim() && member.prompt.trim());
   const canCreate = topic.trim() && workspace.trim() && participantCount >= 2 && participantCount <= 32 && customMembersValid && !busy;
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-6">
         {onCancel ? <Button size="icon" variant="ghost" onClick={onCancel} title="关闭"><X className="h-4 w-4" /></Button> : null}
         <div className="min-w-0 flex-1">
@@ -704,11 +716,11 @@ export function GroupRoomsView({
   };
 
   if (enabled === null) {
-    return <div className="flex h-full items-center justify-center"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+    return <div className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center overflow-hidden"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   }
   if (!enabled) {
     return (
-      <div className="flex h-full items-center justify-center bg-background px-6">
+      <div className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background px-6">
         <div className="w-full max-w-sm text-center">
           <UsersRound className="mx-auto h-9 w-9 text-muted-foreground" />
           <h1 className="mt-4 text-base font-semibold">群聊</h1>
@@ -751,24 +763,15 @@ export function GroupRoomsView({
     ? buildGroupRoomMemberTranscript({ room, memberId: selectedMember.id, streams, liveTraces })
     : [];
   return (
-    <div className="relative flex h-full min-h-0 bg-background">
-      <aside className={cn(
-        "hidden h-full shrink-0 flex-col border-r border-border transition-[width] duration-150 lg:flex",
-        roomListCollapsed ? "w-12" : "w-56",
-      )}>
-        <div className={cn("flex h-14 items-center border-b border-border", roomListCollapsed ? "justify-center px-1" : "gap-1 px-2")}>
-          {roomListCollapsed ? (
-            <Button size="icon" variant="ghost" onClick={() => setRoomListCollapsed(false)} title="展开群聊列表"><PanelLeftOpen className="h-4 w-4" /></Button>
-          ) : (
-            <>
-              <span className="min-w-0 flex-1 px-1 text-sm font-semibold">群聊</span>
-              <Button size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><Plus className="h-4 w-4" /></Button>
-              <Button size="icon" variant="ghost" onClick={() => void refreshRooms()} title="刷新"><RefreshCw className="h-4 w-4" /></Button>
-              <Button size="icon" variant="ghost" onClick={() => setRoomListCollapsed(true)} title="折叠群聊列表"><PanelLeftClose className="h-4 w-4" /></Button>
-            </>
-          )}
+    <div className="absolute inset-0 flex min-h-0 min-w-0 overflow-hidden bg-background">
+      {!roomListCollapsed ? <aside data-group-room-list className="hidden h-full w-56 shrink-0 flex-col border-r border-border lg:flex">
+        <div className="flex h-14 items-center gap-1 border-b border-border px-2">
+          <span className="min-w-0 flex-1 px-1 text-sm font-semibold">群聊</span>
+          <Button size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><Plus className="h-4 w-4" /></Button>
+          <Button size="icon" variant="ghost" onClick={() => void refreshRooms()} title="刷新"><RefreshCw className="h-4 w-4" /></Button>
+          <Button size="icon" variant="ghost" onClick={() => setRoomListCollapsed(true)} title="折叠群聊列表"><PanelLeftClose className="h-4 w-4" /></Button>
         </div>
-        {!roomListCollapsed ? <ScrollArea className="min-h-0 flex-1">
+        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
           <div className="space-y-1 p-2">
             {rooms.map((entry) => {
               const expanded = expandedRoomIds.has(entry.id);
@@ -823,14 +826,19 @@ export function GroupRoomsView({
               );
             })}
           </div>
-        </ScrollArea> : null}
-      </aside>
+        </ScrollArea>
+      </aside> : null}
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main data-group-room-chat className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {error ? <div className="shrink-0 border-b border-destructive/30 bg-destructive/8 px-4 py-2 text-xs text-destructive">{error}</div> : null}
         {room ? (
           <>
-            <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-3 sm:px-4">
+            <header className="flex h-14 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b border-border px-3 sm:px-4">
+              {roomListCollapsed ? (
+                <Button className="hidden lg:inline-flex" size="icon" variant="ghost" onClick={() => setRoomListCollapsed(false)} title="展开群聊列表">
+                  <PanelLeftOpen className="h-4 w-4" />
+                </Button>
+              ) : null}
               {!selectedMember ? (
                 <>
                   <Button className="lg:hidden" size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><MessageSquarePlus className="h-4 w-4" /></Button>
@@ -884,9 +892,9 @@ export function GroupRoomsView({
             ) : null}
 
             {selectedMember ? (
-              <div className="flex min-h-0 flex-1" aria-label={`${selectedMember.displayName} 执行会话`}>
+              <div data-group-room-message-scroll className="flex min-h-0 flex-1 overflow-hidden" aria-label={`${selectedMember.displayName} 执行会话`}>
                 <MessageListPane
-                  className="min-h-0 flex-1"
+                  className="min-h-0 flex-1 overflow-hidden"
                   workspace={room.workspace}
                   messages={memberTranscript}
                   loading={activeTurnForMember(room, selectedMember.id)?.status === "running"}
@@ -894,8 +902,8 @@ export function GroupRoomsView({
                 />
               </div>
             ) : (
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="mx-auto w-full max-w-[1180px] px-3 py-5 sm:px-4">
+              <ScrollArea data-group-room-message-scroll className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div className="mx-auto w-full min-w-0 max-w-[1180px] px-3 py-5 sm:px-4">
                   <div className="space-y-5">
                     {room.messages.map((message) => {
                       const member = room.members.find((entry) => entry.id === message.authorId);
@@ -907,19 +915,20 @@ export function GroupRoomsView({
                       return (
                         <article key={message.id} className={cn("flex gap-3", isHuman && "justify-end") }>
                           {!isHuman && member ? <MemberAvatar member={member} /> : null}
-                          <div className={cn("min-w-0 max-w-[85%]", isHuman && "text-right") }>
+                          <div className={cn("min-w-0 max-w-[85%] [overflow-wrap:anywhere]", isHuman && "text-right") }>
                             <div className="mb-1 text-[11px] text-muted-foreground">
                               {isHuman ? `主持人${audienceNames.length > 0 ? ` → ${audienceNames.join("、")} 执行` : ""}` : isSystem ? "主持" : member?.displayName || "Agent"} · {formatTime(message.createdAt)}
                             </div>
                             <div className={cn("whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm leading-6", isHuman ? "bg-primary text-primary-foreground" : "border border-border bg-muted/25 text-left")}>{message.content}</div>
                           </div>
+                          {isHuman ? <HumanAvatar /> : null}
                         </article>
                       );
                     })}
                     {room.activeRun?.turns.map((turn) => streams[turn.id] ? (
                       <article key={`stream-${turn.id}`} className="flex gap-3 opacity-75">
                         <MemberAvatar member={room.members.find((entry) => entry.id === turn.memberId)!} />
-                        <div className="max-w-[85%] whitespace-pre-wrap rounded-md border border-dashed border-border px-3 py-2 text-sm leading-6">{streams[turn.id]}</div>
+                        <div className="min-w-0 max-w-[85%] whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-dashed border-border px-3 py-2 text-sm leading-6">{streams[turn.id]}</div>
                       </article>
                     ) : null)}
                   </div>
@@ -927,10 +936,10 @@ export function GroupRoomsView({
               </ScrollArea>
             )}
 
-            <div className="shrink-0 border-t border-border bg-background px-3 py-3 sm:px-4">
+            <div data-group-room-composer className="relative z-10 min-w-0 shrink-0 border-t border-border bg-background px-3 py-3 sm:px-4">
               <div data-group-room-composer-track className="mx-auto w-full max-w-[1180px] space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex rounded-md border border-border p-0.5">
+                <div data-group-room-controls className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="flex shrink-0 rounded-md border border-border p-0.5">
                     <Button size="sm" disabled={room.status === "running" || busy} variant={mode === "conversation" ? "secondary" : "ghost"} className="h-7" onClick={() => void updateDiscussionMode("conversation")} title="成员依次发言并阅读前文">讨论</Button>
                     <Button size="sm" disabled={room.status === "running" || busy} variant={mode === "parallel" ? "secondary" : "ghost"} className="h-7" onClick={() => void updateDiscussionMode("parallel")} title="成员基于同一上下文同时处理">并行</Button>
                   </div>
@@ -953,7 +962,7 @@ export function GroupRoomsView({
                           type="number"
                           min={1}
                           max={100}
-                          className="h-8 w-20 text-xs"
+                          className="h-8 w-20 shrink-0 text-xs"
                           value={rounds}
                           disabled={room.status === "running" || busy}
                           onChange={(event) => setRounds(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}
@@ -963,13 +972,13 @@ export function GroupRoomsView({
                       ) : null}
                     </>
                   ) : null}
-                  <Button size="sm" variant="outline" className="h-7" disabled={room.status === "running" || !composer.trim() || busy} onClick={() => void suggestModeration()} title="让主持人选择成员并拆分任务">
+                  <Button size="sm" variant="outline" className="h-7 shrink-0" disabled={room.status === "running" || !composer.trim() || busy} onClick={() => void suggestModeration()} title="让主持人选择成员并拆分任务">
                     <WandSparkles className="h-3.5 w-3.5" />
                     主持
                   </Button>
                   <select
                     aria-label="群权限"
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:opacity-50"
+                    className="h-8 shrink-0 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:opacity-50"
                     value={room.settings.permissionMode || "inherit"}
                     disabled={room.status === "running" || busy}
                     title="优先级：群权限、全局权限、工作区规则"
@@ -979,7 +988,7 @@ export function GroupRoomsView({
                     <option value="ask">权限：群内确认</option>
                     <option value="allow-all">权限：群内允许</option>
                   </select>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="shrink-0 text-[11px] text-muted-foreground">
                     {room.status === "running"
                       ? `本轮执行：${activeRecipientNames.join("、") || "等待调度"}`
                       : `发送给 ${selectedMembers.size} 位`}
@@ -987,7 +996,7 @@ export function GroupRoomsView({
                   {room.members.map((member) => {
                     const selected = room.status === "running" ? activeRecipientIds.has(member.id) : selectedMembers.has(member.id);
                     return (
-                      <button key={member.id} disabled={room.status === "running"} onClick={() => toggleMember(member.id)} className={cn("flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs disabled:opacity-70", selected ? "border-primary/50 bg-primary/8" : "border-border text-muted-foreground") }>
+                      <button key={member.id} disabled={room.status === "running"} onClick={() => toggleMember(member.id)} className={cn("flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs disabled:opacity-70", selected ? "border-primary/50 bg-primary/8" : "border-border text-muted-foreground") }>
                         {selected ? <Check className="h-3 w-3" /> : null}{member.displayName}
                       </button>
                     );
@@ -999,14 +1008,14 @@ export function GroupRoomsView({
                   </div>
                 ) : null}
                 {mode === "parallel" && room.status !== "running" && selectedMembers.size > 1 ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid max-h-24 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                     {room.members.filter((member) => selectedMembers.has(member.id)).map((member) => (
                       <Input key={member.id} value={assignments[member.id] || ""} onChange={(event) => setAssignments((current) => ({ ...current, [member.id]: event.target.value }))} placeholder={`${member.displayName} 的任务`} className="h-8 text-xs" />
                     ))}
                   </div>
                 ) : null}
-                <div className="flex items-end gap-2">
-                  <Textarea value={composer} onChange={(event) => { setComposer(event.target.value); setModeratorSuggestion(null); }} placeholder={room.status === "running" ? "插话" : "发起讨论"} className="max-h-40 min-h-16 resize-none" onKeyDown={(event) => {
+                <div className="flex min-w-0 shrink-0 items-end gap-2">
+                  <Textarea value={composer} onChange={(event) => { setComposer(event.target.value); setModeratorSuggestion(null); }} placeholder={room.status === "running" ? "插话" : "发起讨论"} className="max-h-40 min-h-16 min-w-0 resize-none" onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       if (room.status === "running") void intervene("soft"); else void dispatch();

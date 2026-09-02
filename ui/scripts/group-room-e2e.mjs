@@ -4,6 +4,9 @@ import path from 'node:path';
 
 const cdpBaseUrl = process.env.MOSS_CDP_URL || 'http://127.0.0.1:9222';
 const outputDir = process.env.MOSS_GROUP_E2E_OUTPUT || '/tmp/moss-group-room-e2e';
+const logProgress = (...parts) => {
+  if (process.env.MOSS_GROUP_E2E_VERBOSE === '1') console.error('[group-room-e2e]', ...parts);
+};
 
 class CdpClient {
   #id = 0;
@@ -180,6 +183,63 @@ async function setSelect(client, ariaLabel, value) {
   assert.equal(changed, true, `Visible select not found: ${ariaLabel}`);
 }
 
+async function readFixedGroupRoomComposerMetrics(client) {
+  const before = await client.evaluate(`(() => {
+    const composer = document.querySelector('[data-group-room-composer]');
+    const messageRegion = document.querySelector('[data-group-room-message-scroll]');
+    const scroller = messageRegion?.querySelector('[data-virtuoso-scroller="true"]')
+      || messageRegion?.querySelector('[data-slot="scroll-area-viewport"]');
+    if (!composer || !scroller) return null;
+    const composerRect = composer.getBoundingClientRect();
+    const beforeScrollTop = scroller.scrollTop;
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = beforeScrollTop > maxScrollTop / 2 ? 0 : maxScrollTop;
+    return { top: composerRect.top, bottom: composerRect.bottom, beforeScrollTop, maxScrollTop };
+  })()`);
+  if (!before) return null;
+  await sleep(100);
+  return client.evaluate(`(() => {
+    const composer = document.querySelector('[data-group-room-composer]');
+    const messageRegion = document.querySelector('[data-group-room-message-scroll]');
+    const scroller = messageRegion?.querySelector('[data-virtuoso-scroller="true"]')
+      || messageRegion?.querySelector('[data-slot="scroll-area-viewport"]');
+    const chat = document.querySelector('[data-group-room-chat]');
+    if (!composer || !scroller || !chat) return null;
+    const after = composer.getBoundingClientRect();
+    const chatRect = chat.getBoundingClientRect();
+    return {
+      topDelta: Math.round(Math.abs(${before.top} - after.top)),
+      bottomDelta: Math.round(Math.abs(${before.bottom} - after.bottom)),
+      bottomGap: Math.round(Math.abs(chatRect.bottom - after.bottom)),
+      scrollable: ${before.maxScrollTop} > 1,
+      didScroll: Math.abs(scroller.scrollTop - ${before.beforeScrollTop}) > 1,
+      bodyScrollTop: document.scrollingElement?.scrollTop || 0,
+    };
+  })()`);
+}
+
+async function readGroupRoomMessageOverflow(client) {
+  return client.evaluate(`(() => {
+    const messageRegion = document.querySelector('[data-group-room-message-scroll]');
+    const scroller = messageRegion?.querySelector('[data-virtuoso-scroller="true"]')
+      || messageRegion?.querySelector('[data-slot="scroll-area-viewport"]');
+    if (!messageRegion || !scroller) return null;
+    const regionRect = messageRegion.getBoundingClientRect();
+    return {
+      overflow: Math.max(0, Math.round(scroller.scrollWidth - scroller.clientWidth)),
+      insideViewport: regionRect.left >= 0 && regionRect.right <= innerWidth,
+    };
+  })()`);
+}
+
+function assertFixedGroupRoomComposer(metrics, view) {
+  assert.deepEqual(
+    metrics,
+    { topDelta: 0, bottomDelta: 0, bottomGap: 0, scrollable: true, didScroll: true, bodyScrollTop: 0 },
+    `Group Room composer is not fixed in the ${view} view: ${JSON.stringify(metrics)}`,
+  );
+}
+
 async function setInputByAria(client, ariaLabel, value, { blur = false } = {}) {
   if (blur) {
     const focused = await client.evaluate(`(() => {
@@ -319,6 +379,10 @@ async function uiSmoke(client) {
 }
 
 async function transcriptUiSmoke(client) {
+  logProgress('transcript-ui: set desktop viewport');
+  await client.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1, mobile: false });
+  await sleep(150);
+  logProgress('transcript-ui: open rooms');
   await clickText(client, '群聊');
   await sleep(250);
   let candidate = null;
@@ -333,6 +397,7 @@ async function transcriptUiSmoke(client) {
     }
   }
   assert.ok(candidate?.member, 'No persisted Group Room tool transcript is available for UI verification.');
+  logProgress('transcript-ui: open candidate', candidate.room.title);
   await openRoom(client, candidate.room.title);
 
   const roomListAlreadyCollapsed = await client.evaluate(`[...document.querySelectorAll('[title="展开群聊列表"]')].some((element) => element.offsetParent !== null)`);
@@ -342,12 +407,27 @@ async function transcriptUiSmoke(client) {
   }
   await clickTitle(client, '折叠群聊列表');
   await waitFor(client, `[...document.querySelectorAll('[title="展开群聊列表"]')].some((element) => element.offsetParent !== null)`, 'collapsed Group Room list');
-  await waitFor(client, `document.querySelector('[title="展开群聊列表"]')?.closest('aside')?.getBoundingClientRect().width <= 48`, 'Group Room list collapse transition');
-  const collapsedRoomListWidth = await client.evaluate(`document.querySelector('[title="展开群聊列表"]')?.closest('aside')?.getBoundingClientRect().width`);
-  assert.equal(collapsedRoomListWidth, 48, 'Collapsed Group Room list has an unexpected width.');
+  const collapsedRoomListMetrics = await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll('[title="展开群聊列表"]')].find((element) => element.offsetParent !== null);
+    const list = document.querySelector('[data-group-room-list]');
+    return {
+      reservedWidth: list?.getBoundingClientRect().width || 0,
+      buttonInChatHeader: Boolean(button?.closest('[data-group-room-chat] header')),
+    };
+  })()`);
+  assert.deepEqual(collapsedRoomListMetrics, { reservedWidth: 0, buttonInChatHeader: true }, 'Collapsed Group Room list still reserves a rail or its reopen button is misplaced.');
+  const collapsedRoomListWidth = collapsedRoomListMetrics.reservedWidth;
+  logProgress('transcript-ui: capture collapsed room');
   const collapsedRoomListScreenshot = await client.screenshot('member-transcript-room-list-collapsed.png');
   await clickTitle(client, '展开群聊列表');
   await waitFor(client, `[...document.querySelectorAll('[title="折叠群聊列表"]')].some((element) => element.offsetParent !== null)`, 'expanded Group Room list');
+  const roomComposerMetrics = await readFixedGroupRoomComposerMetrics(client);
+  assertFixedGroupRoomComposer(roomComposerMetrics, 'room conclusion');
+  const roomMessageOverflow = await readGroupRoomMessageOverflow(client);
+  assert.deepEqual(roomMessageOverflow, { overflow: 0, insideViewport: true }, `Room messages overflow horizontally: ${JSON.stringify(roomMessageOverflow)}`);
+  const humanMessageAvatarCount = await client.evaluate(`document.querySelectorAll('[data-group-room-human-avatar]').length`);
+  assert.ok(humanMessageAvatarCount > 0, 'Human messages do not show a user avatar.');
+  logProgress('transcript-ui: room layout checked');
 
   const collapseVisible = await client.evaluate(`[...document.querySelectorAll('[title="收起成员"]')].some((element) => element.offsetParent !== null)`);
   assert.equal(collapseVisible, true, 'The selected room did not expand its member list.');
@@ -382,6 +462,35 @@ async function transcriptUiSmoke(client) {
   assert.equal(desktopMetrics.transcript, true);
   assert.equal(desktopMetrics.rightConversationPanel, false, 'Legacy right-side member conversation is still visible.');
   assert.ok(desktopMetrics.alignment && desktopMetrics.alignment.leftDelta <= 1 && desktopMetrics.alignment.rightDelta <= 1, `Member transcript and composer are not aligned: ${JSON.stringify(desktopMetrics.alignment)}`);
+  const memberComposerMetrics = await readFixedGroupRoomComposerMetrics(client);
+  assertFixedGroupRoomComposer(memberComposerMetrics, 'member transcript');
+  const memberMessageOverflow = await readGroupRoomMessageOverflow(client);
+  assert.deepEqual(memberMessageOverflow, { overflow: 0, insideViewport: true }, `Member transcript overflows horizontally: ${JSON.stringify(memberMessageOverflow)}`);
+  logProgress('transcript-ui: member layout checked');
+  await client.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 450, deviceScaleFactor: 1, mobile: false });
+  await sleep(250);
+  const compactComposerMetrics = await client.evaluate(`(() => {
+    const chat = document.querySelector('[data-group-room-chat]')?.getBoundingClientRect();
+    const composer = document.querySelector('[data-group-room-composer]')?.getBoundingClientRect();
+    const textarea = document.querySelector('[data-group-room-composer] textarea')?.getBoundingClientRect();
+    const controlsElement = document.querySelector('[data-group-room-controls]');
+    const controls = controlsElement?.getBoundingClientRect();
+    const messageRegion = document.querySelector('[data-group-room-message-scroll]')?.getBoundingClientRect();
+    if (!chat || !composer || !textarea || !controls || !controlsElement || !messageRegion) return null;
+    const controlCenters = [...controlsElement.children].map((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+    return {
+      documentFits: document.documentElement.scrollWidth === innerWidth,
+      composerBottomGap: Math.round(Math.abs(chat.bottom - composer.bottom)),
+      textareaVisible: textarea.top >= chat.top && textarea.bottom <= chat.bottom,
+      controlsSingleLine: Math.max(...controlCenters) - Math.min(...controlCenters) <= 1,
+      messageRegionVisible: messageRegion.height > 0,
+    };
+  })()`);
+  assert.deepEqual(compactComposerMetrics, { documentFits: true, composerBottomGap: 0, textareaVisible: true, controlsSingleLine: true, messageRegionVisible: true }, `Compact Group Room composer is clipped: ${JSON.stringify(compactComposerMetrics)}`);
+  logProgress('transcript-ui: compact layout checked');
   await clickTitle(client, '成员资源');
   await waitFor(client, `document.body.innerText.includes('添加个人授权连接器') && document.body.innerText.includes('添加技能')`, 'shared member resource picker');
   await clickText(client, '取消');
@@ -405,6 +514,12 @@ async function transcriptUiSmoke(client) {
     toolName,
     collapsedRoomListWidth,
     collapsedRoomListScreenshot,
+    roomComposerMetrics,
+    memberComposerMetrics,
+    roomMessageOverflow,
+    memberMessageOverflow,
+    humanMessageAvatarCount,
+    compactComposerMetrics,
     desktopMetrics,
     mobileMetrics,
     desktopScreenshot,
