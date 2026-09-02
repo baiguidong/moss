@@ -10,7 +10,7 @@ const GENERIC_CLI_EXECUTABLES = new Set([
   'powershell.exe', 'pwsh', 'python', 'python3', 'sh', 'zsh',
 ]);
 const SECRET_KEY = /(?:token|secret|password|authorization|cookie|api[_-]?key|access[_-]?key|credential)/i;
-const TOKEN_USAGE_KEY = /^(?:input|output|total|cached_input|cache_creation_input|cache_read_input)_tokens$/i;
+const TOKEN_USAGE_KEY = /^(?:(?:input|output|total|cachedInput|cacheReadInput|cacheCreationInput|cacheDeletedInput)Tokens|(?:input|output|total|cached_input|cache_(?:creation|read|deleted)_input)_tokens)$/i;
 const MAX_TRACE_STRING = 4_000;
 export const CONNECTOR_AUTH_REQUIRED_PREFIX = 'GROUP_ROOM_CONNECTOR_AUTH_REQUIRED:';
 
@@ -21,6 +21,10 @@ function truncate(value, max = MAX_TRACE_STRING) {
     .replace(/(\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|authorization)\b\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]');
   return text.length > max ? `${text.slice(0, max)}... [truncated]` : text;
+}
+
+export function redactRoomText(value, max = 100_000) {
+  return truncate(value, Math.max(1, Number(max) || 100_000));
 }
 
 export function redactRoomValue(value, depth = 0) {

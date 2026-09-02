@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createRoomToolPolicy, redactRoomValue } from './group-room-policy.mjs'
+import { createRoomToolPolicy, redactRoomText, redactRoomValue } from './group-room-policy.mjs'
 import { RoomExecutionScheduler } from './group-room-scheduler.mjs'
 
 describe('Group Room policy', () => {
@@ -73,11 +73,20 @@ describe('Group Room policy', () => {
   })
 
   test('preserves numeric model token usage while redacting actual token secrets', () => {
-    expect(redactRoomValue({ input_tokens: 12, output_tokens: 3, access_token: 'secret' })).toEqual({
+    expect(redactRoomValue({ input_tokens: 12, outputTokens: 3, cache_deleted_input_tokens: 1, access_token: 'secret' })).toEqual({
       input_tokens: 12,
-      output_tokens: 3,
+      outputTokens: 3,
+      cache_deleted_input_tokens: 1,
       access_token: '[REDACTED]',
     })
+  })
+
+  test('redacts public conclusions without applying the short trace limit', () => {
+    const content = `${'x'.repeat(5_000)} access_token=room-secret`
+    const redacted = redactRoomText(content)
+    expect(redacted.length).toBeGreaterThan(4_000)
+    expect(redacted).not.toContain('room-secret')
+    expect(redacted).toContain('access_token=[REDACTED]')
   })
 
   test('serializes turns sharing a write connector lease', async () => {

@@ -20,7 +20,7 @@ class FakeClaudeSession {
   async *send(prompt: string) {
     this.prompts.push(prompt)
     yield { type: 'assistant', message: { content: [{ type: 'text', text: this.sessionId }] } }
-    yield { type: 'result', usage: { input_tokens: 1 } }
+    yield { type: 'result', usage: { input_tokens: this.prompts.length } }
   }
 
   abort() { this.aborted = true }
@@ -70,7 +70,7 @@ class ModeratorClaudeSession extends FakeClaudeSession {
       type: 'assistant',
       message: { content: [{ type: 'text', text: JSON.stringify(decision) }] },
     }
-    yield { type: 'result', usage: { input_tokens: 2 } }
+    yield { type: 'result', usage: { input_tokens: this.prompts.length * 2 } }
   }
 }
 
@@ -329,7 +329,7 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     registry.disposeAll()
   })
 
-  test('uses full context at a new run boundary and delta only within the same run', async () => {
+  test('uses delta context across runs while the persistent member session remains valid', async () => {
     FakeClaudeSession.instances = []
     const registry = new GroupRoomRuntimeRegistry({
       getClaudeSessionCtor: async () => FakeClaudeSession,
@@ -345,15 +345,18 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
       mcpServerAccess: {}, mcpServerConnectors: {}, addDirs: [], environment: {}, skillCommands: [],
     }
     const message = (seq: number, content: string) => ({ seq, content, authorType: 'human', authorId: 'host', kind: 'message', status: 'completed', visibility: 'public' })
-    await registry.execute({ room, member: participant, turn: { id: 'turn-1', runId: 'run-1', assignment: 'one' }, snapshotSeq: 1, messages: [message(1, 'first trigger')], resources, signal: new AbortController().signal })
-    await registry.execute({ room, member: participant, turn: { id: 'turn-2', runId: 'run-2', assignment: 'two' }, snapshotSeq: 2, messages: [message(1, 'first trigger'), message(2, 'second trigger')], resources, signal: new AbortController().signal })
-    await registry.execute({ room, member: participant, turn: { id: 'turn-3', runId: 'run-2', assignment: 'three' }, snapshotSeq: 3, messages: [message(1, 'first trigger'), message(2, 'second trigger'), message(3, 'new conclusion')], resources, signal: new AbortController().signal })
+    const first = await registry.execute({ room, member: participant, turn: { id: 'turn-1', runId: 'run-1', assignment: 'one' }, snapshotSeq: 1, messages: [message(1, 'first trigger')], resources, signal: new AbortController().signal })
+    const second = await registry.execute({ room, member: participant, turn: { id: 'turn-2', runId: 'run-2', assignment: 'two' }, snapshotSeq: 2, messages: [message(1, 'first trigger'), message(2, 'second trigger')], resources, signal: new AbortController().signal })
+    const third = await registry.execute({ room, member: participant, turn: { id: 'turn-3', runId: 'run-2', assignment: 'three' }, snapshotSeq: 3, messages: [message(1, 'first trigger'), message(2, 'second trigger'), message(3, 'new conclusion')], resources, signal: new AbortController().signal })
 
     const prompts = FakeClaudeSession.instances[0].prompts.map((prompt) => JSON.parse(prompt))
-    expect(prompts[1].contextMode).toBe('full')
-    expect(prompts[1].publicMessages.map((entry: any) => entry.content)).toEqual(['first trigger', 'second trigger'])
+    expect(prompts[1].contextMode).toBe('delta')
+    expect(prompts[1].publicMessages.map((entry: any) => entry.content)).toEqual(['second trigger'])
     expect(prompts[2].contextMode).toBe('delta')
     expect(prompts[2].publicMessages.map((entry: any) => entry.content)).toEqual(['new conclusion'])
+    expect([first.usage, second.usage, third.usage]).toEqual([
+      { input_tokens: 1 }, { input_tokens: 1 }, { input_tokens: 1 },
+    ])
     registry.disposeAll()
   })
 
@@ -388,6 +391,36 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     registry.disposeAll()
   })
 
+  test('bounds summarization input without dropping message identities', async () => {
+    FakeClaudeSession.instances = []
+    const registry = new GroupRoomRuntimeRegistry({
+      getClaudeSessionCtor: async () => FakeClaudeSession,
+      getSettings: () => ({ model: 'fake', advanced: {} }),
+      buildThinkingConfig: () => ({ type: 'disabled' }),
+      paths: { memberEngineDir: () => '/tmp/member', roomDir: () => '/tmp/group-room-summary' },
+      requestPermission: async () => ({ behavior: 'deny' }),
+    })
+    const messages = [1, 2, 3, 4].map(seq => ({
+      seq,
+      authorType: 'human',
+      authorId: 'user',
+      content: `${seq}:${'x'.repeat(100_000)}:${seq}`,
+    }))
+    await registry.summarize({
+      room: { id: 'summary-room', topic: 'Summarize', workspace: '/tmp' },
+      previousSummary: 's'.repeat(150_000),
+      messages,
+    })
+
+    const prompt = JSON.parse(FakeClaudeSession.instances[0].prompts[0])
+    expect(prompt.previousSummary).toHaveLength(120_000)
+    expect(prompt.publicMessages.map((message: any) => message.seq)).toEqual([1, 2, 3, 4])
+    expect(prompt.publicMessages.reduce((total: number, message: any) => total + message.content.length, 0))
+      .toBeLessThanOrEqual(200_000)
+    expect(prompt.publicMessages[0].content).toContain('[middle truncated for summary]')
+    registry.disposeAll()
+  })
+
   test('keeps one tool-disabled moderator session that delegates and then answers', async () => {
     FakeClaudeSession.instances = []
     const registry = new GroupRoomRuntimeRegistry({
@@ -405,9 +438,10 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
       id: 'moderator-room',
       topic: 'Resolve the design',
       workspace: '/tmp',
-      summary: '',
+      summary: 'Earlier context summary.',
+      summaryThroughSeq: 1,
       members: [participant],
-      messages: [{ id: 'user-message', seq: 1, authorType: 'human', authorId: 'user', kind: 'message', content: 'Check it.' }],
+      messages: [{ id: 'old-message', seq: 1, authorType: 'human', authorId: 'user', kind: 'message', content: 'Earlier request.' }],
     }
     const first = await registry.moderate({
       room,
@@ -448,6 +482,9 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     expect(JSON.parse(session.prompts[1]).executionLedger[0]).toMatchObject({
       status: 'completed', result: 'Verified.',
     })
+    expect(JSON.parse(session.prompts[1]).recentPublicMessages.map((message: any) => message.seq)).toEqual([2])
+    expect(JSON.parse(session.prompts[1]).contextMode).toBe('delta')
+    expect(JSON.parse(session.prompts[1]).summary).toBe('')
     expect(session.disposed).toBe(false)
     registry.disposeAll()
     expect(session.disposed).toBe(true)

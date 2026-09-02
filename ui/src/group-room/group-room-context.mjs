@@ -7,31 +7,44 @@ You receive a concrete assignment from the room moderator. Use the public room c
 Your final response is evidence for the moderator and is published to the room. Return a concise, self-contained conclusion in plain text. Do not address or ask the human user to choose the next speaker; the moderator owns delegation and the final user response.
 Do not include private scratch work, tool logs, permission details, or hidden reasoning in the final response.`;
 
+function boundedPublicMessages(messages, { afterSeq, snapshotSeq, maxItems = 100, maxChars = 120_000 }) {
+  const candidates = (Array.isArray(messages) ? messages : [])
+    .filter((message) => (
+      message.status === 'completed'
+      && message.visibility === 'public'
+      && message.seq > afterSeq
+      && message.seq <= snapshotSeq
+    ));
+  const selected = [];
+  let remaining = maxChars;
+  for (let index = candidates.length - 1; index >= 0 && selected.length < maxItems && remaining > 0; index -= 1) {
+    const message = candidates[index];
+    const content = String(message.content || '').slice(0, Math.min(30_000, remaining));
+    if (!content) continue;
+    selected.unshift({
+      seq: message.seq,
+      authorType: message.authorType,
+      authorId: message.authorId,
+      kind: message.kind,
+      content,
+    });
+    remaining -= content.length;
+  }
+  return selected;
+}
+
 export function buildRoomTurnPrompt({ room, member, turn, messages, snapshotSeq, afterSeq = 0 }) {
   const historyFloor = Math.max(
     Number(afterSeq) || 0,
     room.summary ? Number(room.summaryThroughSeq) || 0 : 0,
   );
-  const publicMessages = (Array.isArray(messages) ? messages : [])
-    .filter((message) => (
-      message.status === 'completed'
-      && message.visibility === 'public'
-      && message.seq > historyFloor
-      && message.seq <= snapshotSeq
-    ))
-    .map((message) => ({
-      seq: message.seq,
-      authorType: message.authorType,
-      authorId: message.authorId,
-      kind: message.kind,
-      content: message.content,
-    }));
+  const publicMessages = boundedPublicMessages(messages, { afterSeq: historyFloor, snapshotSeq });
   return JSON.stringify({
     protocol: 'moss.group-room.turn.v1',
     room: {
       id: room.id,
       topic: room.topic,
-      summary: room.summary || '',
+      summary: String(room.summary || '').slice(-120_000),
       summaryThroughSeq: room.summaryThroughSeq || 0,
     },
     participant: {

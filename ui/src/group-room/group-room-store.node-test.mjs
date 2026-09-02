@@ -405,6 +405,7 @@ describe('GroupRoomStore', () => {
     const { store, paths } = await createStore();
     const captures = [];
     const moderationCaptures = [];
+    const disposedMembers = [];
     const { controller, finished } = controllerFixture(store, paths, captures, {
       moderate: scriptedModerator([
         ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Try evidence' }] }),
@@ -414,6 +415,7 @@ describe('GroupRoomStore', () => {
         captures.push(input);
         throw new Error('Evidence source unavailable');
       },
+      disposeMember: (roomId, memberId) => disposedMembers.push([roomId, memberId]),
     });
     const room = await controller.createRoom({
       topic: 'Failure recovery',
@@ -427,10 +429,39 @@ describe('GroupRoomStore', () => {
     assert.equal(completed.status, 'completed');
     assert.equal(completed.turns[0].status, 'failed');
     assert.equal(moderationCaptures[1].run.turns[0].error, 'Evidence source unavailable');
+    assert.deepEqual(disposedMembers, [[room.id, room.members[0].id]]);
     assert.deepEqual(controller.getRoom(room.id).messages.map((message) => message.content), [
       'Investigate',
       'The evidence source failed; here is the bounded answer.',
     ]);
+    controller.dispose();
+    store.close();
+  });
+
+  test('records a failed turn when resource resolution fails before the scheduler starts it', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Resolve resources' }] }),
+        { action: 'respond', response: 'Resource resolution failed safely.' },
+      ]),
+    }, () => {}, {
+      resolveRuntimeResources: async () => { throw new Error('Resource catalog unavailable'); },
+    });
+    const room = await controller.createRoom({
+      topic: 'Resource failure',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.dispatch(room.id, { content: 'Resolve safely' });
+    await finished;
+
+    const completed = store.getRun(started.id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.turns[0].status, 'failed');
+    assert.equal(completed.turns[0].error, 'Resource catalog unavailable');
+    assert.equal(captures.length, 0);
     controller.dispose();
     store.close();
   });
@@ -674,6 +705,35 @@ describe('GroupRoomStore', () => {
     assert.equal(failed.status, 'paused');
     assert.equal(failed.messages.length, 10);
     assert.equal(failed.recentRuns.length, 0);
+    controller.dispose();
+    store.close();
+  });
+
+  test('resets persistent member and moderator sessions after context compaction', async () => {
+    const { store, paths } = await createStore();
+    const disposedMembers = [];
+    const disposedModerators = [];
+    const { controller, finished } = controllerFixture(store, paths, [], {
+      summarize: async () => 'Compacted room history',
+      disposeMember: (roomId, memberId) => disposedMembers.push([roomId, memberId]),
+      disposeModerator: (roomId) => disposedModerators.push(roomId),
+    });
+    const room = await controller.createRoom({
+      topic: 'Compaction reset',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+      settings: { summaryThresholdChars: 40_000 },
+    });
+    for (let index = 0; index < 10; index += 1) {
+      store.addMessage(room.id, { authorType: 'human', content: `${index}:${'x'.repeat(5_000)}` });
+    }
+
+    await controller.dispatch(room.id, { content: 'Continue after compaction' });
+    await finished;
+
+    assert.deepEqual(disposedMembers, room.members.map((entry) => [room.id, entry.id]));
+    assert.deepEqual(disposedModerators, [room.id]);
+    assert.equal(controller.getRoom(room.id).summary, 'Compacted room history');
     controller.dispose();
     store.close();
   });

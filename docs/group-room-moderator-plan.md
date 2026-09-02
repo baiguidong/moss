@@ -103,6 +103,9 @@ idle
 - 新建/更新房间不再写 `mode`、`discussionPolicy`、`discussionRounds`。旧 settings 中这些键读取时忽略，下一次设置更新时自然清理。
 - 旧消息 author 和旧 run mode 继续渲染；新消息区分 `human`、`moderator`、`agent`、`system`。
 - 主持人会话以 `roomId` 隔离并持久复用；删除房间或 dispose registry 时必须释放。
+- 主持人和成员在持久会话有效时只接收新的公共消息/执行结果；摘要水位变化后重建会话，避免重复注入完整历史或让旧上下文抵消压缩效果。
+- 模型返回的是会话累计 usage，控制器只计入相邻调用的增量；成员失败、主持协议失败或上下文压缩后要释放对应会话，避免上下文与计量水位失配。
+- 主持人、成员与摘要输入都有字符/条目上限；超长待摘要消息保留首尾和消息身份，原始消息仍完整保存在 SQLite 中。
 
 ## 7. UI/API 调整
 
@@ -154,6 +157,9 @@ idle
 - [x] UI 不存在收件人、并行和轮数控件，且主持人身份可见。
 - [x] 旧房间、旧 run 和旧 settings 可读取。
 - [x] 主持人与成员会话按 room/member 隔离，工具权限不泄漏。
+- [x] 持久会话的上下文按水位增量投递，usage 按调用增量记账，压缩后重建会话。
+- [x] 超长公共上下文、成员提示、主持 ledger 与摘要输入均有显式边界。
+- [x] 资源解析等调度前失败也会把预留 turn 落为 failed，不遗留 pending run。
 - [x] Group Room 单测、IPC/运行时测试、TypeScript、renderer build 和仓库相关回归全部通过。
 
 发布前环境门禁：

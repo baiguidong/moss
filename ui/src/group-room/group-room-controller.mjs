@@ -7,7 +7,7 @@ import {
   delegationFingerprint,
   normalizeModeratorDecision,
 } from './group-room-moderator.mjs';
-import { redactRoomValue } from './group-room-policy.mjs';
+import { redactRoomText, redactRoomValue } from './group-room-policy.mjs';
 import { PausableDeadline } from './group-room-timeout.mjs';
 
 class RoomCommandQueue {
@@ -302,6 +302,7 @@ export class GroupRoomController {
       lastDelegationFingerprint: '',
       repeatedDelegations: 0,
       blockingFailure: '',
+      resetModerator: false,
       finished: null,
     };
     const runTimeoutMs = clampNumber(room.settings?.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000);
@@ -495,6 +496,7 @@ export class GroupRoomController {
           });
         } catch (error) {
           if (!forceFinish) throw error;
+          control.resetModerator = true;
           finalStatus = control.blockingFailure ? 'failed' : 'completed';
           stopReason = control.blockingFailure || control.forceFinishReason || safeRunError(error);
           this.#store.addMessage(roomId, {
@@ -514,7 +516,7 @@ export class GroupRoomController {
             causationId: currentRun.triggerMessageId,
             correlationId: runId,
             kind: 'answer',
-            content: redactRoomValue(decision.response),
+            content: redactRoomText(decision.response),
           });
           if (control.blockingFailure) {
             finalStatus = 'failed';
@@ -575,6 +577,7 @@ export class GroupRoomController {
         stopReason ||= control.abortReason || 'Stopped by the user';
       }
     } catch (error) {
+      control.resetModerator = true;
       finalStatus = control.abortController.signal.aborted
         ? control.budgetReached ? 'superseded' : 'interrupted'
         : control.stoppedMemberIds.size > 0 ? 'superseded' : 'failed';
@@ -589,7 +592,9 @@ export class GroupRoomController {
       if (intervention) {
         try { this.#store.promoteMessage(intervention.id); } catch {}
       }
-      if (control.abortController.signal.aborted) this.#runtime.disposeModerator?.(roomId);
+      if (control.abortController.signal.aborted || control.resetModerator) {
+        this.#runtime.disposeModerator?.(roomId);
+      }
       this.#active.delete(roomId);
       this.#rejectRoomPermissions(roomId, 'The room run finished.');
       this.#emitSnapshot(roomId, 'run-finished');
@@ -666,7 +671,7 @@ export class GroupRoomController {
         }
         this.#store.completeTurn(turn.id, {
           ...result,
-          content: redactRoomValue(result.content),
+          content: redactRoomText(result.content),
         });
         turnFinished = true;
         control.totalTokens += tokenUsage(result.usage);
@@ -683,6 +688,7 @@ export class GroupRoomController {
             usage: redactRoomValue(error?.roomUsage || null),
           });
         } catch {}
+        this.#runtime.disposeMember(roomId, member.id);
         this.#emitSnapshot(roomId, interrupted ? 'turn-interrupted' : 'turn-failed');
       }
       throw error;
@@ -738,12 +744,13 @@ export class GroupRoomController {
     const toSummarize = unsummarized.filter((message) => !retainedIds.has(message.id));
     if (toSummarize.length === 0) return room;
     try {
-      const summary = redactRoomValue(await this.#runtime.summarize({
+      const summary = redactRoomText(await this.#runtime.summarize({
         room,
         previousSummary: room.summary,
         messages: toSummarize,
-      }));
+      }), 120_000);
       const compacted = this.#store.updateSummary(roomId, summary, toSummarize.at(-1).seq);
+      for (const member of compacted.members) this.#runtime.disposeMember(roomId, member.id);
       this.#runtime.disposeModerator?.(roomId);
       return compacted;
     } catch (error) {

@@ -24,9 +24,9 @@ function runtimeKey(roomId, memberId) {
 function memberSystemPrompt(member) {
   return [
     member.teamCharterSnapshot
-      ? `Shared expert-team charter:\n${member.teamCharterSnapshot}`
+      ? `Shared expert-team charter:\n${String(member.teamCharterSnapshot).slice(0, 80_000)}`
       : '',
-    `Your participant role:\n${member.promptSnapshot}`,
+    `Your participant role:\n${String(member.promptSnapshot || '').slice(0, 120_000)}`,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -62,6 +62,57 @@ function withExecutionDetails(error, trace, usage) {
   result.roomTrace = trace;
   result.roomUsage = usage;
   return result;
+}
+
+function incrementalUsage(current, previous) {
+  if (!current || typeof current !== 'object') return null;
+  const before = previous && typeof previous === 'object' ? previous : {};
+  return Object.fromEntries(Object.entries(current).map(([key, value]) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return [key, value];
+    const prior = before[key];
+    return [key, typeof prior === 'number' && Number.isFinite(prior) && value >= prior
+      ? value - prior
+      : value];
+  }));
+}
+
+function takeIncrementalUsage(entry, cumulative) {
+  if (!cumulative || typeof cumulative !== 'object') return null;
+  const delta = incrementalUsage(cumulative, entry.lastUsage);
+  entry.lastUsage = cumulative;
+  return delta;
+}
+
+function boundedTail(items, map, { maxItems, maxChars }) {
+  const selected = [];
+  let remaining = maxChars;
+  for (let index = items.length - 1; index >= 0 && selected.length < maxItems && remaining > 0; index -= 1) {
+    const value = map(items[index], remaining);
+    const size = JSON.stringify(value).length;
+    if (size > remaining) break;
+    selected.unshift(value);
+    remaining -= size;
+  }
+  return selected;
+}
+
+function boundedSummaryMessages(messages, maxChars = 200_000) {
+  const candidates = Array.isArray(messages) ? messages : [];
+  if (candidates.length === 0) return [];
+  const perMessage = Math.max(500, Math.floor(maxChars / candidates.length));
+  return candidates.map((message) => {
+    const content = String(message.content || '');
+    const limit = Math.max(1, perMessage - 200);
+    const boundedContent = content.length <= limit
+      ? content
+      : `${content.slice(0, Math.ceil(limit * 0.6))}\n... [middle truncated for summary] ...\n${content.slice(-Math.floor(limit * 0.4))}`;
+    return {
+      seq: message.seq,
+      authorType: message.authorType,
+      authorId: message.authorId,
+      content: boundedContent,
+    };
+  });
 }
 
 export function resolveRoomPermissionPolicy(room, settings) {
@@ -154,8 +205,8 @@ export class GroupRoomRuntimeRegistry {
       session,
       fingerprint: runtimeFingerprint,
       lastSnapshotSeq: 0,
-      lastRunId: '',
       lastSummaryThroughSeq: 0,
+      lastUsage: null,
       executionState,
     };
     this.#entries.set(key, entry);
@@ -171,8 +222,7 @@ export class GroupRoomRuntimeRegistry {
       turn,
       messages,
       snapshotSeq,
-      afterSeq: entry.lastRunId === turn.runId
-        && entry.lastSummaryThroughSeq === (Number(room.summaryThroughSeq) || 0)
+      afterSeq: entry.lastSummaryThroughSeq === (Number(room.summaryThroughSeq) || 0)
         ? entry.lastSnapshotSeq
         : 0,
     });
@@ -180,8 +230,17 @@ export class GroupRoomRuntimeRegistry {
     let latestText = '';
     let streamedText = '';
     let usage = null;
+    let committedUsage;
+    let usageCommitted = false;
     let streamOffset = 0;
     let traceOffset = 0;
+    const takeUsage = () => {
+      if (!usageCommitted) {
+        committedUsage = takeIncrementalUsage(entry, usage);
+        usageCommitted = true;
+      }
+      return committedUsage;
+    };
 
     try {
       for await (const message of entry.session.send(prompt, signal)) {
@@ -201,7 +260,7 @@ export class GroupRoomRuntimeRegistry {
         usage = extractUsage(message) || usage;
       }
     } catch (error) {
-      throw withExecutionDetails(error, trace, usage);
+      throw withExecutionDetails(error, trace, takeUsage());
     }
 
     let content = (latestText || streamedText).trim();
@@ -211,7 +270,7 @@ export class GroupRoomRuntimeRegistry {
       throw withExecutionDetails(
         new Error(`连接器授权需要在连接器中心刷新: ${connectorId}`),
         trace,
-        usage,
+        takeUsage(),
       );
     }
     if (!content) {
@@ -241,7 +300,7 @@ export class GroupRoomRuntimeRegistry {
           usage = extractUsage(message) || usage;
         }
       } catch (error) {
-        throw withExecutionDetails(error, trace, usage);
+        throw withExecutionDetails(error, trace, takeUsage());
       } finally {
         entry.executionState.conclusionOnly = false;
       }
@@ -252,21 +311,20 @@ export class GroupRoomRuntimeRegistry {
         throw withExecutionDetails(
           new Error(`连接器授权需要在连接器中心刷新: ${connectorId}`),
           trace,
-          usage,
+          takeUsage(),
         );
       }
       if (!content) {
         throw withExecutionDetails(
           new Error('Room member returned no public conclusion after a no-tool recovery prompt.'),
           trace,
-          usage,
+          takeUsage(),
         );
       }
     }
     entry.lastSnapshotSeq = snapshotSeq;
-    entry.lastRunId = turn.runId;
     entry.lastSummaryThroughSeq = Number(room.summaryThroughSeq) || 0;
-    return { content, trace, usage, promptHash: promptHash(prompt) };
+    return { content, trace, usage: takeUsage(), promptHash: promptHash(prompt) };
   }
 
   async summarize({ room, previousSummary, messages }) {
@@ -306,13 +364,8 @@ export class GroupRoomRuntimeRegistry {
       const prompt = JSON.stringify({
         protocol: 'moss.group-room.summary.v1',
         topic: room.topic,
-        previousSummary: previousSummary || '',
-        publicMessages: messages.map((message) => ({
-          seq: message.seq,
-          authorType: message.authorType,
-          authorId: message.authorId,
-          content: message.content,
-        })),
+        previousSummary: String(previousSummary || '').slice(-120_000),
+        publicMessages: boundedSummaryMessages(messages),
       });
       for await (const message of session.send(prompt)) {
         latestText = extractAssistantText(message) || latestText;
@@ -372,7 +425,15 @@ You have no tools and cannot create agents, change permissions, or select anyone
       onToolUseValidation: async (toolName) => ({ behavior: 'deny', message: `Moderator tools are disabled: ${toolName}` }),
       onPermissionRequest: async () => ({ behavior: 'deny', message: 'Moderator tools are disabled.' }),
     });
-    const entry = { session, fingerprint };
+    const entry = {
+      session,
+      fingerprint,
+      lastUsage: null,
+      lastMessageSeq: 0,
+      lastRunId: '',
+      lastTurnCount: 0,
+      lastSummaryThroughSeq: 0,
+    };
     this.#moderators.set(room.id, entry);
     return entry;
   }
@@ -385,40 +446,58 @@ You have no tools and cannot create agents, change permissions, or select anyone
     const unavailable = new Set(unavailableMemberIds);
     const availableMembers = room.members.filter((member) => !unavailable.has(member.id));
     const outputById = new Map(room.messages.map((message) => [message.id, message]));
+    const summaryThroughSeq = Number(room.summaryThroughSeq) || 0;
+    const useDelta = entry.lastMessageSeq > 0
+      && entry.lastSummaryThroughSeq === summaryThroughSeq;
+    const messageFloor = useDelta ? Math.max(summaryThroughSeq, entry.lastMessageSeq) : summaryThroughSeq;
+    const ledgerStart = useDelta && entry.lastRunId === run?.id ? entry.lastTurnCount : 0;
+    const publicMessages = boundedTail(
+      room.messages.filter((message) => message.seq > messageFloor),
+      (message, remaining) => ({
+        seq: message.seq,
+        authorType: message.authorType,
+        authorId: message.authorId,
+        kind: message.kind,
+        content: String(message.content || '').slice(0, Math.min(8_000, remaining)),
+      }),
+      { maxItems: 40, maxChars: 40_000 },
+    );
+    const executionLedger = boundedTail(
+      (run?.turns || []).slice(ledgerStart),
+      (turn, remaining) => ({
+        memberId: turn.memberId,
+        assignment: String(turn.assignment || '').slice(0, Math.min(2_000, remaining)),
+        status: turn.status,
+        result: String(outputById.get(turn.outputMessageId)?.content || '').slice(0, 4_000),
+        error: String(turn.error || '').slice(0, 2_000),
+      }),
+      { maxItems: 24, maxChars: 40_000 },
+    );
     const prompt = JSON.stringify({
-        protocol: 'moss.group-room.moderator.v2',
-        topic: room.topic,
-        summary: room.summary || '',
-        step,
-        forceFinish,
-        recentPublicMessages: room.messages.slice(-40).map((message) => ({
-          seq: message.seq,
-          authorType: message.authorType,
-          authorId: message.authorId,
-          kind: message.kind,
-          content: message.content,
-        })),
-        members: availableMembers.map((member) => ({
-          id: member.id,
-          name: member.displayName,
-          role: member.role,
-          description: String(member.promptSnapshot || '').slice(0, 12_000),
-          skills: member.resourceSnapshot?.skillCommands || [],
-        })),
-        executionLedger: (run?.turns || []).map((turn) => ({
-          memberId: turn.memberId,
-          assignment: turn.assignment,
-          status: turn.status,
-          result: outputById.get(turn.outputMessageId)?.content || '',
-          error: turn.error || '',
-        })),
-        outputSchema: {
-          action: 'respond | delegate',
-          response: 'required only for respond: complete answer to the human',
-          assignments: [{ memberId: 'available member id', task: 'specific verifiable task' }],
-          reason: 'optional brief delegation rationale',
-        },
-      });
+      protocol: 'moss.group-room.moderator.v2',
+      contextMode: useDelta ? 'delta' : 'full',
+      topic: useDelta ? '' : String(room.topic || '').slice(0, 20_000),
+      summary: useDelta ? '' : String(room.summary || '').slice(-40_000),
+      step,
+      forceFinish,
+      recentPublicMessages: publicMessages,
+      members: availableMembers.map((member) => ({
+        id: member.id,
+        name: member.displayName,
+        role: member.role,
+        description: useDelta ? '' : String(member.promptSnapshot || '').slice(0, 1_500),
+        skills: (member.resourceSnapshot?.skillCommands || [])
+          .slice(0, 64)
+          .map((skill) => String(skill).slice(0, 160)),
+      })),
+      executionLedger,
+      outputSchema: {
+        action: 'respond | delegate',
+        response: 'required only for respond: complete answer to the human',
+        assignments: [{ memberId: 'available member id', task: 'specific verifiable task' }],
+        reason: 'optional brief delegation rationale',
+      },
+    });
     const collect = async (value) => {
       latestText = '';
       streamedText = '';
@@ -430,6 +509,13 @@ You have no tools and cannot create agents, change permissions, or select anyone
       const raw = (latestText || streamedText).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       return JSON.parse(raw);
     };
+    const finish = (decision) => {
+      entry.lastMessageSeq = room.messages.at(-1)?.seq || entry.lastMessageSeq;
+      entry.lastRunId = run?.id || '';
+      entry.lastTurnCount = run?.turns?.length || 0;
+      entry.lastSummaryThroughSeq = summaryThroughSeq;
+      return { decision, usage: takeIncrementalUsage(entry, usage) };
+    };
     const recover = async (error) => {
       const recoveryPrompt = JSON.stringify({
         protocol: 'moss.group-room.moderator-format-recovery.v1',
@@ -439,14 +525,11 @@ You have no tools and cannot create agents, change permissions, or select anyone
         availableMemberIds: availableMembers.map((member) => member.id),
       });
       const recovered = await collect(recoveryPrompt);
-      return {
-        decision: normalizeModeratorDecision(recovered, {
-          memberIds: new Set(availableMembers.map((member) => member.id)),
+      return finish(normalizeModeratorDecision(recovered, {
+        memberIds: new Set(availableMembers.map((member) => member.id)),
         maxAssignments: 3,
-          forceFinish,
-        }),
-        usage,
-      };
+        forceFinish,
+      }));
     };
     let parsed;
     try {
@@ -456,14 +539,11 @@ You have no tools and cannot create agents, change permissions, or select anyone
       return recover(error);
     }
     try {
-      return {
-        decision: normalizeModeratorDecision(parsed, {
-          memberIds: new Set(availableMembers.map((member) => member.id)),
-          maxAssignments: 3,
-          forceFinish,
-        }),
-        usage,
-      };
+      return finish(normalizeModeratorDecision(parsed, {
+        memberIds: new Set(availableMembers.map((member) => member.id)),
+        maxAssignments: 3,
+        forceFinish,
+      }));
     } catch (error) {
       if (signal?.aborted) throw error;
       return recover(error);
