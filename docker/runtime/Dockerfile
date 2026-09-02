@@ -2,7 +2,7 @@ ARG BASE_IMAGE=public.ecr.aws/ubuntu/ubuntu:24.04
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG NODE_VERSION=22.22.1
+ARG NODE_VERSION=22.23.1
 ARG SHARP_VERSION=0.34.5
 ARG TARGETARCH
 
@@ -53,9 +53,11 @@ RUN set -eux; \
   esac; \
   node_dist="node-v${NODE_VERSION}-linux-${node_arch}"; \
   curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${node_dist}.tar.xz"; \
+  curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"; \
+  grep "  ${node_dist}.tar.xz\$" SHASUMS256.txt | sha256sum -c -; \
   mkdir -p /opt/node; \
   tar -xJf "${node_dist}.tar.xz" -C /opt/node --strip-components=1; \
-  rm "${node_dist}.tar.xz"; \
+  rm "${node_dist}.tar.xz" SHASUMS256.txt; \
   ln -sf /opt/node/bin/node /usr/local/bin/node; \
   ln -sf /opt/node/bin/npm /usr/local/bin/npm; \
   ln -sf /opt/node/bin/npx /usr/local/bin/npx; \

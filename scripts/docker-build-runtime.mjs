@@ -15,7 +15,7 @@ Options:
   --platform <list>      Build platform list. Default: linux/arm64
   --load                 Load a single-platform image into the local Docker daemon.
   --push                 Push the built image or multi-platform manifest.
-  --node-version <ver>   Node.js version. Default: 22.22.1
+  --node-version <ver>   Node.js version. Default: 22.23.1
   --sharp-version <ver>  sharp version. Default: 0.34.5
   --base-image <image>   Ubuntu base image. Default: public.ecr.aws/ubuntu/ubuntu:24.04
   --no-cache             Pass --no-cache to docker buildx build.
@@ -30,7 +30,7 @@ function parseArgs(argv) {
     platform: 'linux/arm64',
     load: false,
     push: false,
-    nodeVersion: '22.22.1',
+    nodeVersion: '22.23.1',
     sharpVersion: '0.34.5',
     baseImage: 'public.ecr.aws/ubuntu/ubuntu:24.04',
     noCache: false,

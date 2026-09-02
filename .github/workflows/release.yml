@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+env:
+  BUN_VERSION: '1.3.10'
+  SERVER_NODE_VERSION: '22.23.1'
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -70,8 +74,128 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-server-linux-amd64:
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.SERVER_NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Install server build dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd admin
+          bun install --frozen-lockfile --cwd adapters
+
+      - name: Validate deployment scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deploy/package-server.sh
+          bash -n deploy/install-server.sh
+          node --check scripts/docker-build-runtime.mjs
+          help_output="$(deploy/install-server.sh --help)"
+          grep -Fq -- '--offline' <<< "$help_output"
+          grep -Fq -- '--upgrade' <<< "$help_output"
+          grep -Fq -- '--service-name NAME' <<< "$help_output"
+
+      - name: Build server and Docker runtime assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          MOSS_SERVER_NODE_VERSION: ${{ env.SERVER_NODE_VERSION }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          OUTPUT_DIR=dist/server-release
+          RUNTIME_TAG_VERSION="${VERSION//+/_}"
+          RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-amd64"
+          deploy/package-server.sh "$VERSION" amd64 "$OUTPUT_DIR"
+          bun scripts/docker-build-runtime.mjs \
+            --tag "$RUNTIME_IMAGE" \
+            --platform linux/amd64 \
+            --node-version "$SERVER_NODE_VERSION" \
+            --load
+          docker run --rm "$RUNTIME_IMAGE" node --no-warnings -e \
+            "require('node:sqlite'); require('sharp')"
+          docker run --rm --user 10001:10001 -e HOME=/tmp/moss-home \
+            "$RUNTIME_IMAGE" node --version
+          docker save "$RUNTIME_IMAGE" | gzip -1 \
+            > "$OUTPUT_DIR/moss-runtime-$VERSION-linux-amd64.tar.gz"
+          (
+            cd "$OUTPUT_DIR"
+            sha256sum \
+              "moss-server-$VERSION-linux-amd64.tar.gz" \
+              "moss-runtime-$VERSION-linux-amd64.tar.gz" \
+              > SHA256SUMS-server
+          )
+          sed \
+            -e "s|@@MOSS_RELEASE_TAG@@|$RELEASE_TAG|g" \
+            -e "s|@@MOSS_REPOSITORY@@|$GITHUB_REPOSITORY|g" \
+            deploy/install-server.sh > "$OUTPUT_DIR/install-server.sh"
+          chmod +x "$OUTPUT_DIR/install-server.sh"
+
+      - name: Validate server release assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          OUTPUT_DIR=dist/server-release
+          SERVER_ARCHIVE="moss-server-$VERSION-linux-amd64.tar.gz"
+          RUNTIME_ARCHIVE="moss-runtime-$VERSION-linux-amd64.tar.gz"
+          (cd "$OUTPUT_DIR" && sha256sum -c SHA256SUMS-server)
+          tar -tzf "$OUTPUT_DIR/$SERVER_ARCHIVE" > dist/server-contents.txt
+          grep -Fxq 'moss-server/node/bin/node' dist/server-contents.txt
+          grep -Fxq 'moss-server/app/bin/moss-server.mjs' dist/server-contents.txt
+          grep -Fxq 'moss-server/app/bin/moss-session-runner.mjs' dist/server-contents.txt
+          grep -Fxq 'moss-server/app/adapters/feishu.mjs' dist/server-contents.txt
+          grep -Fxq 'moss-server/app/admin/dist/index.html' dist/server-contents.txt
+          ! grep -Eq '(^|/)\.\.(/|$)' dist/server-contents.txt
+          gzip -t "$OUTPUT_DIR/$RUNTIME_ARCHIVE"
+          ! grep -Fq '@@MOSS_RELEASE_TAG@@' "$OUTPUT_DIR/install-server.sh"
+          ! grep -Fq '@@MOSS_REPOSITORY@@' "$OUTPUT_DIR/install-server.sh"
+          grep -Fq "RELEASE_TAG=\"\${MOSS_RELEASE_TAG:-$RELEASE_TAG}\"" \
+            "$OUTPUT_DIR/install-server.sh"
+          grep -Fq "REPOSITORY=\"\${MOSS_REPOSITORY:-$GITHUB_REPOSITORY}\"" \
+            "$OUTPUT_DIR/install-server.sh"
+
+      - name: Upload server release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          OUTPUT_DIR=dist/server-release
+          gh release upload "$RELEASE_TAG" \
+            "$OUTPUT_DIR/moss-server-$VERSION-linux-amd64.tar.gz" \
+            "$OUTPUT_DIR/moss-runtime-$VERSION-linux-amd64.tar.gz" \
+            "$OUTPUT_DIR/SHA256SUMS-server" \
+            "$OUTPUT_DIR/install-server.sh" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
+
+
   publish-release:
-    needs: build
+    needs: [build, build-server-linux-amd64]
     runs-on: ubuntu-latest
     steps:
       - name: Ensure release has uploaded assets
@@ -81,6 +205,11 @@ jobs:
             echo "Release ${{ github.ref_name }} has no uploaded assets; refusing to publish an empty release."
             exit 1
           fi
+          assets=$(gh release view ${{ github.ref_name }} --repo ${{ github.repository }} --json assets --jq '.assets[].name')
+          grep -Fxq 'install-server.sh' <<<"$assets"
+          grep -Fxq 'SHA256SUMS-server' <<<"$assets"
+          grep -Eq '^moss-server-.+-linux-amd64\.tar\.gz$' <<<"$assets"
+          grep -Eq '^moss-runtime-.+-linux-amd64\.tar\.gz$' <<<"$assets"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

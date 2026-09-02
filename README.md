@@ -5,10 +5,25 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 ## 文档
 
 - [Moss Server API](server/API.md)
+- [Moss Server 一键部署](deploy/README.md)
 - [飞书 Adapter 配置与完整权限清单](adapters/README.md)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
 `src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
+
+## Server 一键部署
+
+目标机需要 Linux x86_64、systemd、Docker 20.10+、root/sudo 权限，以及
+`curl`、`tar` 和 SHA-256 校验工具。Server 主程序和 session Docker Runtime
+与桌面端使用同一个 `v*` GitHub Release：
+
+```bash
+curl -fsSL https://github.com/baiguidong/moss/releases/latest/download/install-server.sh | sudo bash
+```
+
+默认安装到执行用户的 `~/.moss/server`，注册 `moss-server.service`，监听
+`43127`，并使用随版本发布的 Docker Runtime。安装、独立多实例、离线部署、升级、
+回滚和卸载参数见[部署文档](deploy/README.md)。
 
 ## 飞书 Adapter
 

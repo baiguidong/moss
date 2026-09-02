@@ -1,0 +1,5 @@
+*
+!docker/
+!docker/runtime/
+!docker/runtime/Dockerfile
+!docker/runtime/entrypoint.sh

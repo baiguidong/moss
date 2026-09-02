@@ -4,6 +4,7 @@ import { startStandaloneDirectConnectServer } from './startStandaloneServer.js'
 async function runServer(): Promise<void> {
   const { configPath, config } = await readServerConfig()
   const running = await startStandaloneDirectConnectServer(config)
+  const hideBootstrapSecrets = process.env.MOSS_HIDE_BOOTSTRAP_SECRETS === '1'
 
   process.stderr.write(`\nConfig: ${configPath}\n`)
   if (running.bootstrapAdminUsername) {
@@ -12,10 +13,10 @@ async function runServer(): Promise<void> {
   if (running.bootstrapAdminEmail) {
     process.stderr.write(`Bootstrap admin email: ${running.bootstrapAdminEmail}\n`)
   }
-  if (running.bootstrapAdminPassword) {
+  if (running.bootstrapAdminPassword && !hideBootstrapSecrets) {
     process.stderr.write(`Bootstrap admin password: ${running.bootstrapAdminPassword}\n`)
   }
-  if (running.bootstrapAdminApiKey) {
+  if (running.bootstrapAdminApiKey && !hideBootstrapSecrets) {
     process.stderr.write(`Bootstrap admin API key: ${running.bootstrapAdminApiKey}\n`)
   }
 
