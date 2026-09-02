@@ -10,6 +10,7 @@ const GENERIC_CLI_EXECUTABLES = new Set([
   'powershell.exe', 'pwsh', 'python', 'python3', 'sh', 'zsh',
 ]);
 const SECRET_KEY = /(?:token|secret|password|authorization|cookie|api[_-]?key|access[_-]?key|credential)/i;
+const TOKEN_USAGE_KEY = /^(?:input|output|total|cached_input|cache_creation_input|cache_read_input)_tokens$/i;
 const MAX_TRACE_STRING = 4_000;
 export const CONNECTOR_AUTH_REQUIRED_PREFIX = 'GROUP_ROOM_CONNECTOR_AUTH_REQUIRED:';
 
@@ -30,7 +31,9 @@ export function redactRoomValue(value, depth = 0) {
   if (typeof value !== 'object') return truncate(value);
   const result = {};
   for (const [key, entry] of Object.entries(value).slice(0, 100)) {
-    result[key] = SECRET_KEY.test(key) ? '[REDACTED]' : redactRoomValue(entry, depth + 1);
+    result[key] = SECRET_KEY.test(key) && !TOKEN_USAGE_KEY.test(key)
+      ? '[REDACTED]'
+      : redactRoomValue(entry, depth + 1);
   }
   return result;
 }

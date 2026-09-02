@@ -21,7 +21,6 @@ import {
   TriangleAlert,
   User,
   UsersRound,
-  WandSparkles,
   X,
   Zap,
 } from "lucide-react";
@@ -78,9 +77,11 @@ function statusDot(status: string) {
 
 function friendlyRunError(value: string) {
   const message = String(value || "");
-  if (message === "Interrupted by the room host") return "已由主持人中断";
-  if (message === "Stopped by the room host") return "已由主持人停止";
-  if (message === "Superseded by a host intervention") return "已被主持人的新插话取代";
+  if (message === "Interrupted by the room host") return "已由用户中断";
+  if (message === "Interrupted by the user") return "已由用户中断";
+  if (message === "Stopped by the room host") return "已由用户停止";
+  if (message === "Stopped by the user") return "已由用户停止";
+  if (message === "Superseded by a host intervention") return "已被用户的新补充取代";
   if (message === "Room token budget reached") return "已达到房间 token 预算";
   return message;
 }
@@ -170,6 +171,16 @@ function HumanAvatar() {
   );
 }
 
+function ModeratorAvatar() {
+  return (
+    <Avatar data-group-room-moderator-avatar className="h-7 w-7 shrink-0">
+      <AvatarFallback className="bg-primary/10 text-primary">
+        <Bot className="h-4 w-4" />
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
 type CreateRoomFormProps = {
   resources: { inviteables: GroupRoomInviteable[]; connectors: GroupRoomResourceConnector[]; skills: GroupRoomResourceSkill[] };
   busy: boolean;
@@ -184,8 +195,6 @@ type CreateRoomFormProps = {
     connectorGrants: GroupRoomConnectorGrant[];
     settings: {
       permissionMode: "inherit" | "ask" | "allow-all";
-      discussionPolicy: "fixed" | "until-stable";
-      discussionRounds: number;
     };
   }) => Promise<void>;
 };
@@ -220,14 +229,14 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
     .filter((item) => invitationIds.includes(item.id))
     .reduce((total, item) => total + (item.type === "team" ? item.members.length : 1), customMembers.length);
   const customMembersValid = customMembers.every((member) => member.displayName.trim() && member.prompt.trim());
-  const canCreate = topic.trim() && workspace.trim() && participantCount >= 2 && participantCount <= 32 && customMembersValid && !busy;
+  const canCreate = topic.trim() && workspace.trim() && participantCount >= 1 && participantCount <= 32 && customMembersValid && !busy;
   return (
     <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-6">
         {onCancel ? <Button size="icon" variant="ghost" onClick={onCancel} title="关闭"><X className="h-4 w-4" /></Button> : null}
         <div className="min-w-0 flex-1">
           <h1 className="text-sm font-semibold">新建群聊</h1>
-          <p className="text-xs text-muted-foreground">{participantCount} 位成员</p>
+          <p className="text-xs text-muted-foreground">主持人 · {participantCount} 位专家</p>
         </div>
         <Button
           size="sm"
@@ -246,7 +255,7 @@ function CreateRoomForm({ resources, busy, onCancel, globalBypassPermissions, on
             connectorGrants: resources.connectors
               .filter((connector) => connectorIds.includes(connector.id))
               .map(selectedConnectorGrant),
-            settings: { permissionMode, discussionPolicy: "fixed", discussionRounds: 2 },
+            settings: { permissionMode },
           })}
         >
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -417,12 +426,6 @@ export function GroupRoomsView({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [composer, setComposer] = React.useState("");
-  const [mode, setMode] = React.useState<"conversation" | "parallel">("conversation");
-  const [discussionPolicy, setDiscussionPolicy] = React.useState<"fixed" | "until-stable">("fixed");
-  const [rounds, setRounds] = React.useState(2);
-  const [selectedMembers, setSelectedMembers] = React.useState<Set<string>>(new Set());
-  const [assignments, setAssignments] = React.useState<Record<string, string>>({});
-  const [moderatorSuggestion, setModeratorSuggestion] = React.useState<{ mode: "conversation" | "parallel"; assignments: Array<{ memberId: string; task: string }>; reason: string } | null>(null);
   const [selectedMemberId, setSelectedMemberId] = React.useState<string | null>(null);
   const [expandedRoomIds, setExpandedRoomIds] = React.useState<Set<string>>(new Set());
   const [roomListCollapsed, setRoomListCollapsed] = React.useState(false);
@@ -448,10 +451,6 @@ export function GroupRoomsView({
     }
     const detail = unwrap(await window.agentDesktop.groupRooms.get({ roomId }));
     setRoom(detail);
-    setMode(detail.settings.mode === "parallel" ? "parallel" : "conversation");
-    setDiscussionPolicy(detail.settings.discussionPolicy === "until-stable" ? "until-stable" : "fixed");
-    setRounds(Math.max(1, Math.min(100, Number(detail.settings.discussionRounds) || 2)));
-    setSelectedMembers(new Set(detail.members.slice(0, 3).map((member) => member.id)));
     setSelectedMemberId((current) => current && detail.members.some((member) => member.id === current) ? current : null);
     setExpandedRoomIds((current) => new Set(current).add(detail.id));
   }, [room?.id]);
@@ -577,42 +576,17 @@ export function GroupRoomsView({
     setRoom(detail);
     setCreating(false);
     setComposer("");
-    setAssignments({});
-    setMode(detail.settings.mode === "parallel" ? "parallel" : "conversation");
-    setDiscussionPolicy(detail.settings.discussionPolicy === "until-stable" ? "until-stable" : "fixed");
-    setRounds(Math.max(1, Math.min(100, Number(detail.settings.discussionRounds) || 2)));
-    setModeratorSuggestion(null);
-    setSelectedMembers(new Set(detail.members.slice(0, 3).map((member) => member.id)));
     setSelectedMemberId(memberId && detail.members.some((member) => member.id === memberId) ? memberId : null);
     setExpandedRoomIds((current) => new Set(current).add(detail.id));
   });
 
   const dispatch = () => run(async () => {
-    if (!room || !composer.trim() || selectedMembers.size === 0) return;
+    if (!room || !composer.trim()) return;
     unwrap(await window.agentDesktop.groupRooms.dispatch({
       roomId: room.id,
       content: composer.trim(),
-      mode,
-      memberIds: [...selectedMembers],
-      assignments,
-      rounds,
-      untilStable: discussionPolicy === "until-stable",
     }));
     setComposer("");
-    setAssignments({});
-    setModeratorSuggestion(null);
-  });
-
-  const suggestModeration = () => run(async () => {
-    if (!room || !composer.trim()) return;
-    const suggestion = unwrap(await window.agentDesktop.groupRooms.suggestModeration({
-      roomId: room.id,
-      content: composer.trim(),
-    }));
-    setMode(suggestion.mode);
-    setSelectedMembers(new Set(suggestion.assignments.map((entry) => entry.memberId)));
-    setAssignments(Object.fromEntries(suggestion.assignments.map((entry) => [entry.memberId, entry.task])));
-    setModeratorSuggestion(suggestion);
   });
 
   const intervene = (interventionMode: "soft" | "hard") => run(async () => {
@@ -652,40 +626,6 @@ export function GroupRoomsView({
     setRoom(updated);
   });
 
-  const updateDiscussionMode = (nextMode: "conversation" | "parallel") => run(async () => {
-    if (!room) return;
-    const updated = unwrap(await window.agentDesktop.groupRooms.update({
-      roomId: room.id,
-      updates: { settings: { ...room.settings, mode: nextMode } },
-      expectedRevision: room.revision,
-    }));
-    setRoom(updated);
-    setMode(nextMode);
-  });
-
-  const updateDiscussionRounds = (nextRounds: number) => run(async () => {
-    if (!room) return;
-    const normalizedRounds = Math.max(1, Math.min(100, Math.floor(Number(nextRounds) || 1)));
-    const updated = unwrap(await window.agentDesktop.groupRooms.update({
-      roomId: room.id,
-      updates: { settings: { ...room.settings, discussionRounds: normalizedRounds } },
-      expectedRevision: room.revision,
-    }));
-    setRoom(updated);
-    setRounds(Math.max(1, Math.min(100, Number(updated.settings.discussionRounds) || 2)));
-  });
-
-  const updateDiscussionPolicy = (nextPolicy: "fixed" | "until-stable") => run(async () => {
-    if (!room) return;
-    const updated = unwrap(await window.agentDesktop.groupRooms.update({
-      roomId: room.id,
-      updates: { settings: { ...room.settings, discussionPolicy: nextPolicy } },
-      expectedRevision: room.revision,
-    }));
-    setRoom(updated);
-    setDiscussionPolicy(nextPolicy);
-  });
-
   const refreshMemberSource = (memberId: string) => run(async () => {
     if (!room) return;
     const updated = unwrap(await window.agentDesktop.groupRooms.refreshMemberSource({
@@ -702,18 +642,8 @@ export function GroupRoomsView({
     unwrap(await window.agentDesktop.groupRooms.delete({ roomId: room.id }));
     setRoom(null);
     setComposer("");
-    setAssignments({});
-    setModeratorSuggestion(null);
     await refreshRooms();
   });
-
-  const toggleMember = (memberId: string) => {
-    setSelectedMembers((current) => {
-      const next = new Set(current);
-      if (next.has(memberId)) next.delete(memberId); else next.add(memberId);
-      return next;
-    });
-  };
 
   if (enabled === null) {
     return <div className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center overflow-hidden"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -755,9 +685,11 @@ export function GroupRoomsView({
     ? friendlyRunError(latestRoomRun.stopReason)
     : "";
   const connectorRefreshRequired = pausedReason.includes("连接器授权需要在连接器中心刷新");
-  const activeRecipientIds = new Set(room?.activeRun?.turns.map((turn) => turn.memberId) || []);
-  const activeRecipientNames = room?.members
-    .filter((member) => activeRecipientIds.has(member.id))
+  const activeDelegateIds = new Set(room?.activeRun?.turns
+    .filter((turn) => turn.status === "pending" || turn.status === "running")
+    .map((turn) => turn.memberId) || []);
+  const activeDelegateNames = room?.members
+    .filter((member) => activeDelegateIds.has(member.id))
     .map((member) => member.displayName) || [];
   const memberTranscript = room && selectedMember
     ? buildGroupRoomMemberTranscript({ room, memberId: selectedMember.id, streams, liveTraces })
@@ -871,7 +803,7 @@ export function GroupRoomsView({
                   <div className="truncate text-xs text-muted-foreground">{room.topic}</div>
                 </div>
               )}
-              <span className="hidden text-xs text-muted-foreground sm:inline">{statusLabel(room.status)}</span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">主持人 · {statusLabel(room.status)}</span>
               {selectedMember && sourceUpdateAvailable ? <Button size="icon" variant="ghost" disabled={room.status === "running"} onClick={() => void refreshMemberSource(selectedMember.id)} title="刷新专家快照"><RefreshCw className="h-4 w-4" /></Button> : null}
               {selectedMember ? <Button size="icon" variant="ghost" disabled={room.status === "running"} onClick={() => setResourceMemberId(selectedMember.id)} title="成员资源"><Settings2 className="h-4 w-4" /></Button> : null}
               {selectedMember && activeTurnForMember(room, selectedMember.id)?.status === "running" ? <Button size="icon" variant="ghost" onClick={() => void stopMember(selectedMember.id)} title="停止该成员"><CircleStop className="h-4 w-4 text-destructive" /></Button> : null}
@@ -886,7 +818,7 @@ export function GroupRoomsView({
             {pausedReason ? (
               <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs sm:px-4">
                 <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                <span className="min-w-0 flex-1 truncate" title={pausedReason}>{pausedReason}。可继续发起讨论。</span>
+                <span className="min-w-0 flex-1 truncate" title={pausedReason}>{pausedReason}。可继续向主持人发送新请求。</span>
                 {connectorRefreshRequired && onOpenConnectorHub ? <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={onOpenConnectorHub}>连接器中心</Button> : null}
               </div>
             ) : null}
@@ -909,15 +841,14 @@ export function GroupRoomsView({
                       const member = room.members.find((entry) => entry.id === message.authorId);
                       const isHuman = message.authorType === "human";
                       const isSystem = message.authorType === "system";
-                      const audienceNames = isHuman
-                        ? room.members.filter((entry) => message.audience.includes(entry.id)).map((entry) => entry.displayName)
-                        : [];
+                      const isModerator = message.authorType === "moderator";
                       return (
                         <article key={message.id} className={cn("flex gap-3", isHuman && "justify-end") }>
                           {!isHuman && member ? <MemberAvatar member={member} /> : null}
+                          {isModerator ? <ModeratorAvatar /> : null}
                           <div className={cn("min-w-0 max-w-[85%] [overflow-wrap:anywhere]", isHuman && "text-right") }>
                             <div className="mb-1 text-[11px] text-muted-foreground">
-                              {isHuman ? `主持人${audienceNames.length > 0 ? ` → ${audienceNames.join("、")} 执行` : ""}` : isSystem ? "主持" : member?.displayName || "Agent"} · {formatTime(message.createdAt)}
+                              {isHuman ? "你" : isModerator ? "主持人" : isSystem ? "系统" : member?.displayName || "Agent"} · {formatTime(message.createdAt)}
                             </div>
                             <div className={cn("whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm leading-6", isHuman ? "bg-primary text-primary-foreground" : "border border-border bg-muted/25 text-left")}>{message.content}</div>
                           </div>
@@ -939,43 +870,6 @@ export function GroupRoomsView({
             <div data-group-room-composer className="relative z-10 min-w-0 shrink-0 border-t border-border bg-background px-3 py-3 sm:px-4">
               <div data-group-room-composer-track className="mx-auto w-full max-w-[1180px] space-y-2">
                 <div data-group-room-controls className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <div className="flex shrink-0 rounded-md border border-border p-0.5">
-                    <Button size="sm" disabled={room.status === "running" || busy} variant={mode === "conversation" ? "secondary" : "ghost"} className="h-7" onClick={() => void updateDiscussionMode("conversation")} title="成员依次发言并阅读前文">讨论</Button>
-                    <Button size="sm" disabled={room.status === "running" || busy} variant={mode === "parallel" ? "secondary" : "ghost"} className="h-7" onClick={() => void updateDiscussionMode("parallel")} title="成员基于同一上下文同时处理">并行</Button>
-                  </div>
-                  {mode === "conversation" ? (
-                    <>
-                      <select
-                        aria-label="讨论停止方式"
-                        className="h-8 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:opacity-50"
-                        value={discussionPolicy}
-                        disabled={room.status === "running" || busy}
-                        title="持续讨论会在每轮结束后判断是否还有实质问题"
-                        onChange={(event) => void updateDiscussionPolicy(event.target.value as "fixed" | "until-stable")}
-                      >
-                        <option value="fixed">指定轮数</option>
-                        <option value="until-stable">持续至收敛</option>
-                      </select>
-                      {discussionPolicy === "fixed" ? (
-                        <Input
-                          aria-label="讨论轮数"
-                          type="number"
-                          min={1}
-                          max={100}
-                          className="h-8 w-20 shrink-0 text-xs"
-                          value={rounds}
-                          disabled={room.status === "running" || busy}
-                          onChange={(event) => setRounds(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}
-                          onBlur={(event) => void updateDiscussionRounds(Number(event.currentTarget.value))}
-                          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-                        />
-                      ) : null}
-                    </>
-                  ) : null}
-                  <Button size="sm" variant="outline" className="h-7 shrink-0" disabled={room.status === "running" || !composer.trim() || busy} onClick={() => void suggestModeration()} title="让主持人选择成员并拆分任务">
-                    <WandSparkles className="h-3.5 w-3.5" />
-                    主持
-                  </Button>
                   <select
                     aria-label="群权限"
                     className="h-8 shrink-0 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:opacity-50"
@@ -990,32 +884,14 @@ export function GroupRoomsView({
                   </select>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
                     {room.status === "running"
-                      ? `本轮执行：${activeRecipientNames.join("、") || "等待调度"}`
-                      : `发送给 ${selectedMembers.size} 位`}
+                      ? activeDelegateNames.length > 0
+                        ? `主持人已委派：${activeDelegateNames.join("、")}`
+                        : "主持人正在判断下一步"
+                      : "消息将发送给主持人，由主持人决定是否委派专家"}
                   </span>
-                  {room.members.map((member) => {
-                    const selected = room.status === "running" ? activeRecipientIds.has(member.id) : selectedMembers.has(member.id);
-                    return (
-                      <button key={member.id} disabled={room.status === "running"} onClick={() => toggleMember(member.id)} className={cn("flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs disabled:opacity-70", selected ? "border-primary/50 bg-primary/8" : "border-border text-muted-foreground") }>
-                        {selected ? <Check className="h-3 w-3" /> : null}{member.displayName}
-                      </button>
-                    );
-                  })}
                 </div>
-                {moderatorSuggestion && room.status !== "running" ? (
-                  <div className="truncate text-xs text-muted-foreground" title={moderatorSuggestion.reason}>
-                    主持建议：{moderatorSuggestion.mode === "parallel" ? "并行" : "讨论"} · {moderatorSuggestion.assignments.length} 位成员{moderatorSuggestion.reason ? ` · ${moderatorSuggestion.reason}` : ""}
-                  </div>
-                ) : null}
-                {mode === "parallel" && room.status !== "running" && selectedMembers.size > 1 ? (
-                  <div className="grid max-h-24 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                    {room.members.filter((member) => selectedMembers.has(member.id)).map((member) => (
-                      <Input key={member.id} value={assignments[member.id] || ""} onChange={(event) => setAssignments((current) => ({ ...current, [member.id]: event.target.value }))} placeholder={`${member.displayName} 的任务`} className="h-8 text-xs" />
-                    ))}
-                  </div>
-                ) : null}
                 <div className="flex min-w-0 shrink-0 items-end gap-2">
-                  <Textarea value={composer} onChange={(event) => { setComposer(event.target.value); setModeratorSuggestion(null); }} placeholder={room.status === "running" ? "插话" : "发起讨论"} className="max-h-40 min-h-16 min-w-0 resize-none" onKeyDown={(event) => {
+                  <Textarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder={room.status === "running" ? "补充约束给主持人" : "向主持人说明你的目标"} className="max-h-40 min-h-16 min-w-0 resize-none" onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       if (room.status === "running") void intervene("soft"); else void dispatch();
@@ -1023,11 +899,11 @@ export function GroupRoomsView({
                   }} />
                   {room.status === "running" ? (
                     <div className="flex shrink-0 flex-col gap-2">
-                      <Button size="icon" variant="outline" disabled={!composer.trim() || busy} onClick={() => void intervene("soft")} title="当前发言后插话"><ListPlus className="h-4 w-4" /></Button>
-                      <Button size="icon" variant="destructive" disabled={!composer.trim() || busy} onClick={() => void intervene("hard")} title="立即中断并插话"><CircleStop className="h-4 w-4" /></Button>
+                      <Button size="icon" variant="outline" disabled={!composer.trim() || busy} onClick={() => void intervene("soft")} title="在安全边界补充给主持人"><ListPlus className="h-4 w-4" /></Button>
+                      <Button size="icon" variant="destructive" disabled={!composer.trim() || busy} onClick={() => void intervene("hard")} title="立即中止并记录补充"><CircleStop className="h-4 w-4" /></Button>
                     </div>
                   ) : (
-                    <Button size="icon" disabled={!composer.trim() || selectedMembers.size === 0 || busy} onClick={() => void dispatch()} title="发送"><Send className="h-4 w-4" /></Button>
+                    <Button size="icon" disabled={!composer.trim() || busy} onClick={() => void dispatch()} title="发送给主持人"><Send className="h-4 w-4" /></Button>
                   )}
                 </div>
               </div>
@@ -1069,7 +945,7 @@ export function GroupRoomsView({
             <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
               <Button variant="ghost" className="mr-auto text-destructive hover:text-destructive" onClick={() => void run(async () => {
                 unwrap(await window.agentDesktop.groupRooms.stop({ roomId: permission.roomId }));
-              })}><CircleStop className="h-4 w-4" />停止本轮</Button>
+              })}><CircleStop className="h-4 w-4" />停止当前执行</Button>
               <Button variant="outline" onClick={() => void run(async () => {
                 unwrap(await window.agentDesktop.groupRooms.resolvePermission({ requestId: permission.requestId, allowed: false }));
               })}>拒绝</Button>

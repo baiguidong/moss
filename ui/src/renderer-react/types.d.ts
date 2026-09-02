@@ -896,7 +896,7 @@ export type GroupRoomMessage = {
   roomId: string;
   runId: string | null;
   seq: number;
-  authorType: 'human' | 'agent' | 'system';
+  authorType: 'human' | 'moderator' | 'agent' | 'system';
   authorId: string | null;
   audience: string[];
   causationId: string | null;
@@ -942,7 +942,7 @@ export type GroupRoomRun = {
   id: string;
   roomId: string;
   triggerMessageId: string | null;
-  mode: 'conversation' | 'parallel';
+  mode: 'orchestrated' | 'conversation' | 'parallel';
   contextSnapshotSeq: number;
   status: string;
   stopReason: string;
@@ -963,14 +963,12 @@ export type GroupRoomSummary = {
   summaryThroughSeq: number;
   settings: {
     maxAgentTurns?: number;
-    mode?: 'conversation' | 'parallel';
     permissionMode?: 'inherit' | 'ask' | 'allow-all';
-    discussionPolicy?: 'fixed' | 'until-stable';
-    discussionRounds?: number;
     turnTimeoutMs?: number;
     runTimeoutMs?: number;
     tokenBudget?: number;
     summaryThresholdChars?: number;
+    maxModeratorSteps?: number;
   };
   createdAt: number;
   updatedAt: number;
@@ -1126,9 +1124,8 @@ declare global {
         update: (payload: { roomId: string; updates: Partial<GroupRoomSummary>; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
         updateMemberGrants: (payload: { roomId: string; memberId: string; grants: GroupRoomMember['grants']; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
         refreshMemberSource: (payload: { roomId: string; memberId: string; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
-        dispatch: (payload: { roomId: string; content: string; mode: 'conversation' | 'parallel'; memberIds: string[]; assignments?: Record<string, string>; rounds?: number; untilStable?: boolean }) => Promise<GroupRoomIpcResult<GroupRoomRun>>;
-        suggestModeration: (payload: { roomId: string; content: string }) => Promise<GroupRoomIpcResult<{ mode: 'conversation' | 'parallel'; assignments: Array<{ memberId: string; task: string }>; reason: string }>>;
-        intervene: (payload: { roomId: string; content: string; mode: 'soft' | 'hard' }) => Promise<GroupRoomIpcResult<GroupRoomMessage>>;
+        dispatch: (payload: { roomId: string; content: string }) => Promise<GroupRoomIpcResult<GroupRoomRun>>;
+        intervene: (payload: { roomId: string; content: string; mode: 'soft' | 'hard' }) => Promise<GroupRoomIpcResult<GroupRoomMessage | GroupRoomRun>>;
         stop: (payload: { roomId: string }) => Promise<GroupRoomIpcResult<GroupRoom>>;
         stopMember: (payload: { roomId: string; memberId: string }) => Promise<GroupRoomIpcResult<GroupRoom>>;
         delete: (payload: { roomId: string }) => Promise<GroupRoomIpcResult<{ roomId: string }>>;

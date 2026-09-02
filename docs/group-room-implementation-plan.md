@@ -1,5 +1,9 @@
 # Moss Group Rooms Implementation Plan
 
+> 历史说明：本文记录第一版“用户选择成员/模式/轮次”的实现。该调度模型已由
+> [Group Room 主持人架构计划](./group-room-moderator-plan.md) 取代；资源隔离、
+> 持久化和权限章节仍作为实现背景保留。
+
 Status: implemented and verified in the real desktop client; the repository
 default remains explicit opt-in
 

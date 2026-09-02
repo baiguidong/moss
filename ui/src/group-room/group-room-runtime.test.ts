@@ -59,17 +59,35 @@ class EmptyThenConclusionClaudeSession extends FakeClaudeSession {
   }
 }
 
-class ConvergenceClaudeSession extends FakeClaudeSession {
+class ModeratorClaudeSession extends FakeClaudeSession {
   async *send(prompt: string) {
     this.prompts.push(prompt)
+    const input = JSON.parse(prompt)
+    const decision = input.protocol === 'moss.group-room.moderator.v2' && this.prompts.length === 1
+      ? { action: 'delegate', assignments: [{ memberId: 'reviewer', task: 'Verify the design' }], reason: 'Needs evidence' }
+      : { action: 'respond', response: 'The design is verified.' }
     yield {
       type: 'assistant',
-      message: { content: [{ type: 'text', text: JSON.stringify({
-        stable: true,
-        reason: 'All material issues are resolved.',
-        unresolvedIssues: [],
-      }) }] },
+      message: { content: [{ type: 'text', text: JSON.stringify(decision) }] },
     }
+    yield { type: 'result', usage: { input_tokens: 2 } }
+  }
+}
+
+class RecoveringModeratorClaudeSession extends FakeClaudeSession {
+  async *send(prompt: string) {
+    this.prompts.push(prompt)
+    const text = this.prompts.length === 1
+      ? 'not json'
+      : JSON.stringify({ action: 'respond', response: 'Recovered moderator response.' })
+    yield { type: 'assistant', message: { content: [{ type: 'text', text }] } }
+  }
+}
+
+class FailingModeratorClaudeSession extends FakeClaudeSession {
+  async *send(prompt: string): AsyncGenerator<any> {
+    this.prompts.push(prompt)
+    throw new Error('transport unavailable')
   }
 }
 
@@ -370,41 +388,104 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     registry.disposeAll()
   })
 
-  test('reviews continuous discussions with a tool-disabled convergence session', async () => {
+  test('keeps one tool-disabled moderator session that delegates and then answers', async () => {
     FakeClaudeSession.instances = []
     const registry = new GroupRoomRuntimeRegistry({
-      getClaudeSessionCtor: async () => ConvergenceClaudeSession,
+      getClaudeSessionCtor: async () => ModeratorClaudeSession,
       getSettings: () => ({ model: 'fake', advanced: {} }),
       buildThinkingConfig: () => ({ type: 'disabled' }),
       paths: {
         memberEngineDir: () => '/tmp/member',
-        roomDir: () => '/tmp/group-room-convergence',
+        roomDir: () => '/tmp/group-room-moderator',
       },
       requestPermission: async () => ({ behavior: 'deny' }),
     })
     const participant = member('reviewer')
-    const decision = await registry.assessDiscussion({
+    const room = {
+      id: 'moderator-room',
+      topic: 'Resolve the design',
+      workspace: '/tmp',
+      summary: '',
+      members: [participant],
+      messages: [{ id: 'user-message', seq: 1, authorType: 'human', authorId: 'user', kind: 'message', content: 'Check it.' }],
+    }
+    const first = await registry.moderate({
+      room,
+      run: { turns: [] },
+      step: 1,
+      signal: new AbortController().signal,
+    })
+    const second = await registry.moderate({
       room: {
-        id: 'convergence-room',
-        topic: 'Resolve the design',
-        workspace: '/tmp',
-        members: [participant],
-        messages: [{ authorType: 'agent', authorId: participant.id, content: 'Resolved conclusion.' }],
+        ...room,
+        messages: [...room.messages, { id: 'result', seq: 2, authorType: 'agent', authorId: participant.id, kind: 'conclusion', content: 'Verified.' }],
       },
-      round: 2,
-      memberIds: [participant.id],
+      run: {
+        turns: [{
+          memberId: participant.id,
+          assignment: 'Verify the design',
+          status: 'completed',
+          outputMessageId: 'result',
+          error: '',
+        }],
+      },
+      step: 2,
       signal: new AbortController().signal,
     })
 
-    expect(decision).toEqual({
-      stable: true,
-      reason: 'All material issues are resolved.',
-      unresolvedIssues: [],
+    expect(first.decision).toEqual({
+      action: 'delegate',
+      assignments: [{ memberId: 'reviewer', task: 'Verify the design' }],
+      reason: 'Needs evidence',
     })
-    const session = FakeClaudeSession.instances[0] as ConvergenceClaudeSession
+    expect(second.decision).toEqual({ action: 'respond', response: 'The design is verified.' })
+    expect(second.usage).toEqual({ input_tokens: 2 })
+    expect(FakeClaudeSession.instances).toHaveLength(1)
+    const session = FakeClaudeSession.instances[0] as ModeratorClaudeSession
     expect(session.opts.maxTurns).toBe(1)
     expect(await session.opts.onToolUseValidation('Read')).toMatchObject({ behavior: 'deny' })
-    expect(JSON.parse(session.prompts[0]).protocol).toBe('moss.group-room.convergence.v1')
+    expect(JSON.parse(session.prompts[0]).protocol).toBe('moss.group-room.moderator.v2')
+    expect(JSON.parse(session.prompts[1]).executionLedger[0]).toMatchObject({
+      status: 'completed', result: 'Verified.',
+    })
+    expect(session.disposed).toBe(false)
+    registry.disposeAll()
     expect(session.disposed).toBe(true)
+  })
+
+  test('recovers malformed moderator JSON once but does not retry transport failures', async () => {
+    FakeClaudeSession.instances = []
+    const dependencies = (Ctor: typeof FakeClaudeSession) => ({
+      getClaudeSessionCtor: async () => Ctor,
+      getSettings: () => ({ model: 'fake', advanced: {} }),
+      buildThinkingConfig: () => ({ type: 'disabled' }),
+      paths: { memberEngineDir: () => '/tmp/member', roomDir: () => '/tmp/group-room-moderator-recovery' },
+      requestPermission: async () => ({ behavior: 'deny' }),
+    })
+    const participant = member('reviewer')
+    const room = {
+      id: 'recovery-moderator-room', topic: 'Recover JSON', workspace: '/tmp', summary: '',
+      members: [participant], messages: [],
+    }
+    const recovering = new GroupRoomRuntimeRegistry(dependencies(RecoveringModeratorClaudeSession))
+    const result = await recovering.moderate({
+      room, run: { turns: [] }, step: 1, signal: new AbortController().signal,
+    })
+    expect(result.decision).toEqual({ action: 'respond', response: 'Recovered moderator response.' })
+    expect((FakeClaudeSession.instances[0] as RecoveringModeratorClaudeSession).prompts).toHaveLength(2)
+    expect(JSON.parse((FakeClaudeSession.instances[0] as RecoveringModeratorClaudeSession).prompts[1]).protocol)
+      .toBe('moss.group-room.moderator-format-recovery.v1')
+    recovering.disposeAll()
+
+    FakeClaudeSession.instances = []
+    const failing = new GroupRoomRuntimeRegistry(dependencies(FailingModeratorClaudeSession))
+    await expect(failing.moderate({
+      room: { ...room, id: 'failing-moderator-room' },
+      run: { turns: [] },
+      step: 1,
+      signal: new AbortController().signal,
+    })).rejects.toThrow('transport unavailable')
+    expect((FakeClaudeSession.instances[0] as FailingModeratorClaudeSession).prompts).toHaveLength(1)
+    failing.disposeAll()
   })
 })

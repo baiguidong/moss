@@ -31,7 +31,7 @@ function member(name, sourceMemberId = null) {
   };
 }
 
-function controllerFixture(store, paths, captures, runtimeOverrides = {}, onEmit = () => {}) {
+function controllerFixture(store, paths, captures, runtimeOverrides = {}, onEmit = () => {}, catalogOverrides = {}) {
   const catalog = {
     listInviteables: async () => [],
     listConnectors: async () => [],
@@ -47,8 +47,13 @@ function controllerFixture(store, paths, captures, runtimeOverrides = {}, onEmit
       skillCommands: [],
       fingerprint: 'resources',
     }),
+    ...catalogOverrides,
   };
   const runtime = {
+    moderate: async () => ({
+      decision: { action: 'respond', response: 'Moderator answer' },
+      usage: { input_tokens: 1 },
+    }),
     execute: async (input) => {
       captures.push(input);
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -78,6 +83,17 @@ function controllerFixture(store, paths, captures, runtimeOverrides = {}, onEmit
     },
   });
   return { controller, finished };
+}
+
+function scriptedModerator(decisions, captures = []) {
+  let index = 0;
+  return async (input) => {
+    captures.push(input);
+    const selected = decisions[Math.min(index, decisions.length - 1)];
+    index += 1;
+    const decision = typeof selected === 'function' ? await selected(input) : selected;
+    return { decision, usage: { input_tokens: 1 } };
+  };
 }
 
 afterEach(async () => {
@@ -200,10 +216,38 @@ describe('GroupRoomStore', () => {
     store.close();
   });
 
-  test('serial discussion advances snapshots and repeats members for the challenge round', async () => {
+  test('creates a room with one expert plus the implicit moderator and drops legacy discussion settings', async () => {
+    const { store, paths } = await createStore();
+    const { controller } = controllerFixture(store, paths, [], {}, () => {}, {
+      resolveInvitations: async () => [member('Solo', 'solo')],
+    });
+    const room = await controller.createRoom({
+      topic: 'One expert is enough',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['solo'],
+      settings: { mode: 'parallel', discussionPolicy: 'fixed', discussionRounds: 99, permissionMode: 'ask' },
+    });
+
+    assert.equal(room.members.length, 1);
+    assert.equal(room.settings.permissionMode, 'ask');
+    assert.equal(Object.hasOwn(room.settings, 'mode'), false);
+    assert.equal(Object.hasOwn(room.settings, 'discussionPolicy'), false);
+    assert.equal(Object.hasOwn(room.settings, 'discussionRounds'), false);
+    controller.dispose();
+    store.close();
+  });
+
+  test('lets the moderator dynamically delegate dependent work and publish the final answer', async () => {
     const { store, paths } = await createStore();
     const captures = [];
-    const { controller, finished } = controllerFixture(store, paths, captures);
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Inspect first' }] }),
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[1].id, task: 'Verify the first result' }] }),
+        { action: 'respond', response: 'Moderator synthesis' },
+      ], moderationCaptures),
+    });
     const room = await controller.createRoom({
       topic: 'Serial',
       workspace: path.join(paths.root, 'workspace'),
@@ -212,142 +256,268 @@ describe('GroupRoomStore', () => {
     const listedRoom = controller.listRooms().find((entry) => entry.id === room.id);
     assert.deepEqual(listedRoom.members.map((entry) => entry.displayName), ['A', 'B']);
     assert.equal(Object.hasOwn(listedRoom.members[0], 'promptSnapshot'), false);
-    await controller.dispatch(room.id, {
-      content: 'Discuss',
-      mode: 'conversation',
-      memberIds: room.members.map((entry) => entry.id),
-    });
+    const started = await controller.dispatch(room.id, { content: 'Discuss' });
     await finished;
 
-    assert.deepEqual(captures.map((entry) => entry.snapshotSeq), [1, 2, 3, 4]);
-    assert.match(captures[0].turn.assignment, /独立分析/);
-    assert.match(captures[2].turn.assignment, /质疑、补充并收敛/);
-    assert.deepEqual(controller.getRoom(room.id).messages[0].audience, room.members.map((entry) => entry.id));
+    assert.equal(started.mode, 'orchestrated');
+    assert.deepEqual(captures.map((entry) => entry.snapshotSeq), [1, 2]);
+    assert.deepEqual(captures.map((entry) => entry.turn.assignment), ['Inspect first', 'Verify the first result']);
+    assert.equal(moderationCaptures[1].run.turns[0].status, 'completed');
+    assert.deepEqual(controller.getRoom(room.id).messages[0].audience, ['moderator']);
+    assert.equal(controller.getRoom(room.id).messages[0].authorId, 'user');
     assert.deepEqual(controller.getRoom(room.id).messages.map((entry) => entry.content), [
       'Discuss',
       'A conclusion',
       'B conclusion',
-      'A conclusion',
-      'B conclusion',
+      'Moderator synthesis',
+    ]);
+    assert.equal(controller.getRoom(room.id).messages.at(-1).authorType, 'moderator');
+    controller.dispose();
+    store.close();
+  });
+
+  test('ignores legacy caller orchestration fields and allows a direct moderator answer', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures);
+    const room = await controller.createRoom({
+      topic: 'Direct answer',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.dispatch(room.id, {
+      content: 'Answer directly',
+      mode: 'parallel',
+      rounds: 100,
+      memberIds: ['not-a-room-member'],
+      assignments: { 'not-a-room-member': 'must not execute' },
+    });
+    await finished;
+
+    const completed = store.getRun(started.id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.mode, 'orchestrated');
+    assert.equal(completed.turns.length, 0);
+    assert.equal(captures.length, 0);
+    assert.equal(controller.getRoom(room.id).messages.at(-1).content, 'Moderator answer');
+    controller.dispose();
+    store.close();
+  });
+
+  test('routes an intervention that arrives after a run boundary into a new moderator run', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures);
+    const room = await controller.createRoom({
+      topic: 'Boundary message',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.intervene(room.id, { content: 'Late UI message', mode: 'soft' });
+    await finished;
+
+    assert.equal(started.mode, 'orchestrated');
+    assert.equal(store.getRun(started.id).status, 'completed');
+    assert.deepEqual(controller.getRoom(room.id).messages.map((message) => message.content), [
+      'Late UI message',
+      'Moderator answer',
     ]);
     controller.dispose();
     store.close();
   });
 
-  test('supports a caller-specified discussion length beyond the old three-round limit', async () => {
+  test('discards a stale moderator decision and incorporates a soft user intervention', async () => {
     const { store, paths } = await createStore();
     const captures = [];
-    const { controller, finished } = controllerFixture(store, paths, captures);
-    const room = await controller.createRoom({
-      topic: 'Long review',
-      workspace: path.join(paths.root, 'workspace'),
-      invitationIds: ['team'],
-    });
-    const started = await controller.dispatch(room.id, {
-      content: 'Review through five rounds',
-      mode: 'conversation',
-      rounds: 5,
-      memberIds: room.members.map((entry) => entry.id),
-    });
-    await finished;
-
-    const completed = store.getRun(started.id);
-    assert.equal(completed.status, 'completed');
-    assert.equal(completed.turns.length, 10);
-    assert.equal(captures.length, 10);
-    assert.match(captures.at(-1).turn.assignment, /第 5\/5 轮/);
-    controller.dispose();
-    store.close();
-  });
-
-  test('continues discussion until the convergence reviewer finds no material issue', async () => {
-    const { store, paths } = await createStore();
-    const captures = [];
-    const assessments = [];
+    const moderationCaptures = [];
+    let markModerationStarted;
+    let releaseModeration;
+    let calls = 0;
+    const moderationStarted = new Promise((resolve) => { markModerationStarted = resolve; });
+    const moderationGate = new Promise((resolve) => { releaseModeration = resolve; });
     const { controller, finished } = controllerFixture(store, paths, captures, {
-      assessDiscussion: async ({ round }) => {
-        assessments.push(round);
-        return round >= 2
-          ? { stable: true, reason: 'No material disagreement remains.', unresolvedIssues: [] }
-          : { stable: false, reason: 'Evidence is incomplete.', unresolvedIssues: ['Missing evidence'] };
+      moderate: async (input) => {
+        moderationCaptures.push(input);
+        calls += 1;
+        if (calls === 1) {
+          markModerationStarted();
+          await moderationGate;
+          return { decision: { action: 'respond', response: 'Stale answer' } };
+        }
+        return { decision: { action: 'respond', response: 'Corrected answer' } };
       },
     });
     const room = await controller.createRoom({
-      topic: 'Convergence review',
+      topic: 'User correction',
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    const started = await controller.dispatch(room.id, {
-      content: 'Continue until this is resolved',
-      mode: 'conversation',
-      untilStable: true,
-      memberIds: room.members.map((entry) => entry.id),
-    });
-    await finished;
-
-    const completed = store.getRun(started.id);
-    assert.equal(completed.status, 'completed');
-    assert.equal(completed.turns.length, 4);
-    assert.deepEqual(assessments, [1, 2]);
-    assert.match(completed.stopReason, /converged after round 2/);
-    assert.match(captures[2].turn.assignment, /持续讨论|讨论第 2 轮/);
-    controller.dispose();
-    store.close();
-  });
-
-  test('prioritizes a soft host intervention that arrives during convergence review', async () => {
-    const { store, paths } = await createStore();
-    const captures = [];
-    let markAssessmentStarted;
-    let releaseAssessment;
-    const assessmentStarted = new Promise((resolve) => { markAssessmentStarted = resolve; });
-    const assessmentGate = new Promise((resolve) => { releaseAssessment = resolve; });
-    const { controller, finished } = controllerFixture(store, paths, captures, {
-      assessDiscussion: async () => {
-        markAssessmentStarted();
-        return assessmentGate;
-      },
-    });
-    const room = await controller.createRoom({
-      topic: 'Host correction',
-      workspace: path.join(paths.root, 'workspace'),
-      invitationIds: ['team'],
-    });
-    const started = await controller.dispatch(room.id, {
-      content: 'Discuss until stable',
-      mode: 'conversation',
-      untilStable: true,
-      memberIds: room.members.map((entry) => entry.id),
-    });
-    await assessmentStarted;
+    const started = await controller.dispatch(room.id, { content: 'Initial scope' });
+    await moderationStarted;
     await controller.intervene(room.id, { content: 'Include the missing constraint', mode: 'soft' });
-    releaseAssessment({ stable: true, reason: 'Old scope looked complete.', unresolvedIssues: [] });
+    releaseModeration();
     await finished;
 
     const completed = store.getRun(started.id);
-    assert.equal(completed.status, 'superseded');
-    assert.equal(completed.stopReason, 'Superseded by a host intervention');
+    assert.equal(completed.status, 'completed');
+    assert.equal(moderationCaptures.length, 2);
+    assert.equal(moderationCaptures[1].room.messages.at(-1).content, 'Include the missing constraint');
     const messages = controller.getRoom(room.id).messages;
-    assert.equal(messages.at(-1).content, 'Include the missing constraint');
-    assert.equal(messages.some((message) => message.kind === 'moderation'), false);
+    assert.deepEqual(messages.map((message) => message.content), [
+      'Initial scope',
+      'Include the missing constraint',
+      'Corrected answer',
+    ]);
     controller.dispose();
     store.close();
   });
 
-  test('parallel turns use one snapshot and publish in reserved order', async () => {
+  test('forces a final answer instead of executing a repeated delegation', async () => {
     const { store, paths } = await createStore();
     const captures = [];
-    const { controller, finished } = controllerFixture(store, paths, captures);
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Inspect once' }] }),
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Inspect once' }] }),
+        { action: 'respond', response: 'Best available answer' },
+      ], moderationCaptures),
+    });
+    const room = await controller.createRoom({
+      topic: 'Avoid stalls',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.dispatch(room.id, { content: 'Do not loop' });
+    await finished;
+
+    const completed = store.getRun(started.id);
+    assert.equal(completed.turns.length, 1);
+    assert.equal(captures.length, 1);
+    assert.equal(moderationCaptures.at(-1).forceFinish, true);
+    assert.equal(completed.stopReason, 'Moderator repeated the same delegation');
+    assert.equal(controller.getRoom(room.id).messages.at(-1).content, 'Best available answer');
+    controller.dispose();
+    store.close();
+  });
+
+  test('returns failed member work to the moderator instead of failing the whole run', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Try evidence' }] }),
+        { action: 'respond', response: 'The evidence source failed; here is the bounded answer.' },
+      ], moderationCaptures),
+      execute: async (input) => {
+        captures.push(input);
+        throw new Error('Evidence source unavailable');
+      },
+    });
+    const room = await controller.createRoom({
+      topic: 'Failure recovery',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.dispatch(room.id, { content: 'Investigate' });
+    await finished;
+
+    const completed = store.getRun(started.id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.turns[0].status, 'failed');
+    assert.equal(moderationCaptures[1].run.turns[0].error, 'Evidence source unavailable');
+    assert.deepEqual(controller.getRoom(room.id).messages.map((message) => message.content), [
+      'Investigate',
+      'The evidence source failed; here is the bounded answer.',
+    ]);
+    controller.dispose();
+    store.close();
+  });
+
+  test('uses a final-only moderator step when the token budget is reached', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: async (input) => {
+        moderationCaptures.push(input);
+        return input.forceFinish
+          ? { decision: { action: 'respond', response: 'Budget-bounded answer' }, usage: { input_tokens: 1 } }
+          : {
+            decision: { action: 'delegate', assignments: [{ memberId: input.room.members[0].id, task: 'Would exceed budget' }] },
+            usage: { input_tokens: 1_000 },
+          };
+      },
+    });
+    const room = await controller.createRoom({
+      topic: 'Budget',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+      settings: { tokenBudget: 1_000 },
+    });
+    const started = await controller.dispatch(room.id, { content: 'Stay bounded' });
+    await finished;
+
+    const completed = store.getRun(started.id);
+    assert.equal(completed.turns.length, 0);
+    assert.equal(captures.length, 0);
+    assert.equal(moderationCaptures.at(-1).forceFinish, true);
+    assert.equal(completed.stopReason, 'Room token budget reached');
+    controller.dispose();
+    store.close();
+  });
+
+  test('lets the moderator explain connector auth failure while preserving paused recovery state', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Read connector' }] }),
+        { action: 'respond', response: 'Please refresh the connector authorization.' },
+      ], moderationCaptures),
+      execute: async (input) => {
+        captures.push(input);
+        throw new Error('连接器授权需要在连接器中心刷新: mail');
+      },
+    });
+    const room = await controller.createRoom({
+      topic: 'Connector recovery',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    const started = await controller.dispatch(room.id, { content: 'Read mail' });
+    await finished;
+
+    const completed = controller.getRoom(room.id);
+    assert.equal(store.getRun(started.id).status, 'failed');
+    assert.equal(completed.status, 'paused');
+    assert.match(completed.recentRuns[0].stopReason, /连接器授权需要/);
+    assert.equal(moderationCaptures.at(-1).forceFinish, true);
+    assert.equal(completed.messages.at(-1).authorType, 'moderator');
+    controller.dispose();
+    store.close();
+  });
+
+  test('runs one moderator-selected independent batch on a shared snapshot and reserved order', async () => {
+    const { store, paths } = await createStore();
+    const captures = [];
+    const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({
+          action: 'delegate',
+          assignments: room.members.map((member) => ({ memberId: member.id, task: `Independent ${member.displayName}` })),
+        }),
+        { action: 'respond', response: 'Batch synthesis' },
+      ]),
+    });
     const room = await controller.createRoom({
       topic: 'Parallel',
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Split',
-      mode: 'parallel',
-      memberIds: room.members.map((entry) => entry.id),
-    });
+    await controller.dispatch(room.id, { content: 'Split' });
     await finished;
 
     assert.deepEqual(captures.map((entry) => entry.snapshotSeq), [1, 1]);
@@ -355,6 +525,7 @@ describe('GroupRoomStore', () => {
       'Split',
       'A conclusion',
       'B conclusion',
+      'Batch synthesis',
     ]);
     controller.dispose();
     store.close();
@@ -365,6 +536,13 @@ describe('GroupRoomStore', () => {
     const captures = [];
     const pending = new Map();
     const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({
+          action: 'delegate',
+          assignments: room.members.map((member) => ({ memberId: member.id, task: `Independent ${member.displayName}` })),
+        }),
+        { action: 'respond', response: 'Partial synthesis' },
+      ]),
       execute: (input) => new Promise((resolve, reject) => {
         captures.push(input);
         pending.set(input.member.id, { resolve, reject });
@@ -376,11 +554,7 @@ describe('GroupRoomStore', () => {
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Split',
-      mode: 'parallel',
-      memberIds: room.members.map((entry) => entry.id),
-    });
+    await controller.dispatch(room.id, { content: 'Split' });
     while (captures.length < 2) await new Promise((resolve) => setImmediate(resolve));
 
     controller.stopMember(room.id, room.members[0].id);
@@ -393,9 +567,9 @@ describe('GroupRoomStore', () => {
     await finished;
 
     const completed = controller.getRoom(room.id);
-    assert.equal(completed.recentRuns[0].status, 'superseded');
+    assert.equal(completed.recentRuns[0].status, 'completed');
     assert.deepEqual(completed.recentRuns[0].turns.map((turn) => turn.status), ['interrupted', 'completed']);
-    assert.deepEqual(completed.messages.map((message) => message.content), ['Split', 'B survived']);
+    assert.deepEqual(completed.messages.map((message) => message.content), ['Split', 'B survived', 'Partial synthesis']);
     controller.dispose();
     store.close();
   });
@@ -405,6 +579,12 @@ describe('GroupRoomStore', () => {
     const captures = [];
     const pending = new Map();
     const { controller, finished } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({
+          action: 'delegate',
+          assignments: room.members.map((member) => ({ memberId: member.id, task: `Independent ${member.displayName}` })),
+        }),
+      ]),
       execute: (input) => new Promise((resolve) => {
         captures.push(input);
         pending.set(input.member.id, resolve);
@@ -421,11 +601,7 @@ describe('GroupRoomStore', () => {
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Split',
-      mode: 'parallel',
-      memberIds: room.members.map((entry) => entry.id),
-    });
+    await controller.dispatch(room.id, { content: 'Split' });
     while (captures.length < 2) await new Promise((resolve) => setImmediate(resolve));
 
     await controller.stop(room.id);
@@ -440,31 +616,35 @@ describe('GroupRoomStore', () => {
     store.close();
   });
 
-  test('keeps a completed run completed when an intervention lands during finalization', async () => {
+  test('hard intervention aborts moderator finalization but keeps completed evidence', async () => {
     const { store, paths } = await createStore();
     const captures = [];
-    let controller;
-    let interventionPromise;
-    const fixture = controllerFixture(store, paths, captures, {}, (channel, payload) => {
-      if (channel !== 'group-room:event' || payload.type !== 'turn-completed' || interventionPromise) return;
-      interventionPromise = controller.intervene(payload.roomId, { content: 'Post-run note', mode: 'hard' });
+    let rejectFinalization;
+    let markFinalizationStarted;
+    const finalizationStarted = new Promise((resolve) => { markFinalizationStarted = resolve; });
+    const fixture = controllerFixture(store, paths, captures, {
+      moderate: async ({ room, run }) => {
+        if (run.turns.length === 0) {
+          return { decision: { action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Work' }] } };
+        }
+        markFinalizationStarted();
+        return new Promise((_resolve, reject) => { rejectFinalization = reject; });
+      },
+      abortModerator: () => rejectFinalization?.(new Error('Interrupted by the user')),
     });
-    controller = fixture.controller;
+    const controller = fixture.controller;
     const room = await controller.createRoom({
       topic: 'Finalization race',
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Work',
-      mode: 'conversation',
-      memberIds: [room.members[0].id],
-    });
+    await controller.dispatch(room.id, { content: 'Work' });
+    await finalizationStarted;
+    await controller.intervene(room.id, { content: 'Post-run note', mode: 'hard' });
     await fixture.finished;
-    await interventionPromise;
 
     const completed = controller.getRoom(room.id);
-    assert.equal(completed.recentRuns[0].status, 'completed');
+    assert.equal(completed.recentRuns[0].status, 'interrupted');
     assert.deepEqual(completed.messages.map((message) => message.content), ['Work', 'A conclusion', 'Post-run note']);
     controller.dispose();
     store.close();
@@ -488,8 +668,6 @@ describe('GroupRoomStore', () => {
 
     await assert.rejects(() => controller.dispatch(room.id, {
       content: 'This trigger must not persist',
-      mode: 'conversation',
-      memberIds: [room.members[0].id],
     }), /Unable to summarize/);
 
     const failed = controller.getRoom(room.id);
@@ -505,6 +683,9 @@ describe('GroupRoomStore', () => {
     const captures = [];
     const pending = new Map();
     const { controller } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Run' }] }),
+      ]),
       execute: (input) => new Promise((_resolve, reject) => {
         captures.push(input);
         pending.set(input.member.id, { reject });
@@ -516,11 +697,7 @@ describe('GroupRoomStore', () => {
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Run',
-      mode: 'conversation',
-      memberIds: [room.members[0].id],
-    });
+    await controller.dispatch(room.id, { content: 'Run' });
     while (captures.length < 1) await new Promise((resolve) => setImmediate(resolve));
 
     await controller.deleteRoom(room.id);
@@ -535,6 +712,9 @@ describe('GroupRoomStore', () => {
     const captures = [];
     const pending = new Map();
     const { controller } = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Run' }] }),
+      ]),
       execute: (input) => new Promise((_resolve, reject) => {
         captures.push(input);
         pending.set(input.member.id, { reject });
@@ -547,11 +727,7 @@ describe('GroupRoomStore', () => {
       invitationIds: ['team'],
     });
 
-    const dispatching = controller.dispatch(room.id, {
-      content: 'Run',
-      mode: 'conversation',
-      memberIds: [room.members[0].id],
-    });
+    const dispatching = controller.dispatch(room.id, { content: 'Run' });
     const deleting = controller.deleteRoom(room.id);
     await dispatching;
     await deleting;
@@ -566,6 +742,10 @@ describe('GroupRoomStore', () => {
     const captures = [];
     let controller;
     const fixture = controllerFixture(store, paths, captures, {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Read mail' }] }),
+        { action: 'respond', response: 'Permission-backed answer' },
+      ]),
       execute: async (input) => {
         captures.push(input);
         const decision = await controller.requestPermission({
@@ -586,11 +766,7 @@ describe('GroupRoomStore', () => {
       workspace: path.join(paths.root, 'workspace'),
       invitationIds: ['team'],
     });
-    await controller.dispatch(room.id, {
-      content: 'Read mail',
-      mode: 'conversation',
-      memberIds: [room.members[0].id],
-    });
+    await controller.dispatch(room.id, { content: 'Read mail' });
     while (controller.listPendingPermissions().length < 1) {
       await new Promise((resolve) => setImmediate(resolve));
     }

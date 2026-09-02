@@ -55,7 +55,6 @@ export function registerGroupRoomIpcHandlers({ ipcMain, isEnabled, createFeature
     payload.expectedRevision,
   ));
   handle('group-room:dispatch', (controller, payload) => controller.dispatch(payload.roomId, payload));
-  handle('group-room:suggest-moderation', (controller, payload) => controller.suggestModeration(payload.roomId, payload.content));
   handle('group-room:intervene', (controller, payload) => controller.intervene(payload.roomId, payload));
   handle('group-room:stop', (controller, payload) => controller.stop(payload.roomId));
   handle('group-room:stop-member', (controller, payload) => controller.stopMember(payload.roomId, payload.memberId));

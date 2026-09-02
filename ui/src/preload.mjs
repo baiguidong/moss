@@ -91,7 +91,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     updateMemberGrants: (payload) => ipcRenderer.invoke('group-room:update-member-grants', payload),
     refreshMemberSource: (payload) => ipcRenderer.invoke('group-room:refresh-member-source', payload),
     dispatch: (payload) => ipcRenderer.invoke('group-room:dispatch', payload),
-    suggestModeration: (payload) => ipcRenderer.invoke('group-room:suggest-moderation', payload),
     intervene: (payload) => ipcRenderer.invoke('group-room:intervene', payload),
     stop: (payload) => ipcRenderer.invoke('group-room:stop', payload),
     stopMember: (payload) => ipcRenderer.invoke('group-room:stop-member', payload),

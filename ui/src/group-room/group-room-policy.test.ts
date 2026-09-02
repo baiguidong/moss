@@ -72,6 +72,14 @@ describe('Group Room policy', () => {
     })
   })
 
+  test('preserves numeric model token usage while redacting actual token secrets', () => {
+    expect(redactRoomValue({ input_tokens: 12, output_tokens: 3, access_token: 'secret' })).toEqual({
+      input_tokens: 12,
+      output_tokens: 3,
+      access_token: '[REDACTED]',
+    })
+  })
+
   test('serializes turns sharing a write connector lease', async () => {
     const scheduler = new RoomExecutionScheduler({ globalLimit: 4, roomLimit: 4 })
     let active = 0

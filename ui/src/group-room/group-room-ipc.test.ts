@@ -22,6 +22,7 @@ describe('Group Room IPC feature isolation', () => {
     })
 
     expect(await handlers.get('group-room:status')!({})).toEqual({ success: true, data: { enabled: false } })
+    expect(handlers.has('group-room:suggest-moderation')).toBe(false)
     expect(created).toBe(0)
     expect((await handlers.get('group-room:list')!({})).success).toBe(false)
     expect(created).toBe(0)

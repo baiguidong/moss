@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 
+import {
+  GROUP_ROOM_MODERATOR_ID,
+  GROUP_ROOM_USER_ID,
+  delegationFingerprint,
+  normalizeModeratorDecision,
+} from './group-room-moderator.mjs';
 import { redactRoomValue } from './group-room-policy.mjs';
 import { PausableDeadline } from './group-room-timeout.mjs';
 
@@ -77,26 +83,6 @@ function normalizePermissionMode(value) {
   return value === 'ask' || value === 'allow-all' ? value : 'inherit';
 }
 
-function discussionAssignment(base, round, { policy = 'fixed', rounds = 1 } = {}) {
-  if (policy === 'fixed' && rounds <= 1) return base;
-  const roundLabel = policy === 'until-stable' ? `${round}` : `${round}/${rounds}`;
-  if (round === 1) {
-    return [
-      `[讨论第 ${roundLabel} 轮：独立分析]`,
-      base,
-      '给出可核验的证据、主要判断和具体方案；先形成自己的观点，不要只复述题目。',
-    ].join('\n');
-  }
-  return [
-    `[讨论第 ${roundLabel} 轮：质疑、补充并收敛]`,
-    base,
-    '阅读房间内前面所有成员的结论，明确指出至少一项你赞同的证据和一项需要质疑或补充的内容。',
-    policy === 'fixed' && round === rounds
-      ? '最后给出吸收争议后的修订结论、风险和可执行下一步。'
-      : '给出修订观点，并明确列出仍未解决的问题；如果已经没有实质问题，请明确说明依据。',
-  ].join('\n');
-}
-
 function tokenUsage(usage) {
   if (!usage || typeof usage !== 'object') return 0;
   return Object.entries(usage).reduce((total, [key, value]) => (
@@ -104,6 +90,18 @@ function tokenUsage(usage) {
       ? total + Math.max(0, value)
       : total
   ), 0);
+}
+
+function normalizedRoomSettings(settings = {}) {
+  return {
+    maxAgentTurns: Math.max(1, Math.min(50, Number(settings.maxAgentTurns) || 12)),
+    permissionMode: normalizePermissionMode(settings.permissionMode),
+    turnTimeoutMs: clampNumber(settings.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000),
+    runTimeoutMs: clampNumber(settings.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000),
+    tokenBudget: clampNumber(settings.tokenBudget, 120_000, 1_000, 2_000_000),
+    summaryThresholdChars: clampNumber(settings.summaryThresholdChars, 120_000, 40_000, 1_000_000),
+    maxModeratorSteps: clampNumber(settings.maxModeratorSteps, 16, 2, 64),
+  };
 }
 
 export class GroupRoomController {
@@ -172,7 +170,7 @@ export class GroupRoomController {
       this.#catalog.resolveCustomMembers(input?.customMembers),
     ]);
     const members = [...invitedMembers, ...customMembers];
-    if (members.length < 2) throw new Error('A Group Room requires at least two participants.');
+    if (members.length < 1) throw new Error('A Group Room requires at least one expert.');
     if (members.length > 32) throw new Error('A Group Room supports at most 32 participants.');
     const memberNames = new Set();
     for (const member of members) {
@@ -196,17 +194,7 @@ export class GroupRoomController {
       title: input?.title,
       topic: input?.topic,
       workspace,
-      settings: {
-        maxAgentTurns: Math.max(1, Math.min(50, Number(input?.settings?.maxAgentTurns) || 12)),
-        mode: input?.settings?.mode === 'parallel' ? 'parallel' : 'conversation',
-        permissionMode: normalizePermissionMode(input?.settings?.permissionMode),
-        discussionPolicy: input?.settings?.discussionPolicy === 'until-stable' ? 'until-stable' : 'fixed',
-        discussionRounds: clampNumber(input?.settings?.discussionRounds, 2, 1, 100),
-        turnTimeoutMs: clampNumber(input?.settings?.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000),
-        runTimeoutMs: clampNumber(input?.settings?.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000),
-        tokenBudget: clampNumber(input?.settings?.tokenBudget, 120_000, 1_000, 2_000_000),
-        summaryThresholdChars: clampNumber(input?.settings?.summaryThresholdChars, 120_000, 40_000, 1_000_000),
-      },
+      settings: normalizedRoomSettings(input?.settings),
       members,
     });
     this.#emitSnapshot(room.id, 'room-created');
@@ -222,20 +210,11 @@ export class GroupRoomController {
       if (updates?.topic !== undefined) safeUpdates.topic = updates.topic;
       if (updates?.settings !== undefined) {
         const settings = { ...current.settings, ...(updates.settings || {}) };
-        safeUpdates.settings = {
-          maxAgentTurns: Math.max(1, Math.min(50, Number(settings.maxAgentTurns) || 12)),
-          mode: settings.mode === 'parallel' ? 'parallel' : 'conversation',
-          permissionMode: normalizePermissionMode(settings.permissionMode),
-          discussionPolicy: settings.discussionPolicy === 'until-stable' ? 'until-stable' : 'fixed',
-          discussionRounds: clampNumber(settings.discussionRounds, 2, 1, 100),
-          turnTimeoutMs: clampNumber(settings.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000),
-          runTimeoutMs: clampNumber(settings.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000),
-          tokenBudget: clampNumber(settings.tokenBudget, 120_000, 1_000, 2_000_000),
-          summaryThresholdChars: clampNumber(settings.summaryThresholdChars, 120_000, 40_000, 1_000_000),
-        };
+        safeUpdates.settings = normalizedRoomSettings(settings);
       }
       if (Object.keys(safeUpdates).length === 0) return this.#publicRoom(current);
       const room = this.#store.updateRoom(roomId, safeUpdates, expectedRevision);
+      this.#runtime.disposeModerator?.(roomId);
       this.#emitSnapshot(room.id, 'room-updated');
       return this.#publicRoom(room);
     });
@@ -255,6 +234,7 @@ export class GroupRoomController {
         skills: requestedSkills,
       }, expectedRevision);
       this.#runtime.disposeMember(roomId, memberId);
+      this.#runtime.disposeModerator?.(roomId);
       this.#emitSnapshot(room.id, 'member-resources-updated');
       return this.#publicRoom(room);
     });
@@ -269,128 +249,74 @@ export class GroupRoomController {
       const snapshot = await this.#catalog.resolveMemberSource(member);
       const updated = this.#store.updateMemberSnapshot(roomId, memberId, snapshot, expectedRevision);
       this.#runtime.disposeMember(roomId, memberId);
+      this.#runtime.disposeModerator?.(roomId);
       this.#emitSnapshot(roomId, 'member-source-refreshed');
       return this.#publicRoom(updated);
     });
   }
 
   async dispatch(roomId, input) {
-    return this.#commands.run(roomId, async () => {
-      if (this.#active.has(roomId) || this.#store.getActiveRun(roomId)) {
-        throw new Error('The Group Room is already running. Intervene or stop it first.');
-      }
-      const room = this.#store.getRoom(roomId);
-      const memberIds = Array.isArray(input?.memberIds) && input.memberIds.length > 0
-        ? [...new Set(input.memberIds.map(String))]
-        : [room.members[0]?.id].filter(Boolean);
-      const members = new Map(room.members.map((member) => [member.id, member]));
-      for (const memberId of memberIds) {
-        if (!members.has(memberId)) throw new Error(`Room member not found: ${memberId}`);
-      }
-      const content = String(input?.content || '').trim();
-      if (!content) throw new Error('A host message or assignment is required.');
-      const mode = input?.mode === 'parallel' && memberIds.length > 1 ? 'parallel' : 'conversation';
-      const untilStable = mode === 'conversation'
-        && memberIds.length > 1
-        && (input?.untilStable === true || (
-          input?.untilStable === undefined && room.settings?.discussionPolicy === 'until-stable'
-        ));
-      const rounds = mode === 'conversation' && memberIds.length > 1
-        ? clampNumber(input?.rounds, clampNumber(room.settings?.discussionRounds, 2, 1, 100), 1, 100)
-        : 1;
-      const discussionPolicy = untilStable ? 'until-stable' : 'fixed';
-      await this.#compactContextIfNeeded(roomId);
-      const trigger = this.#store.addMessage(roomId, {
-        authorType: 'human',
-        authorId: 'host',
-        audience: memberIds,
-        kind: 'message',
-        content,
-      });
-      const assignments = input?.assignments && typeof input.assignments === 'object'
-        ? input.assignments
-        : {};
-      const turns = memberIds.map((memberId) => {
-        const base = String(assignments[memberId] || content).trim();
-        return {
-          memberId,
-          assignment: discussionAssignment(base, 1, { policy: discussionPolicy, rounds }),
-        };
-      });
-      const run = this.#store.createRun(roomId, {
-        mode,
-        triggerMessageId: trigger.id,
-        turns,
-      });
-      const control = {
-        runId: run.id,
-        abortController: new AbortController(),
-        softIntervention: null,
-        hardIntervention: null,
-        stoppedMemberIds: new Set(),
-        activeMemberIds: new Set(),
-        activeTurnIds: new Map(),
-        totalTokens: 0,
-        tokenBudget: clampNumber(room.settings?.tokenBudget, 120_000, 1_000, 2_000_000),
-        budgetReached: false,
-        abortReason: '',
-        runDeadline: null,
-        turnDeadlines: new Map(),
-        permissionWaitCounts: new Map(),
-        totalPermissionWaits: 0,
-        assessingConvergence: false,
-        discussion: mode === 'conversation' && memberIds.length > 1 ? {
-          policy: discussionPolicy,
-          targetRounds: rounds,
-          currentRound: 1,
-          memberIds,
-          assignments: Object.fromEntries(memberIds.map((memberId) => [
-            memberId,
-            String(assignments[memberId] || content).trim(),
-          ])),
-        } : null,
-        finished: null,
-      };
-      const runTimeoutMs = clampNumber(room.settings?.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000);
-      control.runDeadline = new PausableDeadline(runTimeoutMs, () => {
-        control.abortReason = 'Group Room run timed out';
-        control.abortController.abort(new Error(control.abortReason));
-        for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
-        this.#rejectRoomPermissions(roomId, control.abortReason);
-      });
-      this.#active.set(roomId, control);
-      this.#emitSnapshot(roomId, 'run-started');
-      control.finished = this.#executeRun(roomId, run.id, control);
-      void control.finished.catch(() => {});
-      return this.#store.getRun(run.id);
-    });
+    return this.#commands.run(roomId, () => this.#startRun(roomId, input));
   }
 
-  async suggestModeration(roomId, content) {
-    return this.#commands.run(roomId, async () => {
-      if (this.#active.has(roomId)) throw new Error('Cannot plan a new dispatch while the room is running.');
-      const room = this.#store.getRoom(roomId);
-      const hostMessage = String(content || '').trim();
-      if (!hostMessage) throw new Error('Enter a discussion request before asking the moderator.');
-      const raw = await this.#runtime.suggestModeration({ room, content: hostMessage });
-      const memberIds = new Set(room.members.map((member) => member.id));
-      const assignments = Array.isArray(raw?.assignments) ? raw.assignments : [];
-      const normalized = [];
-      const seen = new Set();
-      for (const assignment of assignments) {
-        const memberId = String(assignment?.memberId || '').trim();
-        const task = String(assignment?.task || '').trim();
-        if (!memberIds.has(memberId) || !task || seen.has(memberId)) continue;
-        seen.add(memberId);
-        normalized.push({ memberId, task: task.slice(0, 10_000) });
-      }
-      if (normalized.length === 0) throw new Error('Moderator returned no valid member assignments.');
-      return {
-        mode: raw?.mode === 'parallel' && normalized.length > 1 ? 'parallel' : 'conversation',
-        assignments: normalized,
-        reason: String(raw?.reason || '').slice(0, 2_000),
-      };
+  async #startRun(roomId, input) {
+    if (this.#active.has(roomId) || this.#store.getActiveRun(roomId)) {
+      throw new Error('The Group Room is already running. Intervene or stop it first.');
+    }
+    const room = this.#store.getRoom(roomId);
+    const content = String(input?.content || '').trim();
+    if (!content) throw new Error('A message to the room moderator is required.');
+    await this.#compactContextIfNeeded(roomId);
+    const trigger = this.#store.addMessage(roomId, {
+      authorType: 'human',
+      authorId: GROUP_ROOM_USER_ID,
+      audience: [GROUP_ROOM_MODERATOR_ID],
+      kind: 'message',
+      content,
     });
+    const run = this.#store.createRun(roomId, {
+      mode: 'orchestrated',
+      triggerMessageId: trigger.id,
+      turns: [],
+    });
+    const control = {
+      runId: run.id,
+      abortController: new AbortController(),
+      softIntervention: null,
+      hardIntervention: null,
+      stoppedMemberIds: new Set(),
+      activeMemberIds: new Set(),
+      activeTurnIds: new Map(),
+      totalTokens: 0,
+      tokenBudget: clampNumber(room.settings?.tokenBudget, 120_000, 1_000, 2_000_000),
+      budgetReached: false,
+      abortReason: '',
+      runDeadline: null,
+      turnDeadlines: new Map(),
+      permissionWaitCounts: new Map(),
+      totalPermissionWaits: 0,
+      moderating: false,
+      moderatorSteps: 0,
+      maxModeratorSteps: clampNumber(room.settings?.maxModeratorSteps, 16, 2, 64),
+      forceFinishReason: '',
+      lastDelegationFingerprint: '',
+      repeatedDelegations: 0,
+      blockingFailure: '',
+      finished: null,
+    };
+    const runTimeoutMs = clampNumber(room.settings?.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000);
+    control.runDeadline = new PausableDeadline(runTimeoutMs, () => {
+      control.abortReason = 'Group Room run timed out';
+      control.abortController.abort(new Error(control.abortReason));
+      this.#runtime.abortModerator?.(roomId);
+      for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
+      this.#rejectRoomPermissions(roomId, control.abortReason);
+    });
+    this.#active.set(roomId, control);
+    this.#emitSnapshot(roomId, 'run-started');
+    control.finished = this.#executeRun(roomId, run.id, control);
+    void control.finished.catch(() => {});
+    return this.#store.getRun(run.id);
   }
 
   async intervene(roomId, { content, mode = 'soft' } = {}) {
@@ -398,32 +324,24 @@ export class GroupRoomController {
       const text = String(content || '').trim();
       if (!text) throw new Error('Intervention content is required.');
       const control = this.#active.get(roomId);
-      const activeRun = control ? this.#store.getRun(control.runId) : null;
-      const hasUnfinishedTurns = activeRun?.turns.some((turn) => ['pending', 'running'].includes(turn.status));
-      if (!control || (!hasUnfinishedTurns && !control.assessingConvergence)) {
-        const message = this.#store.addMessage(roomId, {
-          authorType: 'human',
-          authorId: 'host',
-          content: text,
-        });
-        this.#emitSnapshot(roomId, 'human-message');
-        return message;
-      }
+      if (!control) return this.#startRun(roomId, { content: text });
       if (control.softIntervention || control.hardIntervention) {
-        throw new Error('A host intervention is already queued.');
+        throw new Error('A user intervention is already queued.');
       }
       const queued = this.#store.addMessage(roomId, {
         authorType: 'human',
-        authorId: 'host',
+        authorId: GROUP_ROOM_USER_ID,
+        audience: [GROUP_ROOM_MODERATOR_ID],
         content: text,
         status: 'queued',
       });
       if (mode === 'hard') {
         control.hardIntervention = queued;
-        control.abortReason = 'Interrupted by the room host';
-        control.abortController.abort(new Error('Interrupted by the room host'));
+        control.abortReason = 'Interrupted by the user';
+        control.abortController.abort(new Error(control.abortReason));
+        this.#runtime.abortModerator?.(roomId);
         for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
-        this.#rejectRoomPermissions(roomId, 'Interrupted by the room host');
+        this.#rejectRoomPermissions(roomId, 'Interrupted by the user');
       } else {
         control.softIntervention = queued;
       }
@@ -463,10 +381,11 @@ export class GroupRoomController {
   #stopActiveRun(roomId) {
     const control = this.#active.get(roomId);
     if (!control) return null;
-    control.abortReason = 'Stopped by the room host';
+    control.abortReason = 'Stopped by the user';
     control.abortController.abort(new Error(control.abortReason));
+    this.#runtime.abortModerator?.(roomId);
     for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
-    this.#rejectRoomPermissions(roomId, 'Stopped by the room host');
+    this.#rejectRoomPermissions(roomId, 'Stopped by the user');
     return control;
   }
 
@@ -521,7 +440,7 @@ export class GroupRoomController {
     pending.releaseTimeoutHold?.();
     pending.resolve(allowed
       ? { behavior: 'allow', updatedInput: pending.input }
-      : { behavior: 'deny', message: 'Denied by the room host' });
+      : { behavior: 'deny', message: 'Denied by the user' });
     this.#emit('group-room:permission-resolved', { requestId, roomId: pending.roomId });
   }
 
@@ -529,90 +448,131 @@ export class GroupRoomController {
     let finalStatus = 'completed';
     let stopReason = '';
     try {
-      const run = this.#store.getRun(runId);
-      if (run.mode === 'parallel') {
-        const settled = await Promise.allSettled(
-          run.turns.map((turn) => this.#executeTurn(roomId, run, turn, control, run.contextSnapshotSeq)),
-        );
-        const rejected = settled.find((entry) => entry.status === 'rejected');
-        if (rejected) {
-          finalStatus = control.hardIntervention || control.abortController.signal.aborted
-            ? 'interrupted'
-            : control.stoppedMemberIds.size > 0 ? 'superseded' : 'failed';
-          stopReason = safeRunError(rejected.reason);
+      while (!control.abortController.signal.aborted) {
+        if (control.softIntervention) this.#promoteSoftIntervention(roomId, control);
+        const forceFinish = Boolean(control.forceFinishReason)
+          || control.moderatorSteps >= control.maxModeratorSteps
+          || control.totalTokens >= control.tokenBudget;
+        if (!control.forceFinishReason && forceFinish) {
+          control.forceFinishReason = control.totalTokens >= control.tokenBudget
+            ? 'Room token budget reached'
+            : 'Moderator step limit reached';
         }
-      } else {
-        let snapshotSeq = run.contextSnapshotSeq;
-        let turnIndex = 0;
-        let currentRun = run;
-        while (turnIndex < currentRun.turns.length) {
-          const turn = currentRun.turns[turnIndex];
-          await this.#executeTurn(roomId, run, turn, control, snapshotSeq);
-          turnIndex += 1;
-          const completed = this.#store.listMessages(roomId)
-            .filter((message) => message.status === 'completed' && message.visibility === 'public');
-          snapshotSeq = completed.at(-1)?.seq || snapshotSeq;
-          if (control.softIntervention) {
-            finalStatus = 'superseded';
-            stopReason = 'Superseded by a host intervention';
-            break;
+
+        const room = this.#store.getRoom(roomId);
+        const currentRun = this.#store.getRun(runId);
+        const availableMemberIds = new Set(room.members
+          .filter((member) => !control.stoppedMemberIds.has(member.id))
+          .map((member) => member.id));
+        control.moderating = true;
+        this.#emitSnapshot(roomId, forceFinish ? 'moderator-finalizing' : 'moderator-thinking');
+        let runtimeResult;
+        try {
+          runtimeResult = await this.#runtime.moderate({
+            room,
+            run: currentRun,
+            step: control.moderatorSteps + 1,
+            forceFinish,
+            unavailableMemberIds: [...control.stoppedMemberIds],
+            signal: control.abortController.signal,
+          });
+        } finally {
+          control.moderating = false;
+        }
+        control.moderatorSteps += 1;
+        control.totalTokens += tokenUsage(runtimeResult?.usage);
+        if (control.abortController.signal.aborted) break;
+        if (control.softIntervention) {
+          this.#promoteSoftIntervention(roomId, control);
+          continue;
+        }
+        let decision;
+        try {
+          decision = normalizeModeratorDecision(runtimeResult, {
+            memberIds: availableMemberIds,
+            maxAssignments: 3,
+            forceFinish,
+          });
+        } catch (error) {
+          if (!forceFinish) throw error;
+          finalStatus = control.blockingFailure ? 'failed' : 'completed';
+          stopReason = control.blockingFailure || control.forceFinishReason || safeRunError(error);
+          this.#store.addMessage(roomId, {
+            runId,
+            authorType: 'moderator',
+            authorId: GROUP_ROOM_MODERATOR_ID,
+            kind: 'answer',
+            content: '我已停止继续委派，但当前证据不足以形成可靠结论。请缩小问题范围、补充约束，或稍后重试。',
+          });
+          break;
+        }
+        if (decision.action === 'respond') {
+          this.#store.addMessage(roomId, {
+            runId,
+            authorType: 'moderator',
+            authorId: GROUP_ROOM_MODERATOR_ID,
+            causationId: currentRun.triggerMessageId,
+            correlationId: runId,
+            kind: 'answer',
+            content: redactRoomValue(decision.response),
+          });
+          if (control.blockingFailure) {
+            finalStatus = 'failed';
+            stopReason = control.blockingFailure;
+          } else {
+            stopReason = control.forceFinishReason;
           }
-          if (control.totalTokens >= control.tokenBudget) {
-            finalStatus = 'superseded';
-            stopReason = 'Room token budget reached';
-            break;
-          }
-          const discussion = control.discussion;
-          const completedRound = discussion
-            && turnIndex === currentRun.turns.length
-            && turnIndex % discussion.memberIds.length === 0;
-          if (!completedRound) continue;
-          if (discussion.policy === 'fixed' && discussion.currentRound >= discussion.targetRounds) break;
-          if (discussion.policy === 'until-stable') {
-            const roomSnapshot = this.#store.getRoom(roomId);
-            let decision;
-            control.assessingConvergence = true;
-            try {
-              decision = await this.#runtime.assessDiscussion({
-                room: roomSnapshot,
-                round: discussion.currentRound,
-                memberIds: discussion.memberIds,
-                signal: control.abortController.signal,
-              });
-            } finally {
-              control.assessingConvergence = false;
-            }
-            if (control.softIntervention) {
-              finalStatus = 'superseded';
-              stopReason = 'Superseded by a host intervention';
-              break;
-            }
-            if (decision?.stable === true) {
-              const safeReason = String(redactRoomValue(decision.reason || ''));
-              stopReason = `Discussion converged after round ${discussion.currentRound}${safeReason ? `: ${safeReason}` : ''}`;
-              this.#store.addMessage(roomId, {
-                authorType: 'system',
-                authorId: 'moderator',
-                kind: 'moderation',
-                content: `主持判断：讨论已在第 ${discussion.currentRound} 轮收敛${safeReason ? `。${safeReason}` : '。'}`,
-              });
-              break;
-            }
-          }
-          discussion.currentRound += 1;
-          currentRun = this.#store.appendRunTurns(runId, discussion.memberIds.map((memberId) => ({
-            memberId,
-            assignment: discussionAssignment(discussion.assignments[memberId], discussion.currentRound, {
-              policy: discussion.policy,
-              rounds: discussion.targetRounds,
-            }),
-          })), { contextSnapshotSeq: snapshotSeq });
-          this.#emitSnapshot(roomId, 'discussion-round-added');
+          break;
+        }
+
+        if (control.totalTokens >= control.tokenBudget) {
+          control.budgetReached = true;
+          control.forceFinishReason = 'Room token budget reached';
+          continue;
+        }
+
+        const fingerprint = delegationFingerprint(decision.assignments);
+        control.repeatedDelegations = fingerprint === control.lastDelegationFingerprint
+          ? control.repeatedDelegations + 1
+          : 0;
+        control.lastDelegationFingerprint = fingerprint;
+        if (control.repeatedDelegations >= 1) {
+          control.forceFinishReason = 'Moderator repeated the same delegation';
+          continue;
+        }
+
+        const latestMessage = this.#store.listMessages(roomId).at(-1);
+        const appended = this.#store.appendRunTurns(runId, decision.assignments.map(({ memberId, task }) => ({
+          memberId,
+          assignment: task,
+        })), {
+          contextSnapshotSeq: latestMessage?.seq || currentRun.contextSnapshotSeq,
+        });
+        const batch = appended.turns.slice(-decision.assignments.length);
+        this.#emitSnapshot(roomId, 'moderator-delegated');
+        const settled = await Promise.allSettled(batch.map((turn) => this.#executeTurn(
+          roomId,
+          appended,
+          turn,
+          control,
+          turn.contextSnapshotSeq,
+        )));
+        const connectorFailure = settled
+          .filter((entry) => entry.status === 'rejected')
+          .map((entry) => safeRunError(entry.reason))
+          .find((message) => message.includes('连接器授权需要在连接器中心刷新:'));
+        if (connectorFailure) {
+          control.blockingFailure = connectorFailure;
+          control.forceFinishReason = connectorFailure;
+        }
+        if (control.totalTokens >= control.tokenBudget) {
+          control.budgetReached = true;
+          control.forceFinishReason = 'Room token budget reached';
         }
       }
       if (control.hardIntervention || control.abortController.signal.aborted) {
         finalStatus = control.budgetReached ? 'superseded' : 'interrupted';
-        stopReason ||= control.abortReason || 'Stopped by the room host';
+        stopReason ||= control.abortReason || 'Stopped by the user';
       }
     } catch (error) {
       finalStatus = control.abortController.signal.aborted
@@ -629,41 +589,56 @@ export class GroupRoomController {
       if (intervention) {
         try { this.#store.promoteMessage(intervention.id); } catch {}
       }
+      if (control.abortController.signal.aborted) this.#runtime.disposeModerator?.(roomId);
       this.#active.delete(roomId);
       this.#rejectRoomPermissions(roomId, 'The room run finished.');
       this.#emitSnapshot(roomId, 'run-finished');
     }
   }
 
+  #promoteSoftIntervention(roomId, control) {
+    const intervention = control.softIntervention;
+    if (!intervention) return null;
+    control.softIntervention = null;
+    const promoted = this.#store.promoteMessage(intervention.id);
+    this.#emitSnapshot(roomId, 'soft-intervention-promoted');
+    return promoted;
+  }
+
   async #executeTurn(roomId, run, turn, control, snapshotSeq) {
     const room = this.#store.getRoom(roomId);
     const member = room.members.find((entry) => entry.id === turn.memberId);
     if (!member) throw new Error(`Room member disappeared: ${turn.memberId}`);
-    const resources = await this.#catalog.resolveRuntimeResources(member);
-    const writeConnectorIds = resources.connectorGrants
-      .filter((grant) => grant?.access === 'write')
-      .map((grant) => grant.id);
-    return this.#scheduler.run({
-      roomId,
-      memberId: member.id,
-      connectorLeaseIds: writeConnectorIds,
-      signal: control.abortController.signal,
-    }, async () => {
-      control.activeMemberIds.add(member.id);
-      control.activeTurnIds.set(member.id, turn.id);
-      this.#store.startTurn(turn.id, {
-        resourceFingerprint: resources.fingerprint,
-        contextSnapshotSeq: snapshotSeq,
-      });
-      this.#emitSnapshot(roomId, 'turn-started');
-      const turnTimeoutMs = clampNumber(room.settings?.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000);
-      const turnAbort = new AbortController();
-      const turnDeadline = new PausableDeadline(turnTimeoutMs, () => {
-        turnAbort.abort(new Error('Group Room member turn timed out'));
-        this.#runtime.abortMember(roomId, member.id);
-      });
-      control.turnDeadlines.set(member.id, turnDeadline);
-      try {
+    let turnDeadline = null;
+    let turnFinished = false;
+    try {
+      const resources = await this.#catalog.resolveRuntimeResources(member);
+      const writeConnectorIds = resources.connectorGrants
+        .filter((grant) => grant?.access === 'write')
+        .map((grant) => grant.id);
+      return await this.#scheduler.run({
+        roomId,
+        memberId: member.id,
+        connectorLeaseIds: writeConnectorIds,
+        signal: control.abortController.signal,
+      }, async () => {
+        if (control.abortController.signal.aborted) {
+          throw control.abortController.signal.reason || new Error(control.abortReason || 'Group Room run was stopped');
+        }
+        control.activeMemberIds.add(member.id);
+        control.activeTurnIds.set(member.id, turn.id);
+        this.#store.startTurn(turn.id, {
+          resourceFingerprint: resources.fingerprint,
+          contextSnapshotSeq: snapshotSeq,
+        });
+        this.#emitSnapshot(roomId, 'turn-started');
+        const turnTimeoutMs = clampNumber(room.settings?.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000);
+        const turnAbort = new AbortController();
+        turnDeadline = new PausableDeadline(turnTimeoutMs, () => {
+          turnAbort.abort(new Error('Group Room member turn timed out'));
+          this.#runtime.abortMember(roomId, member.id);
+        });
+        control.turnDeadlines.set(member.id, turnDeadline);
         const result = await this.#runtime.execute({
           room,
           member,
@@ -693,18 +668,14 @@ export class GroupRoomController {
           ...result,
           content: redactRoomValue(result.content),
         });
+        turnFinished = true;
         control.totalTokens += tokenUsage(result.usage);
-        if (run.mode === 'parallel' && control.totalTokens >= control.tokenBudget && !control.abortController.signal.aborted) {
-          control.budgetReached = true;
-          control.abortReason = 'Room token budget reached';
-          control.abortController.abort(new Error(control.abortReason));
-          for (const memberId of control.activeMemberIds) {
-            if (memberId !== member.id) this.#runtime.abortMember(roomId, memberId);
-          }
-        }
         this.#emitSnapshot(roomId, 'turn-completed');
         return result;
-      } catch (error) {
+      });
+    } catch (error) {
+      if (!turnFinished) {
+        control.totalTokens += tokenUsage(error?.roomUsage);
         const interrupted = control.abortController.signal.aborted || control.stoppedMemberIds.has(member.id);
         try {
           this.#store.failTurn(turn.id, safeRunError(error), interrupted ? 'interrupted' : 'failed', {
@@ -713,14 +684,14 @@ export class GroupRoomController {
           });
         } catch {}
         this.#emitSnapshot(roomId, interrupted ? 'turn-interrupted' : 'turn-failed');
-        throw error;
-      } finally {
-        turnDeadline.clear();
-        if (control.turnDeadlines.get(member.id) === turnDeadline) control.turnDeadlines.delete(member.id);
-        control.activeMemberIds.delete(member.id);
-        control.activeTurnIds.delete(member.id);
       }
-    });
+      throw error;
+    } finally {
+      turnDeadline?.clear();
+      if (control.turnDeadlines.get(member.id) === turnDeadline) control.turnDeadlines.delete(member.id);
+      control.activeMemberIds.delete(member.id);
+      control.activeTurnIds.delete(member.id);
+    }
   }
 
   #rejectRoomPermissions(roomId, message) {
@@ -772,7 +743,9 @@ export class GroupRoomController {
         previousSummary: room.summary,
         messages: toSummarize,
       }));
-      return this.#store.updateSummary(roomId, summary, toSummarize.at(-1).seq);
+      const compacted = this.#store.updateSummary(roomId, summary, toSummarize.at(-1).seq);
+      this.#runtime.disposeModerator?.(roomId);
+      return compacted;
     } catch (error) {
       try { this.#store.updateRoom(roomId, { status: 'paused' }); } catch {}
       throw new Error(`Unable to summarize the Group Room safely: ${safeRunError(error)}`);
@@ -817,6 +790,7 @@ export class GroupRoomController {
     this.#disposed = true;
     for (const [roomId, control] of this.#active.entries()) {
       control.abortController.abort(new Error('The Group Room controller was disposed.'));
+      this.#runtime.abortModerator?.(roomId);
       for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
       this.#rejectRoomPermissions(roomId, 'The Group Room controller was disposed.');
     }

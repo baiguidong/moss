@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 const SCHEMA_VERSION = 2;
 const ROOM_STATUSES = new Set(['idle', 'running', 'paused', 'deleting']);
-const RUN_MODES = new Set(['conversation', 'parallel']);
+const RUN_MODES = new Set(['orchestrated', 'conversation', 'parallel']);
 
 function asJson(value, fallback) {
   try {
@@ -441,9 +441,14 @@ export class GroupRoomStore {
   createRun(roomId, input) {
     const id = normalizeId(roomId, 'room id');
     this.#requireRoom(id);
-    const mode = RUN_MODES.has(input?.mode) ? input.mode : 'conversation';
+    const mode = RUN_MODES.has(input?.mode) ? input.mode : 'orchestrated';
     const turns = Array.isArray(input?.turns) ? input.turns : [];
-    if (turns.length < 1 || turns.length > 32) throw new Error('A run requires 1 to 32 turns.');
+    const minimumTurns = mode === 'orchestrated' ? 0 : 1;
+    if (turns.length < minimumTurns || turns.length > 32) {
+      throw new Error(mode === 'orchestrated'
+        ? 'An orchestrated run requires 0 to 32 initial turns.'
+        : 'A legacy run requires 1 to 32 turns.');
+    }
     const memberIds = new Set(this.listMembers(id).map((member) => member.id));
     const runId = normalizeId(input?.id || `run_${randomUUID().replaceAll('-', '')}`, 'run id');
     const timestamp = nowMs();

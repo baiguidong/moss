@@ -240,35 +240,6 @@ function assertFixedGroupRoomComposer(metrics, view) {
   );
 }
 
-async function setInputByAria(client, ariaLabel, value, { blur = false } = {}) {
-  if (blur) {
-    const focused = await client.evaluate(`(() => {
-      const element = [...document.querySelectorAll('input')]
-        .find((entry) => entry.getAttribute('aria-label') === ${JSON.stringify(ariaLabel)} && entry.offsetParent !== null);
-      if (!element) return false;
-      element.focus();
-      element.select();
-      return true;
-    })()`);
-    assert.equal(focused, true, `Visible input not found: ${ariaLabel}`);
-    await client.send('Input.insertText', { text: String(value) });
-    await client.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
-    await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
-    return;
-  }
-  const changed = await client.evaluate(`(() => {
-    const element = [...document.querySelectorAll('input')]
-      .find((entry) => entry.getAttribute('aria-label') === ${JSON.stringify(ariaLabel)} && entry.offsetParent !== null);
-    if (!element) return false;
-    element.focus();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, ${JSON.stringify(String(value))});
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-  })()`);
-  assert.equal(changed, true, `Visible input not found: ${ariaLabel}`);
-}
-
 async function api(client, method, argument) {
   const result = await client.evaluate(`window.agentDesktop.groupRooms[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`);
   if (!result?.success) throw new Error(result?.error || `Group Room API failed: ${method}`);
@@ -335,17 +306,18 @@ async function uiSmoke(client) {
   assert.deepEqual(custom.grants.skills, [skill.command]);
   if (connector) assert.equal(custom.grants.connectors[0]?.id, connector.id);
 
-  await clickText(client, '并行');
-  await sleep(300);
-  detail = await api(client, 'get', { roomId: room.id });
-  assert.equal(detail.settings.mode, 'parallel');
-  await clickText(client, '讨论');
-  await sleep(300);
-  await setInputByAria(client, '讨论轮数', 5, { blur: true });
-  await sleep(300);
-  detail = await api(client, 'get', { roomId: room.id });
-  assert.equal(detail.settings.mode, 'conversation');
-  assert.equal(detail.settings.discussionRounds, 5);
+  const orchestrationControls = await client.evaluate(`(() => ({
+    discussion: [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '讨论' && element.offsetParent !== null),
+    parallel: [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '并行' && element.offsetParent !== null),
+    rounds: Boolean(document.querySelector('[aria-label="讨论轮数"]')),
+    recipients: document.body.innerText.includes('发送给 '),
+    moderatorHint: document.body.innerText.includes('消息将发送给主持人'),
+  }))()`);
+  assert.deepEqual(orchestrationControls, {
+    discussion: false, parallel: false, rounds: false, recipients: false, moderatorHint: true,
+  });
+  assert.equal(Object.hasOwn(detail.settings, 'mode'), false);
+  assert.equal(Object.hasOwn(detail.settings, 'discussionRounds'), false);
 
   await clickText(client, 'E2E 质疑者');
   await waitFor(client, `document.body.innerText.includes('暂无执行记录')`, 'central member transcript');
@@ -539,7 +511,7 @@ async function openRoom(client, title) {
     await sleep(180);
   }
   await clickText(client, title, { exact: false });
-  await waitFor(client, `document.body.innerText.includes(${JSON.stringify(title)}) && Boolean(document.querySelector('textarea[placeholder="发起讨论"]'))`, `room ${title}`);
+  await waitFor(client, `document.body.innerText.includes(${JSON.stringify(title)}) && Boolean(document.querySelector('textarea[placeholder="向主持人说明你的目标"]'))`, `room ${title}`);
 }
 
 async function waitForRoomRun(client, roomId, { approvePermissions = true, timeoutMs = 6 * 60_000 } = {}) {
@@ -585,7 +557,6 @@ async function createScenarioRoom(client, input) {
       tokenBudget: 30_000,
       summaryThresholdChars: 120_000,
       permissionMode: 'inherit',
-      discussionRounds: 1,
       ...scenarioSettings,
     },
     invitationIds: [],
@@ -604,7 +575,7 @@ async function complexCodeDiscussion(client) {
 
   const room = await createScenarioRoom(client, {
     title: `${prefix} 代码审查与修复方案`,
-    topic: '真实检查 Moss 群聊调度、权限和多轮上下文，互相质疑后形成修复方案。',
+    topic: '真实检查 Moss 群聊主持调度、权限和动态上下文，互相质疑后形成修复方案。',
     settings: {
       maxAgentTurns: 10,
       turnTimeoutMs: 15 * 60_000,
@@ -612,7 +583,6 @@ async function complexCodeDiscussion(client) {
       tokenBudget: 120_000,
       summaryThresholdChars: 120_000,
       permissionMode: 'inherit',
-      discussionRounds: 2,
     },
     invitationIds: ['CodeReviewExpert'],
     customMembers: [{
@@ -620,50 +590,47 @@ async function complexCodeDiscussion(client) {
       role: '用实际代码证据质疑方案',
       prompt: [
         '你是严格的 TypeScript/Electron 反方代码审查员。',
-        '每轮必须至少调用一次 Bash 或 Read，检查 ui/src/group-room/group-room-controller.mjs、group-room-runtime.mjs 或 group-rooms-view.tsx 的真实代码。',
-        '第一轮给出带文件位置的具体缺陷和修复方案；第二轮必须阅读另一位成员结论，指出一项赞同和一项质疑，再给出收敛方案。',
+        '每次受主持人委派时必须至少调用一次 Bash 或 Read，检查 ui/src/group-room/group-room-controller.mjs、group-room-runtime.mjs 或 group-rooms-view.tsx 的真实代码。',
+        '首次给出带文件位置的具体缺陷和修复方案；若主持人再次委派，必须阅读其他成员结论，指出一项赞同和一项质疑，再给出收敛方案。',
         '不要修改文件，公开结论控制在500字内。',
       ].join(''),
     }],
   });
   assert.equal(room.settings.permissionMode, 'inherit');
-  assert.equal(room.settings.discussionRounds, 2);
   await openRoom(client, room.title);
-  await setValue(client, '发起讨论', [
-    '真实审查 Moss 群聊实现：重点检查房间权限优先级、多轮串行快照、权限等待超时。',
-    '必须通过 Bash/Read 查看现有代码，提出有文件依据的修复方案；第二轮互相质疑、补充并收敛。',
+  await setValue(client, '向主持人说明你的目标', [
+    '真实审查 Moss 群聊实现：重点检查房间权限优先级、动态委派快照、权限等待超时。',
+    '请主持人按需要委派两位专家，通过 Bash/Read 查看现有代码，审查结果后再决定是否继续，并给出最终修复方案。',
   ].join(''));
-  await clickTitle(client, '发送');
+  await clickTitle(client, '发送给主持人');
   await waitFor(client, `(async () => (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(room.id)}})).data.status === 'running')()`, 'complex discussion start', 30_000);
   const runningUi = await client.evaluate(`(() => ({
     hasDiscussion: [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '讨论' && element.offsetParent !== null),
     hasParallel: [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '并行' && element.offsetParent !== null),
     hasModerator: [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '主持' && element.offsetParent !== null),
-    hasRecipients: document.body.innerText.includes('本轮执行：'),
+    hasCoordinatorStatus: document.body.innerText.includes('主持人'),
     permission: [...document.querySelectorAll('select[aria-label="群权限"]')].find((element) => element.offsetParent !== null)?.value,
   }))()`);
   assert.deepEqual(runningUi, {
-    hasDiscussion: true,
-    hasParallel: true,
-    hasModerator: true,
-    hasRecipients: true,
+    hasDiscussion: false,
+    hasParallel: false,
+    hasModerator: false,
+    hasCoordinatorStatus: true,
     permission: 'inherit',
   });
   const runningScreenshot = await client.screenshot('complex-code-discussion-running.png');
 
   const settled = await waitForRoomRun(client, room.id, { timeoutMs: 45 * 60_000 });
   const run = assertCompleted(settled.room);
-  assert.equal(run.turns.length, 4);
-  assert.equal(new Set(run.turns.map((turn) => turn.memberId)).size, 2);
-  assert.ok(run.turns.slice(1).every((turn, index) => turn.contextSnapshotSeq > run.turns[index].contextSnapshotSeq));
-  assert.ok(run.turns[0].assignment.includes('独立分析'));
-  assert.ok(run.turns[2].assignment.includes('质疑、补充并收敛'));
+  assert.equal(run.mode, 'orchestrated');
+  assert.ok(run.turns.length >= 1);
+  assert.ok(run.turns.every((turn) => !turn.assignment.includes('讨论第')));
   const trace = run.turns.flatMap((turn) => turn.trace);
   assert.ok(trace.some((event) => event.type === 'tool_call' && ['Bash', 'Read'].includes(event.name)), 'Complex discussion did not inspect real code.');
   assert.ok(!trace.some((event) => JSON.stringify(event).includes('Tool is not available in Group Rooms: Bash')), 'Bash was still rejected by Group Rooms.');
   assert.equal(settled.approvalCount, 0, 'Room inherit should carry the global allow-all mode into Group Rooms.');
-  assert.equal(settled.room.messages.filter((message) => message.authorType === 'agent').length, 4);
-  assert.deepEqual(new Set(settled.room.messages[0].audience), new Set(room.members.map((member) => member.id)));
+  assert.equal(settled.room.messages.at(-1).authorType, 'moderator');
+  assert.deepEqual(settled.room.messages[0].audience, ['moderator']);
 
   await clickText(client, '反方代码审查员');
   await waitFor(client, `document.body.innerText.includes('执行命令') || document.body.innerText.includes('Read') || document.body.innerText.includes('工具结果')`, 'complex execution trace');
@@ -687,20 +654,20 @@ async function realScenarios(client) {
   const results = [];
 
   const serial = await createScenarioRoom(client, {
-    title: `${prefix} 1-自定义串行质疑`,
-    topic: '验证自定义成员依次看到前序结论并进行质疑补充。',
+    title: `${prefix} 1-自定义依赖质疑`,
+    topic: '验证主持人按依赖关系委派，自定义成员可看到前序结论并质疑补充。',
     customMembers: [
       { displayName: '方案提出者', role: '给出最小方案', prompt: '用不超过60个汉字提出可执行方案，只输出结论。' },
       { displayName: '证据质疑者', role: '检查论据', prompt: '阅读前一位成员结论，指出一个证据缺口并补充改进，不超过60个汉字。' },
     ],
   });
   await openRoom(client, serial.title);
-  await setValue(client, '发起讨论', '议题：群聊公开区是否应隐藏工具日志？请按角色给出结论。');
-  await clickTitle(client, '发送');
+  await setValue(client, '向主持人说明你的目标', '议题：群聊公开区是否应隐藏工具日志？请按需要委派专家并给出结论。');
+  await clickTitle(client, '发送给主持人');
   let settled = await waitForRoomRun(client, serial.id, { approvePermissions: false });
   let run = assertCompleted(settled.room);
-  assert.deepEqual(run.turns.map((turn) => turn.status), ['completed', 'completed']);
-  assert.ok(run.turns[1].contextSnapshotSeq > run.turns[0].contextSnapshotSeq);
+  assert.ok(run.turns.every((turn) => turn.status === 'completed'));
+  assert.equal(settled.room.messages.at(-1).authorType, 'moderator');
   results.push({ title: serial.title, runId: run.id, messages: settled.room.messages.length });
 
   const team = await createScenarioRoom(client, {
@@ -712,35 +679,27 @@ async function realScenarios(client) {
   assert.ok(team.members.every((member) => member.source.kind === 'expert-team'));
   await api(client, 'dispatch', {
     roomId: team.id,
-    content: '电子发票归档方案有哪些关键合规点？两位成员各用60字内补充或质疑。',
-    mode: 'conversation',
-    memberIds: team.members.slice(0, 2).map((member) => member.id),
+    content: '电子发票归档方案有哪些关键合规点？请主持人按需要选择专家核验并汇总。',
   });
   settled = await waitForRoomRun(client, team.id, { approvePermissions: false });
   run = assertCompleted(settled.room);
-  assert.ok(run.turns[1].contextSnapshotSeq > run.turns[0].contextSnapshotSeq);
+  assert.equal(run.mode, 'orchestrated');
+  assert.equal(settled.room.messages.at(-1).authorType, 'moderator');
   results.push({ title: team.title, runId: run.id, expandedMembers: team.members.length });
 
   const parallel = await createScenarioRoom(client, {
-    title: `${prefix} 3-AI主持并行分工`,
-    topic: '验证主持建议、不同 assignment、共享快照和稳定输出顺序。',
+    title: `${prefix} 3-AI主持自主分工`,
+    topic: '验证主持人自主分工、内部并发和稳定输出顺序。',
     invitationIds: ['CodeReviewExpert', 'DataAnalyticsReporter'],
   });
   await openRoom(client, parallel.title);
-  await setValue(client, '发起讨论', '为群聊功能做验收：一位检查代码风险，一位检查可观测指标，每人60字内。');
-  await clickText(client, '主持');
-  await sleep(150);
-  await waitFor(client, `document.body.innerText.includes('主持建议：')`, 'moderator assignments', 3 * 60_000);
-  const suggestedAssignments = await client.evaluate(`[...document.querySelectorAll('input[placeholder$="的任务"]')].map((element) => element.value).filter(Boolean)`);
-  await clickTitle(client, '发送');
+  await setValue(client, '向主持人说明你的目标', '为群聊功能做验收：请分别委派代码专家检查代码风险、数据专家检查可观测指标，审阅后统一回答，每人60字内。');
+  await clickTitle(client, '发送给主持人');
   settled = await waitForRoomRun(client, parallel.id, { approvePermissions: false });
   run = assertCompleted(settled.room);
   assert.ok(run.turns.length >= 1);
-  if (run.mode === 'parallel' && run.turns.length > 1) {
-    assert.equal(new Set(run.turns.map((turn) => turn.contextSnapshotSeq)).size, 1);
-    const outputAuthors = settled.room.messages.filter((message) => message.runId === run.id).map((message) => message.authorId);
-    assert.deepEqual(outputAuthors, run.turns.map((turn) => turn.memberId));
-  }
+  assert.equal(run.mode, 'orchestrated');
+  assert.equal(settled.room.messages.at(-1).authorType, 'moderator');
   results.push({ title: parallel.title, runId: run.id, mode: run.mode, assignments: run.turns.map((turn) => turn.assignment) });
 
   const skillRoom = await createScenarioRoom(client, {
@@ -759,15 +718,14 @@ async function realScenarios(client) {
   await openRoom(client, skillRoom.title);
   await api(client, 'dispatch', {
     roomId: skillRoom.id,
-    content: '必须调用 Skill 工具，skill=summarize，总结这段文字：群聊把公开结论与私有工具记录分离。',
-    mode: 'conversation',
-    memberIds: [skillMember.id],
+    content: '请主持人委派“摘要执行员”调用 Skill 工具，skill=summarize，总结这段文字：群聊把公开结论与私有工具记录分离。',
   });
   settled = await waitForRoomRun(client, skillRoom.id);
   run = assertCompleted(settled.room);
-  assert.ok(run.turns[0].trace.some((event) => event.type === 'tool_call' && event.name === 'Skill'), 'Skill tool call was not recorded.');
+  const skillTurn = run.turns.find((turn) => turn.memberId === skillMember.id);
+  assert.ok(skillTurn?.trace.some((event) => event.type === 'tool_call' && event.name === 'Skill'), 'Skill tool call was not recorded.');
   assert.ok(settled.approvalCount >= 1, 'Skill permission was not requested.');
-  results.push({ title: skillRoom.title, runId: run.id, approvals: settled.approvalCount, traceEvents: run.turns[0].trace.length });
+  results.push({ title: skillRoom.title, runId: run.id, approvals: settled.approvalCount, traceEvents: skillTurn.trace.length });
 
   const connectorRoom = await createScenarioRoom(client, {
     title: `${prefix} 5-只读连接器`,
@@ -790,18 +748,17 @@ async function realScenarios(client) {
   await openRoom(client, connectorRoom.title);
   await api(client, 'dispatch', {
     roomId: connectorRoom.id,
-    content: '必须调用乐享连接器，只读搜索精确字符串 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901，不得写入任何数据。',
-    mode: 'conversation',
-    memberIds: [connectorMember.id],
+    content: '请主持人委派“知识库检索员”调用乐享连接器，只读搜索精确字符串 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901，不得写入任何数据。',
   });
   settled = await waitForRoomRun(client, connectorRoom.id);
   run = latestRun(settled.room);
   const ungrantedMember = connectorDetail.members.find((member) => member.id !== connectorMember.id);
   assert.deepEqual(ungrantedMember.grants.connectors, []);
   if (run.status === 'completed') {
-    assert.ok(run.turns[0].trace.some((event) => event.type === 'tool_call' && String(event.name).startsWith('mcp__lexiang__')), 'Connector tool call was not recorded.');
+    const connectorTurn = run.turns.find((turn) => turn.memberId === connectorMember.id);
+    assert.ok(connectorTurn?.trace.some((event) => event.type === 'tool_call' && String(event.name).startsWith('mcp__lexiang__')), 'Connector tool call was not recorded.');
     assert.ok(settled.approvalCount >= 1, 'Connector permission was not requested.');
-    results.push({ title: connectorRoom.title, runId: run.id, status: run.status, approvals: settled.approvalCount, traceEvents: run.turns[0].trace.length });
+    results.push({ title: connectorRoom.title, runId: run.id, status: run.status, approvals: settled.approvalCount, traceEvents: connectorTurn.trace.length });
   } else {
     assert.equal(run.status, 'failed');
     assert.equal(settled.room.status, 'paused');
@@ -811,8 +768,8 @@ async function realScenarios(client) {
   }
 
   const interruptRoom = await createScenarioRoom(client, {
-    title: `${prefix} 6-主持硬中断`,
-    topic: '验证并行运行中的主持插话、取消和隐藏未完成输出。',
+    title: `${prefix} 6-用户硬中断`,
+    topic: '验证内部并发运行中的用户补充、取消和隐藏未完成输出。',
     customMembers: [
       { displayName: '长任务甲', role: '持续分析', prompt: '收到任务后先检查仓库多个文件，再给结论。' },
       { displayName: '长任务乙', role: '持续复核', prompt: '收到任务后仔细复核仓库设计，再给结论。' },
@@ -821,19 +778,17 @@ async function realScenarios(client) {
   await openRoom(client, interruptRoom.title);
   await api(client, 'dispatch', {
     roomId: interruptRoom.id,
-    content: '检查群聊模块全部文件后再回答，先不要快速下结论。',
-    mode: 'parallel',
-    memberIds: interruptRoom.members.map((member) => member.id),
+    content: '请主持人同时委派“长任务甲”和“长任务乙”检查群聊模块全部文件后再回答，先不要快速下结论。',
   });
-  await waitFor(client, `(async () => (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data.status === 'running')()`, 'parallel run start');
-  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="插话"]'))`, 'intervention controls');
-  await setValue(client, '插话', '停止原任务：主持人已确认中断，本轮不再继续。');
-  await clickTitle(client, '立即中断并插话');
+  await waitFor(client, `(async () => { const room = (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data; return room.status === 'running' && room.activeRun?.turns.some((turn) => turn.status === 'running'); })()`, 'delegated run start');
+  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="补充约束给主持人"]'))`, 'intervention controls');
+  await setValue(client, '补充约束给主持人', '停止原任务：用户已确认中断，本轮不再继续。');
+  await clickTitle(client, '立即中止并记录补充');
   settled = await waitForRoomRun(client, interruptRoom.id);
   run = latestRun(settled.room);
   assert.equal(run.status, 'interrupted');
   assert.ok(run.turns.some((turn) => turn.status === 'interrupted'), 'Hard intervention did not cancel an active member turn.');
-  assert.ok(settled.room.messages.some((message) => message.authorType === 'human' && message.content.includes('主持人已确认中断')));
+  assert.ok(settled.room.messages.some((message) => message.authorType === 'human' && message.content.includes('用户已确认中断')));
   results.push({ title: interruptRoom.title, runId: run.id, status: run.status, turnStatuses: run.turns.map((turn) => turn.status) });
 
   const screenshot = await client.screenshot('real-scenarios.png');
@@ -854,9 +809,7 @@ async function resumeRealScenarios(client) {
   if (!latestRun(staleConnectorRoom).stopReason.includes('连接器授权需要在连接器中心刷新: lexiang')) {
     await api(client, 'dispatch', {
       roomId: staleConnectorRoom.id,
-      content: '再次只读搜索 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901。不要调用登录或授权工具。',
-      mode: 'conversation',
-      memberIds: [staleConnectorMember.id],
+      content: '请主持人再次委派知识库检索员只读搜索 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901。不要调用登录或授权工具。',
     });
     staleConnectorRoom = (await waitForRoomRun(client, staleConnectorRoom.id, { approvePermissions: false })).room;
   }
@@ -865,11 +818,12 @@ async function resumeRealScenarios(client) {
   assert.equal(run.status, 'failed');
   assert.equal(settled.room.status, 'paused');
   assert.ok(run.stopReason.includes('连接器授权需要在连接器中心刷新: lexiang'));
-  assert.ok(run.turns[0].error.includes('连接器授权需要在连接器中心刷新: lexiang'));
-  results.push({ title: staleConnectorRoom.title, runId: run.id, status: run.status, error: run.turns[0].error });
+  const staleFailedTurn = run.turns.find((turn) => turn.error.includes('连接器授权需要在连接器中心刷新: lexiang'));
+  assert.ok(staleFailedTurn);
+  results.push({ title: staleConnectorRoom.title, runId: run.id, status: run.status, error: staleFailedTurn.error });
 
   for (const room of await api(client, 'list')) {
-    if (room.title.startsWith(`${prefix} 5b-`) || room.title === `${prefix} 6-主持硬中断`) {
+    if (room.title.startsWith(`${prefix} 5b-`) || room.title === `${prefix} 6-用户硬中断`) {
       await api(client, 'delete', { roomId: room.id });
     }
   }
@@ -897,17 +851,17 @@ async function resumeRealScenarios(client) {
   await openRoom(client, connectorRoom.title);
   await api(client, 'dispatch', {
     roomId: connectorRoom.id,
-    content: `必须调用 ${connectorId} 连接器，执行一次最小的只读列表或搜索操作；可用关键词 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901，不得写入任何数据。`,
-    mode: 'conversation',
-    memberIds: [connectorMember.id],
+    content: `请主持人委派“连接器检索员”调用 ${connectorId} 连接器，执行一次最小的只读列表或搜索操作；可用关键词 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901，不得写入任何数据。`,
   });
   settled = await waitForRoomRun(client, connectorRoom.id);
   run = latestRun(settled.room);
-  const connectorCalls = run.turns[0].trace.filter((event) => event.type === 'tool_call' && (
+  const connectorTurn = run.turns.find((turn) => turn.memberId === connectorMember.id);
+  assert.ok(connectorTurn, 'Moderator did not delegate to the requested connector member.');
+  const connectorCalls = connectorTurn.trace.filter((event) => event.type === 'tool_call' && (
     String(event.name).startsWith(`mcp__${connectorId}__`)
     || ['ListMcpResourcesTool', 'ReadMcpResourceTool'].includes(event.name)
   ));
-  const connectorResults = run.turns[0].trace.filter((event) => event.type === 'tool_result');
+  const connectorResults = connectorTurn.trace.filter((event) => event.type === 'tool_result');
   assert.ok(connectorCalls.every((event) => !/(?:auth|login|oauth)/i.test(event.name)), 'The room agent attempted connector authentication.');
   assert.deepEqual(connectorDetail.members.find((member) => member.id !== connectorMember.id).grants.connectors, []);
   if (run.status === 'completed') {
@@ -924,8 +878,8 @@ async function resumeRealScenarios(client) {
   }
 
   const interruptRoom = await createScenarioRoom(client, {
-    title: `${prefix} 6-主持硬中断`,
-    topic: '验证并行运行中的主持插话、取消和隐藏未完成输出。',
+    title: `${prefix} 6-用户硬中断`,
+    topic: '验证内部并发运行中的用户补充、取消和隐藏未完成输出。',
     customMembers: [
       { displayName: '长任务甲', role: '持续分析', prompt: '收到任务后先检查仓库多个文件，再给结论。' },
       { displayName: '长任务乙', role: '持续复核', prompt: '收到任务后仔细复核仓库设计，再给结论。' },
@@ -934,19 +888,17 @@ async function resumeRealScenarios(client) {
   await openRoom(client, interruptRoom.title);
   await api(client, 'dispatch', {
     roomId: interruptRoom.id,
-    content: '检查群聊模块全部文件后再回答，先不要快速下结论。',
-    mode: 'parallel',
-    memberIds: interruptRoom.members.map((member) => member.id),
+    content: '请主持人同时委派“长任务甲”和“长任务乙”检查群聊模块全部文件后再回答，先不要快速下结论。',
   });
-  await waitFor(client, `(async () => (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data.status === 'running')()`, 'parallel run start');
-  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="插话"]'))`, 'intervention controls');
-  await setValue(client, '插话', '停止原任务：主持人已确认中断，本轮不再继续。');
-  await clickTitle(client, '立即中断并插话');
+  await waitFor(client, `(async () => { const room = (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data; return room.status === 'running' && room.activeRun?.turns.some((turn) => turn.status === 'running'); })()`, 'delegated run start');
+  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="补充约束给主持人"]'))`, 'intervention controls');
+  await setValue(client, '补充约束给主持人', '停止原任务：用户已确认中断，本轮不再继续。');
+  await clickTitle(client, '立即中止并记录补充');
   settled = await waitForRoomRun(client, interruptRoom.id, { approvePermissions: false });
   run = latestRun(settled.room);
   assert.equal(run.status, 'interrupted');
   assert.ok(run.turns.some((turn) => turn.status === 'interrupted'), 'Hard intervention did not cancel an active member turn.');
-  assert.ok(settled.room.messages.some((message) => message.authorType === 'human' && message.content.includes('主持人已确认中断')));
+  assert.ok(settled.room.messages.some((message) => message.authorType === 'human' && message.content.includes('用户已确认中断')));
   assert.ok(settled.room.messages.every((message) => message.status === 'completed' && message.visibility === 'public'));
   results.push({ title: interruptRoom.title, runId: run.id, status: run.status, turnStatuses: run.turns.map((turn) => turn.status) });
 
@@ -1011,13 +963,11 @@ async function uiAudit(client) {
   const beforeMessageIds = new Set(skillRoom.messages.map((message) => message.id));
   await api(client, 'dispatch', {
     roomId: skillRoom.id,
-    content: '必须调用 Skill 工具中的 summarize，总结：权限弹窗必须允许主持人停止本轮。',
-    mode: 'conversation',
-    memberIds: [skillMember.id],
+    content: '请主持人委派“摘要执行员”调用 Skill 工具中的 summarize，总结：权限弹窗必须允许用户停止本轮。',
   });
-  await waitFor(client, `[...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '允许一次' && element.offsetParent !== null) && [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '停止本轮' && element.offsetParent !== null)`, 'stoppable permission modal', 3 * 60_000);
+  await waitFor(client, `[...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '允许一次' && element.offsetParent !== null) && [...document.querySelectorAll('button')].some((element) => (element.textContent || '').trim() === '停止当前执行' && element.offsetParent !== null)`, 'stoppable permission modal', 3 * 60_000);
   screenshots.permission = await client.screenshot('ui-permission.png');
-  await clickText(client, '停止本轮');
+  await clickText(client, '停止当前执行');
   const stopped = await waitForRoomRun(client, skillRoom.id, { approvePermissions: false });
   const stoppedRun = latestRun(stopped.room);
   assert.equal(stoppedRun.status, 'interrupted');
@@ -1061,15 +1011,14 @@ async function finalizeScenarioFixtures(client) {
   await openRoom(client, skillRoom.title);
   await api(client, 'dispatch', {
     roomId: skillRoom.id,
-    content: '必须调用 Skill 工具，skill=summarize，总结这段文字：群聊把公开结论与私有工具记录分离。',
-    mode: 'conversation',
-    memberIds: [skillMember.id],
+    content: '请主持人委派“摘要执行员”调用 Skill 工具，skill=summarize，总结这段文字：群聊把公开结论与私有工具记录分离。',
   });
   let settled = await waitForRoomRun(client, skillRoom.id);
   let run = assertCompleted(settled.room);
-  assert.ok(run.turns[0].trace.some((event) => event.type === 'tool_call' && event.name === 'Skill'));
-  assert.ok(run.turns[0].trace.some((event) => event.type === 'tool_result' && !event.isError));
-  assert.equal(settled.room.messages.filter((message) => message.authorType === 'agent').length, 1);
+  const completedSkillTurn = run.turns.find((turn) => turn.memberId === skillMember.id);
+  assert.ok(completedSkillTurn?.trace.some((event) => event.type === 'tool_call' && event.name === 'Skill'));
+  assert.ok(completedSkillTurn?.trace.some((event) => event.type === 'tool_result' && !event.isError));
+  assert.equal(settled.room.messages.at(-1).authorType, 'moderator');
 
   const authRoom = await createScenarioRoom(client, {
     title: `${prefix} 5-只读连接器`,
@@ -1090,9 +1039,7 @@ async function finalizeScenarioFixtures(client) {
   });
   await api(client, 'dispatch', {
     roomId: authRoom.id,
-    content: '只读搜索 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901。不要调用登录或授权工具。',
-    mode: 'conversation',
-    memberIds: [authMember.id],
+    content: '请主持人委派“知识库检索员”只读搜索 MOSS_GROUP_ROOM_E2E_NO_MATCH_20260901。不要调用登录或授权工具。',
   });
   settled = await waitForRoomRun(client, authRoom.id, { approvePermissions: false });
   run = latestRun(settled.room);
