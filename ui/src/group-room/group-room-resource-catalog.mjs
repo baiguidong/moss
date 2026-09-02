@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   readAssistantContext,
@@ -8,14 +8,8 @@ import {
   readAssistantRelativeMarkdown,
 } from '../assistant-context-utils.mjs';
 
-const RUNTIME_FINGERPRINT_KEY = randomBytes(32);
-
 function hashJson(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function runtimeHash(value) {
-  return createHmac('sha256', RUNTIME_FINGERPRINT_KEY).update(JSON.stringify(value)).digest('hex');
 }
 
 function stringValue(...values) {
@@ -141,6 +135,7 @@ export class GroupRoomResourceCatalog {
         command,
         name: String(skill.displayName || skill.name || command),
         description: String(skill.description || ''),
+        source: path.resolve(skill.source),
       });
     }
     const seen = new Set();
@@ -194,7 +189,7 @@ export class GroupRoomResourceCatalog {
   }
 
   async listSkills() {
-    return this.#skillRecords();
+    return (await this.#skillRecords()).map(({ source: _source, ...skill }) => skill);
   }
 
   async resolveCustomMembers(value) {
@@ -226,6 +221,7 @@ export class GroupRoomResourceCatalog {
           assistantPath: '',
           enabledSkills: selected.map((skill) => skill.id),
           skillCommands,
+          skillDirectories: Object.fromEntries(selected.map((skill) => [skill.command, [skill.source]])),
           sourceType: 'custom',
           sourceHash,
         },
@@ -284,11 +280,33 @@ export class GroupRoomResourceCatalog {
       ? await this.#deps.listSkills()
       : [];
     const skillCommands = await inlineSkillCommands(assistant.source, enabledSkills, installedSkills);
+    const installedSkillDirectories = new Map();
+    for (const skill of Array.isArray(installedSkills) ? installedSkills : []) {
+      if (skill?.enabled === false || !skill?.source) continue;
+      const command = skillCommand(skill.name || skill.slug || path.basename(skill.source));
+      if (command) installedSkillDirectories.set(command, path.resolve(skill.source));
+    }
+    const skillDirectories = {};
+    for (const command of skillCommands) {
+      const candidates = [
+        path.join(assistant.source, 'skills', command),
+        path.join(assistant.source, '.moss', 'skills', command),
+        installedSkillDirectories.get(command),
+      ].filter(Boolean);
+      const directories = [];
+      for (const candidate of candidates) {
+        try {
+          if ((await fsp.stat(candidate)).isDirectory()) directories.push(path.resolve(candidate));
+        } catch {}
+      }
+      skillDirectories[command] = [...new Set(directories)];
+    }
     const commonSnapshot = {
       assistantName: String(assistant.name),
       assistantPath: path.resolve(assistant.source),
       enabledSkills,
       skillCommands,
+      skillDirectories,
       sourceType: String(meta.source_type || assistant.tag || 'local'),
     };
 
@@ -347,96 +365,4 @@ export class GroupRoomResourceCatalog {
     return resolved;
   }
 
-  async resolveRuntimeResources(member) {
-    const connectorGrants = Array.isArray(member?.grants?.connectors) ? member.grants.connectors : [];
-    const connectorIds = stringList(connectorGrants.map((grant) => grant?.id));
-    const connectorActionIds = stringList(connectorGrants
-      .filter((grant) => grant?.access === 'write' || grant?.exec === true)
-      .map((grant) => grant?.id));
-    const rawConnectors = typeof this.#deps.listConnectors === 'function'
-      ? await this.#deps.listConnectors()
-      : [];
-    const available = new Map((Array.isArray(rawConnectors) ? rawConnectors : [])
-      .filter((connector) => connector?.enabled !== false && connector?.connected === true)
-      .map((connector) => [connector.id, connector]));
-    const unavailableConnectorIds = connectorIds.filter((id) => !available.has(id));
-    if (unavailableConnectorIds.length > 0) {
-      throw new Error(`Room connector is unavailable or not authorized: ${unavailableConnectorIds.join(', ')}`);
-    }
-    const mcpServers = typeof this.#deps.getConnectorMcpServers === 'function'
-      ? this.#deps.getConnectorMcpServers(connectorIds)
-      : {};
-    const mcpServerAccess = {};
-    const mcpServerConnectors = {};
-    const connectorSkillCommands = [];
-    for (const grant of connectorGrants) {
-      if (!available.has(grant.id)) continue;
-      const grantedServers = typeof this.#deps.getConnectorMcpServers === 'function'
-        ? this.#deps.getConnectorMcpServers([grant.id])
-        : {};
-      for (const serverName of Object.keys(grantedServers || {})) {
-        mcpServerAccess[serverName] = grant.access === 'write' ? 'write' : 'read';
-        mcpServerConnectors[serverName] = grant.id;
-      }
-      const connector = available.get(grant.id);
-      if ((grant.access === 'write' || grant.exec === true) && connector?.skillRoot) {
-        try {
-          const entries = await fsp.readdir(connector.skillRoot, { withFileTypes: true });
-          connectorSkillCommands.push(...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
-        } catch {}
-      }
-    }
-    const connectorDirs = typeof this.#deps.getConnectorAddDirs === 'function'
-      ? this.#deps.getConnectorAddDirs(connectorActionIds)
-      : [];
-    const cliCommandNames = typeof this.#deps.getConnectorCliCommandNames === 'function'
-      ? stringList(this.#deps.getConnectorCliCommandNames(connectorGrants
-        .filter((grant) => grant?.exec === true)
-        .map((grant) => grant.id)))
-      : [];
-    const knownCliCommandNames = typeof this.#deps.getConnectorCliCommandNames === 'function'
-      ? stringList(this.#deps.getConnectorCliCommandNames(connectorIds))
-      : [];
-    const environment = typeof this.#deps.getConnectorCredentialEnv === 'function'
-      ? this.#deps.getConnectorCredentialEnv(connectorIds)
-      : {};
-    const assistantPath = member?.resourceSnapshot?.assistantPath;
-    const addDirs = [...new Set([
-      typeof assistantPath === 'string' ? assistantPath : '',
-      ...(Array.isArray(connectorDirs) ? connectorDirs : []),
-    ].filter(Boolean).map((entry) => path.resolve(entry)))];
-    const serverNames = Object.keys(mcpServers || {});
-    const skillCommands = [...new Set([
-      ...stringList(member?.grants?.skills),
-      ...connectorSkillCommands,
-    ])];
-    const fingerprint = runtimeHash({
-      sourceHash: member?.source?.hash || member?.resourceSnapshot?.sourceHash || '',
-      connectorGrants: connectorGrants.map((grant) => ({
-        id: grant.id,
-        access: grant.access || 'read',
-        exec: grant.exec === true,
-      })),
-      mcpServers,
-      environment,
-      addDirs,
-      cliCommandNames,
-      knownCliCommandNames,
-      skillCommands,
-    });
-    return {
-      connectorIds,
-      connectorGrants,
-      mcpServers: mcpServers || {},
-      mcpServerNames: serverNames,
-      mcpServerAccess,
-      mcpServerConnectors,
-      addDirs,
-      cliCommandNames,
-      knownCliCommandNames,
-      environment: environment || {},
-      skillCommands,
-      fingerprint,
-    };
-  }
 }

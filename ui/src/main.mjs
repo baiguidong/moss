@@ -40,11 +40,13 @@ import { getInstalledAssistants, registerAgentIpcHandlers } from './agent-ipc.mj
 import { createGroupRoomDataPaths } from './group-room/group-room-layout.mjs';
 import { GroupRoomStore } from './group-room/group-room-store.mjs';
 import { GroupRoomResourceCatalog } from './group-room/group-room-resource-catalog.mjs';
-import { RoomExecutionScheduler } from './group-room/group-room-scheduler.mjs';
-import { GroupRoomRuntimeRegistry } from './group-room/group-room-runtime.mjs';
 import { GroupRoomController } from './group-room/group-room-controller.mjs';
 import { registerGroupRoomIpcHandlers } from './group-room/group-room-ipc.mjs';
 import { isGroupRoomOnlySettingsUpdate } from './group-room/group-room-feature-flag.mjs';
+import {
+  extractPersistedWorkerMappings,
+  validateGroupRoomRosterToolUse,
+} from './group-room/group-room-roster.mjs';
 import {
   createMossAppEventHandler,
   listAllStoredApps,
@@ -548,6 +550,7 @@ let desktopAppShutdownComplete = false;
 let localAuditService = null;
 let localAuditScanTimer = null;
 let groupRoomIpc = null;
+let groupRoomFeature = null;
 let feishuAdapterProcessManager = null;
 let feishuAdapterController = null;
 let appDecisionBroker = null;
@@ -2834,9 +2837,13 @@ function getSessionMcpServers(sessionRecord) {
   };
 }
 
-function getSessionAddDirs(sessionRecord) {
+function getSessionAddDirs(sessionRecord, groupRoom = null) {
+  const roomDescriptor = groupRoom || (sessionRecord?.sessionKind === 'group-room'
+    ? getGroupRoomRuntimeDescriptor(sessionRecord)
+    : null);
   const dirs = [
     ...(Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : []),
+    ...(Array.isArray(roomDescriptor?.addDirs) ? roomDescriptor.addDirs : []),
     ...getConnectorAddDirs(getSessionConnectorIds(sessionRecord)),
   ];
   const seen = new Set();
@@ -2875,43 +2882,87 @@ function buildThinkingConfig() {
 }
 
 function createGroupRoomFeature() {
+  if (groupRoomFeature) return groupRoomFeature;
   const paths = createGroupRoomDataPaths(MOSS_HOME);
   const store = new GroupRoomStore({ paths });
   const catalog = new GroupRoomResourceCatalog({
     listAssistants: getInstalledAssistants,
     listSkills: getInstalledSkills,
     listConnectors: listInstalledConnectors,
-    getConnectorMcpServers,
-    getConnectorAddDirs,
-    getConnectorCliCommandNames,
-    getConnectorCredentialEnv,
   });
-  const scheduler = new RoomExecutionScheduler({ globalLimit: 4, roomLimit: 3 });
-  let controller = null;
-  const runtime = new GroupRoomRuntimeRegistry({
-    getClaudeSessionCtor,
-    getSettings: () => desktopSettings,
-    buildThinkingConfig: () => buildThinkingConfig(),
-    paths,
-    requestPermission: (request) => controller.requestPermission(request),
-    onRuntimeSession: (memberId, runtimeSessionId) => {
-      store.setMemberRuntimeSession(memberId, runtimeSessionId);
-    },
-  });
-  controller = new GroupRoomController({
+  const controller = new GroupRoomController({
     store,
     catalog,
-    runtime,
-    scheduler,
+    paths,
+    sessions: {
+      create({ roomId, title, workspace }) {
+        const record = createSessionRecord({
+          title,
+          workspace,
+          agentMode: 'local',
+          sessionKind: 'group-room',
+          sourceSessionId: roomId,
+        });
+        record.isCoordinatorMode = true;
+        schedulePersistSession(record, true);
+        emitSessionMeta(record);
+        return getSessionSummary(record);
+      },
+      async sync(room) {
+        const record = getSessionRecord(room.sessionId);
+        if (record.busy || getProjectWorkerTasks(record).some(isActiveProjectWorker)) {
+          throw new Error('Cannot change room configuration while the coordinator or a member is running.');
+        }
+        const workspaceChanged = path.resolve(record.workspace) !== path.resolve(room.workspace);
+        record.title = room.title;
+        record.workspace = room.workspace;
+        record.sessionKind = 'group-room';
+        record.sourceSessionId = room.id;
+        record.isCoordinatorMode = true;
+        record.connectorIds = [...new Set(room.members.flatMap((member) => (
+          (member.grants?.connectors || []).map((grant) => String(grant.id || '')).filter(Boolean)
+        )))];
+        record.updatedAt = Date.now();
+        disposeRuntime(record);
+        if (workspaceChanged) {
+          closeWorkspaceWatcher(record);
+          await startWorkspaceWatcher(record);
+        }
+        schedulePersistSession(record, true);
+        emitSessionMeta(record);
+        return getSessionSummary(record);
+      },
+      async delete(sessionId) {
+        if (!sessions.has(sessionId)) return;
+        await deleteSessionRecordById(sessionId);
+      },
+      getSummary(sessionId) {
+        return getSessionSummary(getSessionRecord(sessionId));
+      },
+      isActive(sessionId) {
+        const record = getSessionRecord(sessionId);
+        return Boolean(record.busy || getProjectWorkerTasks(record).some(isActiveProjectWorker));
+      },
+    },
     emit: emitToRenderer,
   });
-  return {
+  groupRoomFeature = {
     controller,
     dispose() {
       controller.dispose();
       store.close();
+      groupRoomFeature = null;
     },
   };
+  return groupRoomFeature;
+}
+
+function getGroupRoomRuntimeDescriptor(sessionRecord) {
+  if (sessionRecord?.sessionKind !== 'group-room' || !sessionRecord.sourceSessionId) return null;
+  if (desktopSettings.advanced?.moss_group_rooms !== true) {
+    throw new Error('Group Rooms are disabled in advanced settings.');
+  }
+  return createGroupRoomFeature().controller.getRuntimeDescriptor(sessionRecord.sourceSessionId);
 }
 
 function startManagedRuntimeInstall() {
@@ -3016,9 +3067,83 @@ function buildProjectSystemPrompt(sessionRecord) {
   return lines.join('\n');
 }
 
+function buildGroupRoomSystemPrompt(sessionRecord, descriptor = getGroupRoomRuntimeDescriptor(sessionRecord)) {
+  if (!descriptor) return '';
+  const roster = descriptor.members.map((member) => ({
+    memberId: member.id,
+    displayName: member.displayName,
+    role: member.role,
+    expert_id: member.id,
+    connector_ids: member.connectorIds,
+    skill_ids: member.skillIds,
+  }));
+  const instructions = String(descriptor.room.settings?.moderatorInstructions || '').trim();
+  return [
+    '[Moss Group Room moderator contract]',
+    `Room ID: ${descriptor.room.id}`,
+    `Room title: ${descriptor.room.title}`,
+    `Discussion topic: ${descriptor.room.topic || 'Use the latest user message as the current topic.'}`,
+    `Room Brief: ${descriptor.roomBriefPath}`,
+    'You are the room moderator and the only user-facing speaker. Use your normal tools to inspect or modify the workspace whenever that is the best way to handle the request.',
+    'The roster below is fixed. Never create a worker outside it and never create a second worker for the same member.',
+    'Do not activate members just because the room was created. On each user request, decide whether to answer or act yourself, activate only relevant members, or start all members for an initial broad briefing when that materially improves the discussion.',
+    'The first Agent call for a member creates that member. Set name to memberId, subagent_type to general-purpose, expert_id to the same memberId, run_in_background=true, connector_ids and skill_ids to subsets of that member grants, and omit team_name. Include a self-contained Room Brief: room topic, latest user request, relevant prior conclusions, desired output, constraints, the user language to use, and how the result will be used.',
+    'After a member has been created, continue that same member only with SendMessage using memberId as to. Never call Agent again for that member.',
+    'You decide delegation, parallelism, follow-up questions, cross-review, conflict resolution, and convergence from the evidence. There is no fixed round count and no requirement to consult every member. Before a high-impact review or conclusion, seek another relevant opinion when it would materially improve reliability.',
+    'Do not expose routing as synthetic chat messages. Tool progress already shows which member is working. Return one coherent moderator answer in the user language, naming member contributions only when useful.',
+    'Allowed roster and grants:',
+    JSON.stringify(roster, null, 2),
+    ...(instructions ? ['', 'Room-specific moderator instructions:', instructions] : []),
+  ].join('\n');
+}
+
+function buildGroupRoomTaskScope(sessionRecord, descriptor = getGroupRoomRuntimeDescriptor(sessionRecord)) {
+  if (!descriptor) return null;
+  const connectorIds = [...new Set(descriptor.connectorIds)];
+  const skillIds = [...new Set(descriptor.members.flatMap((member) => member.skillIds))];
+  return {
+    kind: 'group-room',
+    roomId: descriptor.room.id,
+    sessionId: sessionRecord.id,
+    projectResources: {
+      connectors: connectorIds.map((id) => ({
+        id,
+        mcpServerNames: Object.keys(getConnectorMcpServers([id])),
+        skillCommands: getConnectorCliCommandNames([id]),
+        directories: getConnectorAddDirs([id]),
+        environment: getConnectorCredentialEnv([id]),
+      })),
+      skills: skillIds.map((id) => ({
+        id,
+        command: id,
+        directories: [...new Set(descriptor.members
+          .filter((member) => member.skillIds.includes(id))
+          .flatMap((member) => member.skillDirectories?.[id] || []))],
+      })),
+      experts: descriptor.members.map((member) => ({
+        id: member.id,
+        instructionsPath: member.expertInstructionsPath,
+        directories: [...new Set([
+          path.dirname(member.expertInstructionsPath),
+          ...(member.assistantPath ? [member.assistantPath] : []),
+        ])],
+      })),
+    },
+    memberResources: Object.fromEntries(descriptor.members.map((member) => [member.id, {
+      connectorIds: member.connectorIds,
+      skillIds: member.skillIds,
+      expertId: member.id,
+    }])),
+  };
+}
+
 function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+  const groupRoomDescriptor = sessionRecord?.sessionKind === 'group-room'
+    ? getGroupRoomRuntimeDescriptor(sessionRecord)
+    : null;
   const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
+  const groupRoomPrompt = buildGroupRoomSystemPrompt(sessionRecord, groupRoomDescriptor);
   const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
     ? sessionRecord.assistantSystemPrompt.trim()
@@ -3026,6 +3151,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
   const appendSystemPrompt = [
     desktopSettings.appendSystemPrompt,
     projectContextPrompt,
+    groupRoomPrompt,
     connectorSystemPrompt,
     runtimeSystemPrompt,
   ]
@@ -3040,11 +3166,17 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     appendSystemPrompt: appendSystemPrompt || undefined,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(),
-    permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
+    permissionMode: sessionRecord?.sessionKind === 'group-room'
+      ? (groupRoomDescriptor?.permissionMode === 'allow-all'
+        ? 'allow-all'
+        : groupRoomDescriptor?.permissionMode === 'ask'
+          ? 'default'
+          : desktopSettings.bypassPermissions ? 'allow-all' : 'default')
+      : desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getSessionMcpServers(sessionRecord),
-    addDirs: getSessionAddDirs(sessionRecord),
+    addDirs: getSessionAddDirs(sessionRecord, groupRoomDescriptor),
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
@@ -3056,7 +3188,9 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     },
     projectDir: sessionRecord?.id ? getLocalSessionEngineDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
-      ? (sessionRecord.projectId
+      ? (sessionRecord.sessionKind === 'group-room'
+        ? buildGroupRoomTaskScope(sessionRecord, groupRoomDescriptor)
+        : sessionRecord.projectId
         ? {
             kind: 'project',
             projectId: sessionRecord.projectId,
@@ -3438,7 +3572,14 @@ function refreshDesktopSettings(payload = {}) {
 
   let skippedSessionCount = 0;
   const groupRoomsAreEnabled = nextSettings.advanced?.moss_group_rooms === true;
-  if (groupRoomsWereEnabled && !groupRoomsAreEnabled) groupRoomIpc?.dispose();
+  if (groupRoomsWereEnabled && !groupRoomsAreEnabled) {
+    for (const sessionRecord of sessions.values()) {
+      if (sessionRecord.sessionKind !== 'group-room') continue;
+      try { sessionRecord.runtime?.abort({ includeBackgroundTasks: true }); } catch {}
+      disposeRuntime(sessionRecord);
+    }
+    groupRoomIpc?.dispose();
+  }
   const affectsAgentRuntime = !isGroupRoomOnlySettingsUpdate(payload)
     && Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
   if (affectsAgentRuntime) {
@@ -3465,6 +3606,12 @@ function refreshDesktopSettings(payload = {}) {
   });
 }
 
+function normalizeSessionKind(value) {
+  if (value === 'cron') return 'cron';
+  if (value === 'group-room') return 'group-room';
+  return 'chat';
+}
+
 function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
   return [
     sessionRecord.id,
@@ -3487,7 +3634,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
       ? 'feishu'
       : sessionRecord.sessionKind === 'cron' ? 'cron' : 'desktop',
     JSON.stringify(normalizeStringList(sessionRecord.connectorIds)),
-    sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    normalizeSessionKind(sessionRecord.sessionKind),
     sessionRecord.sourceSessionId || null,
     sessionRecord.cronTaskId || null,
     sessionRecord.parentSessionId || null,
@@ -3550,7 +3697,7 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     assistantName: sessionRecord.assistantName || null,
     projectId: sessionRecord.projectId || null,
     connectorIds: normalizeStringList(sessionRecord.connectorIds),
-    sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
     originChannel: sessionRecord.originChannel === 'feishu'
       ? 'feishu'
       : sessionRecord.sessionKind === 'cron' ? 'cron' : 'desktop',
@@ -3562,6 +3709,7 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     parentSessionId: sessionRecord.parentSessionId || null,
     sessionRole: sessionRecord.sessionRole || 'chat',
     subagentStatus: sessionRecord.subagentStatus || null,
+    workerName: sessionRecord.workerName || null,
     projectTaskStatus: PROJECT_TASK_STATUSES.has(sessionRecord.projectTaskStatus)
       ? sessionRecord.projectTaskStatus
       : null,
@@ -3666,7 +3814,7 @@ function hydratePersistedSessions() {
         : null,
       agentMode,
       sessionDir: getLocalSessionDir(row.id),
-      isCoordinatorMode: Boolean(row.is_coordinator_mode || row.project_id),
+      isCoordinatorMode: Boolean(row.is_coordinator_mode || row.project_id || row.session_kind === 'group-room'),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
@@ -3688,7 +3836,7 @@ function hydratePersistedSessions() {
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
       connectorIds: parsePersistedStringList(row.connector_ids_json),
-      sessionKind: row.session_kind === 'cron' ? 'cron' : 'chat',
+      sessionKind: normalizeSessionKind(row.session_kind),
       originChannel: row.origin_channel === 'feishu'
         ? 'feishu'
         : row.session_kind === 'cron' ? 'cron' : 'desktop',
@@ -3708,6 +3856,7 @@ function hydratePersistedSessions() {
       autoCollapseToolCalls: row.auto_collapse_tool_calls == null
         ? null
         : Boolean(row.auto_collapse_tool_calls),
+      pendingGroupWorkerNames: new Set(),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -3755,7 +3904,7 @@ function hydratePersistedSessions() {
       assistantSystemPrompt: '',
       projectId: normalizeOptionalProjectId(row.project_id),
       connectorIds: parsePersistedStringList(row.connector_ids_json),
-      sessionKind: row.session_kind === 'cron' ? 'cron' : 'chat',
+      sessionKind: normalizeSessionKind(row.session_kind),
       originChannel: row.origin_channel === 'feishu'
         ? 'feishu'
         : row.session_kind === 'cron' ? 'cron' : 'desktop',
@@ -4011,7 +4160,7 @@ function getSessionSummary(sessionRecord) {
     projectConclusion: finalizerResult?.conclusion || '',
     projectMemoryVersion: finalizerResult?.memoryVersion || 0,
     connectorIds: getSessionConnectorIds(sessionRecord),
-    sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+    sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
     originChannel: sessionRecord.originChannel === 'feishu'
       ? 'feishu'
       : sessionRecord.sessionKind === 'cron' ? 'cron' : 'desktop',
@@ -4027,6 +4176,7 @@ function getSessionSummary(sessionRecord) {
     parentSessionId: sessionRecord.parentSessionId || null,
     sessionRole: sessionRecord.sessionRole || 'chat',
     subagentStatus: sessionRecord.subagentStatus || null,
+    workerName: sessionRecord.workerName || null,
   };
 }
 
@@ -4245,7 +4395,9 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
     sessionRecord.title = metadata.customTitle.trim();
   }
   if (metadata.mode) {
-    sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId) || metadata.mode === 'coordinator';
+    sessionRecord.isCoordinatorMode = sessionRecord.sessionKind === 'group-room'
+      || Boolean(sessionRecord.projectId)
+      || metadata.mode === 'coordinator';
   }
   if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
     if (sessionRecord.agentMode === 'remote-direct') {
@@ -5278,6 +5430,56 @@ function validateProjectToolUse(sessionRecord, input) {
     behavior: 'deny',
     message: '项目任务不能绕过连接器确认。请使用相同参数和预览返回的 confirmation_token 重试；若令牌失效，请重新生成预览并再次询问用户。',
   };
+}
+
+function getPersistedGroupWorkerMappings(sessionRecord) {
+  if (sessionRecord?.sessionKind !== 'group-room') return [];
+  const descriptor = getGroupRoomRuntimeDescriptor(sessionRecord);
+  return extractPersistedWorkerMappings(sessionRecord.history, descriptor?.members);
+}
+
+function restoreGroupRoomWorkerNames(sessionRecord) {
+  if (sessionRecord?.sessionKind !== 'group-room' || !sessionRecord.runtime) return;
+  const mappings = getPersistedGroupWorkerMappings(sessionRecord);
+  sessionRecord.runtime.registerAgentNames?.(mappings);
+  sessionRecord.pendingGroupWorkerNames ||= new Set();
+  for (const mapping of mappings) sessionRecord.pendingGroupWorkerNames.add(mapping.name);
+}
+
+function denyToolUse(message) {
+  return { behavior: 'deny', message };
+}
+
+function validateGroupRoomToolUse(sessionRecord, toolName, input) {
+  if (sessionRecord?.sessionKind !== 'group-room') return null;
+  const descriptor = getGroupRoomRuntimeDescriptor(sessionRecord);
+  if (!descriptor) return denyToolUse('群聊配置不存在，不能继续调度成员。');
+  const registry = sessionRecord.runtime?.getAppState?.()?.agentNameRegistry;
+  const existingNames = new Set([
+    ...(registry ? [...registry.keys()] : []),
+    ...(sessionRecord.pendingGroupWorkerNames || []),
+  ]);
+  const taskIds = new Set(registry ? [...registry.entries()]
+    .filter(([name]) => descriptor.members.some((member) => member.id === name))
+    .map(([, agentId]) => String(agentId)) : []);
+  const message = validateGroupRoomRosterToolUse({
+    toolName,
+    input,
+    members: descriptor.members,
+    existingNames,
+    taskIds,
+  });
+  if (message) return denyToolUse(message);
+  if (toolName === 'Agent' || toolName === 'Task') {
+    sessionRecord.pendingGroupWorkerNames ||= new Set();
+    sessionRecord.pendingGroupWorkerNames.add(String(input?.name || '').trim());
+  }
+  return null;
+}
+
+function validateSessionToolUse(sessionRecord, toolName, input) {
+  return validateProjectToolUse(sessionRecord, input)
+    || validateGroupRoomToolUse(sessionRecord, toolName, input);
 }
 
 async function respondToPendingQuestionRequest(pending, {
@@ -6716,7 +6918,7 @@ function createSessionRecord({
     remoteWorkspace: null,
     agentMode,
     sessionDir,
-    isCoordinatorMode: Boolean(normalizedProjectId),
+    isCoordinatorMode: Boolean(normalizedProjectId || sessionKind === 'group-room'),
     createdAt: now,
     updatedAt: now,
     busy: false,
@@ -6737,7 +6939,7 @@ function createSessionRecord({
     assistantSystemPrompt: '',
     projectId: normalizedProjectId,
     connectorIds: normalizeStringList(connectorIds),
-    sessionKind: sessionKind === 'cron' ? 'cron' : 'chat',
+    sessionKind: normalizeSessionKind(sessionKind),
     originChannel: originChannel === 'feishu'
       ? 'feishu'
       : sessionKind === 'cron' ? 'cron' : 'desktop',
@@ -6755,6 +6957,7 @@ function createSessionRecord({
     projectTaskError: '',
     projectTaskCompletedAt: null,
     autoCollapseToolCalls: null,
+    pendingGroupWorkerNames: new Set(),
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -6921,7 +7124,7 @@ function getLocalAuditSessionSnapshots() {
       workspace: sessionRecord.workspace,
       projectId: sessionRecord.projectId || null,
       assistantName: sessionRecord.assistantName || null,
-      sessionKind: sessionRecord.sessionKind === 'cron' ? 'cron' : 'chat',
+      sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
       isSubAgent: Boolean(sessionRecord.isSubAgent),
       createdAt: sessionRecord.createdAt,
       updatedAt: sessionRecord.updatedAt,
@@ -7072,11 +7275,21 @@ async function syncSubAgentSessionsForParent(parentSession) {
       }
     }
     if (!isLiveParent()) return synced;
-    const title = typeof meta?.description === 'string' && meta.description.trim()
-      ? meta.description.trim()
-      : typeof meta?.agentType === 'string' && meta.agentType.trim()
-        ? meta.agentType.trim()
-        : '子会话';
+    let roomMemberName = '';
+    if (parentSession.sessionKind === 'group-room' && typeof meta?.agentName === 'string') {
+      try {
+        roomMemberName = getGroupRoomRuntimeDescriptor(parentSession)?.members
+          .find((member) => member.id === meta.agentName)?.displayName || meta.agentName;
+      } catch {}
+    }
+    const taskDescription = typeof meta?.description === 'string' ? meta.description.trim() : '';
+    const title = roomMemberName
+      ? `${roomMemberName}${taskDescription ? ` · ${taskDescription}` : ''}`
+      : taskDescription
+        ? taskDescription
+        : typeof meta?.agentType === 'string' && meta.agentType.trim()
+          ? meta.agentType.trim()
+          : '子会话';
     const workspace = createDefaultWorkspacePath(id);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
@@ -7160,6 +7373,7 @@ async function syncSubAgentSessionsForParent(parentSession) {
       persistTimer: existing?.persistTimer || null,
       isSubAgent: true,
       assistantName: typeof meta?.agentType === 'string' ? meta.agentType : null,
+      workerName: typeof meta?.agentName === 'string' ? meta.agentName : null,
       assistantSystemPrompt: '',
       projectId: parentSession.projectId || null,
       connectorIds: parentSession.projectId
@@ -7427,8 +7641,8 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
   };
 
   if (sessionRecord.agentMode === 'remote-direct') {
-    if (sessionRecord.projectId) {
-      throw new Error('项目会话暂不支持远程直连模式，请切换到本地模式后重试。');
+    if (sessionRecord.projectId || sessionRecord.sessionKind === 'group-room') {
+      throw new Error('协调器会话暂不支持远程直连模式，请切换到本地模式后重试。');
     }
     sessionRecord.runtime = createRemoteDirectRuntime({
       sessionRecord,
@@ -7451,9 +7665,10 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
     coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
     onPermissionRequest,
-    onToolUseValidation: async (_toolName, input) => validateProjectToolUse(sessionRecord, input),
+    onToolUseValidation: async (toolName, input) => validateSessionToolUse(sessionRecord, toolName, input),
     onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
   });
+  restoreGroupRoomWorkerNames(sessionRecord);
   attachBackgroundTaskWatcher(sessionRecord);
   attachSessionTaskWatcher(sessionRecord);
 
@@ -7505,7 +7720,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
       onPermissionRequest: async (toolName, input, request) => {
         return requestToolPermission(sessionRecord, toolName, input, request);
       },
-      onToolUseValidation: async (_toolName, input) => validateProjectToolUse(sessionRecord, input),
+      onToolUseValidation: async (toolName, input) => validateSessionToolUse(sessionRecord, toolName, input),
       onAppEvent: (appEvent) => mossAppEventHandler(appEvent, sessionRecord),
     });
 
@@ -7535,8 +7750,11 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
       sessionRecord.title = resumed.metadata.customTitle;
     }
     if (resumed.metadata.mode) {
-      sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId) || resumed.metadata.mode === 'coordinator';
+      sessionRecord.isCoordinatorMode = sessionRecord.sessionKind === 'group-room'
+        || Boolean(sessionRecord.projectId)
+        || resumed.metadata.mode === 'coordinator';
     }
+    restoreGroupRoomWorkerNames(sessionRecord);
     if (sessionRecord.workspaceWatcher) {
       await syncWorkspaceWatcher(sessionRecord);
     } else {
@@ -8104,6 +8322,7 @@ function toFeishuSessionOption(sessionRecord) {
     || sessionRecord.agentMode !== 'local'
     || sessionRecord.isSubAgent
     || sessionRecord.sessionKind === 'cron'
+    || sessionRecord.sessionKind === 'group-room'
   ) return null;
   const summary = getSessionSummary(sessionRecord);
   if (summary.resumeReadOnlyReason) return null;
@@ -9572,6 +9791,9 @@ function assertSessionCanFork(sessionRecord) {
   if (sessionRecord.sessionKind === 'cron') {
     throw new Error('定时任务会话不能分叉。');
   }
+  if (sessionRecord.sessionKind === 'group-room') {
+    throw new Error('群聊会话由固定成员主持人管理，不能分叉。');
+  }
   if (sessionRecord.busy) {
     throw new Error('会话正在执行任务，请等待当前回复完成后再分叉。');
   }
@@ -9853,7 +10075,7 @@ async function removeSubAgentSessionRecords(parentSessionId) {
   return children.length;
 }
 
-ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
+async function deleteSessionRecordById(sessionId) {
   const sessionRecord = getSessionRecord(sessionId);
   const activeProjectTaskRun = projectCoordinatorTaskRuns.get(sessionRecord.id) || null;
   if (sessionRecord.isSubAgent) {
@@ -9861,7 +10083,13 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
   }
   if (isProjectTaskRootSession(sessionRecord)) {
     projectTaskCancellationRequests.add(sessionRecord.id);
-    try { sessionRecord.runtime?.abort(); } catch {}
+  }
+  try {
+    sessionRecord.runtime?.abort({ includeBackgroundTasks: sessionRecord.sessionKind === 'group-room' });
+  } catch {}
+  if (sessionRecord.sessionKind === 'group-room' && sessionRecord.busy) {
+    const deadline = Date.now() + 5_000;
+    while (sessionRecord.busy && Date.now() < deadline) await sleepMs(50);
   }
   sessionRecord.deleted = true;
   const subAgentSyncTimer = subAgentSyncTimers.get(sessionRecord.id);
@@ -9921,7 +10149,11 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => {
     removedCronTasks: removedCronTasks.length,
     removedCronTaskPrompts: removedCronTasks.map((t) => String(t.prompt || '').slice(0, 60)),
   };
-});
+}
+
+ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => (
+  deleteSessionRecordById(sessionId)
+));
 
 ipcMain.handle('agent:pick-directory', async () => {
   const response = await dialog.showOpenDialog(mainWindow, {
@@ -10003,7 +10235,7 @@ ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
   if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
     projectTaskCancellationRequests.add(sessionRecord.id);
   }
-  sessionRecord.runtime?.abort();
+  sessionRecord.runtime?.abort({ includeBackgroundTasks: sessionRecord.sessionKind === 'group-room' });
   if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
     await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
       status: 'stopped',
@@ -10718,8 +10950,15 @@ async function sendAgentPromptNow(event, {
   if (sessionRecord.isSubAgent) {
     throw new Error('子会话记录为只读；请返回主会话继续协调或重新发起任务。');
   }
+  if (sessionRecord.sessionKind === 'group-room') {
+    getGroupRoomRuntimeDescriptor(sessionRecord);
+  }
   if (sessionRecord.busy && !allowBusyQueue) {
     throw new Error('This session is already processing a request.');
+  }
+  if (sessionRecord.sessionKind === 'group-room') {
+    sessionRecord.pendingGroupWorkerNames ||= new Set();
+    sessionRecord.pendingGroupWorkerNames.clear();
   }
   if (sessionRecord.projectId) {
     const project = readProjectSync(sessionRecord.projectId);
@@ -10730,7 +10969,7 @@ async function sendAgentPromptNow(event, {
 
   // Store durable chat/boss mode on sessionRecord so runtime and renderer stay in sync.
   // Plan turns are one-shot and should not rewrite the session's durable mode.
-  if (sessionRecord.projectId) {
+  if (sessionRecord.projectId || sessionRecord.sessionKind === 'group-room') {
     sessionRecord.isCoordinatorMode = true;
   } else if (mode === 'coordinator' || coordinatorMode) {
     sessionRecord.isCoordinatorMode = true;
@@ -10760,8 +10999,8 @@ async function sendAgentPromptNow(event, {
     if (sourceChannel !== 'desktop') {
       throw new Error('Direct shell commands are disabled for external chat sessions.');
     }
-    if (sessionRecord.projectId) {
-      throw new Error('项目会话需通过项目协调者执行工作，不能直接运行 shell 命令。');
+    if (sessionRecord.projectId || sessionRecord.sessionKind === 'group-room') {
+      throw new Error('协调器会话需由主持人执行工作，不能直接运行 shell 命令。');
     }
     const command = trimmedPrompt.slice(1).trim();
     if (!command) {
@@ -10771,7 +11010,10 @@ async function sendAgentPromptNow(event, {
   }
 
   const isPlanOnly = mode === 'plan';
-  const isCoordinatorMode = Boolean(sessionRecord.projectId) || mode === 'coordinator' || coordinatorMode;
+  const isCoordinatorMode = sessionRecord.sessionKind === 'group-room'
+    || Boolean(sessionRecord.projectId)
+    || mode === 'coordinator'
+    || coordinatorMode;
 
   if (isPlanOnly && sessionRecord.pendingPlanApproval) {
     throw new Error('There is already a pending plan awaiting approval.');

@@ -60,57 +60,6 @@ describe('GroupRoomResourceCatalog', () => {
     expect(catalog.resolveInvitations(['review-team'])).rejects.toThrow('builder')
   })
 
-  test('keeps connector secrets in main-process runtime resources only', async () => {
-    const source = await teamFixture()
-    let credential = 'secret-one'
-    const catalog = new GroupRoomResourceCatalog({
-      listAssistants: async () => [{ name: 'review-team', displayName: 'Review Team', source, enabled: true }],
-      listConnectors: async () => [{ id: 'mail', name: 'Mail', enabled: true, connected: true }],
-      getConnectorMcpServers: () => ({ mail: { type: 'stdio', env: { TOKEN: credential } } }),
-      getConnectorCredentialEnv: () => ({ TOKEN: credential }),
-      getConnectorAddDirs: () => [],
-    })
-    const [member] = await catalog.resolveInvitations(['review-team'])
-    member.grants.connectors = [{ id: 'mail', access: 'write' }]
-    const runtime = await catalog.resolveRuntimeResources(member)
-
-    expect(runtime.environment.TOKEN).toBe('secret-one')
-    expect(JSON.stringify(member)).not.toContain('secret-one')
-    expect(runtime.mcpServerNames).toEqual(['mail'])
-    credential = 'secret-two'
-    const rotated = await catalog.resolveRuntimeResources(member)
-    expect(rotated.fingerprint).not.toBe(runtime.fingerprint)
-    expect(rotated.fingerprint).not.toContain('secret-two')
-  })
-
-  test('does not advertise connector skills or add-dirs to a read-only grant', async () => {
-    const source = await teamFixture()
-    const connectorRoot = path.join(source, 'mail-connector')
-    const skillRoot = path.join(connectorRoot, 'skills')
-    await mkdir(path.join(skillRoot, 'connector-mail'), { recursive: true })
-    await writeFile(path.join(skillRoot, 'connector-mail', 'SKILL.md'), '---\nname: connector-mail\n---\nMail actions')
-    const catalog = new GroupRoomResourceCatalog({
-      listAssistants: async () => [{ name: 'review-team', displayName: 'Review Team', source, enabled: true }],
-      listConnectors: async () => [{ id: 'mail', name: 'Mail', enabled: true, connected: true, skillRoot }],
-      getConnectorMcpServers: () => ({ mail: { type: 'http', url: 'https://example.test/mcp' } }),
-      getConnectorCredentialEnv: () => ({}),
-      getConnectorAddDirs: (ids: string[]) => ids.includes('mail') ? [connectorRoot] : [],
-      getConnectorCliCommandNames: (ids: string[]) => ids.includes('mail') ? ['mail-cli'] : [],
-    })
-    const [member] = await catalog.resolveInvitations(['review-team'])
-    member.grants.connectors = [{ id: 'mail', access: 'read' }]
-    const readOnly = await catalog.resolveRuntimeResources(member)
-    expect(readOnly.addDirs).not.toContain(connectorRoot)
-    expect(readOnly.skillCommands).not.toContain('connector-mail')
-
-    member.grants.connectors = [{ id: 'mail', access: 'write', exec: true }]
-    const executable = await catalog.resolveRuntimeResources(member)
-    expect(executable.addDirs).toContain(connectorRoot)
-    expect(executable.skillCommands).toContain('connector-mail')
-    expect(executable.cliCommandNames).toEqual(['mail-cli'])
-    expect(executable.fingerprint).not.toBe(readOnly.fingerprint)
-  })
-
   test('does not grant a forked expert skill to room members', async () => {
     const source = await teamFixture()
     await mkdir(path.join(source, 'skills', 'review'), { recursive: true })
@@ -142,6 +91,9 @@ describe('GroupRoomResourceCatalog', () => {
     expect(custom.source.kind).toBe('custom')
     expect(custom.promptSnapshot).toBe('Find unsupported claims and return evidence.')
     expect(custom.grants.skills).toEqual(['custom-skill'])
-    expect(await catalog.listSkills()).toEqual([expect.objectContaining({ id: 'skill-id', command: 'custom-skill' })])
+    expect(custom.resourceSnapshot.skillDirectories).toEqual({ 'custom-skill': [skillRoot] })
+    const listed = await catalog.listSkills()
+    expect(listed).toEqual([expect.objectContaining({ id: 'skill-id', command: 'custom-skill' })])
+    expect(listed[0]).not.toHaveProperty('source')
   })
 })

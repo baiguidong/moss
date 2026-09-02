@@ -67,7 +67,7 @@ import {
 } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
-import { asSessionId, type SessionId } from './types/ids.js'
+import { asAgentId, asSessionId, type SessionId } from './types/ids.js'
 import {
   runWithSessionIdContext,
   runWithSessionIdContextGenerator,
@@ -557,6 +557,7 @@ export class ClaudeSession {
   #storageActivated = false
   #sessionApiOverrides: SessionApiOverrides | undefined
   #workspaceRegistryIds: string[] = []
+  #pendingAgentNames = new Map<string, ReturnType<typeof asAgentId>>()
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -851,6 +852,16 @@ export class ClaudeSession {
       duration_ms: Date.now() - storeStart,
     })
     const store = this.#store
+
+    if (this.#pendingAgentNames.size > 0) {
+      store.setState(previous => ({
+        ...previous,
+        agentNameRegistry: new Map([
+          ...previous.agentNameRegistry,
+          ...this.#pendingAgentNames,
+        ]),
+      }))
+    }
 
     if (resumeState) {
       const resumeRestoreStart = Date.now()
@@ -1231,13 +1242,20 @@ export class ClaudeSession {
   }
 
   /** 中止正在进行的请求 */
-  abort() {
+  abort(options: { includeBackgroundTasks?: boolean } = {}) {
     if (this.#abortController) {
       this.#abortController.abort()
       this.#abortController = null
     }
     if (this.#engine) {
       this.#engine.interrupt()
+    }
+    if (options.includeBackgroundTasks && this.#store) {
+      for (const task of Object.values(this.#store.getState().tasks)) {
+        if (task.type === 'local_agent' && task.status === 'running') {
+          task.abortController?.abort()
+        }
+      }
     }
   }
 
@@ -1257,6 +1275,21 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
+  }
+
+  /** Restore stable display-name routing for persisted background agents. */
+  registerAgentNames(entries: Array<{ name: string; agentId: string }>): void {
+    if (!Array.isArray(entries) || entries.length === 0) return
+    for (const entry of entries) {
+      const name = typeof entry?.name === 'string' ? entry.name.trim() : ''
+      const agentId = typeof entry?.agentId === 'string' ? entry.agentId.trim() : ''
+      if (name && agentId) this.#pendingAgentNames.set(name, asAgentId(agentId))
+    }
+    this.#store?.setState(previous => {
+      const next = new Map(previous.agentNameRegistry)
+      for (const [name, agentId] of this.#pendingAgentNames) next.set(name, agentId)
+      return { ...previous, agentNameRegistry: next }
+    })
   }
 
   getTaskListId() {

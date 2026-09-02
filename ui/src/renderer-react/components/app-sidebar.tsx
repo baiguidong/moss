@@ -59,7 +59,7 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
   projectId?: string | null;
   projectName?: string | null;
-  sessionKind?: 'chat' | 'cron';
+  sessionKind?: 'chat' | 'cron' | 'group-room';
   originChannel?: 'desktop' | 'feishu' | 'cron';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;

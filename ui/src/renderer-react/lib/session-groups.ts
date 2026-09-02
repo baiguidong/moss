@@ -7,7 +7,7 @@ export type GroupableSession = {
   projectName?: string | null;
   parentSessionId?: string | null;
   isSubAgent?: boolean;
-  sessionKind?: 'chat' | 'cron';
+  sessionKind?: 'chat' | 'cron' | 'group-room';
   originChannel?: 'desktop' | 'feishu' | 'cron';
 };
 
@@ -75,7 +75,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       sessions: prioritizePinned(sessions.filter(
         (session) => {
           const root = groupSession(session);
-          return root.sessionKind !== 'cron' && root.originChannel === 'feishu';
+          return root.sessionKind !== 'cron' && root.sessionKind !== 'group-room' && root.originChannel === 'feishu';
         },
       )),
     },
@@ -85,7 +85,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       sessions: prioritizePinned(sessions.filter(
         (session) => {
           const root = groupSession(session);
-          return root.sessionKind !== 'cron' && root.originChannel !== 'feishu' && !root.projectId;
+          return root.sessionKind !== 'cron' && root.sessionKind !== 'group-room' && root.originChannel !== 'feishu' && !root.projectId;
         },
       )),
     },
@@ -100,7 +100,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       sessions: prioritizePinned(sessions.filter(
         (session) => {
           const root = groupSession(session);
-          return root.sessionKind !== 'cron' && root.originChannel !== 'feishu' && Boolean(root.projectId);
+          return root.sessionKind !== 'cron' && root.sessionKind !== 'group-room' && root.originChannel !== 'feishu' && Boolean(root.projectId);
         },
       )),
     },

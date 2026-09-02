@@ -16,6 +16,8 @@ describe('sidebar session groups', () => {
       { id: 'project', projectId: 'project-1' },
       { id: 'cron', sessionKind: 'cron' as const },
       { id: 'project-cron', sessionKind: 'cron' as const, projectId: 'project-1' },
+      { id: 'room', sessionKind: 'group-room' as const },
+      { id: 'room-worker', parentSessionId: 'room', isSubAgent: true },
     ]);
 
     expect(groups.map((group) => [group.id, group.sessions.map((session) => session.id)])).toEqual([

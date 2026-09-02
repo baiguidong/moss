@@ -36,7 +36,6 @@ export function registerGroupRoomIpcHandlers({ ipcMain, isEnabled, createFeature
   handle('group-room:list', (controller) => controller.listRooms());
   handle('group-room:get', (controller, payload) => controller.getRoom(payload.roomId));
   handle('group-room:list-resources', (controller) => controller.listResources());
-  handle('group-room:list-pending-permissions', (controller) => controller.listPendingPermissions());
   handle('group-room:create', (controller, payload) => controller.createRoom(payload));
   handle('group-room:update', (controller, payload) => controller.updateRoom(
     payload.roomId,
@@ -54,17 +53,20 @@ export function registerGroupRoomIpcHandlers({ ipcMain, isEnabled, createFeature
     payload.memberId,
     payload.expectedRevision,
   ));
-  handle('group-room:dispatch', (controller, payload) => controller.dispatch(payload.roomId, payload));
-  handle('group-room:intervene', (controller, payload) => controller.intervene(payload.roomId, payload));
-  handle('group-room:stop', (controller, payload) => controller.stop(payload.roomId));
-  handle('group-room:stop-member', (controller, payload) => controller.stopMember(payload.roomId, payload.memberId));
+  handle('group-room:add-members', (controller, payload) => controller.addMembers(
+    payload.roomId,
+    payload.members,
+    payload.expectedRevision,
+  ));
+  handle('group-room:remove-member', (controller, payload) => controller.removeMember(
+    payload.roomId,
+    payload.memberId,
+    payload.expectedRevision,
+  ));
+  handle('group-room:reorder', (controller, payload) => controller.reorder(payload.roomIds));
   handle('group-room:delete', async (controller, payload) => {
     await controller.deleteRoom(payload.roomId);
     return { roomId: payload.roomId };
-  });
-  handle('group-room:resolve-permission', (controller, payload) => {
-    controller.resolvePermission(payload.requestId, payload.allowed === true);
-    return { requestId: payload.requestId };
   });
 
   return { dispose: disposeFeature };

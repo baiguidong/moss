@@ -85,36 +85,18 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     list: () => ipcRenderer.invoke('group-room:list'),
     get: (payload) => ipcRenderer.invoke('group-room:get', payload),
     listResources: () => ipcRenderer.invoke('group-room:list-resources'),
-    listPendingPermissions: () => ipcRenderer.invoke('group-room:list-pending-permissions'),
     create: (payload) => ipcRenderer.invoke('group-room:create', payload),
     update: (payload) => ipcRenderer.invoke('group-room:update', payload),
     updateMemberGrants: (payload) => ipcRenderer.invoke('group-room:update-member-grants', payload),
     refreshMemberSource: (payload) => ipcRenderer.invoke('group-room:refresh-member-source', payload),
-    dispatch: (payload) => ipcRenderer.invoke('group-room:dispatch', payload),
-    intervene: (payload) => ipcRenderer.invoke('group-room:intervene', payload),
-    stop: (payload) => ipcRenderer.invoke('group-room:stop', payload),
-    stopMember: (payload) => ipcRenderer.invoke('group-room:stop-member', payload),
+    addMembers: (payload) => ipcRenderer.invoke('group-room:add-members', payload),
+    removeMember: (payload) => ipcRenderer.invoke('group-room:remove-member', payload),
+    reorder: (payload) => ipcRenderer.invoke('group-room:reorder', payload),
     delete: (payload) => ipcRenderer.invoke('group-room:delete', payload),
-    resolvePermission: (payload) => ipcRenderer.invoke('group-room:resolve-permission', payload),
     onEvent: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('group-room:event', handler);
       return () => ipcRenderer.off('group-room:event', handler);
-    },
-    onStream: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('group-room:stream', handler);
-      return () => ipcRenderer.off('group-room:stream', handler);
-    },
-    onPermissionRequest: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('group-room:permission-request', handler);
-      return () => ipcRenderer.off('group-room:permission-request', handler);
-    },
-    onPermissionResolved: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('group-room:permission-resolved', handler);
-      return () => ipcRenderer.off('group-room:permission-resolved', handler);
     },
   },
   listApps: () => ipcRenderer.invoke('app:list'),

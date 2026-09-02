@@ -134,17 +134,21 @@ export async function resumeAgentBackground({
   }
 
   const taskScope = getTaskScopeContext()
-  if (taskScope?.kind === 'project' && !meta?.projectResources) {
-    throw new Error('Cannot resume a project worker without its resource assignment')
+  const isResourceScopedTask = taskScope?.kind === 'project' || taskScope?.kind === 'group-room'
+  const assignedResources = taskScope?.kind === 'group-room' && meta?.agentName
+    ? taskScope.memberResources[meta.agentName]
+    : meta?.projectResources
+  if (isResourceScopedTask && !assignedResources) {
+    throw new Error('Cannot resume a resource-scoped worker without its resource assignment')
   }
-  if (meta?.projectResources && taskScope?.kind !== 'project') {
-    throw new Error('Cannot resume a project worker outside its project task scope')
+  if (meta?.projectResources && !isResourceScopedTask) {
+    throw new Error('Cannot resume a resource-scoped worker outside its task scope')
   }
-  const projectResourceSelection = meta?.projectResources
+  const projectResourceSelection = assignedResources
     ? resolveProjectWorkerResourceSelection(taskScope, {
-        connector_ids: meta.projectResources.connectorIds,
-        skill_ids: meta.projectResources.skillIds,
-        expert_id: meta.projectResources.expertId,
+        connector_ids: assignedResources.connectorIds,
+        skill_ids: assignedResources.skillIds,
+        expert_id: assignedResources.expertId,
       })
     : null
   const workerTaskScope = scopeProjectTaskScopeForWorker(
@@ -252,7 +256,8 @@ export async function resumeAgentBackground({
     // Re-persist so metadata survives runAgent's writeAgentMetadata overwrite
     worktreePath: resumedWorktreePath,
     workspacePath: resumedWorkspacePath,
-    projectResources: meta?.projectResources,
+    projectResources: assignedResources,
+    agentName: meta?.agentName,
     description: meta?.description,
     contentReplacementState: resumedReplacementState,
   }

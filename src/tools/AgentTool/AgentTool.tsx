@@ -151,6 +151,7 @@ export const outputSchema = lazySchema(() => {
   const asyncOutputSchema = z.object({
     status: z.literal('async_launched'),
     agentId: z.string().describe('The ID of the async agent'),
+    name: z.string().optional().describe('Stable caller-assigned worker name'),
     description: z.string().describe('The description of the task'),
     prompt: z.string().describe('The prompt for the agent'),
     outputFile: z.string().describe('Path to the output file for checking agent progress'),
@@ -260,7 +261,7 @@ export const AgentTool = buildTool({
       subagent_type &&
       subagent_type !== GENERAL_PURPOSE_AGENT.agentType
     ) {
-      throw new Error(`Project coordinator workers must use '${GENERAL_PURPOSE_AGENT.agentType}' and assign expertise with expert_id.`);
+      throw new Error(`Resource-scoped coordinator workers must use '${GENERAL_PURPOSE_AGENT.agentType}' and assign expertise with expert_id.`);
     }
     const permissionMode = appState.toolPermissionContext.mode;
     // In-process teammates get a no-op setAppState; setAppStateForTasks
@@ -279,7 +280,7 @@ export const AgentTool = buildTool({
       team_name
     }, appState);
     if (projectResourceSelection && teamName && name) {
-      throw new Error('Project coordinator workers must run as scoped Agent sessions, not team teammates. Omit name and team_name.');
+      throw new Error('Resource-scoped coordinator workers must run as scoped Agent sessions, not team teammates. Omit team_name.');
     }
     if (isTeammate() && teamName && name) {
       throw new Error('Teammates cannot spawn other teammates — the team roster is flat. To spawn a subagent instead, omit the `name` parameter.');
@@ -451,9 +452,9 @@ export const AgentTool = buildTool({
       is_fork: isForkPath
     });
 
-    // Project workers already receive a dedicated session workspace. A second
-    // worktree cwd would make their advertised workspace differ from the path
-    // where tools actually run and where the Finalizer collects outputs.
+    // Resource-scoped workers either receive a project session workspace or,
+    // for Group Rooms, deliberately share the room workspace. Neither path may
+    // add a second worktree cwd.
     const effectiveIsolation = projectResourceSelection
       ? undefined
       : isolation ?? selectedAgent.isolation;
@@ -588,7 +589,7 @@ export const AgentTool = buildTool({
     const parentUiSessionId = taskScope && 'sessionId' in taskScope
       ? taskScope.sessionId
       : null;
-    const isolatedWorkspace = isCoordinator && parentUiSessionId
+    const isolatedWorkspace = isCoordinator && parentUiSessionId && taskScope?.kind !== 'group-room'
       ? join(
           process.env.MOSS_HOME || join(homedir(), '.moss'),
           'sessions',
@@ -679,6 +680,7 @@ export const AgentTool = buildTool({
           ? { expertId: projectResourceSelection.expertId }
           : {}),
       } : undefined,
+      agentName: name,
       description
     };
 
@@ -825,6 +827,7 @@ export const AgentTool = buildTool({
           isAsync: true as const,
           status: 'async_launched' as const,
           agentId: agentBackgroundTask.agentId,
+          ...(name ? { name } : {}),
           description: description,
           prompt: prompt,
           outputFile: getTaskOutputPath(agentBackgroundTask.agentId),
@@ -1097,6 +1100,7 @@ export const AgentTool = buildTool({
                     isAsync: true as const,
                     status: 'async_launched' as const,
                     agentId: backgroundedTaskId,
+                    ...(name ? { name } : {}),
                     description: description,
                     prompt: prompt,
                     outputFile: getTaskOutputPath(backgroundedTaskId),
@@ -1319,7 +1323,10 @@ The agent is now running and will receive instructions via mailbox.`
       };
     }
     if (data.status === 'async_launched') {
-      const prefix = `Async agent launched successfully.\nagentId: ${data.agentId} (internal ID - do not mention to user. Use SendMessage with to: '${data.agentId}' to continue this agent.)\nThe agent is working in the background. You will be notified automatically when it completes.`;
+      const routing = data.name
+        ? `worker name: ${data.name} (use SendMessage with to: '${data.name}' to continue this worker).\nagentId: ${data.agentId} (internal task ID - do not mention to user.)`
+        : `agentId: ${data.agentId} (internal ID - do not mention to user. Use SendMessage with to: '${data.agentId}' to continue this agent.)`;
+      const prefix = `Async agent launched successfully.\n${routing}\nThe agent is working in the background. You will be notified automatically when it completes.`;
       const instructions = data.canReadOutputFile ? `Do not duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.\noutput_file: ${data.outputFile}\nIf asked, you can check progress before completion by using ${FILE_READ_TOOL_NAME} or ${BASH_TOOL_NAME} tail on the output file.` : `Briefly tell the user what you launched and end your response. Do not generate any other text — agent results will arrive in a subsequent message.`;
       const text = `${prefix}\n${instructions}`;
       return {

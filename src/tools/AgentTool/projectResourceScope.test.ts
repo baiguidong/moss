@@ -49,7 +49,7 @@ describe('project worker resource scope', () => {
   test('rejects resources outside the project manifest', () => {
     expect(() => resolveProjectWorkerResourceSelection(scope, {
       connector_ids: ['drive'],
-    })).toThrow('Unknown project connector ids')
+    })).toThrow('Unknown scoped worker connector ids')
   })
 
   test('fails closed when a project resource manifest is unavailable', () => {
@@ -90,5 +90,27 @@ describe('project worker resource scope', () => {
       '/experts/reviewer',
       '/user/shared',
     ])
+  })
+
+  test('applies the same least-privilege manifest to group-room workers', () => {
+    const roomScope: TaskScope = {
+      kind: 'group-room',
+      roomId: 'room-1',
+      sessionId: 'session-1',
+      projectResources: scope.kind === 'project' ? scope.projectResources! : { connectors: [], skills: [], experts: [] },
+      memberResources: {
+        reviewer: { connectorIds: ['mail'], skillIds: ['review'], expertId: 'reviewer' },
+      },
+    }
+    const selection = resolveProjectWorkerResourceSelection(roomScope, {
+      connector_ids: ['mail'],
+      skill_ids: ['review'],
+      expert_id: 'reviewer',
+    })
+    expect(selection?.connectorIds).toEqual(['mail'])
+    expect(selection?.skillIds).toEqual(['review'])
+    const workerScope = scopeProjectTaskScopeForWorker(roomScope, selection)
+    expect(workerScope?.kind).toBe('group-room')
+    expect(workerScope?.projectResources.connectors.map(item => item.id)).toEqual(['mail'])
   })
 })

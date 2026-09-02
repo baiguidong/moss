@@ -245,6 +245,7 @@ export async function* runAgent({
   worktreePath,
   workspacePath,
   projectResources,
+  agentName,
   description,
   transcriptSubdir,
   onQueryProgress,
@@ -306,6 +307,8 @@ export async function* runAgent({
     skillIds: string[]
     expertId?: string
   }
+  /** Stable name assigned by the parent coordinator. */
+  agentName?: string
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -698,6 +701,7 @@ export async function* runAgent({
   )
   await writeAgentMetadata(agentId, {
     agentType: agentDefinition.agentType,
+    ...(agentName && { agentName }),
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
     ...(workspacePath && { workspacePath }),

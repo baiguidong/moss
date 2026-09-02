@@ -87,7 +87,7 @@ jobs:
           bun run test
           bun run --cwd server test
           bun run --cwd adapters test
-          bun test --cwd ui tests
+          bun run --cwd ui test
           bun run build:node
 
   create-release:

@@ -2223,11 +2223,12 @@ export function ChatArea({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="relative flex h-8 max-w-48 shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-card px-2 transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           aria-label={`打开子任务：${child.title}，${status}`}
                           onClick={() => onOpenChildSession?.(child.id)}
                         >
-                          <img src="./build/icon.png" alt="" className="h-4.5 w-4.5 object-contain" />
+                          <img src="./build/icon.png" alt="" className={cn("h-4 w-4 shrink-0 object-contain", status === '运行中' && "animate-spin")} />
+                          <span className="truncate">{child.title}</span>
                           <span
                             className={cn(
                               "absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full border border-card",

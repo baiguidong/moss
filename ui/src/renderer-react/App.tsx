@@ -1210,7 +1210,15 @@ export default function App() {
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
       if (sessionId === activeSessionIdRef.current) {
-        navigateToHome();
+        if (activeDetailRef.current?.sessionKind === 'group-room') {
+          activeSessionIdRef.current = null;
+          activeDetailRef.current = null;
+          setActiveSessionId(null);
+          setActiveDetail(null);
+          clearSessionWorkspaceState();
+        } else {
+          navigateToHome();
+        }
       }
     });
 
@@ -1335,6 +1343,7 @@ export default function App() {
     if (activeDetail.isSubAgent) return '子会话不能继续分叉';
     if (activeDetail.projectId) return '项目会话由项目协调器管理，暂不支持分叉';
     if (activeDetail.sessionKind === 'cron') return '定时任务会话不能分叉';
+    if (activeDetail.sessionKind === 'group-room') return '群聊会话由固定成员主持人管理，不能分叉';
     if (visibleChatMessageCount === 0) return '空会话不能分叉';
     return null;
   }, [activeDetail, visibleChatMessageCount]);
@@ -2457,8 +2466,69 @@ export default function App() {
             )
           ) : activeView === 'rooms' ? (
             <GroupRoomsView
-              onOpenConnectorHub={() => setActiveView('connectors')}
+              activeSessionId={activeSessionId}
+              sessions={summaries}
+              rightCollapsed={layout.rightCollapsed}
+              rightWidth={layout.rightWidth}
+              onToggleRightSidebar={() => toggleSidebar('right')}
+              onResizeRight={(event) => {
+                event.preventDefault();
+                startResize('right', event.clientX);
+              }}
+              onOpenSession={async (sessionId) => {
+                const opened = await openSession(sessionId);
+                if (opened) setActiveView('rooms');
+                return opened;
+              }}
               globalBypassPermissions={desktopSettings?.bypassPermissions ?? false}
+              chatContent={activeSessionId && activeDetail?.sessionKind === 'group-room' ? (
+                <ChatArea
+                  messages={chatMessages}
+                  value={input}
+                  selectedAppName=""
+                  loading={Boolean(activeDetail.busy)}
+                  readOnlyReason={activeDetail.resumeReadOnlyReason || null}
+                  hasActiveSession
+                  isProjectSession
+                  sessionTitle={activeDetail.title}
+                  sessionMessageCount={visibleChatMessageCount}
+                  sessionId={activeSessionId}
+                  sessionWorkspace={activeDetail.workspace}
+                  pendingPlanApproval={activeDetail.pendingPlanApproval || null}
+                  planDecisionBusy={planDecisionBusy}
+                  leftCollapsed={effectiveLeftCollapsed}
+                  rightCollapsed={layout.rightCollapsed}
+                  composerIntent="coordinator"
+                  childSessions={activeChildSessions}
+                  onChange={setInput}
+                  onComposerIntentChange={() => {}}
+                  onToggleLeftSidebar={() => toggleSidebar('left')}
+                  onToggleRightSidebar={() => toggleSidebar('right')}
+                  onApprovePlan={handleApprovePlan}
+                  onRejectPlan={handleRejectPlan}
+                  autoCollapseToolCalls={activeAutoCollapseToolCalls}
+                  onToggleAutoCollapseToolCalls={handleToggleSessionAutoCollapseToolCalls}
+                  toolDisplaySettingBusy={toolDisplaySettingSessionId === activeSessionId}
+                  onSend={handleSend}
+                  onStop={handleStop}
+                  onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
+                  installedAssistants={[]}
+                  selectedAssistant={null}
+                  installedConnectors={[]}
+                  selectedConnectorIds={[]}
+                  onOpenConnectorHub={() => setActiveView('connectors')}
+                  onOpenExpertHub={() => setActiveView('experts')}
+                  onOpenSkillHub={() => setActiveView('skills')}
+                  remoteEnabled={false}
+                  newSessionMode="local"
+                  queuedMessages={queuedMessages[activeSessionId] ?? []}
+                  onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                  backgroundTasks={backgroundTasks[activeSessionId] ?? []}
+                  composerAttachments={composerAttachments}
+                  onComposerAttachmentsChange={setComposerAttachments}
+                  contextUsage={contextUsage}
+                />
+              ) : null}
             />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />

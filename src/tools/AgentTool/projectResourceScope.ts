@@ -14,8 +14,12 @@ function normalizeIds(values: unknown): string[] {
 function requireKnownIds(kind: string, selected: string[], available: Set<string>): void {
   const unknown = selected.filter(id => !available.has(id))
   if (unknown.length > 0) {
-    throw new Error(`Unknown project ${kind}: ${unknown.join(', ')}`)
+    throw new Error(`Unknown scoped worker ${kind}: ${unknown.join(', ')}`)
   }
+}
+
+function isResourceScopedTask(taskScope: TaskScope | undefined): taskScope is Extract<TaskScope, { kind: 'project' | 'group-room' }> {
+  return taskScope?.kind === 'project' || taskScope?.kind === 'group-room'
 }
 
 export type ProjectWorkerResourceSelection = {
@@ -34,7 +38,7 @@ export function scopeProjectTaskScopeForWorker(
   taskScope: TaskScope | undefined,
   selection: ProjectWorkerResourceSelection | null,
 ): TaskScope | undefined {
-  if (!selection || taskScope?.kind !== 'project' || !taskScope.projectResources) {
+  if (!selection || !isResourceScopedTask(taskScope) || !taskScope.projectResources) {
     return taskScope
   }
   const connectorIds = new Set(selection.connectorIds)
@@ -57,13 +61,13 @@ export function getProjectConnectorScopeError(
   taskScope: TaskScope | undefined,
   input: { connectorId?: string; serverName?: string },
 ): string | null {
-  if (taskScope?.kind !== 'project') return null
-  if (!taskScope.projectResources) return 'Project resource manifest is unavailable'
+  if (!isResourceScopedTask(taskScope)) return null
+  if (!taskScope.projectResources) return 'Scoped worker resource manifest is unavailable'
   const connectorId = input.connectorId?.trim()
   const serverName = input.serverName?.trim()
   const connectors = taskScope.projectResources.connectors
   if (connectorId && !connectors.some(item => item.id === connectorId)) {
-    return `Connector '${connectorId}' is not assigned to this project worker`
+    return `Connector '${connectorId}' is not assigned to this scoped worker`
   }
   if (serverName) {
     const normalizedServerName = normalizeNameForMCP(serverName)
@@ -71,7 +75,7 @@ export function getProjectConnectorScopeError(
       normalizeIds(item.mcpServerNames).map(normalizeNameForMCP)
     )))
     if (!assignedServerNames.has(normalizedServerName)) {
-      return `Connector server '${serverName}' is not assigned to this project worker`
+      return `Connector server '${serverName}' is not assigned to this scoped worker`
     }
   }
   return null
@@ -85,9 +89,9 @@ export function resolveProjectWorkerResourceSelection(
     expert_id?: unknown
   },
 ): ProjectWorkerResourceSelection | null {
-  if (taskScope?.kind !== 'project') return null
+  if (!isResourceScopedTask(taskScope)) return null
   if (!taskScope.projectResources) {
-    throw new Error('Project worker resource manifest is unavailable')
+    throw new Error('Scoped worker resource manifest is unavailable')
   }
   const resources = taskScope.projectResources
   const connectors = Array.isArray(resources.connectors) ? resources.connectors : []
@@ -102,7 +106,7 @@ export function resolveProjectWorkerResourceSelection(
   requireKnownIds('connector ids', connectorIds, new Set(connectors.map(item => item.id)))
   requireKnownIds('skill ids', skillIds, new Set(skills.map(item => item.id)))
   if (expertId && !experts.some(item => item.id === expertId)) {
-    throw new Error(`Unknown project expert id: ${expertId}`)
+    throw new Error(`Unknown scoped worker expert id: ${expertId}`)
   }
 
   const selectedConnectors = connectors.filter(item => connectorIds.includes(item.id))

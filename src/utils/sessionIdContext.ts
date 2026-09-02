@@ -1,6 +1,18 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import type { SessionId } from '../types/ids.js'
 
+export type ScopedWorkerResources = {
+  connectors: Array<{
+    id: string
+    mcpServerNames?: string[]
+    skillCommands?: string[]
+    directories?: string[]
+    environment?: Record<string, string>
+  }>
+  skills: Array<{ id: string; command: string; directories?: string[] }>
+  experts: Array<{ id: string; instructionsPath?: string | null; directories?: string[] }>
+}
+
 export type TaskScope =
   | {
       kind: 'session'
@@ -11,17 +23,19 @@ export type TaskScope =
       kind: 'project'
       projectId: string
       sessionId?: string | null
-      projectResources?: {
-        connectors: Array<{
-          id: string
-          mcpServerNames?: string[]
-          skillCommands?: string[]
-          directories?: string[]
-          environment?: Record<string, string>
-        }>
-        skills: Array<{ id: string; command: string; directories?: string[] }>
-        experts: Array<{ id: string; instructionsPath?: string | null; directories?: string[] }>
-      }
+      projectResources?: ScopedWorkerResources
+    }
+  | {
+      kind: 'group-room'
+      roomId: string
+      sessionId: string
+      projectId?: null
+      projectResources: ScopedWorkerResources
+      memberResources: Record<string, {
+        connectorIds: string[]
+        skillIds: string[]
+        expertId: string
+      }>
     }
   | {
       kind: 'team'
