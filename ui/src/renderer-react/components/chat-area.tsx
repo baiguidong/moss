@@ -117,6 +117,8 @@ function SessionTabBar({
   messageCount,
   leftCollapsed,
   rightCollapsed,
+  leftPanelName,
+  rightPanelName,
   onToggleLeft,
   onToggleRight,
   autoCollapseToolCalls,
@@ -133,6 +135,8 @@ function SessionTabBar({
   messageCount: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  leftPanelName: string;
+  rightPanelName: string;
   onToggleLeft: () => void;
   onToggleRight: () => void;
   autoCollapseToolCalls: boolean;
@@ -182,7 +186,7 @@ function SessionTabBar({
           size="icon"
           className="h-8 w-8 rounded-full"
           onClick={onToggleLeft}
-          aria-label={leftCollapsed ? "展开左侧栏" : "收起左侧栏"}
+          aria-label={`${leftCollapsed ? "展开" : "收起"}${leftPanelName}`}
         >
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
@@ -299,7 +303,7 @@ function SessionTabBar({
             size="icon"
             className="h-8 w-8 rounded-full"
             onClick={onToggleRight}
-            aria-label={rightCollapsed ? "展开右侧栏" : "收起右侧栏"}
+            aria-label={`${rightCollapsed ? "展开" : "收起"}${rightPanelName}`}
           >
             {rightCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
           </Button>
@@ -1993,6 +1997,8 @@ export function ChatArea({
   planDecisionBusy,
   leftCollapsed,
   rightCollapsed,
+  leftPanelName = "左侧栏",
+  rightPanelName = "右侧栏",
   composerIntent,
   childSessions = [],
   childSessionDetail,
@@ -2049,6 +2055,8 @@ export function ChatArea({
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  leftPanelName?: string;
+  rightPanelName?: string;
   composerIntent: ComposerIntent;
   childSessions?: SessionSummary[];
   childSessionDetail?: SessionDetail | null;
@@ -2187,6 +2195,8 @@ export function ChatArea({
         messageCount={sessionMessageCount}
         leftCollapsed={leftCollapsed}
         rightCollapsed={rightCollapsed}
+        leftPanelName={leftPanelName}
+        rightPanelName={rightPanelName}
         onToggleLeft={onToggleLeftSidebar}
         onToggleRight={onToggleRightSidebar}
         autoCollapseToolCalls={autoCollapseToolCalls}

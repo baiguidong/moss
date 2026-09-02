@@ -10,9 +10,7 @@ import {
   LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
-  PanelRightOpen,
   Plus,
   RefreshCw,
   Settings2,
@@ -276,7 +274,7 @@ function GroupRoomSettings({ room, resources, busy, globalBypassPermissions, onS
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
       <div className="min-w-0 flex-1"><div className="text-sm font-semibold">群设置</div><div className="truncate text-xs text-muted-foreground">固定成员 · Coordinator 主持</div></div>
       <Button size="sm" disabled={disabled} onClick={() => void onSave({ title, topic, workspace, settings: { permissionMode, moderatorInstructions } })}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}保存</Button>
-      <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={onToggleRightSidebar} title="折叠群设置"><PanelRightClose className="h-4 w-4" /></Button>
+      <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={onToggleRightSidebar} title="折叠群设置" aria-label="折叠群设置"><PanelRightClose className="h-4 w-4" /></Button>
     </header>
     <ScrollArea className="min-h-0 flex-1"><div className="space-y-6 p-4">
       {room.status === "running" ? <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700">主持人正在工作，配置暂时只读。</div> : null}
@@ -292,6 +290,8 @@ export function GroupRoomsView({
   activeSessionId,
   sessions,
   chatContent,
+  listCollapsed,
+  onListCollapsedChange,
   rightCollapsed,
   rightWidth,
   onToggleRightSidebar,
@@ -302,6 +302,8 @@ export function GroupRoomsView({
   activeSessionId: string | null;
   sessions: SessionSummary[];
   chatContent: React.ReactNode;
+  listCollapsed: boolean;
+  onListCollapsedChange: (collapsed: boolean) => void;
   rightCollapsed: boolean;
   rightWidth: number;
   onToggleRightSidebar: () => void;
@@ -317,7 +319,6 @@ export function GroupRoomsView({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
-  const [listCollapsed, setListCollapsed] = React.useState(false);
   const [menuRoomId, setMenuRoomId] = React.useState<string | null>(null);
   const [resourceMemberId, setResourceMemberId] = React.useState<string | null>(null);
   const [addingMember, setAddingMember] = React.useState(false);
@@ -400,13 +401,13 @@ export function GroupRoomsView({
 
   return <div className="absolute inset-0 flex min-h-0 min-w-0 overflow-hidden bg-background">
     {!listCollapsed ? <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-border lg:flex">
-      <header className="flex h-14 items-center gap-1 border-b border-border px-2"><span className="min-w-0 flex-1 px-1 text-sm font-semibold">群聊</span><Button size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><Plus className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => void run(loadRooms)} title="刷新"><RefreshCw className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => setListCollapsed(true)} title="折叠群列表"><PanelLeftClose className="h-4 w-4" /></Button></header>
+      <header className="flex h-14 items-center gap-1 border-b border-border px-2"><span className="min-w-0 flex-1 px-1 text-sm font-semibold">群聊</span><Button size="icon" variant="ghost" onClick={() => setCreating(true)} title="新建群聊"><Plus className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => void run(loadRooms)} title="刷新"><RefreshCw className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => onListCollapsedChange(true)} title="折叠群列表" aria-label="折叠群列表"><PanelLeftClose className="h-4 w-4" /></Button></header>
       <ScrollArea className="min-h-0 flex-1"><div className="space-y-1 p-2">{liveRooms.map((entry, index) => <div key={entry.id} draggable onDragStart={() => setDraggedRoomId(entry.id)} onDragEnd={() => setDraggedRoomId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedRoomId) void reorder(draggedRoomId, entry.id); }} className={cn("group relative rounded-md", draggedRoomId === entry.id && "opacity-50")}>
         <div className={cn("flex h-12 items-center rounded-md", liveRoom?.id === entry.id ? "bg-primary/10" : "hover:bg-muted")}><GripVertical className="ml-1 h-4 w-4 cursor-grab text-muted-foreground/60" /><button className="flex h-full w-7 items-center justify-center" onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(entry.id)) next.delete(entry.id); else next.add(entry.id); return next; })}><ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded.has(entry.id) && "rotate-90")} /></button><button className="flex h-full min-w-0 flex-1 items-center gap-2 text-left" onClick={() => void selectRoom(entry)}><span className={cn("h-2 w-2 rounded-full", entry.status === "running" ? "bg-emerald-500" : "bg-muted-foreground/40")} /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{entry.title}</span><span className="block truncate text-[10px] text-muted-foreground">{entry.preview || formatTime(entry.updatedAt)}</span></span></button><Button size="icon" variant="ghost" className="mr-1 h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => setMenuRoomId(menuRoomId === entry.id ? null : entry.id)}><MoreHorizontal className="h-4 w-4" /></Button></div>
         {expanded.has(entry.id) ? <div className="ml-8 border-l border-border py-1 pl-2">{(entry.members || (entry.id === liveRoom?.id ? liveRoom.members : [])).map((member) => <div key={member.id} className="flex h-7 items-center gap-2 truncate text-xs text-muted-foreground"><MemberAvatar member={member} /><span className="truncate">{member.displayName}</span></div>)}</div> : null}
         {menuRoomId === entry.id ? <div className="absolute right-1 top-10 z-20 w-36 rounded-md border border-border bg-popover p-1 shadow-lg"><button className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted" onClick={() => { const title = window.prompt("新的群名称", entry.title)?.trim(); setMenuRoomId(null); if (title) void run(async () => { const detail = unwrap(await window.agentDesktop.groupRooms.get({ roomId: entry.id })); const updated = unwrap(await window.agentDesktop.groupRooms.update({ roomId: entry.id, updates: { title }, expectedRevision: detail.revision })); if (liveRoom?.id === entry.id) setRoom(updated); await loadRooms(); }); }}>重命名</button><button disabled={index === 0} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, -1)}><ChevronUp className="h-3.5 w-3.5" />上移</button><button disabled={index === liveRooms.length - 1} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-40" onClick={() => moveRoom(entry.id, 1)}><ChevronDown className="h-3.5 w-3.5" />下移</button><button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-destructive hover:bg-muted" onClick={() => { setMenuRoomId(null); if (!window.confirm(`删除群聊“${entry.title}”及其完整会话记录？`)) return; void run(async () => { unwrap(await window.agentDesktop.groupRooms.delete({ roomId: entry.id })); const next = await loadRooms(); if (liveRoom?.id === entry.id) { setRoom(null); if (next[0]) { await loadRoom(next[0].id); await onOpenSession(next[0].sessionId); } else setCreating(true); } }); }}><Trash2 className="h-3.5 w-3.5" />删除</button></div> : null}
       </div>)}</div></ScrollArea>
-    </aside> : <aside className="hidden h-full w-12 shrink-0 flex-col items-center border-r border-border pt-2 lg:flex"><Button size="icon" variant="ghost" onClick={() => setListCollapsed(false)} title="展开群列表"><PanelLeftOpen className="h-4 w-4" /></Button></aside>}
+    </aside> : null}
 
     <main className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{error ? <div className="absolute left-4 right-4 top-3 z-40 rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow">{error}</div> : null}{liveRoom && activeSessionId === liveRoom.sessionId ? chatContent : <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">{liveRooms.length ? "选择一个群聊" : "创建第一个群聊"}</div>}</main>
 
@@ -414,6 +415,5 @@ export function GroupRoomsView({
 
     {liveRoom && resourceMemberId ? (() => { const member = liveRoom.members.find((item) => item.id === resourceMemberId); return member ? <MemberResourceDialog room={liveRoom} member={member} resources={resources} busy={busy} onClose={() => setResourceMemberId(null)} onSave={async (connectors, skills) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.updateMemberGrants({ roomId: liveRoom.id, memberId: member.id, grants: { connectors, skills }, expectedRevision: liveRoom.revision })); setRoom(updated); setResourceMemberId(null); await loadRooms(); }); }} /> : null; })() : null}
     {liveRoom && addingMember ? <AddMembersDialog room={liveRoom} resources={resources} busy={busy} onClose={() => setAddingMember(false)} onAdd={async (input) => { await run(async () => { const updated = unwrap(await window.agentDesktop.groupRooms.addMembers({ roomId: liveRoom.id, members: { invitationIds: input.invitationIds, customMembers: input.customMembers, connectorGrants: input.connectorGrants }, expectedRevision: liveRoom.revision })); setRoom(updated); setAddingMember(false); await loadRooms(); }); }} /> : null}
-    {liveRoom && rightCollapsed ? <aside className="hidden h-full w-12 shrink-0 flex-col items-center border-l border-border pt-2 lg:flex"><Button size="icon" variant="ghost" onClick={onToggleRightSidebar} title="展开群设置"><PanelRightOpen className="h-4 w-4" /></Button></aside> : null}
   </div>;
 }

@@ -434,6 +434,7 @@ export default function App() {
   const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
+  const [groupRoomListCollapsed, setGroupRoomListCollapsed] = React.useState(false);
   const effectiveLeftCollapsed = layout.leftCollapsed || compactViewport;
 
   React.useEffect(() => {
@@ -2514,6 +2515,8 @@ export default function App() {
             <GroupRoomsView
               activeSessionId={activeSessionId}
               sessions={summaries}
+              listCollapsed={groupRoomListCollapsed}
+              onListCollapsedChange={setGroupRoomListCollapsed}
               rightCollapsed={layout.rightCollapsed}
               rightWidth={layout.rightWidth}
               onToggleRightSidebar={() => toggleSidebar('right')}
@@ -2542,13 +2545,15 @@ export default function App() {
                   sessionWorkspace={activeDetail.workspace}
                   pendingPlanApproval={activeDetail.pendingPlanApproval || null}
                   planDecisionBusy={planDecisionBusy}
-                  leftCollapsed={effectiveLeftCollapsed}
+                  leftCollapsed={groupRoomListCollapsed}
                   rightCollapsed={layout.rightCollapsed}
+                  leftPanelName="群列表"
+                  rightPanelName="群设置"
                   composerIntent="coordinator"
                   childSessions={activeChildSessions}
                   onChange={setInput}
                   onComposerIntentChange={() => {}}
-                  onToggleLeftSidebar={() => toggleSidebar('left')}
+                  onToggleLeftSidebar={() => setGroupRoomListCollapsed((collapsed) => !collapsed)}
                   onToggleRightSidebar={() => toggleSidebar('right')}
                   onApprovePlan={handleApprovePlan}
                   onRejectPlan={handleRejectPlan}
