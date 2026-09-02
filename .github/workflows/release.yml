@@ -250,6 +250,7 @@ jobs:
           set -euo pipefail
           bash -n deploy/package-server.sh
           bash -n deploy/install-server.sh
+          bash deploy/install-server.test.sh
           node --check scripts/docker-build-runtime.mjs
           help_output="$(deploy/install-server.sh --help)"
           grep -Fq -- '--offline' <<< "$help_output"
@@ -316,6 +317,8 @@ jobs:
           grep -Fxq 'moss-server/app/admin/dist/index.html' dist/server-contents.txt
           grep -Fxq 'moss-server/app/resources/skills/local-kb/SKILL.md' dist/server-contents.txt
           grep -Fxq 'moss-server/app/resources/assistants/app-builder/assistant.md' dist/server-contents.txt
+          ! grep -Fq 'cli-node.js' dist/server-contents.txt
+          ! tar -tvzf "$OUTPUT_DIR/$SERVER_ARCHIVE" | grep -Eq '^[lh]'
           ! grep -Eq '(^|/)\.\.(/|$)' dist/server-contents.txt
           gzip -t "$OUTPUT_DIR/$RUNTIME_ARCHIVE"
           ! grep -Fq '@@MOSS_RELEASE_TAG@@' "$OUTPUT_DIR/install-server.sh"

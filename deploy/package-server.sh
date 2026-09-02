@@ -126,6 +126,9 @@ extract_npm_package \
 extract_npm_package \
   "@img/sharp-libvips-linux-x64@$SHARP_LIBVIPS_VERSION" \
   "$APP_ROOT/node_modules/@img/sharp-libvips-linux-x64"
+# Runtime code loads these packages directly; npm's command shims are unused
+# and would introduce symbolic links into the root-extracted server archive.
+rm -rf "$APP_ROOT/node_modules/.bin"
 
 printf '%s\n' "$VERSION" > "$PACKAGE_ROOT/VERSION"
 printf '%s\n' "$NODE_VERSION" > "$PACKAGE_ROOT/NODE_VERSION"
@@ -151,6 +154,11 @@ if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$PACKAGE_ROOT"
 fi
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$STAGE_ROOT" -czf "$ARCHIVE_PATH" moss-server
+if tar -tvzf "$ARCHIVE_PATH" \
+  | awk 'substr($0, 1, 1) == "l" || substr($0, 1, 1) == "h" { found=1 } END { exit found ? 0 : 1 }'; then
+  echo "Server archive must not contain symbolic or hard links" >&2
+  exit 1
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$OUTPUT_DIR" && sha256sum "$ARCHIVE_NAME" > SHA256SUMS-server)

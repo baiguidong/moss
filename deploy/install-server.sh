@@ -125,12 +125,27 @@ case "$INSTALL_DIR" in
 esac
 [ ! -L "$INSTALL_DIR" ] || die "install directory must not be a symbolic link"
 INSTALL_DIR="$(realpath -m -- "$INSTALL_DIR")"
+DEFAULT_INSTALL_DIR="$(realpath -m -- "$DEFAULT_INSTALL_DIR")"
 [ "$INSTALL_DIR" != / ] || die "refusing to install into /"
+USING_DEFAULT_INSTALL_DIR=0
+[ "$INSTALL_DIR" != "$DEFAULT_INSTALL_DIR" ] || USING_DEFAULT_INSTALL_DIR=1
+DEFAULT_MOSS_HOME="${INSTALL_USER_HOME%/}/.moss"
+[ -d "$DEFAULT_MOSS_HOME" ] && DEFAULT_MOSS_HOME_PREEXISTED=1 \
+  || DEFAULT_MOSS_HOME_PREEXISTED=0
 
+LOCK_DIR="${MOSS_INSTALL_LOCK_DIR:-/run}"
+case "$LOCK_DIR" in
+  /*) ;;
+  *) die "install lock directory must be absolute" ;;
+esac
+[ -d "$LOCK_DIR" ] || die "install lock directory is missing: $LOCK_DIR"
+[ ! -L "$LOCK_DIR" ] || die "install lock directory must not be a symbolic link"
+LOCK_PATH="$LOCK_DIR/moss-server-install.lock"
+[ ! -L "$LOCK_PATH" ] || die "install lock must not be a symbolic link"
 if [ "$INSTALLER_REFRESHED" = 1 ] && flock -n 9 2>/dev/null; then
   : # The refreshed child inherited the lock from this installer version.
 else
-  exec 9>/run/lock/moss-server-install.lock
+  exec 9>>"$LOCK_PATH"
   flock -n "$INSTALL_LOCK_FD" || die "another Moss Server installation is already running"
   export MOSS_INSTALL_LOCK_FD="$INSTALL_LOCK_FD"
 fi
@@ -169,6 +184,24 @@ if [ "$EXISTING_INSTALL" = 0 ] && [ "$INSTALL_DIR_PREEXISTED" = 1 ] \
   && find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
   die "install directory is not empty and is not managed by this installer: $INSTALL_DIR"
 fi
+for relative_path in releases var var/lib var/run var/log skills assistants; do
+  [ ! -L "$INSTALL_DIR/$relative_path" ] \
+    || die "managed directory must not be a symbolic link: $INSTALL_DIR/$relative_path"
+done
+for relative_path in current bin admin adapters; do
+  if { [ -e "$INSTALL_DIR/$relative_path" ] || [ -L "$INSTALL_DIR/$relative_path" ]; } \
+    && [ ! -L "$INSTALL_DIR/$relative_path" ]; then
+    die "managed link has an unexpected type: $INSTALL_DIR/$relative_path"
+  fi
+done
+for relative_path in skills assistants; do
+  if [ -d "$INSTALL_DIR/$relative_path" ] \
+    && find "$INSTALL_DIR/$relative_path" -type l -print -quit | grep -q .; then
+    die "managed resource directory must not contain symbolic links: $INSTALL_DIR/$relative_path"
+  fi
+done
+[ ! -L "$INSTALL_DIR/install-server.sh" ] \
+  || die "installed updater must not be a symbolic link"
 PREVIOUS_RUNTIME_IMAGE=""
 if [ -f "$MARKER_PATH" ]; then
   MARKER_REPOSITORY="$(awk -F= '$1 == "repository" { print substr($0, index($0, "=") + 1); exit }' "$MARKER_PATH")"
@@ -240,6 +273,8 @@ if [ "$EXISTING_INSTALL" = 1 ] && [ "$INSTALLED_TAG" = "$RELEASE_TAG" ]; then
   fi
   if systemctl is-active --quiet "$SERVICE_NAME.service" \
     && [[ "$INSTALLED_PORT" =~ ^[0-9]+$ ]] \
+    && [ -n "$PREVIOUS_RUNTIME_IMAGE" ] \
+    && docker image inspect "$PREVIOUS_RUNTIME_IMAGE" >/dev/null 2>&1 \
     && curl --fail --silent "http://127.0.0.1:$INSTALLED_PORT/healthz" >/dev/null; then
     log "Moss Server $RELEASE_TAG is already installed and healthy; no changes needed"
     exit 0
@@ -254,17 +289,51 @@ RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-$ARCH"
 CHECKSUM_NAME="SHA256SUMS-server"
 WORK_DIR="$(mktemp -d)"
 RUNTIME_IMAGE_BACKUP_TAG=""
-RUNTIME_IMAGE_LOADED=0
+RUNTIME_IMAGE_MUTATED=0
+INSTALL_DIR_PREPARED=0
+rollback_runtime_image() {
+  [ "$RUNTIME_IMAGE_MUTATED" = 1 ] || return 0
+  if ! docker info >/dev/null 2>&1; then
+    log "ERROR: Docker is unavailable; runtime image rollback could not run"
+    return 1
+  fi
+
+  docker image rm "$RUNTIME_IMAGE" >/dev/null 2>&1 || true
+  if [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
+    if ! docker tag "$RUNTIME_IMAGE_BACKUP_TAG" "$RUNTIME_IMAGE" >/dev/null 2>&1; then
+      log "ERROR: could not restore $RUNTIME_IMAGE; backup retained as $RUNTIME_IMAGE_BACKUP_TAG"
+      return 1
+    fi
+    docker image rm "$RUNTIME_IMAGE_BACKUP_TAG" >/dev/null 2>&1 || true
+    RUNTIME_IMAGE_BACKUP_TAG=""
+  elif docker image inspect "$RUNTIME_IMAGE" >/dev/null 2>&1; then
+    log "ERROR: could not remove failed runtime image $RUNTIME_IMAGE"
+    return 1
+  fi
+  RUNTIME_IMAGE_MUTATED=0
+}
 cleanup_work_dir() {
   local status="${1:-0}"
-  if [ "$RUNTIME_IMAGE_LOADED" = 1 ] && [ "$status" -ne 0 ]; then
-    docker image rm "$RUNTIME_IMAGE" >/dev/null 2>&1 || true
-    if [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
-      docker tag "$RUNTIME_IMAGE_BACKUP_TAG" "$RUNTIME_IMAGE" >/dev/null 2>&1 || true
-    fi
+  if [ -n "${NEW_RELEASE_DIR:-}" ]; then
+    rm -rf "$NEW_RELEASE_DIR"
   fi
-  if [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
+  if [ "$status" -ne 0 ]; then
+    rollback_runtime_image || true
+  elif [ -n "$RUNTIME_IMAGE_BACKUP_TAG" ]; then
     docker image rm "$RUNTIME_IMAGE_BACKUP_TAG" >/dev/null 2>&1 || true
+    RUNTIME_IMAGE_BACKUP_TAG=""
+  fi
+  if [ "$status" -ne 0 ] && [ "$EXISTING_INSTALL" = 0 ] \
+    && [ "$INSTALL_DIR_PREPARED" = 1 ] \
+    && [ "${TRANSACTION_ACTIVE:-0}" = 0 ]; then
+    if [ -d "$INSTALL_DIR" ]; then
+      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || true
+    fi
+    [ "$INSTALL_DIR_PREEXISTED" = 1 ] || rmdir "$INSTALL_DIR" 2>/dev/null || true
+    if [ "$USING_DEFAULT_INSTALL_DIR" = 1 ] \
+      && [ "$DEFAULT_MOSS_HOME_PREEXISTED" = 0 ]; then
+      rmdir "$DEFAULT_MOSS_HOME" 2>/dev/null || true
+    fi
   fi
   rm -rf "$WORK_DIR"
 }
@@ -317,8 +386,16 @@ if tar -tzf "$SOURCE_DIR/$ARCHIVE_NAME" \
   | awk '$0 !~ /^moss-server\// || $0 ~ /(^|\/)\.\.($|\/)/ { bad=1 } END { exit bad ? 0 : 1 }'; then
   die "server archive contains an unsafe path"
 fi
-tar -xzf "$SOURCE_DIR/$ARCHIVE_NAME" -C "$WORK_DIR"
+if tar -tvzf "$SOURCE_DIR/$ARCHIVE_NAME" \
+  | awk 'substr($0, 1, 1) == "l" || substr($0, 1, 1) == "h" { found=1 } END { exit found ? 0 : 1 }'; then
+  die "server archive must not contain links"
+fi
+tar --no-same-owner --no-same-permissions \
+  -xzf "$SOURCE_DIR/$ARCHIVE_NAME" -C "$WORK_DIR"
 PACKAGE_ROOT="$WORK_DIR/moss-server"
+if find "$PACKAGE_ROOT" -type l -print -quit | grep -q .; then
+  die "server archive must not contain symbolic links"
+fi
 NODE_BINARY="$PACKAGE_ROOT/node/bin/node"
 [ -x "$NODE_BINARY" ] || die "server package does not contain Node.js"
 [ "$($NODE_BINARY -p 'process.versions.node.split(`.`)[0]')" -eq 22 ] \
@@ -348,12 +425,15 @@ DOCKER_GROUP_ENTRY="$(getent group "$DOCKER_GROUP_ID" || true)"
 DOCKER_GROUP="${DOCKER_GROUP_ENTRY%%:*}"
 
 if docker image inspect "$RUNTIME_IMAGE" >/dev/null 2>&1; then
-  RUNTIME_IMAGE_BACKUP_TAG="moss-runtime-install-backup:$RUNTIME_TAG_VERSION-$ARCH-$$"
-  docker tag "$RUNTIME_IMAGE" "$RUNTIME_IMAGE_BACKUP_TAG"
+  runtime_image_backup="moss-runtime-install-backup:$RUNTIME_TAG_VERSION-$ARCH-$$"
+  docker tag "$RUNTIME_IMAGE" "$runtime_image_backup"
+  RUNTIME_IMAGE_BACKUP_TAG="$runtime_image_backup"
+  RUNTIME_IMAGE_MUTATED=1
+  docker image rm "$RUNTIME_IMAGE" >/dev/null
 fi
 log "Loading Docker runtime image: $RUNTIME_IMAGE"
+RUNTIME_IMAGE_MUTATED=1
 docker load -i "$SOURCE_DIR/$RUNTIME_ARCHIVE_NAME" >/dev/null
-RUNTIME_IMAGE_LOADED=1
 docker image inspect "$RUNTIME_IMAGE" >/dev/null 2>&1 \
   || die "runtime archive did not load $RUNTIME_IMAGE"
 docker run --rm "$RUNTIME_IMAGE" node --no-warnings -e \
@@ -413,6 +493,13 @@ log "Install directory: $INSTALL_DIR"
 log "Service: $SERVICE_NAME.service"
 log "Port: $PORT"
 
+INSTALL_DIR_PREPARED=1
+if [ "$USING_DEFAULT_INSTALL_DIR" = 1 ]; then
+  if [ "$DEFAULT_MOSS_HOME_PREEXISTED" = 0 ]; then
+    install -d -m 0700 -o "$INSTALL_USER" -g "$INSTALL_USER_GROUP" \
+      "$DEFAULT_MOSS_HOME"
+  fi
+fi
 install -d -m 0700 -o "$INSTALL_USER" -g "$INSTALL_USER_GROUP" \
   "$INSTALL_DIR" "$INSTALL_DIR/releases" "$INSTALL_DIR/var/lib" \
   "$INSTALL_DIR/var/run" "$INSTALL_DIR/var/log"
@@ -562,14 +649,14 @@ restore_previous_release() {
       [ "$restored" = 1 ] || restore_status=1
     fi
   elif [ "$EXISTING_INSTALL" = 0 ]; then
-    rm -rf \
-      "$INSTALL_DIR/current" "$INSTALL_DIR/releases" \
-      "$INSTALL_DIR/bin" "$INSTALL_DIR/admin" "$INSTALL_DIR/adapters" \
-      "$INSTALL_DIR/skills" "$INSTALL_DIR/assistants" "$INSTALL_DIR/var" \
-      "$MARKER_PATH" "$CONFIG_PATH" "$SETTINGS_PATH" "$ENV_PATH" \
-      "$UNINSTALL_PATH" || restore_status=1
+    find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + \
+      || restore_status=1
     if [ "$INSTALL_DIR_PREEXISTED" = 0 ]; then
       rmdir "$INSTALL_DIR" 2>/dev/null || true
+    fi
+    if [ "$USING_DEFAULT_INSTALL_DIR" = 1 ] \
+      && [ "$DEFAULT_MOSS_HOME_PREEXISTED" = 0 ]; then
+      rmdir "$DEFAULT_MOSS_HOME" 2>/dev/null || true
     fi
   fi
   return "$restore_status"
@@ -580,6 +667,9 @@ cleanup() {
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "$TRANSACTION_ACTIVE" = 1 ]; then
     log "Installation failed; restoring the previous release"
+    if ! rollback_runtime_image; then
+      log "ERROR: automatic runtime image rollback failed"
+    fi
     if ! restore_previous_release; then
       log "ERROR: automatic rollback failed; inspect $SERVICE_NAME.service"
     fi
@@ -669,13 +759,6 @@ settings.serverRuntime = {
 fs.writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 })
 NODE
 
-for resource in skills assistants; do
-  if [ -d "$RELEASE_DIR/app/resources/$resource" ]; then
-    install -d -m 0700 -o "$INSTALL_USER" -g "$INSTALL_USER_GROUP" "$INSTALL_DIR/$resource"
-    cp -an "$RELEASE_DIR/app/resources/$resource/." "$INSTALL_DIR/$resource/"
-  fi
-done
-
 chmod 0600 "$CONFIG_PATH" "$SETTINGS_PATH"
 chown "$INSTALL_USER:$INSTALL_USER_GROUP" "$CONFIG_PATH" "$SETTINGS_PATH"
 
@@ -761,6 +844,18 @@ if [ "$HEALTHY" != 1 ]; then
   journalctl -u "$SERVICE_NAME.service" -n 50 --no-pager >&2 || true
   die "health check failed: $HEALTH_URL"
 fi
+
+for resource in skills assistants; do
+  if [ -d "$RELEASE_DIR/app/resources/$resource" ]; then
+    if [ -d "$INSTALL_DIR/$resource" ] \
+      && find "$INSTALL_DIR/$resource" -type l -print -quit | grep -q .; then
+      die "managed resource directory must not contain symbolic links: $INSTALL_DIR/$resource"
+    fi
+    install -d -m 0700 -o "$INSTALL_USER" -g "$INSTALL_USER_GROUP" "$INSTALL_DIR/$resource"
+    cp -an "$RELEASE_DIR/app/resources/$resource/." "$INSTALL_DIR/$resource/"
+    chown -R "$INSTALL_USER:$INSTALL_USER_GROUP" "$INSTALL_DIR/$resource"
+  fi
+done
 
 CONFIG_PATH="$CONFIG_PATH" "$INSTALL_DIR/current/node/bin/node" <<'NODE'
 const fs = require('node:fs')

@@ -1,35 +1,11 @@
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
-import fs from 'fs'
-import path from 'path'
 import { MOSS_HOME, MOSS_SERVER_HOME } from '../lib/env.js'
 import type {
   BackendHandle,
   BackendSpawnOptions,
   SessionRuntimeInfo,
 } from '../backendTypes.js'
-
-export function resolveNodeCliPath(): string {
-  const candidates = [
-    path.join(MOSS_SERVER_HOME, 'bin', 'cli-node.js'),
-  ]
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate
-    }
-  }
-
-  return path.join(MOSS_SERVER_HOME, 'bin', 'cli-node.js')
-}
-
-export function ensureCliExists(nodeCliPath: string): void {
-  if (!fs.existsSync(nodeCliPath)) {
-    throw new Error(
-      `Missing ${nodeCliPath}. Build or install cli-node.js to ${path.join(MOSS_SERVER_HOME, 'bin')}.`,
-    )
-  }
-}
 
 export function buildSessionEnv(
   options: BackendSpawnOptions,
@@ -177,41 +153,4 @@ export function createStreamBackendHandle(
       child.kill(force ? 'SIGKILL' : 'SIGTERM')
     },
   }
-}
-
-export function spawnLocalCliProcess(
-  options: BackendSpawnOptions,
-  env: NodeJS.ProcessEnv,
-): ChildProcess {
-  const nodeCliPath = resolveNodeCliPath()
-  ensureCliExists(nodeCliPath)
-
-  const args = [
-    nodeCliPath,
-    '--print',
-    '--verbose',
-    '--input-format',
-    'stream-json',
-    '--output-format',
-    'stream-json',
-    '--permission-prompt-tool',
-    'stdio',
-  ]
-
-  if (options.resumeSessionId) {
-    args.push('--resume', options.resumeSessionId)
-  } else {
-    args.push('--session-id', options.sessionId)
-  }
-
-  if (options.dangerouslySkipPermissions) {
-    args.push('--dangerously-skip-permissions')
-  }
-
-  return spawn(process.execPath, args, {
-    cwd: options.cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
 }

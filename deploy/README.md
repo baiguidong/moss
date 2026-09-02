@@ -6,6 +6,9 @@ Node.js 22, the server and session runner bundles, the admin frontend, and a
 versioned Docker session runtime image. The target host must provide systemd and
 Docker 20.10 or newer.
 
+Server sessions run through the embedded runtime in
+`moss-session-runner.mjs`; the Server package does not require `cli-node.js`.
+
 ## One-command install
 
 ```bash
