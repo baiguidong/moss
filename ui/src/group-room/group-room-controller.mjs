@@ -4,11 +4,12 @@ import fsp from 'node:fs/promises';
 import {
   GROUP_ROOM_MODERATOR_ID,
   GROUP_ROOM_USER_ID,
-  delegationFingerprint,
   normalizeModeratorDecision,
 } from './group-room-moderator.mjs';
 import { redactRoomText, redactRoomValue } from './group-room-policy.mjs';
 import { PausableDeadline } from './group-room-timeout.mjs';
+
+const DEFAULT_MODERATOR_INSTRUCTIONS = '根据任务复杂度、成员专长、已有证据和分歧程度自主决定是否委派、委派给谁、串行或并行执行以及何时收敛。审查、方案、架构和风险判断中，如果第二意见能显著提高可靠性，应主动安排相关成员交叉验证；不要为凑人数调用无关成员。';
 
 class RoomCommandQueue {
   #tails = new Map();
@@ -107,6 +108,7 @@ function normalizedRoomSettings(settings = {}) {
     tokenBudget: effectiveTokenBudget(settings),
     summaryThresholdChars: clampNumber(settings.summaryThresholdChars, 120_000, 40_000, 1_000_000),
     maxModeratorSteps: clampNumber(settings.maxModeratorSteps, 16, 2, 64),
+    moderatorInstructions: String(settings.moderatorInstructions || DEFAULT_MODERATOR_INSTRUCTIONS).trim().slice(0, 12_000),
   };
 }
 
@@ -305,8 +307,6 @@ export class GroupRoomController {
       moderatorSteps: 0,
       maxModeratorSteps: clampNumber(room.settings?.maxModeratorSteps, 16, 2, 64),
       forceFinishReason: '',
-      lastDelegationFingerprint: '',
-      repeatedDelegations: 0,
       blockingFailure: '',
       resetModerator: false,
       finished: null,
@@ -534,16 +534,6 @@ export class GroupRoomController {
         if (control.tokenBudget > 0 && control.totalTokens >= control.tokenBudget) {
           control.budgetReached = true;
           control.forceFinishReason = 'Room token budget reached';
-          continue;
-        }
-
-        const fingerprint = delegationFingerprint(decision.assignments);
-        control.repeatedDelegations = fingerprint === control.lastDelegationFingerprint
-          ? control.repeatedDelegations + 1
-          : 0;
-        control.lastDelegationFingerprint = fingerprint;
-        if (control.repeatedDelegations >= 1) {
-          control.forceFinishReason = 'Moderator repeated the same delegation';
           continue;
         }
 

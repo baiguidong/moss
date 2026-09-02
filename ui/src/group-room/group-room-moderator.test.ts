@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { delegationFingerprint, normalizeModeratorDecision } from './group-room-moderator.mjs'
+import { normalizeModeratorDecision } from './group-room-moderator.mjs'
 
 describe('Group Room moderator decision contract', () => {
   test('accepts a final response and strips unsupported fields', () => {
@@ -25,10 +25,5 @@ describe('Group Room moderator decision contract', () => {
     expect(() => normalizeModeratorDecision({
       action: 'delegate', assignments: [{ memberId: 'a', task: 'Again' }],
     }, { memberIds: new Set(['a']), forceFinish: true })).toThrow('safety boundary')
-  })
-
-  test('normalizes delegation fingerprints for stall detection', () => {
-    expect(delegationFingerprint([{ memberId: 'a', task: '  Check   This ' }]))
-      .toBe(delegationFingerprint([{ memberId: 'a', task: 'check this' }]))
   })
 })

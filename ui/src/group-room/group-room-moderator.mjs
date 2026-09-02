@@ -42,10 +42,3 @@ export function normalizeModeratorDecision(value, {
     reason: text(raw.reason, 2_000),
   };
 }
-
-export function delegationFingerprint(assignments) {
-  return assignments
-    .map(({ memberId, task }) => `${memberId}:${String(task).trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`)
-    .sort()
-    .join('|');
-}

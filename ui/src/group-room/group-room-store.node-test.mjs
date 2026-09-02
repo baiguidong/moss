@@ -256,6 +256,7 @@ describe('GroupRoomStore', () => {
     assert.equal(room.members.length, 1);
     assert.equal(room.settings.permissionMode, 'ask');
     assert.equal(room.settings.tokenBudget, 0);
+    assert.match(room.settings.moderatorInstructions, /第二意见/);
     assert.equal(Object.hasOwn(room.settings, 'mode'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionPolicy'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionRounds'), false);
@@ -408,7 +409,7 @@ describe('GroupRoomStore', () => {
     store.close();
   });
 
-  test('forces a final answer instead of executing a repeated delegation', async () => {
+  test('lets the moderator repeat an assignment when it judges rechecking useful', async () => {
     const { store, paths } = await createStore();
     const captures = [];
     const moderationCaptures = [];
@@ -428,10 +429,10 @@ describe('GroupRoomStore', () => {
     await finished;
 
     const completed = store.getRun(started.id);
-    assert.equal(completed.turns.length, 1);
-    assert.equal(captures.length, 1);
-    assert.equal(moderationCaptures.at(-1).forceFinish, true);
-    assert.equal(completed.stopReason, 'Moderator repeated the same delegation');
+    assert.equal(completed.turns.length, 2);
+    assert.equal(captures.length, 2);
+    assert.equal(moderationCaptures.at(-1).forceFinish, false);
+    assert.equal(completed.stopReason, '');
     assert.equal(controller.getRoom(room.id).messages.at(-1).content, 'Best available answer');
     controller.dispose();
     store.close();

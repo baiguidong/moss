@@ -445,13 +445,22 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
       requestPermission: async () => ({ behavior: 'deny' }),
     })
     const participant = member('reviewer')
+    const challenger = member('challenger')
     const room = {
       id: 'moderator-room',
       topic: 'Resolve the design',
       workspace: '/tmp',
       summary: 'Earlier context summary.',
       summaryThroughSeq: 1,
-      members: [participant],
+      settings: {
+        maxAgentTurns: 12,
+        maxModeratorSteps: 16,
+        turnTimeoutMs: 900_000,
+        runTimeoutMs: 2_700_000,
+        tokenBudget: 0,
+        moderatorInstructions: 'Use another expert when independent review adds value.',
+      },
+      members: [participant, challenger],
       messages: [{ id: 'old-message', seq: 1, authorType: 'human', authorId: 'user', kind: 'message', content: 'Earlier request.' }],
     }
     const first = await registry.moderate({
@@ -489,7 +498,16 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     const session = FakeClaudeSession.instances[0] as ModeratorClaudeSession
     expect(session.opts.maxTurns).toBe(1)
     expect(await session.opts.onToolUseValidation('Read')).toMatchObject({ behavior: 'deny' })
+    expect(session.opts.customSystemPrompt).toContain('independent challenge')
     expect(JSON.parse(session.prompts[0]).protocol).toBe('moss.group-room.moderator.v2')
+    expect(JSON.parse(session.prompts[0]).members.map((member: any) => member.id)).toEqual(['reviewer', 'challenger'])
+    expect(JSON.parse(session.prompts[0]).moderatorInstructions).toContain('independent review')
+    expect(JSON.parse(session.prompts[0]).operatingLimits).toMatchObject({
+      memberMaxTurns: 12,
+      moderatorStepLimit: 16,
+      maxParallelAssignments: 3,
+      tokenBudget: null,
+    })
     expect(JSON.parse(session.prompts[1]).executionLedger[0]).toMatchObject({
       status: 'completed', result: 'Verified.',
     })

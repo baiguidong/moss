@@ -969,6 +969,7 @@ export type GroupRoomSummary = {
     tokenBudget?: number;
     summaryThresholdChars?: number;
     maxModeratorSteps?: number;
+    moderatorInstructions?: string;
   };
   createdAt: number;
   updatedAt: number;
