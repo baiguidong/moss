@@ -410,6 +410,7 @@ export type DesktopSettings = {
     dreamMinSessions?: number;
   };
   advanced?: {
+    moss_group_rooms?: boolean;
     moss_auto_background_agents?: boolean;
     moss_bash_ast_permissions?: boolean;
     moss_hive_evidence?: boolean;
@@ -830,6 +831,179 @@ export type AuditDashboardPayload = {
   runs: AuditRunRecord[];
 };
 
+export type GroupRoomConnectorGrant = {
+  id: string;
+  access: 'read' | 'write';
+  exec?: boolean;
+};
+
+export type GroupRoomInviteable = {
+  id: string;
+  displayName: string;
+  description: string;
+  avatar: string;
+  category: string;
+  type: 'agent' | 'team';
+  sourceHash: string;
+  members: Array<{ id: string; displayName: string; role: string; sourceHash: string }>;
+  skills: string[];
+};
+
+export type GroupRoomResourceConnector = {
+  id: string;
+  name: string;
+  description: string;
+  type: string;
+  icon: string;
+  connected: boolean;
+  enabled: boolean;
+  hasMcp: boolean;
+  hasCli: boolean;
+  hasSkills: boolean;
+  mcpServerNames: string[];
+};
+
+export type GroupRoomResourceSkill = {
+  id: string;
+  command: string;
+  name: string;
+  description: string;
+};
+
+export type GroupRoomMember = {
+  id: string;
+  roomId: string;
+  displayName: string;
+  role: string;
+  status: 'idle' | 'running' | 'waiting' | 'failed' | 'stopped';
+  ordinal: number;
+  source: { kind: string; id: string; memberId: string | null; hash: string };
+  resourceSnapshot: {
+    assistantName: string;
+    enabledSkills: string[];
+    skillCommands: string[];
+    sourceType: string;
+    sourceHash: string;
+  };
+  grants: { connectors: GroupRoomConnectorGrant[]; skills: string[] };
+  runtimeSessionId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type GroupRoomMessage = {
+  id: string;
+  roomId: string;
+  runId: string | null;
+  seq: number;
+  authorType: 'human' | 'agent' | 'system';
+  authorId: string | null;
+  audience: string[];
+  causationId: string | null;
+  correlationId: string | null;
+  kind: string;
+  content: string;
+  status: string;
+  visibility: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type GroupRoomTraceEvent = {
+  type: 'tool_call' | 'tool_result' | string;
+  toolUseId?: string;
+  name?: string;
+  input?: unknown;
+  content?: unknown;
+  isError?: boolean;
+  timestamp?: number;
+};
+
+export type GroupRoomTurn = {
+  id: string;
+  runId: string;
+  roomId: string;
+  memberId: string;
+  assignment: string;
+  ordinal: number;
+  contextSnapshotSeq: number;
+  outputMessageId: string;
+  resourceFingerprint: string;
+  status: string;
+  trace: GroupRoomTraceEvent[];
+  usage: Record<string, unknown> | null;
+  error: string;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+
+export type GroupRoomRun = {
+  id: string;
+  roomId: string;
+  triggerMessageId: string | null;
+  mode: 'conversation' | 'parallel';
+  contextSnapshotSeq: number;
+  status: string;
+  stopReason: string;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  turns: GroupRoomTurn[];
+};
+
+export type GroupRoomSummary = {
+  id: string;
+  title: string;
+  topic: string;
+  workspace: string;
+  status: 'idle' | 'running' | 'paused' | 'deleting';
+  revision: number;
+  summary: string;
+  summaryThroughSeq: number;
+  settings: {
+    maxAgentTurns?: number;
+    mode?: 'conversation' | 'parallel';
+    permissionMode?: 'inherit' | 'ask' | 'allow-all';
+    discussionPolicy?: 'fixed' | 'until-stable';
+    discussionRounds?: number;
+    turnTimeoutMs?: number;
+    runTimeoutMs?: number;
+    tokenBudget?: number;
+    summaryThresholdChars?: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+  members?: GroupRoomMember[];
+};
+
+export type GroupRoom = GroupRoomSummary & {
+  members: GroupRoomMember[];
+  messages: GroupRoomMessage[];
+  activeRun: GroupRoomRun | null;
+  recentRuns: GroupRoomRun[];
+};
+
+export type GroupRoomPermissionRequest = {
+  requestId: string;
+  roomId: string;
+  roomTitle: string;
+  memberId: string;
+  memberName: string;
+  connectorId: string | null;
+  turnId: string | null;
+  toolName: string;
+  input: unknown;
+  readOnly: boolean;
+  requestedAt: number;
+};
+
+export type GroupRoomIpcResult<T> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+};
+
 declare global {
   interface Window {
     agentDesktop: {
@@ -942,6 +1116,28 @@ declare global {
         message?: string;
       }) => Promise<{ ok: boolean }>;
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      groupRooms: {
+        status: () => Promise<GroupRoomIpcResult<{ enabled: boolean }>>;
+        list: () => Promise<GroupRoomIpcResult<GroupRoomSummary[]>>;
+        get: (payload: { roomId: string }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        listResources: () => Promise<GroupRoomIpcResult<{ inviteables: GroupRoomInviteable[]; connectors: GroupRoomResourceConnector[]; skills: GroupRoomResourceSkill[] }>>;
+        listPendingPermissions: () => Promise<GroupRoomIpcResult<GroupRoomPermissionRequest[]>>;
+        create: (payload: { title?: string; topic: string; workspace: string; invitationIds: string[]; customMembers?: Array<{ displayName: string; role: string; prompt: string; skillIds?: string[] }>; connectorGrants?: GroupRoomConnectorGrant[]; memberConnectorGrants?: Record<string, GroupRoomConnectorGrant[]>; settings?: GroupRoomSummary['settings'] }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        update: (payload: { roomId: string; updates: Partial<GroupRoomSummary>; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        updateMemberGrants: (payload: { roomId: string; memberId: string; grants: GroupRoomMember['grants']; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        refreshMemberSource: (payload: { roomId: string; memberId: string; expectedRevision: number }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        dispatch: (payload: { roomId: string; content: string; mode: 'conversation' | 'parallel'; memberIds: string[]; assignments?: Record<string, string>; rounds?: number; untilStable?: boolean }) => Promise<GroupRoomIpcResult<GroupRoomRun>>;
+        suggestModeration: (payload: { roomId: string; content: string }) => Promise<GroupRoomIpcResult<{ mode: 'conversation' | 'parallel'; assignments: Array<{ memberId: string; task: string }>; reason: string }>>;
+        intervene: (payload: { roomId: string; content: string; mode: 'soft' | 'hard' }) => Promise<GroupRoomIpcResult<GroupRoomMessage>>;
+        stop: (payload: { roomId: string }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        stopMember: (payload: { roomId: string; memberId: string }) => Promise<GroupRoomIpcResult<GroupRoom>>;
+        delete: (payload: { roomId: string }) => Promise<GroupRoomIpcResult<{ roomId: string }>>;
+        resolvePermission: (payload: { requestId: string; allowed: boolean }) => Promise<GroupRoomIpcResult<{ requestId: string }>>;
+        onEvent: (callback: (payload: { roomId: string; revision?: number; type: string; payload: GroupRoom }) => void) => () => void;
+        onStream: (callback: (payload: { roomId: string; runId: string; turnId: string; memberId: string; type: string; delta?: string; streamOffset?: number; traceOffset?: number; event?: GroupRoomTraceEvent }) => void) => () => void;
+        onPermissionRequest: (callback: (payload: GroupRoomPermissionRequest) => void) => () => void;
+        onPermissionResolved: (callback: (payload: { requestId: string; roomId: string }) => void) => () => void;
+      };
       listApps: () => Promise<StoredApp[]>;
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;

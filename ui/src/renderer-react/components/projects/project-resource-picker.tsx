@@ -14,9 +14,9 @@ import { isAuthorizedConnector } from '@/lib/connector-selection';
 import { cn } from '@/lib/utils';
 import type { InstalledConnector } from '@/types';
 
-type ProjectResourceKind = 'connector' | 'skill' | 'expert';
+export type ProjectResourceKind = 'connector' | 'skill' | 'expert';
 
-type ProjectResourceOption = {
+export type ProjectResourceOption = {
   id: string;
   name: string;
   description: string;
@@ -36,6 +36,7 @@ type ProjectResourcePickerProps = {
   description: string;
   selectedIds: string[];
   onChange: (ids: string[]) => void;
+  options?: ProjectResourceOption[];
 };
 
 const PAGE_SIZE = 50;
@@ -148,7 +149,12 @@ async function loadMarketExperts(query: string, page: number): Promise<ProjectRe
   };
 }
 
-function loadResources(kind: ProjectResourceKind, query: string, page: number) {
+function loadResources(kind: ProjectResourceKind, query: string, page: number, options?: ProjectResourceOption[]) {
+  if (options) {
+    if (page > 1) return Promise.resolve({ items: [], total: 0, hasMore: false });
+    const items = uniqueOptions(options).filter((item) => matchesQuery(item, query));
+    return Promise.resolve({ items, total: items.length, hasMore: false });
+  }
   if (kind === 'connector') return loadAuthorizedConnectors(query, page);
   if (kind === 'skill') return loadMarketSkills(query, page);
   return loadMarketExperts(query, page);
@@ -202,6 +208,7 @@ export function ProjectResourcePicker({
   description,
   selectedIds,
   onChange,
+  options,
 }: ProjectResourcePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
@@ -216,6 +223,11 @@ export function ProjectResourcePicker({
   const requestIdRef = React.useRef(0);
   const copy = resourceCopy(kind);
   const selected = React.useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  React.useEffect(() => {
+    if (!options) return;
+    setKnownItems(Object.fromEntries(options.map((item) => [item.id, item])));
+  }, [options]);
 
   const rememberItems = React.useCallback((nextItems: ProjectResourceOption[]) => {
     setKnownItems((current) => {
@@ -232,7 +244,7 @@ export function ProjectResourcePicker({
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError('');
-      void loadResources(kind, query, 1)
+      void loadResources(kind, query, 1, options)
         .then((result) => {
           if (requestIdRef.current !== requestId) return;
           setItems(result.items);
@@ -253,7 +265,7 @@ export function ProjectResourcePicker({
         });
     }, query ? 250 : 0);
     return () => window.clearTimeout(timer);
-  }, [kind, open, query, rememberItems]);
+  }, [kind, open, options, query, rememberItems]);
 
   const loadMore = async () => {
     if (!hasMore || loadingMore) return;
@@ -262,7 +274,7 @@ export function ProjectResourcePicker({
     setLoadingMore(true);
     setError('');
     try {
-      const result = await loadResources(kind, query, nextPage);
+      const result = await loadResources(kind, query, nextPage, options);
       if (requestIdRef.current !== requestId) return;
       setItems((current) => uniqueOptions([...current, ...result.items]));
       rememberItems(result.items);

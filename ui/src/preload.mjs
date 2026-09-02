@@ -80,6 +80,44 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   answerQuestion: (payload) => ipcRenderer.invoke('agent:answer-question', payload),
   rejectQuestion: (payload) => ipcRenderer.invoke('agent:reject-question', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
+  groupRooms: {
+    status: () => ipcRenderer.invoke('group-room:status'),
+    list: () => ipcRenderer.invoke('group-room:list'),
+    get: (payload) => ipcRenderer.invoke('group-room:get', payload),
+    listResources: () => ipcRenderer.invoke('group-room:list-resources'),
+    listPendingPermissions: () => ipcRenderer.invoke('group-room:list-pending-permissions'),
+    create: (payload) => ipcRenderer.invoke('group-room:create', payload),
+    update: (payload) => ipcRenderer.invoke('group-room:update', payload),
+    updateMemberGrants: (payload) => ipcRenderer.invoke('group-room:update-member-grants', payload),
+    refreshMemberSource: (payload) => ipcRenderer.invoke('group-room:refresh-member-source', payload),
+    dispatch: (payload) => ipcRenderer.invoke('group-room:dispatch', payload),
+    suggestModeration: (payload) => ipcRenderer.invoke('group-room:suggest-moderation', payload),
+    intervene: (payload) => ipcRenderer.invoke('group-room:intervene', payload),
+    stop: (payload) => ipcRenderer.invoke('group-room:stop', payload),
+    stopMember: (payload) => ipcRenderer.invoke('group-room:stop-member', payload),
+    delete: (payload) => ipcRenderer.invoke('group-room:delete', payload),
+    resolvePermission: (payload) => ipcRenderer.invoke('group-room:resolve-permission', payload),
+    onEvent: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('group-room:event', handler);
+      return () => ipcRenderer.off('group-room:event', handler);
+    },
+    onStream: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('group-room:stream', handler);
+      return () => ipcRenderer.off('group-room:stream', handler);
+    },
+    onPermissionRequest: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('group-room:permission-request', handler);
+      return () => ipcRenderer.off('group-room:permission-request', handler);
+    },
+    onPermissionResolved: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('group-room:permission-resolved', handler);
+      return () => ipcRenderer.off('group-room:permission-resolved', handler);
+    },
+  },
   listApps: () => ipcRenderer.invoke('app:list'),
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),
   launchApp: (payload) => ipcRenderer.invoke('app:launch', payload),

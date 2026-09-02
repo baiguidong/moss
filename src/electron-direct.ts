@@ -30,6 +30,11 @@ import {
 import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchema.js'
 import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
 import { shouldBypassDesktopToolPermission } from './utils/permissions/desktopPermissionMode.js'
+import {
+  shouldForceDesktopToolPermission,
+  type ForcedDesktopToolPermissionCallback,
+  type ForcedDesktopToolPermissionMetadata,
+} from './utils/permissions/forcedDesktopToolPermission.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
@@ -263,6 +268,8 @@ export type DesktopPermissionRequest = {
   readOnly?: boolean
 }
 
+export type DesktopToolPermissionMetadata = ForcedDesktopToolPermissionMetadata
+
 async function defaultDesktopPermissionRequest(
   tool: string,
 ): Promise<DesktopPermissionDecision> {
@@ -297,7 +304,13 @@ export interface ClaudeSessionOptions {
   onToolUseValidation?: (
     tool: string,
     input: unknown,
+    metadata: DesktopToolPermissionMetadata,
   ) => Promise<DesktopPermissionDecision | null | undefined>
+  /**
+   * Forces the desktop confirmation callback for selected tools before global
+   * allow rules or bypass mode are considered. Omitted for normal sessions.
+   */
+  shouldForceToolPermission?: ForcedDesktopToolPermissionCallback
   /** 最大轮次 */
   maxTurns?: number
   /** 思考配置 */
@@ -342,7 +355,9 @@ type ResolvedClaudeSessionOptions = {
   onToolUseValidation?: (
     tool: string,
     input: unknown,
+    metadata: DesktopToolPermissionMetadata,
   ) => Promise<DesktopPermissionDecision | null | undefined>
+  shouldForceToolPermission?: ForcedDesktopToolPermissionCallback
   maxTurns: number
   thinkingConfig: ThinkingConfig
   coordinatorMode: boolean
@@ -585,6 +600,7 @@ export class ClaudeSession {
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
       onToolUseValidation: opts.onToolUseValidation,
+      shouldForceToolPermission: opts.shouldForceToolPermission,
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
@@ -724,7 +740,8 @@ export class ClaudeSession {
 
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
-      const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input)
+      const readOnly = tool.isReadOnly(input)
+      const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input, { readOnly })
       if (
         validationDecision &&
         typeof validationDecision !== 'boolean' &&
@@ -733,6 +750,13 @@ export class ClaudeSession {
         return validationDecision
       }
 
+      const forceDesktopPermission = await shouldForceDesktopToolPermission(
+        this.#opts.shouldForceToolPermission,
+        tool.name,
+        input,
+        { readOnly },
+      )
+
       // Honor the current permission context so managed settings can disable
       // desktop bypass mode. Tools that collect user input remain interactive.
       const activePermissionMode =
@@ -740,6 +764,7 @@ export class ClaudeSession {
           ? 'allow-all'
           : 'default'
       if (
+        !forceDesktopPermission &&
         shouldBypassDesktopToolPermission(
           activePermissionMode,
           tool.requiresUserInteraction?.() === true,
@@ -755,9 +780,10 @@ export class ClaudeSession {
         }
       }
 
-      const permissionDecision =
-        forceDecision ??
-        (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
+      const permissionDecision = forceDesktopPermission
+        ? { behavior: 'ask' as const }
+        : forceDecision ??
+          (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
 
       if (
         permissionDecision.behavior === 'allow' ||
@@ -767,14 +793,16 @@ export class ClaudeSession {
       }
 
       const requestInput = permissionDecision.updatedInput ?? input
-      const hookDecision = await runDesktopPermissionRequestHooks(
-        tool.name,
-        id,
-        requestInput,
-        ctx,
-        permissionDecision.suggestions,
-      )
-      if (hookDecision) return hookDecision
+      if (!forceDesktopPermission) {
+        const hookDecision = await runDesktopPermissionRequestHooks(
+          tool.name,
+          id,
+          requestInput,
+          ctx,
+          permissionDecision.suggestions,
+        )
+        if (hookDecision) return hookDecision
+      }
 
       const decision = await onPermissionRequest(tool.name, requestInput, {
         suggestions: permissionDecision.suggestions,
@@ -782,7 +810,7 @@ export class ClaudeSession {
         toolUseId: id,
         agentId: ctx.agentId ? String(ctx.agentId) : undefined,
         agentType: typeof ctx.agentType === 'string' ? ctx.agentType : undefined,
-        readOnly: tool.isReadOnly(input),
+        readOnly,
       })
 
       if (

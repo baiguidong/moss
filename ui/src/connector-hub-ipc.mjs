@@ -2269,6 +2269,26 @@ export function getConnectorAddDirs(connectorIds) {
   return dirs;
 }
 
+export function getConnectorCliCommandNames(connectorIds) {
+  const names = new Set();
+  const genericExecutables = new Set([
+    'bash', 'bun', 'cmd', 'cmd.exe', 'env', 'node', 'npx', 'powershell',
+    'powershell.exe', 'pwsh', 'python', 'python3', 'sh', 'zsh',
+  ]);
+  for (const connectorId of normalizeStringList(connectorIds)) {
+    if (!isValidConnectorId(connectorId)) continue;
+    const cli = readJsonFile(path.join(connectorDir(connectorId), 'cli.json'), null);
+    const command = getPlatformCommand(cli?.versionCheck?.command, '');
+    const match = normalizeString(command).match(/^(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
+    const executable = match?.[1] || match?.[2] || match?.[3] || '';
+    if (!executable) continue;
+    if (genericExecutables.has(path.basename(executable).toLowerCase())) continue;
+    names.add(executable);
+    names.add(path.basename(executable));
+  }
+  return [...names];
+}
+
 export function registerConnectorHubIpcHandlers({
   getSessionRecord,
   updateSessionConnectors,

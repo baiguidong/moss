@@ -17,6 +17,7 @@ import {
 } from './public-experthub-ipc.mjs';
 import {
   getConnectorAddDirs,
+  getConnectorCliCommandNames,
   getConnectorCredentialEnv,
   getConnectorMcpServers,
   findConnectorMcpServer,
@@ -35,7 +36,15 @@ import {
   applyPendingMcpRuntimeReload,
   scheduleMcpRuntimeReload,
 } from './mcp-runtime-reload.mjs';
-import { registerAgentIpcHandlers } from './agent-ipc.mjs';
+import { getInstalledAssistants, registerAgentIpcHandlers } from './agent-ipc.mjs';
+import { createGroupRoomDataPaths } from './group-room/group-room-layout.mjs';
+import { GroupRoomStore } from './group-room/group-room-store.mjs';
+import { GroupRoomResourceCatalog } from './group-room/group-room-resource-catalog.mjs';
+import { RoomExecutionScheduler } from './group-room/group-room-scheduler.mjs';
+import { GroupRoomRuntimeRegistry } from './group-room/group-room-runtime.mjs';
+import { GroupRoomController } from './group-room/group-room-controller.mjs';
+import { registerGroupRoomIpcHandlers } from './group-room/group-room-ipc.mjs';
+import { isGroupRoomOnlySettingsUpdate } from './group-room/group-room-feature-flag.mjs';
 import {
   createMossAppEventHandler,
   listAllStoredApps,
@@ -531,6 +540,7 @@ let desktopAppRuntime = null;
 let desktopAppShutdownComplete = false;
 let localAuditService = null;
 let localAuditScanTimer = null;
+let groupRoomIpc = null;
 let feishuAdapterProcessManager = null;
 let feishuAdapterController = null;
 let appDecisionBroker = null;
@@ -2857,6 +2867,46 @@ function buildThinkingConfig() {
   return { type: 'adaptive' };
 }
 
+function createGroupRoomFeature() {
+  const paths = createGroupRoomDataPaths(MOSS_HOME);
+  const store = new GroupRoomStore({ paths });
+  const catalog = new GroupRoomResourceCatalog({
+    listAssistants: getInstalledAssistants,
+    listSkills: getInstalledSkills,
+    listConnectors: listInstalledConnectors,
+    getConnectorMcpServers,
+    getConnectorAddDirs,
+    getConnectorCliCommandNames,
+    getConnectorCredentialEnv,
+  });
+  const scheduler = new RoomExecutionScheduler({ globalLimit: 4, roomLimit: 3 });
+  let controller = null;
+  const runtime = new GroupRoomRuntimeRegistry({
+    getClaudeSessionCtor,
+    getSettings: () => desktopSettings,
+    buildThinkingConfig: () => buildThinkingConfig(),
+    paths,
+    requestPermission: (request) => controller.requestPermission(request),
+    onRuntimeSession: (memberId, runtimeSessionId) => {
+      store.setMemberRuntimeSession(memberId, runtimeSessionId);
+    },
+  });
+  controller = new GroupRoomController({
+    store,
+    catalog,
+    runtime,
+    scheduler,
+    emit: emitToRenderer,
+  });
+  return {
+    controller,
+    dispose() {
+      controller.dispose();
+      store.close();
+    },
+  };
+}
+
 function startManagedRuntimeInstall() {
   if (!managedRuntimeInstallPromise) {
     managedRuntimeInstallPromise = ensureManagedRuntimes()
@@ -3323,6 +3373,7 @@ function createRemoteDirectRuntime({
 }
 
 function refreshDesktopSettings(payload = {}) {
+  const groupRoomsWereEnabled = desktopSettings.advanced?.moss_group_rooms === true;
   // 这里不再只保留标准 key，而是将 payload 合并到现有的 desktopSettings 中
   // 这样可以保留用户手动在 settings.json 中添加的自定义 key（如 env, apiBaseUrl 等）
   let nextSettings = {
@@ -3379,7 +3430,10 @@ function refreshDesktopSettings(payload = {}) {
   }
 
   let skippedSessionCount = 0;
-  const affectsAgentRuntime = Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
+  const groupRoomsAreEnabled = nextSettings.advanced?.moss_group_rooms === true;
+  if (groupRoomsWereEnabled && !groupRoomsAreEnabled) groupRoomIpc?.dispose();
+  const affectsAgentRuntime = !isGroupRoomOnlySettingsUpdate(payload)
+    && Object.keys(payload).some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
   if (affectsAgentRuntime) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
@@ -8771,6 +8825,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
+  groupRoomIpc = registerGroupRoomIpcHandlers({
+    ipcMain,
+    isEnabled: () => desktopSettings.advanced?.moss_group_rooms === true,
+    createFeature: createGroupRoomFeature,
+  });
   registerCronIpcHandlers();
   localAuditService = createLocalAuditService({
     dbPath: AUDIT_DB_PATH,
@@ -8833,6 +8892,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  groupRoomIpc?.dispose();
   for (const sessionRecord of sessions.values()) {
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
@@ -8849,6 +8909,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+  groupRoomIpc?.dispose();
   feishuAdapterProcessManager?.dispose();
   feishuAdapterProcessManager = null;
   if (localAuditScanTimer) {

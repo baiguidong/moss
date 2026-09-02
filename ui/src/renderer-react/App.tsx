@@ -2,6 +2,7 @@ import * as React from 'react';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
+import { GroupRoomsView } from '@/components/group-rooms-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { ChatArea } from '@/components/chat-area';
 import {
@@ -336,6 +337,7 @@ export default function App() {
     }
   });
   const [activeView, setActiveView] = React.useState<MainView>('chat');
+  const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
     toolUseId: string;
@@ -432,6 +434,13 @@ export default function App() {
   const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
+  const effectiveLeftCollapsed = layout.leftCollapsed || compactViewport;
+
+  React.useEffect(() => {
+    const updateViewport = () => setCompactViewport(window.innerWidth < 720);
+    window.addEventListener('resize', updateViewport);
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [projects, setProjects] = React.useState<Project[]>([]);
@@ -2290,7 +2299,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="min-h-0 shrink-0 overflow-hidden"
-          style={{ width: layout.leftCollapsed ? 68 : layout.leftWidth }}
+          style={{ width: effectiveLeftCollapsed ? 68 : layout.leftWidth }}
         >
           <AppSidebar
             sessions={sidebarSessions}
@@ -2300,7 +2309,7 @@ export default function App() {
             appsCount={apps.length}
             projectsCount={projects.length}
             themeMode={themeMode}
-            collapsed={layout.leftCollapsed}
+            collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
@@ -2367,7 +2376,7 @@ export default function App() {
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
                 planDecisionBusy={planDecisionBusy}
-                leftCollapsed={layout.leftCollapsed}
+                leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
                 childSessions={activeChildSessions}
@@ -2418,7 +2427,7 @@ export default function App() {
                 sessionWorkspace={undefined}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
-                leftCollapsed={layout.leftCollapsed}
+                leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
                 childSessions={[]}
@@ -2446,6 +2455,11 @@ export default function App() {
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
+          ) : activeView === 'rooms' ? (
+            <GroupRoomsView
+              onOpenConnectorHub={() => setActiveView('connectors')}
+              globalBypassPermissions={desktopSettings?.bypassPermissions ?? false}
+            />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'audit' ? (

@@ -17,6 +17,29 @@ function normalizeAssistantRelativePath(filePath) {
   return safePath;
 }
 
+export async function readAssistantRelativeMarkdown(assistantDir, relativePath) {
+  const candidate = normalizeAssistantRelativePath(relativePath);
+  if (!candidate || !candidate.toLowerCase().endsWith('.md')) {
+    throw new Error('Assistant prompt path must be a relative Markdown file.');
+  }
+  const root = path.resolve(assistantDir);
+  const fullPath = path.resolve(root, candidate);
+  const [realRoot, realFullPath] = await Promise.all([
+    fsp.realpath(root),
+    fsp.realpath(fullPath),
+  ]);
+  const relative = path.relative(realRoot, realFullPath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Assistant prompt path escapes the assistant directory.');
+  }
+  const stat = await fsp.stat(realFullPath);
+  if (!stat.isFile()) throw new Error(`Assistant prompt is not a file: ${candidate}`);
+  return {
+    relativePath: candidate,
+    content: await fsp.readFile(realFullPath, 'utf-8'),
+  };
+}
+
 async function fileExists(filePath) {
   try {
     const stat = await fsp.stat(filePath);
