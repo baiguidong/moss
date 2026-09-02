@@ -109,11 +109,9 @@ if (buildBunCli) {
 }
 
 if (buildElectronDirect) {
-  // Keep the generated runtime under src/ so electron-builder's cross-platform
-  // file collector includes it consistently through the existing src/**/* rule.
-  build('ui/src/generated/electron-direct.mjs', [
+  build('ui/electron-direct.mjs', [
     'build', 'src/electron-direct.ts',
-    '--outfile=ui/src/generated/electron-direct.mjs',
+    '--outfile=ui/electron-direct.mjs',
     '--target=node',
     '--format=esm',
     '--external=sharp',
@@ -121,7 +119,7 @@ if (buildElectronDirect) {
     ...featureArgs,
     ...defines,
   ])
-  sanitizePaths('ui/src/generated/electron-direct.mjs')
+  sanitizePaths('ui/electron-direct.mjs')
 }
 
 if (!buildServer) {

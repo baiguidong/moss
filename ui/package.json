@@ -58,6 +58,7 @@
     },
     "files": [
       "dist/renderer/**/*",
+      "dist/runtime/**/*",
       "src/**/*",
       "index.html",
       "package.json"

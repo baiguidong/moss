@@ -245,7 +245,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(uiRoot, '..');
-const sdkPath = path.join(__dirname, 'generated', 'electron-direct.mjs');
+const sdkPath = app.isPackaged
+  ? path.join(uiRoot, 'dist', 'runtime', 'electron-direct.mjs')
+  : path.join(uiRoot, 'electron-direct.mjs');
 const rendererHtml = path.join(uiRoot, 'dist', 'renderer', 'index.html');
 const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.env.VITE_DEV_SERVER_URL).trim();
 const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';

@@ -66,8 +66,8 @@ async function verifySharpChild(resourcesDir) {
   const requireFromApp = createRequire(path.join(
     resourcesDir,
     'app.asar',
-    'src',
-    'generated',
+    'dist',
+    'runtime',
     'electron-direct.mjs',
   ));
   const sharp = requireFromApp('sharp');
@@ -316,7 +316,7 @@ async function main() {
   const asarPath = requireFile(path.join(paths.resourcesDir, 'app.asar'), 'app.asar');
   const asarEntries = new Set(listPackage(asarPath));
   for (const entry of [
-    '/src/generated/electron-direct.mjs',
+    '/dist/runtime/electron-direct.mjs',
     '/src/main.mjs',
     '/src/preload.mjs',
     '/dist/renderer/index.html',

@@ -41,9 +41,12 @@ describe('desktop package contract', () => {
 
   test('packages native image processing and physical ripgrep resources', () => {
     expect(desktopPackage.build.files).toContain('src/**/*');
+    expect(desktopPackage.build.files).toContain('dist/runtime/**/*');
     const buildSource = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
-    expect(buildSource).toContain("--outfile=ui/src/generated/electron-direct.mjs");
+    const copySource = readFileSync(path.join(uiRoot, 'scripts', 'copy-build-resources.mjs'), 'utf8');
+    expect(buildSource).toContain("--outfile=ui/electron-direct.mjs");
     expect(buildSource).not.toContain('bin/cli-node.js');
+    expect(copySource).toContain("'dist', 'runtime', 'electron-direct.mjs'");
     const rootModules = desktopPackage.build.extraResources.find(
       (entry: { from?: string }) => entry.from === '../node_modules',
     );
