@@ -151,13 +151,19 @@ describe('GroupRoomStore', () => {
       turns: [{ memberId: room.members[0].id, assignment: 'Work' }],
     });
     store.startTurn(run.turns[0].id);
+    store.addMessage(room.id, {
+      authorType: 'human',
+      authorId: 'user',
+      content: 'Keep this queued correction',
+      status: 'queued',
+    });
     store.close();
 
     const reopened = new GroupRoomStore({ paths });
     assert.equal(reopened.getRun(run.id).status, 'interrupted');
     assert.equal(reopened.getRun(run.id).turns[0].status, 'interrupted');
     assert.equal(reopened.getRoom(room.id).status, 'paused');
-    assert.deepEqual(reopened.listMessages(room.id), []);
+    assert.deepEqual(reopened.listMessages(room.id).map((message) => message.content), ['Keep this queued correction']);
     reopened.close();
   });
 
@@ -230,6 +236,7 @@ describe('GroupRoomStore', () => {
 
     assert.equal(room.members.length, 1);
     assert.equal(room.settings.permissionMode, 'ask');
+    assert.equal(room.settings.tokenBudget, 1_000_000);
     assert.equal(Object.hasOwn(room.settings, 'mode'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionPolicy'), false);
     assert.equal(Object.hasOwn(room.settings, 'discussionRounds'), false);
@@ -326,7 +333,7 @@ describe('GroupRoomStore', () => {
     store.close();
   });
 
-  test('discards a stale moderator decision and incorporates a soft user intervention', async () => {
+  test('discards a stale moderator decision and incorporates consecutive soft user interventions', async () => {
     const { store, paths } = await createStore();
     const captures = [];
     const moderationCaptures = [];
@@ -355,17 +362,27 @@ describe('GroupRoomStore', () => {
     const started = await controller.dispatch(room.id, { content: 'Initial scope' });
     await moderationStarted;
     await controller.intervene(room.id, { content: 'Include the missing constraint', mode: 'soft' });
+    await controller.intervene(room.id, { content: 'The previous message was incomplete', mode: 'soft' });
+    const queued = controller.getRoom(room.id).messages.filter((message) => message.status === 'queued');
+    assert.deepEqual(queued.map((message) => message.content), [
+      'Include the missing constraint',
+      'The previous message was incomplete',
+    ]);
     releaseModeration();
     await finished;
 
     const completed = store.getRun(started.id);
     assert.equal(completed.status, 'completed');
     assert.equal(moderationCaptures.length, 2);
-    assert.equal(moderationCaptures[1].room.messages.at(-1).content, 'Include the missing constraint');
+    assert.deepEqual(moderationCaptures[1].room.messages.slice(-2).map((message) => message.content), [
+      'Include the missing constraint',
+      'The previous message was incomplete',
+    ]);
     const messages = controller.getRoom(room.id).messages;
     assert.deepEqual(messages.map((message) => message.content), [
       'Initial scope',
       'Include the missing constraint',
+      'The previous message was incomplete',
       'Corrected answer',
     ]);
     controller.dispose();
@@ -495,6 +512,37 @@ describe('GroupRoomStore', () => {
     assert.equal(captures.length, 0);
     assert.equal(moderationCaptures.at(-1).forceFinish, true);
     assert.equal(completed.stopReason, 'Room token budget reached');
+    controller.dispose();
+    store.close();
+  });
+
+  test('migrates the legacy hidden 120k token default so one cached turn does not force finalization', async () => {
+    const { store, paths } = await createStore();
+    const moderationCaptures = [];
+    const { controller, finished } = controllerFixture(store, paths, [], {
+      moderate: scriptedModerator([
+        ({ room }) => ({ action: 'delegate', assignments: [{ memberId: room.members[0].id, task: 'Inspect cached context' }] }),
+        { action: 'respond', response: 'Normal synthesis after the cached turn.' },
+      ], moderationCaptures),
+      execute: async () => ({
+        content: 'Cached-context result',
+        trace: [],
+        usage: { input_tokens: 23_583, cache_read_input_tokens: 120_320, output_tokens: 1_594 },
+        promptHash: 'cached',
+      }),
+    });
+    const room = await controller.createRoom({
+      topic: 'Legacy budget',
+      workspace: path.join(paths.root, 'workspace'),
+      invitationIds: ['team'],
+    });
+    store.updateRoom(room.id, { settings: { ...room.settings, tokenBudget: 120_000 } });
+
+    await controller.dispatch(room.id, { content: 'Inspect without premature finalization' });
+    await finished;
+
+    assert.equal(moderationCaptures[1].forceFinish, false);
+    assert.equal(store.listRuns(room.id)[0].stopReason, '');
     controller.dispose();
     store.close();
   });

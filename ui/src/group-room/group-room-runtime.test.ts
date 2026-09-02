@@ -91,6 +91,17 @@ class FailingModeratorClaudeSession extends FakeClaudeSession {
   }
 }
 
+class FinalizingModeratorClaudeSession extends FakeClaudeSession {
+  async *send(prompt: string) {
+    this.prompts.push(prompt)
+    yield {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: JSON.stringify({ action: 'respond', response: 'Best supported answer.' }) }] },
+    }
+    yield { type: 'result', usage: { input_tokens: 3 } }
+  }
+}
+
 function member(id: string) {
   return {
     id,
@@ -524,5 +535,33 @@ describe('GroupRoomRuntimeRegistry isolation', () => {
     })).rejects.toThrow('transport unavailable')
     expect((FakeClaudeSession.instances[0] as FailingModeratorClaudeSession).prompts).toHaveLength(1)
     failing.disposeAll()
+  })
+
+  test('does not expose the internal force-finish field to the moderator model', async () => {
+    FakeClaudeSession.instances = []
+    const registry = new GroupRoomRuntimeRegistry({
+      getClaudeSessionCtor: async () => FinalizingModeratorClaudeSession,
+      getSettings: () => ({ model: 'fake', advanced: {} }),
+      buildThinkingConfig: () => ({ type: 'disabled' }),
+      paths: { memberEngineDir: () => '/tmp/member', roomDir: () => '/tmp/group-room-finalizing' },
+      requestPermission: async () => ({ behavior: 'deny' }),
+    })
+    const participant = member('reviewer')
+    await registry.moderate({
+      room: {
+        id: 'finalizing-room', topic: 'Finish safely', workspace: '/tmp', summary: '', summaryThroughSeq: 0,
+        members: [participant], messages: [],
+      },
+      run: { id: 'run', turns: [] },
+      step: 2,
+      forceFinish: true,
+      signal: new AbortController().signal,
+    })
+
+    const session = FakeClaudeSession.instances[0] as FinalizingModeratorClaudeSession
+    expect(session.prompts[0]).not.toContain('forceFinish')
+    expect(JSON.parse(session.prompts[0]).allowedActions).toEqual(['respond'])
+    expect(session.opts.customSystemPrompt).not.toContain('forceFinish')
+    registry.disposeAll()
   })
 })

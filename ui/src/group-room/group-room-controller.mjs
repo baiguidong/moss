@@ -92,13 +92,22 @@ function tokenUsage(usage) {
   ), 0);
 }
 
+function effectiveTokenBudget(settings = {}) {
+  const configured = Number(settings.tokenBudget);
+  // 120k was the original hidden default and is too small for one normal
+  // tool-using turn once cached input is included. Preserve deliberately
+  // smaller test/admin overrides, but migrate that exact legacy default.
+  if (configured === 120_000) return 1_000_000;
+  return clampNumber(configured, 1_000_000, 1_000, 2_000_000);
+}
+
 function normalizedRoomSettings(settings = {}) {
   return {
     maxAgentTurns: Math.max(1, Math.min(50, Number(settings.maxAgentTurns) || 12)),
     permissionMode: normalizePermissionMode(settings.permissionMode),
     turnTimeoutMs: clampNumber(settings.turnTimeoutMs, 15 * 60_000, 30_000, 30 * 60_000),
     runTimeoutMs: clampNumber(settings.runTimeoutMs, 45 * 60_000, 60_000, 90 * 60_000),
-    tokenBudget: clampNumber(settings.tokenBudget, 120_000, 1_000, 2_000_000),
+    tokenBudget: effectiveTokenBudget(settings),
     summaryThresholdChars: clampNumber(settings.summaryThresholdChars, 120_000, 40_000, 1_000_000),
     maxModeratorSteps: clampNumber(settings.maxModeratorSteps, 16, 2, 64),
   };
@@ -282,13 +291,13 @@ export class GroupRoomController {
     const control = {
       runId: run.id,
       abortController: new AbortController(),
-      softIntervention: null,
+      softInterventions: [],
       hardIntervention: null,
       stoppedMemberIds: new Set(),
       activeMemberIds: new Set(),
       activeTurnIds: new Map(),
       totalTokens: 0,
-      tokenBudget: clampNumber(room.settings?.tokenBudget, 120_000, 1_000, 2_000_000),
+      tokenBudget: effectiveTokenBudget(room.settings),
       budgetReached: false,
       abortReason: '',
       runDeadline: null,
@@ -326,9 +335,7 @@ export class GroupRoomController {
       if (!text) throw new Error('Intervention content is required.');
       const control = this.#active.get(roomId);
       if (!control) return this.#startRun(roomId, { content: text });
-      if (control.softIntervention || control.hardIntervention) {
-        throw new Error('A user intervention is already queued.');
-      }
+      if (control.hardIntervention) throw new Error('The Group Room is already stopping.');
       const queued = this.#store.addMessage(roomId, {
         authorType: 'human',
         authorId: GROUP_ROOM_USER_ID,
@@ -344,7 +351,7 @@ export class GroupRoomController {
         for (const memberId of control.activeMemberIds) this.#runtime.abortMember(roomId, memberId);
         this.#rejectRoomPermissions(roomId, 'Interrupted by the user');
       } else {
-        control.softIntervention = queued;
+        control.softInterventions.push(queued);
       }
       this.#emitSnapshot(roomId, mode === 'hard' ? 'hard-intervention-queued' : 'soft-intervention-queued');
       return queued;
@@ -450,7 +457,7 @@ export class GroupRoomController {
     let stopReason = '';
     try {
       while (!control.abortController.signal.aborted) {
-        if (control.softIntervention) this.#promoteSoftIntervention(roomId, control);
+        if (control.softInterventions.length > 0) this.#promoteSoftInterventions(roomId, control);
         const forceFinish = Boolean(control.forceFinishReason)
           || control.moderatorSteps >= control.maxModeratorSteps
           || control.totalTokens >= control.tokenBudget;
@@ -483,8 +490,8 @@ export class GroupRoomController {
         control.moderatorSteps += 1;
         control.totalTokens += tokenUsage(runtimeResult?.usage);
         if (control.abortController.signal.aborted) break;
-        if (control.softIntervention) {
-          this.#promoteSoftIntervention(roomId, control);
+        if (control.softInterventions.length > 0) {
+          this.#promoteSoftInterventions(roomId, control);
           continue;
         }
         let decision;
@@ -588,8 +595,13 @@ export class GroupRoomController {
       try {
         this.#store.finishRun(runId, { status: finalStatus, stopReason });
       } catch {}
-      const intervention = control.hardIntervention || control.softIntervention;
-      if (intervention) {
+      const pendingInterventions = [
+        ...control.softInterventions,
+        control.hardIntervention,
+      ].filter(Boolean).sort((a, b) => a.seq - b.seq);
+      control.softInterventions = [];
+      control.hardIntervention = null;
+      for (const intervention of pendingInterventions) {
         try { this.#store.promoteMessage(intervention.id); } catch {}
       }
       if (control.abortController.signal.aborted || control.resetModerator) {
@@ -601,11 +613,10 @@ export class GroupRoomController {
     }
   }
 
-  #promoteSoftIntervention(roomId, control) {
-    const intervention = control.softIntervention;
-    if (!intervention) return null;
-    control.softIntervention = null;
-    const promoted = this.#store.promoteMessage(intervention.id);
+  #promoteSoftInterventions(roomId, control) {
+    const interventions = control.softInterventions.splice(0);
+    if (interventions.length === 0) return [];
+    const promoted = interventions.map((intervention) => this.#store.promoteMessage(intervention.id));
     this.#emitSnapshot(roomId, 'soft-intervention-promoted');
     return promoted;
   }
@@ -760,8 +771,11 @@ export class GroupRoomController {
   }
 
   #publicRoom(room) {
+    const queuedMessages = this.#store.listMessages(room.id, { includeHidden: true })
+      .filter((message) => message.authorType === 'human' && message.status === 'queued');
     return {
       ...room,
+      messages: [...room.messages, ...queuedMessages].sort((a, b) => a.seq - b.seq),
       members: room.members.map(publicMember),
       recentRuns: this.#store.listRuns(room.id).map((run) => ({
         ...run,

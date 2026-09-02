@@ -781,9 +781,9 @@ async function realScenarios(client) {
     content: '请主持人同时委派“长任务甲”和“长任务乙”检查群聊模块全部文件后再回答，先不要快速下结论。',
   });
   await waitFor(client, `(async () => { const room = (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data; return room.status === 'running' && room.activeRun?.turns.some((turn) => turn.status === 'running'); })()`, 'delegated run start');
-  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="补充约束给主持人"]'))`, 'intervention controls');
-  await setValue(client, '补充约束给主持人', '停止原任务：用户已确认中断，本轮不再继续。');
-  await clickTitle(client, '立即中止并记录补充');
+  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="继续发送给主持人（可连续补充）"]'))`, 'intervention controls');
+  await setValue(client, '继续发送给主持人（可连续补充）', '停止原任务：用户已确认中断，本轮不再继续。');
+  await clickTitle(client, '立即中止，并把这条消息留给主持人');
   settled = await waitForRoomRun(client, interruptRoom.id);
   run = latestRun(settled.room);
   assert.equal(run.status, 'interrupted');
@@ -891,9 +891,9 @@ async function resumeRealScenarios(client) {
     content: '请主持人同时委派“长任务甲”和“长任务乙”检查群聊模块全部文件后再回答，先不要快速下结论。',
   });
   await waitFor(client, `(async () => { const room = (await window.agentDesktop.groupRooms.get({roomId:${JSON.stringify(interruptRoom.id)}})).data; return room.status === 'running' && room.activeRun?.turns.some((turn) => turn.status === 'running'); })()`, 'delegated run start');
-  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="补充约束给主持人"]'))`, 'intervention controls');
-  await setValue(client, '补充约束给主持人', '停止原任务：用户已确认中断，本轮不再继续。');
-  await clickTitle(client, '立即中止并记录补充');
+  await waitFor(client, `Boolean(document.querySelector('textarea[placeholder="继续发送给主持人（可连续补充）"]'))`, 'intervention controls');
+  await setValue(client, '继续发送给主持人（可连续补充）', '停止原任务：用户已确认中断，本轮不再继续。');
+  await clickTitle(client, '立即中止，并把这条消息留给主持人');
   settled = await waitForRoomRun(client, interruptRoom.id, { approvePermissions: false });
   run = latestRun(settled.room);
   assert.equal(run.status, 'interrupted');

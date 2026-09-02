@@ -8,7 +8,6 @@ import {
   ChevronRight,
   CircleStop,
   Cable,
-  ListPlus,
   LoaderCircle,
   MessageSquarePlus,
   PanelLeftClose,
@@ -685,12 +684,15 @@ export function GroupRoomsView({
     ? friendlyRunError(latestRoomRun.stopReason)
     : "";
   const connectorRefreshRequired = pausedReason.includes("连接器授权需要在连接器中心刷新");
-  const activeDelegateIds = new Set(room?.activeRun?.turns
+  const activeDelegations = (room?.activeRun?.turns || [])
     .filter((turn) => turn.status === "pending" || turn.status === "running")
-    .map((turn) => turn.memberId) || []);
-  const activeDelegateNames = room?.members
-    .filter((member) => activeDelegateIds.has(member.id))
-    .map((member) => member.displayName) || [];
+    .map((turn) => ({
+      turn,
+      member: room?.members.find((member) => member.id === turn.memberId),
+      task: turn.assignment.length > 240 ? `${turn.assignment.slice(0, 240)}…` : turn.assignment,
+    }))
+    .filter((entry): entry is { turn: GroupRoomTurn; member: GroupRoomMember; task: string } => Boolean(entry.member));
+  const activeDelegateNames = activeDelegations.map(({ member }) => member.displayName);
   const memberTranscript = room && selectedMember
     ? buildGroupRoomMemberTranscript({ room, memberId: selectedMember.id, streams, liveTraces })
     : [];
@@ -823,6 +825,31 @@ export function GroupRoomsView({
               </div>
             ) : null}
 
+            {!selectedMember && room.status === "running" && activeDelegations.length > 0 ? (
+              <div data-group-room-delegation-status className="shrink-0 border-b border-emerald-500/25 bg-emerald-500/5 px-3 py-2 sm:px-4">
+                <div className="mx-auto flex w-full max-w-[1180px] min-w-0 items-start gap-2">
+                  <Bot className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-foreground">主持人已委派，正在执行</div>
+                    <div className="mt-1 flex min-w-0 flex-wrap gap-1.5">
+                      {activeDelegations.map(({ turn, member, task }) => (
+                        <button
+                          key={turn.id}
+                          type="button"
+                          onClick={() => setSelectedMemberId(member.id)}
+                          className="max-w-full rounded-md border border-emerald-500/25 bg-background px-2 py-1 text-left text-[11px] hover:bg-emerald-500/10"
+                          title={`${member.displayName}：${turn.assignment.slice(0, 1_000)}`}
+                        >
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{member.displayName}</span>
+                          <span className="text-muted-foreground"> · {turn.status === "running" ? "执行中" : "等待中"} · {task}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {selectedMember ? (
               <div data-group-room-message-scroll className="flex min-h-0 flex-1 overflow-hidden" aria-label={`${selectedMember.displayName} 执行会话`}>
                 <MessageListPane
@@ -842,15 +869,16 @@ export function GroupRoomsView({
                       const isHuman = message.authorType === "human";
                       const isSystem = message.authorType === "system";
                       const isModerator = message.authorType === "moderator";
+                      const isQueued = message.status === "queued";
                       return (
                         <article key={message.id} className={cn("flex gap-3", isHuman && "justify-end") }>
                           {!isHuman && member ? <MemberAvatar member={member} /> : null}
                           {isModerator ? <ModeratorAvatar /> : null}
                           <div className={cn("min-w-0 max-w-[85%] [overflow-wrap:anywhere]", isHuman && "text-right") }>
                             <div className="mb-1 text-[11px] text-muted-foreground">
-                              {isHuman ? "你" : isModerator ? "主持人" : isSystem ? "系统" : member?.displayName || "Agent"} · {formatTime(message.createdAt)}
+                              {isHuman ? "你" : isModerator ? "主持人" : isSystem ? "系统" : member?.displayName || "Agent"} · {formatTime(message.createdAt)}{isQueued ? " · 已排队给主持人" : ""}
                             </div>
-                            <div className={cn("whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm leading-6", isHuman ? "bg-primary text-primary-foreground" : "border border-border bg-muted/25 text-left")}>{message.content}</div>
+                            <div className={cn("whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm leading-6", isHuman ? "bg-primary text-primary-foreground" : "border border-border bg-muted/25 text-left", isQueued && "opacity-70")}>{message.content}</div>
                           </div>
                           {isHuman ? <HumanAvatar /> : null}
                         </article>
@@ -891,7 +919,7 @@ export function GroupRoomsView({
                   </span>
                 </div>
                 <div className="flex min-w-0 shrink-0 items-end gap-2">
-                  <Textarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder={room.status === "running" ? "补充约束给主持人" : "向主持人说明你的目标"} className="max-h-40 min-h-16 min-w-0 resize-none" onKeyDown={(event) => {
+                  <Textarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder={room.status === "running" ? "继续发送给主持人（可连续补充）" : "向主持人说明你的目标"} className="max-h-40 min-h-16 min-w-0 resize-none" onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       if (room.status === "running") void intervene("soft"); else void dispatch();
@@ -899,8 +927,8 @@ export function GroupRoomsView({
                   }} />
                   {room.status === "running" ? (
                     <div className="flex shrink-0 flex-col gap-2">
-                      <Button size="icon" variant="outline" disabled={!composer.trim() || busy} onClick={() => void intervene("soft")} title="在安全边界补充给主持人"><ListPlus className="h-4 w-4" /></Button>
-                      <Button size="icon" variant="destructive" disabled={!composer.trim() || busy} onClick={() => void intervene("hard")} title="立即中止并记录补充"><CircleStop className="h-4 w-4" /></Button>
+                      <Button size="icon" disabled={!composer.trim() || busy} onClick={() => void intervene("soft")} title="发送补充给主持人"><Send className="h-4 w-4" /></Button>
+                      <Button size="icon" variant="outline" disabled={!composer.trim() || busy} onClick={() => void intervene("hard")} title="立即中止，并把这条消息留给主持人"><CircleStop className="h-4 w-4 text-destructive" /></Button>
                     </div>
                   ) : (
                     <Button size="icon" disabled={!composer.trim() || busy} onClick={() => void dispatch()} title="发送给主持人"><Send className="h-4 w-4" /></Button>

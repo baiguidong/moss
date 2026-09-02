@@ -844,6 +844,11 @@ export class GroupRoomStore {
         WHERE status = 'pending'
       `).run(timestamp);
       this.#db.prepare(`
+        UPDATE group_room_messages
+        SET status = 'completed', updated_at = ?
+        WHERE status = 'queued' AND author_type = 'human'
+      `).run(timestamp);
+      this.#db.prepare(`
         UPDATE group_room_runs
         SET status = 'interrupted', stop_reason = 'Application restarted during execution', completed_at = ?
         WHERE status IN ('running', 'stopping')
