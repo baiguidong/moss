@@ -37,6 +37,24 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("renders connector authorization status as a visible system message", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: "system",
+      subtype: "connector_auth",
+      status: "success",
+      content: "「企查查」连接器授权成功，已加入当前会话。",
+      timestamp: "2026-09-03T00:00:00.000Z",
+    }]);
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: "system",
+      role: "system",
+      variant: "connector_auth",
+      status: "success",
+      content: "「企查查」连接器授权成功，已加入当前会话。",
+    })]);
+  });
+
   it("separates built-in exploration tools without grouping business search tools", () => {
     const model = buildRenderModel(buildMainChatRenderMessagesFromHistory([
       assistantTool("read-1", "Read", { file_path: "/repo/src/one.ts" }),

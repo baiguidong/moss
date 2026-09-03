@@ -7,6 +7,8 @@ package-lock.json
 .DS_Store
 *.log
 .claude/
+.agents/
+skills-lock.json
 .moss/settings.local.json
 /memory/
 tmp/

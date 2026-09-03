@@ -907,6 +907,7 @@ declare global {
       setSessionAutoCollapseToolCalls: (payload: { sessionId: string; enabled: boolean }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
+      setConnectorAuthStatus: (payload: { sessionId: string; connectorId: string; connectorName?: string; status: 'pending' | 'success' | 'failed'; message?: string }) => Promise<SessionDetail>;
       listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;
       getInstalledConnectors: () => Promise<{ success?: boolean; data?: InstalledConnector[]; error?: string }>;
       refreshConnectorCliStatus: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector: InstalledConnector; connected: boolean; changed: boolean; connectionChanged: boolean }; error?: string }>;

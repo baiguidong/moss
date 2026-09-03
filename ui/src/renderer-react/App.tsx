@@ -37,6 +37,10 @@ import {
   type NewAppNotification,
 } from '@/lib/app-notifications';
 import { isAuthorizedConnector } from '@/lib/connector-selection';
+import {
+  attachAuthorizedConnectorToSession,
+  runMcpConnectorAuthorization,
+} from '@/lib/connector-auth-flow';
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -1731,15 +1735,45 @@ export default function App() {
   const handleAuthenticateMcpConnector = React.useCallback(async (connector: InstalledConnector) => {
     const serverName = connector.mcpServerNames?.[0] || connector.id;
     try {
-      const sessionId = await createAndOpenSession(
-        `授权 ${connector.name} 连接器`,
-        undefined,
-        undefined,
-        [connector.id],
-      );
+      const { result } = await runMcpConnectorAuthorization({
+        connectorId: connector.id,
+        createSession: async () => {
+          const sessionId = await createAndOpenSession(`授权 ${connector.name} 连接器`);
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          return sessionId;
+        },
+        onSessionCreated: async (sessionId) => {
+          await window.agentDesktop.setConnectorAuthStatus({
+            sessionId,
+            connectorId: connector.id,
+            connectorName: connector.name,
+            status: 'pending',
+          });
+        },
+        authenticate: (sessionId) => window.agentDesktop.authenticateMcpServer({ name: serverName, sessionId }),
+        attachConnector: (sessionId, connectorId) => attachAuthorizedConnectorToSession({
+          sessionId,
+          connectorId,
+          getSession: window.agentDesktop.getSession,
+          setSessionConnectors: window.agentDesktop.setSessionConnectors,
+        }),
+        onAuthenticated: (sessionId) => window.agentDesktop.setConnectorAuthStatus({
+          sessionId,
+          connectorId: connector.id,
+          connectorName: connector.name,
+          status: 'success',
+        }),
+        onFailed: async (sessionId, _connectorId, error) => {
+          await window.agentDesktop.setConnectorAuthStatus({
+            sessionId,
+            connectorId: connector.id,
+            connectorName: connector.name,
+            status: 'failed',
+            message: cleanIpcErrorMessage(error),
+          }).catch(() => {});
+        },
+      });
       setActiveView('chat');
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-      const result = await window.agentDesktop.authenticateMcpServer({ name: serverName, sessionId });
       await refreshConnectors();
       const openedAuthUrl = (result as any)?.auth?.status === 'authorization_url_opened';
       const notice = openedAuthUrl

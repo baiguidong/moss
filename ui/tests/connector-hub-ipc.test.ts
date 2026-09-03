@@ -18,6 +18,7 @@ import {
   validateMcpServerConfig,
 } from '../src/connector-hub-ipc.mjs';
 import {
+  fetchMcpAuthorizationChallenge,
   McpAuthProvider,
   withoutOAuthRegistrationScope,
 } from '../../src/services/mcp/auth';
@@ -92,6 +93,27 @@ describe('connector catalog pruning', () => {
 });
 
 describe('connector MCP config normalization', () => {
+  it('reads provider-specific resource metadata from the MCP authorization challenge', async () => {
+    let requestedUrl = '';
+    const challenge = await fetchMcpAuthorizationChallenge({
+      type: 'http',
+      url: 'https://agent.qcc.com/mcp/company/stream',
+    }, async (url) => {
+      requestedUrl = String(url);
+      return new Response(null, {
+        status: 401,
+        headers: {
+          'WWW-Authenticate': 'Bearer error="invalid_token", resource_metadata="https://agent.qcc.com/mcp/.well-known/oauth-protected-resource/company/stream"',
+        },
+      });
+    });
+
+    expect(requestedUrl).toBe('https://agent.qcc.com/mcp/company/stream');
+    expect(challenge.resourceMetadataUrl?.toString()).toBe(
+      'https://agent.qcc.com/mcp/.well-known/oauth-protected-resource/company/stream',
+    );
+  });
+
   it('takes the provider browser strategy from connector auth configuration', () => {
     expect(getConnectorProviderAuthContext({
       authConfig: {

@@ -192,10 +192,12 @@ function SystemMessage({
   content,
   meta,
   variant,
+  status,
 }: {
   content: string;
   meta?: string[];
   variant?: Extract<TranscriptRenderMessage, { type: "system" }>["variant"];
+  status?: Extract<TranscriptRenderMessage, { type: "system" }>["status"];
 }) {
   if (variant === "local_command") {
     return (
@@ -203,6 +205,24 @@ function SystemMessage({
         <div className="max-w-[760px] rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
           <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">本地命令</div>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{content}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === "connector_auth") {
+    return (
+      <div className="mb-5 flex justify-start gap-2">
+        <div className={cn(
+          "max-w-[760px] rounded-xl border px-4 py-3 text-sm",
+          status === "failed"
+            ? "border-destructive/30 bg-destructive/8 text-destructive"
+            : status === "success"
+              ? "border-emerald-500/30 bg-emerald-500/8 text-foreground"
+              : "border-border/70 bg-muted/35 text-muted-foreground",
+        )}>
+          <div className="mb-1 text-[11px] font-medium text-muted-foreground">连接器授权</div>
+          <div className="leading-relaxed">{content}</div>
         </div>
       </div>
     );
@@ -252,7 +272,7 @@ function renderTranscriptItem(
     return <ToolResultBlock key={message.id} result={message} />;
   }
   if (message.type === "system") {
-    return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} />;
+    return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} status={message.status} />;
   }
   if (message.type === "bash") {
     return (

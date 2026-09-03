@@ -364,7 +364,9 @@ function isDisplayTranscriptEntry(entry) {
   }
   if (entry.type === 'assistant') return true;
   if (entry.type === 'system') {
-    return entry.subtype === 'compact_boundary' || entry.subtype === 'local_command';
+    return entry.subtype === 'compact_boundary'
+      || entry.subtype === 'local_command'
+      || entry.subtype === 'connector_auth';
   }
   if (entry.type === 'tool_progress' || entry.type === 'tool_use_summary') return true;
   return false;
@@ -4140,6 +4142,11 @@ function deriveSessionPreview(history) {
       const preview = normalizePreviewText(entry.message);
       if (preview) return preview;
     }
+
+    if (entry.type === 'system' && entry.subtype === 'connector_auth' && typeof entry.content === 'string') {
+      const preview = normalizePreviewText(entry.content);
+      if (preview) return preview;
+    }
   }
 
   return '';
@@ -6935,6 +6942,49 @@ async function updateSessionConnectors(sessionRecord, connectorIds) {
   };
 }
 
+function updateSessionConnectorAuthStatus(sessionRecord, payload = {}) {
+  const connectorId = typeof payload.connectorId === 'string' ? payload.connectorId.trim() : '';
+  if (!connectorId) throw new Error('Connector id is required.');
+  const status = String(payload.status || '').trim();
+  if (!['pending', 'success', 'failed'].includes(status)) {
+    throw new Error('Invalid connector authorization status.');
+  }
+  const connectorName = String(payload.connectorName || connectorId)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120) || connectorId;
+  const failureReason = redactAuthFailureText(String(payload.message || '').trim()).slice(0, 1000);
+  const content = status === 'pending'
+    ? `正在授权「${connectorName}」连接器，请在右侧浏览器完成操作。`
+    : status === 'success'
+      ? `「${connectorName}」连接器授权成功，已加入当前会话。`
+      : `「${connectorName}」连接器授权失败${failureReason ? `：${failureReason}` : '。'}`;
+  const event = {
+    type: 'system',
+    subtype: 'connector_auth',
+    connectorId,
+    status,
+    content,
+    timestamp: Date.now(),
+  };
+  let existingIndex = -1;
+  for (let index = sessionRecord.history.length - 1; index >= 0; index -= 1) {
+    const existing = sessionRecord.history[index];
+    if (existing?.type === 'system' && existing?.subtype === 'connector_auth' && existing?.connectorId === connectorId) {
+      existingIndex = index;
+      break;
+    }
+  }
+  if (existingIndex >= 0) sessionRecord.history[existingIndex] = event;
+  else sessionRecord.history.push(event);
+  sessionRecord.updatedAt = Date.now();
+  sessionRecord.preview = normalizePreviewText(content);
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  emitSessionHistory(sessionRecord);
+  return getSessionDetailPayload(sessionRecord);
+}
+
 // SDK writes task-notification queue-operation events directly to its .jsonl transcript file,
 // bypassing the runtime.send() stream. This helper reads those events so the UI can display
 // async worker results even when the coordinator never ran a second turn.
@@ -9514,6 +9564,11 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
       tasks: snapshotSessionTasks(sessionRecord),
     },
   };
+});
+
+ipcMain.handle('agent:set-connector-auth-status', async (_event, payload = {}) => {
+  const sessionRecord = getSessionRecord(payload.sessionId);
+  return updateSessionConnectorAuthStatus(sessionRecord, payload);
 });
 
 function assertSessionCanFork(sessionRecord) {

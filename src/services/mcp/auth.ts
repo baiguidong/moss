@@ -1,6 +1,7 @@
 import {
   discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
+  extractWWWAuthenticateParams,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
   auth as sdkAuth,
@@ -647,6 +648,27 @@ type WWWAuthenticateParams = {
   resourceMetadataUrl?: URL
 }
 
+export async function fetchMcpAuthorizationChallenge(
+  serverConfig: McpSSEServerConfig | McpHTTPServerConfig,
+  fetchFn: FetchLike = createAuthFetch(),
+  abortSignal?: AbortSignal,
+): Promise<WWWAuthenticateParams> {
+  let response: Response | undefined
+  try {
+    response = await fetchFn(serverConfig.url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        ...(serverConfig.headers || {}),
+      },
+      signal: abortSignal,
+    })
+    return extractWWWAuthenticateParams(response)
+  } finally {
+    await response?.body?.cancel().catch(() => {})
+  }
+}
+
 type XaaFailureStage =
   | 'idp_login'
   | 'discovery'
@@ -938,9 +960,33 @@ export async function performMCPOAuthFlow(
       )
     }
   }
-  const wwwAuthParams: WWWAuthenticateParams = {
+  let wwwAuthParams: WWWAuthenticateParams = {
     scope: cachedStepUpScope,
     resourceMetadataUrl,
+  }
+  if (!wwwAuthParams.resourceMetadataUrl) {
+    try {
+      const challenge = await fetchMcpAuthorizationChallenge(
+        serverConfig,
+        createAuthFetch(),
+        abortSignal,
+      )
+      wwwAuthParams = {
+        scope: wwwAuthParams.scope || challenge.scope,
+        resourceMetadataUrl: challenge.resourceMetadataUrl,
+      }
+      if (challenge.resourceMetadataUrl) {
+        logMCPDebug(
+          serverName,
+          `Discovered resource metadata from MCP authorization challenge: ${challenge.resourceMetadataUrl.origin}${challenge.resourceMetadataUrl.pathname}`,
+        )
+      }
+    } catch (error) {
+      logMCPDebug(
+        serverName,
+        `MCP authorization challenge probe failed: ${errorMessage(error)}`,
+      )
+    }
   }
 
   const flowAttemptId = randomUUID()

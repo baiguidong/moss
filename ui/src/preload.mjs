@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionAutoCollapseToolCalls: (payload) => ipcRenderer.invoke('agent:set-session-auto-collapse-tool-calls', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
+  setConnectorAuthStatus: (payload) => ipcRenderer.invoke('agent:set-connector-auth-status', payload),
   listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
   getInstalledConnectors: () => ipcRenderer.invoke('connector-hub:get-installed'),
   refreshConnectorCliStatus: (payload) => ipcRenderer.invoke('connector-hub:refresh-cli-status', payload),

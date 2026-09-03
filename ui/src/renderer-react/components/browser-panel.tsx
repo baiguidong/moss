@@ -19,6 +19,7 @@ import {
   isNativeOverlayVisible,
   onNativeOverlayVisibilityChange,
 } from "@/lib/native-overlay-visibility";
+import { attachAuthorizedConnectorToSession } from "@/lib/connector-auth-flow";
 import type {
   BrowserAuthNavigation,
   BrowserConnectorAuthContext,
@@ -178,10 +179,10 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
   const processAuthNavigation = React.useCallback((navigation: BrowserAuthNavigation) => {
     if (navigation.sessionId !== sessionKey || pendingAuthNavigationIds.has(navigation.id)) return;
     pendingAuthNavigationIds.add(navigation.id);
+    const connectorContext = navigation.connectorAuth;
 
     void (async () => {
       try {
-        const connectorContext = navigation.connectorAuth;
         const mcpContext = navigation.mcpAuth;
         let nextState: BrowserState;
         if (connectorContext) {
@@ -193,6 +194,20 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
             token,
           });
           if (result?.error) throw new Error(result.error);
+          if (navigation.sessionId !== FALLBACK_SESSION_KEY) {
+            await attachAuthorizedConnectorToSession({
+              sessionId: navigation.sessionId,
+              connectorId: connectorContext.connectorId,
+              getSession: window.agentDesktop.getSession,
+              setSessionConnectors: window.agentDesktop.setSessionConnectors,
+            });
+            await window.agentDesktop.setConnectorAuthStatus({
+              sessionId: navigation.sessionId,
+              connectorId: connectorContext.connectorId,
+              connectorName: connectorContext.displayName,
+              status: 'success',
+            });
+          }
           nextState = await window.agentDesktop.browser.completeAuth({
             sessionId: navigation.sessionId,
             tabId: navigation.tabId,
@@ -227,6 +242,15 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
           setCommandError(null);
         }
       } catch (error) {
+        if (connectorContext && navigation.sessionId !== FALLBACK_SESSION_KEY) {
+          await window.agentDesktop.setConnectorAuthStatus({
+            sessionId: navigation.sessionId,
+            connectorId: connectorContext.connectorId,
+            connectorName: connectorContext.displayName,
+            status: 'failed',
+            message: error instanceof Error ? error.message : String(error),
+          }).catch(() => {});
+        }
         if (sessionKeyRef.current === navigation.sessionId) {
           setCommandError(error instanceof Error ? error.message : String(error));
         }

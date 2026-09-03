@@ -104,7 +104,8 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   type: 'system';
   role: 'system';
   content: string;
-  variant?: 'local_command' | 'plan';
+  variant?: 'local_command' | 'plan' | 'connector_auth';
+  status?: 'pending' | 'success' | 'failed';
 };
 
 export type BashRenderMessage = TranscriptRenderMessageBase & {
@@ -815,6 +816,7 @@ function addSystemRenderMessage(
   content: string,
   meta?: string[],
   variant?: SystemRenderMessage['variant'],
+  status?: SystemRenderMessage['status'],
 ) {
   const normalized = String(content || '').trim();
   if (!normalized) return;
@@ -826,6 +828,7 @@ function addSystemRenderMessage(
     timestamp,
     meta,
     variant,
+    status,
   });
 }
 
@@ -1256,13 +1259,23 @@ export function buildTranscriptRenderMessages(
 
     if (event?.type === 'system') {
       const isLocalCommand = event.subtype === 'local_command';
+      const isConnectorAuth = event.subtype === 'connector_auth';
       const content = isLocalCommand
         ? extractLocalCommandOutput(event?.content)
         : normalizeText(event?.content);
       if (!content) continue;
-      if (isLocalCommand) {
+      if (isLocalCommand || isConnectorAuth) {
         finalizeAssistantTurn(state, { complete: true });
-        addSystemRenderMessage(state, timestamp, content, undefined, 'local_command');
+        addSystemRenderMessage(
+          state,
+          timestamp,
+          content,
+          isConnectorAuth ? ['连接器授权'] : undefined,
+          isConnectorAuth ? 'connector_auth' : 'local_command',
+          isConnectorAuth && ['pending', 'success', 'failed'].includes(event.status)
+            ? event.status
+            : undefined,
+        );
         continue;
       }
       if (state.currentAssistantTurn) {
