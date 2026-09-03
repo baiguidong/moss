@@ -2,7 +2,6 @@ import * as React from 'react';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
-import { GroupRoomsView } from '@/components/group-rooms-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { ChatArea } from '@/components/chat-area';
 import {
@@ -434,8 +433,6 @@ export default function App() {
   const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
-  const [groupRoomListCollapsed, setGroupRoomListCollapsed] = React.useState(false);
-  const [groupRoomSettingsCollapsed, setGroupRoomSettingsCollapsed] = React.useState(false);
   const effectiveLeftCollapsed = layout.leftCollapsed || compactViewport;
 
   React.useEffect(() => {
@@ -475,9 +472,6 @@ export default function App() {
   const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
-  const [groupChildSessionId, setGroupChildSessionId] = React.useState<string | null>(null);
-  const [groupChildDetail, setGroupChildDetail] = React.useState<SessionDetail | null>(null);
-  const [groupChildLoading, setGroupChildLoading] = React.useState(false);
   const [input, setInput] = React.useState('');
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
@@ -1215,15 +1209,7 @@ export default function App() {
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
       if (sessionId === activeSessionIdRef.current) {
-        if (activeDetailRef.current?.sessionKind === 'group-room') {
-          activeSessionIdRef.current = null;
-          activeDetailRef.current = null;
-          setActiveSessionId(null);
-          setActiveDetail(null);
-          clearSessionWorkspaceState();
-        } else {
-          navigateToHome();
-        }
+        navigateToHome();
       }
     });
 
@@ -1300,49 +1286,6 @@ export default function App() {
       : [],
     [activeSessionId, summaries],
   );
-
-  const openGroupChildSession = React.useCallback(async (sessionId: string) => {
-    setGroupChildSessionId(sessionId);
-    setGroupChildLoading(true);
-    try {
-      const detail = await window.agentDesktop.getSession({ sessionId });
-      setGroupChildDetail(detail);
-    } catch (error) {
-      setGroupChildSessionId(null);
-      setGroupChildDetail(null);
-      showPermissionNotice(`打开成员会话失败：${cleanIpcErrorMessage(error)}`, 'error', 5000);
-    } finally {
-      setGroupChildLoading(false);
-    }
-  }, [showPermissionNotice]);
-
-  React.useEffect(() => {
-    if (!groupChildSessionId) return;
-    const childSummary = summaries.find((session) => session.id === groupChildSessionId);
-    if (!childSummary || childSummary.parentSessionId !== activeSessionId) {
-      setGroupChildSessionId(null);
-      setGroupChildDetail(null);
-      setGroupChildLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const detail = await window.agentDesktop.getSession({ sessionId: groupChildSessionId });
-        if (!cancelled) setGroupChildDetail(detail);
-      } catch {
-        // A child transcript can be between filesystem sync steps; retain the
-        // last readable snapshot and retry while it is running.
-      }
-    };
-    void refresh();
-    if (childSummary.subagentStatus !== 'running' && !childSummary.busy) return () => { cancelled = true; };
-    const timer = window.setInterval(() => { void refresh(); }, 1_200);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeSessionId, groupChildSessionId, summaries]);
   const sidebarAppShortcuts = React.useMemo(
     () => apps.filter((app) => appShortcutIds.has(getStoredAppKey(app))),
     [apps, appShortcutIds]
@@ -1391,7 +1334,6 @@ export default function App() {
     if (activeDetail.isSubAgent) return '子会话不能继续分叉';
     if (activeDetail.projectId) return '项目会话由项目协调器管理，暂不支持分叉';
     if (activeDetail.sessionKind === 'cron') return '定时任务会话不能分叉';
-    if (activeDetail.sessionKind === 'group-room') return '群聊会话由固定成员主持人管理，不能分叉';
     if (visibleChatMessageCount === 0) return '空会话不能分叉';
     return null;
   }, [activeDetail, visibleChatMessageCount]);
@@ -2512,84 +2454,6 @@ export default function App() {
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
-          ) : activeView === 'rooms' ? (
-            <GroupRoomsView
-              activeSessionId={activeSessionId}
-              sessions={summaries}
-              activeChildSessionId={groupChildSessionId}
-              onOpenChildSession={(sessionId) => { void openGroupChildSession(sessionId); }}
-              listCollapsed={groupRoomListCollapsed}
-              onListCollapsedChange={setGroupRoomListCollapsed}
-              rightCollapsed={groupRoomSettingsCollapsed}
-              rightWidth={layout.rightWidth}
-              onToggleRightSidebar={() => setGroupRoomSettingsCollapsed((collapsed) => !collapsed)}
-              onResizeRight={(event) => {
-                event.preventDefault();
-                startResize('right', event.clientX);
-              }}
-              onOpenSession={async (sessionId) => {
-                const opened = await openSession(sessionId);
-                if (opened) setActiveView('rooms');
-                return opened;
-              }}
-              globalBypassPermissions={desktopSettings?.bypassPermissions ?? false}
-              chatContent={activeSessionId && activeDetail?.sessionKind === 'group-room' ? (
-                <ChatArea
-                  messages={chatMessages}
-                  value={input}
-                  selectedAppName=""
-                  loading={Boolean(activeDetail.busy)}
-                  readOnlyReason={activeDetail.resumeReadOnlyReason || null}
-                  hasActiveSession
-                  isProjectSession
-                  sessionTitle={activeDetail.title}
-                  sessionMessageCount={visibleChatMessageCount}
-                  sessionId={activeSessionId}
-                  sessionWorkspace={activeDetail.workspace}
-                  pendingPlanApproval={activeDetail.pendingPlanApproval || null}
-                  planDecisionBusy={planDecisionBusy}
-                  leftCollapsed={groupRoomListCollapsed}
-                  rightCollapsed={groupRoomSettingsCollapsed}
-                  leftPanelName="群列表"
-                  rightPanelName="群设置"
-                  composerIntent="coordinator"
-                  childSessions={activeChildSessions}
-                  onChange={setInput}
-                  onComposerIntentChange={() => {}}
-                  onToggleLeftSidebar={() => setGroupRoomListCollapsed((collapsed) => !collapsed)}
-                  onToggleRightSidebar={() => setGroupRoomSettingsCollapsed((collapsed) => !collapsed)}
-                  onApprovePlan={handleApprovePlan}
-                  onRejectPlan={handleRejectPlan}
-                  autoCollapseToolCalls={activeAutoCollapseToolCalls}
-                  onToggleAutoCollapseToolCalls={handleToggleSessionAutoCollapseToolCalls}
-                  toolDisplaySettingBusy={toolDisplaySettingSessionId === activeSessionId}
-                  onSend={handleSend}
-                  onStop={handleStop}
-                  onOpenChildSession={(sessionId) => { void openGroupChildSession(sessionId); }}
-                  childSessionDetail={groupChildDetail}
-                  childSessionLoading={groupChildLoading}
-                  onCloseChildSession={() => {
-                    setGroupChildSessionId(null);
-                    setGroupChildDetail(null);
-                  }}
-                  installedAssistants={[]}
-                  selectedAssistant={null}
-                  installedConnectors={[]}
-                  selectedConnectorIds={[]}
-                  onOpenConnectorHub={() => setActiveView('connectors')}
-                  onOpenExpertHub={() => setActiveView('experts')}
-                  onOpenSkillHub={() => setActiveView('skills')}
-                  remoteEnabled={false}
-                  newSessionMode="local"
-                  queuedMessages={queuedMessages[activeSessionId] ?? []}
-                  onRemoveQueuedMessage={handleRemoveQueuedMessage}
-                  backgroundTasks={backgroundTasks[activeSessionId] ?? []}
-                  composerAttachments={composerAttachments}
-                  onComposerAttachmentsChange={setComposerAttachments}
-                  contextUsage={contextUsage}
-                />
-              ) : null}
-            />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'audit' ? (

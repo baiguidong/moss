@@ -452,9 +452,8 @@ export const AgentTool = buildTool({
       is_fork: isForkPath
     });
 
-    // Resource-scoped workers either receive a project session workspace or,
-    // for Group Rooms, deliberately share the room workspace. Neither path may
-    // add a second worktree cwd.
+    // Resource-scoped project workers receive the project session workspace and
+    // must not add a second worktree cwd.
     const effectiveIsolation = projectResourceSelection
       ? undefined
       : isolation ?? selectedAgent.isolation;
@@ -589,7 +588,7 @@ export const AgentTool = buildTool({
     const parentUiSessionId = taskScope && 'sessionId' in taskScope
       ? taskScope.sessionId
       : null;
-    const isolatedWorkspace = isCoordinator && parentUiSessionId && taskScope?.kind !== 'group-room'
+    const isolatedWorkspace = isCoordinator && parentUiSessionId
       ? join(
           process.env.MOSS_HOME || join(homedir(), '.moss'),
           'sessions',

@@ -48,7 +48,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     dreamMinSessions: 5,
   },
   advanced: {
-    moss_group_rooms: false,
     moss_auto_background_agents: false,
     moss_bash_ast_permissions: false,
     moss_hive_evidence: false,

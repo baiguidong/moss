@@ -134,10 +134,8 @@ export async function resumeAgentBackground({
   }
 
   const taskScope = getTaskScopeContext()
-  const isResourceScopedTask = taskScope?.kind === 'project' || taskScope?.kind === 'group-room'
-  const assignedResources = taskScope?.kind === 'group-room' && meta?.agentName
-    ? taskScope.memberResources[meta.agentName]
-    : meta?.projectResources
+  const isResourceScopedTask = taskScope?.kind === 'project'
+  const assignedResources = meta?.projectResources
   if (isResourceScopedTask && !assignedResources) {
     throw new Error('Cannot resume a resource-scoped worker without its resource assignment')
   }

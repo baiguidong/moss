@@ -5,7 +5,6 @@ import {
   LayoutGrid,
   Monitor,
   MessageSquareText,
-  MessagesSquare,
   MoonStar,
   PenSquare,
   PanelLeftClose,
@@ -60,7 +59,7 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
   projectId?: string | null;
   projectName?: string | null;
-  sessionKind?: 'chat' | 'cron' | 'group-room';
+  sessionKind?: 'chat' | 'cron';
   originChannel?: 'desktop' | 'feishu' | 'cron';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
@@ -70,7 +69,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "rooms" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -406,15 +405,6 @@ export function AppSidebar({
           >
             <PenSquare className="h-4 w-4" />
             {!collapsed && "新会话"}
-          </Button>
-          <Button
-            variant={activeView === "rooms" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("rooms")}
-            title="群聊"
-          >
-            <MessagesSquare className="h-4 w-4" />
-            {!collapsed && "群聊"}
           </Button>
           <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}

@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   Activity,
-  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
@@ -33,11 +32,8 @@ import { ToolDisplaySettingsProvider } from "@/components/chat/tool-display-sett
 import { FilePreview } from "@/components/file-preview";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
-import {
-  buildWorkerRenderMessagesFromSubagentEvents,
-  type TranscriptRenderMessage,
-} from "@/lib/agent-transcript";
-import type { BackgroundTaskInfo, InstalledConnector, SessionDetail, SessionSummary } from "../types";
+import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
+import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
@@ -2001,8 +1997,6 @@ export function ChatArea({
   rightPanelName = "右侧栏",
   composerIntent,
   childSessions = [],
-  childSessionDetail,
-  childSessionLoading = false,
   onChange,
   onComposerIntentChange,
   onToggleLeftSidebar,
@@ -2012,7 +2006,6 @@ export function ChatArea({
   onSend,
   onStop,
   onOpenChildSession,
-  onCloseChildSession,
   installedAssistants,
   selectedAssistant,
   onSelectAssistant,
@@ -2059,8 +2052,6 @@ export function ChatArea({
   rightPanelName?: string;
   composerIntent: ComposerIntent;
   childSessions?: SessionSummary[];
-  childSessionDetail?: SessionDetail | null;
-  childSessionLoading?: boolean;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   onToggleLeftSidebar: () => void;
@@ -2070,7 +2061,6 @@ export function ChatArea({
   onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[]) => void;
   onStop: () => void;
   onOpenChildSession?: (sessionId: string) => void;
-  onCloseChildSession?: () => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
@@ -2100,10 +2090,6 @@ export function ChatArea({
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
-  const childSessionMessages = React.useMemo(
-    () => buildWorkerRenderMessagesFromSubagentEvents(childSessionDetail?.history || []),
-    [childSessionDetail?.history],
-  );
 
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
@@ -2209,36 +2195,6 @@ export function ChatArea({
         forking={forkingSession}
         forkDisabledReason={forkDisabledReason}
       />
-
-      {(childSessionDetail || childSessionLoading) ? (
-        <section className="absolute inset-x-0 bottom-0 top-14 z-30 flex min-h-0 flex-col bg-background" aria-label="成员会话">
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border/70 px-3 sm:px-4">
-            <Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={onCloseChildSession}>
-              <ArrowLeft className="h-4 w-4" />
-              返回群聊
-            </Button>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold">{childSessionDetail?.title || "加载成员会话…"}</div>
-              <div className="text-[11px] text-muted-foreground">
-                {childSessionDetail?.subagentStatus === "running" || childSessionDetail?.busy ? "执行中 · 由主持人调度" : "成员会话 · 只读"}
-              </div>
-            </div>
-            {childSessionLoading ? <LoaderCircle className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
-          </header>
-          <MessageListPane
-            key={childSessionDetail?.id || "loading-child-session"}
-            className="min-h-0 flex-1"
-            messages={childSessionMessages}
-            workspace={childSessionDetail?.workspace}
-            loading={Boolean(childSessionLoading || childSessionDetail?.busy || childSessionDetail?.subagentStatus === "running")}
-            emptyState={(
-              <div className="rounded-xl border border-dashed border-border/70 bg-card/50 px-3 py-4 text-xs text-muted-foreground">
-                {childSessionLoading ? "正在加载成员会话…" : "该成员还没有可展示的消息。"}
-              </div>
-            )}
-          />
-        </section>
-      ) : null}
 
       <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
         <MessageListPane

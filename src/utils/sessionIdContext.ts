@@ -26,18 +26,6 @@ export type TaskScope =
       projectResources?: ScopedWorkerResources
     }
   | {
-      kind: 'group-room'
-      roomId: string
-      sessionId: string
-      projectId?: null
-      projectResources: ScopedWorkerResources
-      memberResources: Record<string, {
-        connectorIds: string[]
-        skillIds: string[]
-        expertId: string
-      }>
-    }
-  | {
       kind: 'team'
       teamId: string
       projectId?: string | null

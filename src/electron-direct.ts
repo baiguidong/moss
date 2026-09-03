@@ -30,11 +30,6 @@ import {
 import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchema.js'
 import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
 import { shouldBypassDesktopToolPermission } from './utils/permissions/desktopPermissionMode.js'
-import {
-  shouldForceDesktopToolPermission,
-  type ForcedDesktopToolPermissionCallback,
-  type ForcedDesktopToolPermissionMetadata,
-} from './utils/permissions/forcedDesktopToolPermission.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
 import { dequeue, peek } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
@@ -67,7 +62,7 @@ import {
 } from './utils/sessionCoordinatorContext.js'
 import { getCoordinatorSystemPrompt } from './coordinator/coordinatorMode.js'
 import { restoreCostStateForSession } from './cost-tracker.js'
-import { asAgentId, asSessionId, type SessionId } from './types/ids.js'
+import { asSessionId, type SessionId } from './types/ids.js'
 import {
   runWithSessionIdContext,
   runWithSessionIdContextGenerator,
@@ -268,8 +263,6 @@ export type DesktopPermissionRequest = {
   readOnly?: boolean
 }
 
-export type DesktopToolPermissionMetadata = ForcedDesktopToolPermissionMetadata
-
 async function defaultDesktopPermissionRequest(
   tool: string,
 ): Promise<DesktopPermissionDecision> {
@@ -304,13 +297,7 @@ export interface ClaudeSessionOptions {
   onToolUseValidation?: (
     tool: string,
     input: unknown,
-    metadata: DesktopToolPermissionMetadata,
   ) => Promise<DesktopPermissionDecision | null | undefined>
-  /**
-   * Forces the desktop confirmation callback for selected tools before global
-   * allow rules or bypass mode are considered. Omitted for normal sessions.
-   */
-  shouldForceToolPermission?: ForcedDesktopToolPermissionCallback
   /** 最大轮次 */
   maxTurns?: number
   /** 思考配置 */
@@ -355,9 +342,7 @@ type ResolvedClaudeSessionOptions = {
   onToolUseValidation?: (
     tool: string,
     input: unknown,
-    metadata: DesktopToolPermissionMetadata,
   ) => Promise<DesktopPermissionDecision | null | undefined>
-  shouldForceToolPermission?: ForcedDesktopToolPermissionCallback
   maxTurns: number
   thinkingConfig: ThinkingConfig
   coordinatorMode: boolean
@@ -557,7 +542,6 @@ export class ClaudeSession {
   #storageActivated = false
   #sessionApiOverrides: SessionApiOverrides | undefined
   #workspaceRegistryIds: string[] = []
-  #pendingAgentNames = new Map<string, ReturnType<typeof asAgentId>>()
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -601,7 +585,6 @@ export class ClaudeSession {
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
       onToolUseValidation: opts.onToolUseValidation,
-      shouldForceToolPermission: opts.shouldForceToolPermission,
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
@@ -741,8 +724,7 @@ export class ClaudeSession {
 
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
-      const readOnly = tool.isReadOnly(input)
-      const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input, { readOnly })
+      const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input)
       if (
         validationDecision &&
         typeof validationDecision !== 'boolean' &&
@@ -751,13 +733,6 @@ export class ClaudeSession {
         return validationDecision
       }
 
-      const forceDesktopPermission = await shouldForceDesktopToolPermission(
-        this.#opts.shouldForceToolPermission,
-        tool.name,
-        input,
-        { readOnly },
-      )
-
       // Honor the current permission context so managed settings can disable
       // desktop bypass mode. Tools that collect user input remain interactive.
       const activePermissionMode =
@@ -765,7 +740,6 @@ export class ClaudeSession {
           ? 'allow-all'
           : 'default'
       if (
-        !forceDesktopPermission &&
         shouldBypassDesktopToolPermission(
           activePermissionMode,
           tool.requiresUserInteraction?.() === true,
@@ -781,10 +755,9 @@ export class ClaudeSession {
         }
       }
 
-      const permissionDecision = forceDesktopPermission
-        ? { behavior: 'ask' as const }
-        : forceDecision ??
-          (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
+      const permissionDecision =
+        forceDecision ??
+        (await hasPermissionsToUseTool(tool, input, ctx, msg, id))
 
       if (
         permissionDecision.behavior === 'allow' ||
@@ -794,16 +767,14 @@ export class ClaudeSession {
       }
 
       const requestInput = permissionDecision.updatedInput ?? input
-      if (!forceDesktopPermission) {
-        const hookDecision = await runDesktopPermissionRequestHooks(
-          tool.name,
-          id,
-          requestInput,
-          ctx,
-          permissionDecision.suggestions,
-        )
-        if (hookDecision) return hookDecision
-      }
+      const hookDecision = await runDesktopPermissionRequestHooks(
+        tool.name,
+        id,
+        requestInput,
+        ctx,
+        permissionDecision.suggestions,
+      )
+      if (hookDecision) return hookDecision
 
       const decision = await onPermissionRequest(tool.name, requestInput, {
         suggestions: permissionDecision.suggestions,
@@ -811,7 +782,7 @@ export class ClaudeSession {
         toolUseId: id,
         agentId: ctx.agentId ? String(ctx.agentId) : undefined,
         agentType: typeof ctx.agentType === 'string' ? ctx.agentType : undefined,
-        readOnly,
+        readOnly: tool.isReadOnly(input),
       })
 
       if (
@@ -852,16 +823,6 @@ export class ClaudeSession {
       duration_ms: Date.now() - storeStart,
     })
     const store = this.#store
-
-    if (this.#pendingAgentNames.size > 0) {
-      store.setState(previous => ({
-        ...previous,
-        agentNameRegistry: new Map([
-          ...previous.agentNameRegistry,
-          ...this.#pendingAgentNames,
-        ]),
-      }))
-    }
 
     if (resumeState) {
       const resumeRestoreStart = Date.now()
@@ -1242,20 +1203,13 @@ export class ClaudeSession {
   }
 
   /** 中止正在进行的请求 */
-  abort(options: { includeBackgroundTasks?: boolean } = {}) {
+  abort() {
     if (this.#abortController) {
       this.#abortController.abort()
       this.#abortController = null
     }
     if (this.#engine) {
       this.#engine.interrupt()
-    }
-    if (options.includeBackgroundTasks && this.#store) {
-      for (const task of Object.values(this.#store.getState().tasks)) {
-        if (task.type === 'local_agent' && task.status === 'running') {
-          task.abortController?.abort()
-        }
-      }
     }
   }
 
@@ -1275,21 +1229,6 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
-  }
-
-  /** Restore stable display-name routing for persisted background agents. */
-  registerAgentNames(entries: Array<{ name: string; agentId: string }>): void {
-    if (!Array.isArray(entries) || entries.length === 0) return
-    for (const entry of entries) {
-      const name = typeof entry?.name === 'string' ? entry.name.trim() : ''
-      const agentId = typeof entry?.agentId === 'string' ? entry.agentId.trim() : ''
-      if (name && agentId) this.#pendingAgentNames.set(name, asAgentId(agentId))
-    }
-    this.#store?.setState(previous => {
-      const next = new Map(previous.agentNameRegistry)
-      for (const [name, agentId] of this.#pendingAgentNames) next.set(name, agentId)
-      return { ...previous, agentNameRegistry: next }
-    })
   }
 
   getTaskListId() {

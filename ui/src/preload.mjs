@@ -80,25 +80,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   answerQuestion: (payload) => ipcRenderer.invoke('agent:answer-question', payload),
   rejectQuestion: (payload) => ipcRenderer.invoke('agent:reject-question', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
-  groupRooms: {
-    status: () => ipcRenderer.invoke('group-room:status'),
-    list: () => ipcRenderer.invoke('group-room:list'),
-    get: (payload) => ipcRenderer.invoke('group-room:get', payload),
-    listResources: () => ipcRenderer.invoke('group-room:list-resources'),
-    create: (payload) => ipcRenderer.invoke('group-room:create', payload),
-    update: (payload) => ipcRenderer.invoke('group-room:update', payload),
-    updateMemberGrants: (payload) => ipcRenderer.invoke('group-room:update-member-grants', payload),
-    refreshMemberSource: (payload) => ipcRenderer.invoke('group-room:refresh-member-source', payload),
-    addMembers: (payload) => ipcRenderer.invoke('group-room:add-members', payload),
-    removeMember: (payload) => ipcRenderer.invoke('group-room:remove-member', payload),
-    reorder: (payload) => ipcRenderer.invoke('group-room:reorder', payload),
-    delete: (payload) => ipcRenderer.invoke('group-room:delete', payload),
-    onEvent: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('group-room:event', handler);
-      return () => ipcRenderer.off('group-room:event', handler);
-    },
-  },
   listApps: () => ipcRenderer.invoke('app:list'),
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),
   launchApp: (payload) => ipcRenderer.invoke('app:launch', payload),

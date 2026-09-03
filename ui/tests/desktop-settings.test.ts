@@ -121,7 +121,6 @@ describe('desktop settings', () => {
     expect(normalizeDesktopSettings({}).advanced).toEqual({
       moss_auto_background_agents: false,
       moss_bash_ast_permissions: false,
-      moss_group_rooms: false,
       moss_hive_evidence: false,
       moss_scratchpad: false,
       moss_idle_session_cleanup: false,
@@ -142,7 +141,6 @@ describe('desktop settings', () => {
       advanced: {
         moss_auto_background_agents: true,
         moss_bash_ast_permissions: true,
-        moss_group_rooms: true,
         moss_hive_evidence: true,
         moss_scratchpad: true,
         moss_idle_session_cleanup: true,
@@ -161,7 +159,6 @@ describe('desktop settings', () => {
     }).advanced).toEqual({
       moss_auto_background_agents: true,
       moss_bash_ast_permissions: true,
-      moss_group_rooms: true,
       moss_hive_evidence: true,
       moss_scratchpad: true,
       moss_idle_session_cleanup: true,

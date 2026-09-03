@@ -237,7 +237,7 @@ function findAssistantDir(name) {
   return null;
 }
 
-export async function getInstalledAssistants() {
+async function getInstalledAssistants() {
   const assistants = [];
 
   for (const { dir: baseDir, category: fallbackCategory, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {

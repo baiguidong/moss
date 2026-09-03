@@ -18,8 +18,8 @@ function requireKnownIds(kind: string, selected: string[], available: Set<string
   }
 }
 
-function isResourceScopedTask(taskScope: TaskScope | undefined): taskScope is Extract<TaskScope, { kind: 'project' | 'group-room' }> {
-  return taskScope?.kind === 'project' || taskScope?.kind === 'group-room'
+function isResourceScopedTask(taskScope: TaskScope | undefined): taskScope is Extract<TaskScope, { kind: 'project' }> {
+  return taskScope?.kind === 'project'
 }
 
 export type ProjectWorkerResourceSelection = {
