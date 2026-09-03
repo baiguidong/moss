@@ -937,7 +937,11 @@ function isNonHumanUserEvent(event: AgentEvent): boolean {
 
 function isHiddenUserMetaEvent(event: AgentEvent): boolean {
   if (event?.type !== 'user') return false;
-  if (event.isMeta === true || event.isVisibleInTranscriptOnly === true) return true;
+  if (
+    event.isMeta === true ||
+    event.isSynthetic === true ||
+    event.isVisibleInTranscriptOnly === true
+  ) return true;
   const text = extractRawUserText(event).trim();
   return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>');
 }

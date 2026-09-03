@@ -15,7 +15,7 @@ function getHistoryEventToken(event) {
   if (!event || typeof event !== 'object') return null;
 
   if (event.type === 'user') {
-    if (event.isMeta || event.isVisibleInTranscriptOnly) return null;
+    if (event.isMeta || event.isSynthetic || event.isVisibleInTranscriptOnly) return null;
     const content = event?.message?.content;
     if (Array.isArray(content) && content.some((block) => block?.type === 'tool_result')) {
       return null;

@@ -36,7 +36,7 @@ import {
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
-import { isAuthorizedConnector } from '@/lib/connector-selection';
+import { isAuthorizedConnector, selectConnectorForNewChat } from '@/lib/connector-selection';
 import {
   attachAuthorizedConnectorToSession,
   runMcpConnectorAuthorization,
@@ -241,7 +241,11 @@ function hasAssistantTextEvent(event: AgentEvent): boolean {
 
 function isVisibleUserTextEvent(event: AgentEvent): boolean {
   if (event?.type !== 'user') return false;
-  if (event.isMeta === true || event.isVisibleInTranscriptOnly === true) return false;
+  if (
+    event.isMeta === true ||
+    event.isSynthetic === true ||
+    event.isVisibleInTranscriptOnly === true
+  ) return false;
   const text = extractHistoryText(event).trim();
   if (!text) return false;
   if (text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>')) return false;
@@ -2123,14 +2127,17 @@ export default function App() {
     return true;
   }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
 
-  const handleUseConnector = React.useCallback(async (connector: InstalledConnector) => {
-    const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
-    if (!current.includes(connector.id)) {
-      const added = await handleToggleConnector(connector);
-      if (!added) return;
+  const handleUseConnector = React.useCallback((connector: InstalledConnector) => {
+    if (!isAuthorizedConnector(connector)) {
+      showPermissionNotice(`${connector.name} 尚未完成认证，不能加入会话`, 'error', 6000);
+      return;
     }
-    setActiveView('chat');
-  }, [activeSessionId, draftConnectorIds, handleToggleConnector]);
+    selectConnectorForNewChat({
+      connectorId: connector.id,
+      navigateToNewChat: () => navigateToHome({ resetInput: true }),
+      setDraftConnectorIds,
+    });
+  }, [navigateToHome, showPermissionNotice]);
 
   const handleConnectorHubError = React.useCallback((error: {
     title: string;

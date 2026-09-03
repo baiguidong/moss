@@ -37,6 +37,34 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("hides SDK synthetic skill context from the user transcript", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([
+      {
+        type: "user",
+        message: { role: "user", content: "查询北京数牍近况" },
+      },
+      {
+        type: "user",
+        isSynthetic: true,
+        sourceToolUseID: "skill-call-1",
+        message: {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "Base directory for this skill: /tmp/tyc-mcp\n\n# 天眼查 Connector Skill",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "查询完成" }] },
+      },
+    ]);
+
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(messages.some((message) => message.content.includes("Base directory for this skill"))).toBe(false);
+  });
+
   it("renders connector authorization status as a visible system message", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "system",

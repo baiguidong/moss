@@ -8,7 +8,9 @@ export function getConnectorPrimaryAction(
 ): ConnectorPrimaryAction {
   if (!installed) return null;
 
-  if (connector.credentialSchema?.fields?.length) return 'credentials';
+  if (connector.credentialSchema?.fields?.length) {
+    return connector.credentialsConfigured ? 'use' : 'credentials';
+  }
   if (!connector.connected && (connector.hasCli || connector.requiresCliSetup || connector.type === 'cli')) {
     return 'cli-setup';
   }

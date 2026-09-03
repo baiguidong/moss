@@ -356,7 +356,7 @@ function isDisplayTranscriptEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   if (entry.isSidechain) return false;
   if (entry.type === 'user') {
-    if (entry.isMeta) return false;
+    if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
     const text = extractDisplayTextFromTranscriptEntry(entry).trim();
     if (text.startsWith('<local-command-caveat>')) return false;
     if (text.startsWith('<command-name>')) return false;
@@ -374,7 +374,7 @@ function isDisplayTranscriptEntry(entry) {
 
 function isVisibleUserTextEntry(entry) {
   if (!entry || entry.type !== 'user') return false;
-  if (entry.isMeta || entry.isVisibleInTranscriptOnly) return false;
+  if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
   const text = extractDisplayTextFromTranscriptEntry(entry).trim();
   if (!text) return false;
   if (text.startsWith('<local-command-caveat>')) return false;
@@ -4483,6 +4483,12 @@ async function runSessionPromptNow({
         }
 
         maybeUpdateUnderlyingSessionId(sessionRecord, message.session_id);
+        if (
+          message?.type === 'user' &&
+          (message.isMeta === true || message.isSynthetic === true || message.isVisibleInTranscriptOnly === true)
+        ) {
+          continue;
+        }
         if (isCompactBoundaryMessage(message)) {
           sawCompactBoundary = true;
         }

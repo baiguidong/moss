@@ -38,8 +38,22 @@ describe('connector primary action', () => {
         title: 'Credentials',
         fields: [{ key: 'token', label: 'Token', type: 'password', required: true }],
       },
+      credentialsConfigured: false,
     }), true)).toBe('credentials');
     expect(getConnectorPrimaryAction(connector({ hasMcp: true, connected: false }), true)).toBe('mcp-auth');
+  });
+
+  it('offers use when credential-based authentication is already configured', () => {
+    expect(getConnectorPrimaryAction(connector({
+      authMode: 'token',
+      hasSkills: true,
+      connected: true,
+      credentialsConfigured: true,
+      credentialSchema: {
+        title: '携程问道授权',
+        fields: [{ key: 'WENDAO_API_KEY', label: 'API Token', type: 'password', required: true }],
+      },
+    }), true)).toBe('use');
   });
 
   it('offers use for an installed skill-only connector', () => {

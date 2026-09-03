@@ -22,6 +22,23 @@ describe('session history reconciliation', () => {
     expect(shouldAdoptSessionHistory(current, candidate)).toBe(true);
   });
 
+  it('ignores SDK synthetic skill context when reconciling display history', () => {
+    const prompt = user('查询北京数牍近况');
+    const answer = assistant('查询完成', 'answer-1');
+    const current = [
+      prompt,
+      {
+        type: 'user',
+        isSynthetic: true,
+        message: { content: [{ type: 'text', text: 'Base directory for this skill: /tmp/tyc-mcp' }] },
+      },
+      answer,
+    ];
+    const candidate = [prompt, answer];
+
+    expect(shouldAdoptSessionHistory(current, candidate)).toBe(true);
+  });
+
   it('rejects a shorter transcript that would remove existing messages', () => {
     const current = [
       user('original question'),
