@@ -18,9 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-type SkillTab = "recommend" | "hub" | "installed";
-
-const FEATURED_SKILL_PAGE_SIZE = 6;
+type SkillTab = "hub" | "installed";
+type SkillSortMode = "score" | "downloads" | "updated_at" | "installs";
 
 type SkillCategory = {
   key: string;
@@ -364,16 +363,13 @@ function InstalledSkillCard({
 }
 
 export function SkillHubView() {
-  const [tab, setTab] = React.useState<SkillTab>("recommend");
+  const [tab, setTab] = React.useState<SkillTab>("hub");
+  const [sortMode, setSortMode] = React.useState<SkillSortMode>("downloads");
   const [query, setQuery] = React.useState("");
   const deferredQuery = React.useDeferredValue(query.trim());
   const [category, setCategory] = React.useState("");
   const [categories, setCategories] = React.useState<SkillCategory[]>([]);
   const [remoteSkills, setRemoteSkills] = React.useState<RemoteSkill[]>([]);
-  const [featuredSkills, setFeaturedSkills] = React.useState<RemoteSkill[]>([]);
-  const [featuredPage, setFeaturedPage] = React.useState(1);
-  const [featuredTotal, setFeaturedTotal] = React.useState(0);
-  const [featuredLoading, setFeaturedLoading] = React.useState(false);
   const [installedSkills, setInstalledSkills] = React.useState<InstalledSkill[]>([]);
   const [page, setPage] = React.useState(1);
   const [total, setTotal] = React.useState(0);
@@ -436,7 +432,7 @@ export function SkillHubView() {
         pageSize: 18,
         query: deferredQuery,
         category,
-        sortBy: tab === "recommend" ? "downloads" : "updated_at",
+        sortBy: sortMode,
         order: "desc",
       }) as { success?: boolean; data?: { skills?: RemoteSkill[]; total?: number }; error?: string };
       if (!res?.success) throw new Error(res?.error || "获取 SkillHub 列表失败");
@@ -450,40 +446,12 @@ export function SkillHubView() {
     } finally {
       setLoading(false);
     }
-  }, [category, deferredQuery, tab]);
-
-  const loadFeatured = React.useCallback(async (nextPage: number) => {
-    setFeaturedLoading(true);
-    setError("");
-    try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:fetch-skills", {
-        page: nextPage,
-        pageSize: FEATURED_SKILL_PAGE_SIZE,
-        sortBy: "downloads",
-        order: "desc",
-      }) as { success?: boolean; data?: { skills?: RemoteSkill[]; total?: number }; error?: string };
-      if (!res?.success) throw new Error(res?.error || "获取精选技能失败");
-      const skills = Array.isArray(res.data?.skills) ? res.data.skills : [];
-      setFeaturedSkills(skills);
-      setFeaturedTotal(Number(res.data?.total || 0));
-      setFeaturedPage(skills.length > 0 ? nextPage : 1);
-      if (skills.length === 0 && nextPage !== 1) {
-        void loadFeatured(1);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setFeaturedSkills([]);
-      setFeaturedTotal(0);
-    } finally {
-      setFeaturedLoading(false);
-    }
-  }, []);
+  }, [category, deferredQuery, sortMode, tab]);
 
   React.useEffect(() => {
     void loadInstalled();
     void loadCategories();
-    void loadFeatured(1);
-  }, [loadCategories, loadFeatured, loadInstalled]);
+  }, [loadCategories, loadInstalled]);
 
   React.useEffect(() => {
     if (tab !== "installed") void loadRemote(1);
@@ -565,9 +533,14 @@ export function SkillHubView() {
   }, [category, categoryNameByKey, deferredQuery, installedSkills]);
 
   const tabs: Array<{ id: SkillTab; label: string }> = [
-    { id: "recommend", label: "推荐" },
     { id: "hub", label: "SkillHub" },
     { id: "installed", label: "我安装的" },
+  ];
+  const sortOptions: Array<{ id: SkillSortMode; label: string }> = [
+    { id: "score", label: "综合评分" },
+    { id: "downloads", label: "下载量" },
+    { id: "updated_at", label: "最近更新" },
+    { id: "installs", label: "安装量" },
   ];
 
   return (
@@ -645,6 +618,34 @@ export function SkillHubView() {
               </CategoryChip>
             ))}
           </div>
+          {tab === "hub" ? (
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <div className="flex h-7 shrink-0 items-center gap-0.5 rounded-md bg-muted/70 p-0.5">
+                {sortOptions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setSortMode(item.id);
+                      setPage(1);
+                    }}
+                    className={cn(
+                      "h-6 rounded-[5px] px-2.5 text-xs font-medium transition-colors",
+                      sortMode === item.id
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                第 {page} 页
+              </div>
+            </div>
+          ) : null}
 
           {error ? (
             <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -690,63 +691,6 @@ export function SkillHubView() {
                 </div>
               ) : (
                 <>
-                  {tab === "recommend" && !deferredQuery && !category ? (
-                    <div className="mb-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <h2 className="text-sm font-semibold text-foreground">精选技能</h2>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">第 {featuredPage} 页</span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 rounded-lg px-3 text-xs"
-                            disabled={featuredPage <= 1 || featuredLoading}
-                            onClick={() => void loadFeatured(featuredPage - 1)}
-                          >
-                            上一页
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 rounded-lg px-3 text-xs"
-                            disabled={featuredPage * FEATURED_SKILL_PAGE_SIZE >= featuredTotal || featuredLoading}
-                            onClick={() => void loadFeatured(featuredPage + 1)}
-                          >
-                            {featuredLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                            下一页
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-                        {(featuredSkills.length > 0 ? featuredSkills : remoteSkills.slice(0, FEATURED_SKILL_PAGE_SIZE)).map((skill) => {
-                          const key = skillKey(skill);
-                          return (
-                            <RemoteSkillCard
-                              key={key}
-                              skill={skill}
-                              installed={installedLookup.get(key) || installedLookup.get(skill.slug) || installedLookup.get(skill.name)}
-                              installing={busyKeys.has(key)}
-                              onInstall={() => void installSkill(skill)}
-                              categoryNameByKey={categoryNameByKey}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-foreground">{tab === "recommend" ? "推荐" : "SkillHub"}</h2>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      {loading ? (
-                        <span className="inline-flex items-center gap-1">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          刷新中
-                        </span>
-                      ) : null}
-                      第 {page} 页
-                    </div>
-                  </div>
                   <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
                     {remoteSkills.map((skill) => {
                       const key = skillKey(skill);
