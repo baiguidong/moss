@@ -412,6 +412,7 @@ function MessageContextMenu({
 type VirtualListContext = {
   footer?: React.ReactNode;
   loading?: boolean;
+  contentClassName?: string;
 };
 
 function VirtuosoHeader() {
@@ -420,7 +421,10 @@ function VirtuosoHeader() {
 
 function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-3 pb-4 pt-1 sm:px-4">
+    <div className={cn(
+      "mx-auto w-full pb-4 pt-1",
+      context?.contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+    )}>
       {context?.loading && <LoadingIndicator />}
       {context?.footer}
     </div>
@@ -469,9 +473,19 @@ export const VirtualMessageList = React.forwardRef<
     emptyState?: React.ReactNode;
     onAtBottomChange?: (atBottom: boolean) => void;
     focusedToolUseId?: string;
+    contentClassName?: string;
   }
 >(function VirtualMessageList(
-  { messages, workspace, loading, footer, emptyState, onAtBottomChange, focusedToolUseId },
+  {
+    messages,
+    workspace,
+    loading,
+    footer,
+    emptyState,
+    onAtBottomChange,
+    focusedToolUseId,
+    contentClassName,
+  },
   ref,
 ) {
   const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
@@ -526,7 +540,10 @@ export const VirtualMessageList = React.forwardRef<
   if (renderItems.length === 0) {
     return (
       <WorkspacePathProvider workspace={workspace || ""}>
-        <div className="mx-auto w-full max-w-[1180px] px-3 py-3 sm:px-4">
+        <div className={cn(
+          "mx-auto w-full py-3",
+          contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+        )}>
           {emptyState || (
             <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">
               暂无消息
@@ -549,7 +566,7 @@ export const VirtualMessageList = React.forwardRef<
         className="h-full min-w-0"
         data={renderItems}
         computeItemKey={(_index, item) => (item.kind === "tool_group" ? item.id : item.message.id)}
-        context={{ footer, loading }}
+        context={{ footer, loading, contentClassName }}
         followOutput={(isAtBottom) => (isAtBottom ? "auto" : false)}
         atBottomThreshold={120}
         atBottomStateChange={(atBottom) => {
@@ -567,7 +584,10 @@ export const VirtualMessageList = React.forwardRef<
           );
           return (
             <div
-              className="mx-auto w-full max-w-[1180px] min-w-0 px-3 py-0.5 sm:px-4"
+              className={cn(
+                "mx-auto w-full min-w-0 py-0.5",
+                contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+              )}
               onContextMenu={(e) => {
                 const selection = window.getSelection()?.toString() ?? "";
                 const messageText = extractItemCopyText(item);
@@ -599,6 +619,7 @@ export const MessageListPane = React.forwardRef<
     emptyState?: React.ReactNode;
     focusedToolUseId?: string;
     className?: string;
+    contentClassName?: string;
   }
 >(function MessageListPane({ className, ...listProps }, ref) {
   const innerRef = React.useRef<VirtualMessageListHandle>(null);

@@ -22,7 +22,6 @@ import { SettingsView } from '@/components/settings-view';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { NotificationCenter, NotificationToast } from '@/components/notification-center';
-import { countSessionMessages } from '../shared/session-message-count.mjs';
 import {
   buildMainChatRenderMessagesFromHistory,
 } from '@/lib/agent-transcript';
@@ -1326,10 +1325,6 @@ export default function App() {
     return messages;
   }, [activeDetail?.history, activeDetail?.busy]);
 
-  const visibleChatMessageCount = React.useMemo(
-    () => countSessionMessages(activeDetail?.history || []),
-    [activeDetail?.history],
-  );
   const globalAutoCollapseToolCalls = desktopSettings?.appearance.autoCollapseToolCalls ?? false;
   const activeAutoCollapseToolCalls = resolveAutoCollapseToolCalls(
     activeDetail?.autoCollapseToolCalls,
@@ -1342,9 +1337,9 @@ export default function App() {
     if (activeDetail.isSubAgent) return '子会话不能继续分叉';
     if (activeDetail.projectId) return '项目会话由项目协调器管理，暂不支持分叉';
     if (activeDetail.sessionKind === 'cron') return '定时任务会话不能分叉';
-    if (visibleChatMessageCount === 0) return '空会话不能分叉';
+    if (activeDetail.messageCount === 0) return '空会话不能分叉';
     return null;
-  }, [activeDetail, visibleChatMessageCount]);
+  }, [activeDetail]);
 
   const sidebarSessions = React.useMemo(
     () => baseSidebarSessions.map((session) => {
@@ -2424,7 +2419,6 @@ export default function App() {
                 hasActiveSession={Boolean(activeSessionId)}
                 isProjectSession={Boolean(activeDetail?.projectId)}
                 sessionTitle={activeDetail?.title || 'New Session'}
-                sessionMessageCount={visibleChatMessageCount}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
@@ -2477,7 +2471,6 @@ export default function App() {
                 loading={false}
                 hasActiveSession={false}
                 sessionTitle=""
-                sessionMessageCount={0}
                 sessionWorkspace={undefined}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}

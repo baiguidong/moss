@@ -91,6 +91,9 @@ const intentOptions: IntentOption[] = [
   },
 ];
 
+const MAIN_CHAT_CONTENT_CLASS_NAME =
+  "max-w-[1120px] pl-4 pr-6 sm:pl-6 sm:pr-10 lg:pr-12";
+
 function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
   const parts: string[] = [];
   for (const message of messages) {
@@ -110,7 +113,6 @@ function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
 
 function SessionTabBar({
   title,
-  messageCount,
   leftCollapsed,
   rightCollapsed,
   leftPanelName,
@@ -128,7 +130,6 @@ function SessionTabBar({
   forkDisabledReason,
 }: {
   title: string;
-  messageCount: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   leftPanelName: string;
@@ -175,8 +176,11 @@ function SessionTabBar({
     : outline;
 
   return (
-    <div className="shrink-0 border-b border-border/70 bg-background/88 px-3 py-2 backdrop-blur sm:px-4">
-      <div className="mx-auto flex max-w-[1180px] min-w-0 items-center justify-between gap-3">
+    <div className="shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur">
+      <div className={cn(
+        "mx-auto flex w-full min-w-0 items-center justify-between gap-3",
+        MAIN_CHAT_CONTENT_CLASS_NAME,
+      )}>
         <Button
           variant="ghost"
           size="icon"
@@ -197,9 +201,6 @@ function SessionTabBar({
             <div className="flex min-w-0 items-center justify-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">
                 {title || "New Session"}
-              </span>
-              <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-                {messageCount} 条
               </span>
             </div>
           </button>
@@ -1985,7 +1986,6 @@ export function ChatArea({
   hasActiveSession,
   isProjectSession = false,
   sessionTitle,
-  sessionMessageCount,
   sessionId,
   sessionWorkspace,
   focusedToolUseId,
@@ -2040,7 +2040,6 @@ export function ChatArea({
   hasActiveSession: boolean;
   isProjectSession?: boolean;
   sessionTitle: string;
-  sessionMessageCount: number;
   sessionId?: string;
   sessionWorkspace?: string;
   focusedToolUseId?: string;
@@ -2178,7 +2177,6 @@ export function ChatArea({
     <div className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
         title={sessionTitle}
-        messageCount={sessionMessageCount}
         leftCollapsed={leftCollapsed}
         rightCollapsed={rightCollapsed}
         leftPanelName={leftPanelName}
@@ -2205,6 +2203,7 @@ export function ChatArea({
           workspace={sessionWorkspace}
           loading={loading}
           focusedToolUseId={focusedToolUseId}
+          contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
           footer={pendingPlanApproval ? (
             <PlanApprovalCard
               pendingPlanApproval={pendingPlanApproval}
@@ -2217,8 +2216,11 @@ export function ChatArea({
       </ToolDisplaySettingsProvider>
 
 
-      <div className="shrink-0 min-w-0 bg-background/94 px-3 py-3 backdrop-blur sm:px-4">
-        <div className="mx-auto max-w-[1180px] min-w-0">
+      <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
+        <div className={cn(
+          "mx-auto w-full min-w-0",
+          MAIN_CHAT_CONTENT_CLASS_NAME,
+        )}>
           {childSessions.length > 0 ? (
             <div
               className="mb-2 flex h-10 min-w-0 items-center justify-start overflow-hidden text-[11px] text-muted-foreground"
