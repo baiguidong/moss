@@ -136,6 +136,7 @@ describe('desktop settings', () => {
       moss_file_read_max_tokens: 25000,
       moss_request_attribution_enabled: true,
       moss_context_compaction_strategy: 'proactive',
+      moss_session_debug_logging: false,
     });
 
     expect(normalizeDesktopSettings({
@@ -174,6 +175,7 @@ describe('desktop settings', () => {
       moss_file_read_max_tokens: 50000,
       moss_request_attribution_enabled: false,
       moss_context_compaction_strategy: 'reactive',
+      moss_session_debug_logging: false,
     });
 
     expect(normalizeDesktopSettings({

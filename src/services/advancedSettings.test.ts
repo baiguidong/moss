@@ -63,6 +63,7 @@ describe('advanced settings', () => {
         moss_file_read_max_tokens: 25_000,
         moss_request_attribution_enabled: true,
         moss_context_compaction_strategy: 'proactive',
+        moss_session_debug_logging: false,
       })
     } finally {
       await rm(configDir, { recursive: true, force: true })
@@ -116,6 +117,7 @@ describe('advanced settings', () => {
         moss_file_read_max_tokens: 50_000,
         moss_request_attribution_enabled: false,
         moss_context_compaction_strategy: 'reactive',
+        moss_session_debug_logging: false,
       })
       const interviewEnabled = runWithSessionIdContext(
         asSessionId('advanced-plan-mode'),

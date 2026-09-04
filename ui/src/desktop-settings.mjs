@@ -64,6 +64,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     moss_file_read_max_tokens: 25000,
     moss_request_attribution_enabled: true,
     moss_context_compaction_strategy: 'proactive',
+    moss_session_debug_logging: false,
   },
   managedRuntimes: {
     node: true,

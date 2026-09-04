@@ -385,7 +385,7 @@ export async function cleanupOldSessionEnvDirs(): Promise<CleanupResult> {
 }
 
 /**
- * Cleans up old debug log files from ~/.moss/debug/
+ * Cleans up old debug log files from ~/.moss/logs/debug/
  * Preserves the 'latest' symlink which points to the current session's log.
  * Debug logs can grow very large (especially with the infinite logging loop bug)
  * and accumulate indefinitely without this cleanup.
@@ -394,7 +394,7 @@ export async function cleanupOldDebugLogs(): Promise<CleanupResult> {
   const cutoffDate = getCutoffDate()
   const result: CleanupResult = { messages: 0, errors: 0 }
   const fsImpl = getFsImplementation()
-  const debugDir = join(getMossConfigHomeDir(), 'debug')
+  const debugDir = join(getMossConfigHomeDir(), 'logs', 'debug')
 
   let dirents
   try {

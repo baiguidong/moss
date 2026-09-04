@@ -1,14 +1,18 @@
-import envPaths from 'env-paths'
 import { join } from 'path'
+import { getMossConfigHomeDir } from './envUtils.js'
 import { getFsImplementation } from './fsOperations.js'
 import { djb2Hash } from './hash.js'
 
-const paths = envPaths('claude-cli')
+// All diagnostic logs live under ~/.moss/logs/, alongside moss.log, so they can
+// be inspected in one place.
+function logsRoot(): string {
+  return join(getMossConfigHomeDir(), 'logs')
+}
 
 // Local sanitizePath using djb2Hash — NOT the shared version from
 // sessionStoragePortable.ts which uses Bun.hash (wyhash) when available.
-// Cache directory names must remain stable across upgrades so existing cache
-// data (error logs, MCP logs) is not orphaned.
+// Directory names must remain stable across upgrades so existing log data
+// (error logs, MCP logs) is not orphaned.
 const MAX_SANITIZED_LENGTH = 200
 function sanitizePath(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9]/g, '-')
@@ -23,14 +27,14 @@ function getProjectDir(cwd: string): string {
 }
 
 export const CACHE_PATHS = {
-  baseLogs: () => join(paths.cache, getProjectDir(getFsImplementation().cwd())),
+  baseLogs: () => join(logsRoot(), getProjectDir(getFsImplementation().cwd())),
   errors: () =>
-    join(paths.cache, getProjectDir(getFsImplementation().cwd()), 'errors'),
+    join(logsRoot(), getProjectDir(getFsImplementation().cwd()), 'errors'),
   messages: () =>
-    join(paths.cache, getProjectDir(getFsImplementation().cwd()), 'messages'),
+    join(logsRoot(), getProjectDir(getFsImplementation().cwd()), 'messages'),
   mcpLogs: (serverName: string) =>
     join(
-      paths.cache,
+      logsRoot(),
       getProjectDir(getFsImplementation().cwd()),
       // Sanitize server name for Windows compatibility (colons are reserved for drive letters)
       `mcp-logs-${sanitizePath(serverName)}`,

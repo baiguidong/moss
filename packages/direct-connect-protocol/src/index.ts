@@ -40,6 +40,7 @@ export type AdvancedSettings = {
   moss_file_read_max_tokens: number
   moss_request_attribution_enabled: boolean
   moss_context_compaction_strategy: 'proactive' | 'reactive'
+  moss_session_debug_logging: boolean
 }
 
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
@@ -80,6 +81,7 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_file_read_max_tokens: 25_000,
   moss_request_attribution_enabled: true,
   moss_context_compaction_strategy: 'proactive',
+  moss_session_debug_logging: false,
 })
 
 export type SessionRuntimeInfo = {
@@ -139,6 +141,7 @@ export const advancedSettingsSchema = lazySchema(() =>
     moss_file_read_max_tokens: z.number().int().min(1).max(1_000_000).optional(),
     moss_request_attribution_enabled: z.boolean().optional(),
     moss_context_compaction_strategy: z.enum(['proactive', 'reactive']).optional(),
+    moss_session_debug_logging: z.boolean().optional(),
   }),
 )
 

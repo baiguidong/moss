@@ -162,7 +162,9 @@ import {
   checkForLSPDiagnostics,
   clearAllLSPDiagnostics,
 } from '../services/lsp/LSPDiagnosticRegistry.js'
+import { getAdvancedSetting } from '../services/advancedSettings.js'
 import { logForDebugging } from './debug.js'
+import { appendMossLog } from './mossFileLog.js'
 import {
   extractTextContent,
   isThinkingMessage,
@@ -2109,6 +2111,18 @@ async function getSkillListingAttachments(
     getSdkBetas(),
   )
   const content = formatCommandsWithinBudget(newSkills, contextWindowTokens)
+
+  // Emits the exact skill listing injected into the model on this turn so a new
+  // session can be diagnosed from ~/.moss/logs/moss.log. Gated on the toggle
+  // (not isDebugMode) so it captures the first turn without a startup flag. Grep
+  // `skill-listing` and filter by `session=` to see what skills were advertised.
+  if (getAdvancedSetting('moss_session_debug_logging')) {
+    appendMossLog(
+      'debug',
+      'skill-listing',
+      `session=${getSessionId()} agent=${agentKey || 'main'} ${isInitial ? 'initial' : 'dynamic'} count=${newSkills.length} names=[${newSkills.map(s => s.name).join(', ')}]\n${content}`,
+    )
+  }
 
   return [
     {

@@ -1,12 +1,9 @@
 import { registerBatchSkill } from './batch.js'
 import { registerDebugSkill } from './debug.js'
-import { registerKeybindingsSkill } from './keybindings.js'
-import { registerLoremIpsumSkill } from './loremIpsum.js'
 import { registerLoopSkill } from './loop.js'
 import { registerRememberSkill } from './remember.js'
 import { registerSimplifySkill } from './simplify.js'
 import { registerSkillifySkill } from './skillify.js'
-import { registerStuckSkill } from './stuck.js'
 import { registerUpdateConfigSkill } from './updateConfig.js'
 import { registerVerifySkill } from './verify.js'
 
@@ -21,15 +18,12 @@ import { registerVerifySkill } from './verify.js'
  */
 export function initBundledSkills(): void {
   registerUpdateConfigSkill()
-  registerKeybindingsSkill()
   registerVerifySkill()
   registerDebugSkill()
-  registerLoremIpsumSkill()
   registerSkillifySkill()
   registerRememberSkill()
   registerSimplifySkill()
   registerBatchSkill()
-  registerStuckSkill()
   // loop skill - AGENT_TRIGGERS is enabled in features.js
   registerLoopSkill()
 }

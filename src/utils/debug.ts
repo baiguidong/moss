@@ -234,12 +234,12 @@ export function getDebugLogPath(): string {
   const sessionProjectDir = getSessionProjectDir()
   return sessionProjectDir
     ? join(sessionProjectDir, getSessionId(), 'logs', 'debug.txt')
-    : join(getMossConfigHomeDir(), 'debug', `${getSessionId()}.txt`)
+    : join(getMossConfigHomeDir(), 'logs', 'debug', `${getSessionId()}.txt`)
 }
 
 /**
  * Updates the latest debug log symlink to point to the current debug log file.
- * Creates or updates a symlink at ~/.moss/debug/latest
+ * Creates or updates a symlink at ~/.moss/logs/debug/latest
  */
 const updateLatestDebugLogSymlink = memoize(
   async (): Promise<void> => {

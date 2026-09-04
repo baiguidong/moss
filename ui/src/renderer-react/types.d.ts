@@ -428,6 +428,7 @@ export type DesktopSettings = {
     moss_file_read_max_tokens?: number;
     moss_request_attribution_enabled?: boolean;
     moss_context_compaction_strategy?: 'proactive' | 'reactive';
+    moss_session_debug_logging?: boolean;
   };
   managedRuntimes?: {
     node?: boolean;

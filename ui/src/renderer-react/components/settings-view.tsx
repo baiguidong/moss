@@ -165,6 +165,7 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_file_read_max_tokens: 25_000,
   moss_request_attribution_enabled: true,
   moss_context_compaction_strategy: 'proactive',
+  moss_session_debug_logging: false,
 };
 
 const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
@@ -1801,6 +1802,20 @@ export function SettingsView({
                             checked={Boolean(advancedDraft.moss_streaming_tool_execution)}
                             onCheckedChange={(checked) => updateAdvancedSettings({ moss_streaming_tool_execution: checked })}
                             label="流式工具执行"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="会话调试日志"
+                        description="将新会话首轮发送给模型的 skill 提示等诊断信息写入 ~/.moss/logs/moss.log，便于按会话过滤排查。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_session_debug_logging)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_session_debug_logging: checked })}
+                            label="会话调试日志"
                           />
                         </div>
                       </SettingsRow>
