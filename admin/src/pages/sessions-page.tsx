@@ -245,7 +245,6 @@ export default function SessionsPage() {
                 <TableHead>Session ID</TableHead>
                 <TableHead>用户</TableHead>
                 <TableHead>运行时</TableHead>
-                <TableHead>模式</TableHead>
                 <TableHead>创建时间</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -268,11 +267,6 @@ export default function SessionsPage() {
                           </span>
                         )}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {session.runtime.profileMode}
-                      </Badge>
                     </TableCell>
                     <TableCell>{format(new Date(session.createdAt), 'MM-dd HH:mm')}</TableCell>
                     <TableCell>
@@ -307,7 +301,7 @@ export default function SessionsPage() {
               })}
               {filteredSessions.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12">
+                  <TableCell colSpan={6} className="text-center py-12">
                     <div className="flex flex-col items-center text-muted-foreground">
                       <Search className="size-8 mb-2 opacity-50" />
                       <p>没有找到匹配的会话</p>

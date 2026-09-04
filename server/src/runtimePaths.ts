@@ -1,5 +1,4 @@
 import { join } from 'path'
-import type { SessionProfileMode } from '../../packages/direct-connect-protocol/src/index.js'
 import type { ServerConfig } from './types.js'
 
 export function getSessionDir(config: ServerConfig, sessionId: string): string {
@@ -47,26 +46,8 @@ export function resolveSessionWorkspaceDir(
   )
 }
 
-export function getSessionProfileDir(
-  config: ServerConfig,
-  sessionId: string,
-): string {
-  return join(getSessionDir(config, sessionId), 'profile')
-}
-
 export function getUserProfileDir(config: ServerConfig, userId: string): string {
   return join(config.dataDir, 'profiles', 'users', userId)
-}
-
-export function getProfileDir(
-  config: ServerConfig,
-  sessionId: string,
-  userId: string,
-  profileMode: SessionProfileMode,
-): string {
-  return profileMode === 'user'
-    ? getUserProfileDir(config, userId)
-    : getSessionProfileDir(config, sessionId)
 }
 
 export function getAttemptDir(

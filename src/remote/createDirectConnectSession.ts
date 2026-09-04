@@ -10,7 +10,6 @@ import {
   type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
-  type SessionProfileMode,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { resolveDirectConnectAccessToken } from './authClient.js'
 
@@ -97,7 +96,6 @@ export async function createDirectConnectSession({
   password,
   cwd,
   dangerouslySkipPermissions,
-  profileMode,
   assistantName,
   advancedSettings,
   autoMemory,
@@ -111,7 +109,6 @@ export async function createDirectConnectSession({
   password?: string
   cwd?: string
   dangerouslySkipPermissions?: boolean
-  profileMode?: SessionProfileMode
   assistantName?: string
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
@@ -139,7 +136,6 @@ export async function createDirectConnectSession({
         ...(dangerouslySkipPermissions && {
           dangerously_skip_permissions: true,
         }),
-        ...(profileMode ? { profileMode } : {}),
         ...(assistantName && { assistant_name: assistantName }),
         ...(advancedSettings ? { advancedSettings } : {}),
         ...(autoMemory ? { autoMemory } : {}),

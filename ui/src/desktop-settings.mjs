@@ -90,7 +90,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   remoteDirectUserPassword: '',
   remoteDirectApiKey: '',
   remoteDirectWorkspace: '',
-  remoteDirectProfileMode: 'user',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
@@ -173,10 +172,6 @@ function deleteLegacyServerSettings(target) {
 
 export function normalizeRemoteDirectCredentialMode(value) {
   return value === 'api-key' ? 'api-key' : 'password';
-}
-
-export function normalizeRemoteDirectProfileMode(value) {
-  return value === 'user' ? 'user' : 'session';
 }
 
 
@@ -409,14 +404,6 @@ export function normalizeDesktopSettings(input, existing = {}) {
     stringField(existingRemoteDirect, 'workspace') ??
     DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
 
-  result.remoteDirectProfileMode = normalizeRemoteDirectProfileMode(
-    source.remoteDirectProfileMode ??
-      sourceRemoteDirect.profileMode ??
-      result.remoteDirectProfileMode ??
-      existingRemoteDirect.profileMode ??
-      DEFAULT_DESKTOP_SETTINGS.remoteDirectProfileMode,
-  );
-
   result.remoteDirect = {
     serverUrl: result.remoteDirectServerUrl,
     credentialMode: result.remoteDirectCredentialMode,
@@ -424,8 +411,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
     userPassword: result.remoteDirectUserPassword,
     apiKey: result.remoteDirectApiKey,
     workspace: result.remoteDirectWorkspace,
-    profileMode: result.remoteDirectProfileMode,
   };
+  delete result.remoteDirectProfileMode;
 
   if (source.coordinatorMode !== undefined) {
     result.coordinatorMode = Boolean(source.coordinatorMode);
@@ -797,12 +784,10 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     ),
     userEmail: normalizedSettings.remoteDirectUserEmail || '',
     workspace: normalizedSettings.remoteDirectWorkspace || '',
-    profileMode: normalizeRemoteDirectProfileMode(
-      normalizedSettings.remoteDirectProfileMode,
-    ),
   };
   delete remoteDirect.userPassword;
   delete remoteDirect.apiKey;
+  delete remoteDirect.profileMode;
 
   const models = {
     ...existingModels,

@@ -1,26 +1,14 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { join } from 'path'
 import {
   getAttemptDir,
   getDockerBackendManifestPath,
-  getProfileDir,
-  getSessionProfileDir,
   getSessionRuntimeMountDirs,
+  getUserProfileDir,
   resolveSessionWorkspaceDir,
 } from '../runtimePaths.js'
 import { SessionTurnLock } from '../sessionTurnLock.js'
-import { validateAutoMemoryProfile } from '../memorySettings.js'
 import type { ServerConfig } from '../types.js'
-
-const originalAutoMemoryEnv = process.env.MOSS_AUTO_MEMORY_SETTINGS
-
-afterEach(() => {
-  if (originalAutoMemoryEnv === undefined) {
-    delete process.env.MOSS_AUTO_MEMORY_SETTINGS
-  } else {
-    process.env.MOSS_AUTO_MEMORY_SETTINGS = originalAutoMemoryEnv
-  }
-})
 
 describe('runtime service workspace layout', () => {
   test('uses per-session server workspace when client does not request cwd', () => {
@@ -31,16 +19,13 @@ describe('runtime service workspace layout', () => {
     )
   })
 
-  test('uses profile mode only to choose the memory profile', () => {
+  test('uses one shared memory profile for every session owned by a user', () => {
     const config = makeConfig('/tmp/moss-server')
 
     expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe(
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'workspace'),
     )
-    expect(getProfileDir(config, 'session-1', 'user-1', 'session')).toBe(
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'profile'),
-    )
-    expect(getProfileDir(config, 'session-1', 'user-1', 'user')).toBe(
+    expect(getUserProfileDir(config, 'user-1')).toBe(
       join('/tmp/moss-server', 'var', 'lib', 'profiles', 'users', 'user-1'),
     )
   })
@@ -68,13 +53,10 @@ describe('runtime service workspace layout', () => {
     expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe('/work/default')
   })
 
-  test('keeps session profile and attempt files under the session root', () => {
+  test('keeps attempt files under the session root', () => {
     const config = makeConfig('/tmp/moss-server')
     const attemptDir = getAttemptDir(config, 'session-1', 'attempt-1')
 
-    expect(getSessionProfileDir(config, 'session-1')).toBe(
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'profile'),
-    )
     expect(attemptDir).toBe(
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'attempts', 'attempt-1'),
     )
@@ -83,17 +65,7 @@ describe('runtime service workspace layout', () => {
     )
   })
 
-  test('mounts only the current session root for session profile mode', () => {
-    const config = makeConfig('/tmp/moss-server')
-
-    expect(
-      getSessionRuntimeMountDirs(config, 'session-2'),
-    ).toEqual([
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-2'),
-    ])
-  })
-
-  test('does not mount other session roots for user profile mode', () => {
+  test('mounts only the current session root in addition to the user profile', () => {
     const config = makeConfig('/tmp/moss-server')
 
     expect(
@@ -122,36 +94,6 @@ describe('runtime service session turn lock', () => {
     const releaseSecond = await second
     expect(secondAcquired).toBe(true)
     releaseSecond()
-  })
-})
-
-describe('runtime service memory profile validation', () => {
-  test('requires a shared user profile for session-enabled Dream', () => {
-    delete process.env.MOSS_AUTO_MEMORY_SETTINGS
-    expect(() =>
-      validateAutoMemoryProfile('session', {
-        dreamEnabled: true,
-      }),
-    ).toThrow('Dream consolidation requires profileMode "user"')
-    expect(() =>
-      validateAutoMemoryProfile('user', {
-        dreamEnabled: true,
-      }),
-    ).not.toThrow()
-  })
-
-  test('applies the global environment override before validation', () => {
-    process.env.MOSS_AUTO_MEMORY_SETTINGS = JSON.stringify({ dreamEnabled: true })
-    expect(() => validateAutoMemoryProfile('session', undefined)).toThrow(
-      'Dream consolidation requires profileMode "user"',
-    )
-
-    process.env.MOSS_AUTO_MEMORY_SETTINGS = JSON.stringify({ dreamEnabled: false })
-    expect(() =>
-      validateAutoMemoryProfile('session', {
-        dreamEnabled: true,
-      }),
-    ).not.toThrow()
   })
 })
 

@@ -1,7 +1,6 @@
 import { z } from 'zod/v4'
 
 export type SessionRuntimeBackend = 'host' | 'docker'
-export type SessionProfileMode = 'session' | 'user'
 
 export type AutoMemorySettings = {
   enabled: boolean
@@ -83,13 +82,8 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_context_compaction_strategy: 'proactive',
 })
 
-export type SessionRuntimeOptions = {
-  profileMode?: SessionProfileMode
-}
-
 export type SessionRuntimeInfo = {
   backend: SessionRuntimeBackend
-  profileMode: SessionProfileMode
   dockerImage?: string
   containerName?: string
   profileDir: string
@@ -176,7 +170,6 @@ export function normalizeAdvancedSettings(value: unknown): AdvancedSettings {
 export const runtimeInfoSchema = lazySchema(() =>
   z.object({
     backend: z.enum(['host', 'docker']),
-    profileMode: z.enum(['session', 'user']),
     dockerImage: z.string().optional(),
     containerName: z.string().optional(),
     profileDir: z.string(),

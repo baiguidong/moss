@@ -141,7 +141,7 @@ bun run dist:mac
 
 ### 3. Docker Runtime 镜像
 
-服务端 Docker 模式使用 session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 server 挂载并执行：
+服务端使用 Docker session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 server 挂载并执行：
 
 ```bash
 node $MOSS_SERVER_HOME/bin/moss-session-runner.mjs --stdio <manifest>
@@ -179,15 +179,12 @@ bun run docker:build-runtime -- \
 ```
 
 配置 `~/.moss/server/settings.json`。新建 session 时，server 会读取这里的
-`serverRuntime` 来决定使用 host 还是 Docker 后端：
+`serverRuntime.dockerImage` 作为 Docker 运行时镜像：
 
 ```json
 {
   "serverRuntime": {
-    "backend": "docker",
-    "dockerImage": "moss-runtime:0.1.8",
-    "defaultProfileMode": "session",
-    "allowedProfileModes": ["session", "user"]
+    "dockerImage": "moss-runtime:0.1.8"
   }
 }
 ```
@@ -195,10 +192,11 @@ bun run docker:build-runtime -- \
 `~/.moss/server/server.json` 只保留 server 启动、存储、session 数量上限、
 Docker network/label/stop timeout 等基础配置。
 
-Docker 模式不会挂载整个 `~/.moss/server`。挂载边界按 profile mode 区分：
-`session` 只挂当前 `var/lib/sessions/<sessionId>`；`user` 挂同一用户的所有
-session 目录，并额外挂该用户共享的 profile/workspace 目录。显式传入的外部
-`cwd` 会作为工作目录单独挂载。
+服务端只支持 Docker 会话运行时。所有服务端 session 都使用
+`var/lib/profiles/users/<userId>` 下的用户级 Memory；
+同一用户的会话共享 Memory，但 workspace、transcript 和运行状态仍按 session
+隔离。Docker 模式只挂载当前 session 目录和该用户的共享 profile 目录；显式传入
+的外部 `cwd` 会作为工作目录单独挂载。
 
 基础验证：
 

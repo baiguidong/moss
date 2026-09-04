@@ -70,10 +70,6 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
   }
 
   const runtime = isRecord(value.runtime) ? value.runtime : {}
-  const profileMode =
-    runtime.profileMode === 'user' || runtime.profileMode === 'session'
-      ? runtime.profileMode
-      : 'session'
   const profileDir =
     typeof runtime.profileDir === 'string' ? runtime.profileDir : ''
   const transcriptDir =
@@ -125,7 +121,6 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
           ),
     runtime: {
       backend: 'host',
-      profileMode,
       containerName:
         typeof runtime.containerName === 'string'
           ? runtime.containerName

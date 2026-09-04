@@ -54,6 +54,12 @@ describe('system settings model layout', () => {
           skillStore: {
             tenantId: 'tenant-initial',
           },
+          serverRuntime: {
+            backend: 'host',
+            dockerImage: '',
+            defaultProfileMode: 'session',
+            allowedProfileModes: ['session', 'user'],
+          },
         },
         null,
         2,
@@ -77,6 +83,9 @@ describe('system settings model layout', () => {
       },
     })
     expect(mod.getSystemSettings()).not.toHaveProperty('skillStore')
+    expect(mod.getSystemSettings().serverRuntime).toEqual({
+      dockerImage: 'moss-runtime:0.1.8',
+    })
 
     const updated = mod.updateSystemSettings({
       bypassPermissions: true,
@@ -143,6 +152,9 @@ describe('system settings model layout', () => {
     expect(persisted.apiKey).toBeUndefined()
     expect(persisted.image).toBeUndefined()
     expect(persisted.skillStore).toBeUndefined()
+    expect(persisted.serverRuntime).toEqual({
+      dockerImage: 'moss-runtime:0.1.8',
+    })
     expect(persisted.env).toEqual({
       KEEP_ME: 'yes',
     })

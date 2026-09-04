@@ -749,13 +749,11 @@ const currentImage = typeof current.dockerImage === 'string' ? current.dockerIma
 const installerManagesImage = firstInstall || !currentImage || currentImage === previousImage
 settings.serverRuntime = {
   ...current,
-  backend: firstInstall ? 'docker' : (current.backend || 'docker'),
   dockerImage: installerManagesImage ? process.env.RUNTIME_IMAGE : currentImage,
-  defaultProfileMode: current.defaultProfileMode || 'session',
-  allowedProfileModes: Array.isArray(current.allowedProfileModes)
-    ? current.allowedProfileModes
-    : ['session', 'user'],
 }
+delete settings.serverRuntime.backend
+delete settings.serverRuntime.defaultProfileMode
+delete settings.serverRuntime.allowedProfileModes
 fs.writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 })
 NODE
 

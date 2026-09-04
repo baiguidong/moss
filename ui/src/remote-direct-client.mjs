@@ -1,6 +1,5 @@
 import {
   normalizeRemoteDirectCredentialMode,
-  normalizeRemoteDirectProfileMode,
 } from './desktop-settings.mjs';
 
 function objectField(source, key) {
@@ -39,7 +38,6 @@ export function getRemoteDirectSettings(settings) {
   const nestedUserPassword = ownRawStringField(remoteDirect, 'userPassword');
   const nestedApiKey = ownStringField(remoteDirect, 'apiKey');
   const nestedWorkspace = ownStringField(remoteDirect, 'workspace');
-  const nestedProfileMode = ownStringField(remoteDirect, 'profileMode');
   return {
     serverUrl:
       nestedServerUrl ??
@@ -65,9 +63,6 @@ export function getRemoteDirectSettings(settings) {
       nestedWorkspace ??
       stringField(settings, 'remoteDirectWorkspace') ??
       '',
-    profileMode: normalizeRemoteDirectProfileMode(
-      nestedProfileMode ?? settings?.remoteDirectProfileMode,
-    ),
   };
 }
 

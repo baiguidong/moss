@@ -11,14 +11,8 @@ export type SystemSettingsImage = {
   model: string
 }
 
-export type SystemRuntimeBackend = 'host' | 'docker'
-export type SystemProfileMode = 'session' | 'user'
-
 export type SystemSettingsServerRuntime = {
-  backend: SystemRuntimeBackend
   dockerImage: string
-  defaultProfileMode: SystemProfileMode
-  allowedProfileModes: SystemProfileMode[]
 }
 
 export type SystemSettingsPayload = {
@@ -71,10 +65,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     model: '',
   },
   serverRuntime: {
-    backend: 'host',
-    dockerImage: '',
-    defaultProfileMode: 'session',
-    allowedProfileModes: ['session', 'user'],
+    dockerImage: 'moss-runtime:0.1.8',
   },
 }
 
@@ -99,26 +90,6 @@ function normalizeThinkingMode(value: unknown): ThinkingMode | null {
     return value
   }
   return null
-}
-
-function normalizeRuntimeBackend(value: unknown): SystemRuntimeBackend | null {
-  return value === 'host' || value === 'docker' ? value : null
-}
-
-function normalizeProfileMode(value: unknown): SystemProfileMode | null {
-  return value === 'session' || value === 'user' ? value : null
-}
-
-function normalizeAllowedProfileModes(
-  value: unknown,
-): SystemProfileMode[] | null {
-  if (!Array.isArray(value)) {
-    return null
-  }
-  const modes = value
-    .map(normalizeProfileMode)
-    .filter((mode): mode is SystemProfileMode => mode !== null)
-  return [...new Set(modes)]
 }
 
 function recordField(
@@ -279,31 +250,12 @@ function normalizeSystemSettings(
   const existingServerRuntime = isRecord(result.serverRuntime)
     ? result.serverRuntime
     : {}
-  const backend =
-    normalizeRuntimeBackend(sourceServerRuntime.backend) ??
-    normalizeRuntimeBackend(existingServerRuntime.backend) ??
-    DEFAULT_SYSTEM_SETTINGS.serverRuntime.backend
-  const defaultProfileMode =
-    normalizeProfileMode(sourceServerRuntime.defaultProfileMode) ??
-    normalizeProfileMode(existingServerRuntime.defaultProfileMode) ??
-    DEFAULT_SYSTEM_SETTINGS.serverRuntime.defaultProfileMode
-  const allowedProfileModes =
-    normalizeAllowedProfileModes(sourceServerRuntime.allowedProfileModes) ??
-    normalizeAllowedProfileModes(existingServerRuntime.allowedProfileModes) ??
-    DEFAULT_SYSTEM_SETTINGS.serverRuntime.allowedProfileModes
-  const normalizedAllowedProfileModes = allowedProfileModes.includes(defaultProfileMode)
-    ? allowedProfileModes
-    : [...allowedProfileModes, defaultProfileMode]
   result.serverRuntime = {
-    backend,
     dockerImage:
-      typeof sourceServerRuntime.dockerImage === 'string'
-        ? sourceServerRuntime.dockerImage.trim()
-        : typeof existingServerRuntime.dockerImage === 'string'
-          ? existingServerRuntime.dockerImage
-          : DEFAULT_SYSTEM_SETTINGS.serverRuntime.dockerImage,
-    defaultProfileMode,
-    allowedProfileModes: normalizedAllowedProfileModes,
+      firstNonEmptyString(
+        stringField(sourceServerRuntime, 'dockerImage'),
+        stringField(existingServerRuntime, 'dockerImage'),
+      ) ?? DEFAULT_SYSTEM_SETTINGS.serverRuntime.dockerImage,
   }
 
   return result as PersistedSystemSettings

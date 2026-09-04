@@ -242,7 +242,6 @@ export class DockerBackend implements SessionBackend {
 
     const runtimeInfo: SessionRuntimeInfo = {
       backend: 'docker',
-      profileMode: runtime.profileMode,
       dockerImage: image,
       containerName,
       profileDir,

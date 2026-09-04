@@ -1015,7 +1015,6 @@ export class AdapterProcessManager {
       orgId: hosted.auth.orgId,
       role: hosted.auth.role,
       scopes: hosted.auth.scopes,
-      profileMode: 'user',
       autoMemory: hosted.config.autoMemory,
       sessionMemory: hosted.config.sessionMemory,
     })

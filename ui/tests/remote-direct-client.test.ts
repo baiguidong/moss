@@ -27,7 +27,6 @@ describe('remote direct client settings', () => {
         userPassword: '  password  ',
         apiKey: ' key ',
         workspace: ' /workspace ',
-        profileMode: 'user',
       },
     })).toEqual({
       serverUrl: 'https://remote.example.com',
@@ -36,7 +35,6 @@ describe('remote direct client settings', () => {
       userPassword: '  password  ',
       apiKey: 'key',
       workspace: '/workspace',
-      profileMode: 'user',
     });
   });
 

@@ -3111,11 +3111,9 @@ function createRemoteDirectRuntime({
       }
 
       if (!created) {
-        const { profileMode } = getRemoteDirectSettings();
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
-          profileMode,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
           advancedSettings: desktopSettings.advanced,

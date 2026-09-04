@@ -19,7 +19,6 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
-  SessionRuntimeBackend,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import {
   advancedSettingsSchema,
@@ -79,11 +78,7 @@ function parseSessionMemorySettings(
 
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
   return {
-    backend: String(row.runtime_backend) === 'docker' ? 'docker' : 'host',
-    profileMode:
-      row.profile_mode === 'user'
-        ? 'user'
-        : 'session',
+    backend: 'docker',
     dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
     containerName:
       typeof row.container_name === 'string' ? row.container_name : undefined,
@@ -127,7 +122,7 @@ function mapAttempt(row: SqlRow): AttemptRecord {
     attemptId: String(row.attempt_id),
     sessionId: String(row.session_id),
     generation: Number(row.generation),
-    backendType: String(row.backend_type) === 'docker' ? 'docker' : 'host',
+    backendType: 'docker',
     runtimeState: String(row.runtime_state) as AttemptRuntimeState,
     serverInstanceId:
       typeof row.server_instance_id === 'string' ? row.server_instance_id : null,
@@ -158,7 +153,12 @@ function tableColumns(db: DatabaseSync, table: string): string[] {
 
 function resetIncompatibleSessionSchema(db: DatabaseSync): void {
   const columns = tableColumns(db, 'sessions')
-  if (columns.length === 0 || columns.includes('runtime_backend')) {
+  if (
+    columns.length === 0 ||
+    (columns.includes('docker_image') &&
+      !columns.includes('runtime_backend') &&
+      !columns.includes('profile_mode'))
+  ) {
     return
   }
   db.exec(`
@@ -194,8 +194,6 @@ export class DirectConnectStore {
         role TEXT NOT NULL,
         scopes_json TEXT NOT NULL,
         cwd TEXT NOT NULL,
-        runtime_backend TEXT NOT NULL,
-        profile_mode TEXT NOT NULL,
         docker_image TEXT,
         profile_dir TEXT NOT NULL,
         workspace_dir TEXT,
@@ -221,7 +219,6 @@ export class DirectConnectStore {
         attempt_id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(session_id),
         generation INTEGER NOT NULL,
-        backend_type TEXT NOT NULL,
         runtime_state TEXT NOT NULL,
         server_instance_id TEXT,
         runner_pid INTEGER,
@@ -352,12 +349,12 @@ export class DirectConnectStore {
     this.db.prepare(`
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
-        cwd, runtime_backend, profile_mode, docker_image, profile_dir,
+        cwd, docker_image, profile_dir,
         workspace_dir, transcript_dir, container_name,
         status, desired_state, transcript_path, title, assistant_name,
         advanced_settings_json, auto_memory_json, session_memory_json,
         created_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -366,8 +363,6 @@ export class DirectConnectStore {
       input.role,
       JSON.stringify(input.scopes),
       input.cwd,
-      input.runtime.backend,
-      input.runtime.profileMode,
       input.runtime.dockerImage ?? null,
       input.runtime.profileDir,
       input.runtime.workspaceDir ?? null,
@@ -397,7 +392,6 @@ export class DirectConnectStore {
     attemptId: string
     sessionId: string
     generation: number
-    backendType: SessionRuntimeBackend
     resumeTranscriptSessionId: string
     serverInstanceId: string
     containerName?: string
@@ -408,16 +402,15 @@ export class DirectConnectStore {
     const ts = now()
     this.db.prepare(`
       INSERT INTO session_attempts (
-        attempt_id, session_id, generation, backend_type, runtime_state,
+        attempt_id, session_id, generation, runtime_state,
         server_instance_id, runner_pid, container_name, attempt_dir,
         manifest_path, attach_path,
         resume_transcript_session_id, started_at, last_heartbeat_at
-      ) VALUES (?, ?, ?, ?, 'starting', ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, 'starting', ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.attemptId,
       input.sessionId,
       input.generation,
-      input.backendType,
       input.serverInstanceId,
       input.containerName ?? null,
       input.attemptDir,
@@ -429,7 +422,7 @@ export class DirectConnectStore {
     )
     this.addEvent(input.sessionId, input.attemptId, 'attempt_created', {
       generation: input.generation,
-      backendType: input.backendType,
+      backendType: 'docker',
       attachPath: input.attachPath,
       containerName: input.containerName,
       attemptDir: input.attemptDir,

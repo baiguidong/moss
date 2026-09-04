@@ -353,10 +353,6 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
                   <span className="text-muted-foreground">Backend</span>
                   <Badge variant="secondary">{session.runtime.backend}</Badge>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Profile</span>
-                  <Badge variant="outline">{session.runtime.profileMode}</Badge>
-                </div>
                 {session.runtime.dockerImage && (
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">镜像</span>
@@ -372,7 +368,7 @@ export function SessionDetailPage({ sessionId }: SessionDetailPageProps) {
                   </div>
                 )}
                 <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground">ProfileDir</span>
+                  <span className="text-muted-foreground">Memory Dir</span>
                   <span className="max-w-[180px] truncate text-right font-mono text-xs" title={session.runtime.profileDir}>
                     {session.runtime.profileDir}
                   </span>

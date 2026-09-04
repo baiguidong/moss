@@ -8,7 +8,7 @@ afterEach(() => {
 })
 
 describe('createDirectConnectSession', () => {
-  test('lets the server choose cwd while preserving the client profile mode', async () => {
+  test('lets the server choose cwd and sends runtime settings', async () => {
     let requestBody: Record<string, unknown> | null = null
     globalThis.fetch = async (_input, init) => {
       requestBody = JSON.parse(String(init?.body || '{}'))
@@ -25,7 +25,6 @@ describe('createDirectConnectSession', () => {
     const created = await createDirectConnectSession({
       serverUrl: 'https://moss.example.com',
       authToken: 'access-token',
-      profileMode: 'user',
       advancedSettings: {
         moss_auto_background_agents: true,
         moss_bash_ast_permissions: true,
@@ -66,7 +65,6 @@ describe('createDirectConnectSession', () => {
     })
 
     expect(requestBody).toEqual({
-      profileMode: 'user',
       advancedSettings: {
         moss_auto_background_agents: true,
         moss_bash_ast_permissions: true,

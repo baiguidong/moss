@@ -42,14 +42,13 @@ prepare 会把随代码变化的运行产物复制到 server root：
 - `~/.moss/server/var/log/`
 - `~/.moss/server/settings.json`
 
-服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。服务端执行后端写在 `serverRuntime.backend`，客户端只能指定 `profileMode`。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
+服务端模型配置统一写在 `~/.moss/server/settings.json` 的 `models.text` 和 `models.image` 下。服务端 session 固定使用 Docker，运行时镜像写在 `serverRuntime.dockerImage`。文本模型运行时会注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN` 给 session runner，配置文件本身不再保存旧的顶级模型字段或模型 env key。
 
 默认 session 目录结构：
 
-- `var/lib/sessions/<sessionId>/workspace/`: session 独立工作目录；不传 `cwd` 且没有服务端默认 workspace 时 host/docker backend 都在这里执行，与 `profileMode` 无关
-- `var/lib/sessions/<sessionId>/profile/`: `profileMode=session` 的独立 profile/Memory 目录
+- `var/lib/sessions/<sessionId>/workspace/`: session 独立工作目录；不传 `cwd` 且没有服务端默认 workspace 时 Docker backend 在这里执行
 - `var/lib/sessions/<sessionId>/transcripts/`: session transcript JSONL
-- `var/lib/profiles/users/<userId>/`: `profileMode=user` 的用户共享 profile/Memory 目录；同一登录用户的会话共享 Memory，但不共享 workspace
+- `var/lib/profiles/users/<userId>/`: 用户共享 profile/Memory 目录；同一登录用户的所有会话共享 Memory，但不共享 workspace
 - `var/lib/sessions/<sessionId>/attempts/<attemptId>/`: 单次 runner attempt 的 manifest、stdout/stderr、status，以及 docker backend 的 stdio manifest
 - `var/run/sockets/<attemptId>.sock`: server 与 runner attach 的本机 socket
 
@@ -62,8 +61,8 @@ bun run server:prepare
 服务端 session 使用独立 runner 进程承接交互：
 `MOSS_SERVER_HOME/bin/moss-session-runner.mjs <manifest>`。
 runner 进程内嵌和桌面端 `electron-direct.mjs` 同源的 Agent runtime。
-host 模式直接在本机 runner 内运行 Agent；docker 模式在容器内运行
-`moss-session-runner.mjs --stdio <manifest>`，不再依赖 `cli-node.js`。
+runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
+不再支持 Host session，也不依赖 `cli-node.js`。
 
 默认配置文件：
 
@@ -581,11 +580,10 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
   "role": "user",
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
   "runtime": {
-    "backend": "host",
-    "profileMode": "session",
-    "dockerImage": "optional",
+    "backend": "docker",
+    "dockerImage": "moss-runtime:0.1.8",
     "containerName": "optional",
-    "profileDir": "/abs/path/profile",
+    "profileDir": "/abs/path/profiles/users/user-id",
     "transcriptDir": "/abs/path/session/transcripts",
     "workspaceDir": "/abs/path/workspace"
   },
@@ -609,7 +607,6 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 {
   "cwd": "/abs/path/project",
   "dangerously_skip_permissions": true,
-  "profileMode": "session",
   "autoMemory": {
     "enabled": true,
     "extractionEnabled": true,
@@ -632,21 +629,20 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 }
 ```
 
-`autoMemory` 可选，作为该 session 的运行时配置持久化并传给 host/docker backend；
+`autoMemory` 可选，作为该 session 的运行时配置持久化并传给 Docker backend；
 未传时继承运行环境中的 `MOSS_AUTO_MEMORY_SETTINGS`（JSON）。
 `sessionMemory` 同样可选，并可由 `MOSS_SESSION_MEMORY_SETTINGS`（JSON）进行全局覆盖。
-启用 `autoMemory.dreamEnabled` 时必须使用 `profileMode=user`，确保多会话共享同一份
-Memory；服务端会拒绝无法达到跨会话门槛的 `profileMode=session` 组合。
+所有 session 固定使用用户级共享 Memory，因此 `autoMemory.dreamEnabled` 可以直接
+跨同一用户的会话进行聚合。
 
 `cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
 未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，始终使用
-`~/.moss/server/var/lib/sessions/<sessionId>/workspace`。`profileMode` 不参与
-workspace 选择，只控制 profile/Memory 范围：`session` 完全独立，`user` 在同一登录
-用户的会话间共享 Memory。
+`~/.moss/server/var/lib/sessions/<sessionId>/workspace`。同一登录用户的会话共享
+Memory，但 workspace 始终按 session 隔离。
 
 Docker backend 不挂载整个 `~/.moss/server`，只挂载当前
-`~/.moss/server/var/lib/sessions/<sessionId>`。`profileMode=user` 时额外挂载该用户的
-共享 profile/Memory 目录，但不会挂载该用户的其他 session 目录。显式传入且不在这些
+`~/.moss/server/var/lib/sessions/<sessionId>`，并额外挂载该用户的共享
+profile/Memory 目录，但不会挂载该用户的其他 session 目录。显式传入且不在这些
 目录下的 `cwd` 会单独挂载。
 
 示例响应：
@@ -657,9 +653,9 @@ Docker backend 不挂载整个 `~/.moss/server`，只挂载当前
   "ws_url": "ws://127.0.0.1:43127/ws/sessions/uuid",
   "work_dir": "/abs/path/project",
   "runtime": {
-    "backend": "host",
-    "profileMode": "session",
-    "profileDir": "/abs/path/profile",
+    "backend": "docker",
+    "dockerImage": "moss-runtime:0.1.8",
+    "profileDir": "/abs/path/profiles/users/user-id",
     "transcriptDir": "/abs/path/session/transcripts",
     "workspaceDir": "/abs/path/workspace"
   }

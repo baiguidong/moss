@@ -145,14 +145,8 @@ export interface SystemSettingsImage {
   model: string
 }
 
-export type RuntimeBackend = 'host' | 'docker'
-export type ProfileMode = 'session' | 'user'
-
 export interface SystemSettingsServerRuntime {
-  backend: RuntimeBackend
   dockerImage: string
-  defaultProfileMode: ProfileMode
-  allowedProfileModes: ProfileMode[]
 }
 
 export interface SystemSettings {
@@ -207,8 +201,7 @@ export type SessionStatus =
 export type DesiredState = 'active' | 'ended' | 'terminated'
 
 export interface SessionRuntime {
-  backend: RuntimeBackend
-  profileMode: ProfileMode
+  backend: 'docker'
   dockerImage?: string
   containerName?: string
   profileDir: string

@@ -39,7 +39,7 @@ describe('desktop settings', () => {
         serverUrl: 'https://remote.example.com/',
         credentialMode: 'api-key',
         apiKey: 'remote-secret',
-        profileMode: 'user',
+        profileMode: 'session',
       },
     });
 
@@ -59,8 +59,9 @@ describe('desktop settings', () => {
       remoteDirectServerUrl: 'https://remote.example.com/',
       remoteDirectCredentialMode: 'api-key',
       remoteDirectApiKey: 'remote-secret',
-      remoteDirectProfileMode: 'user',
     });
+    expect(settings).not.toHaveProperty('remoteDirectProfileMode');
+    expect(settings.remoteDirect).not.toHaveProperty('profileMode');
   });
 
   it('removes only a trailing API version from model base URLs', () => {
@@ -213,6 +214,11 @@ describe('desktop settings', () => {
       remoteDirectCredentialMode: 'api-key',
       remoteDirectApiKey: 'moss_sk_remote.secret',
       remoteDirectUserPassword: 'remote-password',
+      remoteDirectProfileMode: 'session',
+      remoteDirect: {
+        ...store.value.remoteDirect,
+        profileMode: 'session',
+      },
     });
 
     const serialized = fs.readFileSync(settingsPath, 'utf8');
@@ -221,5 +227,7 @@ describe('desktop settings', () => {
     const persisted = JSON.parse(serialized);
     expect(persisted.remoteDirect).not.toHaveProperty('apiKey');
     expect(persisted.remoteDirect).not.toHaveProperty('userPassword');
+    expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
+    expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
   });
 });

@@ -1,7 +1,7 @@
 import net from 'net'
 import { appendFile, mkdir, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
-import { RuntimeBackend } from './backends/runtimeBackend.js'
+import { DockerBackend } from './backends/dockerBackend.js'
 import { DirectConnectStore } from './db.js'
 import { getTranscriptPath } from './runtimePaths.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
@@ -60,7 +60,7 @@ function extractTranscriptSessionCandidate(value: unknown): {
 
 export class SessionRunnerDaemon {
   readonly #store: DirectConnectStore
-  readonly #backend: RuntimeBackend
+  readonly #backend: DockerBackend
   readonly #clients = new Set<SocketWithBuffer>()
   readonly #heartbeatTimer: NodeJS.Timeout
   #server: net.Server | null = null
@@ -75,11 +75,9 @@ export class SessionRunnerDaemon {
 
   constructor(private readonly manifest: RunnerManifest) {
     this.#store = new DirectConnectStore(manifest.config.dbPath)
-    this.#backend = new RuntimeBackend({
-      docker: {
-        network: manifest.config.dockerNetwork,
-        labels: manifest.config.dockerLabels,
-      },
+    this.#backend = new DockerBackend({
+      network: manifest.config.dockerNetwork,
+      labels: manifest.config.dockerLabels,
     })
     this.#heartbeatTimer = setInterval(() => {
       this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId)

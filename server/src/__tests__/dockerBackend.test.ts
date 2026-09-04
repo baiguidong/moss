@@ -5,38 +5,7 @@ import { buildSessionEnv } from '../backends/backendUtils.js'
 import { buildDockerMounts, formatMount } from '../backends/dockerBackend.js'
 
 describe('docker backend mounts', () => {
-  test('mounts only the current session root for session profile mode', () => {
-    const root = '/tmp/moss-server'
-    const sessionRoot = join(root, 'var', 'lib', 'sessions', 'session-1')
-    const options = makeOptions({
-      cwd: join(sessionRoot, 'workspace'),
-      backendManifestPath: join(
-        sessionRoot,
-        'attempts',
-        'attempt-1',
-        'docker-backend.json',
-      ),
-      mountDirs: [sessionRoot],
-      runtime: {
-        backend: 'docker',
-        profileMode: 'session',
-        dockerImage: 'moss-runtime:0.1.8',
-        profileDir: join(sessionRoot, 'profile'),
-        transcriptDir: join(sessionRoot, 'transcripts'),
-        workspaceDir: join(sessionRoot, 'workspace'),
-      },
-    })
-
-    expect(
-      buildDockerMounts(options, join(root, 'bin', 'moss-session-runner.mjs'))
-        .map(formatMount),
-    ).toEqual([
-      `${sessionRoot}:${sessionRoot}`,
-      `${join(root, 'bin')}:${join(root, 'bin')}:ro`,
-    ])
-  })
-
-  test('mounts only the current workspace plus shared profile in user mode', () => {
+  test('mounts only the current workspace plus the shared user profile', () => {
     const root = '/tmp/moss-server'
     const currentSessionRoot = join(root, 'var', 'lib', 'sessions', 'session-2')
     const userProfileDir = join(root, 'var', 'lib', 'profiles', 'users', 'user-1')
@@ -52,7 +21,6 @@ describe('docker backend mounts', () => {
       mountDirs: [currentSessionRoot],
       runtime: {
         backend: 'docker',
-        profileMode: 'user',
         dockerImage: 'moss-runtime:0.1.8',
         profileDir: userProfileDir,
         transcriptDir: join(currentSessionRoot, 'transcripts'),
@@ -136,9 +104,8 @@ function makeOptions(
       '/tmp/moss-server/var/lib/sessions/session-1/attempts/attempt-1/docker-backend.json',
     runtime: {
       backend: 'docker',
-      profileMode: 'session',
       dockerImage: 'moss-runtime:0.1.8',
-      profileDir: '/tmp/moss-server/var/lib/sessions/session-1/profile',
+      profileDir: '/tmp/moss-server/var/lib/profiles/users/user-1',
       transcriptDir: '/tmp/moss-server/var/lib/sessions/session-1/transcripts',
       workspaceDir: '/tmp/moss-server/var/lib/sessions/session-1/workspace',
     },

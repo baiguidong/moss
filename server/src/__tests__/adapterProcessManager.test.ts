@@ -43,7 +43,7 @@ describe('server Feishu adapter manager', () => {
       role: 'user',
       scopes: ['sessions:create'],
       cwd: '/tmp/workspace',
-      runtime: { backend: 'host', profileMode: 'user', profileDir: '', transcriptDir: '', workspaceDir: '' },
+      runtime: { backend: 'docker', profileDir: '', transcriptDir: '', workspaceDir: '' },
       status: 'creating',
       desiredState: 'active',
       currentAttemptId: null,
@@ -103,7 +103,6 @@ describe('server Feishu adapter manager', () => {
       })
       expect(createInput?.autoMemory).toEqual(autoMemory)
       expect(createInput?.sessionMemory).toEqual(sessionMemory)
-      expect(createInput?.profileMode).toBe('user')
     } finally {
       await manager.dispose()
       db.close()
@@ -162,7 +161,7 @@ describe('server Feishu adapter manager', () => {
       role: 'user',
       scopes: ['sessions:create'],
       cwd: '/tmp/workspace',
-      runtime: { backend: 'host', profileMode: 'user', profileDir: '', transcriptDir: '', workspaceDir: '' },
+      runtime: { backend: 'docker', profileDir: '', transcriptDir: '', workspaceDir: '' },
       status: 'ended',
       desiredState: 'ended',
       currentAttemptId: null,
@@ -375,7 +374,7 @@ describe('server Feishu adapter manager', () => {
       role: 'user',
       scopes: ['sessions:create'],
       cwd: '/tmp/workspace',
-      runtime: { backend: 'host', profileMode: 'user', profileDir: '', transcriptDir: '', workspaceDir: '' },
+      runtime: { backend: 'docker', profileDir: '', transcriptDir: '', workspaceDir: '' },
       status: 'active',
       desiredState: 'active',
       currentAttemptId: 'attempt-1',

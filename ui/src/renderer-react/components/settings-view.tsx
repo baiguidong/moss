@@ -1575,26 +1575,6 @@ export function SettingsView({
                               </div>
                             </SettingsRow>
 
-                            <SettingsRow
-                              title="记忆范围"
-                              description="Session 完全独立；User 在同一用户的会话间共享 Memory。"
-                              controlClassName="sm:w-[180px]"
-                            >
-                              <select
-                                className={SELECT_CLASS_NAME}
-                                value={settingsDraft.remoteDirectProfileMode ?? 'user'}
-                                onChange={(event) => {
-                                  updateSetting(
-                                    'remoteDirectProfileMode',
-                                    event.target.value as DesktopSettings['remoteDirectProfileMode'],
-                                  );
-                                }}
-                              >
-                                <option value="session">Session · 独立</option>
-                                <option value="user">User · 共享 Memory</option>
-                              </select>
-                            </SettingsRow>
-
                           </>
                         ) : null}
                       </SettingsGroup>

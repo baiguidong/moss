@@ -12,7 +12,6 @@ import {
   normalizeSessionMemorySettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { getSystemSettings } from './systemSettings.js'
-import { validateAutoMemoryProfile } from './memorySettings.js'
 import { SessionTurnLock } from './sessionTurnLock.js'
 import type {
   AttemptRecord,
@@ -29,7 +28,7 @@ import {
   getAttemptManifestPath,
   getAttemptDir,
   getDockerBackendManifestPath,
-  getProfileDir,
+  getUserProfileDir,
   getRuntimeStatusPath,
   getRuntimeStderrLogPath,
   getRuntimeStdoutLogPath,
@@ -216,19 +215,15 @@ export class RuntimeService {
     const sessionId = randomUUID()
     const settings = getSystemSettings()
     const runtimeSettings = settings.serverRuntime
-    const profileMode = input.profileMode ?? runtimeSettings.defaultProfileMode
-    if (!runtimeSettings.allowedProfileModes.includes(profileMode)) {
-      throw new Error(`Profile mode "${profileMode}" is not allowed by server settings`)
-    }
     const normalizedAutoMemory = input.autoMemory
       ? normalizeAutoMemorySettings(input.autoMemory)
       : undefined
     const normalizedAdvancedSettings = input.advancedSettings
       ? normalizeAdvancedSettings(input.advancedSettings)
       : undefined
-    validateAutoMemoryProfile(profileMode, input.autoMemory)
-    if (runtimeSettings.backend === 'docker' && !runtimeSettings.dockerImage.trim()) {
-      throw new Error('Docker backend is enabled but no docker image is configured')
+    const dockerImage = runtimeSettings.dockerImage.trim()
+    if (!dockerImage) {
+      throw new Error('Docker runtime image is not configured')
     }
     const transcriptPath = getTranscriptPath(
       this.options.config,
@@ -241,18 +236,9 @@ export class RuntimeService {
       input.cwd,
     )
     const runtime: SessionRuntimeInfo = {
-      backend: runtimeSettings.backend,
-      profileMode,
-      dockerImage:
-        runtimeSettings.backend === 'docker'
-          ? runtimeSettings.dockerImage.trim()
-          : undefined,
-      profileDir: getProfileDir(
-        this.options.config,
-        sessionId,
-        input.userId,
-        profileMode,
-      ),
+      backend: 'docker',
+      dockerImage,
+      profileDir: getUserProfileDir(this.options.config, input.userId),
       transcriptDir: getSessionTranscriptDir(this.options.config, sessionId),
       workspaceDir,
     }
@@ -316,22 +302,22 @@ export class RuntimeService {
     }
 
     const sessionId = randomUUID()
-    const profileMode = source.runtime.profileMode
     const transcriptPath = getTranscriptPath(
       this.options.config,
       sessionId,
       sessionId,
     )
     const transcriptDir = getSessionTranscriptDir(this.options.config, sessionId)
-    const profileDir = getProfileDir(
-      this.options.config,
-      sessionId,
-      input.userId,
-      profileMode,
-    )
+    const profileDir = getUserProfileDir(this.options.config, input.userId)
+    const dockerImage = getSystemSettings().serverRuntime.dockerImage.trim()
+    if (!dockerImage) {
+      throw new Error('Docker runtime image is not configured')
+    }
     const title = input.title?.trim() || `${source.title || 'Session'} (Fork)`
     const runtime: SessionRuntimeInfo = {
       ...source.runtime,
+      backend: 'docker',
+      dockerImage,
       profileDir,
       transcriptDir,
       containerName: undefined,
@@ -502,13 +488,10 @@ export class RuntimeService {
     const stderrLogPath = getRuntimeStderrLogPath(attemptDir)
     const statusPath = getRuntimeStatusPath(attemptDir)
     const settings = getSystemSettings()
-    const mountDirs =
-      session.runtime.backend === 'docker'
-        ? getSessionRuntimeMountDirs(
-            this.options.config,
-            session.sessionId,
-          )
-        : undefined
+    const mountDirs = getSessionRuntimeMountDirs(
+      this.options.config,
+      session.sessionId,
+    )
     const dangerouslySkipPermissions =
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
@@ -517,14 +500,10 @@ export class RuntimeService {
       attemptId,
       sessionId: session.sessionId,
       generation,
-      backendType: session.runtime.backend,
       resumeTranscriptSessionId:
         options.resumeTranscriptSessionId ?? session.transcriptSessionId,
       serverInstanceId: this.options.serverInstanceId,
-      containerName:
-        session.runtime.backend === 'docker'
-          ? `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`
-          : undefined,
+      containerName: `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`,
       attemptDir,
       manifestPath,
       attachPath,
@@ -558,10 +537,8 @@ export class RuntimeService {
         mountDirs,
         runtime: {
           ...session.runtime,
-          containerName:
-            session.runtime.backend === 'docker'
-              ? `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`
-              : session.runtime.containerName,
+          backend: 'docker',
+          containerName: `moss-session-${session.sessionId.slice(0, 12)}-${attemptId.slice(0, 8)}`,
         },
       },
       attempt: {

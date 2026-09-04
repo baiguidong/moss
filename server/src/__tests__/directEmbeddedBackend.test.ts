@@ -155,7 +155,6 @@ describe('direct embedded backend model settings', () => {
       cwd: join(tempRoot, 'workspace'),
       runtime: {
         backend: 'host',
-        profileMode: 'session',
         profileDir: join(tempRoot, 'profile'),
         transcriptDir: join(tempRoot, 'transcripts'),
         workspaceDir: join(tempRoot, 'workspace'),
@@ -322,10 +321,7 @@ function makeSettings(
       model: 'image-model',
     },
     serverRuntime: {
-      backend: 'host',
-      dockerImage: '',
-      defaultProfileMode: 'session',
-      allowedProfileModes: ['session', 'user'],
+      dockerImage: 'moss-runtime:test',
     },
     settingsPath: '',
     settingsExists: true,

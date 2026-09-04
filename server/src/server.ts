@@ -16,7 +16,6 @@ import {
   type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
-  type SessionProfileMode,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { MOSS_SERVER_HOME } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
@@ -515,16 +514,6 @@ function redirect(
 ): void {
   res.writeHead(302, { location })
   res.end()
-}
-
-function parseProfileMode(body: JsonBody): SessionProfileMode | undefined {
-  if (body.profileMode === 'session' || body.profileMode === 'user') {
-    return body.profileMode
-  }
-  if (body.profile_mode === 'session' || body.profile_mode === 'user') {
-    return body.profile_mode
-  }
-  return undefined
 }
 
 function parseAutoMemorySettings(body: JsonBody): AutoMemorySettings | undefined {
@@ -1387,7 +1376,6 @@ export function startServer(
             : undefined
         const dangerouslySkipPermissions =
           body.dangerously_skip_permissions === true
-        const profileMode = parseProfileMode(body)
         const advancedSettings = parseAdvancedSettings(body)
         const autoMemory = parseAutoMemorySettings(body)
         const sessionMemory = parseSessionMemorySettings(body)
@@ -1402,7 +1390,6 @@ export function startServer(
           orgId: auth.orgId,
           role: auth.role,
           scopes: auth.scopes,
-          profileMode,
           assistantName,
           advancedSettings,
           autoMemory,

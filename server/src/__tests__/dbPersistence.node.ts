@@ -21,8 +21,8 @@ try {
       scopes: ['sessions:create'],
       cwd: root,
       runtime: {
-        backend: 'host',
-        profileMode: 'user',
+        backend: 'docker',
+        dockerImage: 'moss-runtime:test',
         profileDir: join(root, 'profile'),
         transcriptDir: join(root, 'transcripts'),
         workspaceDir: root,
@@ -131,11 +131,36 @@ try {
       columns.some(column => column.name === 'session_memory_json'),
       true,
     )
+    assert.equal(columns.some(column => column.name === 'runtime_backend'), false)
+    const attemptColumns = migratedStore.db
+      .prepare('PRAGMA table_info(session_attempts)')
+      .all() as Array<{ name: string }>
+    assert.equal(
+      attemptColumns.some(column => column.name === 'backend_type'),
+      false,
+    )
     assert.equal(migratedStore.getSession('session-1')?.advancedSettings, undefined)
     assert.equal(migratedStore.getSession('session-1')?.autoMemory, undefined)
     assert.equal(migratedStore.getSession('session-1')?.sessionMemory, undefined)
   } finally {
     migratedStore.close()
+  }
+
+  const incompatibleDb = new DatabaseSync(dbPath)
+  incompatibleDb.exec(
+    "ALTER TABLE sessions ADD COLUMN profile_mode TEXT NOT NULL DEFAULT 'session'",
+  )
+  incompatibleDb.close()
+
+  const resetStore = new DirectConnectStore(dbPath)
+  try {
+    const columns = resetStore.db
+      .prepare('PRAGMA table_info(sessions)')
+      .all() as Array<{ name: string }>
+    assert.equal(columns.some(column => column.name === 'profile_mode'), false)
+    assert.equal(resetStore.getSession('session-1'), null)
+  } finally {
+    resetStore.close()
   }
 } finally {
   await rm(root, { recursive: true, force: true })

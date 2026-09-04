@@ -3,8 +3,6 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
-  SessionProfileMode,
-  SessionRuntimeBackend,
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
@@ -165,7 +163,7 @@ export type AttemptRecord = {
   attemptId: string
   sessionId: string
   generation: number
-  backendType: SessionRuntimeBackend
+  backendType: 'docker'
   runtimeState: AttemptRuntimeState
   serverInstanceId: string | null
   runnerPid: number | null
@@ -236,7 +234,6 @@ export type SessionCreateInput = {
   orgId: string
   role: string
   scopes: string[]
-  profileMode?: SessionProfileMode
   assistantName?: string
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
