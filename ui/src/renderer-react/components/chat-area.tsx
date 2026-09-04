@@ -1096,6 +1096,12 @@ function ComposerPanel({
               }
             }
             if (slashCommandFilter) {
+              const query = slashCommandFilter.toLowerCase().slice(1);
+              const matches = SLASH_COMMANDS.filter(
+                (cmd: { name: string; description: string }) =>
+                  cmd.name.toLowerCase().startsWith("/" + query) ||
+                  cmd.description.toLowerCase().includes(query)
+              );
               if (event.key === "ArrowUp") {
                 event.preventDefault();
                 setSlashCommandIndex((prev) => Math.max(0, prev - 1));
@@ -1103,34 +1109,42 @@ function ComposerPanel({
               }
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setSlashCommandIndex((prev) => prev + 1);
+                setSlashCommandIndex((prev) => Math.min(matches.length - 1, prev + 1));
                 return;
               }
               if (event.key === "Enter" || event.key === "Tab") {
-                event.preventDefault();
-                const query = slashCommandFilter.toLowerCase().slice(1);
-                const matches = SLASH_COMMANDS.filter(
-                  (cmd: { name: string; description: string }) =>
-                    cmd.name.toLowerCase().startsWith("/" + query) ||
-                    cmd.description.toLowerCase().includes(query)
-                );
-                const visible = matches.slice(0, 8);
-                const idx = Math.min(slashCommandIndex, visible.length - 1);
-                if (visible[idx]) {
-                  const cmdName = visible[idx].name;
-                  const cmdKey = cmdName.startsWith("/") ? cmdName.slice(1) : cmdName;
-                  if (COMMANDS_WITH_ARGS[cmdKey]) {
-                    setSubMenuCommand(cmdKey);
-                    setSlashCommandFilter(null);
-                    setSlashCommandIndex(0);
-                    setSubMenuIndex(0);
-                  } else {
-                    onChange(cmdName + " ");
-                    setSlashCommandFilter(null);
-                    setSlashCommandIndex(0);
+                const idx = Math.min(slashCommandIndex, matches.length - 1);
+                const selected = matches[idx];
+                const cmdKey = selected?.name.startsWith("/") ? selected.name.slice(1) : selected?.name;
+                const hasArgs = cmdKey ? Boolean(COMMANDS_WITH_ARGS[cmdKey]) : false;
+                // If the user has already typed the full command name (and it
+                // takes no sub-args), Enter should send it — not re-autocomplete
+                // and append a trailing space. Tab always autocompletes.
+                if (
+                  event.key === "Enter" &&
+                  selected &&
+                  !hasArgs &&
+                  slashCommandFilter.toLowerCase() === selected.name.toLowerCase()
+                ) {
+                  setSlashCommandFilter(null);
+                  setSlashCommandIndex(0);
+                  // fall through to the send handler below
+                } else {
+                  event.preventDefault();
+                  if (selected) {
+                    if (hasArgs && cmdKey) {
+                      setSubMenuCommand(cmdKey);
+                      setSlashCommandFilter(null);
+                      setSlashCommandIndex(0);
+                      setSubMenuIndex(0);
+                    } else {
+                      onChange(selected.name + " ");
+                      setSlashCommandFilter(null);
+                      setSlashCommandIndex(0);
+                    }
                   }
+                  return;
                 }
-                return;
               }
               if (event.key === "Escape") {
                 setSlashCommandFilter(null);
@@ -1844,9 +1858,11 @@ function deriveComposerActivity(
 function ActivityStrip({
   label,
   startTime,
+  tokens = 0,
 }: {
   label: string;
   startTime: number;
+  tokens?: number;
 }) {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
@@ -1860,7 +1876,10 @@ function ActivityStrip({
         <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 tabular-nums">{formatTaskElapsed(Math.max(0, now - startTime))}</span>
+      <span className="shrink-0 tabular-nums">
+        {formatTaskElapsed(Math.max(0, now - startTime))}
+        {tokens > 0 && ` · ↓ ${formatTokenCount(tokens)} tokens`}
+      </span>
     </div>
   );
 }
@@ -2046,6 +2065,7 @@ export function ChatArea({
   composerAttachments,
   onComposerAttachmentsChange,
   contextUsage,
+  turnTokens = 0,
   onForkSession,
   forkingSession = false,
   forkDisabledReason,
@@ -2100,6 +2120,7 @@ export function ChatArea({
   composerAttachments?: Array<{ name: string; path: string }>;
   onComposerAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
   contextUsage?: ContextUsageInfo | null;
+  turnTokens?: number;
   onForkSession?: () => void;
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
@@ -2223,6 +2244,8 @@ export function ChatArea({
           messages={messages}
           workspace={sessionWorkspace}
           loading={loading}
+          loadingStartTime={busyStartRef.current ?? undefined}
+          loadingTokens={turnTokens}
           focusedToolUseId={focusedToolUseId}
           contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
           footer={pendingPlanApproval ? (
@@ -2290,7 +2313,7 @@ export function ChatArea({
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks} />
           )}
           {loading && composerActivity && busyStartRef.current !== null && (
-            <ActivityStrip label={composerActivity.label} startTime={busyStartRef.current} />
+            <ActivityStrip label={composerActivity.label} startTime={busyStartRef.current} tokens={turnTokens} />
           )}
           {queuedMessages && queuedMessages.length > 0 && (
             <div className="mb-2 space-y-1">

@@ -737,6 +737,29 @@ export default function App() {
     return null;
   }, [activeDetail?.history]);
 
+  // Cumulative output tokens produced since the last human prompt — mirrors the
+  // REPL's live "↓ N tokens" counter shown while a turn is in flight.
+  const turnTokens = React.useMemo(() => {
+    const history = activeDetail?.history;
+    if (!Array.isArray(history)) return 0;
+    let start = 0;
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (isVisibleUserTextEvent(history[i])) {
+        start = i;
+        break;
+      }
+    }
+    let out = 0;
+    for (let i = start; i < history.length; i += 1) {
+      const ev = history[i] as any;
+      if (ev?.type === 'assistant' && ev?.parent_tool_use_id == null) {
+        const tokens = ev?.message?.usage?.output_tokens;
+        if (typeof tokens === 'number') out += tokens;
+      }
+    }
+    return out;
+  }, [activeDetail?.history]);
+
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
     if (!options?.forceDiscardDirty && !confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认离开当前会话？')) {
       return false;
@@ -2462,6 +2485,7 @@ export default function App() {
                 composerAttachments={composerAttachments}
                 onComposerAttachmentsChange={setComposerAttachments}
                 contextUsage={contextUsage}
+                turnTokens={turnTokens}
               />
             ) : (
               <ChatArea

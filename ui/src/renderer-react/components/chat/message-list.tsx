@@ -287,7 +287,34 @@ function renderTranscriptItem(
   return null;
 }
 
-function LoadingIndicator() {
+function formatLoadingElapsed(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+  }
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatLoadingTokens(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; tokens?: number }) {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (startTime == null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [startTime]);
+  const meta: string[] = [];
+  if (startTime != null) meta.push(formatLoadingElapsed(now - startTime));
+  if (tokens > 0) meta.push(`↓ ${formatLoadingTokens(tokens)} tokens`);
   return (
     <div className="flex justify-start gap-2">
       <img
@@ -296,8 +323,11 @@ function LoadingIndicator() {
         className="h-7 w-7 shrink-0 self-start rounded-sm object-contain animate-spin"
         style={{ animationDuration: "2s" }}
       />
-      <div className="rounded-[18px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
-        working...
+      <div className="flex items-center gap-2 rounded-[18px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
+        <span>working...</span>
+        {meta.length > 0 && (
+          <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
+        )}
       </div>
     </div>
   );
@@ -412,6 +442,8 @@ function MessageContextMenu({
 type VirtualListContext = {
   footer?: React.ReactNode;
   loading?: boolean;
+  loadingStartTime?: number;
+  loadingTokens?: number;
   contentClassName?: string;
 };
 
@@ -425,7 +457,9 @@ function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
       "mx-auto w-full pb-4 pt-1",
       context?.contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
     )}>
-      {context?.loading && <LoadingIndicator />}
+      {context?.loading && (
+        <LoadingIndicator startTime={context.loadingStartTime} tokens={context.loadingTokens} />
+      )}
       {context?.footer}
     </div>
   );
@@ -469,6 +503,8 @@ export const VirtualMessageList = React.forwardRef<
     messages: TranscriptRenderMessage[];
     workspace?: string;
     loading?: boolean;
+    loadingStartTime?: number;
+    loadingTokens?: number;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     onAtBottomChange?: (atBottom: boolean) => void;
@@ -480,6 +516,8 @@ export const VirtualMessageList = React.forwardRef<
     messages,
     workspace,
     loading,
+    loadingStartTime,
+    loadingTokens,
     footer,
     emptyState,
     onAtBottomChange,
@@ -549,7 +587,7 @@ export const VirtualMessageList = React.forwardRef<
               暂无消息
             </div>
           )}
-          {loading && <LoadingIndicator />}
+          {loading && <LoadingIndicator startTime={loadingStartTime} tokens={loadingTokens} />}
           {footer}
         </div>
       </WorkspacePathProvider>
@@ -566,7 +604,7 @@ export const VirtualMessageList = React.forwardRef<
         className="h-full min-w-0"
         data={renderItems}
         computeItemKey={(_index, item) => (item.kind === "tool_group" ? item.id : item.message.id)}
-        context={{ footer, loading, contentClassName }}
+        context={{ footer, loading, loadingStartTime, loadingTokens, contentClassName }}
         followOutput={(isAtBottom) => (isAtBottom ? "auto" : false)}
         atBottomThreshold={120}
         atBottomStateChange={(atBottom) => {
@@ -615,6 +653,8 @@ export const MessageListPane = React.forwardRef<
     messages: TranscriptRenderMessage[];
     workspace?: string;
     loading?: boolean;
+    loadingStartTime?: number;
+    loadingTokens?: number;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     focusedToolUseId?: string;
