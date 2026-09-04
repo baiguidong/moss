@@ -6961,7 +6961,7 @@ function updateSessionConnectorAuthStatus(sessionRecord, payload = {}) {
     .slice(0, 120) || connectorId;
   const failureReason = redactAuthFailureText(String(payload.message || '').trim()).slice(0, 1000);
   const content = status === 'pending'
-    ? `正在授权「${connectorName}」连接器，请在右侧浏览器完成操作。`
+    ? `正在准备「${connectorName}」连接器授权，获取授权地址后会在右侧浏览器打开。`
     : status === 'success'
       ? `「${connectorName}」连接器授权成功，已加入当前会话。`
       : `「${connectorName}」连接器授权失败${failureReason ? `：${failureReason}` : '。'}`;
@@ -9191,7 +9191,7 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
             serverName,
             displayName: connectorServer?.connectorName || serverName,
           },
-        });
+        }, 'moss');
       },
       skipBrowserOpen: true,
     });

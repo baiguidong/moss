@@ -169,6 +169,7 @@ export type ConnectorCatalogItem = {
   visibleIn?: string[];
   examples?: string[];
   hasMcp?: boolean;
+  hasRemoteMcp?: boolean;
   hasCli?: boolean;
   hasSkills?: boolean;
   hasCredentialSchema?: boolean;

@@ -28,6 +28,34 @@
         }
       }
     },
+    "xingtu-claw-risk": {
+      "servers": {
+        "xingtu-claw-risk": {
+          "oauth": {
+            "redirectUri": "moss://moss/mcp/xingtu-claw-risk/oauth/callback"
+          }
+        }
+      }
+    },
+    "finenter": {
+      "servers": {
+        "mcp-server-brm": {
+          "oauth": {
+            "resourceMetadataUrl": "https://server.comein.cn/.well-known/oauth-protected-resource/mcp-server-brm"
+          }
+        }
+      }
+    },
+    "fyopen-lawsearch": {
+      "servers": {
+        "fy-law-search-service": {
+          "oauth": {
+            "authServerMetadataUrl": "https://fyopen.com/.well-known/oauth-authorization-server/apis/cop-oauth2",
+            "authorizationServerOrigin": "https://fyopen.com"
+          }
+        }
+      }
+    },
     "pkulaw": {
       "servers": {
         "pkulaw": {

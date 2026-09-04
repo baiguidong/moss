@@ -5,6 +5,7 @@ import {
   applyConnectorCredentials,
   buildConnectorCliEnv,
   cliStatusStatePatch,
+  extractCliVersion,
   extractAuthorizationUrl,
   getConnectorProviderAuthContext,
   matchesCliStatus,
@@ -20,6 +21,7 @@ import {
 import {
   fetchMcpAuthorizationChallenge,
   McpAuthProvider,
+  rewriteOAuthMetadataOrigin,
   withoutOAuthRegistrationScope,
 } from '../../src/services/mcp/auth';
 
@@ -41,6 +43,7 @@ const REMOVED_CONNECTOR_IDS = [
   'teacher-assistant',
   'tencent-dlc',
   'tencent-qidian-cs',
+  'tencent-survey',
   'tencent-tchouse-c',
 ] as const;
 
@@ -55,7 +58,7 @@ describe('connector catalog pruning', () => {
     const catalogIds = catalog.connectors.map((connector: { id: string }) => connector.id);
     const zipEntries = Object.keys(zip.files);
 
-    expect(catalogIds).toHaveLength(116);
+    expect(catalogIds).toHaveLength(115);
     for (const id of REMOVED_CONNECTOR_IDS) {
       expect(catalogIds).not.toContain(id);
       expect(zipEntries.some((entry) => entry.startsWith(`connectors/${id}/`))).toBe(false);
@@ -90,16 +93,48 @@ describe('connector catalog pruning', () => {
     expect(zip.file('connectors/shareone/skills/scripts/publish.js')).not.toBeNull();
     expect(zip.file('icons/shareone.png')).not.toBeNull();
   });
+
+  it('distinguishes the China and global Kling AI connectors', async () => {
+    const zip = await JSZip.loadAsync(readFileSync(
+      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+    ));
+    const catalog = JSON.parse(await zip
+      .file('.codebuddy-connector/connectors.json')!
+      .async('text'));
+
+    expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'kling-ai-plugin')?.name)
+      .toBe('Kling AI（中国）');
+    expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'kling-ai-plugin-ai')?.name)
+      .toBe('Kling AI（海外）');
+  });
+
+  it('distinguishes Canva regions and marks FBSir as authorization-free', async () => {
+    const zip = await JSZip.loadAsync(readFileSync(
+      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+    ));
+    const catalog = JSON.parse(await zip
+      .file('.codebuddy-connector/connectors.json')!
+      .async('text'));
+
+    expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'canva')?.name)
+      .toBe('Canva可画（中国）');
+    expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'canva-ai')?.name)
+      .toBe('Canva可画（海外）');
+    expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'fbs-connector')?.auth_mode)
+      .toBe('none');
+  });
 });
 
 describe('connector MCP config normalization', () => {
   it('reads provider-specific resource metadata from the MCP authorization challenge', async () => {
     let requestedUrl = '';
+    let requestInit: RequestInit | undefined;
     const challenge = await fetchMcpAuthorizationChallenge({
       type: 'http',
       url: 'https://agent.qcc.com/mcp/company/stream',
-    }, async (url) => {
+    }, async (url, init) => {
       requestedUrl = String(url);
+      requestInit = init;
       return new Response(null, {
         status: 401,
         headers: {
@@ -109,8 +144,56 @@ describe('connector MCP config normalization', () => {
     });
 
     expect(requestedUrl).toBe('https://agent.qcc.com/mcp/company/stream');
+    expect(requestInit?.method).toBe('POST');
+    expect(new Headers(requestInit?.headers).get('Content-Type')).toBe('application/json');
+    expect(JSON.parse(String(requestInit?.body))).toMatchObject({
+      jsonrpc: '2.0',
+      method: 'initialize',
+    });
+    expect(challenge.status).toBe(401);
     expect(challenge.resourceMetadataUrl?.toString()).toBe(
       'https://agent.qcc.com/mcp/.well-known/oauth-protected-resource/company/stream',
+    );
+  });
+
+  it('uses GET when probing an SSE server for an OAuth challenge', async () => {
+    let requestInit: RequestInit | undefined;
+    await fetchMcpAuthorizationChallenge({
+      type: 'sse',
+      url: 'https://example.test/sse',
+    }, async (_url, init) => {
+      requestInit = init;
+      return new Response(null, { status: 401 });
+    });
+
+    expect(requestInit?.method).toBe('GET');
+    expect(requestInit?.body).toBeUndefined();
+  });
+
+  it('retries an HTTP OAuth challenge with an older supported MCP protocol', async () => {
+    const protocolVersions: string[] = [];
+    const challenge = await fetchMcpAuthorizationChallenge({
+      type: 'http',
+      url: 'https://example.test/mcp',
+    }, async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      protocolVersions.push(body.params.protocolVersion);
+      if (protocolVersions.length === 1) {
+        return new Response('{"error":"unsupported protocol"}', { status: 400 });
+      }
+      return new Response(null, {
+        status: 401,
+        headers: {
+          'WWW-Authenticate': 'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource"',
+        },
+      });
+    });
+
+    expect(protocolVersions.length).toBe(2);
+    expect(protocolVersions[0]).not.toBe(protocolVersions[1]);
+    expect(challenge.status).toBe(401);
+    expect(challenge.resourceMetadataUrl?.toString()).toBe(
+      'https://example.test/.well-known/oauth-protected-resource',
     );
   });
 
@@ -221,11 +304,70 @@ describe('connector MCP config normalization', () => {
         'kling-ai-plugin': { url: 'https://klingai.com/mcp' },
       },
     }, overrides);
+    const xingtu = normalizeConnectorMcpConfig('xingtu-claw-risk', {
+      mcpServers: {
+        'xingtu-claw-risk': { type: 'sse', url: 'https://claw-mcp.tcredit.com/mcp/sse' },
+      },
+    }, overrides);
+    const finenter = normalizeConnectorMcpConfig('finenter', {
+      mcpServers: {
+        'mcp-server-brm': { type: 'sse', url: 'https://mcp-server-global.comein.cn/mcp-servers/mcp-server-brm/sse' },
+      },
+    }, overrides);
+    const fyopen = normalizeConnectorMcpConfig('fyopen-lawsearch', {
+      mcpServers: {
+        'fy-law-search-service': { url: 'https://api.cjbdi.com:8443/354347/mcp_law_service' },
+      },
+    }, overrides);
 
     expect(mx.mcpServers['mx-ds-mcp']?.oauth?.clientName).toBe('WorkBuddy');
     expect(nges.mcpServers.nges?.oauth?.clientName).toBe('WorkBuddy');
     expect(pkulaw.mcpServers.pkulaw?.oauth?.omitRegistrationScope).toBe(true);
     expect(kling.mcpServers['kling-ai-plugin']?.oauth?.clientName).toBe('Plugin-WorkBuddy');
+    expect(xingtu.mcpServers['xingtu-claw-risk']?.oauth?.redirectUri)
+      .toBe('moss://moss/mcp/xingtu-claw-risk/oauth/callback');
+    expect(finenter.mcpServers['mcp-server-brm']?.oauth?.resourceMetadataUrl)
+      .toBe('https://server.comein.cn/.well-known/oauth-protected-resource/mcp-server-brm');
+    expect(fyopen.mcpServers['fy-law-search-service']?.oauth).toMatchObject({
+      authServerMetadataUrl: 'https://fyopen.com/.well-known/oauth-authorization-server/apis/cop-oauth2',
+      authorizationServerOrigin: 'https://fyopen.com',
+    });
+  });
+
+  it('rewrites OAuth endpoints that use a blocked alias origin', () => {
+    expect(rewriteOAuthMetadataOrigin({
+      issuer: 'https://www.fyopen.com/apis/cop-oauth2',
+      authorization_endpoint: 'https://www.fyopen.com/apis/cop-oauth2/oauth2/authorize',
+      token_endpoint: 'https://www.fyopen.com/apis/cop-oauth2/oauth2/token',
+      registration_endpoint: 'https://www.fyopen.com/apis/cop-oauth2/oauth2/register',
+      response_types_supported: ['code'],
+    }, 'https://fyopen.com')).toMatchObject({
+      issuer: 'https://fyopen.com/apis/cop-oauth2',
+      authorization_endpoint: 'https://fyopen.com/apis/cop-oauth2/oauth2/authorize',
+      token_endpoint: 'https://fyopen.com/apis/cop-oauth2/oauth2/token',
+      registration_endpoint: 'https://fyopen.com/apis/cop-oauth2/oauth2/register',
+    });
+  });
+
+  it('preserves packaged static MCP headers as request headers', () => {
+    expect(validateMcpServerConfig({
+      type: 'streamableHttp',
+      url: 'https://api.example.test/mcp',
+      staticHeaders: {
+        'X-Connector-Source': 'catalog',
+        'X-Request-Source': 'workbuddy',
+      },
+      headers: {
+        'X-Request-Source': 'moss',
+      },
+      disabledTools: ['dangerous_tool', 'dangerous_tool'],
+    })).toMatchObject({
+      headers: {
+        'X-Connector-Source': 'catalog',
+        'X-Request-Source': 'moss',
+      },
+      disabledTools: ['dangerous_tool'],
+    });
   });
 
   it('omits scope only from connector client registration metadata', () => {
@@ -303,6 +445,23 @@ describe('connector MCP config normalization', () => {
 });
 
 describe('connector CLI compatibility', () => {
+  it('extracts a CLI version from structured JSON before generic semver coercion', () => {
+    expect(extractCliVersion(JSON.stringify({
+      code: 0,
+      data: {
+        apiVersion: 'v1',
+        cliVersion: '0.1.13',
+      },
+    }))).toBe('0.1.13');
+  });
+
+  it('uses a connector version pattern before generic semver coercion', () => {
+    expect(extractCliVersion(JSON.stringify({
+      code: 0,
+      data: { cliVersion: '0.1.13' },
+    }), '\\"cliVersion\\"\\s*:\\s*\\"(\\d+\\.\\d+\\.\\d+)\\"')).toBe('0.1.13');
+  });
+
   it('matches authorization URLs against the connector-configured domain', () => {
     const url = 'https://accounts.feishu.cn/oauth/v1/device/verify?user_code=example';
     expect(extractAuthorizationUrl(`Open this URL: ${url}`, 'accounts.feishu.cn')).toBe(url);

@@ -43,6 +43,15 @@ describe('connector primary action', () => {
     expect(getConnectorPrimaryAction(connector({ hasMcp: true, connected: false }), true)).toBe('mcp-auth');
   });
 
+  it('does not offer browser OAuth for a local stdio MCP connector', () => {
+    expect(getConnectorPrimaryAction(connector({
+      hasMcp: true,
+      hasRemoteMcp: false,
+      hasSkills: true,
+      connected: false,
+    }), true)).toBe('use');
+  });
+
   it('offers use when credential-based authentication is already configured', () => {
     expect(getConnectorPrimaryAction(connector({
       authMode: 'token',

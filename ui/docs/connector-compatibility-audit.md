@@ -1,6 +1,6 @@
 # Moss Connector Compatibility Audit
 
-Last updated: 2026-08-26
+Last updated: 2026-09-04
 
 ## Scope and result
 
@@ -221,8 +221,8 @@ credential contract.
 
 ## PENDING: account or business verification required
 
-The table below contains the 56 remaining original pending entries. Together
-with the 53 fixed-pending entries above, the current PENDING total is 109.
+The table below contains the 55 remaining original pending entries. Together
+with the 53 fixed-pending entries above, the current PENDING total is 108.
 Remote MCP entries generally reached a standard OAuth challenge and valid
 metadata. CLI entries installed and passed their version check unless the note
 says otherwise.
@@ -230,11 +230,10 @@ says otherwise.
 | Connector | Name | Type | Auth mode | Remaining verification |
 | --- | --- | --- | --- | --- |
 | `linear-mcp` | Linear | auto | server-side | Complete real OAuth login and a read-only tool call |
-| `canva-ai` | Canva可画 | mcp | - | Complete real OAuth login and a read-only tool call |
+| `canva-ai` | Canva可画（海外） | mcp | - | Complete real OAuth login and a read-only tool call |
 | `westock-mcp` | 腾讯自选股 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `tencent-docs` | 腾讯文档 | auto | - | Complete real OAuth login and a read-only tool call |
 | `tencent-docs-oa` | 腾讯文档企业版 | auto | oneid-token | Verify whether OneID accepts Moss rather than WorkBuddy server identity |
-| `tencent-survey` | 腾讯问卷 | auto | - | Complete real OAuth login and a read-only tool call |
 | `tapd` | TAPD | auto | - | Standard OAuth metadata found; complete real login and tool call |
 | `cnb-api` | CNB | cli | - | CLI install/version passed; complete login and status verification |
 | `tencent-weiyun` | 微云 | auto | - | Complete real OAuth login and a read-only tool call |
@@ -250,7 +249,7 @@ says otherwise.
 | `awesun` | 向日葵远程控制 | cli | - | CLI install/version passed; complete QR login and status verification |
 | `qingflow` | 轻流 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `wk-workbuddy` | 威科先行 | mcp | - | Complete real OAuth login and a read-only tool call |
-| `fyopen-lawsearch` | 法研·法律法规检索 | mcp | - | Complete real OAuth login and a read-only tool call |
+| `fyopen-lawsearch` | 法研·法律法规检索 | mcp | - | OAuth metadata host correction added; provider CloudWAF still intermittently returns HTTP 418 and requires provider-side verification |
 | `yzf-invoice-mcp-server` | 云帐房AI开票 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `tongzhou-fin-research` | 同舟金融研究 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `tec-do` | Tec-Do 2.0 广告与增长情报 | mcp | - | Complete real OAuth login and a read-only tool call |
@@ -260,9 +259,9 @@ says otherwise.
 | `lemonclaw` | LemonClaw | cli | - | CLI install/version passed; complete login and status verification |
 | `emr-query` | 弹性MapReduce | cli | - | Re-test with Python >=3.11; isolated pip install succeeded but its prefix lacked runtime module resolution |
 | `qcc-legal` | 企查查·法律数据 | mcp | - | Complete real OAuth login and a read-only tool call |
-| `finenter` | 进门投研 | mcp | - | SSE endpoint opened; subsequent MCP POST returned 401, so complete OAuth login |
-| `shanglv-mcp-gateway` | 用友智能服务（AI BaaS） | mcp | - | Complete Keycloak OAuth login and a read-only tool call |
-| `xingtu-claw-risk` | 天创信用星图MCP | mcp | - | Complete real OAuth login and a read-only tool call |
+| `finenter` | 进门投研 | mcp | - | Resource-specific OAuth metadata override added; complete real login and a read-only tool call |
+| `shanglv-mcp-gateway` | 用友智能服务（AI BaaS） | mcp | - | MCP URL corrected to the advertised `/mcp/finance` resource; complete Keycloak login and a read-only tool call |
+| `xingtu-claw-risk` | 天创信用星图MCP | mcp | - | Provider rejects loopback redirects but accepts app-scheme redirects; Moss callback override added, awaiting real login and tool call |
 | `mzl-trademark` | 摩知轮商标查询 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `bazhuayu` | 八爪鱼 | mcp | - | Complete real OAuth login and a read-only tool call |
 | `miaoda` | 秒哒应用搭建 | cli | - | CLI install/version passed; complete login and status verification |

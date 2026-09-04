@@ -21,9 +21,21 @@ describe('desktop MCP settings', () => {
     expect(validateMcpServerConfig({
       type: 'streamable-http',
       url: ' https://mcp.example.com/api ',
+      oauth: {
+        redirectUri: 'moss://moss/mcp/example/oauth/callback',
+        authorizationServerOrigin: 'https://auth.example.com',
+        resourceMetadataUrl: 'https://auth.example.com/.well-known/oauth-protected-resource/api',
+      },
+      disabledTools: ['dangerous_tool'],
     })).toEqual({
       type: 'http',
       url: 'https://mcp.example.com/api',
+      oauth: {
+        redirectUri: 'moss://moss/mcp/example/oauth/callback',
+        authorizationServerOrigin: 'https://auth.example.com',
+        resourceMetadataUrl: 'https://auth.example.com/.well-known/oauth-protected-resource/api',
+      },
+      disabledTools: ['dangerous_tool'],
     });
   });
 

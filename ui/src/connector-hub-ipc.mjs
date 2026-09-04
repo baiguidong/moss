@@ -290,7 +290,7 @@ function assertStringRecord(value, label) {
 function normalizeMcpOAuthConfig(value) {
   if (!isPlainObject(value)) return undefined;
   const result = {};
-  for (const key of ['clientName', 'clientId', 'authServerMetadataUrl']) {
+  for (const key of ['clientName', 'clientId', 'redirectUri', 'authorizationServerOrigin', 'resourceMetadataUrl', 'authServerMetadataUrl']) {
     const text = normalizeString(value[key]);
     if (text) result[key] = text;
   }
@@ -340,6 +340,9 @@ export function validateMcpServerConfig(input) {
       command: input.command.trim(),
       args,
       ...(input.env ? { env: assertStringRecord(input.env, 'env') } : {}),
+      ...(normalizeStringList(input.disabledTools).length > 0
+        ? { disabledTools: normalizeStringList(input.disabledTools) }
+        : {}),
     };
   }
 
@@ -356,10 +359,22 @@ export function validateMcpServerConfig(input) {
       throw new Error(error?.message || 'Invalid MCP server url.');
     }
     const oauth = normalizeMcpOAuthConfig(input.oauth);
+    const staticHeaders = input.staticHeaders
+      ? assertStringRecord(input.staticHeaders, 'staticHeaders')
+      : undefined;
+    const headers = input.headers
+      ? assertStringRecord(input.headers, 'headers')
+      : undefined;
+    const mergedHeaders = staticHeaders || headers
+      ? { ...(staticHeaders || {}), ...(headers || {}) }
+      : undefined;
     return {
       type,
       url: input.url.trim(),
-      ...(input.headers ? { headers: assertStringRecord(input.headers, 'headers') } : {}),
+      ...(mergedHeaders ? { headers: mergedHeaders } : {}),
+      ...(normalizeStringList(input.disabledTools).length > 0
+        ? { disabledTools: normalizeStringList(input.disabledTools) }
+        : {}),
       ...(oauth ? { oauth } : {}),
     };
   }
@@ -879,6 +894,12 @@ async function readInstalledConnector(connectorId) {
   const state = await readConnectorRuntimeState(id);
   const mcp = await readJsonFileAsync(path.join(baseDir, 'mcp.json'), null);
   const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
+  const mcpServers = isPlainObject(mcp?.mcpServers) ? mcp.mcpServers : {};
+  const hasRemoteMcp = Object.values(mcpServers).some((config) => {
+    if (!isPlainObject(config)) return false;
+    const type = normalizeMcpServerType(config.type, config);
+    return type === 'http' || type === 'sse';
+  });
   const credentialSchema = normalizeConnectorCredentialSchema(
     meta.credentialSchema || await readJsonFileAsync(path.join(baseDir, 'token-schema.json'), null),
   );
@@ -893,14 +914,21 @@ async function readInstalledConnector(connectorId) {
   }
   const credentialsConfigured = !credentialReadFailed
     && connectorCredentialsConfigured(credentialSchema, credentialValues);
+  const hasNoAuthContract = normalizeString(meta.authMode).toLowerCase() === 'none';
+  const availableWithoutAuthorization = Boolean(mcp?.mcpServers)
+    && (!hasRemoteMcp || hasNoAuthContract)
+    && !cli
+    && !credentialSchema;
   const skillRoot = path.join(baseDir, '.moss', 'skills');
   return {
     ...meta,
     installed: true,
     enabled: meta.enabled !== false,
-    connected: Boolean(state?.connected) && credentialsConfigured,
+    connected: (Boolean(state?.connected) || availableWithoutAuthorization) && credentialsConfigured,
     setupStatus: credentialReadFailed
       ? 'credential-error'
+      : availableWithoutAuthorization
+        ? 'connected'
       : normalizeString(state?.setupStatus || meta.setupStatus) || (
       credentialSchema && !credentialsConfigured
         ? 'needs-credentials'
@@ -910,12 +938,15 @@ async function readInstalledConnector(connectorId) {
     ),
     setupMessage: credentialReadFailed
       ? '本地凭据无法读取，请重新授权连接器'
+      : availableWithoutAuthorization
+        ? ''
       : normalizeString(state?.setupMessage),
     setupUpdatedAt: normalizeString(state?.updatedAt),
     path: baseDir,
     skillRoot: fs.existsSync(skillRoot) ? skillRoot : '',
-    mcpServerNames: isPlainObject(mcp?.mcpServers) ? Object.keys(mcp.mcpServers) : normalizeStringList(meta.mcpServerNames),
+    mcpServerNames: Object.keys(mcpServers).length > 0 ? Object.keys(mcpServers) : normalizeStringList(meta.mcpServerNames),
     hasMcp: Boolean(mcp?.mcpServers || meta.hasMcp),
+    hasRemoteMcp,
     hasCli: Boolean(cli || meta.hasCli),
     credentialSchema,
     configuredFields: credentialSchema
@@ -1003,6 +1034,49 @@ function normalizeVersionRange(value) {
 
 function coerceVersion(value) {
   return semver.coerce(String(value || ''), { loose: true })?.version || '';
+}
+
+function findStructuredCliVersion(value, depth = 0) {
+  if (depth > 4 || value === null || typeof value !== 'object') return '';
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const version = findStructuredCliVersion(item, depth + 1);
+      if (version) return version;
+    }
+    return '';
+  }
+
+  for (const key of ['cliVersion', 'cli_version', 'currentVersion', 'current_version', 'version']) {
+    const version = coerceVersion(value[key]);
+    if (version) return version;
+  }
+  for (const nestedValue of Object.values(value)) {
+    const version = findStructuredCliVersion(nestedValue, depth + 1);
+    if (version) return version;
+  }
+  return '';
+}
+
+export function extractCliVersion(output, versionPattern) {
+  const text = String(output || '');
+  const pattern = normalizeString(versionPattern);
+  if (pattern) {
+    try {
+      const match = new RegExp(pattern, 'm').exec(text);
+      const matchedVersion = coerceVersion(match?.[1] || match?.[0]);
+      if (matchedVersion) return matchedVersion;
+    } catch {}
+  }
+
+  try {
+    const structuredVersion = findStructuredCliVersion(JSON.parse(text));
+    if (structuredVersion) return structuredVersion;
+  } catch {}
+
+  const namedVersionMatch = /["']?(?:cliVersion|cli_version|currentVersion|current_version|version)["']?\s*[:=]\s*["']?([^\s,"'}]+)/i.exec(text);
+  const namedVersion = coerceVersion(namedVersionMatch?.[1]);
+  if (namedVersion) return namedVersion;
+  return coerceVersion(text);
 }
 
 function versionSatisfies(version, range) {
@@ -1533,7 +1607,7 @@ async function runCliVersionCheck(cli, baseDir, env) {
     env,
     timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
   });
-  const version = coerceVersion(result.output);
+  const version = extractCliVersion(result.output, cli?.versionCheck?.versionPattern);
   const satisfies = result.code === 0 && (!minVersion || versionSatisfies(version, minVersion));
   return {
     checked: true,

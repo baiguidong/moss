@@ -25,6 +25,7 @@ import {
   type OAuthTokens,
   OAuthTokensSchema,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js'
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import axios from 'axios'
 import { createHash, randomBytes, randomUUID } from 'crypto'
@@ -236,6 +237,44 @@ function createAuthFetch(): FetchLike {
       throw error
     }
   }
+}
+
+export function rewriteOAuthMetadataOrigin(
+  metadata: AuthorizationServerMetadata,
+  configuredOrigin: string | undefined,
+): AuthorizationServerMetadata {
+  if (!configuredOrigin) return metadata
+
+  let sourceOrigin: string
+  let targetOrigin: string
+  try {
+    sourceOrigin = new URL(metadata.issuer).origin
+    const target = new URL(configuredOrigin)
+    if (target.protocol !== 'https:') return metadata
+    targetOrigin = target.origin
+  } catch {
+    return metadata
+  }
+  if (sourceOrigin === targetOrigin) return metadata
+
+  const rewritten = { ...metadata } as Record<string, unknown>
+  for (const [key, value] of Object.entries(metadata)) {
+    if (
+      typeof value !== 'string' ||
+      (key !== 'issuer' && key !== 'jwks_uri' && !key.endsWith('_endpoint'))
+    ) {
+      continue
+    }
+    try {
+      const parsed = new URL(value)
+      if (parsed.origin === sourceOrigin) {
+        rewritten[key] = `${targetOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`
+      }
+    } catch {
+      // Ignore malformed optional metadata fields; schema validation handles them.
+    }
+  }
+  return rewritten as AuthorizationServerMetadata
 }
 
 export function withoutOAuthRegistrationScope(
@@ -646,6 +685,7 @@ export function clearServerTokensFromLocalStorage(
 type WWWAuthenticateParams = {
   scope?: string
   resourceMetadataUrl?: URL
+  status?: number
 }
 
 export async function fetchMcpAuthorizationChallenge(
@@ -653,20 +693,62 @@ export async function fetchMcpAuthorizationChallenge(
   fetchFn: FetchLike = createAuthFetch(),
   abortSignal?: AbortSignal,
 ): Promise<WWWAuthenticateParams> {
-  let response: Response | undefined
-  try {
-    response = await fetchFn(serverConfig.url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json, text/event-stream',
-        ...(serverConfig.headers || {}),
-      },
-      signal: abortSignal,
-    })
-    return extractWWWAuthenticateParams(response)
-  } finally {
-    await response?.body?.cancel().catch(() => {})
+  if (serverConfig.type === 'sse') {
+    let response: Response | undefined
+    try {
+      response = await fetchFn(serverConfig.url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          ...(serverConfig.headers || {}),
+        },
+        signal: abortSignal,
+      })
+      return {
+        ...extractWWWAuthenticateParams(response),
+        status: response.status,
+      }
+    } finally {
+      await response?.body?.cancel().catch(() => {})
+    }
   }
+
+  let lastResult: WWWAuthenticateParams = {}
+  for (const protocolVersion of SUPPORTED_PROTOCOL_VERSIONS) {
+    let response: Response | undefined
+    try {
+      response = await fetchFn(serverConfig.url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+          'MCP-Protocol-Version': protocolVersion,
+          ...(serverConfig.headers || {}),
+        },
+        body: jsonStringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion,
+            capabilities: {},
+            clientInfo: { name: 'Moss', version: '0.0.0' },
+          },
+        }),
+        signal: abortSignal,
+      })
+      lastResult = {
+        ...extractWWWAuthenticateParams(response),
+        status: response.status,
+      }
+      if (lastResult.resourceMetadataUrl || response.status !== 400) {
+        return lastResult
+      }
+    } finally {
+      await response?.body?.cancel().catch(() => {})
+    }
+  }
+  return lastResult
 }
 
 type XaaFailureStage =
@@ -950,13 +1032,17 @@ export async function performMCPOAuthFlow(
   // The transport-attached auth provider caches these when it receives a
   // step-up 401, so we don't need to probe the server again.
   let resourceMetadataUrl: URL | undefined
-  if (cachedResourceMetadataUrl) {
+  const configuredResourceMetadataUrl =
+    serverConfig.oauth?.resourceMetadataUrl?.trim()
+  if (configuredResourceMetadataUrl || cachedResourceMetadataUrl) {
     try {
-      resourceMetadataUrl = new URL(cachedResourceMetadataUrl)
+      resourceMetadataUrl = new URL(
+        configuredResourceMetadataUrl || cachedResourceMetadataUrl,
+      )
     } catch {
       logMCPDebug(
         serverName,
-        `Invalid cached resourceMetadataUrl: ${cachedResourceMetadataUrl}`,
+        `Invalid resourceMetadataUrl: ${configuredResourceMetadataUrl || cachedResourceMetadataUrl}`,
       )
     }
   }
@@ -965,6 +1051,7 @@ export async function performMCPOAuthFlow(
     resourceMetadataUrl,
   }
   if (!wwwAuthParams.resourceMetadataUrl) {
+    let challengeError: unknown
     try {
       const challenge = await fetchMcpAuthorizationChallenge(
         serverConfig,
@@ -974,6 +1061,7 @@ export async function performMCPOAuthFlow(
       wwwAuthParams = {
         scope: wwwAuthParams.scope || challenge.scope,
         resourceMetadataUrl: challenge.resourceMetadataUrl,
+        status: challenge.status,
       }
       if (challenge.resourceMetadataUrl) {
         logMCPDebug(
@@ -982,9 +1070,25 @@ export async function performMCPOAuthFlow(
         )
       }
     } catch (error) {
+      challengeError = error
       logMCPDebug(
         serverName,
         `MCP authorization challenge probe failed: ${errorMessage(error)}`,
+      )
+    }
+    if (challengeError) {
+      throw new Error(
+        `Unable to reach the MCP endpoint before OAuth discovery: ${errorMessage(challengeError)}`,
+      )
+    }
+    if (
+      wwwAuthParams.status !== undefined &&
+      wwwAuthParams.status >= 400 &&
+      wwwAuthParams.status !== 401 &&
+      wwwAuthParams.status !== 403
+    ) {
+      throw new Error(
+        `MCP endpoint returned HTTP ${wwwAuthParams.status} before OAuth discovery; the provider endpoint may be unavailable or moved.`,
       )
     }
   }
@@ -1011,13 +1115,20 @@ export async function performMCPOAuthFlow(
   let authorizationCodeObtained = false
 
   try {
+    // Some providers accept only app-scheme redirects (and reject RFC 8252
+    // loopback redirects). Connector-owned overrides can opt into such a URI;
+    // the desktop browser captures it and forwards the callback to this flow.
+    const configuredRedirectUri = serverConfig.oauth?.redirectUri?.trim()
     // Use configured callback port for pre-configured OAuth, otherwise find an available port
     const configuredCallbackPort = serverConfig.oauth?.callbackPort
     const port = configuredCallbackPort ?? (await findAvailablePort())
-    const redirectUri = buildRedirectUri(port, '127.0.0.1')
+    const redirectUri =
+      configuredRedirectUri || buildRedirectUri(port, '127.0.0.1')
     logMCPDebug(
       serverName,
-      `Using redirect port: ${port}${configuredCallbackPort ? ' (from config)' : ''}`,
+      configuredRedirectUri
+        ? 'Using configured application redirect URI'
+        : `Using redirect port: ${port}${configuredCallbackPort ? ' (from config)' : ''}`,
     )
 
     const provider = new McpAuthProvider(
@@ -1042,9 +1153,8 @@ export async function performMCPOAuthFlow(
         wwwAuthParams.resourceMetadataUrl,
       )
       if (metadata) {
-        authServerMetadata = metadata
+        authServerMetadata = provider.setMetadata(metadata)
         // Store metadata in provider for scope information
-        provider.setMetadata(metadata)
         logMCPDebug(
           serverName,
           `Fetched OAuth metadata with scope: ${getScopeFromMetadata(metadata) || 'NONE'}`,
@@ -1055,6 +1165,11 @@ export async function performMCPOAuthFlow(
         serverName,
         `Failed to fetch OAuth metadata: ${errorMessage(error)}`,
       )
+      if (serverConfig.oauth?.authorizationServerOrigin) {
+        throw new Error(
+          `OAuth provider metadata is unavailable: ${errorMessage(error)}`,
+        )
+      }
     }
 
     if (serverConfig.oauth?.omitRegistrationScope) {
@@ -1541,8 +1656,12 @@ export class McpAuthProvider implements OAuthClientProvider {
 
   setMetadata(
     metadata: Awaited<ReturnType<typeof discoverAuthorizationServerMetadata>>,
-  ): void {
-    this._metadata = metadata
+  ): Awaited<ReturnType<typeof discoverAuthorizationServerMetadata>> {
+    this._metadata = rewriteOAuthMetadataOrigin(
+      metadata,
+      this.serverConfig.oauth?.authorizationServerOrigin,
+    )
+    return this._metadata
   }
 
   /**
@@ -2128,23 +2247,18 @@ export class McpAuthProvider implements OAuthClientProvider {
     const serverKey = getServerKey(this.serverName, this.serverConfig)
 
     const cached = data?.mcpOAuth?.[serverKey]?.discoveryState
-    if (cached?.authorizationServerUrl) {
-      logMCPDebug(
-        this.serverName,
-        `Returning cached discovery state (authServer: ${cached.authorizationServerUrl})`,
-      )
 
+    if (this._metadata) {
       return {
-        authorizationServerUrl: cached.authorizationServerUrl,
-        resourceMetadataUrl: cached.resourceMetadataUrl,
-        resourceMetadata:
-          cached.resourceMetadata as OAuthDiscoveryState['resourceMetadata'],
+        authorizationServerUrl: this._metadata.issuer,
+        resourceMetadataUrl: cached?.resourceMetadataUrl,
         authorizationServerMetadata:
-          cached.authorizationServerMetadata as OAuthDiscoveryState['authorizationServerMetadata'],
+          this._metadata as OAuthDiscoveryState['authorizationServerMetadata'],
       }
     }
 
-    // Check config hint for direct metadata URL
+    // A configured metadata URL is authoritative and may also carry an
+    // origin correction for providers whose advertised hostname is blocked.
     const metadataUrl = this.serverConfig.oauth?.authServerMetadataUrl
     if (metadataUrl) {
       logMCPDebug(
@@ -2158,10 +2272,12 @@ export class McpAuthProvider implements OAuthClientProvider {
           metadataUrl,
         )
         if (metadata) {
+          const normalizedMetadata = this.setMetadata(metadata)
           return {
-            authorizationServerUrl: metadata.issuer,
+            authorizationServerUrl: normalizedMetadata.issuer,
+            resourceMetadataUrl: cached?.resourceMetadataUrl,
             authorizationServerMetadata:
-              metadata as OAuthDiscoveryState['authorizationServerMetadata'],
+              normalizedMetadata as OAuthDiscoveryState['authorizationServerMetadata'],
           }
         }
       } catch (error) {
@@ -2169,6 +2285,22 @@ export class McpAuthProvider implements OAuthClientProvider {
           this.serverName,
           `Failed to fetch from configured metadata URL: ${errorMessage(error)}`,
         )
+      }
+    }
+
+    if (cached?.authorizationServerUrl) {
+      logMCPDebug(
+        this.serverName,
+        `Returning cached discovery state (authServer: ${cached.authorizationServerUrl})`,
+      )
+
+      return {
+        authorizationServerUrl: cached.authorizationServerUrl,
+        resourceMetadataUrl: cached.resourceMetadataUrl,
+        resourceMetadata:
+          cached.resourceMetadata as OAuthDiscoveryState['resourceMetadata'],
+        authorizationServerMetadata:
+          cached.authorizationServerMetadata as OAuthDiscoveryState['authorizationServerMetadata'],
       }
     }
 
@@ -2341,7 +2473,7 @@ export class McpAuthProvider implements OAuthClientProvider {
           return undefined
         }
         // Cache for future refreshes
-        this._metadata = metadata
+        metadata = this.setMetadata(metadata)
 
         const clientInfo = await this.clientInformation()
         if (!clientInfo) {

@@ -63,7 +63,7 @@ function connectorStatusLabel(connector: ConnectorCatalogItem) {
   if (connector.hasCli && connector.setupStatus === "failed") return "设置失败";
   if (connector.hasCli && connector.setupStatus === "needs-auth") return "未认证";
   if (connector.hasCli && connector.setupStatus === "pending") return "待设置";
-  if (connector.authMode) return "待授权";
+  if (connector.authMode && connector.authMode.toLowerCase() !== "none") return "待授权";
   return "已安装";
 }
 
@@ -192,7 +192,7 @@ function ConnectorCard({
             {connector.hasSkills ? (
               <Badge variant="outline" className="rounded-md text-[11px]">Skill</Badge>
             ) : null}
-            {connector.authMode ? (
+            {connector.authMode && connector.authMode.toLowerCase() !== "none" ? (
               <Badge variant="outline" className="rounded-md text-[11px]">{connector.authMode}</Badge>
             ) : null}
             {installed ? (
@@ -403,7 +403,7 @@ export function ConnectorHubView({
       if (needsCliSetup && installedConnector && onRunCliSetup) {
         onRunCliSetup(installedConnector, res.data.cli || null);
       }
-      if (!needsCliSetup && connector.type === "mcp" && connector.authMode && installedConnector && onAuthenticateMcp) {
+      if (!needsCliSetup && connector.type === "mcp" && connector.authMode && connector.authMode.toLowerCase() !== "none" && installedConnector && onAuthenticateMcp) {
         onAuthenticateMcp(installedConnector);
       }
     } catch (err) {

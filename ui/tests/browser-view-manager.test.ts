@@ -194,6 +194,29 @@ describe('BrowserViewManager', () => {
     expect(opened.tabs).toHaveLength(2);
   });
 
+  it('captures custom-scheme MCP callbacks without launching another application', () => {
+    const { manager, views, events, externalUrls } = createHarness();
+    manager.openTab({
+      sessionId: 'session-custom-oauth',
+      url: 'https://auth.example.test',
+      mcpAuth: { serverName: 'demo' },
+    });
+    const webContents = views[1]!.view.webContents;
+    let prevented = false;
+
+    webContents.emit('will-navigate', {
+      preventDefault: () => { prevented = true; },
+    }, 'moss://moss/mcp/demo/oauth/callback?code=oauth-code&state=oauth-state');
+
+    expect(prevented).toBe(true);
+    expect(externalUrls).toEqual([]);
+    expect(events.find((event) => event.channel === 'browser:auth-navigation')?.payload)
+      .toMatchObject({
+        url: 'moss://moss/mcp/demo/oauth/callback?code=oauth-code&state=oauth-state',
+        mcpAuth: { serverName: 'demo' },
+      });
+  });
+
   it('loads deferred background popups with their referrer and POST body', () => {
     const { manager, views } = createHarness();
     manager.openTab({ sessionId: 'session-popup', url: 'https://auth.example.test' });

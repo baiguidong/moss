@@ -14,7 +14,7 @@ export function getConnectorPrimaryAction(
   if (!connector.connected && (connector.hasCli || connector.requiresCliSetup || connector.type === 'cli')) {
     return 'cli-setup';
   }
-  if (!connector.connected && connector.hasMcp) return 'mcp-auth';
+  if (!connector.connected && connector.hasMcp && connector.hasRemoteMcp !== false) return 'mcp-auth';
   if (connector.connected || connector.hasSkills) return 'use';
 
   return null;

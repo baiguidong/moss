@@ -17,10 +17,16 @@ function assertStringRecord(value, label) {
   return result;
 }
 
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => typeof item === 'string' ? item.trim() : '').filter(Boolean))]
+    : [];
+}
+
 function normalizeMcpOAuthConfig(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const result = {};
-  for (const key of ['clientName', 'clientId', 'authServerMetadataUrl']) {
+  for (const key of ['clientName', 'clientId', 'redirectUri', 'authorizationServerOrigin', 'resourceMetadataUrl', 'authServerMetadataUrl']) {
     const text = typeof value[key] === 'string' ? value[key].trim() : '';
     if (text) result[key] = text;
   }
@@ -70,6 +76,9 @@ export function validateMcpServerConfig(input) {
       command: input.command.trim(),
       args,
       ...(input.env ? { env: assertStringRecord(input.env, 'env') } : {}),
+      ...(normalizeStringList(input.disabledTools).length > 0
+        ? { disabledTools: normalizeStringList(input.disabledTools) }
+        : {}),
     };
   }
 
@@ -90,6 +99,9 @@ export function validateMcpServerConfig(input) {
       type,
       url: input.url.trim(),
       ...(input.headers ? { headers: assertStringRecord(input.headers, 'headers') } : {}),
+      ...(normalizeStringList(input.disabledTools).length > 0
+        ? { disabledTools: normalizeStringList(input.disabledTools) }
+        : {}),
       ...(oauth ? { oauth } : {}),
     };
   }

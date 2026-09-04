@@ -30,6 +30,7 @@ export const McpStdioServerConfigSchema = lazySchema(() =>
     command: z.string().min(1, 'Command cannot be empty'),
     args: z.array(z.string()).default([]),
     env: z.record(z.string(), z.string()).optional(),
+    disabledTools: z.array(z.string()).optional(),
   }),
 )
 
@@ -44,7 +45,22 @@ const McpOAuthConfigSchema = lazySchema(() =>
     clientName: z.string().min(1).optional(),
     clientId: z.string().optional(),
     callbackPort: z.number().int().positive().optional(),
+    redirectUri: z.string().url().optional(),
     omitRegistrationScope: z.boolean().optional(),
+    authorizationServerOrigin: z
+      .string()
+      .url()
+      .startsWith('https://', {
+        message: 'authorizationServerOrigin must use https://',
+      })
+      .optional(),
+    resourceMetadataUrl: z
+      .string()
+      .url()
+      .startsWith('https://', {
+        message: 'resourceMetadataUrl must use https://',
+      })
+      .optional(),
     authServerMetadataUrl: z
       .string()
       .url()
@@ -62,6 +78,7 @@ export const McpSSEServerConfigSchema = lazySchema(() =>
     url: z.string(),
     headers: z.record(z.string(), z.string()).optional(),
     headersHelper: z.string().optional(),
+    disabledTools: z.array(z.string()).optional(),
     oauth: McpOAuthConfigSchema().optional(),
   }),
 )
@@ -93,6 +110,7 @@ export const McpHTTPServerConfigSchema = lazySchema(() =>
     url: z.string(),
     headers: z.record(z.string(), z.string()).optional(),
     headersHelper: z.string().optional(),
+    disabledTools: z.array(z.string()).optional(),
     oauth: McpOAuthConfigSchema().optional(),
   }),
 )

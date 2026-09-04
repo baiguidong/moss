@@ -1580,6 +1580,7 @@ export const fetchToolsForClient = memoizeWithLRU(
 
       // Sanitize tool data from MCP server
       const toolsToProcess = recursivelySanitizeUnicode(result.tools)
+      const disabledTools = new Set(client.config.disabledTools ?? [])
 
       // Check if we should skip the mcp__ prefix for SDK MCP servers
       const skipPrefix =
@@ -1588,6 +1589,7 @@ export const fetchToolsForClient = memoizeWithLRU(
 
       // Convert MCP tools to our Tool format
       return toolsToProcess
+        .filter(tool => !disabledTools.has(tool.name))
         .map((tool): Tool => {
           const fullyQualifiedName = buildMcpToolName(client.name, tool.name)
           return {

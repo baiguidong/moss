@@ -1726,15 +1726,29 @@ export default function App() {
     connector: InstalledConnector,
     cli: Record<string, any> | null,
   ) => {
-    const sessionId = await createAndOpenSession(
-      `设置 ${connector.name} 连接器`,
-      undefined,
-      undefined,
-      [connector.id],
-    );
-    setActiveView('chat');
-    await dispatchToSession(sessionId, buildCliConnectorSetupPrompt(connector, cli), 'chat');
-  }, [createAndOpenSession, dispatchToSession]);
+    try {
+      // The connector is not authorized yet, so it cannot be attached while
+      // creating the bootstrap session. Setup authorizes it for later use.
+      const sessionId = await createAndOpenSession(`设置 ${connector.name} 连接器`);
+      setActiveView('chat');
+      await dispatchToSession(sessionId, buildCliConnectorSetupPrompt(connector, cli), 'chat');
+    } catch (error) {
+      const rawMessage = getErrorMessage(error);
+      const reason = cleanIpcErrorMessage(error);
+      showPermissionNotice(`${connector.name} 设置失败：${reason}`, 'error', 6000);
+      pushAppNotification({
+        severity: 'error',
+        source: '连接器授权',
+        title: `${connector.name} 设置失败`,
+        message: reason,
+        details: [
+          `连接器：${connector.name} (${connector.id})`,
+          `原始错误：${rawMessage}`,
+          error instanceof Error && error.stack ? `调用栈：\n${error.stack}` : '',
+        ].filter(Boolean).join('\n'),
+      });
+    }
+  }, [createAndOpenSession, dispatchToSession, pushAppNotification, showPermissionNotice]);
 
   const handleAuthenticateMcpConnector = React.useCallback(async (connector: InstalledConnector) => {
     const serverName = connector.mcpServerNames?.[0] || connector.id;

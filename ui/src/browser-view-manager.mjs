@@ -294,7 +294,8 @@ export function createBrowserViewManager({
     webContents.setWindowOpenHandler?.((details) => {
       const popupUrl = String(details?.url || '').trim();
       if (!isBrowserUrl(popupUrl)) {
-        emitAuthNavigation(session, tab, popupUrl);
+        const authNavigation = emitAuthNavigation(session, tab, popupUrl);
+        if (authNavigation) return { action: 'deny' };
         const externalUrl = getExternalNavigationHref(popupUrl);
         if (externalUrl) {
           emit?.('browser:external-url', { sessionId: session.id, tabId: tab.id, url: externalUrl });
@@ -336,7 +337,8 @@ export function createBrowserViewManager({
       const externalUrl = getExternalNavigationHref(url);
       if (!externalUrl) return;
       event.preventDefault?.();
-      emitAuthNavigation(session, tab, url);
+      const authNavigation = emitAuthNavigation(session, tab, url);
+      if (authNavigation) return;
       emit?.('browser:external-url', { sessionId: session.id, tabId: tab.id, url: externalUrl });
       void openExternal?.(externalUrl);
     });
