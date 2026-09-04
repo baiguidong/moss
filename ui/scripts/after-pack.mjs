@@ -88,4 +88,7 @@ export default async function afterPack(context) {
   if (!fs.existsSync(path.join(resourcesDir, 'connectors', 'workbuddy-connectors-config.zip'))) {
     throw new Error('Packaged connector catalog is missing.');
   }
+  if (!fs.existsSync(path.join(resourcesDir, 'connectors', 'connector-cli-overrides.json'))) {
+    throw new Error('Packaged connector CLI overrides are missing.');
+  }
 }

@@ -21,6 +21,7 @@ const CREDENTIAL_MASTER_KEY_PATHS = getMossCredentialMasterKeyPaths(MOSS_HOME);
 const CONNECTOR_CATALOG_ZIP_NAME = 'workbuddy-connectors-config.zip';
 const CONNECTOR_CLOUD_AUTH_PROVIDERS_FILE_NAME = 'cloud-auth-providers.json';
 const CONNECTOR_MCP_OVERRIDES_FILE_NAME = 'connector-mcp-overrides.json';
+const CONNECTOR_CLI_OVERRIDES_FILE_NAME = 'connector-cli-overrides.json';
 const CONNECTOR_META_FILE = 'connector.json';
 const CONNECTOR_STATE_FILE = 'state.json';
 const CONNECTOR_AUTH_FILE = 'auth.json';
@@ -467,6 +468,27 @@ export function normalizeConnectorMcpConfig(connectorId, input, overrides = read
   };
 }
 
+function normalizeConnectorCliOverrides(input) {
+  const connectors = isPlainObject(input?.connectors) ? input.connectors : {};
+  return { connectors };
+}
+
+function readConnectorCliOverrides() {
+  return normalizeConnectorCliOverrides(readJsonFile(localCliOverridesPath(), {}));
+}
+
+export function applyConnectorCliOverride(connectorId, cli, overrides = readConnectorCliOverrides()) {
+  if (!isPlainObject(cli)) return cli;
+  const override = overrides?.connectors?.[normalizeString(connectorId)];
+  if (!isPlainObject(override)) return cli;
+
+  const result = { ...cli };
+  for (const key of ['authUrlDomain', 'authWaitForExit', 'authSuppressBrowser', 'authQrModal', 'authBrowserMode']) {
+    if (Object.prototype.hasOwnProperty.call(override, key)) result[key] = override[key];
+  }
+  return result;
+}
+
 function connectorDir(connectorId) {
   return path.join(CONNECTOR_INSTALLED_DIR, normalizeConnectorId(connectorId));
 }
@@ -487,6 +509,10 @@ function localMcpOverridesPath() {
   return path.join(CONNECTOR_CATALOG_DIR, CONNECTOR_MCP_OVERRIDES_FILE_NAME);
 }
 
+function localCliOverridesPath() {
+  return path.join(CONNECTOR_CATALOG_DIR, CONNECTOR_CLI_OVERRIDES_FILE_NAME);
+}
+
 async function ensureConnectorDirs() {
   await Promise.all([
     fsp.mkdir(CONNECTOR_CATALOG_DIR, { recursive: true }),
@@ -499,6 +525,7 @@ export async function initializeBundledConnectorCatalog({
   bundledCatalogPath,
   bundledCloudAuthPath,
   bundledMcpOverridesPath,
+  bundledCliOverridesPath,
   log,
 } = {}) {
   await ensureConnectorDirs();
@@ -555,6 +582,22 @@ export async function initializeBundledConnectorCatalog({
     }
   }
 
+  const cliOverridesSourcePath = normalizeString(bundledCliOverridesPath);
+  let cliOverridesCopied = false;
+  if (cliOverridesSourcePath && fs.existsSync(cliOverridesSourcePath)) {
+    const overridesStat = await fsp.stat(cliOverridesSourcePath);
+    if (overridesStat.isFile()) {
+      const targetOverridesPath = localCliOverridesPath();
+      await fsp.copyFile(cliOverridesSourcePath, targetOverridesPath);
+      cliOverridesCopied = true;
+      log?.('info', 'connector', 'Bundled connector CLI overrides initialized', {
+        source: cliOverridesSourcePath,
+        target: targetOverridesPath,
+        size: overridesStat.size,
+      });
+    }
+  }
+
   return {
     copied: catalogCopied,
     catalogPath: targetPath,
@@ -562,6 +605,8 @@ export async function initializeBundledConnectorCatalog({
     cloudAuthPath: localCloudAuthProvidersPath(),
     mcpOverridesCopied,
     mcpOverridesPath: localMcpOverridesPath(),
+    cliOverridesCopied,
+    cliOverridesPath: localCliOverridesPath(),
   };
 }
 
@@ -1432,6 +1477,36 @@ function appendLimitedOutput(current, chunk) {
   return next.length > COMMAND_OUTPUT_LIMIT ? next.slice(next.length - COMMAND_OUTPUT_LIMIT) : next;
 }
 
+function spawnConnectorShell(command, { cwd, env }) {
+  return spawn(command, {
+    cwd,
+    env,
+    shell: true,
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+  });
+}
+
+function terminateConnectorProcess(child, signal = 'SIGTERM') {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    const args = ['/pid', String(child.pid), '/T'];
+    if (signal === 'SIGKILL') args.push('/F');
+    try {
+      const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' });
+      killer.unref();
+    } catch {}
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {}
+  }
+}
+
 function cleanUrlCandidate(value) {
   return String(value || '').replace(/[),.;\]}>"'，。；）】》]+$/g, '');
 }
@@ -1501,7 +1576,7 @@ export function buildConnectorCliEnv(cli, baseDir, connectorId, baseEnv = proces
   return env;
 }
 
-function runConnectorCommand(command, {
+export function runConnectorCommand(command, {
   cwd,
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   env = connectorCommandEnv(),
@@ -1524,18 +1599,15 @@ function runConnectorCommand(command, {
     let output = '';
     let settled = false;
     let timedOut = false;
+    let forceKillTimer = null;
 
-    const child = spawn(normalizedCommand, {
-      cwd,
-      env,
-      shell: true,
-      windowsHide: true,
-    });
+    const child = spawnConnectorShell(normalizedCommand, { cwd, env });
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         code: result.code ?? null,
         signal: result.signal ?? null,
@@ -1557,14 +1629,13 @@ function runConnectorCommand(command, {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill('SIGTERM');
-      } catch {}
-      setTimeout(() => {
+      terminateConnectorProcess(child, 'SIGTERM');
+      forceKillTimer = setTimeout(() => {
         if (!settled) {
-          try {
-            child.kill('SIGKILL');
-          } catch {}
+          terminateConnectorProcess(child, 'SIGKILL');
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          finish({ code: null, signal: 'SIGKILL' });
         }
       }, 1500);
     }, timeoutMs);
@@ -1654,8 +1725,9 @@ export async function refreshConnectorCliStatus(connectorId) {
   const connector = await readInstalledConnector(id);
   if (!connector) throw new Error(`Connector is not installed: ${id}`);
   const baseDir = connectorDir(id);
-  const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
-  if (!isPlainObject(cli)) throw new Error(`Connector has no cli.json: ${id}`);
+  const rawCli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
+  if (!isPlainObject(rawCli)) throw new Error(`Connector has no cli.json: ${id}`);
+  const cli = applyConnectorCliOverride(id, rawCli);
 
   const status = await runCliStatus(
     cli,
@@ -1730,6 +1802,7 @@ export function normalizeCliAuthSteps(cli) {
     authWaitForExit: cli?.authWaitForExit,
     authSuppressBrowser: cli?.authSuppressBrowser,
     authQrModal: cli?.authQrModal,
+    authBrowserMode: cli?.authBrowserMode,
   };
   const sources = Array.isArray(cli?.auth) ? cli.auth : [cli?.auth];
   return sources
@@ -1764,7 +1837,7 @@ async function runCliAuthWaitForExit(step, baseDir, {
     } catch {
       authorizationHost = normalizeString(step.authUrlDomain);
     }
-    if (!step.authSuppressBrowser) openBrowser?.({ url, sessionId });
+    if (!step.authSuppressBrowser) openBrowser?.({ url, sessionId, browserMode: step.authBrowserMode });
   };
   const result = await runConnectorCommand(command, {
     cwd: baseDir,
@@ -1801,12 +1874,7 @@ async function runCliAuthCommand(step, cli, baseDir, {
     let authorizationUrlOpened = false;
     let authorizationHost = '';
 
-    const child = spawn(command, {
-      cwd: baseDir,
-      env,
-      shell: true,
-      windowsHide: true,
-    });
+    const child = spawnConnectorShell(command, { cwd: baseDir, env });
 
     const cleanup = () => {
       clearTimeout(timeout);
@@ -1843,7 +1911,7 @@ async function runCliAuthCommand(step, cli, baseDir, {
       } catch {
         authorizationHost = normalizeString(step.authUrlDomain);
       }
-      if (!step.authSuppressBrowser) openBrowser?.({ url, sessionId });
+      if (!step.authSuppressBrowser) openBrowser?.({ url, sessionId, browserMode: step.authBrowserMode });
     };
 
     const consume = (chunk) => {
@@ -1856,9 +1924,7 @@ async function runCliAuthCommand(step, cli, baseDir, {
       try {
         const status = await runCliStatus(cli, baseDir, env);
         if (!status.connected || settled) return;
-        try {
-          child.kill('SIGTERM');
-        } catch {}
+        terminateConnectorProcess(child, 'SIGTERM');
         finish({ connected: true, code: 0 });
       } catch {
         // Ignore transient status failures while auth is still pending.
@@ -1866,9 +1932,7 @@ async function runCliAuthCommand(step, cli, baseDir, {
     };
 
     const timeout = setTimeout(() => {
-      try {
-        child.kill('SIGTERM');
-      } catch {}
+      terminateConnectorProcess(child, 'SIGTERM');
       finish({
         connected: false,
         timedOut: true,
@@ -1954,8 +2018,9 @@ export async function setupConnectorCli(connectorId, {
   const connector = await readInstalledConnector(id);
   if (!connector) throw new Error(`Connector is not installed: ${id}`);
   const baseDir = connectorDir(id);
-  const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
-  if (!isPlainObject(cli)) throw new Error(`Connector has no cli.json: ${id}`);
+  const rawCli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
+  if (!isPlainObject(rawCli)) throw new Error(`Connector has no cli.json: ${id}`);
+  const cli = applyConnectorCliOverride(id, rawCli);
 
   const steps = [];
   const env = {

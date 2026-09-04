@@ -84,6 +84,7 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain("path.join(paths.resourcesDir, 'apps', 'README.md')");
     expect(verifierSource).toContain("'connectors', 'cloud-auth-providers.json'");
     expect(verifierSource).toContain("'connectors', 'connector-mcp-overrides.json'");
+    expect(verifierSource).toContain("'connectors', 'connector-cli-overrides.json'");
     const workflowSources = [
       readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
       readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),

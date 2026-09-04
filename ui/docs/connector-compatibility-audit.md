@@ -6,7 +6,7 @@ Last updated: 2026-09-04
 
 This ledger covers the original 133-connector catalog against the current Moss
 desktop connector implementation. The active
-`ui/resources/connectors/workbuddy-connectors-config.zip` contains 115 entries
+`ui/resources/connectors/workbuddy-connectors-config.zip` contains 114 entries
 after the 18 provider-blocked connectors were removed on 2026-08-26.
 
 | Result | Count | Meaning |
@@ -14,16 +14,16 @@ after the 18 provider-blocked connectors were removed on 2026-08-26.
 | PASS | 6 | Connector use was verified end to end, including real-account authorization where required |
 | PENDING | 109 | 53 implementation fixes await connector re-test; 56 other connectors still require account, environment, entitlement, or business verification |
 | REMOVED | 18 | Provider-blocked connectors removed from the active ZIP; evidence is retained below |
-| Active total | 115 | Every connector still shipped in the catalog is accounted for |
+| Active total | 114 | Every connector still shipped in the catalog is accounted for |
 | Audited total | 133 | Active and removed entries are both accounted for |
 
 Before removal, `installConnector()` completed for 133/133 entries in an
 isolated `HOME`. After removal and the three OAuth fixes, it completed for all
-115/115 active entries; all 28 token schemas were retained. Installation only
+114/114 active entries; all 28 token schemas were retained. Installation only
 proves catalog extraction and metadata persistence, so it is not treated as
 connector usability.
 
-The 2026-08-26 re-audit also probed all 96 packaged remote MCP servers. Of the
+The 2026-08-26 re-audit also probed all 95 packaged remote MCP servers. Of the
 68 servers that required OAuth without a packaged token schema, 67 exposed a
 discoverable authorization server and one (`ima-mcp`) exposed no authorization
 contract. Moss-compatible dynamic registration succeeded for 49 of the 67.
@@ -37,7 +37,6 @@ client IDs or secrets returned by the registration probes were retained.
 | Connector | Name | Evidence | Last verified |
 | --- | --- | --- | --- |
 | `fbs-connector` | 福帮手 | HTTP MCP initialized; 10 tools listed; read-only `skill_whoami` completed successfully | 2026-08-25 |
-| `lingyi-mcp` | 零一数科 | HTTP MCP initialized; tool listed; read-only `open_lingyi_skill` returned structured content for a valid skill id | 2026-08-25 |
 | `lexiang` | 乐享知识库 | User-verified in Moss: real-account authorization and connector use succeeded | 2026-08-25 |
 | `baidu-netdisk` | 百度网盘 | User-verified in Moss: real-account authorization and connector use succeeded | 2026-08-25 |
 | `qq-mail` | QQ邮箱 | User-verified in Moss: real-account authorization and connector use succeeded | 2026-08-25 |

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import JSZip from 'jszip';
 import {
+  applyConnectorCliOverride,
   applyConnectorCredentials,
   buildConnectorCliEnv,
   cliStatusStatePatch,
@@ -16,6 +19,7 @@ import {
   normalizeMcpConfig,
   normalizeMcpServerName,
   requestProvisionedConnectorCredentials,
+  runConnectorCommand,
   validateMcpServerConfig,
 } from '../src/connector-hub-ipc.mjs';
 import {
@@ -36,6 +40,7 @@ const REMOVED_CONNECTOR_IDS = [
   'ima-mcp',
   'jiandaoyun',
   'kdocs',
+  'lingyi-mcp',
   'qixinhuiyan-mcp',
   'salesnail-instructor',
   'salestouch',
@@ -58,7 +63,7 @@ describe('connector catalog pruning', () => {
     const catalogIds = catalog.connectors.map((connector: { id: string }) => connector.id);
     const zipEntries = Object.keys(zip.files);
 
-    expect(catalogIds).toHaveLength(115);
+    expect(catalogIds).toHaveLength(114);
     for (const id of REMOVED_CONNECTOR_IDS) {
       expect(catalogIds).not.toContain(id);
       expect(zipEntries.some((entry) => entry.startsWith(`connectors/${id}/`))).toBe(false);
@@ -122,6 +127,21 @@ describe('connector catalog pruning', () => {
       .toBe('Canva可画（海外）');
     expect(catalog.connectors.find((entry: { id: string }) => entry.id === 'fbs-connector')?.auth_mode)
       .toBe('none');
+  });
+
+  it('packages the WPS device login with its actual account host and Moss browser flow', async () => {
+    const zip = await JSZip.loadAsync(readFileSync(
+      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+    ));
+    const cli = JSON.parse(await zip
+      .file('connectors/wps-knowledgebase/cli.json')!
+      .async('text'));
+
+    expect(cli).toMatchObject({
+      authUrlDomain: 'account.wps.cn',
+      authWaitForExit: false,
+      authBrowserMode: 'moss',
+    });
   });
 });
 
@@ -445,6 +465,54 @@ describe('connector MCP config normalization', () => {
 });
 
 describe('connector CLI compatibility', () => {
+  it('applies WPS authorization compatibility without changing the installed cli.json', () => {
+    const overrides = JSON.parse(readFileSync(
+      new URL('../resources/connectors/connector-cli-overrides.json', import.meta.url),
+      'utf8',
+    ));
+    const installed = {
+      authUrlDomain: 'zhishi.wps.cn',
+      authWaitForExit: true,
+      auth: { darwin: 'kwiki-cli auth login' },
+    };
+
+    expect(applyConnectorCliOverride('wps-knowledgebase', installed, overrides)).toEqual({
+      authUrlDomain: 'account.wps.cn',
+      authWaitForExit: false,
+      authBrowserMode: 'moss',
+      auth: { darwin: 'kwiki-cli auth login' },
+    });
+    expect(installed).toEqual({
+      authUrlDomain: 'zhishi.wps.cn',
+      authWaitForExit: true,
+      auth: { darwin: 'kwiki-cli auth login' },
+    });
+  });
+
+  it('terminates a timed-out connector command together with inherited child processes', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'moss-connector-timeout-'));
+    const childPath = join(tempDir, 'child.cjs');
+    const wrapperPath = join(tempDir, 'wrapper.cjs');
+    writeFileSync(childPath, 'setInterval(() => {}, 1000);\n');
+    writeFileSync(wrapperPath, [
+      "const { spawnSync } = require('node:child_process');",
+      `spawnSync(process.execPath, [${JSON.stringify(childPath)}], { stdio: 'inherit' });`,
+      '',
+    ].join('\n'));
+
+    const startedAt = Date.now();
+    try {
+      const result = await runConnectorCommand(
+        `${JSON.stringify(process.execPath)} ${JSON.stringify(wrapperPath)}`,
+        { cwd: tempDir, timeoutMs: 50 },
+      );
+      expect(result.timedOut).toBe(true);
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 5000);
+
   it('extracts a CLI version from structured JSON before generic semver coercion', () => {
     expect(extractCliVersion(JSON.stringify({
       code: 0,
@@ -519,6 +587,7 @@ describe('connector CLI compatibility', () => {
   it('preserves ordered auth steps and inherits connector-level behavior', () => {
     expect(normalizeCliAuthSteps({
       authUrlDomain: 'accounts.example.com',
+      authBrowserMode: 'moss',
       authSuppressBrowser: true,
       auth: [
         {
@@ -536,6 +605,7 @@ describe('connector CLI compatibility', () => {
         authWaitForExit: true,
         authSuppressBrowser: true,
         authQrModal: undefined,
+        authBrowserMode: 'moss',
         command: { darwin: 'example config init' },
         skipIf: { darwin: 'example config show' },
       },
@@ -544,6 +614,7 @@ describe('connector CLI compatibility', () => {
         authWaitForExit: undefined,
         authSuppressBrowser: true,
         authQrModal: undefined,
+        authBrowserMode: 'moss',
         command: { darwin: 'example auth login' },
       },
     ]);

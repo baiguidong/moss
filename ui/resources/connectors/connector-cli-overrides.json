@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "connectors": {
+    "wps-knowledgebase": {
+      "authUrlDomain": "account.wps.cn",
+      "authWaitForExit": false,
+      "authBrowserMode": "moss"
+    }
+  }
+}

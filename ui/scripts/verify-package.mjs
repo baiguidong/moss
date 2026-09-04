@@ -361,6 +361,7 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'apps', 'README.md'), 'bundled apps manifest');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'cloud-auth-providers.json'), 'connector cloud auth configuration');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-mcp-overrides.json'), 'connector MCP overrides');
+  requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-cli-overrides.json'), 'connector CLI overrides');
 
   const catalogPath = requireFile(
     path.join(paths.resourcesDir, 'connectors', 'workbuddy-connectors-config.zip'),

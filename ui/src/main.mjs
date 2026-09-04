@@ -7388,11 +7388,11 @@ const mossAppEventHandler = createMossAppEventHandler(
     allowMediaRoot,
     setupConnectorCli: (connectorId, context = {}) => setupConnectorCli(connectorId, {
       sessionId: context.sessionId || null,
-      openBrowser: ({ url, sessionId }) => {
+      openBrowser: ({ url, sessionId, browserMode }) => {
         openConnectorAuthorizationUrl({
           url,
           sessionId: sessionId || null,
-        });
+        }, browserMode);
       },
       emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
       onSetupComplete: () => resetLocalRuntimesForMcpReload(),
@@ -8781,6 +8781,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     bundledCatalogPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'workbuddy-connectors-config.zip'),
     bundledCloudAuthPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'cloud-auth-providers.json'),
     bundledMcpOverridesPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'connector-mcp-overrides.json'),
+    bundledCliOverridesPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'connector-cli-overrides.json'),
     log: mossLog,
   });
 
