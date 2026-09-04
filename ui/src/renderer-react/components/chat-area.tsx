@@ -266,44 +266,65 @@ function SessionTabBar({
               {forkDisabledReason || (forking ? "正在分叉会话" : "分叉当前会话")}
             </TooltipContent>
           </Tooltip>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-full"
-            onClick={handleCopyTranscript}
-            title="复制全部对话"
-            aria-label="复制全部对话"
-          >
-            {transcriptCopied ? (
-              <Check className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-8 w-8 rounded-full", autoCollapseToolCalls && "text-primary")}
-            onClick={onToggleAutoCollapseToolCalls}
-            disabled={!onToggleAutoCollapseToolCalls || toolDisplaySettingBusy}
-            title={autoCollapseToolCalls
-              ? "当前会话：关闭完成后自动折叠"
-              : "当前会话：完成后自动折叠工具调用"}
-            aria-label={autoCollapseToolCalls
-              ? "关闭当前会话的工具调用自动折叠"
-              : "开启当前会话的工具调用自动折叠"}
-          >
-            <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-full"
-            onClick={onToggleRight}
-            aria-label={`${rightCollapsed ? "展开" : "收起"}${rightPanelName}`}
-          >
-            {rightCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full"
+                  onClick={handleCopyTranscript}
+                  aria-label="复制全部对话"
+                >
+                  {transcriptCopied ? (
+                    <Check className="h-4 w-4 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{transcriptCopied ? "已复制全部对话" : "复制全部对话"}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn("h-8 w-8 rounded-full", autoCollapseToolCalls && "text-primary")}
+                  onClick={onToggleAutoCollapseToolCalls}
+                  disabled={!onToggleAutoCollapseToolCalls || toolDisplaySettingBusy}
+                  aria-label={autoCollapseToolCalls
+                    ? "关闭当前会话的工具调用自动折叠"
+                    : "开启当前会话的工具调用自动折叠"}
+                >
+                  <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {autoCollapseToolCalls
+                ? "当前会话：关闭完成后自动折叠"
+                : "当前会话：完成后自动折叠工具调用"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full"
+                  onClick={onToggleRight}
+                  aria-label={`${rightCollapsed ? "展开" : "收起"}${rightPanelName}`}
+                >
+                  {rightCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{`${rightCollapsed ? "展开" : "收起"}${rightPanelName}`}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>

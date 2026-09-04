@@ -51,20 +51,12 @@ export type UserTextRenderMessage = TranscriptRenderMessageBase & {
   attachments?: TranscriptAttachment[];
 };
 
-export type TurnTokenUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  cacheRead: number;
-  cacheWrite: number;
-};
-
 export type AssistantTextRenderMessage = TranscriptRenderMessageBase & {
   type: 'assistant_text';
   role: 'assistant';
   content: string;
   streaming?: boolean;
   attachments?: TranscriptAttachment[];
-  tokenUsage?: TurnTokenUsage;
 };
 
 export type ThinkingRenderMessage = TranscriptRenderMessageBase & {
@@ -1362,21 +1354,6 @@ export function buildTranscriptRenderMessages(
         appendTurnMeta(turn, `错误: ${String(event.error.message)}`);
       }
 
-      const usage = event?.message?.usage;
-      if (usage && typeof usage.input_tokens === 'number') {
-        for (let j = turn.items.length - 1; j >= 0; j -= 1) {
-          const item = turn.items[j];
-          if (item && item.type === 'assistant_text') {
-            item.tokenUsage = {
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
-              cacheRead: usage.cache_read_input_tokens ?? 0,
-              cacheWrite: usage.cache_creation_input_tokens ?? 0,
-            };
-            break;
-          }
-        }
-      }
       continue;
     }
 
