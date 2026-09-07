@@ -158,6 +158,7 @@ import {
   DESKTOP_PROJECT_LAYOUT_VERSION,
   DESKTOP_SESSION_KIND,
   DESKTOP_SESSION_LAYOUT_VERSION,
+  getProjectSessionWorkspaceDirectories,
   isDesktopProjectRecord,
   withDesktopProjectLayout,
 } from './desktop-data-layout.mjs';
@@ -6664,15 +6665,15 @@ function createSessionRecord({
   const id = randomUUID();
   const sessionDir = getLocalSessionDir(id);
   const normalizedWorkspace = normalizeWorkspace(workspace, id);
+  const normalizedProjectId = normalizeOptionalProjectId(projectId);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(getLocalSessionEngineDir(id), { recursive: true });
   if (isPathInsideDirectory(sessionDir, normalizedWorkspace)) {
-    for (const directory of ['inputs', 'working', 'outputs']) {
+    for (const directory of getProjectSessionWorkspaceDirectories(normalizedProjectId)) {
       fs.mkdirSync(path.join(normalizedWorkspace, directory), { recursive: true });
     }
   }
-  const normalizedProjectId = normalizeOptionalProjectId(projectId);
   const agentMode = requestedAgentMode === 'remote-direct'
     ? 'remote-direct'
     : requestedAgentMode === 'local'
@@ -7091,10 +7092,11 @@ async function syncSubAgentSessionsForParent(parentSession) {
         ? meta.agentType.trim()
         : '子会话';
     const workspace = createDefaultWorkspacePath(id);
+    const workspaceDirectories = getProjectSessionWorkspaceDirectories(parentSession.projectId);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
       fsp.mkdir(getLocalSessionEngineDir(id), { recursive: true }),
-      ...['inputs', 'working', 'outputs'].map((directory) => (
+      ...workspaceDirectories.map((directory) => (
         fsp.mkdir(path.join(workspace, directory), { recursive: true })
       )),
     ]);

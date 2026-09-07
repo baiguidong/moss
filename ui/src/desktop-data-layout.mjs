@@ -5,6 +5,18 @@ export const DESKTOP_PROJECT_LAYOUT_VERSION = 3;
 export const DESKTOP_SESSION_KIND = 'moss-session';
 export const DESKTOP_SESSION_LAYOUT_VERSION = 2;
 
+const PROJECT_SESSION_WORKSPACE_DIRECTORIES = Object.freeze([
+  'inputs',
+  'working',
+  'outputs',
+]);
+
+export function getProjectSessionWorkspaceDirectories(projectId) {
+  return typeof projectId === 'string' && projectId.trim()
+    ? [...PROJECT_SESSION_WORKSPACE_DIRECTORIES]
+    : [];
+}
+
 function normalizePathComponent(value, label) {
   const normalized = typeof value === 'string' ? value.trim() : '';
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(normalized)) {

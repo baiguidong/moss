@@ -6,6 +6,7 @@ import {
   DESKTOP_PROJECT_LAYOUT_VERSION,
   DESKTOP_SESSION_KIND,
   DESKTOP_SESSION_LAYOUT_VERSION,
+  getProjectSessionWorkspaceDirectories,
   isDesktopProjectRecord,
   withDesktopProjectLayout,
 } from '../src/desktop-data-layout.mjs';
@@ -43,5 +44,12 @@ describe('desktop data layout', () => {
 
     expect(() => paths.projectDir('../outside')).toThrow('Invalid project id.');
     expect(() => paths.sessionDir('session/child')).toThrow('Invalid session id.');
+  });
+
+  it('only scaffolds categorized workspace directories for project sessions', () => {
+    expect(getProjectSessionWorkspaceDirectories('project-1'))
+      .toEqual(['inputs', 'working', 'outputs']);
+    expect(getProjectSessionWorkspaceDirectories(null)).toEqual([]);
+    expect(getProjectSessionWorkspaceDirectories('   ')).toEqual([]);
   });
 });

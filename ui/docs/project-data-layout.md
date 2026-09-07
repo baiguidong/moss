@@ -49,9 +49,9 @@ does not fall back to `~/.moss/app-projects` or legacy project files.
 ~/.moss/sessions/<session-id>/
   session.json
   workspace/
-    inputs/
-    working/
-    outputs/
+    inputs/                 # project sessions only
+    working/                # project sessions only
+    outputs/                # project sessions only
     .moss/
       project-assets/
   runtime/
@@ -69,6 +69,9 @@ does not fall back to `~/.moss/app-projects` or legacy project files.
 - Every main session and subagent session owns one top-level session directory.
 - `session.json` carries `kind: "moss-session"` and the current
   `layoutVersion`.
+- Project sessions pre-create `workspace/inputs/`, `workspace/working/`, and
+  `workspace/outputs/`; regular chat sessions use the workspace root without
+  these empty directories.
 - `workspace/inputs/` contains localized source material,
   `workspace/working/` contains intermediate work, and `workspace/outputs/`
   contains final publish candidates.
