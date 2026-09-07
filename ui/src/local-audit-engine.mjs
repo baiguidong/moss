@@ -9,6 +9,7 @@ export const AUDIT_SEVERITIES = Object.freeze(['low', 'medium', 'high', 'critica
 export const DEFAULT_LOCAL_AUDIT_RULES = Object.freeze([
   {
     id: 'destructive-command',
+    version: 2,
     name: '高危命令',
     description: '检查删除、覆盖磁盘、管道执行脚本及破坏性 Git 命令。',
     severity: 'high',
@@ -16,7 +17,7 @@ export const DEFAULT_LOCAL_AUDIT_RULES = Object.freeze([
     config: {
       patterns: [
         '\\brm\\s+-[^\\n]*r[^\\n]*f',
-        '\\b(?:mkfs|fdisk|diskpart|format)\\b',
+        '(?:^|[;&|]\\s*|\\n\\s*)(?:sudo\\s+)?(?:[^\\s;&|]+[/\\\\])?(?:mkfs(?:\\.[\\w-]+)?|fdisk|diskpart|format)(?=\\s|$)',
         '\\bdd\\s+[^\\n]*\\bof=',
         '\\b(?:curl|wget)\\b[^\\n|]*\\|\\s*(?:sh|bash|zsh|powershell)\\b',
         '\\bgit\\s+(?:reset\\s+--hard|clean\\s+-[^\\n]*f)',
@@ -26,39 +27,44 @@ export const DEFAULT_LOCAL_AUDIT_RULES = Object.freeze([
   },
   {
     id: 'sensitive-file-access',
+    version: 2,
     name: '敏感文件访问',
     description: '检查工具输入中是否访问密钥、凭据、环境变量或 SSH 文件。',
     severity: 'high',
     enabled: true,
     config: {
       patterns: [
-        '(^|[/\\\\])\\.env(?:\\.|$)',
+        '(^|[/\\\\])\\.env$',
+        '(^|[/\\\\])\\.env\\.(?!(?:example|sample|template|dist)$)[^/\\\\]+$',
         '(^|[/\\\\])\\.ssh([/\\\\]|$)',
-        'id_(?:rsa|ed25519)',
-        'credentials?(?:\\.json)?',
-        'service[_-]?account',
-        'keychain|login\\.keychain',
+        '(^|[/\\\\])id_(?:rsa|ed25519)$',
+        '(^|[/\\\\])credentials?(?:\\.json)?$',
+        '(^|[/\\\\])service[_-]?account(?:\\.json)?$',
+        '(^|[/\\\\])(?:login\\.)?keychain(?:-db)?$',
       ],
     },
   },
   {
     id: 'outside-workspace-write',
+    version: 3,
     name: '工作区外写入',
     description: '检查写入、编辑或删除工具是否操作当前会话工作区和允许路径之外的绝对路径。',
-    severity: 'critical',
+    severity: 'high',
     enabled: true,
-    config: { allowedPaths: ['${MOSS_HOME}/memory'] },
+    config: { allowedPaths: ['${MOSS_HOME}/memory', '${MOSS_HOME}/plans'] },
   },
   {
     id: 'failed-tool-call',
+    version: 2,
     name: '工具执行失败',
     description: '记录工具执行错误，便于发现失效连接器、权限和环境问题。',
     severity: 'medium',
     enabled: true,
-    config: { minimumFailures: 1 },
+    config: { minimumFailures: 3 },
   },
   {
     id: 'permission-denial',
+    version: 2,
     name: '权限拒绝',
     description: '记录会话结果中保留的工具权限拒绝。',
     severity: 'medium',
@@ -282,10 +288,13 @@ function expandAuditPath(value) {
   return path.isAbsolute(expanded) ? path.resolve(expanded) : '';
 }
 
-function isAllowedOutsideWrite(candidate, config) {
+function isAllowedOutsideWrite(candidate, session, config) {
   if (!candidate || !path.isAbsolute(candidate)) return false;
   const resolved = path.resolve(candidate);
-  const allowedPaths = Array.isArray(config?.allowedPaths) ? config.allowedPaths : [];
+  const allowedPaths = [
+    ...(Array.isArray(config?.allowedPaths) ? config.allowedPaths : []),
+    ...(Array.isArray(session?.allowedWritePaths) ? session.allowedWritePaths : []),
+  ];
   return allowedPaths.some((entry) => {
     const allowedRoot = expandAuditPath(entry);
     return allowedRoot && (resolved === allowedRoot || resolved.startsWith(`${allowedRoot}${path.sep}`));
@@ -335,15 +344,15 @@ export function evaluateLocalAuditSession(session, normalized, rules) {
       const patterns = safePatterns(rule.config);
       for (const tool of normalized.tools.filter((entry) => isFileTool(entry.toolName))) {
         const targetPath = pathFromTool(tool);
-        const inputText = stringifyAuditValue(tool.input);
-        const matched = patterns.find((pattern) => pattern.test(targetPath) || pattern.test(inputText));
+        if (!targetPath) continue;
+        const matched = patterns.find((pattern) => pattern.test(targetPath));
         if (!matched) continue;
         findings.push(buildFinding(
           rule,
           session,
           tool,
           '检测到敏感文件访问',
-          targetPath || inputText.slice(0, 1_000),
+          targetPath,
           { input: tool.input, matchedPattern: matched.source },
           matched.source,
         ));
@@ -354,7 +363,7 @@ export function evaluateLocalAuditSession(session, normalized, rules) {
         if (
           !targetPath
           || isInsideWorkspace(session.workspace, targetPath)
-          || isAllowedOutsideWrite(targetPath, rule.config)
+          || isAllowedOutsideWrite(targetPath, session, rule.config)
         ) continue;
         findings.push(buildFinding(
           rule,
@@ -367,34 +376,54 @@ export function evaluateLocalAuditSession(session, normalized, rules) {
         ));
       }
     } else if (rule.id === 'failed-tool-call') {
-      const failedTools = normalized.tools.filter((entry) => entry.isError);
+      const deniedToolUseIds = new Set(normalized.permissionDenials.map((denial) => (
+        String(denial?.tool_use_id || denial?.toolUseId || '').trim()
+      )).filter(Boolean));
+      const failedTools = normalized.tools.filter((entry) => (
+        entry.isError
+        && !deniedToolUseIds.has(entry.toolUseId)
+        && !/(?:denied by user|interrupted by user|request interrupted|cancelled:)/i.test(entry.result || '')
+      ));
       const minimumFailures = Math.max(1, Number(rule.config?.minimumFailures) || 1);
       if (failedTools.length < minimumFailures) continue;
-      for (const tool of failedTools) {
-        findings.push(buildFinding(
-          rule,
-          session,
-          tool,
-          '工具执行失败',
-          `${tool.toolName}: ${tool.result || '未返回错误详情'}`.slice(0, 1_500),
-          { toolName: tool.toolName, result: tool.result },
-          tool.toolUseId,
-        ));
-      }
+      const failureSummary = failedTools.slice(0, 10).map((tool) => ({
+        toolUseId: tool.toolUseId,
+        toolName: tool.toolName,
+        result: tool.result,
+      }));
+      findings.push(buildFinding(
+        rule,
+        session,
+        failedTools[0],
+        `本会话有 ${failedTools.length} 次工具执行失败`,
+        failureSummary
+          .slice(0, 5)
+          .map((failure) => `${failure.toolName}: ${failure.result || '未返回错误详情'}`)
+          .join('\n')
+          .slice(0, 1_500),
+        { failureCount: failedTools.length, failures: failureSummary },
+        failedTools.map((tool) => tool.toolUseId).sort().join(':'),
+      ));
     } else if (rule.id === 'permission-denial') {
-      normalized.permissionDenials.forEach((denial, index) => {
-        const toolUseId = String(denial?.tool_use_id || denial?.toolUseId || '').trim();
-        const tool = normalized.tools.find((entry) => entry.toolUseId === toolUseId) || null;
-        findings.push(buildFinding(
-          rule,
-          session,
-          tool,
-          '工具权限被拒绝',
-          String(denial?.message || denial?.reason || denial?.tool_name || '用户或策略拒绝了工具调用'),
-          denial,
-          `${toolUseId}:${index}`,
-        ));
-      });
+      if (normalized.permissionDenials.length === 0) continue;
+      const denials = normalized.permissionDenials.slice(0, 20);
+      const firstDeniedToolUseId = String(denials[0]?.tool_use_id || denials[0]?.toolUseId || '').trim();
+      const firstDeniedTool = normalized.tools.find((tool) => tool.toolUseId === firstDeniedToolUseId) || null;
+      findings.push(buildFinding(
+        rule,
+        session,
+        firstDeniedTool,
+        `本会话有 ${normalized.permissionDenials.length} 次工具权限被拒绝`,
+        denials
+          .slice(0, 5)
+          .map((denial) => String(denial?.message || denial?.reason || denial?.tool_name || '用户或策略拒绝了工具调用'))
+          .join('\n'),
+        { denialCount: normalized.permissionDenials.length, denials },
+        denials
+          .map((denial, index) => String(denial?.tool_use_id || denial?.toolUseId || index))
+          .sort()
+          .join(':'),
+      ));
     } else if (rule.id === 'network-access') {
       for (const tool of normalized.tools) {
         const command = commandFromTool(tool);

@@ -319,9 +319,22 @@ function FindingsTable({
                 </div>
               </div>
             </details>
-            <button className="min-w-0 pr-3 text-left" onClick={() => onOpenSession?.(finding.sessionId)}>
+            <button
+              className="min-w-0 pr-3 text-left"
+              title={hasTool && onLocateTool ? "在会话中定位此工具调用" : "打开会话"}
+              onClick={() => {
+                if (hasTool && onLocateTool) {
+                  onLocateTool(finding.sessionId, finding.toolUseId!);
+                } else {
+                  onOpenSession?.(finding.sessionId);
+                }
+              }}
+            >
               <span className="block truncate text-foreground hover:underline">{finding.sessionTitle}</span>
-              <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{finding.toolName || "会话事件"}</span>
+              <span className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                {hasTool && onLocateTool ? <LocateFixed className="h-3 w-3 shrink-0" /> : null}
+                <span className="truncate">{finding.toolName || "会话事件"}</span>
+              </span>
             </button>
             <span className="truncate pr-2 text-muted-foreground" title={finding.ruleName}>{finding.ruleName}</span>
             <select
@@ -600,7 +613,7 @@ export function LocalAuditView({
           setProgress(null);
         }
         void refresh();
-      } else if (event.reason === "rule-updated" || event.reason === "finding-updated" || event.reason === "findings-updated") {
+      } else if (event.reason === "rule-updated" || event.reason === "finding-updated" || event.reason === "findings-updated" || event.reason === "sources-reconciled") {
         void refresh();
       }
     });

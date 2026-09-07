@@ -104,5 +104,7 @@ describe('app notification history', () => {
     stored = JSON.stringify([...JSON.parse(stored), { id: 'broken' }]);
 
     expect(loadAppNotifications(storage).map((item) => item.id)).toEqual(['valid']);
+    expect(saveAppNotifications([], storage)).toBe(true);
+    expect(loadAppNotifications(storage)).toEqual([]);
   });
 });

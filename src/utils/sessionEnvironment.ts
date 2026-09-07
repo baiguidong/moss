@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { getSessionId, getSessionProjectDir } from '../bootstrap/state.js'
+import { getSessionEngineDir, getSessionId } from '../bootstrap/state.js'
 import { logForDebugging } from './debug.js'
 import { getMossConfigHomeDir } from './envUtils.js'
 import { errorMessage, getErrnoCode } from './errors.js'
@@ -16,9 +16,9 @@ const sessionEnvScriptCache = new Map<
 >()
 
 export async function getSessionEnvDirPath(): Promise<string> {
-  const sessionProjectDir = getSessionProjectDir()
-  const sessionEnvDir = sessionProjectDir
-    ? join(sessionProjectDir, getSessionId(), 'env')
+  const sessionEngineDir = getSessionEngineDir()
+  const sessionEnvDir = sessionEngineDir
+    ? join(sessionEngineDir, getSessionId(), 'env')
     : join(getMossConfigHomeDir(), 'session-env', getSessionId())
   await mkdir(sessionEnvDir, { recursive: true })
   return sessionEnvDir

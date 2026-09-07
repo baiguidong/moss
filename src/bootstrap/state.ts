@@ -18,8 +18,8 @@ import {
   getProjectRootOverride,
 } from 'src/utils/cwdContext.js'
 import {
+  getSessionEngineDirContext,
   getSessionIdContext,
-  getSessionProjectDirContext,
 } from 'src/utils/sessionIdContext.js'
 import type { SettingSource } from 'src/utils/settings/constants.js'
 import { resetSettingsCache } from 'src/utils/settings/settingsCache.js'
@@ -195,7 +195,7 @@ type State = {
   // Additional directories from --add-dir flag (for instruction loading)
   additionalDirectoriesForMossMd: string[]
   // Dir containing the session's `.jsonl`; null = derive from originalCwd.
-  sessionProjectDir: string | null
+  sessionEngineDir: string | null
   // Cached prompt cache 1h TTL allowlist from feature flag (session-stable)
   promptCache1hAllowlist: string[] | null
   // Cached 1h TTL user eligibility (session-stable). Latched on first
@@ -350,8 +350,8 @@ function getInitialState(): State {
     lastEmittedDate: null,
     // Additional directories from --add-dir flag (for instruction loading)
     additionalDirectoriesForMossMd: [],
-    // Session project dir (null = derive from originalCwd)
-    sessionProjectDir: null,
+    // Session engine dir (null = derive from originalCwd)
+    sessionEngineDir: null,
     // Prompt cache 1h allowlist (null = not yet fetched from feature flag)
     promptCache1hAllowlist: null,
     // Prompt cache 1h eligibility (null = not yet evaluated)
@@ -420,10 +420,10 @@ export function regenerateSessionId(
   // accumulate stale keys. Callers that need to carry the slug across
   // (REPL.tsx clearContext) read it before calling clearConversation.
   STATE.planSlugCache.delete(STATE.sessionId)
-  // Regenerated sessions live in the current project: reset projectDir to
+  // Regenerated sessions live in the current project: reset engineDir to
   // null so getTranscriptPath() derives from originalCwd.
   STATE.sessionId = randomUUID() as SessionId
-  STATE.sessionProjectDir = null
+  STATE.sessionEngineDir = null
   return STATE.sessionId
 }
 
@@ -432,27 +432,27 @@ export function getParentSessionId(): SessionId | undefined {
 }
 
 /**
- * Atomically switch the active session. `sessionId` and `sessionProjectDir`
+ * Atomically switch the active session. `sessionId` and `sessionEngineDir`
  * always change together — there is no separate setter for either, so they
  * cannot drift out of sync (CC-34).
  *
- * @param projectDir — directory containing `<sessionId>.jsonl`. Omit (or
+ * @param engineDir — directory containing `<sessionId>.jsonl`. Omit (or
  *   pass `null`) for sessions in the current project — the path will derive
  *   from originalCwd at read time. Pass `dirname(transcriptPath)` when the
- *   session lives in a different project directory (git worktrees,
- *   cross-project resume). Every call resets the project dir; it never
+ *   session lives in a different engine directory (git worktrees,
+ *   cross-project resume). Every call resets the engine dir; it never
  *   carries over from the previous session.
  */
 export function switchSession(
   sessionId: SessionId,
-  projectDir: string | null = null,
+  engineDir: string | null = null,
 ): void {
   // Drop the outgoing session's plan-slug entry so the Map stays bounded
   // across repeated /resume. Only the current session's slug is ever read
   // (plans.ts getPlanSlug defaults to getSessionId()).
   STATE.planSlugCache.delete(STATE.sessionId)
   STATE.sessionId = sessionId
-  STATE.sessionProjectDir = projectDir
+  STATE.sessionEngineDir = engineDir
   sessionSwitched.emit(sessionId)
 }
 
@@ -467,12 +467,12 @@ const sessionSwitched = createSignal<[id: SessionId]>()
 export const onSessionSwitch = sessionSwitched.subscribe
 
 /**
- * Project directory the current session's transcript lives in, or `null` if
- * the session was created in the current project (common case — derive from
- * originalCwd). See `switchSession()`.
+ * Engine directory containing the current session's transcript, or `null`
+ * when the default location should be derived from originalCwd. See
+ * `switchSession()`.
  */
-export function getSessionProjectDir(): string | null {
-  return getSessionProjectDirContext() ?? STATE.sessionProjectDir
+export function getSessionEngineDir(): string | null {
+  return getSessionEngineDirContext() ?? STATE.sessionEngineDir
 }
 
 export function getOriginalCwd(): string {

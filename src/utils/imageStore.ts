@@ -1,6 +1,6 @@
 import { mkdir, open } from 'fs/promises'
 import { join } from 'path'
-import { getSessionId, getSessionProjectDir } from '../bootstrap/state.js'
+import { getSessionEngineDir, getSessionId } from '../bootstrap/state.js'
 import type { PastedContent } from './config.js'
 import { logForDebugging } from './debug.js'
 import { getMossConfigHomeDir } from './envUtils.js'
@@ -16,9 +16,9 @@ const storedImagePaths = new Map<number, string>()
  * Get the image store directory for the current session.
  */
 function getImageStoreDir(): string {
-  const sessionProjectDir = getSessionProjectDir()
-  return sessionProjectDir
-    ? join(sessionProjectDir, getSessionId(), IMAGE_STORE_DIR)
+  const sessionEngineDir = getSessionEngineDir()
+  return sessionEngineDir
+    ? join(sessionEngineDir, getSessionId(), IMAGE_STORE_DIR)
     : join(getMossConfigHomeDir(), IMAGE_STORE_DIR, getSessionId())
 }
 
@@ -130,7 +130,7 @@ function evictOldestIfAtCap(): void {
  * Clean up old image cache directories from previous sessions.
  */
 export async function cleanupOldImageCaches(): Promise<void> {
-  if (getSessionProjectDir()) {
+  if (getSessionEngineDir()) {
     return
   }
 

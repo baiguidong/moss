@@ -40,6 +40,7 @@ test('local audit service persists redacted current results and preserves findin
   });
   t.after(() => service.close());
 
+  service.updateRule({ id: 'failed-tool-call', config: { minimumFailures: 1 } });
   const firstRun = await service.runAudit();
   assert.equal(firstRun.sessionCount, 1);
   let dashboard = service.getDashboard();
@@ -121,6 +122,55 @@ test('incremental audit skips busy and unchanged sessions', async (t) => {
   const settled = await service.runIncrementalAudit();
   assert.equal(settled.sessionCount, 1);
   assert.equal(service.getDashboard().runs.length, 2);
+
+  sessions.splice(0, 1);
+  const removed = await service.runIncrementalAudit();
+  assert.equal(removed.reason, 'unchanged');
+  assert.equal(service.getDashboard().summary.sessionCount, 0);
+});
+
+test('audit attributes duplicated worker tool calls to the child session only', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-audit-subagent-dedupe-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const toolUse = {
+    type: 'tool_use',
+    id: 'shared-tool-id',
+    name: 'Bash',
+    input: { command: 'rm -rf ./build' },
+  };
+  const sessions = [
+    {
+      id: 'parent',
+      title: 'Parent',
+      workspace: '/work/parent',
+      agentMode: 'local',
+      createdAt: 1,
+      updatedAt: 2,
+      history: [{ type: 'assistant', message: { content: [toolUse] } }],
+    },
+    {
+      id: 'child',
+      title: 'Child',
+      workspace: '/work/child',
+      agentMode: 'local',
+      isSubAgent: true,
+      parentSessionId: 'parent',
+      createdAt: 1,
+      updatedAt: 2,
+      history: [{ type: 'assistant', message: { content: [toolUse] } }],
+    },
+  ];
+  const service = createLocalAuditService({
+    dbPath: path.join(directory, 'audit.db'),
+    getLocalSessions: () => sessions,
+  });
+  t.after(() => service.close());
+
+  await service.runAudit();
+  const dashboard = service.getDashboard();
+  assert.equal(dashboard.tools.filter((tool) => tool.toolUseId === 'shared-tool-id').length, 1);
+  assert.equal(dashboard.findings.filter((finding) => finding.ruleId === 'destructive-command').length, 1);
+  assert.equal(dashboard.findings[0].sessionId, 'child');
 });
 
 test('serious findings are pending only until reported or processed', async (t) => {
@@ -178,7 +228,21 @@ test('local audit service recovers interrupted runs on startup', (t) => {
   first.close();
 
   const db = new DatabaseSync(dbPath);
-  db.prepare("UPDATE audit_rules SET config_json = '{}' WHERE id = 'outside-workspace-write'").run();
+  db.prepare(`
+    UPDATE audit_rules
+    SET version = 1,
+        config_json = '{"patterns":["\\\\b(?:mkfs|fdisk|diskpart|format)\\\\b"]}'
+    WHERE id = 'destructive-command'
+  `).run();
+  db.prepare(`
+    UPDATE audit_rules SET version = 1, config_json = '{"minimumFailures":1}'
+    WHERE id = 'failed-tool-call'
+  `).run();
+  db.prepare(`
+    UPDATE audit_rules
+    SET version = 2, severity = 'critical', config_json = '{"allowedPaths":["\${MOSS_HOME}/memory"]}'
+    WHERE id = 'outside-workspace-write'
+  `).run();
   db.prepare(`
     INSERT INTO audit_runs (id, status, scope_json, rule_snapshot_json, started_at)
     VALUES ('interrupted', 'running', '{}', '[]', 1)
@@ -192,7 +256,13 @@ test('local audit service recovers interrupted runs on startup', (t) => {
   assert.equal(dashboard.summary.rulesStale, false);
   assert.deepEqual(
     dashboard.rules.find((rule) => rule.id === 'outside-workspace-write').config.allowedPaths,
-    ['${MOSS_HOME}/memory'],
+    ['${MOSS_HOME}/memory', '${MOSS_HOME}/plans'],
+  );
+  assert.equal(dashboard.rules.find((rule) => rule.id === 'outside-workspace-write').severity, 'high');
+  assert.equal(dashboard.rules.find((rule) => rule.id === 'failed-tool-call').config.minimumFailures, 3);
+  assert.doesNotMatch(
+    dashboard.rules.find((rule) => rule.id === 'destructive-command').config.patterns.join('\n'),
+    /^\\b\(\?:mkfs\|fdisk\|diskpart\|format\)\\b$/,
   );
   assert.equal(dashboard.runs[0].status, 'failed');
   assert.match(dashboard.runs[0].error, /中断/);

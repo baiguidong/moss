@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
-import { join } from 'path'
+import { join, sep } from 'path'
 import {
   getOriginalCwd,
   getSessionId,
-  getSessionProjectDir,
+  getSessionEngineDir,
   setOriginalCwd,
   switchSession,
 } from '../../bootstrap/state.js'
@@ -43,7 +43,11 @@ mock.module('color-diff-napi', () => ({
   getSyntaxTheme: () => ({}),
 }))
 
-const { checkPathSafetyForAutoEdit, pathInAllowedWorkingPath } =
+const {
+  checkPathSafetyForAutoEdit,
+  getSessionMemoryDir,
+  pathInAllowedWorkingPath,
+} =
   await import('../permissions/filesystem.js')
 const { hasPermissionsToUseTool } = await import('../permissions/permissions.js')
 const { validatePath } = await import('../permissions/pathValidation.js')
@@ -52,16 +56,31 @@ const { FileWriteTool } = await import('../../tools/FileWriteTool/FileWriteTool.
 const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
 const originalCwd = getOriginalCwd()
 const originalSessionId = getSessionId()
-const originalSessionProjectDir = getSessionProjectDir()
+const originalSessionEngineDir = getSessionEngineDir()
 
 afterEach(() => {
   discardSessionWorkspaceDirectories(getSessionId())
   restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
   setOriginalCwd(originalCwd)
-  switchSession(originalSessionId, originalSessionProjectDir)
+  switchSession(originalSessionId, originalSessionEngineDir)
 })
 
 describe('Moss project paths', () => {
+  test('resolves session memory from the active session engine directory', () => {
+    switchSession(
+      asSessionId('engine-session'),
+      '/tmp/custom-moss/sessions/desktop-session/runtime/engine',
+    )
+
+    expect(getSessionMemoryDir()).toBe(
+      join(
+        '/tmp/custom-moss/sessions/desktop-session/runtime/engine',
+        'engine-session',
+        'session-memory',
+      ) + sep,
+    )
+  })
+
   test('uses .moss for project and local settings', () => {
     expect(getRelativeSettingsFilePathForSource('projectSettings')).toBe(
       join('.moss', 'settings.json'),

@@ -16,6 +16,7 @@ export type SessionSummary = {
   createdAt: number;
   updatedAt: number;
   busy: boolean;
+  busyStartedAt?: number | null;
   messageCount: number;
   sessionId: string | null;
   preview: string;

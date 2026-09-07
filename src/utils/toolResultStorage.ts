@@ -8,7 +8,7 @@ import { join } from 'path'
 import {
   getOriginalCwd,
   getSessionId,
-  getSessionProjectDir,
+  getSessionEngineDir,
 } from '../bootstrap/state.js'
 import {
   BYTES_PER_TOKEN,
@@ -96,17 +96,17 @@ export type PersistToolResultError = {
 }
 
 /**
- * Get the session directory (projectDir/sessionId)
+ * Get the session directory (engineDir/sessionId)
  */
 function getSessionDir(): string {
   return join(
-    getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+    getSessionEngineDir() ?? getProjectDir(getOriginalCwd()),
     getSessionId(),
   )
 }
 
 /**
- * Get the tool results directory for this session (projectDir/sessionId/tool-results)
+ * Get the tool results directory for this session (engineDir/sessionId/tool-results)
  */
 export function getToolResultsDir(): string {
   return join(getSessionDir(), TOOL_RESULTS_SUBDIR)

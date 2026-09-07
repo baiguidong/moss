@@ -30,7 +30,7 @@ import {
   getOriginalCwd,
   getIsRemoteMode,
   getSessionId,
-  getSessionProjectDir,
+  getSessionEngineDir,
 } from '../../bootstrap/state.js'
 import { createAutoMemCanUseTool } from '../extractMemories/extractMemories.js'
 import { buildConsolidationPrompt } from './consolidationPrompt.js'
@@ -190,7 +190,7 @@ export function initAutoDream(): void {
 
       try {
         const transcriptDir =
-          getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+          getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
         // Tool constraints are specific to the background fork, so keep them
         // out of the reusable consolidation prompt body.
         const extra = `

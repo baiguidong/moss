@@ -176,7 +176,7 @@ function SessionTabBar({
     : outline;
 
   return (
-    <div className="shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur">
+    <div className="relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur">
       <div className={cn(
         "mx-auto flex w-full min-w-0 items-center justify-between gap-3",
         MAIN_CHAT_CONTENT_CLASS_NAME,
@@ -205,7 +205,7 @@ function SessionTabBar({
             </div>
           </button>
           {outlineOpen && (
-            <div className="absolute left-1/2 top-full z-30 mt-1 w-[420px] max-w-[80vw] -translate-x-1/2 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
+            <div className="absolute left-1/2 top-full z-50 mt-1 w-[420px] max-w-[80vw] -translate-x-1/2 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
               <div className="border-b border-border/50 p-2">
                 <input
                   value={outlineQuery}
@@ -2022,6 +2022,7 @@ export function ChatArea({
   value,
   selectedAppName,
   loading,
+  busyStartedAt,
   readOnlyReason,
   hasActiveSession,
   isProjectSession = false,
@@ -2029,6 +2030,7 @@ export function ChatArea({
   sessionId,
   sessionWorkspace,
   focusedToolUseId,
+  focusedToolRequestId,
   pendingPlanApproval,
   planDecisionBusy,
   leftCollapsed,
@@ -2077,6 +2079,7 @@ export function ChatArea({
   value: string;
   selectedAppName: string;
   loading: boolean;
+  busyStartedAt?: number | null;
   readOnlyReason?: string | null;
   hasActiveSession: boolean;
   isProjectSession?: boolean;
@@ -2084,6 +2087,7 @@ export function ChatArea({
   sessionId?: string;
   sessionWorkspace?: string;
   focusedToolUseId?: string;
+  focusedToolRequestId?: number;
   pendingPlanApproval: PendingPlanApproval | null;
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
@@ -2134,33 +2138,43 @@ export function ChatArea({
 
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
-    const groupTimer = window.setTimeout(() => {
-      virtualListRef.current?.scrollToTool(focusedToolUseId);
-    }, 60);
-    const exactTimer = window.setTimeout(() => {
+    let located = false;
+    const locateExactTool = () => {
+      if (located) return;
       const selector = `[data-tool-use-id="${CSS.escape(focusedToolUseId)}"]`;
-      document.querySelector<HTMLElement>(selector)?.scrollIntoView({
-        behavior: "smooth",
+      const target = document.querySelector<HTMLElement>(selector);
+      if (!target) {
+        virtualListRef.current?.scrollToTool(focusedToolUseId);
+        return;
+      }
+      target.scrollIntoView({
+        behavior: "auto",
         block: "center",
       });
-    }, 320);
-    return () => {
-      window.clearTimeout(groupTimer);
-      window.clearTimeout(exactTimer);
+      located = true;
     };
-  }, [focusedToolUseId, hasActiveSession, messages]);
+
+    virtualListRef.current?.scrollToTool(focusedToolUseId);
+    const timers = [80, 240, 600, 1_000].map((delay) => (
+      window.setTimeout(locateExactTool, delay)
+    ));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [focusedToolRequestId, focusedToolUseId, hasActiveSession]);
 
   const outline = React.useMemo(() => deriveOutline(messages), [messages]);
   const handleJumpToOutlineItem = React.useCallback((messageId: string) => {
     virtualListRef.current?.scrollToMessage(messageId);
   }, []);
 
-  const busyStartRef = React.useRef<number | null>(null);
-  if (loading && busyStartRef.current === null) {
-    busyStartRef.current = Date.now();
-  } else if (!loading) {
-    busyStartRef.current = null;
+  const fallbackBusyStartRef = React.useRef<{ sessionId?: string; startedAt: number } | null>(null);
+  if (!loading) {
+    fallbackBusyStartRef.current = null;
+  } else if (busyStartedAt == null && fallbackBusyStartRef.current?.sessionId !== sessionId) {
+    fallbackBusyStartRef.current = { sessionId, startedAt: Date.now() };
   }
+  const loadingStartTime = loading
+    ? (busyStartedAt ?? fallbackBusyStartRef.current?.startedAt)
+    : undefined;
   const composerActivity = React.useMemo(
     () => deriveComposerActivity(messages, loading),
     [messages, loading],
@@ -2244,7 +2258,7 @@ export function ChatArea({
           messages={messages}
           workspace={sessionWorkspace}
           loading={loading}
-          loadingStartTime={busyStartRef.current ?? undefined}
+          loadingStartTime={loadingStartTime}
           loadingTokens={turnTokens}
           focusedToolUseId={focusedToolUseId}
           contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
@@ -2312,8 +2326,8 @@ export function ChatArea({
           {backgroundTasks && backgroundTasks.length > 0 && (
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks} />
           )}
-          {loading && composerActivity && busyStartRef.current !== null && (
-            <ActivityStrip label={composerActivity.label} startTime={busyStartRef.current} tokens={turnTokens} />
+          {loading && composerActivity && loadingStartTime != null && (
+            <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />
           )}
           {queuedMessages && queuedMessages.length > 0 && (
             <div className="mb-2 space-y-1">

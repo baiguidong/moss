@@ -1,7 +1,7 @@
 import { getFsImplementation } from '../utils/fsOperations.js'
 import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
 
-import { getOriginalCwd, getSessionProjectDir } from '../bootstrap/state.js'
+import { getOriginalCwd, getSessionEngineDir } from '../bootstrap/state.js'
 import {
   getAutoMemorySettings,
   isPastContextSearchEnabled,
@@ -303,7 +303,7 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
   if (!isPastContextSearchEnabled()) {
     return []
   }
-  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+  const engineDir = getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
   // Ant-native builds alias grep to embedded ugrep and remove the dedicated
   // Grep tool, so give the model a real shell invocation there.
   // In REPL mode, both Grep and Bash are hidden from direct use — the model
@@ -314,8 +314,8 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
     ? `grep -rn "<search term>" ${autoMemDir} --include="*.md"`
     : `${GREP_TOOL_NAME} with pattern="<search term>" path="${autoMemDir}" glob="*.md"`
   const transcriptSearch = embedded
-    ? `grep -rn "<search term>" ${projectDir}/ --include="*.jsonl"`
-    : `${GREP_TOOL_NAME} with pattern="<search term>" path="${projectDir}/" glob="*.jsonl"`
+    ? `grep -rn "<search term>" ${engineDir}/ --include="*.jsonl"`
+    : `${GREP_TOOL_NAME} with pattern="<search term>" path="${engineDir}/" glob="*.jsonl"`
   return [
     '## Searching past context',
     '',

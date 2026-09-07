@@ -31,7 +31,8 @@ import {
   appendAppNotification,
   cleanIpcErrorMessage,
   getErrorMessage,
-  loadAppNotifications,
+  saveAppNotifications,
+  type AppNotification,
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
@@ -335,19 +336,15 @@ export default function App() {
   const [permissionNotice, setPermissionNotice] = React.useState('');
   const [permissionNoticeSeverity, setPermissionNoticeSeverity] = React.useState<AppNotificationSeverity>('info');
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
-  const [appNotifications, setAppNotifications] = React.useState(() => {
-    try {
-      return loadAppNotifications(window.localStorage);
-    } catch {
-      return [];
-    }
-  });
+  const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
     toolUseId: string;
+    requestId: number;
   } | null>(null);
+  const auditFocusRequestIdRef = React.useRef(0);
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -865,11 +862,10 @@ export default function App() {
       receivedChange = true;
       setAppNotifications(payload.notifications);
     });
-    const legacy = loadAppNotifications(window.localStorage);
-    void (legacy.length > 0
-      ? window.agentDesktop.notifications.importLegacy(legacy)
-      : window.agentDesktop.notifications.list()
-    ).then((notifications) => {
+    // SQLite is authoritative. Re-importing this retired cache after a database
+    // clear would resurrect notifications the user already removed.
+    saveAppNotifications([], window.localStorage);
+    void window.agentDesktop.notifications.list().then((notifications) => {
       if (!receivedChange) setAppNotifications(notifications);
     }).catch(() => {});
     return unsubscribe;
@@ -2217,7 +2213,12 @@ export default function App() {
       });
       return;
     }
-    setAuditFocusTarget({ sessionId, toolUseId });
+    auditFocusRequestIdRef.current += 1;
+    setAuditFocusTarget({
+      sessionId,
+      toolUseId,
+      requestId: auditFocusRequestIdRef.current,
+    });
   }, [handleAuditError, openSession]);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
@@ -2360,7 +2361,11 @@ export default function App() {
             onRemove={(id) => {
               void window.agentDesktop.notifications.remove(id);
             }}
-            onClear={() => { void window.agentDesktop.notifications.clear(); }}
+            onClear={() => {
+              void window.agentDesktop.notifications.clear()
+                .then(() => { saveAppNotifications([], window.localStorage); })
+                .catch(() => {});
+            }}
             onResolveDecision={async (decisionId, allowed, choice) => {
               await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
             }}
@@ -2438,6 +2443,7 @@ export default function App() {
                 value={input}
                 selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy)}
+                busyStartedAt={activeDetail?.busyStartedAt ?? null}
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 isProjectSession={Boolean(activeDetail?.projectId)}
@@ -2445,6 +2451,7 @@ export default function App() {
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
+                focusedToolRequestId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.requestId : undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
                 planDecisionBusy={planDecisionBusy}
                 leftCollapsed={effectiveLeftCollapsed}

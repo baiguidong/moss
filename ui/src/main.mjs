@@ -97,6 +97,11 @@ import {
 } from './media-protocol.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import {
+  beginSessionBusyTiming,
+  clearSessionBusyTiming,
+  getSessionBusyStartedAt,
+} from './shared/session-busy-timing.mjs';
+import {
   mergeInterruptedSessionHistory,
   shouldAdoptSessionHistory,
 } from './shared/session-history-reconcile.mjs';
@@ -2486,12 +2491,17 @@ async function driveProjectCoordinatorTaskNow(sessionRecord, {
 
 function driveProjectCoordinatorTask(sessionRecord, options = {}) {
   const existing = projectCoordinatorTaskRuns.get(sessionRecord.id);
-  if (existing) return existing;
+  if (existing) {
+    beginSessionBusyTiming(sessionRecord);
+    return existing;
+  }
+  beginSessionBusyTiming(sessionRecord);
   const run = driveProjectCoordinatorTaskNow(sessionRecord, options)
     .finally(() => {
       if (projectCoordinatorTaskRuns.get(sessionRecord.id) === run) {
         projectCoordinatorTaskRuns.delete(sessionRecord.id);
       }
+      if (!sessionRecord.busy) clearSessionBusyTiming(sessionRecord);
       if (sessionRecord.deleted) projectTaskCancellationRequests.delete(sessionRecord.id);
       if (!sessionRecord.deleted) {
         emitSessionMeta(sessionRecord);
@@ -3624,6 +3634,7 @@ function hydratePersistedSessions() {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
+      busyStartedAt: null,
       messageCount,
       preview,
       underlyingSessionId: row.underlying_session_id || null,
@@ -3691,6 +3702,7 @@ function hydratePersistedSessions() {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       busy: false,
+      busyStartedAt: null,
       messageCount,
       preview,
       underlyingSessionId: row.underlying_session_id || null,
@@ -3932,6 +3944,7 @@ function getSessionSummary(sessionRecord) {
   const finalizerResult = isProjectTaskRoot
     ? getProjectSessionFinalizerResultSync(sessionRecord.projectId, sessionRecord.id)
     : null;
+  const busy = isSessionBusyForRenderer(sessionRecord);
   return {
     id: sessionRecord.id,
     title: sessionRecord.title,
@@ -3940,7 +3953,8 @@ function getSessionSummary(sessionRecord) {
     workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
-    busy: isSessionBusyForRenderer(sessionRecord),
+    busy,
+    busyStartedAt: getSessionBusyStartedAt(sessionRecord, busy),
     messageCount: sessionRecord.messageCount,
     sessionId: sessionRecord.underlyingSessionId,
     preview: sessionRecord.preview,
@@ -4438,6 +4452,7 @@ async function runSessionPromptNow({
     }
   }
 
+  beginSessionBusyTiming(sessionRecord);
   sessionRecord.busy = true;
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
@@ -4606,6 +4621,7 @@ async function runSessionPromptNow({
     throw error;
   } finally {
     sessionRecord.busy = false;
+    if (!isSessionBusyForRenderer(sessionRecord)) clearSessionBusyTiming(sessionRecord);
     sessionRecord.updatedAt = Date.now();
     await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
     await syncSubAgentSessionsBestEffort(sessionRecord);
@@ -6691,6 +6707,7 @@ function createSessionRecord({
     createdAt: now,
     updatedAt: now,
     busy: false,
+    busyStartedAt: null,
     messageCount: 0,
     preview: '',
     underlyingSessionId: null,
@@ -6886,20 +6903,37 @@ function getSessionRecord(sessionId) {
 function getLocalAuditSessionSnapshots() {
   return [...sessions.values(), ...subAgentSessions.values()]
     .filter((sessionRecord) => sessionRecord?.agentMode !== 'remote-direct')
-    .map((sessionRecord) => ({
-      id: sessionRecord.id,
-      title: sessionRecord.title,
-      workspace: sessionRecord.workspace,
-      projectId: sessionRecord.projectId || null,
-      assistantName: sessionRecord.assistantName || null,
-      sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
-      isSubAgent: Boolean(sessionRecord.isSubAgent),
-      createdAt: sessionRecord.createdAt,
-      updatedAt: sessionRecord.updatedAt,
-      agentMode: 'local',
-      busy: Boolean(sessionRecord.busy),
-      history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
-    }));
+    .map((sessionRecord) => {
+      const parentSession = sessionRecord.parentSessionId
+        ? sessions.get(sessionRecord.parentSessionId) || subAgentSessions.get(sessionRecord.parentSessionId)
+        : null;
+      const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
+      const engineSessionDir = transcriptPath
+        ? path.join(path.dirname(transcriptPath), path.basename(transcriptPath, path.extname(transcriptPath)))
+        : null;
+      return {
+        id: sessionRecord.id,
+        title: sessionRecord.title,
+        workspace: sessionRecord.workspace,
+        projectId: sessionRecord.projectId || null,
+        assistantName: sessionRecord.assistantName || null,
+        sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
+        isSubAgent: Boolean(sessionRecord.isSubAgent),
+        parentSessionId: sessionRecord.parentSessionId || null,
+        allowedWritePaths: normalizeStringList([
+          ...getSessionWorkspaceDirectories(sessionRecord),
+          parentSession?.workspace,
+          getClaudeTempDirForLookup(),
+          engineSessionDir ? path.join(engineSessionDir, 'session-memory') : null,
+          engineSessionDir ? path.join(engineSessionDir, 'plans') : null,
+        ]),
+        createdAt: sessionRecord.createdAt,
+        updatedAt: sessionRecord.updatedAt,
+        agentMode: 'local',
+        busy: Boolean(sessionRecord.busy),
+        history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
+      };
+    });
 }
 
 function startLocalAuditScanner() {
@@ -7160,6 +7194,9 @@ async function syncSubAgentSessionsForParent(parentSession) {
       createdAt: existing?.createdAt || stat.birthtimeMs || stat.ctimeMs || Date.now(),
       updatedAt: stat.mtimeMs || Date.now(),
       busy: status === 'running',
+      busyStartedAt: status === 'running'
+        ? (existing?.busyStartedAt || Date.now())
+        : null,
       messageCount: countSessionMessages(parsed.history),
       preview: deriveSessionPreview(parsed.history) || title,
       underlyingSessionId: agentId,

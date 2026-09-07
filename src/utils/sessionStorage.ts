@@ -27,7 +27,7 @@ import {
   getPlanSlugCache,
   getPromptId,
   getSessionId,
-  getSessionProjectDir,
+  getSessionEngineDir,
   isSessionPersistenceDisabled,
   switchSession,
 } from '../bootstrap/state.js'
@@ -245,21 +245,21 @@ export function getProjectsDir(): string {
 }
 
 export function getTranscriptPath(): string {
-  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
-  return join(projectDir, `${getSessionId()}.jsonl`)
+  const engineDir = getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
+  return join(engineDir, `${getSessionId()}.jsonl`)
 }
 
 export function getTranscriptPathForSession(sessionId: string): string {
-  // When asking for the CURRENT session's transcript, honor sessionProjectDir
+  // When asking for the CURRENT session's transcript, honor sessionEngineDir
   // the same way getTranscriptPath() does. Without this, hooks get a
   // transcript_path computed from originalCwd while the actual file was
-  // written to sessionProjectDir (set by switchActiveSession on resume/branch)
+  // written to sessionEngineDir (set by switchActiveSession on resume/branch)
   // — different directories, so the hook sees MISSING (gh-30217). CC-34
-  // made sessionId + sessionProjectDir atomic precisely to prevent this
+  // made sessionId + sessionEngineDir atomic precisely to prevent this
   // kind of drift; this function just wasn't updated to read both.
   //
   // For OTHER session IDs we can only guess via originalCwd — we don't
-  // track a sessionId→projectDir map. Callers wanting a specific other
+  // track a sessionId→engineDir map. Callers wanting a specific other
   // session's path should pass fullPath explicitly (most save* functions
   // already accept this).
   if (sessionId === getSessionId()) {
@@ -290,15 +290,15 @@ export function clearAgentTranscriptSubdir(agentId: string): void {
 }
 
 export function getAgentTranscriptPath(agentId: AgentId): string {
-  // Same sessionProjectDir consistency as getTranscriptPathForSession —
+  // Same sessionEngineDir consistency as getTranscriptPathForSession —
   // subagent transcripts live under the session dir, so if the session
-  // transcript is at sessionProjectDir, subagent transcripts are too.
-  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+  // transcript is at sessionEngineDir, subagent transcripts are too.
+  const engineDir = getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
   const sessionId = getSessionId()
   const subdir = agentTranscriptSubdirs.get(agentId)
   const base = subdir
-    ? join(projectDir, sessionId, 'subagents', subdir)
-    : join(projectDir, sessionId, 'subagents')
+    ? join(engineDir, sessionId, 'subagents', subdir)
+    : join(engineDir, sessionId, 'subagents')
   return join(base, `agent-${agentId}.jsonl`)
 }
 
@@ -3649,7 +3649,7 @@ async function loadSessionFile(sessionId: UUID): Promise<{
   contentReplacements: Map<UUID, ContentReplacementRecord[]>
 }> {
   const sessionFile = join(
-    getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+    getSessionEngineDir() ?? getProjectDir(getOriginalCwd()),
     `${sessionId}.jsonl`,
   )
   return loadTranscriptFile(sessionFile)
@@ -4137,7 +4137,7 @@ export async function loadAllSubagentTranscriptsFromDisk(): Promise<{
   [agentId: string]: Message[]
 }> {
   const subagentsDir = join(
-    getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+    getSessionEngineDir() ?? getProjectDir(getOriginalCwd()),
     getSessionId(),
     'subagents',
   )

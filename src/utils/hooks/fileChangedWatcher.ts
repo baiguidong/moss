@@ -12,7 +12,7 @@ import { runWithCwdOverride } from '../cwd.js'
 import { getProjectRootOverride } from '../cwdContext.js'
 import {
   getSessionIdContext,
-  getSessionProjectDirContext,
+  getSessionEngineDirContext,
   runWithSessionIdContext,
 } from '../sessionIdContext.js'
 import { clearCwdEnvFiles } from '../sessionEnvironment.js'
@@ -28,7 +28,7 @@ type WatcherState = {
   hasEnvHooks: boolean
   notifyCallback: ((text: string, isError: boolean) => void) | null
   sessionId: SessionId | undefined
-  projectDir: string | null | undefined
+  sessionEngineDir: string | null | undefined
   projectRoot: string | undefined
 }
 
@@ -42,7 +42,7 @@ function createWatcherState(): WatcherState {
     hasEnvHooks: false,
     notifyCallback: null,
     sessionId: undefined,
-    projectDir: undefined,
+    sessionEngineDir: undefined,
     projectRoot: undefined,
   }
 }
@@ -67,7 +67,7 @@ function runWithWatcherContext<T>(state: WatcherState, fn: () => T): T {
   if (!state.sessionId) {
     return fn()
   }
-  return runWithSessionIdContext(state.sessionId, state.projectDir, () =>
+  return runWithSessionIdContext(state.sessionId, state.sessionEngineDir, () =>
     runWithCwdOverride(state.currentCwd, fn, state.projectRoot),
   )
 }
@@ -84,7 +84,7 @@ export function initializeFileChangedWatcher(cwd: string): void {
   state.initialized = true
   state.currentCwd = cwd
   state.sessionId = getSessionIdContext()
-  state.projectDir = getSessionProjectDirContext()
+  state.sessionEngineDir = getSessionEngineDirContext()
   state.projectRoot = getProjectRootOverride()
 
   const config = getHooksConfigFromSnapshot()

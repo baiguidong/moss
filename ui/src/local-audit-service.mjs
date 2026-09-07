@@ -149,6 +149,46 @@ function mapRun(row) {
   };
 }
 
+function toolUseIdFromDenial(denial) {
+  return String(denial?.tool_use_id || denial?.toolUseId || '').trim();
+}
+
+function collectDescendantToolUseIds(snapshots) {
+  const sessionsById = new Map(snapshots.map((session) => [session.id, session]));
+  const descendantToolUseIds = new Map();
+  for (const session of snapshots.filter((entry) => entry.isSubAgent && entry.parentSessionId)) {
+    const toolUseIds = normalizeLocalAuditSession(session).tools
+      .map((tool) => tool.toolUseId)
+      .filter(Boolean);
+    let ancestorId = session.parentSessionId;
+    const visited = new Set();
+    while (ancestorId && !visited.has(ancestorId)) {
+      visited.add(ancestorId);
+      const existing = descendantToolUseIds.get(ancestorId) || new Set();
+      toolUseIds.forEach((toolUseId) => existing.add(toolUseId));
+      descendantToolUseIds.set(ancestorId, existing);
+      ancestorId = sessionsById.get(ancestorId)?.parentSessionId || null;
+    }
+  }
+  return descendantToolUseIds;
+}
+
+function excludeDescendantToolCalls(normalized, toolUseIds) {
+  if (!toolUseIds || toolUseIds.size === 0) return normalized;
+  const tools = normalized.tools.filter((tool) => !toolUseIds.has(tool.toolUseId));
+  const permissionDenials = normalized.permissionDenials.filter((denial) => (
+    !toolUseIds.has(toolUseIdFromDenial(denial))
+  ));
+  const incompleteToolCount = tools.filter((tool) => tool.status === 'unknown').length;
+  return {
+    ...normalized,
+    tools,
+    permissionDenials,
+    completeness: incompleteToolCount > 0 ? 'partial' : 'complete',
+    incompleteToolCount,
+  };
+}
+
 export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = () => {} }) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -246,7 +286,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
   const insertRule = db.prepare(`
     INSERT OR IGNORE INTO audit_rules (
       id, name, description, severity, enabled, config_json, version, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const initializedAt = Date.now();
   for (const rule of DEFAULT_LOCAL_AUDIT_RULES) {
@@ -257,11 +297,31 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       rule.severity,
       rule.enabled ? 1 : 0,
       JSON.stringify(rule.config || {}),
+      rule.version || 1,
       initializedAt,
     );
   }
+  const selectPersistedRule = db.prepare('SELECT version, config_json FROM audit_rules WHERE id = ?');
+  const migratePersistedRule = db.prepare(`
+    UPDATE audit_rules
+    SET name = ?, description = ?, severity = ?, config_json = ?, version = ?, updated_at = ?
+    WHERE id = ?
+  `);
+  for (const rule of DEFAULT_LOCAL_AUDIT_RULES) {
+    const persisted = selectPersistedRule.get(rule.id);
+    if (!persisted || Number(persisted.version) >= Number(rule.version || 1)) continue;
+    migratePersistedRule.run(
+      rule.name,
+      rule.description,
+      rule.severity,
+      JSON.stringify(rule.config || {}),
+      rule.version || 1,
+      initializedAt,
+      rule.id,
+    );
+  }
   const outsideWriteRule = DEFAULT_LOCAL_AUDIT_RULES.find((rule) => rule.id === 'outside-workspace-write');
-  const persistedOutsideWriteRule = db.prepare('SELECT config_json FROM audit_rules WHERE id = ?').get('outside-workspace-write');
+  const persistedOutsideWriteRule = selectPersistedRule.get('outside-workspace-write');
   const persistedOutsideWriteConfig = parseJson(persistedOutsideWriteRule?.config_json, {});
   if (
     outsideWriteRule
@@ -269,7 +329,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
   ) {
     db.prepare(`
       UPDATE audit_rules
-      SET description = ?, config_json = ?, version = version + 1, updated_at = ?
+      SET description = ?, config_json = ?, version = MAX(version, ?), updated_at = ?
       WHERE id = 'outside-workspace-write'
     `).run(
       outsideWriteRule.description,
@@ -277,6 +337,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
         ...persistedOutsideWriteConfig,
         allowedPaths: outsideWriteRule.config.allowedPaths,
       }),
+      outsideWriteRule.version || 1,
       initializedAt,
     );
   }
@@ -316,7 +377,10 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
         t.status AS tool_status,
         r.name AS rule_name
       FROM audit_findings f
-      JOIN audit_sessions s ON s.session_id = f.session_id AND s.latest_run_id = f.run_id
+      JOIN audit_sessions s
+        ON s.session_id = f.session_id
+        AND s.latest_run_id = f.run_id
+        AND s.source_present = 1
       LEFT JOIN audit_tool_calls t ON t.id = f.tool_call_id
       LEFT JOIN audit_rules r ON r.id = f.rule_id
       ORDER BY
@@ -483,11 +547,13 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     const requestedIds = Array.isArray(payload.sessionIds)
       ? new Set(payload.sessionIds.map((entry) => String(entry)).filter(Boolean))
       : null;
-    const snapshots = (await Promise.resolve(getLocalSessions()))
-      .filter((session) => session && session.agentMode !== 'remote-direct')
+    const localSnapshots = (await Promise.resolve(getLocalSessions()))
+      .filter((session) => session && session.agentMode !== 'remote-direct');
+    const snapshots = localSnapshots
       .filter((session) => !requestedIds || requestedIds.has(session.id))
       .filter((session) => payload.scopeKind !== 'incremental'
         || (!session.busy && Array.isArray(session.history) && session.history.length > 0));
+    const descendantToolUseIds = collectDescendantToolUseIds(localSnapshots);
     const rules = listRules({ enabledOnly: true });
     const runId = randomUUID();
     const startedAt = Date.now();
@@ -506,7 +572,10 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     try {
       for (let index = 0; index < snapshots.length; index += 1) {
         const session = snapshots[index];
-        const normalized = normalizeLocalAuditSession(session);
+        const normalized = excludeDescendantToolCalls(
+          normalizeLocalAuditSession(session),
+          descendantToolUseIds.get(session.id),
+        );
         const findings = evaluateLocalAuditSession(session, normalized, rules);
         const auditedAt = Date.now();
         db.exec('BEGIN');
@@ -646,12 +715,41 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     });
   }
 
+  function reconcileSourcePresence(snapshots) {
+    const sessionIds = [...new Set(snapshots.map((session) => String(session?.id || '').trim()).filter(Boolean))];
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    db.exec('BEGIN');
+    try {
+      const hidden = sessionIds.length > 0
+        ? db.prepare(`
+            UPDATE audit_sessions
+            SET source_present = 0
+            WHERE source_present = 1 AND session_id NOT IN (${placeholders})
+          `).run(...sessionIds)
+        : db.prepare('UPDATE audit_sessions SET source_present = 0 WHERE source_present = 1').run();
+      const restored = sessionIds.length > 0
+        ? db.prepare(`
+            UPDATE audit_sessions
+            SET source_present = 1
+            WHERE source_present = 0 AND session_id IN (${placeholders})
+          `).run(...sessionIds)
+        : { changes: 0 };
+      db.exec('COMMIT');
+      return Number(hidden.changes || 0) + Number(restored.changes || 0);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   async function runIncrementalAudit() {
     if (scheduledRunCount > 0) return { ok: true, skipped: true, reason: 'busy', sessionCount: 0 };
-    const snapshots = (await Promise.resolve(getLocalSessions()))
-      .filter((session) => session && session.agentMode !== 'remote-direct')
+    const localSnapshots = (await Promise.resolve(getLocalSessions()))
+      .filter((session) => session && session.agentMode !== 'remote-direct');
+    const snapshots = localSnapshots
       .filter((session) => !session.busy && Array.isArray(session.history) && session.history.length > 0);
     if (scheduledRunCount > 0) return { ok: true, skipped: true, reason: 'busy', sessionCount: 0 };
+    const sourcePresenceChanges = reconcileSourcePresence(localSnapshots);
 
     const getAuditedSession = db.prepare(`
       SELECT source_updated_at, event_count
@@ -668,6 +766,9 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       .map((session) => session.id);
 
     if (sessionIds.length === 0) {
+      if (sourcePresenceChanges > 0) {
+        onChanged({ reason: 'sources-reconciled', updatedCount: sourcePresenceChanges });
+      }
       return { ok: true, skipped: true, reason: 'unchanged', sessionCount: 0 };
     }
     return runAudit({ sessionIds, scopeKind: 'incremental' });

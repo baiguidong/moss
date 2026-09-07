@@ -13,7 +13,7 @@ import type {
 import {
   getPlanSlugCache,
   getSessionId,
-  getSessionProjectDir,
+  getSessionEngineDir,
 } from '../bootstrap/state.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
 import { getCwd } from './cwd.js'
@@ -108,9 +108,9 @@ export const getPlansDirectory = memoize(
       }
     } else {
       // Default
-      const sessionProjectDir = getSessionProjectDir()
-      plansPath = sessionProjectDir
-        ? join(sessionProjectDir, getSessionId(), 'plans')
+      const sessionEngineDir = getSessionEngineDir()
+      plansPath = sessionEngineDir
+        ? join(sessionEngineDir, getSessionId(), 'plans')
         : join(getMossConfigHomeDir(), 'plans')
     }
 
@@ -127,7 +127,7 @@ export const getPlansDirectory = memoize(
     const settings = getInitialSettings()
     return [
       settings.plansDirectory ?? '',
-      getSessionProjectDir() ?? '',
+      getSessionEngineDir() ?? '',
       getSessionId(),
       getCwd(),
     ].join('\0')

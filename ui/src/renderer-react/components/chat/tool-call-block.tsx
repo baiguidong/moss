@@ -411,7 +411,7 @@ export function ToolCallBlock({
       data-tool-use-id={toolCall.toolUseId}
       className={cn(
         TOOL_CALL_FRAME_CLASS_NAME,
-        focused && "ring-1 ring-[color:var(--color-repl-fg)]/20",
+        focused && "scroll-mt-16 bg-primary/5 ring-2 ring-primary/70",
       )}
     >
       <div

@@ -10,7 +10,7 @@
  */
 
 import { dirname, join } from 'path'
-import { getSessionId, getSessionProjectDir } from 'src/bootstrap/state.js'
+import { getSessionEngineDir, getSessionId } from 'src/bootstrap/state.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -148,9 +148,9 @@ export function isDetailedProfilingEnabled(): boolean {
 }
 
 export function getStartupPerfLogPath(): string {
-  const sessionProjectDir = getSessionProjectDir()
-  return sessionProjectDir
-    ? join(sessionProjectDir, getSessionId(), 'logs', 'startup-perf.txt')
+  const sessionEngineDir = getSessionEngineDir()
+  return sessionEngineDir
+    ? join(sessionEngineDir, getSessionId(), 'logs', 'startup-perf.txt')
     : join(getMossConfigHomeDir(), 'startup-perf', `${getSessionId()}.txt`)
 }
 

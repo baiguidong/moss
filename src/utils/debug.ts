@@ -1,7 +1,7 @@
 import { appendFile, mkdir, symlink, unlink } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
 import { dirname, join } from 'path'
-import { getSessionId, getSessionProjectDir } from 'src/bootstrap/state.js'
+import { getSessionEngineDir, getSessionId } from 'src/bootstrap/state.js'
 
 import { type BufferedWriter, createBufferedWriter } from './bufferedWriter.js'
 import { registerCleanup } from './cleanupRegistry.js'
@@ -231,9 +231,9 @@ export function getDebugLogPath(): string {
     return explicitPath
   }
 
-  const sessionProjectDir = getSessionProjectDir()
-  return sessionProjectDir
-    ? join(sessionProjectDir, getSessionId(), 'logs', 'debug.txt')
+  const sessionEngineDir = getSessionEngineDir()
+  return sessionEngineDir
+    ? join(sessionEngineDir, getSessionId(), 'logs', 'debug.txt')
     : join(getMossConfigHomeDir(), 'logs', 'debug', `${getSessionId()}.txt`)
 }
 

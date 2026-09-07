@@ -15,6 +15,7 @@ import {
 import type { z } from 'zod/v4'
 import {
   getOriginalCwd,
+  getSessionEngineDir,
   getSessionId,
 } from '../../bootstrap/state.js'
 import { getAdvancedSetting } from '../../services/advancedSettings.js'
@@ -301,7 +302,7 @@ function isSessionPlanFile(absolutePath: string): boolean {
 export function getSessionMemoryDir(): string {
   return (
     join(
-      getSessionProjectDir() ?? getProjectDir(getCwd()),
+      getSessionEngineDir() ?? getProjectDir(getCwd()),
       getSessionId(),
       'session-memory',
     ) + sep
@@ -325,15 +326,15 @@ function isSessionMemoryPath(absolutePath: string): boolean {
 
 /**
  * Check if file is within the current session storage directory.
- * Path format: sessionProjectDir when present, otherwise
+ * Path format: sessionEngineDir when present, otherwise
  * ~/.moss/projects/{sanitized-cwd}/...
  */
-function isProjectDirPath(absolutePath: string): boolean {
-  const projectDir = getSessionProjectDir() ?? getProjectDir(getCwd())
+function isSessionEngineDirPath(absolutePath: string): boolean {
+  const engineDir = getSessionEngineDir() ?? getProjectDir(getCwd())
   // SECURITY: Normalize to prevent path traversal bypasses via .. segments
   const normalizedPath = normalize(absolutePath)
   return (
-    normalizedPath === projectDir || normalizedPath.startsWith(projectDir + sep)
+    normalizedPath === engineDir || normalizedPath.startsWith(engineDir + sep)
   )
 }
 
@@ -1693,7 +1694,7 @@ export function checkReadableInternalPath(
   }
 
   // Current session storage directory (for session memory, transcripts, etc.)
-  if (isProjectDirPath(normalizedPath)) {
+  if (isSessionEngineDirPath(normalizedPath)) {
     return {
       behavior: 'allow',
       updatedInput: input,

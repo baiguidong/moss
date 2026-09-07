@@ -19,7 +19,7 @@ import {
 import { join } from 'path'
 import {
   getOriginalCwd,
-  getSessionProjectDir,
+  getSessionEngineDir,
 } from '../../bootstrap/state.js'
 import { getAutoMemPath } from '../../memdir/paths.js'
 import { logForDebugging } from '../../utils/debug.js'
@@ -231,7 +231,7 @@ export async function listSessionsTouchedSince(
   const [activitySessions, transcriptSessions] = await Promise.all([
     listActivityMarkersSince(sinceMs),
     listCandidates(
-      getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+      getSessionEngineDir() ?? getProjectDir(getOriginalCwd()),
       true,
     )
       .then(candidates => candidates

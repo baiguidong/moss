@@ -34,7 +34,7 @@ export type TaskScope =
 
 type SessionIdContext = {
   sessionId: SessionId
-  projectDir?: string | null
+  engineDir?: string | null
   taskScope?: TaskScope
   environment?: Record<string, string>
 }
@@ -45,8 +45,8 @@ export function getSessionIdContext(): SessionId | undefined {
   return sessionIdStorage.getStore()?.sessionId
 }
 
-export function getSessionProjectDirContext(): string | null | undefined {
-  return sessionIdStorage.getStore()?.projectDir
+export function getSessionEngineDirContext(): string | null | undefined {
+  return sessionIdStorage.getStore()?.engineDir
 }
 
 export function getTaskScopeContext(): TaskScope | undefined {
@@ -69,12 +69,12 @@ export function setTaskScopeContext(taskScope: TaskScope | undefined): void {
 
 export function runWithSessionIdContext<T>(
   sessionId: SessionId,
-  projectDir: string | null | undefined,
+  engineDir: string | null | undefined,
   fn: () => T,
   taskScope?: TaskScope,
   environment?: Record<string, string>,
 ): T {
-  return sessionIdStorage.run({ sessionId, projectDir, taskScope, environment }, fn)
+  return sessionIdStorage.run({ sessionId, engineDir, taskScope, environment }, fn)
 }
 
 function runWithExistingSessionIdContext<T>(
@@ -109,12 +109,17 @@ async function* runGeneratorWithSessionContext<T, TReturn>(
 
 export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
   sessionId: SessionId,
-  projectDir: string | null | undefined,
+  engineDir: string | null | undefined,
   fn: () => AsyncGenerator<T, TReturn, unknown>,
   taskScope?: TaskScope,
   environment?: Record<string, string>,
 ): AsyncGenerator<T, TReturn, unknown> {
-  const context: SessionIdContext = { sessionId, projectDir, taskScope, environment }
+  const context: SessionIdContext = {
+    sessionId,
+    engineDir,
+    taskScope,
+    environment,
+  }
   yield* runGeneratorWithSessionContext(context, fn)
 }
 
