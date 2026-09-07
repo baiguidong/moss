@@ -284,7 +284,7 @@ export function ComposerResourceSelectionArea({
         <div className="space-y-1">
           {activeTab === 'assistants' ? filteredAssistants.map((assistant) => (
             <ResourceRow
-              key={assistant.name}
+              key={`assistant:${assistant.name}`}
               selected={selectedAssistant?.name === assistant.name}
               icon={<AssistantAvatar assistant={assistant} className="h-4 w-4" />}
               title={assistant.displayName || assistant.name}
@@ -297,7 +297,7 @@ export function ComposerResourceSelectionArea({
             />
           )) : activeTab === 'skills' ? filteredSkills.map((skill) => (
             <ResourceRow
-              key={skill.name}
+              key={`skill:${skill.name}`}
               selected={selectedSkillNames.has(skill.name)}
               icon={<SkillIcon skill={skill} className="h-4 w-4" />}
               title={skill.displayName || skill.name}
@@ -306,7 +306,7 @@ export function ComposerResourceSelectionArea({
             />
           )) : filteredConnectors.map((connector) => (
             <ResourceRow
-              key={connector.id}
+              key={`connector:${connector.id}`}
               selected={selectedConnectors.has(connector.id)}
               icon={<ConnectorIcon connector={connector} className="h-4 w-4" />}
               title={connector.name}

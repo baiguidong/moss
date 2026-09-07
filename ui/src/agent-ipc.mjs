@@ -239,17 +239,19 @@ function findAssistantDir(name) {
 
 async function getInstalledAssistants() {
   const assistants = [];
+  const seenAssistantNames = new Set();
 
   for (const { dir: baseDir, category: fallbackCategory, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {
     const dirs = await scanAssistantDirs(baseDir, reservedNames);
     for (const assistantDir of dirs) {
       const dirName = path.basename(assistantDir);
       const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
+      let assistant;
       try {
         const metaContent = await fsp.readFile(metaPath, 'utf-8');
         const meta = JSON.parse(metaContent);
         const category = getAssistantCategory(meta, fallbackCategory);
-        assistants.push({
+        assistant = {
           name: meta.name || dirName,
           displayName: meta.display_name || meta.name || dirName,
           description: meta.description || '',
@@ -265,10 +267,10 @@ async function getInstalledAssistants() {
           enabled: meta.enabled !== false,
           skills: meta.skills || [],
           enabledSkills: meta.enabledSkills || [],
-        });
+        };
       } catch {
         const category = fallbackCategory;
-        assistants.push({
+        assistant = {
           name: dirName,
           displayName: dirName,
           description: '',
@@ -284,8 +286,14 @@ async function getInstalledAssistants() {
           enabled: true,
           skills: [],
           enabledSkills: [],
-        });
+        };
       }
+
+      // The root directory supersedes the legacy system/hub/custom directories.
+      // Keep the first logical assistant so an upgrade cannot expose both copies.
+      if (seenAssistantNames.has(assistant.name)) continue;
+      seenAssistantNames.add(assistant.name);
+      assistants.push(assistant);
     }
   }
 

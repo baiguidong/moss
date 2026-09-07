@@ -50,8 +50,16 @@ export const AssistantAvatar: React.FC<{
 };
 
 export function getSelectableInstalledAssistants(assistants: InstalledAssistant[]) {
-  return assistants
-    .filter((assistant) => assistant.enabled !== false)
+  const uniqueAssistants = Array.from(
+    assistants.reduce((byName, assistant) => {
+      if (assistant.enabled !== false && !byName.has(assistant.name)) {
+        byName.set(assistant.name, assistant);
+      }
+      return byName;
+    }, new Map<string, InstalledAssistant>()).values(),
+  );
+
+  return uniqueAssistants
     .sort((a, b) => {
       if (a.name === 'cowork') return -1;
       if (b.name === 'cowork') return 1;
