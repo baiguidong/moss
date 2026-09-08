@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   updateSettings: (payload) => ipcRenderer.invoke('agent:update-settings', payload),
+  agentMail: {
+    getStatus: () => ipcRenderer.invoke('agent-mail:get-status'),
+    listPending: () => ipcRenderer.invoke('agent-mail:list-pending'),
+    onStatusChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('agent-mail:status-changed', handler);
+      return () => ipcRenderer.off('agent-mail:status-changed', handler);
+    },
+  },
   authenticateRemoteServer: (payload) => ipcRenderer.invoke('agent:remote-authenticate', payload),
   cancelRemoteServerAuthentication: () => ipcRenderer.invoke('agent:remote-authenticate-cancel'),
   listMcpServers: () => ipcRenderer.invoke('agent:mcp-list'),

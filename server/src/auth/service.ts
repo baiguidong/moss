@@ -48,11 +48,19 @@ function defaultScopesForRole(role: string): string[] {
       'sessions:create',
       'sessions:attach',
       'sessions:list',
+      'agent-mail:send',
+      'agent-mail:receive',
       'admin:users',
       'admin:api_keys',
     ]
   }
-  return ['sessions:create', 'sessions:attach', 'sessions:list']
+  return [
+    'sessions:create',
+    'sessions:attach',
+    'sessions:list',
+    'agent-mail:send',
+    'agent-mail:receive',
+  ]
 }
 
 const DEFAULT_SCOPES_FOR_USER_ROLE = defaultScopesForRole('user')
@@ -258,10 +266,19 @@ export class AuthService {
       throw new AuthServiceError(401, 'API key owner is invalid')
     }
 
+    // Browser OAuth keys are managed login credentials, so their scopes track
+    // the user's current role. Explicitly created API keys remain fixed-scope.
+    const oauthIdentity = this.db.getOAuthIdentityByApiKeyId(apiKey.id)
+    const scopes = oauthIdentity?.providerId === 'moss-server'
+      ? defaultScopesForRole(user.role)
+      : apiKey.scopes
+    if (oauthIdentity && JSON.stringify(scopes) !== JSON.stringify(apiKey.scopes)) {
+      this.db.updateApiKeyScopes(apiKey.id, scopes)
+    }
     this.db.updateApiKeyLastUsed(apiKey.id)
     return this.issueToken({
       user,
-      scopes: apiKey.scopes,
+      scopes,
       keyId: apiKey.id,
     })
   }
@@ -844,7 +861,7 @@ export class AuthService {
     auth: AuthContext,
     scope: string,
   ): void {
-    if (!hasScope(auth.scopes, scope)) {
+    if (!this.hasEffectiveScope(auth, scope)) {
       throw new AuthServiceError(403, `Missing scope: ${scope}`)
     }
   }
@@ -853,9 +870,22 @@ export class AuthService {
     auth: AuthContext,
     scopes: string[],
   ): void {
-    if (!scopes.some(scope => hasScope(auth.scopes, scope))) {
+    if (!scopes.some(scope => this.hasEffectiveScope(auth, scope))) {
       throw new AuthServiceError(403, `Missing any scope: ${scopes.join(', ')}`)
     }
+  }
+
+  private hasEffectiveScope(auth: AuthContext, scope: string): boolean {
+    if (hasScope(auth.scopes, scope)) return true
+    const identity = this.db.getOAuthIdentityByApiKeyId(auth.keyId)
+    if (
+      identity?.providerId !== 'moss-server' ||
+      identity.userId !== auth.userId
+    ) {
+      return false
+    }
+    const user = this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
+    return Boolean(user?.status === 'active' && hasScope(defaultScopesForRole(user.role), scope))
   }
 
   private issueToken(input: {

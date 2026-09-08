@@ -5,6 +5,7 @@ import {
   LayoutGrid,
   Monitor,
   MessageSquareText,
+  Mail,
   MoonStar,
   PenSquare,
   PanelLeftClose,
@@ -59,8 +60,8 @@ export interface SidebarSession {
   agentMode?: 'local' | 'remote-direct';
   projectId?: string | null;
   projectName?: string | null;
-  sessionKind?: 'chat' | 'cron';
-  originChannel?: 'desktop' | 'feishu' | 'cron';
+  sessionKind?: 'chat' | 'cron' | 'agent-mail';
+  originChannel?: 'desktop' | 'feishu' | 'cron' | 'agent-mail';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
@@ -339,6 +340,7 @@ export function AppSidebar({
   const projectTrees = groupProjectSessionTrees(displaySessions);
   const sessionGroupIcons = {
     feishu: Bot,
+    'agent-mail': Mail,
     chat: MessageSquareText,
     cron: AlarmClock,
     project: FolderKanban,

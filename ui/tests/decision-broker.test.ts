@@ -121,4 +121,21 @@ describe('decision broker', () => {
     expect(result.plan.status).toBe('pending');
     expect(result.notifications.find((entry: any) => entry.id === result.tool.notificationId)?.decisionRequestId).toBeUndefined();
   });
+
+  it('restores and expires durable Agent Mail approvals after restart', () => {
+    const result = runScenario(`
+      store.createDecision({
+        id: 'mail-decision', sessionId: 'mail-session', kind: 'agent_mail_approval',
+        mobileTitle: 'Agent Mail', mobileSummary: 'Waiting', actionTokenHash: 'hash',
+        payload: { messageId: 'mail-1' }, expiresAt: 999,
+      });
+      const broker = createDecisionBroker({
+        store, notificationBroker: notifications, getSigningSecret: () => 'secret', now: () => 1000,
+      });
+      const restored = await broker.restorePending();
+      console.log(JSON.stringify({ restored, decision: store.getDecision('mail-decision') }));
+    `);
+    expect(result.restored).toBe(1);
+    expect(result.decision.status).toBe('expired');
+  });
 });

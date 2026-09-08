@@ -106,12 +106,14 @@ describe('direct embedded backend model settings', () => {
     const eventUrl = 'file:///tmp/welcome.html'
     let createdWorkspaceDirectories: string[] | undefined
     let createdEnvironment: Record<string, string> | undefined
+    let createdAgentMailEnabled: boolean | undefined
 
     class FakeSession {
       constructor(
         private readonly options: {
           workspaceDirectories?: string[]
           environment?: Record<string, string>
+          agentMailEnabled?: boolean
           onAppEvent?: (event: {
             type: string
             input?: Record<string, unknown>
@@ -120,6 +122,7 @@ describe('direct embedded backend model settings', () => {
       ) {
         createdWorkspaceDirectories = options.workspaceDirectories
         createdEnvironment = options.environment
+        createdAgentMailEnabled = options.agentMailEnabled
       }
 
       async *send(
@@ -160,6 +163,7 @@ describe('direct embedded backend model settings', () => {
         workspaceDir: join(tempRoot, 'workspace'),
       },
       systemSettings: makeSettings({}),
+      scopes: ['sessions:create', 'agent-mail:send'],
       advancedSettings: {
         moss_auto_background_agents: true,
         moss_bash_ast_permissions: true,
@@ -203,6 +207,7 @@ describe('direct embedded backend model settings', () => {
       expect(createdWorkspaceDirectories).toEqual([
         join(tempRoot, 'workspace'),
       ])
+      expect(createdAgentMailEnabled).toBe(true)
       expect(createdEnvironment?.MOSS_CONFIG_DIR).toBe(
         join(tempRoot, 'profile'),
       )

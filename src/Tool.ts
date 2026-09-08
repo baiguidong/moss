@@ -319,6 +319,9 @@ export type MossAppEvent =
   | { type: 'connector_mcp_authenticate'; input: MossConnectorMcpAuthenticateInput }
   | { type: 'image_generate'; input: MossImageGenerateInput }
   | { type: 'image_edit'; input: MossImageEditInput }
+  | { type: 'agent_mail_search'; input: MossAgentMailSearchInput }
+  | { type: 'agent_mail_send'; input: MossAgentMailSendInput }
+  | { type: 'agent_mail_list_outbox'; input: MossAgentMailListOutboxInput }
 
 export type MossAppBuildInput = {
   kind?: 'app'
@@ -396,6 +399,22 @@ export type MossImageEditInput = {
   out_path: string
 }
 
+export type MossAgentMailSearchInput = {
+  query?: string
+}
+
+export type MossAgentMailSendInput = {
+  to_user_id?: string
+  subject?: string
+  content: string
+  reply_to?: string
+  client_message_id: string
+}
+
+export type MossAgentMailListOutboxInput = {
+  limit?: number
+}
+
 export type MossAppEventResult =
   | {
       ok: true
@@ -420,6 +439,10 @@ export type MossAppEventResult =
       auth?: unknown
       steps?: unknown[]
       message?: string
+      recipients?: unknown[]
+      mail?: unknown
+      duplicate?: boolean
+      messages?: unknown[]
     }
   | { ok: false; error: string }
 

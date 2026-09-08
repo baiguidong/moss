@@ -11,6 +11,7 @@ import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
+import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { mergeAndFilterTools } from './utils/toolPool.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
@@ -306,6 +307,8 @@ export interface ClaudeSessionOptions {
   coordinatorMode?: boolean
   /** App 事件回调，用于 MossTool 保存/打开 app */
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  /** Dynamically expose authenticated Moss Server Agent Mail operations. */
+  agentMailEnabled?: boolean
   /** 恢复后的 transcript session ID */
   sessionId?: string
   /** resume 后直接喂给 QueryEngine 的消息 */
@@ -347,6 +350,7 @@ type ResolvedClaudeSessionOptions = {
   thinkingConfig: ThinkingConfig
   coordinatorMode: boolean
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  agentMailEnabled: boolean
   sessionId?: string
   initialMessages?: Message[]
   projectDir?: string | null
@@ -589,6 +593,7 @@ export class ClaudeSession {
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
+      agentMailEnabled: opts.agentMailEnabled === true,
       sessionId: opts.sessionId,
       initialMessages: opts.initialMessages,
       // 始终显式解析 projectDir, 避免并发多会话时 getTranscriptPath()
@@ -843,7 +848,8 @@ export class ClaudeSession {
     const computeTools = () => {
       const state = store.getState()
       const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
-      return mergeAndFilterTools([], assembled, state.toolPermissionContext.mode)
+      const dynamicTools = this.#opts.agentMailEnabled ? [MossMailTool] : []
+      return mergeAndFilterTools(dynamicTools, assembled, state.toolPermissionContext.mode)
     }
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {

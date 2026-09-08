@@ -51,6 +51,7 @@ type DirectSessionOptions = {
     request: DirectPermissionRequest,
   ) => Promise<DirectPermissionDecision>
   onAppEvent?: (event: DirectAppEvent) => Promise<DirectAppEventResult>
+  agentMailEnabled?: boolean
   maxTurns?: number
   thinkingConfig?: unknown
   coordinatorMode?: boolean
@@ -698,6 +699,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
         }
         return handle.emitAppEvent(event)
       },
+      agentMailEnabled: options.scopes?.includes('agent-mail:send') === true,
     }
 
     let session: DirectSession

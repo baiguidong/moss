@@ -159,6 +159,17 @@ export function createDecisionBroker({
   return {
     create,
     respond,
+    async restorePending() {
+      const pending = store.listPendingDecisions();
+      for (const decision of pending) {
+        if (decision.expiresAt && decision.expiresAt <= now()) {
+          await expire(decision.id, '等待确认已超时。');
+        } else {
+          scheduleExpiration(decision);
+        }
+      }
+      return pending.length;
+    },
     get(id) {
       return store.getDecision(id);
     },

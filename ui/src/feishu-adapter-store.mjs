@@ -134,12 +134,12 @@ export function createFeishuAdapterStore(db, { now = () => Date.now() } = {}) {
   db.prepare(`
     UPDATE decision_requests
     SET status = 'expired', error = 'Moss exited before this decision was resolved.', updated_at = ?
-    WHERE status IN ('pending', 'resolving') AND kind <> 'plan_approval'
+    WHERE status IN ('pending', 'resolving') AND kind NOT IN ('plan_approval', 'agent_mail_approval')
   `).run(now());
   db.prepare(`
     UPDATE decision_requests
     SET status = 'pending', resolution_source = NULL, updated_at = ?
-    WHERE status = 'resolving' AND kind = 'plan_approval'
+    WHERE status = 'resolving' AND kind IN ('plan_approval', 'agent_mail_approval')
   `).run(now());
   db.prepare(`
     UPDATE app_notifications

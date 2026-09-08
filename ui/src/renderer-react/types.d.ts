@@ -31,8 +31,8 @@ export type SessionSummary = {
   projectConclusion?: string;
   projectMemoryVersion?: number;
   connectorIds?: string[];
-  sessionKind?: 'chat' | 'cron';
-  originChannel?: 'desktop' | 'feishu' | 'cron';
+  sessionKind?: 'chat' | 'cron' | 'agent-mail';
+  originChannel?: 'desktop' | 'feishu' | 'cron' | 'agent-mail';
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
@@ -455,6 +455,11 @@ export type DesktopSettings = {
   expertHub?: {
     baseUrl?: string;
   };
+  agentMail?: {
+    enabled?: boolean;
+    consumerId?: string;
+    inboxSessionId?: string;
+  };
   remoteDirect?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
@@ -722,7 +727,7 @@ export type AuditSessionRecord = {
   workspace: string;
   projectId: string | null;
   assistantName: string | null;
-  sessionKind: 'chat' | 'cron';
+  sessionKind: 'chat' | 'cron' | 'agent-mail';
   isSubAgent: boolean;
   sourceCreatedAt: number;
   sourceUpdatedAt: number;
@@ -846,6 +851,21 @@ declare global {
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
       updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
+      agentMail: {
+        getStatus: () => Promise<{
+          state: 'stopped' | 'disabled' | 'polling' | 'standby' | 'error';
+          error: string | null;
+          serverUrl: string;
+          pendingManual: number;
+        }>;
+        listPending: () => Promise<Array<Record<string, unknown>>>;
+        onStatusChanged: (callback: (payload: {
+          state: string;
+          error: string | null;
+          serverUrl: string;
+          pendingManual: number;
+        }) => void) => () => void;
+      };
       authenticateRemoteServer: (payload: { serverUrl: string }) => Promise<DesktopSettings>;
       cancelRemoteServerAuthentication: () => Promise<{ canceled: boolean }>;
       listMcpServers: () => Promise<McpSettingsPayload>;

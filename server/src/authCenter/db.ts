@@ -693,6 +693,12 @@ export class AuthCenterDb {
     `).run(now(), id)
   }
 
+  updateApiKeyScopes(id: string, scopes: string[]): void {
+    this.db.prepare(`
+      UPDATE api_keys SET scopes_json = ? WHERE id = ?
+    `).run(JSON.stringify(scopes), id)
+  }
+
   revokeApiKey(id: string): void {
     this.db.prepare(`
       UPDATE api_keys SET status = 'revoked' WHERE id = ?
@@ -706,6 +712,13 @@ export class AuthCenterDb {
       WHERE provider_id = ? AND subject = ?
       LIMIT 1
     `).get(providerId, subject) as SqlRow | undefined
+    return row ? mapOAuthIdentity(row) : null
+  }
+
+  getOAuthIdentityByApiKeyId(apiKeyId: string): AuthCenterOAuthIdentity | null {
+    const row = this.db.prepare(`
+      SELECT * FROM oauth_identities WHERE api_key_id = ? LIMIT 1
+    `).get(apiKeyId) as SqlRow | undefined
     return row ? mapOAuthIdentity(row) : null
   }
 

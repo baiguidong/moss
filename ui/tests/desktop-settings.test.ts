@@ -18,6 +18,25 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {
+    expect(normalizeDesktopSettings({}).agentMail).toEqual({
+      enabled: false,
+      consumerId: '',
+      inboxSessionId: '',
+    });
+    expect(normalizeDesktopSettings({
+      agentMail: {
+        enabled: true,
+        consumerId: `  ${'x'.repeat(140)}  `,
+        inboxSessionId: ' inbox-session ',
+      },
+    }).agentMail).toEqual({
+      enabled: true,
+      consumerId: 'x'.repeat(128),
+      inboxSessionId: 'inbox-session',
+    });
+  });
+
   it('normalizes legacy and structured model settings into one runtime shape', () => {
     const settings = normalizeDesktopSettings({
       models: {

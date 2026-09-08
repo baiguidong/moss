@@ -30,7 +30,7 @@ import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpSer
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type SectionId = 'basic-info' | 'model' | 'agent-mail' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -195,6 +195,11 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     iconGradientClassName: 'from-lime-400 to-emerald-600',
     keywords: ['扩展', '集成', 'integration'],
     sections: [
+      {
+        id: 'agent-mail',
+        title: 'Agent Mail',
+        keywords: ['agent mail', 'mail', '邮箱', '邮件', 'agent 通讯', 'moss server'],
+      },
       {
         id: 'mcp',
         title: 'MCP',
@@ -1102,6 +1107,69 @@ function RuntimeSettings({
   );
 }
 
+function AgentMailSettings({
+  settingsDraft,
+  updateSetting,
+}: {
+  settingsDraft: DesktopSettings;
+  updateSetting: <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => void;
+}) {
+  const [status, setStatus] = React.useState<{
+    state: string;
+    error: string | null;
+    serverUrl: string;
+    pendingManual: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    void window.agentDesktop.agentMail.getStatus().then((next) => {
+      if (mounted) setStatus(next);
+    });
+    const dispose = window.agentDesktop.agentMail.onStatusChanged((next) => {
+      if (mounted) setStatus(next);
+    });
+    return () => {
+      mounted = false;
+      dispose();
+    };
+  }, []);
+
+  const statusText = {
+    stopped: '已停止',
+    disabled: '未启用',
+    polling: '运行中',
+    standby: '其他客户端运行中',
+    error: '连接异常',
+  }[status?.state || 'stopped'] || status?.state || '未知';
+
+  return (
+    <SettingsGroup>
+      <SettingsRow title="启用 Agent Mail" controlClassName="sm:w-[56px]">
+        <div className="flex justify-start sm:justify-end">
+          <Toggle
+            checked={settingsDraft.agentMail?.enabled === true}
+            onCheckedChange={(enabled) => updateSetting('agentMail', {
+              ...settingsDraft.agentMail,
+              enabled,
+            })}
+            label="启用 Agent Mail"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow title="状态" controlClassName="sm:w-[260px]">
+        <div className="text-left text-xs text-muted-foreground sm:text-right">
+          <span className={status?.state === 'polling' ? 'text-emerald-600 dark:text-emerald-300' : ''}>
+            {statusText}
+          </span>
+          {status?.pendingManual ? ` · ${status.pendingManual} 封待确认` : ''}
+          {status?.error ? <div className="mt-1 break-words text-destructive">{status.error}</div> : null}
+        </div>
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
 export function SettingsView({
   settingsDraft,
   setSettingsDraft,
@@ -1126,6 +1194,7 @@ export function SettingsView({
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     'basic-info': null,
     model: null,
+    'agent-mail': null,
     mcp: null,
     feishu: null,
     appearance: null,
@@ -2203,6 +2272,21 @@ export function SettingsView({
                         </div>
                       </SettingsRow>
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'agent-mail') ? (
+                  <SettingsSection
+                    id="agent-mail"
+                    title="Agent Mail"
+                    sectionRef={(element) => {
+                      sectionRefs.current['agent-mail'] = element;
+                    }}
+                  >
+                    <AgentMailSettings
+                      settingsDraft={settingsDraft}
+                      updateSetting={updateSetting}
+                    />
                   </SettingsSection>
                 ) : null}
 

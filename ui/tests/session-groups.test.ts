@@ -9,9 +9,10 @@ import {
 } from '../src/renderer-react/lib/session-groups';
 
 describe('sidebar session groups', () => {
-  it('separates Feishu, normal, cron, and project sessions', () => {
+  it('separates Feishu, Agent Mail, normal, cron, and project sessions', () => {
     const groups = groupSidebarSessions([
       { id: 'feishu', originChannel: 'feishu' as const },
+      { id: 'mail', sessionKind: 'agent-mail' as const, originChannel: 'agent-mail' as const },
       { id: 'normal' },
       { id: 'project', projectId: 'project-1' },
       { id: 'cron', sessionKind: 'cron' as const },
@@ -20,6 +21,7 @@ describe('sidebar session groups', () => {
 
     expect(groups.map((group) => [group.id, group.sessions.map((session) => session.id)])).toEqual([
       ['feishu', ['feishu']],
+      ['agent-mail', ['mail']],
       ['chat', ['normal']],
       ['cron', ['cron', 'project-cron']],
       ['project', ['project']],

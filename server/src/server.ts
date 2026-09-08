@@ -29,6 +29,8 @@ import { jsonParse, jsonStringify } from './lib/json.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { handleAppRoute } from './apps/appRoutes.js'
 import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
+import { AgentMailService } from './agentMail/agentMailService.js'
+import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -686,6 +688,7 @@ export function startServer(
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
   const adapterProcessManager = new AdapterProcessManager(runtime.store.db, runtime, logger)
+  const agentMailService = new AgentMailService(runtime.store.db)
   const oauthLoginService = new OAuthLoginService(authService)
   void adapterProcessManager.restoreEnabled()
 
@@ -888,10 +891,24 @@ export function startServer(
         return
       }
 
+      if (await handleAgentMailRoute({
+        req,
+        res,
+        url,
+        auth,
+        authService,
+        service: agentMailService,
+      })) {
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/bootstrap') {
         writeJson(res, 200, {
           client_data: null,
           additional_model_options: [],
+          capabilities: {
+            agent_mail: { version: 1 },
+          },
         })
         return
       }
@@ -1594,6 +1611,7 @@ export function startServer(
     port: null,
     ready,
     stop: async () => {
+      agentMailService.dispose()
       await adapterProcessManager.dispose()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {

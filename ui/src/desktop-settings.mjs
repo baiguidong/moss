@@ -84,6 +84,11 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   expertHub: {
     baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
+  agentMail: {
+    enabled: false,
+    consumerId: '',
+    inboxSessionId: '',
+  },
   adapters: { feishu: { runLocation: 'desktop' } },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
@@ -599,6 +604,33 @@ export function normalizeDesktopSettings(input, existing = {}) {
         : existingManagedRuntimes.git !== undefined
           ? Boolean(existingManagedRuntimes.git)
           : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.git,
+  };
+
+  const sourceAgentMail = source.agentMail && typeof source.agentMail === 'object'
+    ? source.agentMail
+    : {};
+  const existingAgentMail = result.agentMail && typeof result.agentMail === 'object'
+    ? result.agentMail
+    : {};
+  result.agentMail = {
+    enabled:
+      sourceAgentMail.enabled !== undefined
+        ? Boolean(sourceAgentMail.enabled)
+        : existingAgentMail.enabled !== undefined
+          ? Boolean(existingAgentMail.enabled)
+          : DEFAULT_DESKTOP_SETTINGS.agentMail.enabled,
+    consumerId:
+      typeof sourceAgentMail.consumerId === 'string'
+        ? sourceAgentMail.consumerId.trim().slice(0, 128)
+        : typeof existingAgentMail.consumerId === 'string'
+          ? existingAgentMail.consumerId.trim().slice(0, 128)
+          : DEFAULT_DESKTOP_SETTINGS.agentMail.consumerId,
+    inboxSessionId:
+      typeof sourceAgentMail.inboxSessionId === 'string'
+        ? sourceAgentMail.inboxSessionId.trim()
+        : typeof existingAgentMail.inboxSessionId === 'string'
+          ? existingAgentMail.inboxSessionId.trim()
+          : DEFAULT_DESKTOP_SETTINGS.agentMail.inboxSessionId,
   };
 
   result.appearance = normalizeAppearance(source.appearance, result.appearance);

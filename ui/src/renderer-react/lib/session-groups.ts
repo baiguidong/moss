@@ -1,4 +1,4 @@
-export type SessionGroupId = 'feishu' | 'chat' | 'cron' | 'project';
+export type SessionGroupId = 'feishu' | 'agent-mail' | 'chat' | 'cron' | 'project';
 
 export type GroupableSession = {
   id: string;
@@ -7,8 +7,8 @@ export type GroupableSession = {
   projectName?: string | null;
   parentSessionId?: string | null;
   isSubAgent?: boolean;
-  sessionKind?: 'chat' | 'cron';
-  originChannel?: 'desktop' | 'feishu' | 'cron';
+  sessionKind?: 'chat' | 'cron' | 'agent-mail';
+  originChannel?: 'desktop' | 'feishu' | 'cron' | 'agent-mail';
 };
 
 export type SessionNode<T> = {
@@ -80,12 +80,19 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       )),
     },
     {
+      id: 'agent-mail' as const,
+      label: 'Agent Mail',
+      sessions: prioritizePinned(sessions.filter(
+        (session) => groupSession(session).sessionKind === 'agent-mail',
+      )),
+    },
+    {
       id: 'chat' as const,
       label: '普通会话',
       sessions: prioritizePinned(sessions.filter(
         (session) => {
           const root = groupSession(session);
-          return root.sessionKind !== 'cron' && root.originChannel !== 'feishu' && !root.projectId;
+          return root.sessionKind !== 'cron' && root.sessionKind !== 'agent-mail' && root.originChannel !== 'feishu' && !root.projectId;
         },
       )),
     },
@@ -100,7 +107,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
       sessions: prioritizePinned(sessions.filter(
         (session) => {
           const root = groupSession(session);
-          return root.sessionKind !== 'cron' && root.originChannel !== 'feishu' && Boolean(root.projectId);
+          return root.sessionKind !== 'cron' && root.sessionKind !== 'agent-mail' && root.originChannel !== 'feishu' && Boolean(root.projectId);
         },
       )),
     },
@@ -110,7 +117,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
 export function groupProjectSessionTrees<T extends GroupableSession>(sessions: T[]): ProjectSessionTree<T>[] {
   const grouped = new Map<string, T[]>();
   for (const session of sessions) {
-    if (session.sessionKind === 'cron' || session.originChannel === 'feishu' || !session.projectId) continue;
+    if (session.sessionKind === 'cron' || session.sessionKind === 'agent-mail' || session.originChannel === 'feishu' || !session.projectId) continue;
     grouped.set(session.projectId, [...(grouped.get(session.projectId) || []), session]);
   }
   return Array.from(grouped.entries()).map(([projectId, entries]) => {
