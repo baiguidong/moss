@@ -67,7 +67,59 @@ export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 // Stop trying autocompact after this many consecutive failures.
 // BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272)
 // in a single session, wasting ~250K API calls/day globally.
-const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+export const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+
+// How many turns after a compaction still counts as an "immediate" re-compaction.
+// query.ts resets turnCounter to 0 on compact and increments it once per turn,
+// so the turn right after a compaction reports turnsSincePreviousCompact === 1.
+const RECOMPACTION_LOOP_TURNS = 1
+
+// A compaction "succeeds" whenever it doesn't throw, but a throw-free compaction
+// can still leave the conversation at/above the threshold — in which case the
+// next turn compacts again, forever. The circuit breaker only ever saw thrown
+// errors, and success reset consecutiveFailures to 0, so this loop was unbounded.
+// Treat an ineffective compaction as a failure so the breaker can stop it.
+export function isCompactionEffective(
+  result: CompactionResult,
+  recompactionInfo: RecompactionInfo,
+): boolean {
+  // Primary signal: the resulting message payload alone already meets/exceeds
+  // the threshold. This is the same estimate as the `willRetriggerNextTurn`
+  // telemetry and reliably catches small context windows, where the post-compact
+  // attachment budget (~50K) dwarfs the shrunken threshold.
+  if (
+    result.truePostCompactTokenCount !== undefined &&
+    result.truePostCompactTokenCount >= recompactionInfo.autoCompactThreshold
+  ) {
+    return false
+  }
+
+  // Backstop: we're compacting again within a turn of the previous compaction.
+  // truePostCompactTokenCount is payload-only and can't see the ~20-40K of
+  // system prompt + tool schemas that also count against the window, so a large
+  // model with heavy fixed overhead can loop while the payload estimate stays
+  // under threshold. An immediate re-compaction is empirical proof the previous
+  // one didn't fit, independent of any estimate.
+  if (
+    recompactionInfo.isRecompactionInChain &&
+    recompactionInfo.turnsSincePreviousCompact >= 0 &&
+    recompactionInfo.turnsSincePreviousCompact <= RECOMPACTION_LOOP_TURNS
+  ) {
+    return false
+  }
+
+  return true
+}
+
+export function nextConsecutiveFailures(
+  result: CompactionResult,
+  recompactionInfo: RecompactionInfo,
+  tracking: AutoCompactTrackingState | undefined,
+): number {
+  return isCompactionEffective(result, recompactionInfo)
+    ? 0
+    : (tracking?.consecutiveFailures ?? 0) + 1
+}
 
 export function getAutoCompactThreshold(model: string): number {
   const effectiveContextWindow = getEffectiveContextWindowSize(model)
@@ -267,6 +319,11 @@ export async function autoCompactIfNeeded(
     return {
       wasCompacted: true,
       compactionResult: sessionMemoryResult,
+      consecutiveFailures: nextConsecutiveFailures(
+        sessionMemoryResult,
+        recompactionInfo,
+        tracking,
+      ),
     }
   }
 
@@ -289,8 +346,13 @@ export async function autoCompactIfNeeded(
     return {
       wasCompacted: true,
       compactionResult,
-      // Reset failure count on success
-      consecutiveFailures: 0,
+      // Reset on an effective compaction; count an ineffective one (still
+      // over threshold / immediate re-compaction) toward the circuit breaker.
+      consecutiveFailures: nextConsecutiveFailures(
+        compactionResult,
+        recompactionInfo,
+        tracking,
+      ),
     }
   } catch (error) {
     if (!hasExactErrorMessage(error, ERROR_MESSAGE_USER_ABORT)) {

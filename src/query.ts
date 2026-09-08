@@ -481,7 +481,10 @@ async function* queryLoop(
         compacted: true,
         turnId: deps.uuid(),
         turnCounter: 0,
-        consecutiveFailures: 0,
+        // Thread the breaker count from autocompact. An ineffective compaction
+        // (still over threshold) returns a non-zero count so a wedged session
+        // stops re-compacting every turn instead of resetting to 0 forever.
+        consecutiveFailures: consecutiveFailures ?? 0,
       }
 
       const postCompactMessages = buildPostCompactMessages(compactionResult)
