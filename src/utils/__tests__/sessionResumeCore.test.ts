@@ -9,7 +9,10 @@ mock.module('color-diff-napi', () => ({
   getSyntaxTheme: () => ({}),
 }))
 
-const { sanitizeMessagesForResume } = await import('../sessionResumeSanitizer.js')
+const {
+  sanitizeMessagesAfterApiFailure,
+  sanitizeMessagesForResume,
+} = await import('../sessionResumeSanitizer.js')
 
 describe('sanitizeMessagesForResume', () => {
   it('drops resume-unsafe Moss image preview payloads and synthetic API errors', () => {
@@ -76,5 +79,74 @@ describe('sanitizeMessagesForResume', () => {
     expect((messages[1] as { message: { content: unknown } }).message.content).toEqual([
       { type: 'text', text: 'No response requested.' },
     ])
+  })
+
+  it('drops signed thinking state after an API failure while preserving visible progress', () => {
+    const thinkingMessage = {
+      type: 'assistant',
+      uuid: 'assistant-thinking',
+      timestamp: '2026-09-10T00:00:00.000Z',
+      message: {
+        id: 'message-1',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '', signature: 'opaque-provider-state' }],
+      },
+    } as Message
+    const progressMessage = {
+      type: 'assistant',
+      uuid: 'assistant-progress',
+      timestamp: '2026-09-10T00:00:01.000Z',
+      message: {
+        id: 'message-1',
+        role: 'assistant',
+        content: [{ type: 'text', text: '已清点根目录。' }],
+      },
+    } as Message
+    const userMessage = {
+      type: 'user',
+      uuid: 'user-continue',
+      timestamp: '2026-09-10T00:00:02.000Z',
+      message: { role: 'user', content: '继续' },
+    } as Message
+    const timeoutMessage = {
+      type: 'assistant',
+      uuid: 'assistant-timeout',
+      timestamp: '2026-09-10T00:00:03.000Z',
+      isApiErrorMessage: true,
+      message: {
+        id: 'synthetic-error',
+        model: '<synthetic>',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Request timed out' }],
+      },
+    } as Message
+
+    const result = sanitizeMessagesAfterApiFailure([
+      thinkingMessage,
+      progressMessage,
+      userMessage,
+      timeoutMessage,
+    ])
+
+    expect(result.removedApiError).toBe(true)
+    expect(result.messages).toEqual([progressMessage, userMessage])
+  })
+
+  it('preserves signed thinking state when the previous turn did not fail', () => {
+    const thinkingMessage = {
+      type: 'assistant',
+      uuid: 'assistant-thinking',
+      timestamp: '2026-09-10T00:00:00.000Z',
+      message: {
+        id: 'message-1',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '', signature: 'opaque-provider-state' }],
+      },
+    } as Message
+
+    const result = sanitizeMessagesAfterApiFailure([thinkingMessage])
+
+    expect(result.removedApiError).toBe(false)
+    expect(result.messages).toEqual([thinkingMessage])
   })
 })

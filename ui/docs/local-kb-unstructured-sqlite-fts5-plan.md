@@ -1,5 +1,12 @@
 # Local Knowledge Base Plan: Unstructured + SQLite FTS5
 
+> Status: Implemented engine prototype and historical design.
+>
+> This document describes the local parser and FTS5 engine. The productization
+> contract that moves lifecycle, UI, project integration, and agent APIs out of
+> Skill ownership is `local-library-productization-plan.md`; its architecture
+> review is `local-library-productization-review.md`.
+
 ## Goal
 
 Build a lightweight local knowledge base for this project using:

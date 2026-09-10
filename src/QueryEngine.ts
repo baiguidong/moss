@@ -74,6 +74,7 @@ import {
 } from './utils/processUserInput/processUserInput.js'
 import { fetchSystemPromptParts } from './utils/queryContext.js'
 import { setCwd } from './utils/Shell.js'
+import { sanitizeMessagesAfterApiFailure } from './utils/sessionResumeSanitizer.js'
 import {
   flushSessionStorage,
   recordTranscript,
@@ -192,6 +193,13 @@ export class QueryEngine {
     prompt: string | ContentBlockParam[],
     options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode },
   ): AsyncGenerator<SDKMessage, void, unknown> {
+    const recoveredMessages = sanitizeMessagesAfterApiFailure(
+      this.mutableMessages,
+    )
+    if (recoveredMessages.removedApiError) {
+      this.mutableMessages = recoveredMessages.messages
+    }
+
     const {
       cwd,
       commands,

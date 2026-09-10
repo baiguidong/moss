@@ -1,7 +1,10 @@
 import { feature } from 'bun:bundle'
 import partition from 'lodash-es/partition.js'
 import uniqBy from 'lodash-es/uniqBy.js'
-import { COORDINATOR_MODE_ALLOWED_TOOLS } from '../constants/tools.js'
+import {
+  CHAT_MODE_DISALLOWED_TOOLS,
+  COORDINATOR_MODE_ALLOWED_TOOLS,
+} from '../constants/tools.js'
 import { isMcpTool } from '../services/mcp/utils.js'
 import type { Tool, ToolPermissionContext, Tools } from '../Tool.js'
 
@@ -38,6 +41,10 @@ export function applyCoordinatorToolFilter(tools: Tools): Tools {
       COORDINATOR_MODE_ALLOWED_TOOLS.has(t.name) ||
       isPrActivitySubscriptionTool(t.name),
   )
+}
+
+export function applyChatToolFilter(tools: Tools): Tools {
+  return tools.filter(tool => !CHAT_MODE_DISALLOWED_TOOLS.has(tool.name))
 }
 
 /**

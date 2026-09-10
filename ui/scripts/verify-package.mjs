@@ -173,6 +173,29 @@ async function extractAndVerifyRuntimes(resourcesDir, platform, arch) {
     if (pythonVersion !== `Python ${MANAGED_RUNTIME_VERSIONS.python}`) {
       throw new Error(`Managed Python version mismatch: ${pythonVersion}`);
     }
+    run(nodeExecutable, [
+      '--no-warnings',
+      '-e',
+      "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(':memory:');d.exec('CREATE VIRTUAL TABLE smoke USING fts5(content)');d.close()",
+    ]);
+    const parserPath = requireFile(
+      path.join(resourcesDir, 'library', 'library_parser.py'),
+      'Library parser',
+    );
+    const parserFixture = path.join(temporary, 'library-smoke.md');
+    await fsp.writeFile(parserFixture, '# Package smoke\n\nmanaged runtime evidence\n', 'utf8');
+    const parserResult = JSON.parse(run(pythonExecutable, [
+      parserPath,
+      'ingest-resource',
+      '--path',
+      parserFixture,
+    ]));
+    if (parserResult.schemaVersion !== 1
+      || parserResult.operation !== 'ingest-resource'
+      || parserResult.ok !== true
+      || !parserResult.payload?.blocks?.[0]?.text?.includes('managed runtime evidence')) {
+      throw new Error('Packaged Library parser smoke test returned an invalid response.');
+    }
 
     if (platform === 'win32') {
       const gitDir = path.join(temporary, 'PortableGit');
@@ -184,7 +207,7 @@ async function extractAndVerifyRuntimes(resourcesDir, platform, arch) {
       }
     }
 
-    return { nodeVersion, pythonVersion };
+    return { nodeVersion, pythonVersion, libraryEngineSmoke: true };
   } finally {
     await fsp.rm(temporary, { recursive: true, force: true });
   }
@@ -354,7 +377,8 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
   requireFile(path.join(paths.resourcesDir, 'shared', 'security', 'credential-crypto.mjs'), 'credential crypto');
-  requireFile(path.join(paths.resourcesDir, 'skills', 'local-kb', 'SKILL.md'), 'local knowledge-base skill');
+  requireFile(path.join(paths.resourcesDir, 'library', 'library_parser.py'), 'Library parser');
+  requireFile(path.join(paths.resourcesDir, 'library', 'engine-manifest.json'), 'Library engine manifest');
   requireFile(path.join(paths.resourcesDir, 'skills', 'convert-skill-to-app', 'SKILL.md'), 'skill-to-app skill');
   requireFile(path.join(paths.resourcesDir, 'assistants', 'app-builder', 'assistant.md'), 'app-builder assistant');
   requireFile(path.join(paths.resourcesDir, 'assistants', 'app-builder', '_moss_meta.json'), 'app-builder metadata');

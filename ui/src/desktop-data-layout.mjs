@@ -29,6 +29,7 @@ export function createDesktopDataPaths(mossHome) {
   const home = path.resolve(mossHome);
   const projectsRoot = path.join(home, 'projects');
   const sessionsRoot = path.join(home, 'sessions');
+  const libraryRoot = path.join(home, 'library');
 
   const projectDir = (projectId) => path.join(
     projectsRoot,
@@ -41,6 +42,8 @@ export function createDesktopDataPaths(mossHome) {
 
   return Object.freeze({
     home,
+    libraryRoot,
+    libraryDbPath: path.join(libraryRoot, 'library.db'),
     projectsRoot,
     sessionsRoot,
     projectDir,

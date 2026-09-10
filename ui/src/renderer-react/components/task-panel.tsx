@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BookOpen,
   CheckCircle2,
   Cloud,
   Circle,
@@ -11,6 +12,7 @@ import {
   Globe2,
   LayoutDashboard,
   ListChecks,
+  RefreshCw,
   Search,
   X,
   FileText,
@@ -20,6 +22,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { BrowserPanel } from "@/components/browser-panel";
 import { FileTree } from "@/components/file-tree";
 import type { FileTreeNode, SessionTask, SessionTaskStatus, WorkspacePreviewData } from "@/types";
@@ -134,6 +142,7 @@ export function TaskPanel({
   projectName,
   browserOpenSignal,
   onBrowserOpen,
+  onSaveFileToLibrary,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -155,8 +164,10 @@ export function TaskPanel({
   projectName?: string | null;
   browserOpenSignal?: number;
   onBrowserOpen?: () => void;
+  onSaveFileToLibrary?: (path: string, target?: 'personal' | 'project') => Promise<void>;
 }) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [isSavingToLibrary, setIsSavingToLibrary] = React.useState(false);
   const [activeView, setActiveView] = React.useState<TaskPanelView>("overview");
   const ActiveViewIcon = viewMeta[activeView].icon;
   const activePreviewTab = React.useMemo(
@@ -188,6 +199,16 @@ export function TaskPanel({
       await onRefresh();
     } finally {
       setTimeout(() => setIsRefreshing(false), 300);
+    }
+  };
+
+  const handleSaveToLibrary = async (target?: 'personal' | 'project') => {
+    if (!selectedFilePath || !onSaveFileToLibrary) return;
+    setIsSavingToLibrary(true);
+    try {
+      await onSaveFileToLibrary(selectedFilePath, target);
+    } finally {
+      setIsSavingToLibrary(false);
     }
   };
 
@@ -524,7 +545,45 @@ export function TaskPanel({
                 </div>
               </ScrollArea>
 
-              <div className="flex justify-end border-t border-border/80 px-3 py-2.5">
+              <div className="flex justify-end gap-2 border-t border-border/80 px-3 py-2.5">
+                {projectName ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card/75 px-3 py-1.5 text-xs text-primary transition-colors hover:border-primary/35 hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={!selectedFilePath || !onSaveFileToLibrary || isSavingToLibrary}
+                        title={selectedFilePath ? '选择资料库保存范围' : '先选择一个文件'}
+                      >
+                        {isSavingToLibrary
+                          ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          : <BookOpen className="h-3.5 w-3.5" />}
+                        保存到资料库
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => void handleSaveToLibrary('project')}>
+                        保存到当前项目
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void handleSaveToLibrary('personal')}>
+                        保存到个人资料
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card/75 px-3 py-1.5 text-xs text-primary transition-colors hover:border-primary/35 hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void handleSaveToLibrary('personal')}
+                    disabled={!selectedFilePath || !onSaveFileToLibrary || isSavingToLibrary}
+                    title={selectedFilePath ? '将选中文件保存到个人资料库' : '先选择一个文件'}
+                  >
+                    {isSavingToLibrary
+                      ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      : <BookOpen className="h-3.5 w-3.5" />}
+                    保存到资料库
+                  </button>
+                )}
                 <button
                   type="button"
                   className="rounded-full border border-border/70 bg-card/75 px-3 py-1.5 text-xs text-primary transition-colors hover:border-primary/35 hover:text-primary/80"

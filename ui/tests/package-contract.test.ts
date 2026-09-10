@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,6 +61,77 @@ describe('desktop package contract', () => {
     const winRipgrep = path.join(repoRoot, 'vendor', 'ripgrep', 'x64-win32', 'rg.exe');
     expect(statSync(macRipgrep).size).toBeGreaterThan(1_000_000);
     expect(statSync(winRipgrep).size).toBeGreaterThan(1_000_000);
+  });
+
+  test('runs Library agent tools in-process without a bundled MCP server', () => {
+    const mainSource = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
+    const agentRuntimeSource = readFileSync(path.join(repoRoot, 'src', 'electron-direct.ts'), 'utf8');
+    const libraryToolsSource = readFileSync(
+      path.join(repoRoot, 'src', 'tools', 'LibraryTool', 'LibraryTools.ts'),
+      'utf8',
+    );
+    const verifierSource = readFileSync(path.join(uiRoot, 'scripts', 'verify-package.mjs'), 'utf8');
+
+    expect(mainSource).toContain("libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService)");
+    expect(mainSource).toContain('handleLibraryAgentToolEvent');
+    expect(libraryToolsSource).toContain('LibraryWriteTool');
+    expect(libraryToolsSource).toContain('user has confirmed which files should be added');
+    const directoryDraftSource = mainSource.slice(
+      mainSource.indexOf('function buildLibraryDirectoryImportDraft'),
+      mainSource.indexOf('function remoteSessionTimestamp'),
+    );
+    expect(directoryDraftSource).toContain('draftPrompt: buildLibraryDirectoryImportDraft');
+    expect(directoryDraftSource).not.toContain('createSessionRecord');
+    expect(directoryDraftSource).not.toContain('runSessionPrompt');
+    expect(directoryDraftSource).not.toContain("sessionKind: 'library-import'");
+    expect(directoryDraftSource).toContain('请按以下 Markdown 结构回复');
+    expect(directoryDraftSource).not.toContain('`Glob`');
+    expect(directoryDraftSource).not.toContain('`Bash`');
+    expect(mainSource).not.toContain('LIBRARY_DIRECTORY_AGENT_PROMPT_PATH');
+    expect(mainSource).not.toContain("sessionKind === 'library-import'");
+    expect(mainSource).not.toContain('libraryDirectorySystemPrompt');
+    expect(mainSource).not.toContain('librarySystemPrompt');
+    expect(agentRuntimeSource).toContain("import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'");
+    expect(agentRuntimeSource).toContain('applyChatToolFilter(assembled)');
+    expect(agentRuntimeSource).toContain('Chat 模式不能创建或控制 worker');
+    expect(mainSource).not.toContain('MOSS_LIBRARY_DB_PATH');
+    expect(mainSource).not.toContain('MOSS_LIBRARY_CORE');
+    expect(verifierSource).not.toContain('library_mcp_server.mjs');
+    expect(verifierSource).not.toContain("skills', 'local-kb'");
+    expect(mainSource).toContain("RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb'])");
+    expect(existsSync(path.join(repoRoot, 'skills', 'local-kb'))).toBe(false);
+    expect(existsSync(path.join(uiRoot, 'resources', 'library', 'library_mcp_server.mjs'))).toBe(false);
+    expect(existsSync(path.join(uiRoot, 'resources', 'library', 'prompts', 'personal-directory-import-agent.md'))).toBe(false);
+    expect(verifierSource).not.toContain('personal-directory-import-agent.md');
+  });
+
+  test('exposes only chat and boss as desktop conversation modes', () => {
+    const appSource = readFileSync(path.join(uiRoot, 'src', 'renderer-react', 'App.tsx'), 'utf8');
+    const chatSource = readFileSync(
+      path.join(uiRoot, 'src', 'renderer-react', 'components', 'chat-area.tsx'),
+      'utf8',
+    );
+    const rendererTypes = readFileSync(
+      path.join(uiRoot, 'src', 'renderer-react', 'types.d.ts'),
+      'utf8',
+    );
+
+    expect(appSource).toContain("type ComposerIntent = 'chat' | 'boss'");
+    expect(chatSource).toContain('type ComposerIntent = "chat" | "boss"');
+    expect(chatSource).toContain('id: "boss"');
+    expect(chatSource).not.toContain('id: "plan"');
+    expect(chatSource).not.toContain('id: "coordinator"');
+    expect(rendererTypes).toContain("mode?: 'chat' | 'boss'");
+  });
+
+  test('keeps the persisted Chat or Boss selection authoritative when resuming', () => {
+    const mainSource = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
+    const agentRuntimeSource = readFileSync(path.join(repoRoot, 'src', 'electron-direct.ts'), 'utf8');
+
+    expect(agentRuntimeSource).toContain('sessionOptions.coordinatorMode\n      ?? (prepared.mode');
+    expect(mainSource).toContain('coordinatorMode: desiredCoordinatorMode');
+    expect(mainSource).toContain('sessionRecord.isCoordinatorMode = desiredCoordinatorMode');
+    expect(mainSource).not.toContain('sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId)\n      || metadata.mode');
   });
 
   test('keeps desktop signing and notarization disabled', () => {
@@ -169,6 +240,14 @@ describe('managed runtime contract', () => {
     }
     const downloaderSource = readFileSync(path.join(uiRoot, 'scripts', 'download-runtimes.mjs'), 'utf8');
     expect(downloaderSource).toContain('|| 600_000');
+  });
+
+  test('removes obsolete managed runtime versions after verifying the current version', () => {
+    const runtimeSource = readFileSync(path.join(uiRoot, 'src', 'runtime', 'managed-runtimes.mjs'), 'utf8');
+    expect(runtimeSource).toContain('async function pruneObsoleteRuntimeVersions');
+    expect(runtimeSource).toContain("await pruneObsoleteRuntimeVersions('node', version)");
+    expect(runtimeSource).toContain("await pruneObsoleteRuntimeVersions('python', version)");
+    expect(runtimeSource).toContain("entry.name === currentVersion");
   });
 
   test('ships checksum-valid macOS runtime archives', async () => {

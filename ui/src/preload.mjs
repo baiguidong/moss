@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   agentMail: {
     getStatus: () => ipcRenderer.invoke('agent-mail:get-status'),
     listPending: () => ipcRenderer.invoke('agent-mail:list-pending'),
+    list: (direction, limit = 100) => ipcRenderer.invoke('agent-mail:list', { direction, limit }),
+    delete: (messageIds) => ipcRenderer.invoke('agent-mail:delete', { messageIds }),
     onStatusChanged: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('agent-mail:status-changed', handler);
@@ -61,6 +63,46 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   listProjectTasks: (payload) => ipcRenderer.invoke('project:list-tasks', payload),
   createProjectTask: (payload) => ipcRenderer.invoke('project:create-task', payload),
   getProjectTask: (payload) => ipcRenderer.invoke('project:get-task', payload),
+  library: {
+    getOverview: () => ipcRenderer.invoke('library:get-overview'),
+    getExtensionStatus: () => ipcRenderer.invoke('library:get-extension-status'),
+    acknowledgeExtensionGuide: () => ipcRenderer.invoke('library:acknowledge-extension-guide'),
+    installExtensions: (payload) => ipcRenderer.invoke('library:install-extensions', payload),
+    listCollections: () => ipcRenderer.invoke('library:list-collections'),
+    createCollection: (payload) => ipcRenderer.invoke('library:create-collection', payload),
+    updateCollection: (payload) => ipcRenderer.invoke('library:update-collection', payload),
+    deleteCollection: (payload) => ipcRenderer.invoke('library:delete-collection', payload),
+    listSources: (payload) => ipcRenderer.invoke('library:list-sources', payload),
+    pickSources: (payload) => ipcRenderer.invoke('library:pick-sources', payload),
+    selectDirectory: () => ipcRenderer.invoke('library:select-directory'),
+    prepareDirectoryImport: (payload) => ipcRenderer.invoke('library:prepare-directory-import', payload),
+    addProjectSource: (payload) => ipcRenderer.invoke('library:add-project-source', payload),
+    removeSource: (payload) => ipcRenderer.invoke('library:remove-source', payload),
+    refreshSource: (payload) => ipcRenderer.invoke('library:refresh-source', payload),
+    listResources: (payload) => ipcRenderer.invoke('library:list-resources', payload),
+    getResource: (payload) => ipcRenderer.invoke('library:get-resource', payload),
+    search: (payload) => ipcRenderer.invoke('library:search', payload),
+    diagnoseSearch: (payload) => ipcRenderer.invoke('library:diagnose-search', payload),
+    getEvaluationOverview: () => ipcRenderer.invoke('library:get-evaluation-overview'),
+    saveEvaluationCase: (payload) => ipcRenderer.invoke('library:save-evaluation-case', payload),
+    deleteEvaluationCase: (payload) => ipcRenderer.invoke('library:delete-evaluation-case', payload),
+    runEvaluation: (payload) => ipcRenderer.invoke('library:run-evaluation', payload),
+    openResource: (payload) => ipcRenderer.invoke('library:open-resource', payload),
+    showResourceInFolder: (payload) => ipcRenderer.invoke('library:show-resource-in-folder', payload),
+    listJobs: (payload) => ipcRenderer.invoke('library:list-jobs', payload),
+    cancelJob: (payload) => ipcRenderer.invoke('library:cancel-job', payload),
+    repairIndex: () => ipcRenderer.invoke('library:repair-index'),
+    exportData: (payload) => ipcRenderer.invoke('library:export', payload),
+    saveTaskArtifact: (payload) => ipcRenderer.invoke('library:save-task-artifact', payload),
+    getMigrationPreview: () => ipcRenderer.invoke('library:get-migration-preview'),
+    migrateLegacy: () => ipcRenderer.invoke('library:migrate-legacy'),
+    dismissLegacyMigration: () => ipcRenderer.invoke('library:dismiss-legacy-migration'),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('library:changed', handler);
+      return () => ipcRenderer.off('library:changed', handler);
+    },
+  },
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
   syncRemoteSessions: () => ipcRenderer.invoke('agent:sync-remote-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),

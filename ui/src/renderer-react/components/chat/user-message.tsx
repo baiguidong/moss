@@ -28,6 +28,7 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
               <FilePreview
                 key={`${attachment.kind}:${attachment.path}`}
                 path={attachment.path}
+                name={attachment.name}
                 readonly
               />
             ))}

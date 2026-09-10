@@ -38,10 +38,10 @@ export function supportsForkSubagentRuntime({
   entrypoint: string | undefined
 }): boolean {
   if (coordinatorMode) return false
-  // The embedded desktop engine is headless from Ink's perspective, but it
-  // has its own UI for background tasks and permission prompts. Keep fork
-  // disabled for print/SDK sessions that cannot surface those interactions.
-  return !nonInteractive || entrypoint === 'local-agent'
+  // Embedded desktop Chat sessions are non-interactive from Ink's perspective.
+  // Worker orchestration belongs to desktop Boss mode, which already has its
+  // own coordinator implementation and is rejected above.
+  return !nonInteractive
 }
 
 export function isForkSubagentEnabled(): boolean {

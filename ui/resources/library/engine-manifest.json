@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "1.2.0",
+  "protocol": "json-stdio",
+  "operations": [
+    "doctor",
+    "ingest-resource"
+  ],
+  "extensionPackages": [
+    "unstructured[all-docs]",
+    "pypdf"
+  ],
+  "formats": {
+    "builtIn": [
+      "c",
+      "cc",
+      "cpp",
+      "css",
+      "csv",
+      "docx",
+      "go",
+      "h",
+      "hpp",
+      "htm",
+      "html",
+      "ini",
+      "java",
+      "js",
+      "json",
+      "jsx",
+      "log",
+      "markdown",
+      "md",
+      "mjs",
+      "pptx",
+      "py",
+      "rs",
+      "sh",
+      "sql",
+      "toml",
+      "ts",
+      "tsx",
+      "txt",
+      "xlsx",
+      "xml",
+      "yaml",
+      "yml"
+    ],
+    "optional": [
+      "pdf"
+    ]
+  }
+}

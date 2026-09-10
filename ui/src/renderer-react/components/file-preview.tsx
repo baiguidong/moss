@@ -21,13 +21,21 @@ function formatFileSize(bytes: number): string {
 
 interface FilePreviewProps {
   path: string;
+  name?: string;
   onRemove?: () => void;
   readonly?: boolean;
 }
 
-export function FilePreview({ path, onRemove, readonly = false }: FilePreviewProps) {
+export function FilePreview({ path, name, onRemove, readonly = false }: FilePreviewProps) {
   const isImage = isImageFile(path);
-  const fileName = path.split(/[\\/]/).pop() || '';
+  const isLibraryResource = path.startsWith('moss-library://');
+  let libraryName = '';
+  if (isLibraryResource) {
+    try {
+      libraryName = new URL(path).searchParams.get('name') || '';
+    } catch {}
+  }
+  const fileName = name || libraryName || (isLibraryResource ? '资料库资源' : path.split(/[\\/]/).pop()) || '';
   const fileExt = fileName.includes('.') ? fileName.split('.').pop()?.toUpperCase() || '' : '';
   const [imageUrl, setImageUrl] = React.useState<string>('');
   const [fileSize, setFileSize] = React.useState<string>('');

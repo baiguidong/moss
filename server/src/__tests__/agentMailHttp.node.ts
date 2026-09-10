@@ -133,6 +133,26 @@ try {
     const pulledBody = await pulled.json() as any
     assert.deepEqual(pulledBody.messages.map((message: any) => message.messageId), [sentBody.message.messageId])
     assert.equal(pulledBody.messages[0].deliveryMode, 'manual')
+
+    const deletedFromOutbox = await fetch(
+      `${baseUrl}/api/v1/agent-mail/messages/${encodeURIComponent(sentBody.message.messageId)}`,
+      { method: 'DELETE', headers: aliceHeaders },
+    )
+    assert.equal(deletedFromOutbox.status, 200)
+    assert.equal((await deletedFromOutbox.json() as any).deleted, true)
+    const aliceOutbox = await fetch(`${baseUrl}/api/v1/agent-mail/outbox`, { headers: aliceHeaders })
+    assert.equal((await aliceOutbox.json() as any).messages.length, 0)
+    const bobInbox = await fetch(`${baseUrl}/api/v1/agent-mail/inbox`, { headers: bobHeaders })
+    assert.equal((await bobInbox.json() as any).messages.length, 1)
+
+    const deletedFromInbox = await fetch(
+      `${baseUrl}/api/v1/agent-mail/messages/${encodeURIComponent(sentBody.message.messageId)}`,
+      { method: 'DELETE', headers: bobHeaders },
+    )
+    assert.equal(deletedFromInbox.status, 200)
+    assert.equal((await deletedFromInbox.json() as any).deleted, true)
+    const bobInboxAfterDelete = await fetch(`${baseUrl}/api/v1/agent-mail/inbox`, { headers: bobHeaders })
+    assert.equal((await bobInboxAfterDelete.json() as any).messages.length, 0)
   } finally {
     await moss.stop()
   }

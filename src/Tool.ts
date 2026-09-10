@@ -322,6 +322,10 @@ export type MossAppEvent =
   | { type: 'agent_mail_search'; input: MossAgentMailSearchInput }
   | { type: 'agent_mail_send'; input: MossAgentMailSendInput }
   | { type: 'agent_mail_list_outbox'; input: MossAgentMailListOutboxInput }
+  | { type: 'library_list'; input: MossLibraryListInput }
+  | { type: 'library_search'; input: MossLibrarySearchInput }
+  | { type: 'library_read'; input: MossLibraryReadInput }
+  | { type: 'library_write'; input: MossLibraryWriteInput }
 
 export type MossAppBuildInput = {
   kind?: 'app'
@@ -415,6 +419,40 @@ export type MossAgentMailListOutboxInput = {
   limit?: number
 }
 
+export type MossLibraryListInput = {
+  kind?: 'collections' | 'sources' | 'resources'
+  collection?: string
+  scope?: 'current' | 'personal' | 'project'
+  limit?: number
+  offset?: number
+}
+
+export type MossLibrarySearchInput = {
+  query: string
+  collection?: string
+  sourceId?: string
+  scope?: 'current' | 'personal' | 'project'
+  mode?: 'auto' | 'all' | 'any'
+  limit?: number
+}
+
+export type MossLibraryReadInput = {
+  resource: string
+  offset?: number
+  limit?: number
+}
+
+export type MossLibraryWriteInput = {
+  collection: string
+  files: Array<{
+    path: string
+    categoryKey?: 'work' | 'study' | 'finance' | 'records' | 'life' | 'creative' | 'reference' | 'other'
+    subcategory?: string
+    reason?: string
+  }>
+  sourceName?: string
+}
+
 export type MossAppEventResult =
   | {
       ok: true
@@ -443,6 +481,9 @@ export type MossAppEventResult =
       mail?: unknown
       duplicate?: boolean
       messages?: unknown[]
+      items?: unknown[]
+      resource?: unknown
+      libraryWrite?: unknown
     }
   | { ok: false; error: string }
 

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BookOpen,
   LayoutGrid,
   Monitor,
   MessageSquareText,
@@ -70,7 +71,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "library" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
@@ -84,6 +85,8 @@ interface AppSidebarProps {
   searchQuery: string;
   localEnabled?: boolean;
   remoteEnabled?: boolean;
+  libraryEnabled?: boolean;
+  agentMailEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
@@ -297,6 +300,8 @@ export function AppSidebar({
   searchQuery,
   localEnabled = true,
   remoteEnabled = false,
+  libraryEnabled = false,
+  agentMailEnabled = false,
   newSessionMode = 'local',
   onChangeView,
   onChangeTheme,
@@ -336,7 +341,11 @@ export function AppSidebar({
     ? (newSessionMode === 'remote-direct' ? remoteSessions : localSessions)
     : filteredSessions;
 
-  const sessionGroups = groupSidebarSessions(displaySessions).filter((group) => group.id !== 'project');
+  const sessionGroups = groupSidebarSessions(displaySessions).filter((group) => (
+    group.id !== 'project' && (
+      group.id !== 'agent-mail' || (remoteEnabled && agentMailEnabled)
+    )
+  ));
   const projectTrees = groupProjectSessionTrees(displaySessions);
   const sessionGroupIcons = {
     feishu: Bot,
@@ -417,6 +426,28 @@ export function AppSidebar({
             <FolderKanban className="h-4 w-4" />
             {!collapsed && "项目"}
           </Button>
+          {libraryEnabled ? (
+            <Button
+              variant={activeView === "library" ? "secondary" : "ghost"}
+              className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
+              onClick={() => onChangeView("library")}
+              title="资料库"
+            >
+              <BookOpen className="h-4 w-4" />
+              {!collapsed && "资料库"}
+            </Button>
+          ) : null}
+          {remoteEnabled && agentMailEnabled ? (
+            <Button
+              variant={activeView === "mail" ? "secondary" : "ghost"}
+              className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
+              onClick={() => onChangeView("mail")}
+              title="协作邮箱"
+            >
+              <Mail className="h-4 w-4" />
+              {!collapsed && "协作邮箱"}
+            </Button>
+          ) : null}
           <Button
             variant={activeView === "skills" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}

@@ -18,6 +18,23 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('keeps Library Agent tools opt-in and normalizes the persisted switch', () => {
+    expect(normalizeDesktopSettings({}).library).toEqual({
+      enabled: false,
+      extensionGuideAcknowledged: false,
+    });
+    expect(normalizeDesktopSettings({ library: { enabled: true } }).library)
+      .toEqual({ enabled: true, extensionGuideAcknowledged: false });
+    expect(normalizeDesktopSettings(
+      { model: 'next-model' },
+      { library: { enabled: true } },
+    ).library).toEqual({ enabled: true, extensionGuideAcknowledged: false });
+    expect(normalizeDesktopSettings(
+      { library: { extensionGuideAcknowledged: true } },
+      { library: { enabled: true, extensionGuideAcknowledged: false } },
+    ).library).toEqual({ enabled: true, extensionGuideAcknowledged: true });
+  });
+
   it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {
     expect(normalizeDesktopSettings({}).agentMail).toEqual({
       enabled: false,
@@ -25,6 +42,7 @@ describe('desktop settings', () => {
       inboxSessionId: '',
     });
     expect(normalizeDesktopSettings({
+      remoteEnabled: true,
       agentMail: {
         enabled: true,
         consumerId: `  ${'x'.repeat(140)}  `,
@@ -35,6 +53,14 @@ describe('desktop settings', () => {
       consumerId: 'x'.repeat(128),
       inboxSessionId: 'inbox-session',
     });
+    expect(normalizeDesktopSettings({
+      remoteEnabled: false,
+      agentMail: { enabled: true },
+    }).agentMail.enabled).toBe(false);
+    expect(normalizeDesktopSettings(
+      { remoteEnabled: false },
+      { remoteEnabled: true, agentMail: { enabled: true } },
+    ).agentMail.enabled).toBe(false);
   });
 
   it('normalizes legacy and structured model settings into one runtime shape', () => {

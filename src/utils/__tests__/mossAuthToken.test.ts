@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { isProviderManagedEnvVar } from '../managedEnvConstants.js'
 import {
+  applySessionMossModel,
   getSessionMossBaseUrl,
   getSessionMossAuthToken,
+  getSessionMossModel,
+  resolveSessionMossModel,
   runWithSessionApiOverrides,
 } from '../sessionApiOverrides.js'
 import { subprocessEnv } from '../subprocessEnv.js'
@@ -52,19 +55,44 @@ describe('Moss model auth token', () => {
       {
         mossBaseUrl: 'https://moss.example.test',
         mossAuthToken: 'session-token',
+        mossModel: 'moss-text-model',
       },
       () => ({
         baseUrl: getSessionMossBaseUrl(),
         token: getSessionMossAuthToken(),
+        model: getSessionMossModel(),
       }),
     )
 
     expect(overrides).toEqual({
       baseUrl: 'https://moss.example.test',
       token: 'session-token',
+      model: 'moss-text-model',
     })
     expect(getSessionMossBaseUrl()).toBeUndefined()
     expect(getSessionMossAuthToken()).toBeUndefined()
+    expect(getSessionMossModel()).toBeUndefined()
+  })
+
+  test('forces every session request to use the configured Moss model', () => {
+    const options = runWithSessionApiOverrides(
+      { mossModel: 'moss-text-model' },
+      () => applySessionMossModel({
+        model: 'claude-haiku-4-5-20251001',
+        fallbackModel: 'fallback-model',
+        advisorModel: 'advisor-model',
+      }),
+    )
+
+    expect(options).toEqual({
+      model: 'moss-text-model',
+      fallbackModel: undefined,
+      advisorModel: undefined,
+    })
+    expect(runWithSessionApiOverrides(
+      { mossModel: 'moss-text-model' },
+      () => resolveSessionMossModel('claude-haiku-4-5-20251001'),
+    )).toBe('moss-text-model')
   })
 
   test('is protected from settings overrides in host-managed sessions', () => {

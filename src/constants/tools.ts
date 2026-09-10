@@ -2,7 +2,10 @@ import { feature } from 'bun:bundle'
 import { TASK_OUTPUT_TOOL_NAME } from '../tools/TaskOutputTool/constants.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
 import { ENTER_PLAN_MODE_TOOL_NAME } from '../tools/EnterPlanModeTool/constants.js'
-import { AGENT_TOOL_NAME } from '../tools/AgentTool/constants.js'
+import {
+  AGENT_TOOL_NAME,
+  LEGACY_AGENT_TOOL_NAME,
+} from '../tools/AgentTool/constants.js'
 import { ASK_USER_QUESTION_TOOL_NAME } from '../tools/AskUserQuestionTool/prompt.js'
 import { TASK_STOP_TOOL_NAME } from '../tools/TaskStopTool/prompt.js'
 import { FILE_READ_TOOL_NAME } from '../tools/FileReadTool/prompt.js'
@@ -25,6 +28,9 @@ import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/Synthet
 import { ENTER_WORKTREE_TOOL_NAME } from '../tools/EnterWorktreeTool/constants.js'
 import { EXIT_WORKTREE_TOOL_NAME } from '../tools/ExitWorktreeTool/constants.js'
 import { WORKFLOW_TOOL_NAME } from '../tools/WorkflowTool/constants.js'
+import { LIBRARY_TOOL_NAMES } from '../tools/LibraryTool/constants.js'
+import { TEAM_CREATE_TOOL_NAME } from '../tools/TeamCreateTool/constants.js'
+import { TEAM_DELETE_TOOL_NAME } from '../tools/TeamDeleteTool/constants.js'
 import {
   CRON_CREATE_TOOL_NAME,
   CRON_DELETE_TOOL_NAME,
@@ -108,4 +114,19 @@ export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
   TASK_STOP_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
   SYNTHETIC_OUTPUT_TOOL_NAME,
+  ...LIBRARY_TOOL_NAMES,
+])
+
+/**
+ * Worker orchestration belongs to Boss mode. Desktop Chat sessions must not
+ * expose these tools, including through deferred tool search or old sessions.
+ */
+export const CHAT_MODE_DISALLOWED_TOOLS = new Set([
+  AGENT_TOOL_NAME,
+  LEGACY_AGENT_TOOL_NAME,
+  TASK_OUTPUT_TOOL_NAME,
+  TASK_STOP_TOOL_NAME,
+  SEND_MESSAGE_TOOL_NAME,
+  TEAM_CREATE_TOOL_NAME,
+  TEAM_DELETE_TOOL_NAME,
 ])

@@ -73,9 +73,17 @@ import {
   registerLocalAuditIpcHandlers,
 } from './local-audit-service.mjs';
 import {
+  createLibraryService,
+  resolveLibraryParserPath,
+} from './library/library-service.mjs';
+import { handleLibraryAgentToolEvent } from './library/library-agent-tools.mjs';
+import { createLibraryExtensionManager } from './library/library-extensions.mjs';
+import { registerLibraryIpcHandlers } from './library/library-ipc.mjs';
+import {
   applyManagedRuntimeEnv,
   ensureManagedRuntimes,
   getManagedRuntimeStatus,
+  MANAGED_RUNTIME_VERSIONS,
 } from './runtime/managed-runtimes.mjs';
 import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
 import { autoUpdaterService } from './auto-updater-service.mjs';
@@ -208,6 +216,7 @@ import { performRemoteDirectOAuth } from './remote-direct-oauth.mjs';
 import { openRemoteDirectAuthorizationWindow } from './remote-direct-auth-window.mjs';
 import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
 import {
+  deleteAgentMail,
   fetchAgentMailCapabilities,
   listAgentMail,
   searchAgentMailRecipients,
@@ -267,10 +276,18 @@ const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
+const MOSS_LIBRARY_DIR = DESKTOP_DATA_PATHS.libraryRoot;
+const LIBRARY_DB_PATH = DESKTOP_DATA_PATHS.libraryDbPath;
+const LIBRARY_FEATURE_FLAGS = Object.freeze({
+  projectAssets: process.env.MOSS_LIBRARY_PROJECT_ASSETS !== '0',
+  composerResources: process.env.MOSS_LIBRARY_COMPOSER_RESOURCES !== '0',
+  migration: process.env.MOSS_LIBRARY_MIGRATION !== '0',
+});
 const MOSS_BUNDLED_APPS_WORKSPACE_DIR = path.join(MOSS_HOME, 'bundled-apps-workspace');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
+const RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb']);
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
 const MOSS_REPO_APPS_DIR = path.join(repoRoot, 'apps');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
@@ -553,6 +570,8 @@ let managedRuntimeInstallPromise = null;
 let desktopAppRuntime = null;
 let desktopAppShutdownComplete = false;
 let localAuditService = null;
+let libraryService = null;
+let libraryExtensionManager = null;
 let localAuditScanTimer = null;
 let feishuAdapterProcessManager = null;
 let feishuAdapterController = null;
@@ -615,6 +634,7 @@ const pendingMcpAuthCallbacks = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_PROJECTS_DIR, { recursive: true });
+fs.mkdirSync(MOSS_LIBRARY_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
@@ -1116,6 +1136,20 @@ function getProjectFilePath(projectId) {
 
 function getProjectWorkspaceDir(projectId) {
   return DESKTOP_DATA_PATHS.projectWorkspaceDir(normalizeProjectId(projectId));
+}
+
+function queueProjectLibraryRefresh(projectId) {
+  if (!libraryService || !LIBRARY_FEATURE_FLAGS.projectAssets) return;
+  const project = readProjectSync(projectId);
+  const refresh = project && !project.archivedAt
+    ? libraryService.addProjectSource({ projectId })
+    : Promise.resolve(libraryService.refreshProjectSource(projectId));
+  void refresh.catch((error) => {
+    mossLog('warn', 'library', 'Unable to queue project Library refresh', {
+      projectId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 function getProjectAssetsDir(projectId) {
@@ -1901,6 +1935,7 @@ async function archiveProject(projectId) {
       resolvedAt: stoppedAt,
     }, { expectedStatus: 'pending' }).catch(() => {});
   }
+  queueProjectLibraryRefresh(next.id);
   return enrichProjectBestEffort(next);
 }
 
@@ -1955,7 +1990,7 @@ async function collectProjectWorkspaceFiles(rootDir, options = {}) {
   const root = path.resolve(rootDir);
   const files = [];
   const pending = [root];
-  const maxFiles = Number.isInteger(options.maxFiles) ? options.maxFiles : 500;
+  const maxFiles = Number.isInteger(options.maxFiles) ? options.maxFiles : 10_000;
   while (pending.length > 0 && files.length < maxFiles) {
     const current = pending.pop();
     let entries = [];
@@ -2211,6 +2246,7 @@ async function addProjectAssetUnlocked(projectId, payload = {}) {
     metadata: { sourceSessionId: asset.sourceSessionId },
   });
   emitToRenderer('project:changed', { projectId: project.id, reason: 'assets' });
+  queueProjectLibraryRefresh(project.id);
   return asset;
 }
 
@@ -2255,6 +2291,7 @@ async function removeProjectAssetUnlocked(projectId, assetId) {
     });
   }
   emitToRenderer('project:changed', { projectId: id, reason: 'assets' });
+  queueProjectLibraryRefresh(id);
   return { ok: true };
 }
 
@@ -2747,6 +2784,10 @@ async function snapshotProjectAssetsForSession(sessionRecord, project, assets) {
 async function buildProjectResourceManifest(sessionRecord) {
   const project = getSessionProject(sessionRecord);
   if (!project) return null;
+  const previousManifest = sessionRecord.projectResourceManifest || await readJsonFileAsync(
+    getLocalSessionResourceManifestPath(sessionRecord.id),
+    {},
+  );
   const resourceScope = getProjectResourceScope(sessionRecord, project);
   await ensureProjectStructure(project.id);
   const [installedSkills, installedConnectors, expertInfos, assets, memory] = await Promise.all([
@@ -2818,6 +2859,15 @@ async function buildProjectResourceManifest(sessionRecord) {
       overviewPath: memory.overviewPath,
       overview: memory.overview.slice(0, 20000),
     },
+    libraryResources: Array.isArray(previousManifest?.libraryResources)
+      ? previousManifest.libraryResources
+      : [],
+    libraryScopes: Array.isArray(previousManifest?.libraryScopes)
+      ? previousManifest.libraryScopes
+      : [],
+    libraryQuotes: Array.isArray(previousManifest?.libraryQuotes)
+      ? previousManifest.libraryQuotes
+      : [],
   };
   sessionRecord.projectSkillInfos = skillInfos;
   sessionRecord.projectExpertInfos = expertInfos;
@@ -3023,6 +3073,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     mcpServers: getSessionMcpServers(sessionRecord),
+    libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     addDirs: getSessionAddDirs(sessionRecord),
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
@@ -3062,7 +3113,8 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
           }
         : { kind: 'session', sessionId: sessionRecord.id })
       : undefined,
-    agentMailEnabled: desktopSettings.agentMail?.enabled === true,
+    agentMailEnabled:
+      desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true,
   };
 }
 
@@ -3408,6 +3460,7 @@ function refreshDesktopSettings(payload = {}) {
   saveDesktopSettings(nextSettings);
   if (
     Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
+    Object.prototype.hasOwnProperty.call(payload, 'remoteEnabled') ||
     Object.prototype.hasOwnProperty.call(payload, 'remoteDirect') ||
     Object.keys(payload).some((key) => key.startsWith('remoteDirect'))
   ) {
@@ -3531,7 +3584,9 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     kind: DESKTOP_SESSION_KIND,
     layoutVersion: DESKTOP_SESSION_LAYOUT_VERSION,
     id: sessionRecord.id,
-    title: sessionRecord.title,
+    title: sessionRecord.sessionKind === 'agent-mail' && sessionRecord.title === 'Agent Mail'
+      ? '协作邮箱'
+      : sessionRecord.title,
     workspace: sessionRecord.workspace,
     remoteWorkspace: sessionRecord.remoteWorkspace || null,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
@@ -3975,7 +4030,7 @@ function getSessionSummary(sessionRecord) {
     id: sessionRecord.id,
     title: sessionRecord.title,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
-    composerIntent: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'coordinator' : 'chat',
+    composerIntent: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
     workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
@@ -4105,7 +4160,7 @@ function appendRuntimeMessageToSession(sessionRecord, message) {
   schedulePersistSession(sessionRecord);
 }
 
-function buildVisibleUserEvent(prompt, attachments = []) {
+function buildVisibleUserEvent(prompt, attachments = [], resources = []) {
   const trimmedUserPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const userEvent = {
     type: 'user',
@@ -4116,6 +4171,7 @@ function buildVisibleUserEvent(prompt, attachments = []) {
     userEvent.files = attachments;
     userEvent.images = attachments.filter((p) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p));
   }
+  if (resources.length > 0) userEvent.resources = resources;
   return userEvent;
 }
 
@@ -4241,10 +4297,6 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   }
   if (typeof metadata.customTitle === 'string' && metadata.customTitle.trim()) {
     sessionRecord.title = metadata.customTitle.trim();
-  }
-  if (metadata.mode) {
-    sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId)
-      || metadata.mode === 'coordinator';
   }
   if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
     if (sessionRecord.agentMode === 'remote-direct') {
@@ -4446,6 +4498,7 @@ async function runSessionPromptNow({
   runtimePrompt,
   visibleUserPrompt,
   attachments = [],
+  resources = [],
   runtimeSystemPrompt = '',
 }) {
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
@@ -4466,8 +4519,8 @@ async function runSessionPromptNow({
   const cronIdsBeforeTurn = await readMossCronTaskIds();
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
-  if (trimmedUserPrompt || attachments.length > 0) {
-    const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments);
+  if (trimmedUserPrompt || attachments.length > 0 || resources.length > 0) {
+    const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments, resources);
     appendVisibleUserEvent(sessionRecord, sender, userEvent);
     if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
@@ -4587,7 +4640,11 @@ async function runSessionPromptNow({
         throw new Error('Prompt is too long. Automatic /compact did not reduce this session enough to continue.');
       }
       if (compactRun.sawCompactBoundary) {
-        appendVisibleUserEvent(sessionRecord, sender, buildVisibleUserEvent(trimmedUserPrompt, attachments));
+        appendVisibleUserEvent(
+          sessionRecord,
+          sender,
+          buildVisibleUserEvent(trimmedUserPrompt, attachments, resources),
+        );
       }
       return runRuntimePromptOnce(runtimePrompt, {
         expectedVisiblePrompt: visibleUserPrompt,
@@ -5287,7 +5344,7 @@ function validateProjectToolUse(sessionRecord, input) {
   };
 }
 
-function validateSessionToolUse(sessionRecord, toolName, input) {
+function validateSessionToolUse(sessionRecord, _toolName, input) {
   return validateProjectToolUse(sessionRecord, input);
 }
 
@@ -5857,6 +5914,26 @@ function buildSessionTitle(prompt) {
  * Initialize bundled skills from repo/package resources to ~/.moss/skills.
  */
 async function initializeBundledSkills() {
+  // These names were previously owned and overwritten by the bundled-skill
+  // installer on every launch, so removing their stale installed copies does
+  // not affect user-created skills.
+  for (const skillName of RETIRED_BUNDLED_SKILL_NAMES) {
+    const retiredPath = path.join(MOSS_SKILLS_DIR, skillName);
+    if (!fs.existsSync(retiredPath)) continue;
+    try {
+      await fsp.rm(retiredPath, { recursive: true, force: true });
+      mossLog('info', 'skill', 'Retired bundled skill removed', {
+        name: skillName,
+        target: retiredPath,
+      });
+    } catch (error) {
+      mossLog('warn', 'skill', 'Unable to remove retired bundled skill', {
+        name: skillName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   await copyBundledDirectoryEntries({
     resourceName: 'skill',
     sourceDir: getBundledResourceDir('skills', MOSS_REPO_SKILLS_DIR),
@@ -6778,6 +6855,56 @@ function createSessionRecord({
   return sessionRecord;
 }
 
+function buildLibraryDirectoryImportDraft({ collection, directoryName }) {
+  return [
+    '请整理当前目录中适合进入 Moss 本地资料库（知识库）的文档。',
+    '',
+    `目标资料集：“${collection.name}”`,
+    `当前目录：“${directoryName}”`,
+    `说明：“${collection.name}”只是资料库中的保存位置名称，不能作为文件主题、分类或价值判断依据。`,
+    '',
+    '执行要求：',
+    '1. 使用简体中文检查当前目录，覆盖根目录和各级子目录；不要读取目录外路径，不跟随符号链接，也不要修改、移动或删除原文件。',
+    '2. 默认只建议收录具有长期检索价值的文档，例如方案、报告、笔记、制度、手册、合同和个人档案。',
+    '3. 原始数据、行情记录、批量导出、日志、源码、依赖、构建产物、临时文件和程序控制文件默认排除。',
+    '4. 先根据文件名和相对路径判断；名称无法说明用途时，再读取足够判断用途的少量内容，不需要读取全文。',
+    '5. 支持格式不等于建议收录。可解析格式包括 txt、md、markdown、pdf、docx、pptx、xlsx、csv、json、xml、yaml、yml、html、htm 以及常见源码和配置文本。',
+    '6. 给出完整、可核对的分类建议；分类可使用工作与项目、学习与研究、财务与票据、个人档案、生活资料、创作与收藏、参考资料或其他资料，并可增加简短二级分类。',
+    '7. 现在不要写入资料库，等我确认或调整后再导入。',
+    '',
+    '请按以下 Markdown 结构回复：',
+    '# 资料库整理建议',
+    `> 目标资料集：${collection.name}；当前目录：${directoryName}；状态：仅生成建议，尚未写入资料库`,
+    '## 扫描概览',
+    '| 项目 | 结果 |',
+    '| --- | --- |',
+    '| 已检查范围 | 根目录和子目录范围 |',
+    '| 支持格式候选 | 数量 |',
+    '| 建议收录 | 数量 |',
+    '| 待确认 | 数量 |',
+    '| 明确排除 | 数量或整目录范围 |',
+    '## 建议收录',
+    '| 分类 | 相对路径 | 类型 | 建议理由 |',
+    '| --- | --- | --- | --- |',
+    '## 待确认',
+    '| 相对路径 | 需要确认的问题 |',
+    '| --- | --- |',
+    '## 已排除',
+    '| 文件或目录范围 | 排除原因 |',
+    '| --- | --- |',
+    '## 请确认',
+    '请提示我回复“确认”按建议导入，或直接说明需要增加、删除和调整的文件或分类。',
+  ].join('\n');
+}
+
+function prepareLibraryDirectoryImport({ directoryPath, directoryName, collection }) {
+  return {
+    workspace: directoryPath,
+    title: `资料库整理 · ${directoryName}`,
+    draftPrompt: buildLibraryDirectoryImportDraft({ collection, directoryName }),
+  };
+}
+
 function remoteSessionTimestamp(value, fallback = Date.now()) {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : fallback;
@@ -7463,13 +7590,21 @@ const mossAppEventHandler = createMossAppEventHandler(
 )
 
 async function resolveAgentMailConnection() {
-  if (desktopSettings.agentMail?.enabled !== true) {
-    throw new Error('Agent Mail is disabled in Moss settings.');
+  if (desktopSettings.remoteEnabled !== true || desktopSettings.agentMail?.enabled !== true) {
+    throw new Error('协作邮箱尚未在 Moss 设置中启用。');
   }
   return resolveRemoteDirectConnection();
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  const libraryResult = await handleLibraryAgentToolEvent({
+    event,
+    libraryService,
+    enabled: desktopSettings.library?.enabled === true,
+    projectId: sessionRecord?.projectId || '',
+    sessionId: sessionRecord?.id || '',
+  });
+  if (libraryResult) return libraryResult;
   if (event?.type === 'agent_mail_search') {
     try {
       const connection = await resolveAgentMailConnection();
@@ -7485,7 +7620,7 @@ async function handleMossHostEvent(event, sessionRecord) {
   if (event?.type === 'agent_mail_send') {
     try {
       if (sessionRecord?.sessionKind === 'agent-mail' && !event.input?.reply_to) {
-        throw new Error('The Agent Mail inbox session may only reply within an authenticated existing thread.');
+        throw new Error('协作邮箱会话只能在已认证的现有邮件线程中回复。');
       }
       const connection = await resolveAgentMailConnection();
       const result = await sendAgentMail(connection, {
@@ -7535,7 +7670,7 @@ function ensureAgentMailSession() {
   }
   if (!sessionRecord) {
     sessionRecord = createSessionRecord({
-      title: 'Agent Mail',
+      title: '协作邮箱',
       sessionKind: 'agent-mail',
       originChannel: 'agent-mail',
       agentMode: getDesktopAgentMode(),
@@ -7552,8 +7687,8 @@ function ensureAgentMailSession() {
 
 async function runAgentMailMessage(message) {
   const sessionRecord = ensureAgentMailSession();
-  const senderName = String(message?.fromName || message?.fromUserId || 'Unknown sender');
-  const subject = String(message?.subject || '').trim() || '(no subject)';
+  const senderName = String(message?.fromName || message?.fromUserId || '未知发件人');
+  const subject = String(message?.subject || '').trim() || '(无主题)';
   const envelope = JSON.stringify({
     messageId: message?.messageId,
     threadId: message?.threadId,
@@ -7577,7 +7712,7 @@ async function runAgentMailMessage(message) {
     body,
     '</agent-mail>',
   ].join('\n');
-  const visibleUserPrompt = `Agent Mail from ${senderName}\nSubject: ${subject}\n\n${body}`;
+  const visibleUserPrompt = `来自 ${senderName} 的协作邮件\n主题：${subject}\n\n${body}`;
   const turn = await runSessionPrompt({
     sessionRecord,
     sender: 'agent-mail',
@@ -7594,14 +7729,14 @@ function createAgentMailApproval(message) {
   const existing = feishuAdapterStore.listPendingDecisionsForSession(sessionRecord.id)
     .find((decision) => decision.kind === 'agent_mail_approval' && decision.payload?.messageId === message.messageId);
   if (existing) return;
-  const senderName = String(message.fromName || message.fromUserId || 'Unknown sender');
-  const subject = String(message.subject || '').trim() || '(no subject)';
+  const senderName = String(message.fromName || message.fromUserId || '未知发件人');
+  const subject = String(message.subject || '').trim() || '(无主题)';
   appDecisionBroker.create({
     sessionId: sessionRecord.id,
     kind: 'agent_mail_approval',
-    title: `Agent Mail: ${subject}`,
-    summary: `${senderName} 发来一封需要确认的 Agent Mail。`,
-    desktopMessage: `是否允许 ${senderName} 的 Agent 执行这封邮件？`,
+    title: `协作邮箱：${subject}`,
+    summary: `${senderName} 发来一封需要确认的协作邮件。`,
+    desktopMessage: `是否允许 ${senderName} 的智能体执行这封邮件？`,
     desktopDetails: String(message.content || ''),
     desktopOptions: [
       { id: 'remember', label: '允许并信任发件人' },
@@ -7622,12 +7757,14 @@ function initializeAgentMail() {
   agentMailPoller = createAgentMailPoller({
     consumerId,
     store: agentMailStore,
-    getEnabled: () => desktopSettings.agentMail?.enabled === true,
+    getEnabled: () => (
+      desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
+    ),
     getConnection: async () => {
       const connection = await resolveAgentMailConnection();
       const bootstrap = await fetchAgentMailCapabilities(connection);
       if (bootstrap?.capabilities?.agent_mail?.version !== 1) {
-        throw new Error('The connected Moss Server does not advertise Agent Mail v1.');
+        throw new Error('当前 Moss Server 不支持协作邮箱 v1。');
       }
       return connection;
     },
@@ -7750,6 +7887,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   }
 
   const targetSessionId = sessionRecord.underlyingSessionId;
+  const desiredCoordinatorMode = Boolean(sessionRecord.projectId || sessionRecord.isCoordinatorMode);
   await waitForManagedRuntimesBeforeLocalSession();
   await prepareAssistantContextForSessionStart(sessionRecord);
   const resumeClaudeSession = await getResumeClaudeSessionFn();
@@ -7757,6 +7895,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
+      coordinatorMode: desiredCoordinatorMode,
       sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
       onPermissionRequest: async (toolName, input, request) => {
         return requestToolPermission(sessionRecord, toolName, input, request);
@@ -7790,10 +7929,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
     if (resumed.metadata.customTitle) {
       sessionRecord.title = resumed.metadata.customTitle;
     }
-    if (resumed.metadata.mode) {
-      sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId)
-        || resumed.metadata.mode === 'coordinator';
-    }
+    sessionRecord.isCoordinatorMode = desiredCoordinatorMode;
     if (sessionRecord.workspaceWatcher) {
       await syncWorkspaceWatcher(sessionRecord);
     } else {
@@ -8405,7 +8541,7 @@ async function sendPromptFromFeishu(sessionId, prompt) {
   const result = await sendAgentPrompt(null, {
     sessionId,
     prompt,
-    mode: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'coordinator' : 'chat',
+    mode: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
     coordinatorMode: Boolean(sessionRecord.projectId || sessionRecord.isCoordinatorMode),
   }, {
     allowBusyQueue: true,
@@ -9102,6 +9238,64 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onChanged: (payload) => emitToRenderer('audit:changed', payload),
   });
   registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
+  libraryExtensionManager = createLibraryExtensionManager({
+    libraryRoot: MOSS_LIBRARY_DIR,
+    pythonRuntimeRoot: path.join(MOSS_HOME, 'runtimes', 'python'),
+    pythonVersion: MANAGED_RUNTIME_VERSIONS.python,
+    getPythonPath: () => {
+      const runtime = getManagedRuntimeStatus().python;
+      return runtime.installed ? runtime.path : null;
+    },
+    onChanged: (payload) => emitToRenderer('library:changed', {
+      reason: 'extensions-changed',
+      ...payload,
+    }),
+  });
+  libraryService = createLibraryService({
+    libraryRoot: MOSS_LIBRARY_DIR,
+    dbPath: LIBRARY_DB_PATH,
+    parserPath: resolveLibraryParserPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      uiRoot,
+    }),
+    pythonPath: process.env.MOSS_PYTHON_PATH,
+    getPythonModulePaths: () => libraryExtensionManager?.getModulePaths() || [],
+    requireManagedRuntime: app.isPackaged,
+    getEngineStatus: () => getManagedRuntimeStatus().python,
+    getProject: (projectId) => readProjectSync(projectId),
+    getProjectAssets: (projectId) => listProjectAssets(projectId),
+    getSessionRecord,
+    commitProjectAsset: (projectId, payload) => addProjectAsset(projectId, payload),
+    getSessionResourceManifestPath: (session) => getLocalSessionResourceManifestPath(session.id),
+    watchSources: true,
+    featureFlags: LIBRARY_FEATURE_FLAGS,
+    onChanged: (payload) => emitToRenderer('library:changed', payload),
+    log: mossLog,
+  });
+  registerLibraryIpcHandlers({
+    ipcMain,
+    dialog,
+    shell,
+    getWindow: () => mainWindow,
+    service: libraryService,
+    extensions: libraryExtensionManager,
+    prepareDirectoryImport: prepareLibraryDirectoryImport,
+    getExtensionGuideAcknowledged: () => (
+      desktopSettings.library?.extensionGuideAcknowledged === true
+    ),
+    acknowledgeExtensionGuide: () => {
+      if (desktopSettings.library?.extensionGuideAcknowledged === true) return;
+      saveDesktopSettings({
+        ...desktopSettings,
+        library: {
+          ...desktopSettings.library,
+          extensionGuideAcknowledged: true,
+        },
+      });
+    },
+    log: mossLog,
+  });
   startLocalAuditScanner();
   startMossCronScheduler();
   initUpdateIpcHandlers();
@@ -9183,6 +9377,10 @@ app.on('before-quit', (event) => {
   }
   localAuditService?.close?.();
   localAuditService = null;
+  libraryService?.close?.();
+  libraryService = null;
+  libraryExtensionManager?.dispose?.();
+  libraryExtensionManager = null;
   if (desktopAppRuntime && !desktopAppShutdownComplete) {
     event.preventDefault();
     void desktopAppRuntime.shutdown().finally(() => {
@@ -9213,6 +9411,29 @@ ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
 ipcMain.handle('agent-mail:get-status', () => ({ ...agentMailStatus }));
 ipcMain.handle('agent-mail:list-pending', () => agentMailPoller?.listManual() || []);
+ipcMain.handle('agent-mail:list', async (_event, payload = {}) => {
+  const direction = payload?.direction === 'outbox' ? 'outbox' : 'inbox';
+  const limit = Math.min(100, Math.max(1, Math.floor(Number(payload?.limit) || 100)));
+  const connection = await resolveAgentMailConnection();
+  const result = await listAgentMail(connection, direction, { limit });
+  return { messages: Array.isArray(result?.messages) ? result.messages : [] };
+});
+ipcMain.handle('agent-mail:delete', async (_event, payload = {}) => {
+  const messageIds = [...new Set(
+    (Array.isArray(payload?.messageIds) ? payload.messageIds : [])
+      .map((messageId) => typeof messageId === 'string' ? messageId.trim() : '')
+      .filter(Boolean),
+  )];
+  if (messageIds.length === 0) throw new Error('请选择要删除的邮件。');
+  if (messageIds.length > 100) throw new Error('一次最多删除 100 封邮件。');
+  const connection = await resolveAgentMailConnection();
+  const deleted = [];
+  for (const messageId of messageIds) {
+    await deleteAgentMail(connection, messageId);
+    deleted.push(messageId);
+  }
+  return { messageIds: deleted };
+});
 let remoteDirectOAuthInFlight = null;
 ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   if (remoteDirectOAuthInFlight) {
@@ -10975,6 +11196,7 @@ async function sendAgentPromptNow(event, {
   mode,
   appName,
   files,
+  resources,
   skills,
   coordinatorMode,
 }, {
@@ -11000,7 +11222,7 @@ async function sendAgentPromptNow(event, {
   // Plan turns are one-shot and should not rewrite the session's durable mode.
   if (sessionRecord.projectId) {
     sessionRecord.isCoordinatorMode = true;
-  } else if (mode === 'coordinator' || coordinatorMode) {
+  } else if (mode === 'boss' || mode === 'coordinator' || coordinatorMode) {
     sessionRecord.isCoordinatorMode = true;
   } else if (mode !== 'plan') {
     sessionRecord.isCoordinatorMode = false;
@@ -11013,14 +11235,30 @@ async function sendAgentPromptNow(event, {
   let filePaths = Array.isArray(files)
     ? files.map((filePath) => typeof filePath === 'string' ? filePath.trim() : '').filter(Boolean)
     : [];
-
-  if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
+  if (sessionRecord.agentMode === 'remote-direct'
+    && (filePaths.length > 0 || (Array.isArray(resources) && resources.length > 0))) {
     throw new Error('Remote Direct mode does not support local file attachments yet.');
   }
+  if (Array.isArray(resources) && resources.length > 0 && !libraryService) {
+    throw new Error('Library is not available.');
+  }
+  const libraryResources = Array.isArray(resources) && resources.length > 0
+    ? await libraryService.prepareComposerResources(sessionRecord, resources)
+    : [];
+  filePaths.push(...libraryResources
+    .filter((resource) => resource.selection === 'full-file')
+    .map((resource) => resource.uri));
+  const visibleAttachmentReferences = filePaths.map((filePath) => (
+    filePath.startsWith('moss-library://') ? filePath : null
+  ));
 
+  if (filePaths.some((filePath) => filePath.startsWith('moss-library://'))) {
+    if (!libraryService) throw new Error('Library is not available.');
+    filePaths = await libraryService.resolveAttachmentUris(sessionRecord, filePaths);
+  }
   filePaths = await localizeProjectSessionAttachments(sessionRecord, filePaths);
 
-  if (!trimmedPrompt && filePaths.length === 0) {
+  if (!trimmedPrompt && filePaths.length === 0 && libraryResources.length === 0) {
     throw new Error('Prompt is required.');
   }
 
@@ -11040,6 +11278,7 @@ async function sendAgentPromptNow(event, {
 
   const isPlanOnly = mode === 'plan';
   const isCoordinatorMode = Boolean(sessionRecord.projectId)
+    || mode === 'boss'
     || mode === 'coordinator'
     || coordinatorMode;
 
@@ -11056,9 +11295,12 @@ async function sendAgentPromptNow(event, {
   const visibleUserPrompt = promptSpill
     ? buildLargePromptVisiblePrompt(promptSpill)
     : trimmedPrompt;
+  const visibleFileAttachments = filePaths.map((filePath, index) => (
+    visibleAttachmentReferences[index] || filePath
+  ));
   const visibleAttachments = promptSpill
-    ? [...filePaths, promptSpill.filePath]
-    : filePaths;
+    ? [...visibleFileAttachments, promptSpill.filePath]
+    : visibleFileAttachments;
   const runtimeSystemPrompt = buildBoundAppSystemPrompt(appName);
 
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
@@ -11088,6 +11330,20 @@ async function sendAgentPromptNow(event, {
     attachmentSuffix = lines.join('\n');
   }
 
+  const libraryContextInstruction = libraryResources
+    .filter((resource) => resource.selection !== 'full-file')
+    .map((resource) => {
+      if (resource.selection === 'quote') {
+        return `- Quoted from ${resource.displayName} (${resource.uri}):\n${resource.quote?.text || ''}`;
+      }
+      return resource.kind === 'collection'
+        ? `- Search collection "${resource.displayName}" by passing collection=${JSON.stringify(resource.resourceId)} to library_search.`
+        : `- Search source "${resource.displayName}" by passing sourceId=${JSON.stringify(resource.resourceId)} to library_search.`;
+    });
+  const libraryContextSuffix = libraryContextInstruction.length > 0
+    ? `\n\n[Library retrieval references]\n${libraryContextInstruction.join('\n')}`
+    : '';
+
   const bashContextPrefix = isPlanOnly ? '' : consumePendingBashContexts(sessionRecord);
   const effectiveSkills = skills;
   const selectedSkillsInstruction = isPlanOnly
@@ -11101,7 +11357,7 @@ async function sendAgentPromptNow(event, {
     : [
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
-      effectivePrompt + attachmentSuffix,
+      effectivePrompt + attachmentSuffix + libraryContextSuffix,
     ].filter(Boolean).join('\n\n');
 
   // The embedded runtime's processUserInput natively accepts content-block
@@ -11146,6 +11402,7 @@ async function sendAgentPromptNow(event, {
       runtimePrompt,
       visibleUserPrompt,
       attachments: visibleAttachments,
+      resources: libraryResources,
       runtimeSystemPrompt,
       reopenCompletedProjectSession: Boolean(sessionRecord.projectId),
     });
@@ -11305,9 +11562,9 @@ async function resolveDurableAppDecision(decision, { allowed, context }) {
     return applyPlanApprovalDecision(decision.sessionId, allowed);
   }
   if (decision.kind === 'agent_mail_approval') {
-    if (!agentMailPoller) throw new Error('Agent Mail is not initialized.');
+    if (!agentMailPoller) throw new Error('协作邮箱尚未初始化。');
     const messageId = String(decision.payload?.messageId || '').trim();
-    if (!messageId) throw new Error('Agent Mail approval is missing its message ID.');
+    if (!messageId) throw new Error('协作邮件确认请求缺少邮件 ID。');
     if (context?.choice === 'block') return agentMailPoller.block(messageId);
     return allowed
       ? agentMailPoller.approve(messageId, { trustSender: context?.choice === 'remember' })

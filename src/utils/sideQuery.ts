@@ -17,6 +17,7 @@ import { getAnthropicClient } from '../services/api/client.js'
 import { getModelBetas, modelSupportsStructuredOutputs } from './betas.js'
 import { computeFingerprint } from './fingerprint.js'
 import { normalizeModelStringForAPI } from './model/model.js'
+import { resolveSessionMossModel } from './sessionApiOverrides.js'
 
 type MessageParam = Anthropic.MessageParam
 type TextBlockParam = Anthropic.TextBlockParam
@@ -117,7 +118,7 @@ function extractFirstUserMessageText(messages: MessageParam[]): string {
  */
 export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
   const {
-    model,
+    model: requestedModel,
     system,
     messages,
     tools,
@@ -131,6 +132,7 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
     thinking,
     stop_sequences,
   } = opts
+  const model = resolveSessionMossModel(requestedModel)
 
   const client = await getAnthropicClient({
     maxRetries,

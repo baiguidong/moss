@@ -30,7 +30,7 @@ import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpSer
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'agent-mail' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type SectionId = 'basic-info' | 'model' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -87,6 +87,7 @@ type ToggleProps = {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   label: string;
+  disabled?: boolean;
 };
 
 type NavigationGroupButtonProps = {
@@ -196,9 +197,9 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     keywords: ['扩展', '集成', 'integration'],
     sections: [
       {
-        id: 'agent-mail',
-        title: 'Agent Mail',
-        keywords: ['agent mail', 'mail', '邮箱', '邮件', 'agent 通讯', 'moss server'],
+        id: 'library',
+        title: '资料库',
+        keywords: ['library', '资料库', '知识库', '检索', 'tool', '工具'],
       },
       {
         id: 'mcp',
@@ -374,13 +375,17 @@ function SettingsRow({
   );
 }
 
-function Toggle({ checked, onCheckedChange, label }: ToggleProps) {
+function Toggle({ checked, onCheckedChange, label, disabled = false }: ToggleProps) {
   return (
-    <label className="relative inline-flex h-6 w-11 cursor-pointer items-center">
+    <label className={cn(
+      'relative inline-flex h-6 w-11 items-center',
+      disabled ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
+    )}>
       <input
         type="checkbox"
         className="peer sr-only"
         checked={checked}
+        disabled={disabled}
         aria-label={label}
         onChange={(event) => onCheckedChange(event.target.checked)}
       />
@@ -1107,69 +1112,6 @@ function RuntimeSettings({
   );
 }
 
-function AgentMailSettings({
-  settingsDraft,
-  updateSetting,
-}: {
-  settingsDraft: DesktopSettings;
-  updateSetting: <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => void;
-}) {
-  const [status, setStatus] = React.useState<{
-    state: string;
-    error: string | null;
-    serverUrl: string;
-    pendingManual: number;
-  } | null>(null);
-
-  React.useEffect(() => {
-    let mounted = true;
-    void window.agentDesktop.agentMail.getStatus().then((next) => {
-      if (mounted) setStatus(next);
-    });
-    const dispose = window.agentDesktop.agentMail.onStatusChanged((next) => {
-      if (mounted) setStatus(next);
-    });
-    return () => {
-      mounted = false;
-      dispose();
-    };
-  }, []);
-
-  const statusText = {
-    stopped: '已停止',
-    disabled: '未启用',
-    polling: '运行中',
-    standby: '其他客户端运行中',
-    error: '连接异常',
-  }[status?.state || 'stopped'] || status?.state || '未知';
-
-  return (
-    <SettingsGroup>
-      <SettingsRow title="启用 Agent Mail" controlClassName="sm:w-[56px]">
-        <div className="flex justify-start sm:justify-end">
-          <Toggle
-            checked={settingsDraft.agentMail?.enabled === true}
-            onCheckedChange={(enabled) => updateSetting('agentMail', {
-              ...settingsDraft.agentMail,
-              enabled,
-            })}
-            label="启用 Agent Mail"
-          />
-        </div>
-      </SettingsRow>
-      <SettingsRow title="状态" controlClassName="sm:w-[260px]">
-        <div className="text-left text-xs text-muted-foreground sm:text-right">
-          <span className={status?.state === 'polling' ? 'text-emerald-600 dark:text-emerald-300' : ''}>
-            {statusText}
-          </span>
-          {status?.pendingManual ? ` · ${status.pendingManual} 封待确认` : ''}
-          {status?.error ? <div className="mt-1 break-words text-destructive">{status.error}</div> : null}
-        </div>
-      </SettingsRow>
-    </SettingsGroup>
-  );
-}
-
 export function SettingsView({
   settingsDraft,
   setSettingsDraft,
@@ -1194,7 +1136,7 @@ export function SettingsView({
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     'basic-info': null,
     model: null,
-    'agent-mail': null,
+    library: null,
     mcp: null,
     feishu: null,
     appearance: null,
@@ -1572,12 +1514,40 @@ export function SettingsView({
                               onCheckedChange={(checked) => {
                                 updateSetting('remoteEnabled', checked);
                                 if (!checked) {
+                                  setSettingsDraft((current) => current ? {
+                                    ...current,
+                                    remoteEnabled: false,
+                                    agentMail: { ...current.agentMail, enabled: false },
+                                  } : current);
+                                }
+                                if (!checked) {
                                   updateSetting('agentMode', 'local');
                                 } else if (!(settingsDraft.localEnabled ?? true)) {
                                   updateSetting('agentMode', 'remote-direct');
                                 }
                               }}
                               label="云端模式"
+                            />
+                          </div>
+                        </SettingsRow>
+
+                        <SettingsRow
+                          title="协作邮箱"
+                          description="通过云端 Moss Server 接收其他智能体发来的协作邮件。"
+                          controlClassName="sm:w-[56px]"
+                        >
+                          <div className="flex justify-start sm:justify-end">
+                            <Toggle
+                              checked={
+                                (settingsDraft.remoteEnabled ?? false) &&
+                                settingsDraft.agentMail?.enabled === true
+                              }
+                              disabled={!(settingsDraft.remoteEnabled ?? false)}
+                              onCheckedChange={(enabled) => updateSetting('agentMail', {
+                                ...settingsDraft.agentMail,
+                                enabled,
+                              })}
+                              label="启用协作邮箱"
                             />
                           </div>
                         </SettingsRow>
@@ -1766,15 +1736,15 @@ export function SettingsView({
                       ) : null}
 
                       <SettingsRow
-                        title="长任务自动转后台"
-                        description="前台 Agent 运行超过 120 秒后自动转为后台任务。"
+                        title="Boss 长任务自动转后台"
+                        description="仅在 Boss 模式下，worker 运行超过 120 秒后自动转为后台任务。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
                             checked={Boolean(advancedDraft.moss_auto_background_agents)}
                             onCheckedChange={(checked) => updateAdvancedSettings({ moss_auto_background_agents: checked })}
-                            label="长任务自动转后台"
+                            label="Boss 长任务自动转后台"
                           />
                         </div>
                       </SettingsRow>
@@ -2275,18 +2245,29 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'agent-mail') ? (
+                {visibleSections.some((section) => section.id === 'library') ? (
                   <SettingsSection
-                    id="agent-mail"
-                    title="Agent Mail"
+                    id="library"
+                    title="资料库"
                     sectionRef={(element) => {
-                      sectionRefs.current['agent-mail'] = element;
+                      sectionRefs.current.library = element;
                     }}
                   >
-                    <AgentMailSettings
-                      settingsDraft={settingsDraft}
-                      updateSetting={updateSetting}
-                    />
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="启用资料库"
+                        description="允许 Agent 在对话中检索已索引的资料。关闭后保留已有资料和索引。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={settingsDraft.library?.enabled === true}
+                            onCheckedChange={(enabled) => updateSetting('library', { enabled })}
+                            label="启用资料库"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 

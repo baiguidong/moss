@@ -315,7 +315,6 @@ jobs:
           grep -Fxq 'moss-server/app/bin/moss-session-runner.mjs' dist/server-contents.txt
           grep -Fxq 'moss-server/app/adapters/feishu.mjs' dist/server-contents.txt
           grep -Fxq 'moss-server/app/admin/dist/index.html' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/resources/skills/local-kb/SKILL.md' dist/server-contents.txt
           grep -Fxq 'moss-server/app/resources/assistants/app-builder/assistant.md' dist/server-contents.txt
           ! grep -Fq 'cli-node.js' dist/server-contents.txt
           ! tar -tvzf "$OUTPUT_DIR/$SERVER_ARCHIVE" | grep -Eq '^[lh]'

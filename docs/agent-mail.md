@@ -101,8 +101,11 @@ sequenceDiagram
 | `POST` | `/messages/:id/fail` | `agent-mail:receive` | 报告失败或拒绝 |
 | `GET/PUT` | `/acl[/senderUserId]` | `agent-mail:receive` | 查看或更新发件人策略 |
 | `GET` | `/inbox`, `/outbox` | receive/send | 查看最近消息状态 |
+| `DELETE` | `/messages/:id` | send 或 receive | 从当前用户的邮箱视图移除邮件 |
 
 `GET /api/v1/bootstrap` 返回 `capabilities.agent_mail.version = 1`。客户端只有确认此能力后才启动拉取。
+
+删除使用按用户记录的 tombstone，不物理删除原消息。发件人删除发信记录不会影响收件人的记录，反之亦然；回复 thread 也会继续保留。
 
 ## 状态与限制
 
@@ -128,11 +131,11 @@ expired lease -> queued (attempts < 5) or failed
 
 ## 启用与操作
 
-1. 在桌面端基础连接设置中配置并认证 Moss Server。
-2. 在“扩展与集成 -> Agent Mail”打开 Agent Mail。
-3. 状态显示“运行中”后，普通会话可调用动态 `MossMail` Tool 搜索用户、发送，并用 `list_outbox` 查看执行状态。
+1. 在桌面端基础设置中开启“云端模式”，配置并认证 Moss Server。
+2. 在“云端模式”下方打开“协作邮箱”；关闭云端模式会同时停用协作邮箱。
+3. 普通会话可调用动态 `MossMail` Tool 搜索用户、发送，并用 `list_outbox` 查看执行状态。
 4. 未信任发件人的邮件显示在通知中心；可选择允许一次、允许并信任发件人、拒绝一次，或拒绝并屏蔽发件人。
-5. 自动执行记录统一出现在侧边栏的 “Agent Mail” 会话组。
+5. 收信记录与发信记录在侧栏“协作邮箱”中按日期查看；删除只影响当前用户自己的列表。
 
 手工创建的长期 API Key 只有在 scopes 中包含 `agent-mail:send` / `agent-mail:receive` 时才能使用对应接口。桌面浏览器 OAuth 管理的登录 Key 会在换取 access token 时同步用户当前角色的默认 scopes，旧登录凭据无需手工重建。
 

@@ -36,6 +36,7 @@ export type ChatMessage = {
 export type TranscriptAttachment = {
   kind: 'image' | 'file';
   path: string;
+  name?: string;
 };
 
 type TranscriptRenderMessageBase = {
@@ -476,6 +477,20 @@ function attachmentsFromPaths(
   }
 
   return attachments.length > 0 ? mergeAttachments(undefined, attachments) : undefined;
+}
+
+function attachmentsFromResources(resources?: Array<Record<string, unknown>> | null) {
+  if (!Array.isArray(resources)) return undefined;
+  const attachments = resources.flatMap((resource) => {
+    const uri = typeof resource?.uri === 'string' ? resource.uri.trim() : '';
+    if (!uri.startsWith('moss-library://')) return [];
+    return [{
+      kind: 'file' as const,
+      path: uri,
+      name: typeof resource.displayName === 'string' ? resource.displayName : undefined,
+    }];
+  });
+  return attachments.length > 0 ? attachments : undefined;
 }
 
 function nextRenderId(state: RenderBuilderState, prefix: string): string {
@@ -1080,9 +1095,12 @@ export function buildTranscriptRenderMessages(
     const timestamp = safeDate(event?.timestamp);
     const userText = event?.type === 'user' ? extractUserText(event) : '';
 
-    const userAttachments = attachmentsFromPaths(
-      Array.isArray(event?.images) ? event.images : undefined,
-      Array.isArray(event?.files) ? event.files : undefined,
+    const userAttachments = mergeAttachments(
+      attachmentsFromPaths(
+        Array.isArray(event?.images) ? event.images : undefined,
+        Array.isArray(event?.files) ? event.files : undefined,
+      ),
+      attachmentsFromResources(Array.isArray(event?.resources) ? event.resources : undefined),
     );
 
     if (

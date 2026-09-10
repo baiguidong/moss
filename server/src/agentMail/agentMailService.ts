@@ -141,6 +141,15 @@ export class AgentMailService {
       CREATE INDEX IF NOT EXISTS agent_mail_messages_thread_idx
         ON agent_mail_messages (org_id, thread_id, created_at);
 
+      CREATE TABLE IF NOT EXISTS agent_mail_deletions (
+        message_id TEXT NOT NULL REFERENCES agent_mail_messages(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        deleted_at INTEGER NOT NULL,
+        PRIMARY KEY (message_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS agent_mail_deletions_user_idx
+        ON agent_mail_deletions (user_id, deleted_at);
+
       CREATE TABLE IF NOT EXISTS agent_mail_consumers (
         org_id TEXT NOT NULL REFERENCES organizations(id),
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -411,10 +420,32 @@ export class AgentMailService {
     const rows = this.db.prepare(`
       ${this.messageSelect()}
       WHERE m.org_id = ? AND ${column} = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_mail_deletions deletion
+          WHERE deletion.message_id = m.id AND deletion.user_id = ?
+        )
       ORDER BY m.created_at DESC
       LIMIT ?
-    `).all(auth.orgId, auth.userId, boundedLimit) as SqlRow[]
+    `).all(auth.orgId, auth.userId, auth.userId, boundedLimit) as SqlRow[]
     return rows.map(mapMessage)
+  }
+
+  deleteForUser(auth: AuthContext, messageId: string): { messageId: string; deleted: boolean } {
+    this.requireActiveCaller(auth)
+    const normalizedMessageId = text(messageId)
+    const row = this.db.prepare(`
+      SELECT id FROM agent_mail_messages
+      WHERE id = ? AND org_id = ? AND (from_user_id = ? OR to_user_id = ?)
+    `).get(normalizedMessageId, auth.orgId, auth.userId, auth.userId) as SqlRow | undefined
+    if (!row) throw new AgentMailError(404, 'AGENT_MAIL_NOT_FOUND', 'Agent Mail message was not found')
+    const result = this.db.prepare(`
+      INSERT OR IGNORE INTO agent_mail_deletions (message_id, user_id, deleted_at)
+      VALUES (?, ?, ?)
+    `).run(normalizedMessageId, auth.userId, now())
+    return {
+      messageId: normalizedMessageId,
+      deleted: Number(result.changes) > 0,
+    }
   }
 
   private acquireConsumer(auth: AuthContext, consumerId: string): number {

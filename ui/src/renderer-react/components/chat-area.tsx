@@ -59,7 +59,7 @@ import {
   type ComposerMentionTab,
 } from "@/lib/composer-mentions";
 
-type ComposerIntent = "chat" | "plan" | "coordinator";
+type ComposerIntent = "chat" | "boss";
 type PendingPlanApproval = {
   kind: "plan";
   originalPrompt: string;
@@ -80,14 +80,9 @@ const chatIntentOption: IntentOption = {
 
 const intentOptions: IntentOption[] = [
   {
-    id: "coordinator",
+    id: "boss",
     title: "boss",
     description: "主 agent 协调多个 worker 并行执行复杂任务",
-  },
-  {
-    id: "plan",
-    title: "plan",
-    description: "规划任务步骤和执行计划",
   },
 ];
 
@@ -981,11 +976,9 @@ function ComposerPanel({
                 ? `描述你想如何修改 ${selectedAppName}...`
                 : selectedAssistant?.name === "app-builder-assistant"
                   ? "描述你想创建或修改的 App、目标用户、交互和风格..."
-                  : composerIntent === "coordinator"
+                  : composerIntent === "boss"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
-                    : composerIntent === "plan"
-                    ? "描述需求，我会先给出计划..."
-                      : defaultPlaceholder
+                    : defaultPlaceholder
               : defaultPlaceholder
               )
           }
@@ -1212,6 +1205,7 @@ function ComposerPanel({
                 <FilePreview
                   key={`${file.path}-${index}`}
                   path={file.path}
+                  name={file.name}
                   onRemove={() => handleRemoveAttachment(index)}
                 />
               ))}
@@ -2029,6 +2023,7 @@ export function ChatArea({
   sessionTitle,
   sessionId,
   sessionWorkspace,
+  homeWorkspace,
   focusedToolUseId,
   focusedToolRequestId,
   pendingPlanApproval,
@@ -2066,6 +2061,7 @@ export function ChatArea({
   backgroundTasks,
   composerAttachments,
   onComposerAttachmentsChange,
+  onHomeWorkspaceChange,
   contextUsage,
   turnTokens = 0,
   onForkSession,
@@ -2086,6 +2082,7 @@ export function ChatArea({
   sessionTitle: string;
   sessionId?: string;
   sessionWorkspace?: string;
+  homeWorkspace?: string;
   focusedToolUseId?: string;
   focusedToolRequestId?: number;
   pendingPlanApproval: PendingPlanApproval | null;
@@ -2123,6 +2120,7 @@ export function ChatArea({
   backgroundTasks?: BackgroundTaskInfo[];
   composerAttachments?: Array<{ name: string; path: string }>;
   onComposerAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
+  onHomeWorkspaceChange?: (workspace: string | undefined) => void;
   contextUsage?: ContextUsageInfo | null;
   turnTokens?: number;
   onForkSession?: () => void;
@@ -2187,6 +2185,10 @@ export function ChatArea({
     }
   }, [hasActiveSession]);
 
+  React.useEffect(() => {
+    if (!hasActiveSession) setWorkspace(homeWorkspace);
+  }, [hasActiveSession, homeWorkspace]);
+
   const handleHomeLandingSend = (
     files: Array<{ name: string; path: string }> | undefined,
     skills?: SkillMentionItem[],
@@ -2206,7 +2208,10 @@ export function ChatArea({
           attachments={attachments}
           onAttachmentsChange={setAttachments}
           workspace={workspace}
-          onWorkspaceChange={setWorkspace}
+          onWorkspaceChange={(nextWorkspace) => {
+            setWorkspace(nextWorkspace);
+            onHomeWorkspaceChange?.(nextWorkspace);
+          }}
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
           onSend={handleHomeLandingSend}

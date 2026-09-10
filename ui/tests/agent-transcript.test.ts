@@ -37,6 +37,30 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("replays structured Library references with their stable display names", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: "user",
+      prompt: "对比这些资料",
+      resources: [{
+        uri: "moss-library://collection/collection-123?name=Research",
+        resourceId: "collection-123",
+        kind: "collection",
+        selection: "search-scope",
+        displayName: "客户研究资料",
+        revision: null,
+      }],
+    }]);
+
+    expect(messages[0]).toEqual(expect.objectContaining({
+      type: "user_text",
+      attachments: [{
+        kind: "file",
+        path: "moss-library://collection/collection-123?name=Research",
+        name: "客户研究资料",
+      }],
+    }));
+  });
+
   it("hides SDK synthetic skill context from the user transcript", () => {
     const messages = buildMainChatRenderMessagesFromHistory([
       {

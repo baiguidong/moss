@@ -136,6 +136,29 @@ assert.throws(() => service.send(auth('bob'), {
   clientMessageId: 'long-subject-reply',
 }), (error: unknown) => error instanceof AgentMailError && error.code === 'AGENT_MAIL_SUBJECT_TOO_LONG')
 
+const deleteTarget = service.send(auth('alice'), {
+  toUserId: 'bob',
+  subject: 'Delete independently',
+  content: 'Each mailbox owner controls only their own view.',
+  clientMessageId: 'delete-target',
+}).message
+assert.deepEqual(service.deleteForUser(auth('alice'), deleteTarget.messageId), {
+  messageId: deleteTarget.messageId,
+  deleted: true,
+})
+assert.deepEqual(service.deleteForUser(auth('alice'), deleteTarget.messageId), {
+  messageId: deleteTarget.messageId,
+  deleted: false,
+})
+assert.equal(service.list(auth('alice'), 'outbox').some(message => message.messageId === deleteTarget.messageId), false)
+assert.equal(service.list(auth('bob'), 'inbox').some(message => message.messageId === deleteTarget.messageId), true)
+service.deleteForUser(auth('bob'), deleteTarget.messageId)
+assert.equal(service.list(auth('bob'), 'inbox').some(message => message.messageId === deleteTarget.messageId), false)
+assert.throws(
+  () => service.deleteForUser(auth('mallory', 'org-2'), deleteTarget.messageId),
+  (error: unknown) => error instanceof AgentMailError && error.code === 'AGENT_MAIL_NOT_FOUND',
+)
+
 const queuedBeforeBlock = service.send(auth('alice'), {
   toUserId: 'bob',
   content: 'Must be cancelled when blocked',

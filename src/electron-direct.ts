@@ -11,8 +11,10 @@ import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
+import { CHAT_MODE_DISALLOWED_TOOLS } from './constants/tools.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
-import { mergeAndFilterTools } from './utils/toolPool.js'
+import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
+import { applyChatToolFilter, mergeAndFilterTools } from './utils/toolPool.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -309,6 +311,10 @@ export interface ClaudeSessionOptions {
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   /** Dynamically expose authenticated Moss Server Agent Mail operations. */
   agentMailEnabled?: boolean
+  /** Expose Moss Library as first-party in-process tools. */
+  libraryEnabled?: boolean
+  /** Restrict Bash to commands accepted by the core read-only validator. */
+  readOnlyBashOnly?: boolean
   /** 恢复后的 transcript session ID */
   sessionId?: string
   /** resume 后直接喂给 QueryEngine 的消息 */
@@ -351,6 +357,8 @@ type ResolvedClaudeSessionOptions = {
   coordinatorMode: boolean
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   agentMailEnabled: boolean
+  libraryEnabled: boolean
+  readOnlyBashOnly: boolean
   sessionId?: string
   initialMessages?: Message[]
   projectDir?: string | null
@@ -483,23 +491,27 @@ async function runDesktopPermissionRequestHooks(
 }
 
 function buildSessionApiOverrides(
-  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey'>,
+  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey' | 'model'>,
 ): SessionApiOverrides | undefined {
   const mossBaseUrl = normalizeMossBaseUrl(
     typeof opts.url === 'string' ? opts.url : undefined,
   )
   const mossAuthToken =
     typeof opts.apiKey === 'string' ? opts.apiKey.trim() || undefined : undefined
+  const mossModel =
+    typeof opts.model === 'string' ? opts.model.trim() || undefined : undefined
 
-  if (!mossBaseUrl && !mossAuthToken) {
+  if (!mossBaseUrl && !mossAuthToken && !mossModel) {
     return undefined
   }
 
   return {
     ...(mossBaseUrl ? { mossBaseUrl } : {}),
     ...(mossAuthToken ? { mossAuthToken } : {}),
+    ...(mossModel ? { mossModel } : {}),
   }
 }
+
 
 async function resolveResumeSourceJsonlFile(
   sessionId: string | undefined,
@@ -594,6 +606,8 @@ export class ClaudeSession {
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
       agentMailEnabled: opts.agentMailEnabled === true,
+      libraryEnabled: opts.libraryEnabled === true,
+      readOnlyBashOnly: opts.readOnlyBashOnly === true,
       sessionId: opts.sessionId,
       initialMessages: opts.initialMessages,
       // 始终显式解析 projectDir, 避免并发多会话时 getTranscriptPath()
@@ -729,6 +743,25 @@ export class ClaudeSession {
 
     // 权限回调
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
+      if (
+        !this.#opts.coordinatorMode &&
+        CHAT_MODE_DISALLOWED_TOOLS.has(tool.name)
+      ) {
+        return {
+          behavior: 'deny',
+          message: 'Chat 模式不能创建或控制 worker。请先切换到 Boss 模式。',
+        }
+      }
+      if (
+        this.#opts.readOnlyBashOnly &&
+        tool.name === 'Bash' &&
+        tool.isReadOnly(input) !== true
+      ) {
+        return {
+          behavior: 'deny',
+          message: '资料整理会话只允许运行只读命令；不能写文件、重定向输出、执行脚本或修改系统状态。',
+        }
+      }
       const validationDecision = await this.#opts.onToolUseValidation?.(tool.name, input)
       if (
         validationDecision &&
@@ -848,8 +881,14 @@ export class ClaudeSession {
     const computeTools = () => {
       const state = store.getState()
       const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
-      const dynamicTools = this.#opts.agentMailEnabled ? [MossMailTool] : []
-      return mergeAndFilterTools(dynamicTools, assembled, state.toolPermissionContext.mode)
+      const modeTools = this.#opts.coordinatorMode
+        ? assembled
+        : applyChatToolFilter(assembled)
+      const dynamicTools = [
+        ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
+        ...(this.#opts.libraryEnabled ? LibraryTools : []),
+      ]
+      return mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
     }
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {
@@ -1322,9 +1361,10 @@ export async function resumeClaudeSession(
   const session = new ClaudeSession({
     ...sessionOptions,
     cwd: effectiveCwd,
-    coordinatorMode: prepared.mode
-      ? prepared.mode === 'coordinator'
-      : (sessionOptions.coordinatorMode ?? false),
+    // The desktop's persisted Chat/Boss selection is authoritative. Fall back
+    // to the transcript mode only for callers that did not provide one.
+    coordinatorMode: sessionOptions.coordinatorMode
+      ?? (prepared.mode ? prepared.mode === 'coordinator' : false),
     sessionId: prepared.sessionId,
     initialMessages: prepared.messages,
     projectDir: prepared.projectDir,

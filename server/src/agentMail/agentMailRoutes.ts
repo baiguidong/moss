@@ -120,6 +120,13 @@ export async function handleAgentMailRoute(input: {
       return true
     }
 
+    const messageMatch = pathname.match(/^\/api\/v1\/agent-mail\/messages\/([^/]+)$/)
+    if (messageMatch && req.method === 'DELETE') {
+      authService.requireAnyScope(auth, ['agent-mail:send', 'agent-mail:receive'])
+      writeJson(res, 200, service.deleteForUser(auth, decoded(messageMatch[1]!)))
+      return true
+    }
+
     const actionMatch = pathname.match(/^\/api\/v1\/agent-mail\/messages\/([^/]+)\/(accept|heartbeat|complete|fail)$/)
     if (actionMatch && req.method === 'POST') {
       authService.requireScope(auth, 'agent-mail:receive')

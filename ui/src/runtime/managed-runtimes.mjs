@@ -211,12 +211,51 @@ async function markInstalled(name, version, executablePath, installPath) {
   await writeRegistry(registry);
 }
 
+async function pruneObsoleteRuntimeVersions(name, currentVersion) {
+  const versionsRoot = path.join(RUNTIME_HOME, name, 'versions');
+  const removed = [];
+  let entries = [];
+  try {
+    entries = await fsp.readdir(versionsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  for (const entry of entries) {
+    if (entry.name === currentVersion || (!entry.isDirectory() && !entry.isSymbolicLink())) continue;
+    await fsp.rm(path.join(versionsRoot, entry.name), { recursive: true, force: true });
+    removed.push(entry.name);
+  }
+
+  const registry = await readRegistry();
+  const versions = registry.runtimes?.[name];
+  let registryChanged = false;
+  if (versions && typeof versions === 'object') {
+    for (const version of Object.keys(versions)) {
+      if (version === currentVersion) continue;
+      delete versions[version];
+      registryChanged = true;
+    }
+  }
+  if (registryChanged) {
+    registry.lastUpdated = Date.now();
+    await writeRegistry(registry);
+  }
+  if (removed.length > 0) {
+    mossLog('info', 'runtime', `${name} obsolete runtime versions removed`, {
+      currentVersion,
+      removed,
+    });
+  }
+  return removed;
+}
+
 async function ensureNodeRuntime() {
   const version = MANAGED_RUNTIME_VERSIONS.node;
   const installDir = runtimeInstallDir('node', version);
   const executablePath = nodeExecutablePath();
   if (await verifyExecutable(executablePath)) {
     await markInstalled('node', version, executablePath, installDir);
+    await pruneObsoleteRuntimeVersions('node', version);
     return { ok: true, executablePath, installPath: installDir, installed: false };
   }
   const resource = findResource('node');
@@ -232,6 +271,7 @@ async function ensureNodeRuntime() {
     throw new Error(`Managed Node.js runtime failed verification: ${executablePath}`);
   }
   await markInstalled('node', version, executablePath, installDir);
+  await pruneObsoleteRuntimeVersions('node', version);
   return { ok: true, executablePath, installPath: installDir, installed: true };
 }
 
@@ -241,6 +281,7 @@ async function ensurePythonRuntime() {
   const executablePath = pythonExecutablePath();
   if (await verifyExecutable(executablePath)) {
     await markInstalled('python', version, executablePath, installDir);
+    await pruneObsoleteRuntimeVersions('python', version);
     return { ok: true, executablePath, installPath: installDir, installed: false };
   }
   const resource = findResource('python');
@@ -257,6 +298,7 @@ async function ensurePythonRuntime() {
     throw new Error(`Managed Python runtime failed verification: ${verifiedPath}`);
   }
   await markInstalled('python', version, verifiedPath, installDir);
+  await pruneObsoleteRuntimeVersions('python', version);
   return { ok: true, executablePath: verifiedPath, installPath: installDir, installed: true };
 }
 

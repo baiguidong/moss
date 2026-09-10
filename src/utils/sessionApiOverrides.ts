@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'async_hooks'
 export type SessionApiOverrides = {
   mossBaseUrl?: string
   mossAuthToken?: string
+  mossModel?: string
 }
 
 const sessionApiOverridesStorage = new AsyncLocalStorage<SessionApiOverrides>()
@@ -17,6 +18,32 @@ export function getSessionMossBaseUrl(): string | undefined {
 
 export function getSessionMossAuthToken(): string | undefined {
   return sessionApiOverridesStorage.getStore()?.mossAuthToken
+}
+
+export function getSessionMossModel(): string | undefined {
+  return sessionApiOverridesStorage.getStore()?.mossModel
+}
+
+export function resolveSessionMossModel(model: string): string {
+  return getSessionMossModel() || model
+}
+
+export function applySessionMossModel<
+  T extends { model: string; fallbackModel?: string; advisorModel?: string },
+>(options: T): T {
+  const mossModel = getSessionMossModel()
+  if (!mossModel) return options
+  if (
+    options.model === mossModel &&
+    options.fallbackModel === undefined &&
+    options.advisorModel === undefined
+  ) return options
+  return {
+    ...options,
+    model: mossModel,
+    fallbackModel: undefined,
+    advisorModel: undefined,
+  }
 }
 
 export function runWithSessionApiOverrides<T>(

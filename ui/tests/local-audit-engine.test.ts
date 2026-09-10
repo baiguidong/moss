@@ -158,7 +158,7 @@ describe('local audit engine', () => {
           message: {
             content: [
               { type: 'tool_use', id: 'memory-write', name: 'Write', input: { file_path: '/Users/test/.moss/memory/project_note.md' } },
-              { type: 'tool_use', id: 'skill-write', name: 'Edit', input: { file_path: '/Users/test/.moss/skills/local-kb/scripts/kb.py' } },
+              { type: 'tool_use', id: 'skill-write', name: 'Edit', input: { file_path: '/Users/test/.moss/skills/research-notes/scripts/index.py' } },
             ],
           },
         }],
@@ -168,7 +168,7 @@ describe('local audit engine', () => {
       const findings = evaluateLocalAuditSession(session, normalized, [outsideWriteRule]);
 
       expect(findings).toHaveLength(1);
-      expect(findings[0]?.detail).toBe('/Users/test/.moss/skills/local-kb/scripts/kb.py');
+      expect(findings[0]?.detail).toBe('/Users/test/.moss/skills/research-notes/scripts/index.py');
     } finally {
       if (previousMossHome === undefined) delete process.env.MOSS_HOME;
       else process.env.MOSS_HOME = previousMossHome;

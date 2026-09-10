@@ -3,6 +3,8 @@ import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
+import { LibraryView } from '@/components/library-view';
+import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import {
   resolveAutoCollapseToolCalls,
@@ -48,10 +50,12 @@ import type {
   AppVersion,
   AuditAlert,
   BackgroundTaskInfo,
+  ComposerResourceRef,
   DesktopSettings,
   FileTreeNode,
   InstalledConnector,
   InstalledAssistant,
+  LibraryResource,
   Project,
   ProjectTemplate,
   SessionDetail,
@@ -80,6 +84,12 @@ function formatSidebarPreview(preview: string): string {
   if (!singleLine) return '';
 
   return singleLine.length > 48 ? `${singleLine.slice(0, 48)}...` : singleLine;
+}
+
+function displaySessionTitle(session: Pick<SessionSummary, 'title' | 'sessionKind'>): string {
+  return session.sessionKind === 'agent-mail' && session.title === 'Agent Mail'
+    ? '协作邮箱'
+    : session.title;
 }
 
 function basename(filePath: string): string {
@@ -123,12 +133,18 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type ComposerIntent = 'chat' | 'plan' | 'coordinator';
+type ComposerIntent = 'chat' | 'boss';
+type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
+type PendingNewSessionContext = {
+  workspace: string;
+  title: string;
+  draftPrompt: string;
+};
 type QueuedMessage = {
   id: string;
   prompt: string;
   skills?: Array<{ name: string; displayName?: string; source?: string }>;
-  files?: Array<{ name: string; path: string }>;
+  files?: ComposerAttachment[];
   intent: ComposerIntent;
 };
 type LayoutState = {
@@ -272,7 +288,8 @@ function mergeSessionHistorySnapshot(
 }
 
 function restoreComposerIntent(session?: Pick<SessionSummary, 'composerIntent'> | null): ComposerIntent {
-  return session?.composerIntent === 'coordinator' ? 'coordinator' : 'chat';
+  const persistedIntent = session?.composerIntent as string | undefined;
+  return persistedIntent === 'boss' || persistedIntent === 'coordinator' ? 'boss' : 'chat';
 }
 
 function buildCliConnectorSetupPrompt(connector: InstalledConnector, _cli: Record<string, any> | null) {
@@ -477,10 +494,11 @@ export default function App() {
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [input, setInput] = React.useState('');
+  const [pendingNewSessionContext, setPendingNewSessionContext] = React.useState<PendingNewSessionContext | null>(null);
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
   const [questionRequests, setQuestionRequests] = React.useState<AskUserQuestionRequest[]>([]);
-  const [composerAttachments, setComposerAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
+  const [composerAttachments, setComposerAttachments] = React.useState<ComposerAttachment[]>([]);
   // Ref mirrors state so event handlers (registered once) and abort can read
   // and mutate the queue synchronously, ahead of React's re-render.
   const queuedMessagesRef = React.useRef<Record<string, QueuedMessage[]>>({});
@@ -531,6 +549,9 @@ export default function App() {
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
+  const libraryEnabled = desktopSettings?.library?.enabled === true;
+  const agentMailEnabled =
+    desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const previewAutoCollapsedRightRef = React.useRef(false);
   const previewAutoCollapsedBySessionRef = React.useRef<string | null>(null);
@@ -685,11 +706,11 @@ export default function App() {
   // Per-session composer drafts: text + attachments survive session switches
   // (borrowed from sudowork's useSendBoxDraft). Snapshotted on switch, so live
   // edits stay in normal state and send-clearing works untouched.
-  const composerDraftsRef = React.useRef<Record<string, { text: string; files: Array<{ name: string; path: string }> }>>({});
+  const composerDraftsRef = React.useRef<Record<string, { text: string; files: ComposerAttachment[] }>>({});
   const draftSessionKeyRef = React.useRef<string>('home');
   const inputDraftRef = React.useRef('');
   inputDraftRef.current = input;
-  const composerAttachmentsRef = React.useRef<Array<{ name: string; path: string }>>([]);
+  const composerAttachmentsRef = React.useRef<ComposerAttachment[]>([]);
   composerAttachmentsRef.current = composerAttachments;
 
   React.useEffect(() => {
@@ -764,6 +785,7 @@ export default function App() {
     setActiveView('chat');
     setActiveSessionId(null);
     setActiveDetail(null);
+    setPendingNewSessionContext(null);
     clearSessionWorkspaceState();
     if (!options?.preserveIntent) {
       setComposerIntent('chat');
@@ -826,7 +848,7 @@ export default function App() {
     setActiveDetail(created.detail);
     clearSessionWorkspaceState();
     // Record session agentMode based on current settings
-    const mode = desktopSettings?.agentMode ?? 'local';
+    const mode = created.summary.agentMode ?? desktopSettings?.agentMode ?? 'local';
     persistSessionAgentModes(new Map(sessionAgentModes).set(created.summary.id, mode));
     await openSession(created.summary.id);
     return created.summary.id;
@@ -995,6 +1017,12 @@ export default function App() {
       }
     }
   }, [activeView, apps, embeddedAppName, selectedAppName]);
+
+  React.useEffect(() => {
+    if (!libraryEnabled && activeView === 'library') {
+      setActiveView('chat');
+    }
+  }, [activeView, libraryEnabled]);
 
   React.useEffect(() => {
     if (!appsLoaded) return;
@@ -1363,9 +1391,11 @@ export default function App() {
   const sidebarSessions = React.useMemo(
     () => baseSidebarSessions.map((session) => {
       const pendingCount = questionRequests.filter((request) => request.sessionId === session.id).length;
-      return pendingCount > 0
-        ? { ...session, preview: `待决策 ${pendingCount}` }
-        : session;
+      return {
+        ...session,
+        title: displaySessionTitle(session),
+        ...(pendingCount > 0 ? { preview: `待决策 ${pendingCount}` } : {}),
+      };
     }),
     [baseSidebarSessions, questionRequests],
   );
@@ -1582,6 +1612,7 @@ export default function App() {
   }, []);
 
   const handleNewSession = React.useCallback(async () => {
+    setPendingNewSessionContext(null);
     navigateToHome({ resetInput: true, resetApp: true });
   }, [navigateToHome]);
 
@@ -1658,9 +1689,9 @@ export default function App() {
 
   const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
     if (activeDetailRef.current?.projectId) {
-      setComposerIntent('coordinator');
-      if (intent !== 'coordinator') {
-        showPermissionNotice('项目会话固定使用项目协调模式', 'info', 3000);
+      setComposerIntent('boss');
+      if (intent !== 'boss') {
+        showPermissionNotice('项目会话固定使用 Boss 模式', 'info', 3000);
       }
       return;
     }
@@ -1722,17 +1753,17 @@ export default function App() {
     sessionId: string,
     prompt: string,
     intent: ComposerIntent,
-    files?: Array<{ name: string; path: string }>,
+    files?: ComposerAttachment[],
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
   ) => {
     await window.agentDesktop.send({
       sessionId,
       prompt,
       skills,
-      mode: intent === 'chat' ? undefined : intent,
+      mode: intent,
       appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
-      files: files?.map(f => f.path),
-      coordinatorMode: intent === 'coordinator' ? true : undefined,
+      files: files?.filter((file) => !file.resource).map((file) => file.path),
+      resources: files?.flatMap((file) => file.resource ? [file.resource] : []),
     });
   }, [selectedAppName, selectedAssistant]);
 
@@ -1850,7 +1881,7 @@ export default function App() {
 
   const submitPrompt = React.useCallback(async (
     intent: ComposerIntent,
-    files?: Array<{ name: string; path: string }>,
+    files?: ComposerAttachment[],
     workspace?: string,
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
   ) => {
@@ -1881,12 +1912,15 @@ export default function App() {
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
     if (!sessionId) {
+      const preparedSession = pendingNewSessionContext && workspace === pendingNewSessionContext.workspace
+        ? pendingNewSessionContext
+        : null;
       // Reuse an in-flight creation so a re-entrant submit (double-send or a
       // retry after an errored first turn) binds to the SAME session/workspace
       // instead of spawning a second directory.
       if (!creatingSessionRef.current) {
         creatingSessionRef.current = createAndOpenSession(
-          undefined,
+          preparedSession?.title,
           workspace,
           selectedAssistant?.name,
           draftConnectorIds,
@@ -1896,14 +1930,19 @@ export default function App() {
         sessionJustCreated = true;
       }
       sessionId = await creatingSessionRef.current;
+      if (sessionId && preparedSession) setPendingNewSessionContext(null);
     }
     if (!sessionId) return;
 
     // If we just created a new session and have files, copy them to the new workspace
     let filesToSend = files;
     if (sessionJustCreated && hasFiles) {
-      const newFiles: Array<{ name: string; path: string }> = [];
+      const newFiles: ComposerAttachment[] = [];
       for (const file of files!) {
+        if (file.resource) {
+          newFiles.push(file);
+          continue;
+        }
         const result = await window.agentDesktop.copyFileToWorkspace({
           sessionId,
           sourcePath: file.path,
@@ -1917,15 +1956,124 @@ export default function App() {
     }
 
     await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
-    files?: Array<{ name: string; path: string }>,
+    files?: ComposerAttachment[],
     workspace?: string,
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
   ) => {
     await submitPrompt(composerIntent, files, workspace, skills);
   }, [composerIntent, submitPrompt]);
+
+  const handleUseLibraryResource = React.useCallback((resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => {
+    setComposerAttachments((current) => current.some((item) => item.path === resource.uri)
+      ? current
+      : [...current, {
+          name: resource.title,
+          path: resource.uri,
+          resource: {
+            uri: resource.uri,
+            resourceId: resource.id,
+            kind: 'resource',
+            selection: 'full-file',
+            displayName: resource.title,
+            revision: (() => {
+              try { return new URL(resource.uri).searchParams.get('revision'); } catch { return null; }
+            })(),
+          },
+        }]);
+    setActiveView('chat');
+    showPermissionNotice(`已将“${resource.title}”加入对话`, 'info', 2500);
+  }, [showPermissionNotice]);
+
+  const handleUseLibraryScope = React.useCallback((scope: {
+    id: string;
+    uri: string;
+    name: string;
+    kind: 'collection' | 'source';
+  }) => {
+    setComposerAttachments((current) => current.some((item) => item.path === scope.uri)
+      ? current
+      : [...current, {
+          name: scope.name,
+          path: scope.uri,
+          resource: {
+            uri: scope.uri,
+            resourceId: scope.id,
+            kind: scope.kind,
+            selection: 'search-scope',
+            displayName: scope.name,
+            revision: null,
+          },
+        }]);
+    setActiveView('chat');
+    showPermissionNotice(`已将“${scope.name}”作为检索范围加入对话`, 'info', 2500);
+  }, [showPermissionNotice]);
+
+  const handlePrepareLibraryDirectoryImport = React.useCallback(async (payload: {
+    selectionId: string;
+    collectionId: string;
+  }) => {
+    if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认返回新会话并准备资料整理任务？')) return;
+    const prepared = await window.agentDesktop.library.prepareDirectoryImport(payload);
+    const draftPrompt = typeof prepared.draftPrompt === 'string' ? prepared.draftPrompt.trim() : '';
+    if (!draftPrompt) throw new Error('资料整理任务准备失败，请重启 Moss 后重新选择目录。');
+    const previousDraftKey = draftSessionKeyRef.current;
+    composerDraftsRef.current[previousDraftKey] = {
+      text: inputDraftRef.current,
+      files: composerAttachmentsRef.current,
+    };
+    composerDraftsRef.current.home = { text: draftPrompt, files: [] };
+    draftSessionKeyRef.current = 'home';
+    openSessionRequestIdRef.current += 1;
+    activeSessionIdRef.current = null;
+    activeDetailRef.current = null;
+    setAuditFocusTarget(null);
+    setActiveView('chat');
+    setActiveSessionId(null);
+    setActiveDetail(null);
+    setComposerIntent('chat');
+    setPendingNewSessionContext(prepared);
+    setSelectedAssistant(null);
+    setDraftConnectorIds([]);
+    setSelectedAppName('');
+    setInput(draftPrompt);
+    setComposerAttachments([]);
+    clearSessionWorkspaceState();
+  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
+
+  const handleHomeWorkspaceChange = React.useCallback((workspace?: string) => {
+    if (!pendingNewSessionContext || workspace === pendingNewSessionContext.workspace) return;
+    setPendingNewSessionContext(null);
+    if (inputDraftRef.current === pendingNewSessionContext.draftPrompt) {
+      composerDraftsRef.current.home = { text: '', files: [] };
+      setInput('');
+    }
+  }, [pendingNewSessionContext]);
+
+  const handleSaveFileToLibrary = React.useCallback(async (
+    filePath: string,
+    target?: 'personal' | 'project',
+  ) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const result = await window.agentDesktop.library.saveTaskArtifact({
+        sessionId,
+        path: filePath,
+        target: target || (activeDetailRef.current?.projectId ? 'project' : 'personal'),
+      });
+      showPermissionNotice(
+        `已将“${result.name}”保存到${result.target === 'project' ? '当前项目' : '个人资料库'}`,
+        'info',
+        3000,
+      );
+    } catch (error) {
+      showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000);
+      throw error;
+    }
+  }, [showPermissionNotice]);
 
   const handleApprovePlan = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -2390,6 +2538,8 @@ export default function App() {
             searchQuery={sessionSearchQuery}
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+            libraryEnabled={libraryEnabled}
+            agentMailEnabled={agentMailEnabled}
             newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
             onChangeView={setActiveView}
             onChangeTheme={handleThemeModeChange}
@@ -2447,7 +2597,7 @@ export default function App() {
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 isProjectSession={Boolean(activeDetail?.projectId)}
-                sessionTitle={activeDetail?.title || 'New Session'}
+                sessionTitle={activeDetail ? displaySessionTitle(activeDetail) : 'New Session'}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
@@ -2503,6 +2653,7 @@ export default function App() {
                 hasActiveSession={false}
                 sessionTitle=""
                 sessionWorkspace={undefined}
+                homeWorkspace={pendingNewSessionContext?.workspace}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
                 leftCollapsed={effectiveLeftCollapsed}
@@ -2516,6 +2667,7 @@ export default function App() {
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
+                onHomeWorkspaceChange={handleHomeWorkspaceChange}
                 onStop={handleStop}
                 onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
                 installedAssistants={installedAssistants}
@@ -2528,8 +2680,8 @@ export default function App() {
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
-                newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
+                remoteEnabled={pendingNewSessionContext ? false : (desktopSettings?.remoteEnabled ?? false)}
+                newSessionMode={pendingNewSessionContext ? 'local' : desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
@@ -2537,6 +2689,18 @@ export default function App() {
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'audit' ? (
             <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
+          ) : activeView === 'library' && libraryEnabled ? (
+            <LibraryView
+              projects={projects}
+              onUseResource={handleUseLibraryResource}
+              onUseScope={handleUseLibraryScope}
+              onPrepareDirectoryImport={handlePrepareLibraryDirectoryImport}
+            />
+          ) : activeView === 'mail' && agentMailEnabled ? (
+            <AgentMailView
+              enabled={agentMailEnabled}
+              onOpenSettings={() => setActiveView('settings')}
+            />
           ) : activeView === 'skills' ? (
             <SkillHubView />
           ) : activeView === 'connectors' ? (
@@ -2558,6 +2722,7 @@ export default function App() {
               onActiveProjectChange={setActiveProjectId}
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
+              onUseLibraryResource={handleUseLibraryResource}
             />
           ) : activeView === 'embedded-app' && embeddedAppName ? (
             <EmbeddedAppView
@@ -2661,6 +2826,7 @@ export default function App() {
                     rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
                   }));
                 }}
+                onSaveFileToLibrary={handleSaveFileToLibrary}
               />
             </div>
           </>

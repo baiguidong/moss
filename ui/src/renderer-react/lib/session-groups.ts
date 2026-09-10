@@ -81,7 +81,7 @@ export function groupSidebarSessions<T extends GroupableSession>(sessions: T[]):
     },
     {
       id: 'agent-mail' as const,
-      label: 'Agent Mail',
+      label: '协作邮箱',
       sessions: prioritizePinned(sessions.filter(
         (session) => groupSession(session).sessionKind === 'agent-mail',
       )),

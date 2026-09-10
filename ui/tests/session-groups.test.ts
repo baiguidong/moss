@@ -9,7 +9,7 @@ import {
 } from '../src/renderer-react/lib/session-groups';
 
 describe('sidebar session groups', () => {
-  it('separates Feishu, Agent Mail, normal, cron, and project sessions', () => {
+  it('separates Feishu, collaborative mail, normal, cron, and project sessions', () => {
     const groups = groupSidebarSessions([
       { id: 'feishu', originChannel: 'feishu' as const },
       { id: 'mail', sessionKind: 'agent-mail' as const, originChannel: 'agent-mail' as const },
@@ -26,6 +26,7 @@ describe('sidebar session groups', () => {
       ['cron', ['cron', 'project-cron']],
       ['project', ['project']],
     ]);
+    expect(groups.find((group) => group.id === 'agent-mail')?.label).toBe('协作邮箱');
   });
 
   it('keeps pinned sessions first within their own group', () => {

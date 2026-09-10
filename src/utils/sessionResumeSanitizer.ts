@@ -1,5 +1,9 @@
 import type { Message } from '../types/message.js'
-import { createAssistantMessage, NO_RESPONSE_REQUESTED } from './messages.js'
+import {
+  createAssistantMessage,
+  NO_RESPONSE_REQUESTED,
+  stripSignatureBlocks,
+} from './messages.js'
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -27,11 +31,11 @@ export type ResumeMessageSanitization = {
   removedApiError: boolean
 }
 
-export function sanitizeMessagesForResume(
+export function sanitizeMessagesAfterApiFailure(
   messages: Message[],
 ): ResumeMessageSanitization {
   let removedApiError = false
-  const sanitized = messages
+  let sanitized = messages
     .filter(message => {
       const shouldRemove =
         message.type === 'assistant' && message.isApiErrorMessage
@@ -51,16 +55,35 @@ export function sanitizeMessagesForResume(
       return message
     })
 
-  const lastRelevantIdx = sanitized.findLastIndex(
+  if (removedApiError) {
+    sanitized = stripSignatureBlocks(sanitized).filter(message =>
+      !(
+        message.type === 'assistant' &&
+        Array.isArray(message.message.content) &&
+        message.message.content.length === 0
+      ),
+    )
+  }
+
+  return { messages: sanitized, removedApiError }
+}
+
+export function sanitizeMessagesForResume(
+  messages: Message[],
+): ResumeMessageSanitization {
+  const sanitized = sanitizeMessagesAfterApiFailure(messages)
+  const resumeMessages = [...sanitized.messages]
+
+  const lastRelevantIdx = resumeMessages.findLastIndex(
     m => m.type !== 'system' && m.type !== 'progress',
   )
-  if (lastRelevantIdx !== -1 && sanitized[lastRelevantIdx]?.type === 'user') {
-    sanitized.splice(
+  if (lastRelevantIdx !== -1 && resumeMessages[lastRelevantIdx]?.type === 'user') {
+    resumeMessages.splice(
       lastRelevantIdx + 1,
       0,
       createAssistantMessage({ content: NO_RESPONSE_REQUESTED }) as Message,
     )
   }
 
-  return { messages: sanitized, removedApiError }
+  return { messages: resumeMessages, removedApiError: sanitized.removedApiError }
 }

@@ -22,6 +22,7 @@ import {
   normalizeModelStringForAPI,
 } from '../utils/model/model.js'
 import { jsonStringify } from '../utils/slowOperations.js'
+import { resolveSessionMossModel } from '../utils/sessionApiOverrides.js'
 import { isToolReferenceBlock } from '../utils/toolSearch.js'
 import { getAPIMetadata, getExtraBodyParams } from './api/claude.js'
 import { getAnthropicClient } from './api/client.js'
@@ -143,7 +144,7 @@ export async function countMessagesTokensWithAPI(
 ): Promise<number | null> {
   return withTokenCountVCR(messages, tools, async () => {
     try {
-      const model = getMainLoopModel()
+      const model = resolveSessionMossModel(getMainLoopModel())
       const betas = getModelBetas(model)
       const containsThinking = hasThinkingBlocks(messages)
 
@@ -271,10 +272,11 @@ export async function countTokensViaHaikuFallback(
   // stripToolSearchFieldsFromMessages() before sending.
   // Use getSmallFastModel() to respect ANTHROPIC_SMALL_FAST_MODEL env var for Bedrock users
   // with global inference profiles (see issue #10883).
-  const model =
+  const model = resolveSessionMossModel(
     isVertexGlobalEndpoint || isBedrockWithThinking || isVertexWithThinking
       ? getDefaultSonnetModel()
-      : getSmallFastModel()
+      : getSmallFastModel(),
+  )
   const anthropic = await getAnthropicClient({
     maxRetries: 1,
     model,

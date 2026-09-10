@@ -129,3 +129,12 @@ export function listAgentMail(connection, direction = 'inbox', options = {}) {
     path: `/api/v1/agent-mail/${resolved}?limit=${Math.min(100, Math.max(1, Number(options.limit) || 50))}`,
   });
 }
+
+export function deleteAgentMail(connection, messageId, options = {}) {
+  return requestAgentMail({
+    ...connection,
+    ...options,
+    path: `/api/v1/agent-mail/messages/${encodeURIComponent(String(messageId || ''))}`,
+    method: 'DELETE',
+  });
+}

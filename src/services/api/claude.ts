@@ -85,6 +85,7 @@ import {
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
 import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
+import { applySessionMossModel } from '../../utils/sessionApiOverrides.js'
 import {
   currentLimits,
   extractQuotaStatusFromError,
@@ -993,6 +994,8 @@ async function* queryModel(
   StreamEvent | AssistantMessage | SystemAPIErrorMessage,
   void
 > {
+  options = applySessionMossModel(options)
+
   // Derive previous request ID from the last assistant message in this query chain.
   // This is scoped per message array (main thread, subagent, teammate each have their own),
   // so concurrent agents don't clobber each other's request chain tracking.
