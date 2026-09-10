@@ -25,7 +25,13 @@ export { type TaskScope }
 export function getTaskListIdForScope(scope: TaskScope): string {
   switch (scope.kind) {
     case 'project':
-      return `project-${scope.projectId}`
+      // Task lists are session-scoped even for project sessions: each root
+      // session (and the sub-agents that inherit its scope) gets its own list so
+      // sibling sessions in a project don't pool into one shared checklist. The
+      // `kind: 'project'` tag is retained purely for project resource scoping.
+      return scope.sessionId
+        ? `project-${scope.projectId}__session-${scope.sessionId}`
+        : `project-${scope.projectId}`
     case 'team':
       return scope.projectId
         ? `project-${scope.projectId}__team-${sanitizeName(scope.teamId)}`

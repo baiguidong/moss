@@ -9,7 +9,6 @@ import {
   MessageSquareMore,
   Search,
   Send,
-  Square,
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -71,7 +70,6 @@ export function ProjectTasksTab({
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [sort, setSort] = React.useState<'newest' | 'oldest' | 'updated' | 'status'>('newest');
   const [expandedTaskIds, setExpandedTaskIds] = React.useState<Set<string>>(() => new Set());
-  const [stoppingTaskId, setStoppingTaskId] = React.useState<string | null>(null);
   const [deletingTaskId, setDeletingTaskId] = React.useState<string | null>(null);
   const [error, setError] = React.useState('');
   const visibleTasks = React.useMemo(() => filterAndSortProjectTasks(tasks, {
@@ -116,19 +114,6 @@ export function ProjectTasksTab({
       else next.add(taskId);
       return next;
     });
-  };
-
-  const stopTask = async (task: ProjectTask) => {
-    setStoppingTaskId(task.id);
-    setError('');
-    try {
-      await window.agentDesktop.abort({ sessionId: task.sessionId });
-      await onReload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setStoppingTaskId(null);
-    }
   };
 
   const deleteTask = async (task: ProjectTask) => {
@@ -237,20 +222,6 @@ export function ProjectTasksTab({
                     <div className="flex items-center gap-1">
                       {task.attentionCount > 0 ? (
                         <Button variant="outline" size="sm" onClick={onShowDecisions}>处理判断</Button>
-                      ) : null}
-                      {['working', 'waiting_for_user'].includes(task.status) ? (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => void stopTask(task)}
-                          disabled={stoppingTaskId !== null}
-                          title="停止任务"
-                          aria-label={`停止任务：${task.subject}`}
-                        >
-                          {stoppingTaskId === task.id
-                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                            : <Square className="h-4 w-4" />}
-                        </Button>
                       ) : null}
                       <Button
                         variant={task.status === 'failed' ? 'outline' : 'ghost'}

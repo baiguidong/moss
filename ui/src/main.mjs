@@ -3732,6 +3732,8 @@ function hydratePersistedSessions() {
       resumeReadOnlyReason: null,
       workspaceWatcher: null,
       workspaceWatcherSyncTimer: null,
+      subagentDirWatcher: null,
+      subagentDirWatcherPath: null,
       persistTimer: null,
       isSubAgent: false,
       assistantName: row.assistant_name || null,
@@ -6481,6 +6483,22 @@ function sanitizeTaskPathComponent(input) {
   return String(input || '').replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
+function resolveTaskScopeOwnerSession(sessionRecord) {
+  // Sub-agents inherit their root session's taskScope, so task files live under
+  // the owning root session id. Walk up parentSessionId to that root.
+  let current = sessionRecord;
+  const seen = new Set();
+  while (current?.parentSessionId && !seen.has(current.id)) {
+    seen.add(current.id);
+    const parent =
+      sessions.get(current.parentSessionId) ||
+      subAgentSessions.get(current.parentSessionId);
+    if (!parent) break;
+    current = parent;
+  }
+  return current;
+}
+
 function getSessionTaskListId(sessionRecord) {
   try {
     const runtimeTaskListId = sessionRecord.runtime?.getTaskListId?.();
@@ -6489,13 +6507,16 @@ function getSessionTaskListId(sessionRecord) {
     }
   } catch {}
   // Tasks are keyed by taskScope (buildClaudeSessionConfig), derived from the
-  // moss session id / project id — never underlyingSessionId. Mirror the
-  // engine's getTaskListIdForScope so reads without a live runtime hit the same
-  // directory the writes used.
-  if (sessionRecord.projectId) {
-    return `project-${sessionRecord.projectId}`;
+  // moss session id / project id — never underlyingSessionId. Project sessions
+  // are session-scoped (`project-<projectId>__session-<rootSessionId>`) so
+  // sibling sessions don't share one checklist. Mirror the engine's
+  // getTaskListIdForScope so reads without a live runtime hit the same directory
+  // the writes used.
+  const owner = resolveTaskScopeOwnerSession(sessionRecord);
+  if (owner.projectId) {
+    return `project-${owner.projectId}__session-${owner.id}`;
   }
-  return sessionRecord.id;
+  return owner.id;
 }
 
 function getSessionTasksDir(sessionRecord) {
@@ -6823,6 +6844,8 @@ function createSessionRecord({
     resumeReadOnlyReason: null,
     workspaceWatcher: null,
     workspaceWatcherSyncTimer: null,
+    subagentDirWatcher: null,
+    subagentDirWatcherPath: null,
     persistTimer: null,
     isSubAgent,
     assistantName: assistantName || null,
@@ -7235,6 +7258,7 @@ async function syncSubAgentSessionsForParent(parentSession) {
   }
   if (!isLiveParent()) return [];
   const synced = [];
+  let runningCount = 0;
   for (const metaFileName of fileNames.filter((name) => /^agent-.+\.meta\.json$/.test(name))) {
     if (!isLiveParent()) return synced;
     const agentId = metaFileName.slice('agent-'.length, -'.meta.json'.length);
@@ -7330,6 +7354,7 @@ async function syncSubAgentSessionsForParent(parentSession) {
       parentBusy: parentSession.busy,
       runtimeActive: Boolean(parentSession.runtime),
     });
+    if (status === 'running') runningCount += 1;
     const hasChanged = !existing || transcriptChanged || existing.title !== title ||
       existing.workspace !== workspace || existing.subagentStatus !== status ||
       existing.parentSessionId !== parentSession.id || existing.projectId !== parentSession.projectId;
@@ -7384,6 +7409,9 @@ async function syncSubAgentSessionsForParent(parentSession) {
     subAgentSessions.set(id, record);
     schedulePersistSession(record, true);
     emitSessionMeta(record);
+    // Push the refreshed transcript too, so an open sub-agent view repaints live
+    // as the worker appends — meta alone only updates preview/status.
+    emitSessionHistory(record);
     synced.push(record);
   }
   if (synced.length > 0) {
@@ -7397,6 +7425,11 @@ async function syncSubAgentSessionsForParent(parentSession) {
         reason: 'subagents',
       });
     }
+  }
+  if (runningCount > 0) {
+    ensureSubAgentDirWatcher(parentSession, subagentDir);
+  } else {
+    closeSubAgentDirWatcher(parentSession);
   }
   return synced;
 }
@@ -7430,8 +7463,44 @@ function scheduleSubAgentSessionSync(parentSession) {
   subAgentSyncTimers.set(parentSession.id, timer);
 }
 
+function closeSubAgentDirWatcher(sessionRecord) {
+  const watcher = sessionRecord.subagentDirWatcher;
+  if (!watcher) return;
+  try {
+    watcher.close();
+  } catch {}
+  sessionRecord.subagentDirWatcher = null;
+  sessionRecord.subagentDirWatcherPath = null;
+}
+
+// While a sub-agent runs, the parent is blocked awaiting the synchronous Task
+// tool and emits no messages, so the parent-message-driven sync
+// (scheduleSubAgentSessionSync) never fires and the sub-agent's growing .jsonl
+// isn't re-read until the parent unblocks. Watch the sub-agent directory to
+// bridge that gap so its tool calls surface live. The watcher only needs to
+// exist while a sub-agent is actually running; syncSubAgentSessionsForParent
+// attaches it when it sees a running child and closes it once none remain.
+function ensureSubAgentDirWatcher(sessionRecord, subagentDir) {
+  if (!subagentDir) return;
+  if (
+    sessionRecord.subagentDirWatcher &&
+    sessionRecord.subagentDirWatcherPath === subagentDir
+  ) return;
+  closeSubAgentDirWatcher(sessionRecord);
+  try {
+    const watcher = fs.watch(subagentDir, () => {
+      scheduleSubAgentSessionSync(sessionRecord);
+    });
+    watcher.on('error', () => closeSubAgentDirWatcher(sessionRecord));
+    watcher.unref?.();
+    sessionRecord.subagentDirWatcher = watcher;
+    sessionRecord.subagentDirWatcherPath = subagentDir;
+  } catch {}
+}
+
 function disposeRuntime(sessionRecord) {
   sessionRecord.pendingMcpRuntimeReload = false;
+  closeSubAgentDirWatcher(sessionRecord);
   if (!sessionRecord.runtime) return;
   try {
     sessionRecord.backgroundTaskUnsubscribe?.();
