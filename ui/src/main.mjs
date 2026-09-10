@@ -6488,11 +6488,14 @@ function getSessionTaskListId(sessionRecord) {
       return runtimeTaskListId.trim();
     }
   } catch {}
-  return (
-    sessionRecord.runtime?.sessionId ||
-    sessionRecord.underlyingSessionId ||
-    sessionRecord.id
-  );
+  // Tasks are keyed by taskScope (buildClaudeSessionConfig), derived from the
+  // moss session id / project id — never underlyingSessionId. Mirror the
+  // engine's getTaskListIdForScope so reads without a live runtime hit the same
+  // directory the writes used.
+  if (sessionRecord.projectId) {
+    return `project-${sessionRecord.projectId}`;
+  }
+  return sessionRecord.id;
 }
 
 function getSessionTasksDir(sessionRecord) {
