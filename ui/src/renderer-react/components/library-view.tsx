@@ -48,7 +48,6 @@ import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { formatLibraryResourceError } from '@/lib/library-ui';
 import {
   buildLibraryResourceTree,
-  collectLibraryDirectoryIds,
   type LibraryTreeNode,
 } from '@/lib/library-tree';
 import { cn } from '@/lib/utils';
@@ -240,21 +239,7 @@ function LibraryResourceTree({
   onContextMenu: (event: React.MouseEvent, resource: LibraryResource) => void;
 }) {
   const tree = React.useMemo(() => buildLibraryResourceTree(resources), [resources]);
-  const directoryIds = React.useMemo(() => collectLibraryDirectoryIds(tree), [tree]);
-  const seenDirectoriesRef = React.useRef(new Set<string>());
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
-
-  React.useEffect(() => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      for (const id of directoryIds) {
-        if (seenDirectoriesRef.current.has(id)) continue;
-        seenDirectoriesRef.current.add(id);
-        next.add(id);
-      }
-      return next;
-    });
-  }, [directoryIds]);
 
   const renderNode = (node: LibraryTreeNode, depth: number): React.ReactNode => {
     const inset = 12 + depth * 18;
