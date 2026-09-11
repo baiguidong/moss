@@ -2691,7 +2691,6 @@ export default function App() {
             <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
           ) : activeView === 'library' && libraryEnabled ? (
             <LibraryView
-              projects={projects}
               onUseResource={handleUseLibraryResource}
               onUseScope={handleUseLibraryScope}
               onPrepareDirectoryImport={handlePrepareLibraryDirectoryImport}

@@ -15,6 +15,12 @@ import type {
   UpdateDepartmentRequest,
   DepartmentResponse,
   RolesListResponse,
+  PermissionsListResponse,
+  RoleResponse,
+  UpsertRoleRequest,
+  RagflowAccountStatus,
+  RagflowCredentials,
+  RagflowIntegrationStatus,
 } from './types'
 
 export async function login(
@@ -118,6 +124,22 @@ export async function getRoles(): Promise<RolesListResponse> {
   return authClient.get<RolesListResponse>('/api/v1/roles')
 }
 
+export async function getPermissions(): Promise<PermissionsListResponse> {
+  return authClient.get<PermissionsListResponse>('/api/v1/permissions')
+}
+
+export async function createRole(data: Required<UpsertRoleRequest>): Promise<RoleResponse> {
+  return authClient.post<RoleResponse>('/api/v1/roles', data)
+}
+
+export async function updateRole(roleId: string, data: UpsertRoleRequest): Promise<RoleResponse> {
+  return authClient.patch<RoleResponse>(`/api/v1/roles/${encodeURIComponent(roleId)}`, data)
+}
+
+export async function deleteRole(roleId: string): Promise<{ ok: true }> {
+  return authClient.delete<{ ok: true }>(`/api/v1/roles/${encodeURIComponent(roleId)}`)
+}
+
 export async function setUserTokenLimit(
   userId: string,
   tokenLimit: number | null,
@@ -130,6 +152,42 @@ export async function setDepartmentTokenLimit(
   tokenLimit: number | null,
 ): Promise<{ ok: boolean }> {
   return authClient.patch<{ ok: boolean }>(`/api/v1/departments/${departmentId}/token-limit`, { tokenLimit })
+}
+
+export async function getRagflowStatus(): Promise<RagflowIntegrationStatus> {
+  return authClient.get<RagflowIntegrationStatus>('/api/v1/integrations/ragflow/status')
+}
+
+export async function getUserRagflowStatus(userId: string): Promise<RagflowAccountStatus> {
+  return authClient.get<RagflowAccountStatus>(`/api/v1/users/${encodeURIComponent(userId)}/ragflow`)
+}
+
+export async function provisionUserRagflow(userId: string): Promise<RagflowAccountStatus> {
+  return authClient.post<RagflowAccountStatus>(
+    `/api/v1/users/${encodeURIComponent(userId)}/ragflow/provision`,
+    {},
+  )
+}
+
+export async function revealUserRagflowCredentials(userId: string): Promise<RagflowCredentials> {
+  return authClient.post<RagflowCredentials>(
+    `/api/v1/users/${encodeURIComponent(userId)}/ragflow/credentials`,
+    {},
+  )
+}
+
+export async function rotateUserRagflowPassword(userId: string): Promise<Pick<RagflowCredentials, 'username' | 'password'>> {
+  return authClient.post(
+    `/api/v1/users/${encodeURIComponent(userId)}/ragflow/password`,
+    {},
+  )
+}
+
+export async function rotateUserRagflowApiKey(userId: string): Promise<Pick<RagflowCredentials, 'username' | 'api_key'>> {
+  return authClient.post(
+    `/api/v1/users/${encodeURIComponent(userId)}/ragflow/api-key`,
+    {},
+  )
 }
 
 export function isAuthenticated(): boolean {

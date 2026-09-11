@@ -66,9 +66,14 @@ const scopeOptions = [
   { value: 'sessions:list', label: '列出会话' },
   { value: 'sessions:list:any', label: '查看所有会话' },
   { value: 'sessions:attach:any', label: '接入任何会话' },
+  { value: 'agent-mail:send', label: '发送 Agent Mail' },
+  { value: 'agent-mail:receive', label: '接收 Agent Mail' },
   { value: 'admin:users', label: '管理用户' },
   { value: 'admin:api_keys', label: '管理 API Keys' },
   { value: 'admin:settings', label: '管理系统设置' },
+  { value: 'ragflow:read', label: '读取个人知识库' },
+  { value: 'ragflow:manage', label: '管理个人知识库' },
+  { value: 'ragflow:credentials', label: '查看和轮换知识库凭据' },
 ]
 
 export default function ApiKeysPage() {

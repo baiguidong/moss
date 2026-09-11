@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "moss-rag": {
+      "type": "streamableHttp",
+      "url": "http://${MOSS_RAG_MCP_ADDRESS}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MOSS_SERVER_AUTH_TOKEN}"
+      }
+    }
+  }
+}

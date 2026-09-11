@@ -3502,40 +3502,6 @@ export function createLibraryService(options) {
     return { ok: true };
   }
 
-  function exportData(input = {}) {
-    ensureOpen();
-    const includeIndex = input.includeIndex === true;
-    const exported = {
-      schemaVersion: LIBRARY_SCHEMA_VERSION,
-      kind: includeIndex ? 'full-index' : 'registrations',
-      exportedAt: now(),
-      collections: listCollections(),
-      sources: listSources(),
-      collectionSources: db.prepare(`
-        SELECT collection_id AS collectionId, source_id AS sourceId, created_at AS createdAt
-        FROM library_collection_sources ORDER BY created_at
-      `).all(),
-      evaluationCases: listEvaluationCases(),
-    };
-    if (!includeIndex) return exported;
-    return {
-      ...exported,
-      resources: db.prepare(`
-        SELECT r.*, s.name AS source_name, s.provider_kind, s.scope_kind, s.scope_id
-        FROM library_resources r JOIN library_sources s ON s.id = r.source_id
-        WHERE r.status <> 'missing'
-        ORDER BY r.updated_at DESC, r.title COLLATE NOCASE LIMIT 10000
-      `).all().map(resourceFromRow),
-      chunks: db.prepare(`
-      SELECT resource_id AS resourceId, chunk_index AS chunkIndex,
-          block_index AS blockIndex, heading, page, start_line AS startLine,
-          end_line AS endLine, location_kind AS locationKind, content,
-          char_count AS charCount
-        FROM library_chunks ORDER BY resource_id, chunk_index LIMIT 100000
-      `).all(),
-    };
-  }
-
   function repairIndex() {
     ensureOpen();
     const active = db.prepare(`
@@ -3744,7 +3710,6 @@ export function createLibraryService(options) {
     deleteEvaluationCase,
     diagnoseSearch,
     dismissLegacyMigration,
-    exportData,
     getMigrationPreview,
     getMetrics,
     getOverview,

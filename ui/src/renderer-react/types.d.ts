@@ -1286,7 +1286,6 @@ declare global {
         listJobs: (payload?: { sourceId?: string; limit?: number }) => Promise<LibraryJob[]>;
         cancelJob: (payload: { jobId: string }) => Promise<{ ok: boolean }>;
         repairIndex: () => Promise<LibraryJob>;
-        exportData: (payload: { includeIndex?: boolean }) => Promise<{ canceled: boolean }>;
         saveTaskArtifact: (payload: { sessionId: string; path: string; name?: string; collectionId?: string; target?: 'personal' | 'project' }) => Promise<{ sourceId: string; job: LibraryJob; name: string; target: 'personal' | 'project' }>;
         getMigrationPreview: () => Promise<LibraryMigrationPreview>;
         migrateLegacy: () => Promise<{ migrated: boolean; collections: number; sources: number; skipped: number }>;

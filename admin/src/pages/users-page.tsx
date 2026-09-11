@@ -8,6 +8,8 @@ import { Link } from 'react-router-dom'
 import {
   Building2,
   Copy,
+  Database,
+  Eye,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -93,6 +95,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import {
   createApiKey,
@@ -109,6 +112,16 @@ import {
   setUserTokenLimit,
   updateDepartment,
   updateUser,
+  createRole,
+  deleteRole,
+  getPermissions,
+  getRagflowStatus,
+  getUserRagflowStatus,
+  provisionUserRagflow,
+  revealUserRagflowCredentials,
+  rotateUserRagflowApiKey,
+  rotateUserRagflowPassword,
+  updateRole,
 } from '@/lib/api/auth'
 import { hasScope } from '@/lib/api/client'
 import { getUserSessions } from '@/lib/api/sessions'
@@ -117,9 +130,12 @@ import type {
   ApiKey,
   AuthDepartment,
   AuthUser,
+  PermissionDefinition,
+  RagflowAccountStatus,
+  RagflowCredentials,
+  RagflowIntegrationStatus,
   RoleDefinition,
   Session,
-  UserRole,
 } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 
@@ -134,51 +150,6 @@ type DepartmentOption = AuthDepartment & {
 const NONE_VALUE = '__none__'
 const ROOT_VALUE = '__root__'
 
-const ROLE_LABELS: Record<UserRole, string> = {
-  admin: '管理员',
-  dept_admin: '部门管理员',
-  user: '普通用户',
-}
-
-const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
-  admin: '负责整个组织的部门、用户、角色和系统设置。',
-  dept_admin: '负责部门内成员日常管理和 API Key 代发。',
-  user: '基础使用角色，可创建并接入自己的会话。',
-}
-
-const DEFAULT_SCOPES_BY_ROLE: Record<UserRole, string[]> = {
-  admin: ['*'],
-  dept_admin: [
-    'sessions:create',
-    'sessions:attach',
-    'sessions:list',
-    'admin:users',
-    'admin:api_keys',
-  ],
-  user: ['sessions:create', 'sessions:attach', 'sessions:list'],
-}
-
-const FALLBACK_ROLES: RoleDefinition[] = [
-  {
-    id: 'admin',
-    name: '系统管理员',
-    description: ROLE_DESCRIPTIONS.admin,
-    scopes: DEFAULT_SCOPES_BY_ROLE.admin,
-  },
-  {
-    id: 'dept_admin',
-    name: '部门管理员',
-    description: ROLE_DESCRIPTIONS.dept_admin,
-    scopes: DEFAULT_SCOPES_BY_ROLE.dept_admin,
-  },
-  {
-    id: 'user',
-    name: '普通用户',
-    description: ROLE_DESCRIPTIONS.user,
-    scopes: DEFAULT_SCOPES_BY_ROLE.user,
-  },
-]
-
 const SCOPE_LABELS: Record<string, string> = {
   '*': '全部权限',
   'sessions:create': '创建会话',
@@ -188,26 +159,27 @@ const SCOPE_LABELS: Record<string, string> = {
   'sessions:attach:any': '接入任意会话',
   'admin:users': '管理用户与部门',
   'admin:api_keys': '管理 API Keys',
+  'admin:roles': '管理角色与授权',
   'admin:settings': '管理系统设置',
+  'agent-mail:send': '发送 Agent Mail',
+  'agent-mail:receive': '接收 Agent Mail',
+  'ragflow:read': '读取个人知识库',
+  'ragflow:manage': '管理个人知识库',
+  'ragflow:credentials': '查看和轮换知识库凭据',
 }
 
-const API_SCOPE_OPTIONS = [
-  { value: '*', label: '全部权限' },
-  { value: 'sessions:create', label: '创建会话' },
-  { value: 'sessions:attach', label: '接入会话' },
-  { value: 'sessions:list', label: '查看自己的会话' },
-  { value: 'sessions:list:any', label: '查看所有会话' },
-  { value: 'sessions:attach:any', label: '接入任意会话' },
-  { value: 'admin:users', label: '管理用户与部门' },
-  { value: 'admin:api_keys', label: '管理 API Keys' },
-  { value: 'admin:settings', label: '管理系统设置' },
-]
+const PERMISSION_GROUP_LABELS: Record<PermissionDefinition['group'], string> = {
+  session: '会话',
+  'agent-mail': 'Agent Mail',
+  administration: '系统管理',
+  ragflow: '知识库',
+}
 
 const userFormSchema = z.object({
   name: z.string().trim().min(2, '用户名至少 2 个字符'),
   email: z.union([z.literal(''), z.string().trim().email('请输入有效的邮箱地址')]),
   password: z.union([z.literal(''), z.string().min(6, '密码至少 6 位')]),
-  role: z.enum(['admin', 'dept_admin', 'user']),
+  roleIds: z.array(z.string()).min(1, '至少选择一个角色'),
   departmentId: z.string().nullable().optional(),
 })
 
@@ -245,7 +217,7 @@ function formatTimestamp(value: number | null): string {
   return new Date(value).toLocaleString('zh-CN')
 }
 
-function getRoleBadgeVariant(role: UserRole): 'default' | 'secondary' | 'outline' {
+function getRoleBadgeVariant(role: RoleDefinition['systemKey']): 'default' | 'secondary' | 'outline' {
   switch (role) {
     case 'admin':
       return 'default'
@@ -474,11 +446,19 @@ function DepartmentTreeRow({
 export default function UsersPage() {
   const { user: currentUser, scopes } = useAuth()
   const canManageUsers = hasScope(scopes, 'admin:users')
-  const isOrgAdmin = currentUser?.role === 'admin'
+  const isOrgAdmin = currentUser?.roles?.some(role => role.systemKey === 'admin')
+    || currentUser?.role === 'admin'
+  const canManageRagflowCredentials = hasScope(scopes, 'ragflow:credentials')
 
   const [users, setUsers] = useState<AuthUser[]>([])
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [roles, setRoles] = useState<RoleDefinition[]>([])
+  const [permissions, setPermissions] = useState<PermissionDefinition[]>([])
+  const [ragflowStatus, setRagflowStatus] = useState<RagflowIntegrationStatus | null>(null)
+  const [selectedRagflowStatus, setSelectedRagflowStatus] = useState<RagflowAccountStatus | null>(null)
+  const [revealedRagflowCredentials, setRevealedRagflowCredentials] = useState<
+    (Pick<RagflowCredentials, 'username'> & Partial<Pick<RagflowCredentials, 'password' | 'api_key'>>) | null
+  >(null)
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
   const [userSessions, setUserSessions] = useState<Session[]>([])
   const [selectedUser, setSelectedUser] = useState<AuthUser | null>(null)
@@ -512,6 +492,14 @@ export default function UsersPage() {
   const [resetPasswordUser, setResetPasswordUser] = useState<AuthUser | null>(null)
   const [apiKeyUser, setApiKeyUser] = useState<AuthUser | null>(null)
   const [departmentToDelete, setDepartmentToDelete] = useState<AuthDepartment | null>(null)
+  const [roleToDelete, setRoleToDelete] = useState<RoleDefinition | null>(null)
+  const [roleDialog, setRoleDialog] = useState<{
+    open: boolean
+    role: RoleDefinition | null
+    name: string
+    description: string
+    permissions: string[]
+  }>({ open: false, role: null, name: '', description: '', permissions: [] })
   const [revealedApiKey, setRevealedApiKey] = useState<{
     userName: string
     value: string
@@ -524,6 +512,8 @@ export default function UsersPage() {
   const [isSubmittingDepartment, setIsSubmittingDepartment] = useState(false)
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
   const [isSubmittingApiKey, setIsSubmittingApiKey] = useState(false)
+  const [isSubmittingRole, setIsSubmittingRole] = useState(false)
+  const [pendingRagflowAction, setPendingRagflowAction] = useState<string | null>(null)
   const [pendingUserActionId, setPendingUserActionId] = useState<string | null>(null)
   const [pendingDepartmentActionId, setPendingDepartmentActionId] = useState<string | null>(null)
   const [pendingApiKeyActionId, setPendingApiKeyActionId] = useState<string | null>(null)
@@ -534,7 +524,7 @@ export default function UsersPage() {
       name: '',
       email: '',
       password: '',
-      role: 'user',
+      roleIds: [],
       departmentId: null,
     },
   })
@@ -551,7 +541,7 @@ export default function UsersPage() {
     resolver: zodResolver(apiKeyFormSchema),
     defaultValues: {
       name: '',
-      scopes: DEFAULT_SCOPES_BY_ROLE.user,
+      scopes: [],
     },
   })
 
@@ -567,7 +557,18 @@ export default function UsersPage() {
     defaultValues: { tokenLimit: '' },
   })
 
-  const roleCatalog = roles.length > 0 ? roles : FALLBACK_ROLES
+  const roleCatalog = roles
+  const permissionNameMap = useMemo(
+    () => new Map(permissions.map(permission => [permission.code, permission.name])),
+    [permissions],
+  )
+  const apiScopeOptions = useMemo(() => {
+    const allowed = new Set(apiKeyUser?.effectiveScopes ?? [])
+    const options = permissions
+      .filter(permission => !permission.protected && (allowed.has('*') || allowed.has(permission.code)))
+      .map(permission => ({ value: permission.code, label: permission.name }))
+    return allowed.has('*') ? [{ value: '*', label: '全部权限' }, ...options] : options
+  }, [apiKeyUser, permissions])
 
   const departmentTree = useMemo(
     () => buildDepartmentTree(departments),
@@ -591,17 +592,21 @@ export default function UsersPage() {
     }
 
     try {
-      const [usersRes, departmentsRes, apiKeysRes, rolesRes] = await Promise.all([
+      const [usersRes, departmentsRes, apiKeysRes, rolesRes, permissionsRes, ragflowRes] = await Promise.all([
         getUsers(),
         getDepartments(),
         getApiKeys(),
-        getRoles().catch(() => ({ roles: FALLBACK_ROLES })),
+        getRoles(),
+        getPermissions(),
+        getRagflowStatus().catch(() => null),
       ])
 
       setUsers(usersRes.users)
       setDepartments(departmentsRes.departments)
       setApiKeys(apiKeysRes.api_keys)
       setRoles(rolesRes.roles)
+      setPermissions(permissionsRes.permissions)
+      setRagflowStatus(ragflowRes)
       setSelectedUser(previousSelectedUser => {
         if (!previousSelectedUser) {
           return null
@@ -633,7 +638,7 @@ export default function UsersPage() {
         name: '',
         email: '',
         password: '',
-        role: 'user',
+        roleIds: roles.filter(role => role.systemKey === 'user').map(role => role.id),
         departmentId: null,
       })
       return
@@ -643,10 +648,10 @@ export default function UsersPage() {
       name: userDialog.user?.name ?? '',
       email: userDialog.user?.email ?? '',
       password: '',
-      role: userDialog.user?.role ?? 'user',
+      roleIds: userDialog.user?.roleIds ?? [],
       departmentId: userDialog.user?.departmentId ?? null,
     })
-  }, [userDialog, userForm])
+  }, [roles, userDialog, userForm])
 
   useEffect(() => {
     if (!departmentDialog.open) {
@@ -670,14 +675,14 @@ export default function UsersPage() {
     if (!apiKeyUser) {
       apiKeyForm.reset({
         name: '',
-        scopes: DEFAULT_SCOPES_BY_ROLE.user,
+        scopes: [],
       })
       return
     }
 
     apiKeyForm.reset({
       name: `${apiKeyUser.name}-key`,
-      scopes: DEFAULT_SCOPES_BY_ROLE[apiKeyUser.role],
+      scopes: apiKeyUser.effectiveScopes,
     })
   }, [apiKeyForm, apiKeyUser])
 
@@ -708,7 +713,7 @@ export default function UsersPage() {
         user.email?.toLowerCase().includes(keyword) ||
         departmentName.toLowerCase().includes(keyword)
 
-      const matchesRole = roleFilter === 'all' || user.role === roleFilter
+      const matchesRole = roleFilter === 'all' || user.roleIds.includes(roleFilter)
       const matchesStatus = statusFilter === 'all' || user.status === statusFilter
       return matchesKeyword && matchesRole && matchesStatus
     })
@@ -716,7 +721,7 @@ export default function UsersPage() {
 
   const totalUsers = users.length
   const activeUsers = users.filter(user => user.status === 'active').length
-  const deptAdminCount = users.filter(user => user.role === 'dept_admin').length
+  const deptAdminCount = users.filter(user => user.roles.some(role => role.systemKey === 'dept_admin')).length
   const unassignedUsers = users.filter(user => !user.departmentId).length
 
   const getUserApiKeys = (userId: string) =>
@@ -737,9 +742,14 @@ export default function UsersPage() {
   const handleViewUser = async (user: AuthUser) => {
     setSelectedUser(user)
     setIsLoadingSessions(true)
+    setSelectedRagflowStatus(null)
     try {
-      const response = await getUserSessions(user.id)
-      setUserSessions(response.sessions)
+      const [sessionsResponse, userRagflowStatus] = await Promise.all([
+        getUserSessions(user.id),
+        getUserRagflowStatus(user.id).catch(() => null),
+      ])
+      setUserSessions(sessionsResponse.sessions)
+      setSelectedRagflowStatus(userRagflowStatus)
     } catch (error) {
       console.error('Failed to fetch user sessions:', error)
       toast.error('获取用户会话失败')
@@ -763,7 +773,7 @@ export default function UsersPage() {
           name: values.name,
           email: values.email || undefined,
           department_id: values.departmentId ?? null,
-          role: values.role,
+          role_ids: values.roleIds,
           password: values.password || '',
         })
         toast.success('用户创建成功')
@@ -771,7 +781,7 @@ export default function UsersPage() {
         await updateUser(userDialog.user.id, {
           name: values.name,
           department_id: values.departmentId ?? null,
-          role: values.role,
+          ...(isOrgAdmin ? { role_ids: values.roleIds } : {}),
         })
         toast.success('用户信息已更新')
       }
@@ -932,6 +942,86 @@ export default function UsersPage() {
     }
   }
 
+  const handleSubmitRole = async () => {
+    const name = roleDialog.name.trim()
+    if (!name) {
+      toast.error('请输入角色名称')
+      return
+    }
+    if (roleDialog.permissions.length === 0) {
+      toast.error('至少选择一个权限')
+      return
+    }
+    setIsSubmittingRole(true)
+    try {
+      if (roleDialog.role) {
+        await updateRole(roleDialog.role.id, {
+          name,
+          description: roleDialog.description,
+          permissions: roleDialog.permissions,
+        })
+        toast.success('角色已更新，用户重新登录后生效')
+      } else {
+        await createRole({
+          name,
+          description: roleDialog.description,
+          permissions: roleDialog.permissions,
+        })
+        toast.success('角色已创建')
+      }
+      setRoleDialog({ open: false, role: null, name: '', description: '', permissions: [] })
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存角色失败')
+    } finally {
+      setIsSubmittingRole(false)
+    }
+  }
+
+  const handleDeleteRole = async () => {
+    if (!roleToDelete) return
+    setIsSubmittingRole(true)
+    try {
+      await deleteRole(roleToDelete.id)
+      toast.success('角色已删除')
+      setRoleToDelete(null)
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除角色失败')
+    } finally {
+      setIsSubmittingRole(false)
+    }
+  }
+
+  const handleRagflowAction = async (
+    action: 'provision' | 'reveal' | 'password' | 'api-key',
+  ) => {
+    if (!selectedUser) return
+    setPendingRagflowAction(action)
+    try {
+      if (action === 'provision') {
+        const status = await provisionUserRagflow(selectedUser.id)
+        setSelectedRagflowStatus(status)
+        toast.success('知识库账号已接入')
+      } else if (action === 'reveal') {
+        setRevealedRagflowCredentials(await revealUserRagflowCredentials(selectedUser.id))
+      } else if (action === 'password') {
+        const credential = await rotateUserRagflowPassword(selectedUser.id)
+        setRevealedRagflowCredentials(credential)
+        toast.success('知识库登录密码已轮换')
+      } else {
+        const credential = await rotateUserRagflowApiKey(selectedUser.id)
+        setRevealedRagflowCredentials(credential)
+        toast.success('知识库 API Key 已轮换')
+      }
+      setSelectedRagflowStatus(await getUserRagflowStatus(selectedUser.id))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '知识库操作失败')
+    } finally {
+      setPendingRagflowAction(null)
+    }
+  }
+
   const copyApiKey = (value: string) => {
     navigator.clipboard.writeText(value)
     toast.success('API Key 已复制')
@@ -956,7 +1046,7 @@ export default function UsersPage() {
         description="当前账号缺少用户管理权限。"
       >
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
-          当前账号没有 `admin:users` 权限，无法访问此页面。
+          当前账号没有“管理用户与部门”权限，无法访问此页面。
         </div>
       </DashboardLayout>
     )
@@ -1008,6 +1098,23 @@ export default function UsersPage() {
           />
         </div>
 
+        <div className="flex flex-col gap-3 border-y py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Database className="size-5 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium">RAGFlow 个人知识库服务</p>
+              <p className="text-xs text-muted-foreground">
+                {ragflowStatus?.base_url || '服务地址未配置'} · 账号域名 {ragflowStatus?.user_domain || '-'}
+              </p>
+            </div>
+          </div>
+          <Badge variant={ragflowStatus?.enabled && ragflowStatus.reachable ? 'default' : 'secondary'}>
+            {ragflowStatus?.enabled
+              ? (ragflowStatus.reachable ? '服务正常' : '服务不可达')
+              : '未启用'}
+          </Badge>
+        </div>
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <TabsList>
@@ -1049,6 +1156,18 @@ export default function UsersPage() {
                   新建部门
                 </Button>
               ) : null}
+              {activeTab === 'roles' && isOrgAdmin ? (
+                <Button onClick={() => setRoleDialog({
+                  open: true,
+                  role: null,
+                  name: '',
+                  description: '',
+                  permissions: [],
+                })}>
+                  <Plus className="mr-2 size-4" />
+                  新建角色
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -1079,7 +1198,7 @@ export default function UsersPage() {
                       <SelectItem value="all">全部角色</SelectItem>
                       {roleCatalog.map(role => (
                         <SelectItem key={role.id} value={role.id}>
-                          {ROLE_LABELS[role.id]}
+                          {role.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1127,9 +1246,13 @@ export default function UsersPage() {
                             </TableCell>
                             <TableCell>{getDepartmentName(user.departmentId)}</TableCell>
                             <TableCell>
-                              <Badge variant={getRoleBadgeVariant(user.role)}>
-                                {ROLE_LABELS[user.role]}
-                              </Badge>
+                              <div className="flex max-w-[260px] flex-wrap gap-1">
+                                {user.roles.map(role => (
+                                  <Badge key={role.id} variant={getRoleBadgeVariant(role.systemKey)}>
+                                    {role.name}
+                                  </Badge>
+                                ))}
+                              </div>
                             </TableCell>
                             <TableCell>
                               {userKeys.length > 0 ? (
@@ -1269,37 +1392,56 @@ export default function UsersPage() {
           {isOrgAdmin ? (
             <TabsContent value="roles" className="space-y-6">
               <div className="grid gap-4 xl:grid-cols-3">
-                {roleCatalog.map(role => {
-                  const assignedCount = users.filter(user => user.role === role.id).length
-                  return (
+                {roleCatalog.map(role => (
                     <Card key={role.id} className="border-l-4 border-l-primary/60">
                       <CardHeader className="space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <CardTitle className="text-base">{role.name}</CardTitle>
-                          <Badge variant={getRoleBadgeVariant(role.id)}>
-                            {assignedCount} 人
+                          <Badge variant={getRoleBadgeVariant(role.systemKey)}>
+                            {role.assignedCount} 人
                           </Badge>
                         </div>
                         <CardDescription>{role.description}</CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-4">
-                        <div className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
-                          {ROLE_DESCRIPTIONS[role.id]}
-                        </div>
                         <div className="space-y-2">
-                          <p className="text-xs font-medium text-muted-foreground">默认权限</p>
+                          <p className="text-xs font-medium text-muted-foreground">有效权限</p>
                           <div className="flex flex-wrap gap-2">
-                            {role.scopes.map(scope => (
+                            {role.permissions.map(scope => (
                               <Badge key={scope} variant="secondary" className="text-xs">
-                                {SCOPE_LABELS[scope] ?? scope}
+                                {scope === '*' ? '全部权限' : permissionNameMap.get(scope) ?? SCOPE_LABELS[scope] ?? scope}
                               </Badge>
                             ))}
                           </div>
                         </div>
+                        {role.systemKey !== 'admin' ? (
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setRoleDialog({
+                                open: true,
+                                role,
+                                name: role.name,
+                                description: role.description,
+                                permissions: role.permissions,
+                              })}
+                            >
+                              <Pencil className="mr-2 size-4" />
+                              编辑权限
+                            </Button>
+                            {!role.isBuiltin ? (
+                              <Button type="button" variant="outline" size="sm" onClick={() => setRoleToDelete(role)}>
+                                <Trash2 className="mr-2 size-4" />
+                                删除
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </CardContent>
                     </Card>
-                  )
-                })}
+                ))}
               </div>
             </TabsContent>
           ) : null}
@@ -1377,28 +1519,33 @@ export default function UsersPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   control={userForm.control}
-                  name="role"
+                  name="roleIds"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>角色</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="选择角色" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {roleCatalog.map(role => (
-                            <SelectItem
-                              key={role.id}
-                              value={role.id}
-                              disabled={!isOrgAdmin && role.id !== 'user'}
-                            >
-                              {ROLE_LABELS[role.id]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="grid gap-2 rounded-lg border p-3">
+                        {roleCatalog.map(role => {
+                          const checked = field.value.includes(role.id)
+                          const disabled = !isOrgAdmin && role.systemKey !== 'user'
+                          return (
+                            <label key={role.id} className="flex items-start gap-3 rounded-md p-2 hover:bg-muted/60">
+                              <Checkbox
+                                checked={checked}
+                                disabled={disabled}
+                                onCheckedChange={(value) => field.onChange(
+                                  value === true
+                                    ? [...field.value, role.id]
+                                    : field.value.filter(roleId => roleId !== role.id),
+                                )}
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium">{role.name}</span>
+                                <span className="block text-xs text-muted-foreground">{role.description}</span>
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1457,6 +1604,95 @@ export default function UsersPage() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={roleDialog.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRoleDialog({ open: false, role: null, name: '', description: '', permissions: [] })
+          }
+        }}
+      >
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{roleDialog.role ? '编辑角色' : '新建角色'}</DialogTitle>
+            <DialogDescription>
+              一个用户可以拥有多个角色，最终权限为所有角色权限的并集，重新登录后生效。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="role-name">角色名称</label>
+              <Input
+                id="role-name"
+                value={roleDialog.name}
+                disabled={roleDialog.role?.isBuiltin}
+                onChange={event => setRoleDialog(current => ({ ...current, name: event.target.value }))}
+                placeholder="例如：知识库管理员"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="role-description">角色说明</label>
+              <Textarea
+                id="role-description"
+                value={roleDialog.description}
+                onChange={event => setRoleDialog(current => ({ ...current, description: event.target.value }))}
+                placeholder="说明角色的职责范围"
+              />
+            </div>
+            <div className="space-y-4">
+              <p className="text-sm font-medium">权限</p>
+              {(Object.keys(PERMISSION_GROUP_LABELS) as PermissionDefinition['group'][]).map(group => {
+                const groupPermissions = permissions.filter(permission => (
+                  permission.group === group && !permission.protected
+                ))
+                if (groupPermissions.length === 0) return null
+                return (
+                  <div key={group} className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {PERMISSION_GROUP_LABELS[group]}
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {groupPermissions.map(permission => (
+                        <label key={permission.code} className="flex items-start gap-3 rounded-lg border p-3">
+                          <Checkbox
+                            checked={roleDialog.permissions.includes(permission.code)}
+                            onCheckedChange={(checked) => setRoleDialog(current => ({
+                              ...current,
+                              permissions: checked === true
+                                ? [...current.permissions, permission.code]
+                                : current.permissions.filter(code => code !== permission.code),
+                            }))}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium">{permission.name}</span>
+                            <span className="block text-xs leading-5 text-muted-foreground">
+                              {permission.description}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRoleDialog({ open: false, role: null, name: '', description: '', permissions: [] })}
+            >
+              取消
+            </Button>
+            <Button type="button" disabled={isSubmittingRole} onClick={() => void handleSubmitRole()}>
+              {isSubmittingRole ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              保存角色
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1668,7 +1904,7 @@ export default function UsersPage() {
                   <FormItem>
                     <FormLabel>权限范围</FormLabel>
                     <div className="grid gap-2 rounded-xl border p-4 sm:grid-cols-2">
-                      {API_SCOPE_OPTIONS.map(option => (
+                      {apiScopeOptions.map(option => (
                         <FormField
                           key={option.value}
                           control={apiKeyForm.control}
@@ -1777,7 +2013,40 @@ export default function UsersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Sheet open={!!selectedUser} onOpenChange={(open) => !open && setSelectedUser(null)}>
+      <AlertDialog open={!!roleToDelete} onOpenChange={(open) => !open && setRoleToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除角色</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除角色“{roleToDelete?.name ?? ''}”。仍分配给用户的角色不能删除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSubmittingRole}
+              onClick={(event) => {
+                event.preventDefault()
+                void handleDeleteRole()
+              }}
+            >
+              {isSubmittingRole ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Sheet
+        open={!!selectedUser}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedUser(null)
+            setSelectedRagflowStatus(null)
+            setRevealedRagflowCredentials(null)
+          }
+        }}
+      >
         <SheetContent className="sm:max-w-[560px] overflow-y-auto">
           <SheetHeader>
             <SheetTitle>{selectedUser?.name ?? '用户详情'}</SheetTitle>
@@ -1802,9 +2071,13 @@ export default function UsersPage() {
                   </div>
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">角色</span>
-                    <Badge variant={getRoleBadgeVariant(selectedUser.role)}>
-                      {ROLE_LABELS[selectedUser.role]}
-                    </Badge>
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {selectedUser.roles.map(role => (
+                        <Badge key={role.id} variant={getRoleBadgeVariant(role.systemKey)}>
+                          {role.name}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">状态</span>
@@ -1824,6 +2097,76 @@ export default function UsersPage() {
                     <span className="text-muted-foreground">最后登录</span>
                     <span>{formatTimestamp(selectedUser.lastLoginAt)}</span>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base">个人知识库账号</CardTitle>
+                    <CardDescription>
+                      {selectedRagflowStatus?.provisioned
+                        ? selectedRagflowStatus.ragflow_username
+                        : '尚未在 RAGFlow 创建个人账号'}
+                    </CardDescription>
+                  </div>
+                  <Badge variant={selectedRagflowStatus?.provisioned ? 'default' : 'secondary'}>
+                    {selectedRagflowStatus?.provisioned ? '已对接' : '未对接'}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {!ragflowStatus?.enabled ? (
+                    <p className="text-sm text-muted-foreground">RAGFlow 集成尚未启用。</p>
+                  ) : selectedRagflowStatus?.provisioned ? (
+                    <div className="flex flex-wrap gap-2">
+                      {canManageRagflowCredentials ? (
+                        <>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pendingRagflowAction !== null}
+                            onClick={() => void handleRagflowAction('reveal')}
+                          >
+                            <Eye className="mr-2 size-4" />
+                            查看账号凭据
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pendingRagflowAction !== null}
+                            onClick={() => void handleRagflowAction('password')}
+                          >
+                            轮换密码
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pendingRagflowAction !== null}
+                            onClick={() => void handleRagflowAction('api-key')}
+                          >
+                            轮换 API Key
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">当前角色不能查看或轮换账号凭据。</p>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={pendingRagflowAction !== null}
+                      onClick={() => void handleRagflowAction('provision')}
+                    >
+                      {pendingRagflowAction === 'provision'
+                        ? <Loader2 className="mr-2 size-4 animate-spin" />
+                        : <Database className="mr-2 size-4" />}
+                      初始化知识库账号
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1934,6 +2277,47 @@ export default function UsersPage() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={!!revealedRagflowCredentials}
+        onOpenChange={(open) => !open && setRevealedRagflowCredentials(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>RAGFlow 账号凭据</DialogTitle>
+            <DialogDescription>凭据只在当前窗口展示，请仅交付给对应用户。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {[
+              ['登录账号', revealedRagflowCredentials?.username],
+              ['登录密码', revealedRagflowCredentials?.password],
+              ['API Key', revealedRagflowCredentials?.api_key],
+            ].filter((entry): entry is [string, string] => Boolean(entry[1])).map(([label, value]) => (
+              <div key={label} className="space-y-1 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title={`复制${label}`}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(value)
+                      toast.success(`${label}已复制`)
+                    }}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+                <code className="block break-all text-sm">{value}</code>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setRevealedRagflowCredentials(null)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

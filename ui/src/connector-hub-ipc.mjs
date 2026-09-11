@@ -1205,6 +1205,32 @@ function replaceCredentialReferences(value, values) {
     ));
 }
 
+export function getCredentialReferenceKeys(value) {
+  const keys = new Set();
+  const visit = (current) => {
+    if (typeof current === 'string') {
+      const patterns = [
+        /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,
+        /\$([a-zA-Z_][a-zA-Z0-9_]*)/g,
+        /%([a-zA-Z_][a-zA-Z0-9_]*)%/g,
+      ];
+      for (const pattern of patterns) {
+        for (const match of current.matchAll(pattern)) keys.add(match[1]);
+      }
+      return;
+    }
+    if (Array.isArray(current)) {
+      for (const item of current) visit(item);
+      return;
+    }
+    if (isPlainObject(current)) {
+      for (const item of Object.values(current)) visit(item);
+    }
+  };
+  visit(value);
+  return Array.from(keys);
+}
+
 export function applyConnectorCredentials(config, values) {
   if (!isPlainObject(config) || !isPlainObject(values)) return config;
   const resolved = {
@@ -1315,7 +1341,17 @@ export function getConnectorCredentialEnv(connectorIds) {
   const env = {};
   for (const connectorId of normalizeStringList(connectorIds)) {
     if (!isValidConnectorId(connectorId)) continue;
-    Object.assign(env, readConnectorCredentialValues(connectorId));
+    const baseDir = connectorDir(connectorId);
+    const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
+    const schema = normalizeConnectorCredentialSchema(
+      meta?.credentialSchema || readJsonFile(path.join(baseDir, 'token-schema.json'), null),
+    );
+    if (!schema) continue;
+    const allowedFields = new Set(schema.fields.map((field) => field.key));
+    const values = readConnectorCredentialValues(connectorId);
+    Object.assign(env, Object.fromEntries(
+      Object.entries(values).filter(([key]) => allowedFields.has(key)),
+    ));
   }
   return env;
 }
@@ -1336,7 +1372,9 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
       ? { ...credentials.connectorFields }
       : {};
     const existingRecords = isPlainObject(connectorFields[id]) ? connectorFields[id] : {};
-    const nextRecords = { ...existingRecords };
+    const nextRecords = Object.fromEntries(
+      Object.entries(existingRecords).filter(([key]) => allowedFields.has(key)),
+    );
     for (const [key, rawValue] of Object.entries(inputValues)) {
       const field = allowedFields.get(key);
       if (!field || typeof rawValue !== 'string') continue;
@@ -2282,8 +2320,18 @@ export async function uninstallConnector(connectorId) {
   return { ok: true, id };
 }
 
-export function getConnectorMcpServers(connectorIds) {
+export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {}) {
   const result = {};
+  const runtimeValues = isPlainObject(runtimeCredentialValues)
+    ? Object.fromEntries(
+        Object.entries(runtimeCredentialValues)
+          .filter(([key, value]) => (
+            /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/.test(key)
+            && typeof value === 'string'
+            && value.trim()
+          )),
+      )
+    : {};
   for (const item of normalizeStringList(connectorIds)) {
     if (!isValidConnectorId(item)) continue;
     const baseDir = connectorDir(item);
@@ -2301,7 +2349,7 @@ export function getConnectorMcpServers(connectorIds) {
       for (const [serverName, config] of Object.entries(normalized.mcpServers)) {
         const accessToken = readConnectorMcpAccessToken(item, serverName);
         result[serverName] = withMcpAccessToken(
-          applyConnectorCredentials(config, credentialValues),
+          applyConnectorCredentials(config, { ...credentialValues, ...runtimeValues }),
           accessToken,
         );
       }

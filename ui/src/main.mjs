@@ -17,7 +17,9 @@ import {
 } from './public-experthub-ipc.mjs';
 import {
   getConnectorAddDirs,
+  applyConnectorCredentials,
   getConnectorCredentialEnv,
+  getCredentialReferenceKeys,
   getConnectorMcpServers,
   findConnectorMcpServer,
   initializeBundledConnectorCatalog,
@@ -2896,11 +2898,35 @@ function getSessionConnectorIds(sessionRecord) {
   );
 }
 
-function getSessionMcpServers(sessionRecord) {
+function getSessionMcpServers(sessionRecord, runtimeCredentialValues = {}) {
   return {
     ...getEnabledDesktopMcpServers(),
-    ...getConnectorMcpServers(getSessionConnectorIds(sessionRecord)),
+    ...getConnectorMcpServers(
+      getSessionConnectorIds(sessionRecord),
+      runtimeCredentialValues,
+    ),
   };
+}
+
+async function resolveCurrentMossServerAuthToken() {
+  const remoteDirect = getRemoteDirectSettings();
+  if (!remoteDirect.serverUrl) {
+    throw new Error('该连接器需要 Moss Server 登录态，请先登录 Moss Server。');
+  }
+  const authToken = remoteDirect.apiKey
+    || (await resolveRemoteDirectConnection()).authToken;
+  if (!authToken) {
+    throw new Error('无法取得 Moss Server 登录凭据，请重新登录 Moss Server。');
+  }
+  return authToken;
+}
+
+async function resolveSessionConnectorRuntimeCredentials(sessionRecord) {
+  const connectorIds = getSessionConnectorIds(sessionRecord);
+  const unresolvedServers = getConnectorMcpServers(connectorIds);
+  const runtimeCredentialKeys = getCredentialReferenceKeys(unresolvedServers);
+  if (!runtimeCredentialKeys.includes('MOSS_SERVER_AUTH_TOKEN')) return {};
+  return { MOSS_SERVER_AUTH_TOKEN: await resolveCurrentMossServerAuthToken() };
 }
 
 function getSessionAddDirs(sessionRecord) {
@@ -3045,8 +3071,9 @@ function buildProjectSystemPrompt(sessionRecord) {
   return lines.join('\n');
 }
 
-function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
+async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+  const connectorRuntimeCredentials = await resolveSessionConnectorRuntimeCredentials(sessionRecord);
   const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
   const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
@@ -3072,7 +3099,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
-    mcpServers: getSessionMcpServers(sessionRecord),
+    mcpServers: getSessionMcpServers(sessionRecord, connectorRuntimeCredentials),
     libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     addDirs: getSessionAddDirs(sessionRecord),
     workspaceDirectories: sessionRecord
@@ -3080,6 +3107,7 @@ function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt
       : [],
     environment: {
       ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
+      ...connectorRuntimeCredentials,
       MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(desktopSettings.advanced),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
       MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
@@ -7913,7 +7941,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
   const ClaudeSession = await getClaudeSessionCtor();
 
   sessionRecord.runtime = new ClaudeSession({
-    ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
+    ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt)),
     coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
     onPermissionRequest,
     onToolUseValidation: async (toolName, input) => validateSessionToolUse(sessionRecord, toolName, input),
@@ -7966,7 +7994,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
 
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
-      ...buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt),
+      ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt)),
       coordinatorMode: desiredCoordinatorMode,
       sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
       onPermissionRequest: async (toolName, input, request) => {
@@ -9653,6 +9681,82 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
     entry.enabled = true;
     entry.updatedAt = Date.now();
     saveDesktopMcpStore(store);
+  }
+
+  if (connectorServer && String(connectorServer.authMode).toLowerCase() === 'moss-session') {
+    await updateConnectorMcpAuthState(connectorServer.connectorId, {
+      connected: false,
+      setupStatus: 'authenticating',
+      setupMessage: '正在验证 Moss Server 登录态',
+    });
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-auth-state',
+      connectorId: connectorServer.connectorId,
+    });
+    try {
+      const authToken = await resolveCurrentMossServerAuthToken();
+      const resolvedConfig = applyConnectorCredentials(serverConfig, {
+        MOSS_SERVER_AUTH_TOKEN: authToken,
+      });
+      const response = await fetch(resolvedConfig.url, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          ...(resolvedConfig.headers || {}),
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'moss-session-auth-check', version: '1.0' },
+          },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.result?.serverInfo?.name) {
+        const detail = payload?.error?.message || payload?.error || `HTTP ${response.status}`;
+        throw new Error(String(detail));
+      }
+    } catch (error) {
+      const message = `Moss 登录态验证失败：${redactAuthFailureText(error?.message || String(error))}`;
+      await updateConnectorMcpAuthState(connectorServer.connectorId, {
+        connected: false,
+        setupStatus: 'failed',
+        setupMessage: message,
+      });
+      emitToRenderer('connector-hub:changed', {
+        reason: 'mcp-auth-failed',
+        connectorId: connectorServer.connectorId,
+      });
+      throw new Error(message);
+    }
+
+    const reload = resetLocalRuntimesForMcpReload();
+    await updateConnectorMcpAuthState(connectorServer.connectorId, {
+      connected: true,
+      setupStatus: 'connected',
+      setupMessage: '已复用当前 Moss Server 登录态',
+    });
+    emitToRenderer('connector-hub:changed', {
+      reason: 'mcp-authenticated',
+      connectorId: connectorServer.connectorId,
+      ...reload,
+    });
+    return getDesktopMcpPayload({
+      ...reload,
+      auth: {
+        name: serverName,
+        connectorId: connectorServer.connectorId,
+        status: 'authenticated',
+        authorizationUrl: null,
+      },
+    });
   }
 
   const configuredAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';

@@ -1,4 +1,3 @@
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -162,17 +161,6 @@ export function registerLibraryIpcHandlers({
   handle('library:list-jobs', (payload) => service.listJobs(payload));
   handle('library:cancel-job', (payload) => service.cancelJob(payload));
   handle('library:repair-index', () => service.repairIndex());
-  handle('library:export', async (payload) => {
-    const result = await dialog.showSaveDialog(getWindow(), {
-      title: '导出资料库',
-      defaultPath: payload.includeIndex ? 'moss-library-full-index.json' : 'moss-library-registrations.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (result.canceled || !result.filePath) return { canceled: true };
-    const data = service.exportData({ includeIndex: payload.includeIndex === true });
-    await fsp.writeFile(result.filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-    return { canceled: false };
-  });
   handle('library:save-task-artifact', (payload) => service.saveTaskArtifact(payload));
 
   handle('library:get-migration-preview', () => service.getMigrationPreview());

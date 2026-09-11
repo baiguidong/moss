@@ -8,6 +8,7 @@ import {
   type AuthCenterDepartment,
   type AuthCenterOAuthAuthorizationCode,
   type AuthCenterOAuthAuthorizationRequest,
+  type AuthCenterRole,
   type BootstrapAdminConfig,
   type AuthCenterUser,
   type SanitizedAuthCenterDepartment,
@@ -19,6 +20,12 @@ import {
   sanitizeUser,
   verifyPassword,
 } from '../authCenter/db.js'
+import {
+  BUILTIN_ROLE_TEMPLATES,
+  normalizePermissions,
+  permissionCatalog,
+  type BuiltinRoleKey,
+} from './permissions.js'
 
 export type AuthRole = 'admin' | 'dept_admin' | 'user'
 
@@ -39,31 +46,16 @@ export class AuthServiceError extends Error {
   }
 }
 
-function defaultScopesForRole(role: string): string[] {
-  if (role === 'admin') {
-    return ['*']
-  }
-  if (role === 'dept_admin') {
-    return [
-      'sessions:create',
-      'sessions:attach',
-      'sessions:list',
-      'agent-mail:send',
-      'agent-mail:receive',
-      'admin:users',
-      'admin:api_keys',
-    ]
-  }
-  return [
-    'sessions:create',
-    'sessions:attach',
-    'sessions:list',
-    'agent-mail:send',
-    'agent-mail:receive',
-  ]
+export type RoleDefinition = AuthCenterRole & {
+  permissions: string[]
+  assignedCount: number
 }
 
-const DEFAULT_SCOPES_FOR_USER_ROLE = defaultScopesForRole('user')
+export type UserWithRoles = SanitizedAuthCenterUser & {
+  roleIds: string[]
+  roles: Array<Pick<AuthCenterRole, 'id' | 'systemKey' | 'name' | 'isBuiltin'>>
+  effectiveScopes: string[]
+}
 
 async function initializeStore(
   db: AuthCenterDb,
@@ -141,7 +133,7 @@ export class AuthService {
     access_token: string
     token_type: 'Bearer'
     expires_in: number
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
@@ -150,7 +142,7 @@ export class AuthService {
     this.db.updateUserLastLogin(user.id, loggedInAt)
     return this.issueToken({
       user: { ...user, lastLoginAt: loggedInAt },
-      scopes: defaultScopesForRole(user.role),
+      scopes: this.getEffectiveScopes(user.id),
       keyId: 'password-login',
     })
   }
@@ -160,7 +152,7 @@ export class AuthService {
     email?: string
     password: string
   }): {
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
     organization: { id: string; name: string; createdAt: number }
     scopes: string[]
   } {
@@ -172,9 +164,9 @@ export class AuthService {
     const loggedInAt = Date.now()
     this.db.updateUserLastLogin(user.id, loggedInAt)
     return {
-      user: sanitizeUser({ ...user, lastLoginAt: loggedInAt }),
+      user: this.withRoles({ ...user, lastLoginAt: loggedInAt }),
       organization,
-      scopes: defaultScopesForRole(user.role),
+      scopes: this.getEffectiveScopes(user.id),
     }
   }
 
@@ -246,7 +238,7 @@ export class AuthService {
     access_token: string
     token_type: 'Bearer'
     expires_in: number
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
@@ -270,7 +262,7 @@ export class AuthService {
     // the user's current role. Explicitly created API keys remain fixed-scope.
     const oauthIdentity = this.db.getOAuthIdentityByApiKeyId(apiKey.id)
     const scopes = oauthIdentity?.providerId === 'moss-server'
-      ? defaultScopesForRole(user.role)
+      ? this.getEffectiveScopes(user.id)
       : apiKey.scopes
     if (oauthIdentity && JSON.stringify(scopes) !== JSON.stringify(apiKey.scopes)) {
       this.db.updateApiKeyScopes(apiKey.id, scopes)
@@ -289,7 +281,7 @@ export class AuthService {
   }): {
     api_key: string
     key: Omit<AuthCenterApiKey, 'secretHash'>
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
     organization: { id: string; name: string; createdAt: number }
     scopes: string[]
   } {
@@ -319,7 +311,7 @@ export class AuthService {
       if (identity?.apiKeyId) {
         this.db.revokeApiKey(identity.apiKeyId)
       }
-      const scopes = defaultScopesForRole(user.role)
+      const scopes = this.getEffectiveScopes(user.id)
       const created = createApiKeyRecord({
         orgId: user.orgId,
         userId: user.id,
@@ -340,7 +332,7 @@ export class AuthService {
       return {
         api_key: created.plainTextKey,
         key: sanitizeApiKey(created.apiKey),
-        user: sanitizeUser({ ...user, lastLoginAt: loggedInAt }),
+        user: this.withRoles({ ...user, lastLoginAt: loggedInAt }),
         organization,
         scopes,
       }
@@ -348,7 +340,7 @@ export class AuthService {
   }
 
   getMe(auth: AuthContext): {
-    user: SanitizedAuthCenterUser | null
+    user: UserWithRoles | null
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
     role: string
@@ -367,10 +359,10 @@ export class AuthService {
     orgId: string,
     auth?: AuthContext,
   ): {
-    users: SanitizedAuthCenterUser[]
+    users: UserWithRoles[]
   } {
     return {
-      users: this.listVisibleUsers(orgId, auth).map(user => sanitizeUser(user)),
+      users: this.listVisibleUsers(orgId, auth).map(user => this.withRoles(user)),
     }
   }
 
@@ -403,35 +395,112 @@ export class AuthService {
     }
   }
 
-  listRoles(): {
-    roles: Array<{
-      id: AuthRole
-      name: string
-      description: string
-      scopes: string[]
-    }>
+  listRoles(orgId: string): { roles: RoleDefinition[] } {
+    return { roles: this.db.listRolesByOrg(orgId).map(role => this.roleDefinition(role)) }
+  }
+
+  listPermissions(): { permissions: ReturnType<typeof permissionCatalog> } {
+    return { permissions: permissionCatalog() }
+  }
+
+  createRole(input: {
+    orgId: string
+    name: string
+    description?: string
+    permissions: string[]
+  }): { role: RoleDefinition } {
+    const name = input.name.trim()
+    if (!name) throw new AuthServiceError(400, 'Missing role name')
+    if (this.db.listRolesByOrg(input.orgId).some(role => role.name === name)) {
+      throw new AuthServiceError(409, 'Role name already exists')
+    }
+    let permissions: string[]
+    try {
+      permissions = normalizePermissions(input.permissions)
+    } catch (error) {
+      throw new AuthServiceError(400, error instanceof Error ? error.message : String(error))
+    }
+    if (permissions.includes('admin:roles')) {
+      throw new AuthServiceError(400, 'The protected role-management permission cannot be assigned to a custom role')
+    }
+    const timestamp = Date.now()
+    const role: AuthCenterRole = {
+      id: randomUUID(),
+      orgId: input.orgId,
+      systemKey: null,
+      name,
+      description: input.description?.trim() || '',
+      isBuiltin: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    this.db.createRole(role, permissions)
+    return { role: this.roleDefinition(role) }
+  }
+
+  updateRole(input: {
+    orgId: string
+    roleId: string
+    name?: string
+    description?: string
+    permissions?: string[]
+  }): { role: RoleDefinition } {
+    const role = this.db.getRoleByIdAndOrg(input.roleId, input.orgId)
+    if (!role) throw new AuthServiceError(404, 'Unknown role_id')
+    if (role.systemKey === 'admin') {
+      throw new AuthServiceError(409, 'The system administrator role is protected')
+    }
+    const name = input.name?.trim()
+    if (role.isBuiltin && name && name !== role.name) {
+      throw new AuthServiceError(409, 'Built-in roles cannot be renamed')
+    }
+    if (name && this.db.listRolesByOrg(input.orgId).some(item => item.id !== role.id && item.name === name)) {
+      throw new AuthServiceError(409, 'Role name already exists')
+    }
+    let permissions: string[] | undefined
+    if (input.permissions) {
+      try {
+        permissions = normalizePermissions(input.permissions)
+      } catch (error) {
+        throw new AuthServiceError(400, error instanceof Error ? error.message : String(error))
+      }
+      if (permissions.includes('admin:roles')) {
+        throw new AuthServiceError(400, 'The protected role-management permission is reserved for system administrators')
+      }
+    }
+    this.db.updateRole(role.id, {
+      name: role.isBuiltin ? undefined : name,
+      description: input.description?.trim(),
+    })
+    if (permissions) this.db.setRolePermissions(role.id, permissions)
+    const updated = this.db.getRoleByIdAndOrg(role.id, input.orgId) ?? role
+    return { role: this.roleDefinition(updated) }
+  }
+
+  deleteRole(input: { orgId: string; roleId: string }): { ok: true } {
+    const role = this.db.getRoleByIdAndOrg(input.roleId, input.orgId)
+    if (!role) throw new AuthServiceError(404, 'Unknown role_id')
+    if (role.isBuiltin) throw new AuthServiceError(409, 'Built-in roles cannot be deleted')
+    if (this.db.countUsersForRole(role.id) > 0) {
+      throw new AuthServiceError(409, 'Role still has assigned users')
+    }
+    this.db.deleteRole(role.id)
+    return { ok: true }
+  }
+
+  setUserRoles(input: { orgId: string; userId: string; roleIds: string[] }, auth?: AuthContext): {
+    user: UserWithRoles
   } {
-    return {
-      roles: [
-        {
-          id: 'admin',
-          name: '系统管理员',
-          description: '可管理整个组织、部门、用户、会话和系统设置。',
-          scopes: ['*'],
-        },
-        {
-          id: 'dept_admin',
-          name: '部门管理员',
-          description: '可在后台管理部门内用户并代为生成 API Key。',
-          scopes: defaultScopesForRole('dept_admin'),
-        },
-        {
-          id: 'user',
-          name: '普通用户',
-          description: '具备基础会话创建与接入能力。',
-          scopes: defaultScopesForRole('user'),
-        },
-      ],
+    return this.updateUser({
+      orgId: input.orgId,
+      userId: input.userId,
+      roleIds: input.roleIds,
+    }, auth)
+  }
+
+  requireSystemAdmin(auth: AuthContext): void {
+    if (!(auth.systemRoles?.includes('admin') || auth.role === 'admin')) {
+      throw new AuthServiceError(403, 'System administrator permission is required')
     }
   }
 
@@ -439,7 +508,7 @@ export class AuthService {
     userId: string,
     orgId: string,
     auth?: AuthContext,
-  ): SanitizedAuthCenterUser | null {
+  ): UserWithRoles | null {
     const user = this.db.getUserByIdAndOrg(userId, orgId)
     if (!user) {
       return null
@@ -447,7 +516,7 @@ export class AuthService {
     if (!this.canViewUser(user, auth)) {
       return null
     }
-    return sanitizeUser(user)
+    return this.withRoles(user)
   }
 
   createUser(input: {
@@ -455,22 +524,22 @@ export class AuthService {
     email?: string
     name: string
     departmentId?: string | null
-    role: string
+    role?: string
+    roleIds?: string[]
     password: string
   }, auth?: AuthContext): {
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
   } {
     const email = input.email?.trim() || ''
     const name = input.name.trim()
     const departmentId = input.departmentId?.trim() || null
-    const role = input.role.trim()
     if (!name || !input.password) {
       throw new AuthServiceError(400, 'Missing name or password')
     }
-    if (!isAuthRole(role)) {
-      throw new AuthServiceError(400, `Unsupported role: ${role}`)
-    }
-    if (role === 'dept_admin' && !departmentId) {
+    const roleIds = this.resolveRoleIds(input.orgId, input.roleIds, input.role)
+    this.assertCanAssignRoles(auth, roleIds)
+    const role = this.primaryRoleForRoleIds(input.orgId, roleIds)
+    if (this.roleIdsRequireDepartment(input.orgId, roleIds) && !departmentId) {
       throw new AuthServiceError(400, 'Department admin must be assigned to a department')
     }
     if (departmentId && !this.db.getDepartmentByIdAndOrg(departmentId, input.orgId)) {
@@ -512,7 +581,8 @@ export class AuthService {
       lastLoginAt: null,
     }
     this.db.createUser(user)
-    return { user: sanitizeUser(user) }
+    this.db.setUserRoleIds(user.id, roleIds)
+    return { user: this.withRoles(user) }
   }
 
   updateUser(input: {
@@ -521,9 +591,10 @@ export class AuthService {
     name?: string
     departmentId?: string | null
     role?: string
+    roleIds?: string[]
     status?: string
   }, auth?: AuthContext): {
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
   } {
     const user = this.db.getUserByIdAndOrg(input.userId, input.orgId)
     if (!user) {
@@ -550,12 +621,12 @@ export class AuthService {
       }
       patch.name = name
     }
-    if (typeof input.role === 'string') {
-      const role = input.role.trim()
-      if (!isAuthRole(role)) {
-        throw new AuthServiceError(400, `Unsupported role: ${role}`)
-      }
-      patch.role = role
+    const nextRoleIds = input.roleIds !== undefined || typeof input.role === 'string'
+      ? this.resolveRoleIds(input.orgId, input.roleIds, input.role)
+      : this.db.listRolesForUser(user.id).map(role => role.id)
+    if (input.roleIds !== undefined || typeof input.role === 'string') {
+      this.assertCanAssignRoles(auth, nextRoleIds)
+      patch.role = this.primaryRoleForRoleIds(input.orgId, nextRoleIds)
     }
     if (input.departmentId !== undefined) {
       const departmentId = input.departmentId?.trim() || null
@@ -575,17 +646,16 @@ export class AuthService {
       patch.status = status
     }
 
-    const nextRole = patch.role ?? user.role
     const nextDepartmentId =
       patch.departmentId === undefined ? user.departmentId : patch.departmentId
-    if (nextRole === 'dept_admin' && !nextDepartmentId) {
+    if (this.roleIdsRequireDepartment(input.orgId, nextRoleIds) && !nextDepartmentId) {
       throw new AuthServiceError(400, 'Department admin must be assigned to a department')
     }
     this.assertCanManageExistingUser(user, auth)
     this.assertCanManageUserMutation(
       input.orgId,
       {
-        role: nextRole,
+        role: patch.role ?? user.role,
         departmentId: nextDepartmentId,
       },
       auth,
@@ -595,14 +665,27 @@ export class AuthService {
       patch.name === undefined &&
       patch.departmentId === undefined &&
       patch.role === undefined &&
+      input.roleIds === undefined &&
       patch.status === undefined
     ) {
       throw new AuthServiceError(400, 'Missing user update fields')
     }
 
+    if (
+      (patch.status === 'disabled' || !this.hasSystemRoleIds(input.orgId, nextRoleIds, 'admin'))
+      && this.userHasSystemRole(user.id, 'admin')
+      && this.db.countActiveUsersWithSystemRole(input.orgId, 'admin') <= 1
+    ) {
+      throw new AuthServiceError(409, 'At least one active system administrator is required')
+    }
+
     this.db.updateUser(user.id, patch)
+    if (input.roleIds !== undefined || typeof input.role === 'string') {
+      this.db.setUserRoleIds(user.id, nextRoleIds)
+    }
+    const updated = this.db.getUserByIdAndOrg(user.id, input.orgId) ?? user
     return {
-      user: sanitizeUser(this.db.getUserByIdAndOrg(user.id, input.orgId) ?? user),
+      user: this.withRoles(updated),
     }
   }
 
@@ -876,16 +959,7 @@ export class AuthService {
   }
 
   private hasEffectiveScope(auth: AuthContext, scope: string): boolean {
-    if (hasScope(auth.scopes, scope)) return true
-    const identity = this.db.getOAuthIdentityByApiKeyId(auth.keyId)
-    if (
-      identity?.providerId !== 'moss-server' ||
-      identity.userId !== auth.userId
-    ) {
-      return false
-    }
-    const user = this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
-    return Boolean(user?.status === 'active' && hasScope(defaultScopesForRole(user.role), scope))
+    return hasScope(auth.scopes, scope)
   }
 
   private issueToken(input: {
@@ -896,16 +970,19 @@ export class AuthService {
     access_token: string
     token_type: 'Bearer'
     expires_in: number
-    user: SanitizedAuthCenterUser
+    user: UserWithRoles
     organization: { id: string; name: string; createdAt: number } | null
     scopes: string[]
   } {
+    const roles = this.db.listRolesForUser(input.user.id)
     const issued = issueAccessToken(
       {
         iss: this.db.getIssuer(),
         sub: input.user.id,
         org_id: input.user.orgId,
         role: input.user.role,
+        role_ids: roles.map(role => role.id),
+        system_roles: roles.flatMap(role => role.systemKey ? [role.systemKey] : []),
         scopes: input.scopes,
         key_id: input.keyId,
       },
@@ -917,7 +994,7 @@ export class AuthService {
       access_token: issued.token,
       token_type: 'Bearer',
       expires_in: issued.expiresAt - Math.floor(Date.now() / 1000),
-      user: sanitizeUser(input.user),
+      user: this.withRoles(input.user),
       organization: this.db.getOrganization(input.user.orgId),
       scopes: input.scopes,
     }
@@ -956,6 +1033,93 @@ export class AuthService {
       )
     }
     return users[0] ?? null
+  }
+
+  private roleDefinition(role: AuthCenterRole): RoleDefinition {
+    return {
+      ...role,
+      permissions: this.db.listRolePermissions(role.id),
+      assignedCount: this.db.countUsersForRole(role.id),
+    }
+  }
+
+  private withRoles(user: AuthCenterUser): UserWithRoles {
+    const roles = this.db.listRolesForUser(user.id)
+    return {
+      ...sanitizeUser(user),
+      roleIds: roles.map(role => role.id),
+      roles: roles.map(role => ({
+        id: role.id,
+        systemKey: role.systemKey,
+        name: role.name,
+        isBuiltin: role.isBuiltin,
+      })),
+      effectiveScopes: this.getEffectiveScopes(user.id),
+    }
+  }
+
+  private getEffectiveScopes(userId: string): string[] {
+    const permissions = this.db.listRolesForUser(userId)
+      .flatMap(role => this.db.listRolePermissions(role.id))
+    if (permissions.includes('*')) return ['*']
+    try {
+      return normalizePermissions(permissions)
+    } catch {
+      return [...new Set(permissions)]
+    }
+  }
+
+  private resolveRoleIds(orgId: string, inputRoleIds?: string[], legacyRole?: string): string[] {
+    if (Array.isArray(inputRoleIds)) {
+      const roleIds = [...new Set(inputRoleIds.map(value => value.trim()).filter(Boolean))]
+      if (roleIds.length === 0) throw new AuthServiceError(400, 'At least one role is required')
+      for (const roleId of roleIds) {
+        if (!this.db.getRoleByIdAndOrg(roleId, orgId)) {
+          throw new AuthServiceError(400, `Unknown role_id: ${roleId}`)
+        }
+      }
+      return roleIds
+    }
+    const key = legacyRole?.trim() || 'user'
+    if (!isAuthRole(key)) throw new AuthServiceError(400, `Unsupported role: ${key}`)
+    const role = this.db.getRoleBySystemKey(orgId, key)
+    if (!role) throw new AuthServiceError(500, `Built-in role is missing: ${key}`)
+    return [role.id]
+  }
+
+  private primaryRoleForRoleIds(orgId: string, roleIds: string[]): AuthRole {
+    const roles = roleIds
+      .map(roleId => this.db.getRoleByIdAndOrg(roleId, orgId))
+      .filter((role): role is AuthCenterRole => Boolean(role))
+    if (roles.some(role => role.systemKey === 'admin')) return 'admin'
+    if (roles.some(role => role.systemKey === 'dept_admin')) return 'dept_admin'
+    return 'user'
+  }
+
+  private hasSystemRoleIds(
+    orgId: string,
+    roleIds: string[],
+    systemKey: BuiltinRoleKey,
+  ): boolean {
+    return roleIds.some(roleId => this.db.getRoleByIdAndOrg(roleId, orgId)?.systemKey === systemKey)
+  }
+
+  private userHasSystemRole(userId: string, systemKey: BuiltinRoleKey): boolean {
+    return this.db.listRolesForUser(userId).some(role => role.systemKey === systemKey)
+  }
+
+  private roleIdsRequireDepartment(orgId: string, roleIds: string[]): boolean {
+    if (this.hasSystemRoleIds(orgId, roleIds, 'admin')) return false
+    const permissions = roleIds.flatMap(roleId => this.db.listRolePermissions(roleId))
+    return permissions.includes('admin:users')
+  }
+
+  private assertCanAssignRoles(auth: AuthContext | undefined, roleIds: string[]): void {
+    if (!auth || auth.systemRoles?.includes('admin') || auth.role === 'admin') return
+    const regularRole = this.db.getRoleBySystemKey(auth.orgId, 'user')
+    if (!regularRole || roleIds.length !== 1 || roleIds[0] !== regularRole.id) {
+      throw new AuthServiceError(403, 'Only system administrators can assign roles')
+    }
   }
 
   private countUsersForDepartment(orgId: string, departmentId: string): number {
@@ -1012,7 +1176,6 @@ export class AuthService {
     }
 
     return users.filter(user =>
-      user.role === 'user' &&
       user.departmentId !== null &&
       visibleDepartmentIds.has(user.departmentId),
     )
@@ -1027,10 +1190,10 @@ export class AuthService {
     }
 
     const actor = this.requireAuthUser(auth)
-    if (actor.role === 'admin') {
+    if (auth.systemRoles?.includes('admin') || auth.role === 'admin') {
       return null
     }
-    if (actor.role !== 'dept_admin' || !actor.departmentId) {
+    if (!hasScope(auth.scopes, 'admin:users') || !actor.departmentId) {
       return new Set<string>()
     }
 
@@ -1080,7 +1243,6 @@ export class AuthService {
     }
 
     return (
-      user.role === 'user' &&
       user.departmentId !== null &&
       visibleDepartmentIds.has(user.departmentId)
     )
@@ -1108,7 +1270,7 @@ export class AuthService {
     }
 
     const actor = this.requireAuthUser(auth)
-    if (actor.role === 'admin') {
+    if (auth.systemRoles?.includes('admin') || auth.role === 'admin') {
       return
     }
 
@@ -1134,11 +1296,12 @@ export class AuthService {
     }
 
     const actor = this.requireAuthUser(auth)
-    if (actor.role === 'admin') {
+    if (auth.systemRoles?.includes('admin') || auth.role === 'admin') {
       return
     }
 
-    const allowedScopes = new Set(DEFAULT_SCOPES_FOR_USER_ROLE)
+    const regularTemplate = BUILTIN_ROLE_TEMPLATES.find(role => role.key === 'user')
+    const allowedScopes = new Set(regularTemplate?.permissions ?? [])
     if (!scopes.every(scope => allowedScopes.has(scope))) {
       throw new AuthServiceError(
         403,

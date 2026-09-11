@@ -206,6 +206,53 @@ Authorization: Bearer <access_token>
 }
 ```
 
+## RAGFlow Integration
+
+启用配置示例：
+
+```json
+{
+  "ragflow": {
+    "enabled": true,
+    "instanceId": "default",
+    "baseUrl": "http://127.0.0.1:80",
+    "adminUrl": "http://127.0.0.1:9381",
+    "adminEmail": "<RAGFLOW_ADMIN_EMAIL>",
+    "userDomain": "ragflow.com",
+    "passwordLength": 6,
+    "requestTimeoutMs": 15000
+  }
+}
+```
+
+敏感值建议通过服务环境变量注入：
+
+```text
+MOSS_RAGFLOW_ADMIN_PASSWORD=<RAGFlow 当前管理员密码；新安装等于 ADMIN_DEFAULT_PASSWORD>
+MOSS_RAGFLOW_GATEWAY_TOKEN=<Moss RAG MCP 使用的共享随机令牌>
+MOSS_RAGFLOW_USER_DOMAIN=ragflow.com
+MOSS_RAGFLOW_PASSWORD_LENGTH=6
+```
+
+- `POST /api/v1/integrations/ragflow/resolve`：需要 Moss Bearer 凭据和 `X-Moss-Rag-Gateway-Token`；按需创建当前用户的 RAGFlow 个人账号，并按 `ragflow:read` / `ragflow:manage` 返回 MCP 工具范围。
+- `GET /api/v1/integrations/ragflow/status`：读取服务接入状态，需要“管理用户与部门”权限。
+- `GET /api/v1/users/:userId/ragflow`：读取用户开户状态，需要“管理用户与部门”权限，并受部门可见范围约束。
+- `POST /api/v1/users/:userId/ragflow/provision`：初始化用户个人账号，权限要求同上。
+- `POST /api/v1/users/:userId/ragflow/credentials`：查看登录账号、密码和 API Key，需要“查看和轮换知识库凭据”权限。
+- `POST /api/v1/users/:userId/ragflow/password`：生成新的 6 位字母密码并同步到 RAGFlow，需要凭据权限。
+- `POST /api/v1/users/:userId/ragflow/api-key`：轮换 RAGFlow API Key，需要凭据权限。
+
+每个 Moss 用户对应一个 RAGFlow 个人账号，默认用户名为 `<Moss用户名>@ragflow.com`，域名可配置。密码和 RAGFlow API Key 使用 Moss 凭据主密钥加密保存。第三方客户端不应直接调用 `resolve`；它是 Moss RAG MCP 的内部凭据交换接口。
+
+## Roles and permissions
+
+- `GET /api/v1/roles`：列出当前组织角色及权限。
+- `GET /api/v1/permissions`：返回权限目录、中文名称、说明和分组。
+- `POST /api/v1/roles`、`PATCH /api/v1/roles/:roleId`、`DELETE /api/v1/roles/:roleId`：系统管理员维护角色。
+- `PUT /api/v1/users/:userId/roles`：系统管理员分配多个角色。
+
+用户有效权限为其所有角色权限的并集。权限写入登录令牌，角色变化后用户重新登录生效；已签发令牌不会实时重算。内置系统管理员角色固定拥有全部权限，内置部门管理员和普通用户角色允许系统管理员调整权限但不能重命名或删除。
+
 ### GET `/healthz`
 
 存活检查。

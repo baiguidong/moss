@@ -92,7 +92,6 @@ describe('Library IPC', () => {
     expect(handlers.has('library:delete-evaluation-case')).toBe(true);
     expect(handlers.has('library:run-evaluation')).toBe(true);
     expect(handlers.has('library:repair-index')).toBe(true);
-    expect(handlers.has('library:export')).toBe(true);
     expect(handlers.has('library:get-extension-status')).toBe(true);
     expect(handlers.has('library:acknowledge-extension-guide')).toBe(true);
     expect(handlers.has('library:install-extensions')).toBe(true);

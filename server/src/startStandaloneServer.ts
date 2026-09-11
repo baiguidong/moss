@@ -7,6 +7,7 @@ import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
 import { ServerAppRuntime } from './apps/serverAppRuntime.js'
+import { RagflowIntegrationService } from './ragflow/service.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -38,9 +39,21 @@ export async function startStandaloneDirectConnectServer(
   })
   await runtime.reconcileOnStartup()
   const appRuntime = await ServerAppRuntime.create(config, instance.instanceId)
+  const ragflowIntegration = new RagflowIntegrationService({
+    db: store.db,
+    rootDir: config.rootDir,
+    config: config.ragflow,
+  })
 
   const logger = createServerLogger()
-  const server = startServer(config, runtime, authService, logger, appRuntime)
+  const server = startServer(
+    config,
+    runtime,
+    authService,
+    logger,
+    appRuntime,
+    ragflowIntegration,
+  )
   const actualPort = (await server.ready) ?? config.port
   const connectHost =
     config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host

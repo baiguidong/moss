@@ -1,0 +1,28 @@
+{
+  "id": "ragflow",
+  "name": "RAGFlow 企业知识库",
+  "name_en": "RAGFlow Knowledge Base",
+  "description": "连接自托管 RAGFlow，通过 MCP 检索知识库、管理文档与 Chunk、上传文件、控制解析并使用聊天助手和 Agent。",
+  "description_zh": "连接自托管 RAGFlow，通过 MCP 检索知识库、管理文档与 Chunk、上传文件、控制解析并使用聊天助手和 Agent。",
+  "description_en": "Connect a self-hosted RAGFlow instance over MCP to retrieve knowledge, manage documents and chunks, upload files, control parsing, and use chats and agents.",
+  "source": "ragflow",
+  "type": "mcp",
+  "auth_mode": "api-key",
+  "examples_zh": [
+    "列出 RAGFlow 中的知识库和文档解析状态",
+    "从企业知识库检索这个问题并给出引用",
+    "把这份 PDF 上传到指定知识库并开始解析",
+    "创建一个 RAGFlow 会话并基于知识库回答问题"
+  ],
+  "examples_en": [
+    "List RAGFlow knowledge bases and document parsing status",
+    "Retrieve this question from the enterprise knowledge base with citations",
+    "Upload this PDF to a knowledge base and start parsing",
+    "Create a RAGFlow chat session and answer from the knowledge base"
+  ],
+  "visible_in": [
+    "external",
+    "cloudhosted",
+    "selfhosted"
+  ]
+}

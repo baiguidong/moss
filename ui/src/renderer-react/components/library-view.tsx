@@ -12,7 +12,6 @@ import {
   Filter,
   FlaskConical,
   Folder,
-  FolderKanban,
   FolderOpen,
   FolderPlus,
   Loader2,
@@ -61,11 +60,9 @@ import type {
   LibrarySearchResult,
   LibrarySearchDiagnostics,
   LibrarySource,
-  Project,
 } from '@/types';
 
 type LibraryViewProps = {
-  projects: Project[];
   onUseResource: (resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => void;
   onUseScope: (scope: { id: string; uri: string; name: string; kind: 'collection' | 'source' }) => void;
   onPrepareDirectoryImport: (payload: { selectionId: string; collectionId: string }) => Promise<void>;
@@ -357,7 +354,7 @@ function extensionStatusLabel(status?: LibraryExtensionStatus['status']) {
   return '未安装';
 }
 
-export function LibraryView({ projects, onUseResource, onUseScope, onPrepareDirectoryImport }: LibraryViewProps) {
+export function LibraryView({ onUseResource, onUseScope, onPrepareDirectoryImport }: LibraryViewProps) {
   const [overview, setOverview] = React.useState<LibraryOverview | null>(null);
   const [collections, setCollections] = React.useState<LibraryCollection[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = React.useState<string | null>(null);
@@ -674,22 +671,6 @@ export function LibraryView({ projects, onUseResource, onUseScope, onPrepareDire
     }
   };
 
-  const addProject = async (project: Project) => {
-    if (!selectedCollectionId) return;
-    setBusyAction(`project:${project.id}`);
-    try {
-      await window.agentDesktop.library.addProjectSource({
-        collectionId: selectedCollectionId,
-        projectId: project.id,
-      });
-      await load();
-    } catch (actionError) {
-      setError(cleanIpcErrorMessage(actionError));
-    } finally {
-      setBusyAction('');
-    }
-  };
-
   const cancelIndexing = async (job: LibraryJob) => {
     setBusyAction(`cancel:${job.id}`);
     try {
@@ -752,17 +733,6 @@ export function LibraryView({ projects, onUseResource, onUseScope, onPrepareDire
     try {
       await window.agentDesktop.library.repairIndex();
       await load();
-    } catch (actionError) {
-      setError(cleanIpcErrorMessage(actionError));
-    } finally {
-      setBusyAction('');
-    }
-  };
-
-  const exportData = async (includeIndex: boolean) => {
-    setBusyAction(includeIndex ? 'export-full' : 'export-registrations');
-    try {
-      await window.agentDesktop.library.exportData({ includeIndex });
     } catch (actionError) {
       setError(cleanIpcErrorMessage(actionError));
     } finally {
@@ -1000,22 +970,6 @@ export function LibraryView({ projects, onUseResource, onUseScope, onPrepareDire
               {busyAction === 'select:directory' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
               目录
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" disabled={!selectedCollectionId || projects.length === 0 || Boolean(busyAction)}>
-                  <FolderKanban className="h-4 w-4" />
-                  项目
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                {projects.map((project) => (
-                  <DropdownMenuItem key={project.id} onClick={() => void addProject(project)}>
-                    <FolderKanban className="h-4 w-4" />
-                    <span className="truncate">{project.name}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
             <Button
               variant="outline"
               size="sm"
@@ -1035,13 +989,6 @@ export function LibraryView({ projects, onUseResource, onUseScope, onPrepareDire
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={openDiagnostics}>
                   <Gauge className="h-4 w-4" />检索评测与诊断
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => void exportData(false)}>
-                  <Download className="h-4 w-4" />导出资料库配置
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void exportData(true)}>
-                  <Download className="h-4 w-4" />导出完整索引
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void repairIndex()}>

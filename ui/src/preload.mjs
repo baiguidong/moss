@@ -92,7 +92,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     listJobs: (payload) => ipcRenderer.invoke('library:list-jobs', payload),
     cancelJob: (payload) => ipcRenderer.invoke('library:cancel-job', payload),
     repairIndex: () => ipcRenderer.invoke('library:repair-index'),
-    exportData: (payload) => ipcRenderer.invoke('library:export', payload),
     saveTaskArtifact: (payload) => ipcRenderer.invoke('library:save-task-artifact', payload),
     getMigrationPreview: () => ipcRenderer.invoke('library:get-migration-preview'),
     migrateLegacy: () => ipcRenderer.invoke('library:migrate-legacy'),

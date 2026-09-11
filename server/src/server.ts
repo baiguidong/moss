@@ -22,6 +22,7 @@ import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
+import { RagflowIntegrationService } from './ragflow/service.js'
 import { RuntimeService } from './runtimeService.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { AdapterProcessManager } from './adapterProcessManager.js'
@@ -680,6 +681,7 @@ export function startServer(
   authService: AuthService,
   logger: ServerLogger = createServerLogger(),
   appRuntime?: ServerAppRuntime,
+  ragflowIntegration?: RagflowIntegrationService,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -908,9 +910,88 @@ export function startServer(
           additional_model_options: [],
           capabilities: {
             agent_mail: { version: 1 },
+            ragflow: {
+              enabled: ragflowIntegration?.enabled ?? false,
+              version: 1,
+            },
           },
         })
         return
+      }
+
+      if (
+        req.method === 'POST' &&
+        pathname === '/api/v1/integrations/ragflow/resolve'
+      ) {
+        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
+        const gatewayToken = typeof req.headers['x-moss-rag-gateway-token'] === 'string'
+          ? req.headers['x-moss-rag-gateway-token']
+          : ''
+        if (!ragflowIntegration.authorizeGateway(gatewayToken)) {
+          throw new HttpError(403, 'Invalid Moss RAG gateway token')
+        }
+        writeNoStoreJson(res, 200, await ragflowIntegration.resolve(auth))
+        return
+      }
+
+      if (
+        req.method === 'GET' &&
+        pathname === '/api/v1/integrations/ragflow/status'
+      ) {
+        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
+        authService.requireScope(auth, 'admin:users')
+        writeJson(res, 200, await ragflowIntegration.getStatus())
+        return
+      }
+
+      const ragflowUserMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/ragflow(?:\/(provision|credentials|password|api-key))?$/,
+      )
+      if (ragflowUserMatch) {
+        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
+        authService.requireScope(auth, 'admin:users')
+        const userId = decodeURIComponent(ragflowUserMatch[1] || '')
+        const action = ragflowUserMatch[2] || ''
+        if (!authService.getUserOrNull(userId, auth.orgId, auth)) {
+          throw new HttpError(404, 'Unknown user_id')
+        }
+        if (req.method === 'GET' && !action) {
+          writeJson(res, 200, await ragflowIntegration.getUserStatus(auth.orgId, userId))
+          return
+        }
+        if (req.method === 'POST' && action === 'provision') {
+          writeJson(
+            res,
+            200,
+            await ragflowIntegration.provisionForUser(auth.orgId, userId, auth.userId),
+          )
+          return
+        }
+        authService.requireScope(auth, 'ragflow:credentials')
+        if (req.method === 'POST' && action === 'credentials') {
+          writeNoStoreJson(
+            res,
+            200,
+            await ragflowIntegration.revealCredentials(auth.orgId, userId, auth.userId),
+          )
+          return
+        }
+        if (req.method === 'POST' && action === 'password') {
+          writeNoStoreJson(
+            res,
+            200,
+            await ragflowIntegration.rotatePassword(auth.orgId, userId, auth.userId),
+          )
+          return
+        }
+        if (req.method === 'POST' && action === 'api-key') {
+          writeNoStoreJson(
+            res,
+            200,
+            await ragflowIntegration.rotateApiKey(auth.orgId, userId, auth.userId),
+          )
+          return
+        }
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/settings/remote-managed') {
@@ -933,7 +1014,52 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/roles') {
         authService.requireScope(auth, 'admin:users')
-        writeJson(res, 200, authService.listRoles())
+        writeJson(res, 200, authService.listRoles(auth.orgId))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/permissions') {
+        authService.requireScope(auth, 'admin:users')
+        writeJson(res, 200, authService.listPermissions())
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/roles') {
+        authService.requireSystemAdmin(auth)
+        const body = await readJsonBody(req)
+        writeJson(res, 200, authService.createRole({
+          orgId: auth.orgId,
+          name: typeof body.name === 'string' ? body.name : '',
+          description: typeof body.description === 'string' ? body.description : '',
+          permissions: Array.isArray(body.permissions)
+            ? body.permissions.filter((value): value is string => typeof value === 'string')
+            : [],
+        }))
+        return
+      }
+
+      const roleMatch = pathname.match(/^\/api\/v1\/roles\/([^/]+)$/)
+      if (req.method === 'PATCH' && roleMatch) {
+        authService.requireSystemAdmin(auth)
+        const body = await readJsonBody(req)
+        writeJson(res, 200, authService.updateRole({
+          orgId: auth.orgId,
+          roleId: roleMatch[1] || '',
+          name: typeof body.name === 'string' ? body.name : undefined,
+          description: typeof body.description === 'string' ? body.description : undefined,
+          permissions: Array.isArray(body.permissions)
+            ? body.permissions.filter((value): value is string => typeof value === 'string')
+            : undefined,
+        }))
+        return
+      }
+
+      if (req.method === 'DELETE' && roleMatch) {
+        authService.requireSystemAdmin(auth)
+        writeJson(res, 200, authService.deleteRole({
+          orgId: auth.orgId,
+          roleId: roleMatch[1] || '',
+        }))
         return
       }
 
@@ -1017,6 +1143,9 @@ export function startServer(
                 ? body.department_id
                 : undefined,
             role: typeof body.role === 'string' ? body.role : 'user',
+            roleIds: Array.isArray(body.role_ids)
+              ? body.role_ids.filter((value): value is string => typeof value === 'string')
+              : undefined,
             password: typeof body.password === 'string' ? body.password : '',
           }, auth),
         )
@@ -1040,10 +1169,27 @@ export function startServer(
                 ? body.department_id
                 : undefined,
             role: typeof body.role === 'string' ? body.role : undefined,
+            roleIds: Array.isArray(body.role_ids)
+              ? body.role_ids.filter((value): value is string => typeof value === 'string')
+              : undefined,
             status:
               typeof body.status === 'string' ? body.status : undefined,
           }, auth),
         )
+        return
+      }
+
+      const userRolesMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/roles$/)
+      if (req.method === 'PUT' && userRolesMatch) {
+        authService.requireSystemAdmin(auth)
+        const body = await readJsonBody(req)
+        writeJson(res, 200, authService.setUserRoles({
+          orgId: auth.orgId,
+          userId: userRolesMatch[1] || '',
+          roleIds: Array.isArray(body.role_ids)
+            ? body.role_ids.filter((value): value is string => typeof value === 'string')
+            : [],
+        }, auth))
         return
       }
 

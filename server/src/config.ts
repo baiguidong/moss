@@ -69,6 +69,14 @@ export function getDefaultServerConfig(): ServerFileConfig {
       level: 'info',
     },
     apps: {},
+    ragflow: {
+      enabled: false,
+      instanceId: 'default',
+      adminEmail: 'admin@ragflow.io',
+      userDomain: 'ragflow.com',
+      passwordLength: 6,
+      requestTimeoutMs: 15_000,
+    },
   }
 }
 
@@ -121,6 +129,18 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       ? normalizePath(raw.logging.auditFile)
       : undefined,
     appSourceDir: raw.apps.sourceDir ? normalizePath(raw.apps.sourceDir) : undefined,
+    ragflow: {
+      enabled: raw.ragflow.enabled,
+      instanceId: raw.ragflow.instanceId,
+      baseUrl: raw.ragflow.baseUrl?.replace(/\/+$/, ''),
+      adminUrl: raw.ragflow.adminUrl?.replace(/\/+$/, ''),
+      adminEmail: raw.ragflow.adminEmail,
+      adminPassword: process.env.MOSS_RAGFLOW_ADMIN_PASSWORD || raw.ragflow.adminPassword,
+      gatewayToken: process.env.MOSS_RAGFLOW_GATEWAY_TOKEN || raw.ragflow.gatewayToken,
+      userDomain: process.env.MOSS_RAGFLOW_USER_DOMAIN || raw.ragflow.userDomain,
+      passwordLength: Number(process.env.MOSS_RAGFLOW_PASSWORD_LENGTH) || raw.ragflow.passwordLength,
+      requestTimeoutMs: raw.ragflow.requestTimeoutMs,
+    },
   }
 }
 

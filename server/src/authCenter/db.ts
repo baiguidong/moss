@@ -3,6 +3,7 @@ import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getMossConfigHomeDir } from '../lib/env.js'
+import { BUILTIN_ROLE_TEMPLATES, type BuiltinRoleKey } from '../auth/permissions.js'
 
 export type AuthCenterOrganization = {
   id: string
@@ -33,6 +34,17 @@ export type AuthCenterUser = {
   passwordHash: string | null
   passwordUpdatedAt: number | null
   lastLoginAt: number | null
+}
+
+export type AuthCenterRole = {
+  id: string
+  orgId: string
+  systemKey: BuiltinRoleKey | null
+  name: string
+  description: string
+  isBuiltin: boolean
+  createdAt: number
+  updatedAt: number
 }
 
 export type AuthCenterApiKey = {
@@ -169,6 +181,22 @@ function mapUser(row: SqlRow): AuthCenterUser {
   }
 }
 
+function mapRole(row: SqlRow): AuthCenterRole {
+  const systemKey = row.system_key == null ? null : String(row.system_key)
+  return {
+    id: String(row.id),
+    orgId: String(row.org_id),
+    systemKey: systemKey === 'admin' || systemKey === 'dept_admin' || systemKey === 'user'
+      ? systemKey
+      : null,
+    name: String(row.name),
+    description: String(row.description),
+    isBuiltin: Number(row.is_builtin) === 1,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  }
+}
+
 function mapApiKey(row: SqlRow): AuthCenterApiKey {
   return {
     id: String(row.id),
@@ -283,6 +311,32 @@ export class AuthCenterDb {
         created_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS roles (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        system_key TEXT,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        is_builtin INTEGER NOT NULL DEFAULT 0 CHECK (is_builtin IN (0, 1)),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (org_id, name),
+        UNIQUE (org_id, system_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL,
+        PRIMARY KEY (role_id, permission)
+      );
+
+      CREATE TABLE IF NOT EXISTS user_roles (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, role_id)
+      );
+
       CREATE TABLE IF NOT EXISTS api_keys (
         id TEXT PRIMARY KEY,
         org_id TEXT NOT NULL REFERENCES organizations(id),
@@ -336,6 +390,8 @@ export class AuthCenterDb {
       CREATE INDEX IF NOT EXISTS departments_parent_idx ON departments (parent_id);
       CREATE INDEX IF NOT EXISTS users_org_idx ON users (org_id);
       CREATE INDEX IF NOT EXISTS users_email_idx ON users (email);
+      CREATE INDEX IF NOT EXISTS roles_org_idx ON roles (org_id);
+      CREATE INDEX IF NOT EXISTS user_roles_role_idx ON user_roles (role_id);
       CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
       CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
       CREATE INDEX IF NOT EXISTS oauth_identities_user_idx ON oauth_identities (user_id);
@@ -393,6 +449,25 @@ export class AuthCenterDb {
         FROM app_config
       `)
     }
+
+    this.ensureRoleData()
+  }
+
+  private ensureRoleData(): void {
+    for (const organization of this.listOrganizations()) {
+      this.ensureBuiltinRoles(organization.id)
+    }
+    for (const user of this.db.prepare('SELECT * FROM users ORDER BY created_at ASC').all() as SqlRow[]) {
+      const mapped = mapUser(user)
+      if (this.listRolesForUser(mapped.id).length > 0) continue
+      const key: BuiltinRoleKey = mapped.role === 'admin'
+        ? 'admin'
+        : mapped.role === 'dept_admin'
+          ? 'dept_admin'
+          : 'user'
+      const role = this.getRoleBySystemKey(mapped.orgId, key)
+      if (role) this.setUserRoleIds(mapped.id, [role.id])
+    }
   }
 
   private ensureColumn(
@@ -444,6 +519,140 @@ export class AuthCenterDb {
       SELECT * FROM organizations ORDER BY created_at ASC
     `).all() as SqlRow[]
     return rows.map(mapOrganization)
+  }
+
+  // Role operations
+  ensureBuiltinRoles(orgId: string): void {
+    for (const template of BUILTIN_ROLE_TEMPLATES) {
+      let role = this.getRoleBySystemKey(orgId, template.key)
+      if (!role) {
+        const timestamp = now()
+        role = {
+          id: randomUUID(),
+          orgId,
+          systemKey: template.key,
+          name: template.name,
+          description: template.description,
+          isBuiltin: true,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        this.createRole(role, template.permissions)
+      } else if (template.key === 'admin') {
+        this.setRolePermissions(role.id, ['*'])
+      }
+    }
+  }
+
+  createRole(role: AuthCenterRole, permissions: string[]): void {
+    this.db.prepare(`
+      INSERT INTO roles (
+        id, org_id, system_key, name, description, is_builtin, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      role.id,
+      role.orgId,
+      role.systemKey,
+      role.name,
+      role.description,
+      role.isBuiltin ? 1 : 0,
+      role.createdAt,
+      role.updatedAt,
+    )
+    this.setRolePermissions(role.id, permissions)
+  }
+
+  getRoleByIdAndOrg(id: string, orgId: string): AuthCenterRole | null {
+    const row = this.db.prepare(`
+      SELECT * FROM roles WHERE id = ? AND org_id = ? LIMIT 1
+    `).get(id, orgId) as SqlRow | undefined
+    return row ? mapRole(row) : null
+  }
+
+  getRoleBySystemKey(orgId: string, systemKey: BuiltinRoleKey): AuthCenterRole | null {
+    const row = this.db.prepare(`
+      SELECT * FROM roles WHERE org_id = ? AND system_key = ? LIMIT 1
+    `).get(orgId, systemKey) as SqlRow | undefined
+    return row ? mapRole(row) : null
+  }
+
+  listRolesByOrg(orgId: string): AuthCenterRole[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM roles
+      WHERE org_id = ?
+      ORDER BY is_builtin DESC, created_at ASC
+    `).all(orgId) as SqlRow[]
+    return rows.map(mapRole)
+  }
+
+  updateRole(id: string, patch: { name?: string; description?: string }): void {
+    const row = this.db.prepare('SELECT * FROM roles WHERE id = ? LIMIT 1').get(id) as SqlRow | undefined
+    if (!row) return
+    const role = mapRole(row)
+    this.db.prepare(`
+      UPDATE roles SET name = ?, description = ?, updated_at = ? WHERE id = ?
+    `).run(
+      patch.name ?? role.name,
+      patch.description ?? role.description,
+      now(),
+      id,
+    )
+  }
+
+  deleteRole(id: string): void {
+    this.db.prepare('DELETE FROM roles WHERE id = ?').run(id)
+  }
+
+  setRolePermissions(roleId: string, permissions: string[]): void {
+    this.db.prepare('DELETE FROM role_permissions WHERE role_id = ?').run(roleId)
+    const insert = this.db.prepare(`
+      INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)
+    `)
+    for (const permission of [...new Set(permissions)]) insert.run(roleId, permission)
+  }
+
+  listRolePermissions(roleId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission ASC
+    `).all(roleId) as SqlRow[]
+    return rows.map(row => String(row.permission))
+  }
+
+  listRolesForUser(userId: string): AuthCenterRole[] {
+    const rows = this.db.prepare(`
+      SELECT r.* FROM roles r
+      JOIN user_roles ur ON ur.role_id = r.id
+      WHERE ur.user_id = ?
+      ORDER BY r.is_builtin DESC, r.created_at ASC
+    `).all(userId) as SqlRow[]
+    return rows.map(mapRole)
+  }
+
+  setUserRoleIds(userId: string, roleIds: string[]): void {
+    this.db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(userId)
+    const insert = this.db.prepare(`
+      INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)
+    `)
+    const timestamp = now()
+    for (const roleId of [...new Set(roleIds)]) insert.run(userId, roleId, timestamp)
+  }
+
+  countUsersForRole(roleId: string): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM user_roles WHERE role_id = ?
+    `).get(roleId) as SqlRow | undefined
+    return Number(row?.count ?? 0)
+  }
+
+  countActiveUsersWithSystemRole(orgId: string, systemKey: BuiltinRoleKey): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(DISTINCT u.id) AS count
+      FROM users u
+      JOIN user_roles ur ON ur.user_id = u.id
+      JOIN roles r ON r.id = ur.role_id
+      WHERE u.org_id = ? AND u.status = 'active' AND r.system_key = ?
+    `).get(orgId, systemKey) as SqlRow | undefined
+    return Number(row?.count ?? 0)
   }
 
   // Department operations
@@ -959,6 +1168,10 @@ export class AuthCenterDb {
         passwordUpdatedAt: now(),
         lastLoginAt: null,
       })
+      this.ensureBuiltinRoles(orgId)
+      const adminRole = this.getRoleBySystemKey(orgId, 'admin')
+      if (!adminRole) throw new Error('Failed to initialize the system administrator role')
+      this.setUserRoleIds(adminUserId, [adminRole.id])
       this.createApiKey(apiKey)
       this.setConfig('issuer', 'moss-server')
       this.setConfig('jwt_secret', randomBytes(32).toString('base64url'))
@@ -1026,6 +1239,10 @@ export class AuthCenterDb {
         passwordUpdatedAt: now(),
         lastLoginAt: null,
       })
+      this.ensureBuiltinRoles(orgId)
+      const adminRole = this.getRoleBySystemKey(orgId, 'admin')
+      if (!adminRole) throw new Error('Failed to initialize the system administrator role')
+      this.setUserRoleIds(adminUserId, [adminRole.id])
       this.createApiKey(apiKey)
       this.db.exec('COMMIT')
     } catch (error) {

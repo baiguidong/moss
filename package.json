@@ -15,6 +15,9 @@
     "docker:build-runtime": "bun scripts/docker-build-runtime.mjs",
     "server:prepare": "bun scripts/server-prepare.mjs",
     "server:start": "bun scripts/server-start.mjs",
+    "connectors:sync-local": "node scripts/sync-local-connectors.mjs",
+    "connectors:sync-ragflow": "node scripts/sync-local-connectors.mjs ragflow",
+    "connectors:sync-moss-rag": "node scripts/sync-local-connectors.mjs moss-rag",
     "connectors:sync-shareone": "node scripts/sync-shareone-connector.mjs",
     "postinstall": "bun run scripts/copy-vendor.js"
   },

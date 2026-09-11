@@ -1,0 +1,15 @@
+services:
+  ragflow:
+    command:
+      - --enable-adminserver
+      - --init-model-provider-tables
+      - --workers=1
+      - --enable-mcpserver
+      - --mcp-host=0.0.0.0
+      - --mcp-port=9382
+      - --mcp-base-url=http://127.0.0.1:9380
+      - --mcp-script-path=/ragflow/mcp/server/server.py
+      - --mcp-mode=host
+      - --no-transport-sse-enabled
+    ports:
+      - "${RAGFLOW_MCP_BIND_IP:-127.0.0.1}:${SVR_MCP_PORT:-9382}:9382"

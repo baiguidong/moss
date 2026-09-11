@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/opt/moss-ragflow}"
+ENV_FILE="$INSTALL_DIR/.env"
+COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
+GPU_COMPOSE_FILE="$INSTALL_DIR/docker-compose.gpu.yml"
+NATIVE_MCP_COMPOSE_FILE="$INSTALL_DIR/docker-compose.native-mcp.yml"
+BACKUP_DIR="${RAGFLOW_BACKUP_DIR:-/data/ragflow-backups}"
+
+[[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" ]] || {
+  echo "Moss RAGFlow is not installed under $INSTALL_DIR" >&2
+  exit 1
+}
+
+env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1; }
+set_env() {
+  local key="$1" value="$2" escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+compose_args=(docker compose --project-directory "$INSTALL_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+[[ "$(env_value RAGFLOW_DEVICE)" == "gpu" ]] && compose_args+=(-f "$GPU_COMPOSE_FILE")
+[[ "$(env_value ENABLE_NATIVE_MCP)" == "1" ]] && compose_args+=(-f "$NATIVE_MCP_COMPOSE_FILE")
+compose_all_args=("${compose_args[@]}" --profile extended-mcp --profile moss-rag-mcp --profile local-models)
+[[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] && compose_args+=(--profile extended-mcp)
+[[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]] && compose_args+=(--profile moss-rag-mcp)
+[[ "$(env_value WITH_LOCAL_MODELS)" == "1" ]] && compose_args+=(--profile local-models)
+compose() { "${compose_args[@]}" "$@"; }
+compose_all() { "${compose_all_args[@]}" "$@"; }
+remove_disabled_services() {
+  local disabled=()
+  [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] || disabled+=(ragflow-mcp-extended)
+  [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]] || disabled+=(moss-rag-mcp)
+  [[ "$(env_value WITH_LOCAL_MODELS)" == "1" ]] || disabled+=(ollama)
+  if ((${#disabled[@]})); then
+    compose_all rm --stop --force "${disabled[@]}" >/dev/null
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ragflowctl COMMAND [ARG]
+
+  status                  Show containers and endpoints
+  doctor                  Run health and MCP authentication checks
+  logs [SERVICE]          Follow logs (default: ragflow)
+  start|stop|restart      Control the stack
+  mcp-rebuild             Rebuild and restart only the custom MCP sidecar
+  mcp-scopes LIST         Set Extended MCP scopes (read,write,agent,admin)
+  mcp-bind IP             Change the address used to publish enabled MCP ports
+  lock-registration       Disable creation of new UI accounts
+  unlock-registration     Enable creation of new UI accounts
+  models                  List locally installed Ollama models
+  backup [NAME]           Archive configuration and all named volumes
+  restore BACKUP_DIR      Restore a backup, replacing current volume data
+EOF
+}
+
+case "${1:-}" in
+  status)
+    compose_all ps
+    bind_ip="$(env_value RAGFLOW_MCP_BIND_IP)"
+    printf '\nWeb: http://%s:%s\n' "$bind_ip" "$(env_value SVR_WEB_HTTP_PORT)"
+    [[ "$(env_value ENABLE_NATIVE_MCP)" == "1" ]] && printf 'Native MCP: http://%s:%s/mcp (RAGFlow Bearer required)\n' "$bind_ip" "$(env_value SVR_MCP_PORT)"
+    [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] && printf 'Extended MCP: http://%s:%s/mcp (scopes: %s)\n' \
+      "$bind_ip" "$(env_value EXTENDED_MCP_PORT)" "$(env_value EXTENDED_MCP_SCOPES)"
+    [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]] && printf 'Moss RAG MCP: http://%s:%s/mcp (Moss Server Bearer required)\n' \
+      "$bind_ip" "$(env_value MOSS_RAG_MCP_PORT)"
+    ;;
+  doctor)
+    compose ps
+    bind_ip="$(env_value RAGFLOW_MCP_BIND_IP)"
+    web_bind="$(env_value RAGFLOW_BIND_IP)"
+    [[ "$web_bind" == "0.0.0.0" ]] && web_bind=127.0.0.1
+    curl --fail --silent --show-error --max-time 15 \
+      "http://$web_bind:$(env_value SVR_WEB_HTTP_PORT)/api/v1/system/healthz" \
+      | jq -e '.status == "ok" and .db == "ok" and .doc_engine == "ok" and .redis == "ok" and .storage == "ok"' >/dev/null
+    echo "backend=ok"
+    if [[ "$(env_value ENABLE_NATIVE_MCP)" == "1" ]]; then
+      native_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$bind_ip:$(env_value SVR_MCP_PORT)/mcp" || true)"
+      [[ "$native_code" == "401" ]] || { echo "native-mcp=failed (HTTP $native_code)" >&2; exit 1; }
+      echo "native-mcp=ok (RAGFlow Bearer authentication enforced)"
+    fi
+    if [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]]; then
+      curl --fail --silent --show-error --max-time 5 \
+        "http://$bind_ip:$(env_value EXTENDED_MCP_PORT)/healthz" \
+        | jq -e '.status == "ok" and .service == "ragflow-mcp-extended" and .auth_mode == "direct"' >/dev/null
+      extended_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$bind_ip:$(env_value EXTENDED_MCP_PORT)/mcp" || true)"
+      [[ "$extended_code" == "401" ]] || { echo "extended-mcp=failed (HTTP $extended_code)" >&2; exit 1; }
+      echo "extended-mcp=ok (RAGFlow Bearer authentication enforced, scopes=$(env_value EXTENDED_MCP_SCOPES))"
+    fi
+    if [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]]; then
+      curl --fail --silent --show-error --max-time 5 \
+        "http://$bind_ip:$(env_value MOSS_RAG_MCP_PORT)/healthz" \
+        | jq -e '.status == "ok" and .service == "moss-rag-mcp" and .auth_mode == "moss"' >/dev/null
+      moss_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$bind_ip:$(env_value MOSS_RAG_MCP_PORT)/mcp" || true)"
+      [[ "$moss_code" == "401" ]] || { echo "moss-rag-mcp=failed (HTTP $moss_code)" >&2; exit 1; }
+      echo "moss-rag-mcp=ok (Moss Server Bearer authentication enforced)"
+    fi
+    ;;
+  logs)
+    compose logs -f --tail=200 "${2:-ragflow}"
+    ;;
+  start)
+    compose up -d
+    remove_disabled_services
+    ;;
+  stop)
+    compose_all stop
+    ;;
+  restart)
+    compose up -d --force-recreate
+    remove_disabled_services
+    ;;
+  mcp-rebuild)
+    compose build ragflow-mcp-extended
+    services=()
+    [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] && services+=(ragflow-mcp-extended)
+    [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]] && services+=(moss-rag-mcp)
+    if ((${#services[@]})); then
+      compose up -d --no-deps --force-recreate "${services[@]}"
+    fi
+    ;;
+  mcp-scopes)
+    scopes="${2:?comma-separated scopes are required}"
+    IFS=',' read -r -a requested <<< "$scopes"
+    normalized=()
+    for scope in "${requested[@]}"; do
+      scope="$(printf '%s' "$scope" | tr '[:upper:]' '[:lower:]' | xargs)"
+      case "$scope" in
+        read|write|agent|admin) normalized+=("$scope") ;;
+        *) echo "invalid scope: $scope" >&2; exit 2 ;;
+      esac
+    done
+    value="$(IFS=','; printf '%s' "${normalized[*]}")"
+    set_env EXTENDED_MCP_SCOPES "$value"
+    if [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]]; then
+      compose up -d --no-deps --force-recreate ragflow-mcp-extended
+    fi
+    echo "Extended MCP scopes: $value (read is always enabled)"
+    ;;
+  mcp-bind)
+    bind_ip="${2:?IPv4 bind address is required}"
+    [[ "$bind_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid IPv4 address" >&2; exit 2; }
+    set_env RAGFLOW_MCP_BIND_IP "$bind_ip"
+    set_env EXTENDED_MCP_PUBLIC_URL "http://$bind_ip:$(env_value EXTENDED_MCP_PORT)"
+    set_env MOSS_RAG_MCP_PUBLIC_URL "http://$bind_ip:$(env_value MOSS_RAG_MCP_PORT)"
+    services=(ragflow)
+    [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] && services+=(ragflow-mcp-extended)
+    [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]] && services+=(moss-rag-mcp)
+    compose up -d --force-recreate "${services[@]}"
+    ;;
+  lock-registration)
+    set_env REGISTER_ENABLED 0
+    set_env ENABLE_REGISTER 0
+    compose up -d --no-deps --force-recreate ragflow
+    ;;
+  unlock-registration)
+    set_env REGISTER_ENABLED 1
+    set_env ENABLE_REGISTER 1
+    compose up -d --no-deps --force-recreate ragflow
+    ;;
+  models)
+    [[ "$(env_value WITH_LOCAL_MODELS)" == "1" ]] || { echo "Ollama is disabled" >&2; exit 2; }
+    compose exec -T ollama ollama list
+    ;;
+  backup)
+    name="${2:-$(date +%Y%m%d-%H%M%S)}"
+    destination="$BACKUP_DIR/$name"
+    helper_image="${RAGFLOW_BACKUP_HELPER_IMAGE:-$(env_value REDIS_IMAGE)}"
+    project="$(env_value COMPOSE_PROJECT_NAME)"
+    install -d -m 0700 "$destination"
+    echo "Stopping services for a consistent snapshot..."
+    compose stop
+    restart_needed=1
+    trap '[[ "${restart_needed:-0}" == 1 ]] && compose up -d' EXIT
+    cp "$ENV_FILE" "$destination/env"
+    cp "$COMPOSE_FILE" "$GPU_COMPOSE_FILE" "$NATIVE_MCP_COMPOSE_FILE" "$destination/"
+    cp -a "$INSTALL_DIR/config" "$destination/config"
+    docker volume ls -q --filter "label=com.docker.compose.project=$project" | while IFS= read -r volume; do
+      [[ -n "$volume" ]] || continue
+      echo "Archiving $volume"
+      docker run --rm --entrypoint tar -v "$volume:/data:ro" -v "$destination:/backup" \
+        "$helper_image" czf "/backup/$volume.tgz" -C /data .
+    done
+    compose up -d
+    restart_needed=0
+    trap - EXIT
+    echo "Backup created: $destination"
+    ;;
+  restore)
+    source_backup="${2:-}"
+    [[ -d "$source_backup" ]] || { echo "backup directory not found: $source_backup" >&2; exit 2; }
+    shopt -s nullglob
+    archives=("$source_backup"/*.tgz)
+    ((${#archives[@]})) || { echo "no volume archives found" >&2; exit 2; }
+    compose stop
+    for archive in "${archives[@]}"; do
+      volume="$(basename "$archive" .tgz)"
+      docker volume inspect "$volume" >/dev/null 2>&1 || docker volume create "$volume" >/dev/null
+      docker run --rm --entrypoint sh -v "$volume:/data" -v "$source_backup:/backup:ro" \
+        "$(env_value REDIS_IMAGE)" -c "find /data -mindepth 1 -delete && tar xzf '/backup/$(basename "$archive")' -C /data"
+    done
+    cp "$source_backup/env" "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+    compose up -d
+    echo "Restore complete"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

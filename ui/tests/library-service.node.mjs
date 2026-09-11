@@ -188,9 +188,6 @@ test('Library indexes multilingual content and keeps the last successful revisio
   assert.equal(service.search({ query: 'beta' }).length, 1);
   assert.equal(service.search({ query: 'alpha' }).length, 0);
   assert.equal(events.some((event) => event.reason === 'job-updated'), true);
-  const registrations = service.exportData();
-  assert.equal(registrations.kind, 'registrations');
-  assert.equal(JSON.stringify(registrations).includes(`${directory}${path.sep}`), false);
   const repairJob = service.repairIndex();
   assert.equal(repairJob.kind, 'repair');
   await service.waitForIdle();

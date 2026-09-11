@@ -5,6 +5,8 @@ export type AccessTokenClaims = {
   sub: string
   org_id: string
   role: string
+  role_ids?: string[]
+  system_roles?: string[]
   scopes: string[]
   key_id: string
   type: 'access'
@@ -17,6 +19,8 @@ export type AuthContext = {
   userId: string
   orgId: string
   role: string
+  roleIds?: string[]
+  systemRoles?: string[]
   scopes: string[]
   keyId: string
 }
@@ -139,6 +143,12 @@ export function verifyAccessToken(
     userId: payload.sub,
     orgId: payload.org_id,
     role: payload.role,
+    roleIds: Array.isArray(payload.role_ids)
+      ? payload.role_ids.filter(value => typeof value === 'string')
+      : undefined,
+    systemRoles: Array.isArray(payload.system_roles)
+      ? payload.system_roles.filter(value => typeof value === 'string')
+      : undefined,
     scopes: payload.scopes,
     keyId: payload.key_id,
   }

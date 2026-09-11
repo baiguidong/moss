@@ -1,0 +1,28 @@
+{
+  "id": "moss-rag",
+  "name": "Moss RAG 企业知识库",
+  "name_en": "Moss RAG Knowledge Base",
+  "description": "使用 Moss Server 身份访问企业 RAGFlow，自动绑定独立 RAG 账号，并按只读或管理权限动态提供 MCP 工具。",
+  "description_zh": "使用 Moss Server 身份访问企业 RAGFlow，自动绑定独立 RAG 账号，并按只读或管理权限动态提供 MCP 工具。",
+  "description_en": "Use a Moss Server identity to access enterprise RAGFlow with automatic account binding and dynamically scoped read-only or manager MCP tools.",
+  "source": "moss-rag",
+  "type": "mcp",
+  "auth_mode": "moss-session",
+  "examples_zh": [
+    "从企业知识库检索这个问题并给出引用",
+    "列出我有权限访问的知识库和文档",
+    "上传这份文档并启动解析",
+    "查看当前 RAG 权限和可用工具"
+  ],
+  "examples_en": [
+    "Retrieve this question from the enterprise knowledge base with citations",
+    "List the knowledge bases and documents available to me",
+    "Upload this document and start parsing",
+    "Show my current RAG permission and available tools"
+  ],
+  "visible_in": [
+    "external",
+    "cloudhosted",
+    "selfhosted"
+  ]
+}

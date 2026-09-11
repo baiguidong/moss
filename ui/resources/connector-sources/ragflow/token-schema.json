@@ -1,0 +1,30 @@
+{
+  "title": "连接 RAGFlow 企业知识库",
+  "titleEn": "Connect RAGFlow Knowledge Base",
+  "description": "填写 Extended MCP 主机地址和 RAGFlow API Key。凭据由 Moss 在本机加密保存；当前 HTTP 连接只应在可信局域网中使用。",
+  "descriptionEn": "Enter the Extended MCP host and a RAGFlow API key. Moss stores credentials encrypted on this device; use this HTTP connection only on a trusted LAN.",
+  "fields": [
+    {
+      "key": "RAGFLOW_MCP_ADDRESS",
+      "label": "Extended MCP 主机和端口",
+      "labelEn": "Extended MCP host and port",
+      "placeholder": "ragflow.company.local:9385",
+      "placeholderEn": "ragflow.company.local:9385",
+      "description": "只填写 host:port，不要包含 http:// 或 /mcp。",
+      "descriptionEn": "Enter host:port only, without http:// or /mcp.",
+      "type": "text",
+      "required": true
+    },
+    {
+      "key": "RAGFLOW_API_KEY",
+      "label": "RAGFlow API Key",
+      "labelEn": "RAGFlow API Key",
+      "placeholder": "ragflow-...",
+      "placeholderEn": "ragflow-...",
+      "description": "作为 Authorization: Bearer 请求头发送。不要填写 Ollama 或模型供应商的密钥。",
+      "descriptionEn": "Sent as an Authorization: Bearer header. Do not enter an Ollama or model-provider key.",
+      "type": "password",
+      "required": true
+    }
+  ]
+}

@@ -79,6 +79,25 @@ export const serverFileConfigSchema = lazySchema(() =>
     apps: z.object({
       sourceDir: z.string().min(1).optional(),
     }).default({}),
+    ragflow: z.object({
+      enabled: z.boolean().default(false),
+      instanceId: z.string().min(1).default('default'),
+      baseUrl: z.string().min(1).optional(),
+      adminUrl: z.string().min(1).optional(),
+      adminEmail: z.string().min(1).default('admin@ragflow.io'),
+      adminPassword: z.string().min(1).optional(),
+      gatewayToken: z.string().min(32).optional(),
+      userDomain: z.string().min(3).default('ragflow.com'),
+      passwordLength: z.number().int().min(6).max(64).default(6),
+      requestTimeoutMs: z.number().int().min(1_000).default(15_000),
+    }).default({
+      enabled: false,
+      instanceId: 'default',
+      adminEmail: 'admin@ragflow.io',
+      userDomain: 'ragflow.com',
+      passwordLength: 6,
+      requestTimeoutMs: 15_000,
+    }),
   }),
 )
 
@@ -113,6 +132,18 @@ export type ServerConfig = {
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   auditFile?: string
   appSourceDir?: string
+  ragflow: {
+    enabled: boolean
+    instanceId: string
+    baseUrl?: string
+    adminUrl?: string
+    adminEmail: string
+    adminPassword?: string
+    gatewayToken?: string
+    userDomain?: string
+    passwordLength?: number
+    requestTimeoutMs: number
+  }
 }
 
 export type SessionStatus =

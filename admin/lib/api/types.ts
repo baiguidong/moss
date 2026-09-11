@@ -1,6 +1,13 @@
 // Moss auth/admin types
 export type UserRole = 'admin' | 'dept_admin' | 'user'
 
+export interface UserRoleSummary {
+  id: string
+  systemKey: UserRole | null
+  name: string
+  isBuiltin: boolean
+}
+
 export interface AuthUser {
   id: string
   orgId: string
@@ -8,6 +15,9 @@ export interface AuthUser {
   name: string
   departmentId: string | null
   role: UserRole
+  roleIds: string[]
+  roles: UserRoleSummary[]
+  effectiveScopes: string[]
   status: 'active' | 'disabled'
   tokenLimit: number | null
   createdAt: number
@@ -33,10 +43,24 @@ export interface AuthDepartment {
 }
 
 export interface RoleDefinition {
-  id: UserRole
+  id: string
+  orgId: string
+  systemKey: UserRole | null
   name: string
   description: string
-  scopes: string[]
+  isBuiltin: boolean
+  createdAt: number
+  updatedAt: number
+  permissions: string[]
+  assignedCount: number
+}
+
+export interface PermissionDefinition {
+  code: string
+  name: string
+  description: string
+  group: 'session' | 'agent-mail' | 'administration' | 'ragflow'
+  protected?: boolean
 }
 
 export interface LoginRequest {
@@ -72,7 +96,7 @@ export interface CreateUserRequest {
   email?: string
   name: string
   department_id?: string | null
-  role: UserRole
+  role_ids: string[]
   password: string
 }
 
@@ -83,7 +107,7 @@ export interface CreateUserResponse {
 export interface UpdateUserRequest {
   name?: string
   department_id?: string | null
-  role?: UserRole
+  role_ids?: string[]
   status?: 'active' | 'disabled'
 }
 
@@ -107,6 +131,20 @@ export interface DepartmentResponse {
 
 export interface RolesListResponse {
   roles: RoleDefinition[]
+}
+
+export interface PermissionsListResponse {
+  permissions: PermissionDefinition[]
+}
+
+export interface RoleResponse {
+  role: RoleDefinition
+}
+
+export interface UpsertRoleRequest {
+  name?: string
+  description?: string
+  permissions?: string[]
 }
 
 export interface ApiKey {
@@ -134,6 +172,33 @@ export interface CreateApiKeyRequest {
 export interface CreateApiKeyResponse {
   api_key: ApiKey
   plain_text_key: string
+}
+
+export interface RagflowAccountStatus {
+  enabled: boolean
+  instance_id: string
+  user_id: string
+  provisioned: boolean
+  ragflow_username: string | null
+  ragflow_user_id: string | null
+  password_ready: boolean
+  api_key_ready: boolean
+  updated_at: number | null
+}
+
+export interface RagflowIntegrationStatus {
+  enabled: boolean
+  instance_id: string
+  base_url: string | null
+  admin_url: string | null
+  user_domain: string
+  reachable: boolean
+}
+
+export interface RagflowCredentials {
+  username: string
+  password: string
+  api_key: string
 }
 
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
