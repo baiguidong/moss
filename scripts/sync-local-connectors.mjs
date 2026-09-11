@@ -37,13 +37,27 @@ function validateSourceName(sourceName) {
   }
 }
 
-export async function syncLocalConnectors(requestedSourceNames = []) {
+export async function syncLocalConnectors(requestedSourceNames = [], removedConnectorIds = []) {
   const sourceNames = requestedSourceNames.length > 0
     ? [...new Set(requestedSourceNames)]
     : await discoverSourceNames();
   const zip = await JSZip.loadAsync(await fsp.readFile(catalogPath));
   const manifest = JSON.parse(await zip.file(manifestPath).async('string'));
   const connectors = Array.isArray(manifest.connectors) ? manifest.connectors : [];
+
+  for (const connectorId of [...new Set(removedConnectorIds)]) {
+    validateSourceName(connectorId);
+    const existingIndex = connectors.findIndex((entry) => entry?.id === connectorId);
+    const existing = existingIndex >= 0 ? connectors[existingIndex] : null;
+    const packageSource = String(existing?.source || connectorId).trim();
+    for (const entryName of Object.keys(zip.files)) {
+      if (entryName.startsWith(`connectors/${packageSource}/`)) zip.remove(entryName);
+      if (iconExtensions.some((extension) => entryName === `icons/${connectorId}${extension}`)) {
+        zip.remove(entryName);
+      }
+    }
+    if (existingIndex >= 0) connectors.splice(existingIndex, 1);
+  }
 
   for (const sourceName of sourceNames) {
     validateSourceName(sourceName);
@@ -110,5 +124,10 @@ export async function syncLocalConnectors(requestedSourceNames = []) {
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedPath === fileURLToPath(import.meta.url)) {
-  await syncLocalConnectors(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const removed = args
+    .filter((arg) => arg.startsWith('--remove='))
+    .map((arg) => arg.slice('--remove='.length))
+    .filter(Boolean);
+  await syncLocalConnectors(args.filter((arg) => !arg.startsWith('--remove=')), removed);
 }

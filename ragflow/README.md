@@ -48,11 +48,12 @@ sudo ./install.sh
 - 官方/Extended MCP：`Authorization: Bearer <RAGFlow API key>`
 - Moss RAG MCP：复用当前 Moss Server 登录态并自动注入 Bearer 凭据
 
-打开 RAGFlow Web 创建账号和 API Key 后，在 Moss 的 **RAGFlow 企业知识库**连接器中填写 `服务器地址:9385` 和 API Key。
+Moss 中只提供一个 **RAGFlow 企业知识库**连接器。认证时可选择：
 
-使用 Moss 统一身份时，在 **Moss RAG 企业知识库**连接器中只填写
-`服务器地址:9386`。连接器会在运行时复用当前 Moss Server 登录态，不需要填写或保存第二份
-Moss Server API Key；首次请求会自动创建并绑定独立的 RAGFlow 用户。
+- **Moss Server 登录态**：填写 `服务器地址:9386`，运行时复用当前 Moss 登录，不保存第二份 Moss Server API Key；首次请求自动创建并绑定独立的 RAGFlow 用户。
+- **RAGFlow API Key**：填写 `服务器地址:9385` 和 RAGFlow API Key，直接使用 Extended MCP。
+
+连接成功后仍可从连接器设置中重新选择认证方式、修改地址或更换 Key，并重新执行连接验证。
 
 Moss Server 地址属于每台目标机的部署配置，不会编译进 Sidecar 镜像。部署时通过环境变量写入目标机的
 `/opt/moss-ragflow/.env`：

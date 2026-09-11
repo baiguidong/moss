@@ -212,8 +212,26 @@ export function normalizeConnectorCredentialSchema(input) {
       if (!isPlainObject(field)) return null;
       const key = normalizeString(field.key);
       if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/.test(key)) return null;
-      const type = normalizeString(field.type).toLowerCase() === 'password' ? 'password' : 'text';
+      const requestedType = normalizeString(field.type).toLowerCase();
+      const type = requestedType === 'password' || requestedType === 'select'
+        ? requestedType
+        : 'text';
       const defaultValue = type === 'password' ? '' : normalizeString(field.defaultValue);
+      const options = type === 'select' && Array.isArray(field.options)
+        ? field.options
+          .map((option) => {
+            if (!isPlainObject(option)) return null;
+            const value = normalizeString(option.value);
+            if (!value) return null;
+            return {
+              value,
+              label: normalizeString(option.label) || value,
+              labelEn: normalizeString(option.labelEn || option.label_en),
+            };
+          })
+          .filter(Boolean)
+        : [];
+      if (type === 'select' && options.length === 0) return null;
       return {
         key,
         label: normalizeString(field.label) || key,
@@ -224,11 +242,32 @@ export function normalizeConnectorCredentialSchema(input) {
         descriptionEn: normalizeString(field.descriptionEn || field.description_en),
         type,
         required: field.required !== false,
+        ...(options.length > 0 ? { options } : {}),
+        ...(isPlainObject(field.visibleWhen) ? { visibleWhen: field.visibleWhen } : {}),
+        ...(isPlainObject(field.requiredWhen) ? { requiredWhen: field.requiredWhen } : {}),
         ...(defaultValue ? { defaultValue } : {}),
       };
     })
     .filter(Boolean);
   if (fields.length === 0) return null;
+  const fieldKeys = new Set(fields.map((field) => field.key));
+  const normalizeCondition = (condition) => {
+    if (!isPlainObject(condition)) return null;
+    const field = normalizeString(condition.field);
+    const equals = Array.isArray(condition.equals)
+      ? condition.equals.map(normalizeString).filter(Boolean)
+      : [normalizeString(condition.equals)].filter(Boolean);
+    if (!fieldKeys.has(field) || equals.length === 0) return null;
+    return { field, equals };
+  };
+  for (const field of fields) {
+    const visibleWhen = normalizeCondition(field.visibleWhen);
+    const requiredWhen = normalizeCondition(field.requiredWhen);
+    if (visibleWhen) field.visibleWhen = visibleWhen;
+    else delete field.visibleWhen;
+    if (requiredWhen) field.requiredWhen = requiredWhen;
+    else delete field.requiredWhen;
+  }
   const provision = normalizeConnectorCredentialProvision(
     input.provision,
     fields.map((field) => field.key),
@@ -242,6 +281,9 @@ export function normalizeConnectorCredentialSchema(input) {
     docLabel: normalizeString(input.docLabel),
     docLabelEn: normalizeString(input.docLabelEn || input.docLabel_en),
     fields,
+    ...(input.authenticateOnSave === true || input.authenticate_on_save === true
+      ? { authenticateOnSave: true }
+      : {}),
     ...(provision ? { provision } : {}),
   };
 }
@@ -466,6 +508,74 @@ export function normalizeConnectorMcpConfig(connectorId, input, overrides = read
       ]),
     ),
   };
+}
+
+function normalizeConnectorMcpPackage(connectorId, input, overrides = readConnectorMcpOverrides()) {
+  const variantField = normalizeString(input?.variantField || input?.variant_field);
+  const rawVariants = isPlainObject(input?.variants) ? input.variants : null;
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/.test(variantField) || !rawVariants) {
+    return normalizeConnectorMcpConfig(connectorId, input, overrides);
+  }
+
+  const variants = {};
+  for (const [value, rawVariant] of Object.entries(rawVariants)) {
+    const variantValue = normalizeString(value);
+    if (!variantValue || !isPlainObject(rawVariant)) continue;
+    try {
+      variants[variantValue] = {
+        ...normalizeConnectorMcpConfig(connectorId, rawVariant, overrides),
+        authMode: normalizeString(rawVariant.authMode || rawVariant.auth_mode),
+        authValidation: normalizeString(rawVariant.authValidation || rawVariant.auth_validation),
+      };
+    } catch {}
+  }
+  const variantValues = Object.keys(variants);
+  if (variantValues.length === 0) {
+    throw new Error(`Connector ${connectorId} has no valid MCP variants.`);
+  }
+  const requestedDefault = normalizeString(input.defaultVariant || input.default_variant);
+  return {
+    variantField,
+    defaultVariant: Object.prototype.hasOwnProperty.call(variants, requestedDefault)
+      ? requestedDefault
+      : variantValues[0],
+    variants,
+  };
+}
+
+function resolveConnectorMcpPackage(connectorId, input, credentialValues = {}) {
+  if (!isPlainObject(input?.variants) || !normalizeString(input?.variantField)) {
+    return {
+      ...normalizeConnectorMcpConfig(connectorId, input),
+      authMode: '',
+      selectedVariant: '',
+    };
+  }
+  const variantField = normalizeString(input.variantField);
+  const requested = normalizeString(credentialValues[variantField])
+    || normalizeString(input.defaultVariant);
+  const variant = input.variants[requested];
+  if (!isPlainObject(variant)) {
+    throw new Error(`Connector ${connectorId} has no MCP variant for ${requested || variantField}.`);
+  }
+  return {
+    ...normalizeConnectorMcpConfig(connectorId, variant),
+    authMode: normalizeString(variant.authMode),
+    authValidation: normalizeString(variant.authValidation),
+    selectedVariant: requested,
+  };
+}
+
+function allConnectorMcpServers(input) {
+  if (!isPlainObject(input?.variants)) {
+    return isPlainObject(input?.mcpServers) ? input.mcpServers : {};
+  }
+  const servers = {};
+  for (const variant of Object.values(input.variants)) {
+    if (!isPlainObject(variant?.mcpServers)) continue;
+    Object.assign(servers, variant.mcpServers);
+  }
+  return servers;
 }
 
 function normalizeConnectorCliOverrides(input) {
@@ -939,7 +1049,7 @@ async function readInstalledConnector(connectorId) {
   const state = await readConnectorRuntimeState(id);
   const mcp = await readJsonFileAsync(path.join(baseDir, 'mcp.json'), null);
   const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
-  const mcpServers = isPlainObject(mcp?.mcpServers) ? mcp.mcpServers : {};
+  const mcpServers = allConnectorMcpServers(mcp);
   const hasRemoteMcp = Object.values(mcpServers).some((config) => {
     if (!isPlainObject(config)) return false;
     const type = normalizeMcpServerType(config.type, config);
@@ -959,6 +1069,13 @@ async function readInstalledConnector(connectorId) {
   }
   const credentialsConfigured = !credentialReadFailed
     && connectorCredentialsConfigured(credentialSchema, credentialValues);
+  const resolvedCredentialValues = withCredentialDefaults(credentialSchema, credentialValues);
+  let selectedMcp = { mcpServers: {}, authMode: '' };
+  try {
+    selectedMcp = isPlainObject(mcp)
+      ? resolveConnectorMcpPackage(id, mcp, resolvedCredentialValues)
+      : selectedMcp;
+  } catch {}
   const hasNoAuthContract = normalizeString(meta.authMode).toLowerCase() === 'none';
   const availableWithoutAuthorization = Boolean(mcp?.mcpServers)
     && (!hasRemoteMcp || hasNoAuthContract)
@@ -967,6 +1084,7 @@ async function readInstalledConnector(connectorId) {
   const skillRoot = path.join(baseDir, '.moss', 'skills');
   return {
     ...meta,
+    authMode: normalizeString(selectedMcp.authMode) || normalizeString(meta.authMode),
     installed: true,
     enabled: meta.enabled !== false,
     connected: (Boolean(state?.connected) || availableWithoutAuthorization) && credentialsConfigured,
@@ -989,14 +1107,23 @@ async function readInstalledConnector(connectorId) {
     setupUpdatedAt: normalizeString(state?.updatedAt),
     path: baseDir,
     skillRoot: fs.existsSync(skillRoot) ? skillRoot : '',
-    mcpServerNames: Object.keys(mcpServers).length > 0 ? Object.keys(mcpServers) : normalizeStringList(meta.mcpServerNames),
-    hasMcp: Boolean(mcp?.mcpServers || meta.hasMcp),
+    mcpServerNames: Object.keys(selectedMcp.mcpServers || {}).length > 0
+      ? Object.keys(selectedMcp.mcpServers)
+      : Object.keys(mcpServers).length > 0
+        ? Object.keys(mcpServers)
+        : normalizeStringList(meta.mcpServerNames),
+    hasMcp: Boolean(Object.keys(mcpServers).length > 0 || meta.hasMcp),
     hasRemoteMcp,
     hasCli: Boolean(cli || meta.hasCli),
     credentialSchema,
     configuredFields: credentialSchema
       ? credentialSchema.fields.map((field) => field.key).filter((key) => Boolean(credentialValues[key]))
       : [],
+    configuredValues: credentialSchema
+      ? Object.fromEntries(credentialSchema.fields
+        .filter((field) => field.type !== 'password' && resolvedCredentialValues[field.key])
+        .map((field) => [field.key, resolvedCredentialValues[field.key]]))
+      : {},
     credentialsConfigured,
   };
 }
@@ -1188,7 +1315,33 @@ function readConnectorCredentialValues(connectorId) {
 
 function connectorCredentialsConfigured(schema, values) {
   if (!schema) return true;
-  return schema.fields.every((field) => !field.required || Boolean(normalizeString(values[field.key])));
+  const resolvedValues = withCredentialDefaults(schema, values);
+  return schema.fields.every((field) => (
+    !credentialFieldRequired(field, resolvedValues)
+    || Boolean(normalizeString(resolvedValues[field.key]))
+  ));
+}
+
+function withCredentialDefaults(schema, values) {
+  return Object.fromEntries((schema?.fields || []).map((field) => [
+    field.key,
+    normalizeString(values?.[field.key]) || field.defaultValue || '',
+  ]));
+}
+
+function credentialConditionMatches(condition, values) {
+  if (!condition) return true;
+  return condition.equals.includes(normalizeString(values?.[condition.field]));
+}
+
+function credentialFieldVisible(field, values) {
+  return credentialConditionMatches(field.visibleWhen, values);
+}
+
+function credentialFieldRequired(field, values) {
+  if (!credentialFieldVisible(field, values)) return false;
+  if (field.requiredWhen) return credentialConditionMatches(field.requiredWhen, values);
+  return field.required;
 }
 
 function replaceCredentialReferences(value, values) {
@@ -1348,9 +1501,12 @@ export function getConnectorCredentialEnv(connectorIds) {
     );
     if (!schema) continue;
     const allowedFields = new Set(schema.fields.map((field) => field.key));
-    const values = readConnectorCredentialValues(connectorId);
+    const values = withCredentialDefaults(schema, readConnectorCredentialValues(connectorId));
+    const activeFields = new Set(schema.fields
+      .filter((field) => credentialFieldVisible(field, values))
+      .map((field) => field.key));
     Object.assign(env, Object.fromEntries(
-      Object.entries(values).filter(([key]) => allowedFields.has(key)),
+      Object.entries(values).filter(([key]) => allowedFields.has(key) && activeFields.has(key)),
     ));
   }
   return env;
@@ -1402,8 +1558,12 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
         nextValues[field.key] = field.defaultValue;
       }
     }
+    const resolvedNextValues = withCredentialDefaults(schema, nextValues);
     const missing = schema.fields
-      .filter((field) => field.required && !normalizeString(nextValues[field.key]))
+      .filter((field) => (
+        credentialFieldRequired(field, resolvedNextValues)
+        && !normalizeString(resolvedNextValues[field.key])
+      ))
       .map((field) => field.label || field.key);
     if (missing.length > 0) {
       throw new Error(`请填写必填凭据：${missing.join('、')}`);
@@ -1414,14 +1574,15 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
     return { ...credentials, connectorFields };
   });
   const state = await updateConnectorRuntimeState(id, {
-    connected: true,
-    setupStatus: 'connected',
-    setupMessage: '连接器凭据已配置',
+    connected: !schema.authenticateOnSave,
+    setupStatus: schema.authenticateOnSave ? 'needs-auth' : 'connected',
+    setupMessage: schema.authenticateOnSave ? '凭据已保存，等待连接验证' : '连接器凭据已配置',
   });
   return {
     ok: true,
     connectorId: id,
     configuredFields,
+    requiresAuthentication: schema.authenticateOnSave,
     state,
   };
 }
@@ -2250,8 +2411,8 @@ export async function installConnector(connectorId) {
   if (connector.hasMcp) {
     const rawMcp = await readZipJson(zip, `connectors/${connector.source}/mcp.json`, null);
     requiresCliSetup = normalizeString(rawMcp?.preAuth).toLowerCase() === 'cli';
-    const mcp = normalizeConnectorMcpConfig(id, rawMcp);
-    mcpServerNames = Object.keys(mcp.mcpServers);
+    const mcp = normalizeConnectorMcpPackage(id, rawMcp);
+    mcpServerNames = Object.keys(allConnectorMcpServers(mcp));
     await writeJsonFileAsync(path.join(baseDir, 'mcp.json'), mcp);
   }
 
@@ -2343,9 +2504,11 @@ export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {
       readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
     try {
-      const credentialValues = credentialSchema ? readConnectorCredentialValues(item) : {};
+      const credentialValues = credentialSchema
+        ? withCredentialDefaults(credentialSchema, readConnectorCredentialValues(item))
+        : {};
       if (!connectorCredentialsConfigured(credentialSchema, credentialValues)) continue;
-      const normalized = normalizeConnectorMcpConfig(item, rawMcp);
+      const normalized = resolveConnectorMcpPackage(item, rawMcp, credentialValues);
       for (const [serverName, config] of Object.entries(normalized.mcpServers)) {
         const accessToken = readConnectorMcpAccessToken(item, serverName);
         result[serverName] = withMcpAccessToken(
@@ -2383,7 +2546,9 @@ export function findConnectorMcpServer(nameOrConnectorId) {
     );
     let credentialValues = {};
     try {
-      credentialValues = credentialSchema ? readConnectorCredentialValues(connectorId) : {};
+      credentialValues = credentialSchema
+        ? withCredentialDefaults(credentialSchema, readConnectorCredentialValues(connectorId))
+        : {};
     } catch {
       continue;
     }
@@ -2391,7 +2556,7 @@ export function findConnectorMcpServer(nameOrConnectorId) {
 
     let normalized;
     try {
-      normalized = normalizeConnectorMcpConfig(connectorId, rawMcp);
+      normalized = resolveConnectorMcpPackage(connectorId, rawMcp, credentialValues);
     } catch {
       continue;
     }
@@ -2408,7 +2573,8 @@ export function findConnectorMcpServer(nameOrConnectorId) {
           connectorId,
           connectorName: normalizeString(meta.name) || connectorId,
           providerId: normalizeString(meta.providerId),
-          authMode: normalizeString(meta.authMode),
+          authMode: normalizeString(normalized.authMode) || normalizeString(meta.authMode),
+          authValidation: normalizeString(normalized.authValidation),
           authConfig: normalizeConnectorAuthConfig(meta.authConfig, meta),
           serverName,
           config: applyConnectorCredentials(config, credentialValues),

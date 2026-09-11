@@ -9,7 +9,9 @@ export function getConnectorPrimaryAction(
   if (!installed) return null;
 
   if (connector.credentialSchema?.fields?.length) {
-    return connector.credentialsConfigured ? 'use' : 'credentials';
+    if (!connector.credentialsConfigured) return 'credentials';
+    if (!connector.connected && connector.hasMcp && connector.hasRemoteMcp !== false) return 'mcp-auth';
+    return 'use';
   }
   if (!connector.connected && (connector.hasCli || connector.requiresCliSetup || connector.type === 'cli')) {
     return 'cli-setup';

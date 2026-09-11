@@ -11,6 +11,7 @@ import {
   Plug,
   RefreshCw,
   Search,
+  Settings2,
   Terminal,
   Trash2,
   X,
@@ -53,18 +54,50 @@ function connectorTypeLabel(connector: ConnectorCatalogItem) {
   return "连接器";
 }
 
+function connectorAuthModeLabel(authMode?: string) {
+  const normalized = authMode?.toLowerCase();
+  if (normalized === "selectable") return "可选认证";
+  if (normalized === "moss-session") return "Moss 登录";
+  if (normalized === "api-key") return "API Key";
+  return authMode || "";
+}
+
 function connectorStatusLabel(connector: ConnectorCatalogItem) {
   if (!connector.installed) return "";
   if (connector.connected) return "已连接";
   if (connector.setupStatus === "credential-error") return "凭据异常";
   if (connector.credentialSchema?.fields?.length && !connector.credentialsConfigured) return "待配置";
-  if (connector.hasCli && connector.setupStatus === "running") return "安装中";
-  if (connector.hasCli && connector.setupStatus === "authenticating") return "认证中";
-  if (connector.hasCli && connector.setupStatus === "failed") return "设置失败";
-  if (connector.hasCli && connector.setupStatus === "needs-auth") return "未认证";
+  if (connector.setupStatus === "running") return "安装中";
+  if (connector.setupStatus === "authenticating") return "认证中";
+  if (connector.setupStatus === "failed") return connector.hasCli ? "设置失败" : "认证失败";
+  if (connector.setupStatus === "needs-auth") return "待认证";
   if (connector.hasCli && connector.setupStatus === "pending") return "待设置";
   if (connector.authMode && connector.authMode.toLowerCase() !== "none") return "待授权";
   return "已安装";
+}
+
+function credentialConditionMatches(
+  condition: { field: string; equals: string[] } | undefined,
+  values: Record<string, string>,
+) {
+  return !condition || condition.equals.includes(values[condition.field] || "");
+}
+
+function credentialFieldVisible(
+  field: NonNullable<ConnectorCatalogItem["credentialSchema"]>["fields"][number],
+  values: Record<string, string>,
+) {
+  return credentialConditionMatches(field.visibleWhen, values);
+}
+
+function credentialFieldRequired(
+  field: NonNullable<ConnectorCatalogItem["credentialSchema"]>["fields"][number],
+  values: Record<string, string>,
+) {
+  if (!credentialFieldVisible(field, values)) return false;
+  return field.requiredWhen
+    ? credentialConditionMatches(field.requiredWhen, values)
+    : field.required;
 }
 
 function ConnectorIcon({
@@ -102,6 +135,7 @@ function ConnectorCard({
   installedRecord,
   onInstall,
   onPrimaryAction,
+  onConfigure,
   onUninstall,
 }: {
   connector: ConnectorCatalogItem;
@@ -109,6 +143,7 @@ function ConnectorCard({
   installedRecord?: InstalledConnector;
   onInstall: () => void;
   onPrimaryAction: () => void;
+  onConfigure: () => void;
   onUninstall: () => void;
 }) {
   const installed = Boolean(installedRecord || connector.installed);
@@ -139,6 +174,19 @@ function ConnectorCard({
             </div>
             {installed ? (
               <div className="flex shrink-0 items-center gap-1.5">
+                {activeConnector.credentialSchema?.fields?.length && activeConnector.credentialsConfigured ? (
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    className="h-8 w-8 rounded-lg"
+                    onClick={onConfigure}
+                    disabled={busy}
+                    title="重新认证/配置"
+                    aria-label="重新认证/配置"
+                  >
+                    <Settings2 className="h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
                 {primaryAction ? (
                   <Button
                     size="icon-sm"
@@ -192,8 +240,10 @@ function ConnectorCard({
             {connector.hasSkills ? (
               <Badge variant="outline" className="rounded-md text-[11px]">Skill</Badge>
             ) : null}
-            {connector.authMode && connector.authMode.toLowerCase() !== "none" ? (
-              <Badge variant="outline" className="rounded-md text-[11px]">{connector.authMode}</Badge>
+            {activeConnector.authMode && activeConnector.authMode.toLowerCase() !== "none" ? (
+              <Badge variant="outline" className="rounded-md text-[11px]">
+                {connectorAuthModeLabel(activeConnector.authMode)}
+              </Badge>
             ) : null}
             {installed ? (
               <Badge
@@ -334,7 +384,8 @@ export function ConnectorHubView({
     const values = Object.fromEntries(
       (connector.credentialSchema?.fields || []).map((field) => [
         field.key,
-        connector.configuredFields?.includes(field.key) ? "" : (field.defaultValue || ""),
+        connector.configuredValues?.[field.key]
+          || (connector.configuredFields?.includes(field.key) ? "" : (field.defaultValue || "")),
       ]),
     );
     setCredentialValues(values);
@@ -354,15 +405,20 @@ export function ConnectorHubView({
       if (!res?.success) throw new Error(res?.error || "保存连接器凭据失败");
       setCredentialTarget(null);
       setCredentialValues({});
-      flashNotice(`已配置 ${credentialTarget.name}`);
+      flashNotice(res.data?.requiresAuthentication
+        ? `已保存 ${credentialTarget.name}，正在验证连接`
+        : `已配置 ${credentialTarget.name}`);
       await loadConnectors();
       await onConnectorsChanged?.();
+      if (res.data?.requiresAuthentication && onAuthenticateMcp) {
+        await onAuthenticateMcp(credentialTarget);
+      }
     } catch (err) {
       reportError(`${credentialTarget.name} 凭据保存失败`, err, credentialTarget);
     } finally {
       setCredentialSaving(false);
     }
-  }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onConnectorsChanged, reportError]);
+  }, [credentialTarget, credentialValues, flashNotice, loadConnectors, onAuthenticateMcp, onConnectorsChanged, reportError]);
 
   const provisionCredentials = React.useCallback(async () => {
     if (!credentialTarget?.credentialSchema?.provision) return;
@@ -559,6 +615,7 @@ export function ConnectorHubView({
                           onUseConnector(record);
                         }
                       }}
+                      onConfigure={() => openCredentialEditor((installedRecord || connector) as InstalledConnector)}
                       onUninstall={() => void uninstallConnector(connector)}
                     />
                   );
@@ -615,22 +672,56 @@ export function ConnectorHubView({
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
               {credentialTarget.credentialSchema.fields.map((field) => {
+                if (!credentialFieldVisible(field, credentialValues)) return null;
                 const configured = credentialTarget.configuredFields?.includes(field.key);
+                const required = credentialFieldRequired(field, credentialValues);
                 return (
                   <label key={field.key} className="block">
                     <span className="mb-1.5 block text-sm font-medium text-foreground">
-                      {field.label}{field.required ? " *" : ""}
+                      {field.label}{required ? " *" : ""}
                     </span>
-                    <Input
-                      type={field.type === "password" ? "password" : "text"}
-                      value={credentialValues[field.key] || ""}
-                      placeholder={configured ? "已保存" : field.placeholder}
-                      autoComplete={field.type === "password" ? "new-password" : "off"}
-                      onChange={(event) => setCredentialValues((current) => ({
-                        ...current,
-                        [field.key]: event.target.value,
-                      }))}
-                    />
+                    {field.type === "select" ? (
+                      <div
+                        role="radiogroup"
+                        aria-label={field.label}
+                        className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1"
+                      >
+                        {(field.options || []).map((option) => {
+                          const selected = (credentialValues[field.key] || field.defaultValue) === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected}
+                              className={cn(
+                                "min-h-9 rounded-md px-3 py-2 text-sm font-medium leading-5 transition-colors",
+                                selected
+                                  ? "bg-background text-foreground shadow-sm"
+                                  : "text-muted-foreground hover:text-foreground",
+                              )}
+                              onClick={() => setCredentialValues((current) => ({
+                                ...current,
+                                [field.key]: option.value,
+                              }))}
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <Input
+                        type={field.type === "password" ? "password" : "text"}
+                        value={credentialValues[field.key] || ""}
+                        placeholder={configured ? "已保存" : field.placeholder}
+                        autoComplete={field.type === "password" ? "new-password" : "off"}
+                        onChange={(event) => setCredentialValues((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))}
+                      />
+                    )}
                     {field.description ? (
                       <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
                         {field.description}
@@ -677,7 +768,7 @@ export function ConnectorHubView({
                 </Button>
                 <Button type="submit" disabled={credentialSaving || credentialProvisioning}>
                   {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                  保存
+                  {credentialTarget.credentialSchema.authenticateOnSave ? "保存并连接" : "保存"}
                 </Button>
               </div>
             </div>

@@ -164,9 +164,12 @@ export type ConnectorCredentialField = {
   placeholderEn?: string;
   description?: string;
   descriptionEn?: string;
-  type: 'text' | 'password';
+  type: 'text' | 'password' | 'select';
   required: boolean;
   defaultValue?: string;
+  options?: Array<{ value: string; label: string; labelEn?: string }>;
+  visibleWhen?: { field: string; equals: string[] };
+  requiredWhen?: { field: string; equals: string[] };
 };
 
 export type ConnectorCredentialProvision = {
@@ -190,6 +193,7 @@ export type ConnectorCredentialSchema = {
   docLabel?: string;
   docLabelEn?: string;
   fields: ConnectorCredentialField[];
+  authenticateOnSave?: boolean;
   provision?: ConnectorCredentialProvision;
 };
 
@@ -215,6 +219,7 @@ export type ConnectorCatalogItem = {
   requiresCliSetup?: boolean;
   credentialSchema?: ConnectorCredentialSchema | null;
   configuredFields?: string[];
+  configuredValues?: Record<string, string>;
   credentialsConfigured?: boolean;
   installed?: boolean;
   enabled?: boolean;
@@ -1308,7 +1313,7 @@ declare global {
       installConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { connector?: InstalledConnector; cli?: Record<string, any> | null }; error?: string }>;
       uninstallConnector: (payload: { id: string }) => Promise<{ success?: boolean; data?: { ok: boolean; id: string }; error?: string }>;
       saveConnectorMcpToken: (payload: { connectorId: string; serverName: string; token?: string; url?: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; serverName: string }; error?: string }>;
-      saveConnectorCredentials: (payload: { connectorId: string; values: Record<string, string> }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[] }; error?: string }>;
+      saveConnectorCredentials: (payload: { connectorId: string; values: Record<string, string> }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[]; requiresAuthentication?: boolean }; error?: string }>;
       provisionConnectorCredentials: (payload: { connectorId: string }) => Promise<{ success?: boolean; data?: { ok: boolean; connectorId: string; configuredFields: string[]; provisioned: boolean }; error?: string }>;
       pickDirectory: () => Promise<string | null>;
       pickFiles: () => Promise<Array<{ name: string; path: string }>>;

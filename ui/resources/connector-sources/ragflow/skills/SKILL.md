@@ -1,6 +1,6 @@
 ---
 name: ragflow
-description: Search and manage a self-hosted RAGFlow enterprise knowledge base over MCP. Use for knowledge retrieval, datasets, documents, chunks, parsing, uploads, chats, or RAGFlow agents.
+description: Search and manage a self-hosted RAGFlow enterprise knowledge base over MCP using either Moss identity or a RAGFlow API key. Use for knowledge retrieval, datasets, documents, chunks, parsing, uploads, chats, or RAGFlow agents.
 ---
 
 # RAGFlow enterprise knowledge base
@@ -27,16 +27,21 @@ For tiny text files, `ragflow_upload_document_base64` is available. Avoid placin
 For normal and large local files:
 
 1. Call `ragflow_create_upload_ticket` with the target dataset, filename, and `auto_parse` choice.
-2. POST the file to the returned one-time `upload_url` as multipart field `file`. The connector injects `RAGFLOW_API_KEY` into the session environment. Use it without printing it:
+2. POST the file to the returned one-time `upload_url` as multipart field `file`. The connector injects either `MOSS_SERVER_AUTH_TOKEN` or `RAGFLOW_API_KEY`, depending on the selected authentication method. Use the available value without printing it:
 
 ```bash
+if [[ -n "${MOSS_SERVER_AUTH_TOKEN:-}" ]]; then
+  rag_auth_token="$MOSS_SERVER_AUTH_TOKEN"
+else
+  rag_auth_token="$RAGFLOW_API_KEY"
+fi
 curl --fail-with-body --silent --show-error \
   --request POST "$upload_url" \
-  --header "Authorization: Bearer $RAGFLOW_API_KEY" \
+  --header "Authorization: Bearer $rag_auth_token" \
   --form "file=@${file_path}"
 ```
 
-3. Never enable shell tracing or echo `RAGFLOW_API_KEY`. Upload tickets expire and can only be used once.
+3. Never enable shell tracing or echo either authentication token. Upload tickets expire and can only be used once.
 4. Inspect the returned document ID and parsing result; use document tools for follow-up status.
 
 ## Mutating operations
@@ -44,6 +49,7 @@ curl --fail-with-body --silent --show-error \
 - Before deleting datasets, documents, chunks, chat sessions, or agent sessions, state the exact target and obtain user confirmation. Then pass `confirm: true`.
 - Prefer narrow IDs over bulk actions.
 - Admin operations are not available unless the deployed Extended MCP explicitly enables the `admin` scope.
+- With Moss Server authentication, the available tools are restricted by the current user's effective Moss roles. Never try to bypass a missing tool.
 
 ## Chats and agents
 

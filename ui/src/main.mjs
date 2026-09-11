@@ -7686,6 +7686,13 @@ const mossAppEventHandler = createMossAppEventHandler(
     authenticateConnectorMcp: (name, context = {}) => authenticateMcpServerByName(name, {
       sessionId: context.sessionId || null,
     }),
+    attachConnectorToSession: async (connectorId, context = {}) => {
+      const sessionRecord = getSessionRecord(context.sessionId);
+      return updateSessionConnectors(sessionRecord, [
+        ...getSessionConnectorIds(sessionRecord),
+        connectorId,
+      ]);
+    },
   },
 )
 
@@ -9659,6 +9666,45 @@ function getConnectorMcpAuthFailureMessage(connectorServer, error, { authorizati
   return detail;
 }
 
+async function validateConnectorMcpTools(serverConfig, clientName) {
+  const protocolVersion = '2025-03-26';
+  const headers = {
+    ...(serverConfig.headers || {}),
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    'MCP-Protocol-Version': protocolVersion,
+  };
+  const request = async (id, method, params) => {
+    const response = await fetch(serverConfig.url, {
+      method: 'POST',
+      redirect: 'error',
+      headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.error) {
+      const detail = payload?.error?.message || payload?.error || `HTTP ${response.status}`;
+      throw new Error(`${method} 验证失败：${String(detail)}`);
+    }
+    return payload?.result;
+  };
+
+  const initialized = await request(1, 'initialize', {
+    protocolVersion,
+    capabilities: {},
+    clientInfo: { name: clientName, version: '1.0' },
+  });
+  if (!initialized?.serverInfo?.name) {
+    throw new Error('initialize 验证失败：响应缺少 serverInfo');
+  }
+  const listed = await request(2, 'tools/list', {});
+  if (!Array.isArray(listed?.tools)) {
+    throw new Error('tools/list 验证失败：响应缺少工具列表');
+  }
+  return { serverName: initialized.serverInfo.name, toolCount: listed.tools.length };
+}
+
 async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
   if (!isValidMcpServerName(name) && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
     throw new Error('Invalid MCP server name.');
@@ -9683,48 +9729,41 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
     saveDesktopMcpStore(store);
   }
 
-  if (connectorServer && String(connectorServer.authMode).toLowerCase() === 'moss-session') {
+  const connectorAuthMode = String(connectorServer?.authMode || '').toLowerCase();
+  const connectorAuthValidation = String(connectorServer?.authValidation || '').toLowerCase();
+  if (
+    connectorServer
+    && (
+      connectorAuthMode === 'moss-session'
+      || (connectorAuthMode === 'api-key' && connectorAuthValidation === 'tools-list')
+    )
+  ) {
+    const usesMossSession = connectorAuthMode === 'moss-session';
     await updateConnectorMcpAuthState(connectorServer.connectorId, {
       connected: false,
       setupStatus: 'authenticating',
-      setupMessage: '正在验证 Moss Server 登录态',
+      setupMessage: usesMossSession
+        ? '正在验证 Moss Server 登录态和工具权限'
+        : '正在验证连接器 API Key 和工具权限',
     });
     emitToRenderer('connector-hub:changed', {
       reason: 'mcp-auth-state',
       connectorId: connectorServer.connectorId,
     });
     try {
-      const authToken = await resolveCurrentMossServerAuthToken();
-      const resolvedConfig = applyConnectorCredentials(serverConfig, {
-        MOSS_SERVER_AUTH_TOKEN: authToken,
-      });
-      const response = await fetch(resolvedConfig.url, {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          ...(resolvedConfig.headers || {}),
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-          params: {
-            protocolVersion: '2025-03-26',
-            capabilities: {},
-            clientInfo: { name: 'moss-session-auth-check', version: '1.0' },
-          },
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.result?.serverInfo?.name) {
-        const detail = payload?.error?.message || payload?.error || `HTTP ${response.status}`;
-        throw new Error(String(detail));
-      }
+      const resolvedConfig = usesMossSession
+        ? applyConnectorCredentials(serverConfig, {
+            MOSS_SERVER_AUTH_TOKEN: await resolveCurrentMossServerAuthToken(),
+          })
+        : serverConfig;
+      await validateConnectorMcpTools(
+        resolvedConfig,
+        usesMossSession ? 'moss-session-auth-check' : 'moss-api-key-auth-check',
+      );
     } catch (error) {
-      const message = `Moss 登录态验证失败：${redactAuthFailureText(error?.message || String(error))}`;
+      const message = `${usesMossSession ? 'Moss 登录态' : 'API Key'}验证失败：${
+        redactAuthFailureText(error?.message || String(error))
+      }`;
       await updateConnectorMcpAuthState(connectorServer.connectorId, {
         connected: false,
         setupStatus: 'failed',
@@ -9741,7 +9780,9 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
     await updateConnectorMcpAuthState(connectorServer.connectorId, {
       connected: true,
       setupStatus: 'connected',
-      setupMessage: '已复用当前 Moss Server 登录态',
+      setupMessage: usesMossSession
+        ? 'Moss Server 登录态与工具列表验证通过'
+        : 'API Key 与工具列表验证通过',
     });
     emitToRenderer('connector-hub:changed', {
       reason: 'mcp-authenticated',

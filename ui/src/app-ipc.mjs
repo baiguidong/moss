@@ -366,7 +366,9 @@ export function buildConnectorMcpAuthToolResult(result) {
   if (status === 'authenticated') {
     return {
       auth,
-      message: '连接器授权已完成。当前会话将在本轮结束后刷新 MCP 工具；不要再次发起授权，请让用户在下一条消息继续原请求。',
+      message: sourceAuth?.connectorAttached
+        ? '连接器授权已完成并已加入当前会话。当前会话将在本轮结束后刷新 MCP 工具；不要再次发起授权，请让用户在下一条消息继续原请求。'
+        : '连接器授权已完成。当前会话将在本轮结束后刷新 MCP 工具；不要再次发起授权，请让用户在下一条消息继续原请求。',
     }
   }
   if (status === 'authorization_url_opened') {
@@ -403,6 +405,9 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     : null
   const authenticateConnectorMcp = typeof options.authenticateConnectorMcp === 'function'
     ? options.authenticateConnectorMcp
+    : null
+  const attachConnectorToSession = typeof options.attachConnectorToSession === 'function'
+    ? options.attachConnectorToSession
     : null
 
   const requireWorkspaceBuildDir = (sessionRecord, input = {}) => {
@@ -570,9 +575,29 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           if (!authenticateConnectorMcp) {
             throw new Error('Connector MCP authentication is not available in this context')
           }
-          const result = await authenticateConnectorMcp(target, {
+          let result = await authenticateConnectorMcp(target, {
             sessionId: sessionRecord?.id || null,
           })
+          const authenticatedConnectorId = typeof result?.auth?.connectorId === 'string'
+            ? result.auth.connectorId.trim()
+            : ''
+          if (
+            result?.auth?.status === 'authenticated'
+            && authenticatedConnectorId
+            && sessionRecord?.id
+            && attachConnectorToSession
+          ) {
+            await attachConnectorToSession(authenticatedConnectorId, {
+              sessionId: sessionRecord.id,
+            })
+            result = {
+              ...result,
+              auth: {
+                ...result.auth,
+                connectorAttached: true,
+              },
+            }
+          }
           const toolResult = buildConnectorMcpAuthToolResult(result)
           return {
             ok: true,
