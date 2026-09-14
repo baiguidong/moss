@@ -12,6 +12,8 @@ import * as yauzl from 'yauzl';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+const MAX_FALLBACK_PARSE_BYTES = 100 * 1024 * 1024;
+const CONVERSION_TEMP_TTL_MS = 10 * 60 * 1000;
 
 class ConversionService {
   constructor() {
@@ -20,11 +22,21 @@ class ConversionService {
       codeBlockStyle: 'fenced',
     });
     this.libreOfficeQueue = Promise.resolve();
+    void this.cleanupStaleTempDirs();
+  }
+
+  async readFallbackBuffer(filePath) {
+    const fileStat = await fs.stat(filePath);
+    if (!fileStat.isFile()) throw new Error('Document path is not a file');
+    if (fileStat.size > MAX_FALLBACK_PARSE_BYTES) {
+      throw new Error(`Document is too large for fallback parsing (${fileStat.size} bytes)`);
+    }
+    return fs.readFile(filePath);
   }
 
   async wordToMarkdown(filePath) {
     try {
-      const buffer = await fs.readFile(filePath);
+      const buffer = await this.readFallbackBuffer(filePath);
       const result = await mammoth.convertToHtml({ buffer });
       return { success: true, data: this.turndownService.turndown(result.value) };
     } catch (error) {
@@ -34,7 +46,7 @@ class ConversionService {
 
   async wordToHtml(filePath) {
     try {
-      const buffer = await fs.readFile(filePath);
+      const buffer = await this.readFallbackBuffer(filePath);
       const result = await mammoth.convertToHtml(
         { buffer },
         {
@@ -56,12 +68,12 @@ class ConversionService {
 
   async excelToJson(filePath) {
     try {
-      const buffer = await fs.readFile(filePath);
-      const isCsv = filePath.toLowerCase().endsWith('.csv');
+      const buffer = await this.readFallbackBuffer(filePath);
+      const isDelimitedText = /\.(csv|tsv)$/i.test(filePath);
       let workbook;
       let sheetImages = {};
 
-      if (isCsv) {
+      if (isDelimitedText) {
         workbook = XLSX.read(buffer.toString('utf-8'), { type: 'string' });
       } else {
         workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -87,29 +99,14 @@ class ConversionService {
 
   async pptToJson(filePath) {
     try {
-      const fileBuffer = await fs.readFile(filePath);
+      const fileBuffer = await this.readFallbackBuffer(filePath);
       if (fileBuffer.length < 4 || fileBuffer.toString('ascii', 0, 2) !== 'PK') {
         return { success: false, error: 'Invalid PPTX file: missing PK signature' };
       }
       const zipEntries = await this.loadPptxZipEntries(fileBuffer);
       const mediaResources = {};
-      const imageRelsMap = new Map();
 
       for (const [entryPath, buffer] of zipEntries.entries()) {
-        if (entryPath.includes('_rels') && entryPath.endsWith('.rels')) {
-          const relDoc = new DOMParser().parseFromString(buffer.toString('utf-8'), 'text/xml');
-          const relationships = relDoc.getElementsByTagName('Relationship');
-          for (let i = 0; i < relationships.length; i++) {
-            const rel = relationships.item(i);
-            if (!rel) continue;
-            const type = rel.getAttribute('Type') || '';
-            const target = rel.getAttribute('Target') || '';
-            const id = rel.getAttribute('Id') || '';
-            if (type.includes('image') && target && id) {
-              imageRelsMap.set(id, target.replace(/^.*media\//, ''));
-            }
-          }
-        }
         if (entryPath.startsWith('ppt/media/')) {
           const fileName = entryPath.replace('ppt/media/', '');
           mediaResources[fileName] = `data:${this.getMimeTypeFromName(fileName)};base64,${buffer.toString('base64')}`;
@@ -121,6 +118,13 @@ class ConversionService {
         if (!entryPath.match(/^ppt\/slides\/slide\d+\.xml$/i)) continue;
         const slideNumber = parseInt(entryPath.match(/slide(\d+)\.xml$/i)?.[1] || '0', 10);
         const slideDoc = new DOMParser().parseFromString(buffer.toString('utf-8'), 'text/xml');
+        const slideRelationships = this.parseRelationships(zipEntries.get(this.getRelsPath(entryPath)));
+        const imageRelsMap = new Map();
+        for (const [id, relationship] of slideRelationships.entries()) {
+          if (relationship.type.includes('/image')) {
+            imageRelsMap.set(id, path.posix.basename(relationship.target));
+          }
+        }
         slides.push({ slideNumber, content: this.parseSlideXml(slideDoc, imageRelsMap) });
       }
       slides.sort((a, b) => a.slideNumber - b.slideNumber);
@@ -275,6 +279,8 @@ class ConversionService {
   }
 
   async libreOfficeToPdf(filePath, outputDir) {
+    let tempDir;
+    let ownsTempDir = false;
     try {
       await fs.access(filePath);
       const libreOfficePath = await this.findLibreOffice();
@@ -283,13 +289,22 @@ class ConversionService {
       }
 
       const ext = path.extname(filePath).toLowerCase();
-      const supportedExtensions = ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.odt', '.odp', '.ods'];
+      const supportedExtensions = [
+        '.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt',
+        '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp',
+        '.xls', '.xlsx', '.xlsm', '.xlsb', '.ods',
+      ];
       if (!supportedExtensions.includes(ext)) {
         return { success: false, error: `Unsupported file extension: ${ext}` };
       }
 
-      const tempDir = outputDir || path.join(os.tmpdir(), `moss-libreoffice-${Date.now()}`);
-      await fs.mkdir(tempDir, { recursive: true });
+      if (outputDir) {
+        tempDir = outputDir;
+        await fs.mkdir(tempDir, { recursive: true });
+      } else {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-libreoffice-'));
+        ownsTempDir = true;
+      }
 
       let sourcePath = filePath;
       let baseName = path.basename(filePath, ext);
@@ -308,7 +323,7 @@ class ConversionService {
         }
       }
 
-      return await new Promise((resolve) => {
+      const result = await new Promise((resolve) => {
         this.libreOfficeQueue = this.libreOfficeQueue.then(async () => {
           try {
             resolve(await this.executeLibreOfficeConversion(sourcePath, tempDir, baseName, ext));
@@ -317,9 +332,38 @@ class ConversionService {
           }
         });
       });
+      if (ownsTempDir) this.scheduleTempCleanup(tempDir, result.success ? CONVERSION_TEMP_TTL_MS : 0);
+      return result;
     } catch (error) {
+      if (ownsTempDir && tempDir) this.scheduleTempCleanup(tempDir, 0);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
+  }
+
+  scheduleTempCleanup(tempDir, delayMs) {
+    const timer = setTimeout(() => {
+      void fs.rm(tempDir, { recursive: true, force: true });
+    }, delayMs);
+    timer.unref?.();
+  }
+
+  async cleanupStaleTempDirs() {
+    try {
+      const tempRoot = os.tmpdir();
+      const entries = await fs.readdir(tempRoot, { withFileTypes: true });
+      const now = Date.now();
+      await Promise.all(entries
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('moss-libreoffice-'))
+        .map(async (entry) => {
+          const target = path.join(tempRoot, entry.name);
+          try {
+            const targetStat = await fs.stat(target);
+            if (now - targetStat.mtimeMs > CONVERSION_TEMP_TTL_MS) {
+              await fs.rm(target, { recursive: true, force: true });
+            }
+          } catch {}
+        }));
+    } catch {}
   }
 
   async prepareExcelForPdf(filePath, tempDir) {
@@ -408,9 +452,9 @@ class ConversionService {
     const libreOfficePath = await this.findLibreOffice();
     if (!libreOfficePath) return { success: false, error: 'LibreOffice is not installed or not found in PATH' };
     let pdfFilter = 'pdf';
-    if (['.xls', '.xlsx', '.ods'].includes(ext)) pdfFilter = 'calc_pdf_Export';
-    else if (['.doc', '.docx', '.odt'].includes(ext)) pdfFilter = 'writer_pdf_Export';
-    else if (['.ppt', '.pptx', '.odp'].includes(ext)) pdfFilter = 'impress_pdf_Export';
+    if (['.xls', '.xlsx', '.xlsm', '.xlsb', '.ods'].includes(ext)) pdfFilter = 'calc_pdf_Export';
+    else if (['.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt'].includes(ext)) pdfFilter = 'writer_pdf_Export';
+    else if (['.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp'].includes(ext)) pdfFilter = 'impress_pdf_Export';
 
     await execFileAsync(
       libreOfficePath,

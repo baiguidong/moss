@@ -120,6 +120,9 @@ type PreviewDrawerMetadata = Record<string, unknown> & {
   previewEditable?: boolean;
   previewSaveable?: boolean;
   previewReason?: string;
+  localPreviewPath?: string;
+  modifiedAt?: number;
+  remote?: boolean;
 };
 
 function getPreviewMetadata(file: WorkspacePreviewData | null | undefined): PreviewDrawerMetadata {
@@ -149,21 +152,26 @@ function buildDirtyMetadata(file: WorkspacePreviewData, content: string): Previe
 }
 
 function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
+  const metadata = getPreviewMetadata(file);
+  const previewPath = typeof metadata.localPreviewPath === "string" && metadata.localPreviewPath
+    ? metadata.localPreviewPath
+    : file.path;
+  const fileVersion = typeof metadata.modifiedAt === "number" ? metadata.modifiedAt : undefined;
   switch (file.contentType) {
     case "image":
-      return <ImageViewer filePath={file.path} alt={file.relativePath} />;
+      return <ImageViewer filePath={previewPath} alt={file.relativePath} />;
     case "pdf":
-      return <PDFViewer filePath={file.path} title={file.relativePath} />;
+      return <PDFViewer filePath={previewPath} title={file.relativePath} />;
     case "markdown":
       return <MarkdownViewer content={file.content} />;
     case "html":
       return <HTMLViewer content={file.content} filePath={file.path} />;
     case "word":
-      return <WordViewer filePath={file.path} />;
+      return <WordViewer filePath={previewPath} fileVersion={fileVersion} />;
     case "excel":
-      return <ExcelViewer filePath={file.path} />;
+      return <ExcelViewer filePath={previewPath} fileVersion={fileVersion} />;
     case "ppt":
-      return <PPTViewer filePath={file.path} />;
+      return <PPTViewer filePath={previewPath} fileVersion={fileVersion} />;
     case "diff":
       return <DiffViewer content={file.content} />;
     case "url":
@@ -220,6 +228,11 @@ export function PreviewDrawer({
   const dirtyTabs = React.useMemo(() => tabs.filter((tab) => isDirtyPreview(tab)), [tabs]);
   const activeMetadata = getPreviewMetadata(activeFile);
   const activeDirty = isDirtyPreview(activeFile);
+  const externalOpenPath = typeof activeMetadata.localPreviewPath === "string" && activeMetadata.localPreviewPath
+    ? activeMetadata.localPreviewPath
+    : activeMetadata.remote
+      ? null
+      : activeFile?.path || null;
 
   React.useEffect(() => {
     if (!activeFile || !activePath) return;
@@ -310,8 +323,8 @@ export function PreviewDrawer({
     try {
       if (activeFile.contentType === "url") {
         await shellIpc.openExternal(activeFile.content);
-      } else if (!isVirtualPreview) {
-        await shellIpc.openFile(activeFile.path);
+      } else if (!isVirtualPreview && externalOpenPath) {
+        await shellIpc.openFile(externalOpenPath);
       } else {
         return;
       }
@@ -514,7 +527,7 @@ export function PreviewDrawer({
             size="sm"
             className="h-8 rounded-full px-3 text-xs"
             onClick={() => void handleOpenInSystem()}
-            disabled={activeFile.contentType !== "url" && isVirtualPreview}
+            disabled={activeFile.contentType !== "url" && (isVirtualPreview || !externalOpenPath)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
             打开

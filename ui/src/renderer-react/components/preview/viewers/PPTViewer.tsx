@@ -12,7 +12,7 @@ import { UnsupportedViewer } from "./UnsupportedViewer";
 const pdfCache = new Map<string, { pdfPath: string; timestamp: number }>();
 const CACHE_TIMEOUT = 5 * 60 * 1000;
 
-export function PPTViewer({ filePath }: { filePath: string }) {
+export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVersion?: number }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
   const [pptData, setPptData] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -44,30 +44,35 @@ export function PPTViewer({ filePath }: { filePath: string }) {
     };
   }, []);
 
-  const load = React.useCallback(async () => {
+  const cacheKey = `${filePath}:${fileVersion ?? "unknown"}`;
+
+  const load = React.useCallback(async (bypassCache = false) => {
     setLoading(true);
     setError(null);
     setPdfPath(undefined);
     setPptData(null);
     try {
-      const cached = pdfCache.get(filePath);
-      if (cached && Date.now() - cached.timestamp < CACHE_TIMEOUT) {
+      const cached = pdfCache.get(cacheKey);
+      if (!bypassCache && cached && Date.now() - cached.timestamp < CACHE_TIMEOUT) {
         setPdfPath(cached.pdfPath);
         return;
       }
-      if (cached) pdfCache.delete(filePath);
+      if (cached) pdfCache.delete(cacheKey);
 
       const libreOfficeAvailable = await documentIpc.libreOffice.isAvailable();
       if (libreOfficeAvailable) {
         const pdfResponse = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
         if (pdfResponse?.result?.success && pdfResponse.result.data) {
           setPdfPath(pdfResponse.result.data);
-          pdfCache.set(filePath, { pdfPath: pdfResponse.result.data, timestamp: Date.now() });
+          pdfCache.set(cacheKey, { pdfPath: pdfResponse.result.data, timestamp: Date.now() });
           return;
         }
       }
 
-      const pptResponse = await documentIpc.convert({ filePath, to: "ppt-json" });
+      const canUseXmlFallback = /\.(pptx|pptm|ppsx)$/i.test(filePath);
+      const pptResponse = canUseXmlFallback
+        ? await documentIpc.convert({ filePath, to: "ppt-json" })
+        : null;
       if (pptResponse?.result?.success && pptResponse.result.data?.slides?.length) {
         setPptData(pptResponse.result.data);
         return;
@@ -81,10 +86,10 @@ export function PPTViewer({ filePath }: { filePath: string }) {
     } finally {
       setLoading(false);
     }
-  }, [filePath]);
+  }, [cacheKey, filePath]);
 
   React.useEffect(() => {
-    void load();
+    void load(false);
   }, [load, reloadToken]);
 
   const handleInstall = React.useCallback(async () => {
@@ -100,7 +105,7 @@ export function PPTViewer({ filePath }: { filePath: string }) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load()}>
+          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load(true)}>
             刷新
           </Button>
           <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void shellIpc.openFile(filePath)}>

@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   fetchRemoteAppAvailability,
   fetchRemoteDirectSessions,
+  downloadRemoteDirectWorkspaceFile,
   forkRemoteDirectSession,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
+  requestRemoteDirectAuthentication,
   requestRemoteDirectAccessToken,
   startRemoteFeishuAdapter,
 } from '../src/remote-direct-client.mjs';
@@ -96,6 +101,29 @@ describe('remote direct client settings', () => {
     );
   });
 
+  it('retains the authenticated account identity for mailbox isolation', async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      user: { id: 'user-2', name: 'Second User', email: 'second@example.com' },
+      organization: { id: 'org-1', name: 'Example' },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+
+    await expect(requestRemoteDirectAuthentication({
+      authCenterUrl: 'https://moss.example.com',
+      credentialMode: 'api-key',
+      apiKey: 'server-key',
+    })).resolves.toEqual({
+      authToken: 'access-token',
+      userId: 'user-2',
+      orgId: 'org-1',
+      userName: 'Second User',
+      userEmail: 'second@example.com',
+    });
+  });
+
   it('checks known Server package versions with bearer auth', async () => {
     const requests = [];
     globalThis.fetch = async (input, init = {}) => {
@@ -178,5 +206,47 @@ describe('remote direct client settings', () => {
       title: 'Research (Fork)',
       dangerously_skip_permissions: true,
     });
+  });
+
+  it('downloads an authenticated remote workspace file to the requested path', async () => {
+    const outputDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-remote-preview-test-'));
+    const outputPath = path.join(outputDir, 'report.pdf');
+    globalThis.fetch = async (input, init = {}) => {
+      expect(String(input)).toContain('/api/v1/sessions/session%2F1/workspace/content');
+      expect(init.headers.authorization).toBe('Bearer access-token');
+      return new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-length': '4', 'content-type': 'application/pdf' },
+      });
+    };
+
+    try {
+      await expect(downloadRemoteDirectWorkspaceFile({
+        serverUrl: 'https://moss.example.com',
+        authToken: 'access-token',
+        sessionId: 'session/1',
+        filePath: '/workspace/report.pdf',
+        destinationPath: outputPath,
+      })).resolves.toEqual({ path: outputPath, size: 4 });
+      expect(await fsp.readFile(outputPath)).toEqual(Buffer.from('%PDF'));
+    } finally {
+      await fsp.rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects remote preview downloads above the configured limit', async () => {
+    globalThis.fetch = async () => new Response(new Uint8Array([1, 2, 3, 4]), {
+      status: 200,
+      headers: { 'content-length': '4' },
+    });
+
+    await expect(downloadRemoteDirectWorkspaceFile({
+      serverUrl: 'https://moss.example.com',
+      authToken: 'access-token',
+      sessionId: 'session-1',
+      filePath: '/workspace/large.bin',
+      destinationPath: path.join(os.tmpdir(), 'unused-moss-preview.bin'),
+      maxBytes: 3,
+    })).rejects.toThrow('too large to preview');
   });
 });

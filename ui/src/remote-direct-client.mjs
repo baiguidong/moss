@@ -1,6 +1,10 @@
 import {
   normalizeRemoteDirectCredentialMode,
 } from './desktop-settings.mjs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+
+export const MAX_REMOTE_PREVIEW_DOWNLOAD_BYTES = 250 * 1024 * 1024;
 
 function objectField(source, key) {
   const value = source?.[key];
@@ -108,7 +112,21 @@ export function parseRemoteDirectServerInput(raw) {
   };
 }
 
-export async function requestRemoteDirectAccessToken({
+function decodeAccessTokenIdentity(authToken) {
+  const payload = String(authToken || '').split('.')[1];
+  if (!payload) return { userId: '', orgId: '' };
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return {
+      userId: typeof claims?.sub === 'string' ? claims.sub.trim() : '',
+      orgId: typeof claims?.org_id === 'string' ? claims.org_id.trim() : '',
+    };
+  } catch {
+    return { userId: '', orgId: '' };
+  }
+}
+
+export async function requestRemoteDirectAuthentication({
   authCenterUrl,
   credentialMode,
   loginIdentifier,
@@ -180,7 +198,22 @@ export async function requestRemoteDirectAccessToken({
   if (!data?.access_token) {
     throw new Error('Moss server response missing access_token.');
   }
-  return data.access_token;
+  const tokenIdentity = decodeAccessTokenIdentity(data.access_token);
+  return {
+    authToken: data.access_token,
+    userId: typeof data?.user?.id === 'string' && data.user.id.trim()
+      ? data.user.id.trim()
+      : tokenIdentity.userId,
+    orgId: typeof data?.organization?.id === 'string' && data.organization.id.trim()
+      ? data.organization.id.trim()
+      : tokenIdentity.orgId,
+    userName: typeof data?.user?.name === 'string' ? data.user.name.trim() : '',
+    userEmail: typeof data?.user?.email === 'string' ? data.user.email.trim() : '',
+  };
+}
+
+export async function requestRemoteDirectAccessToken(input) {
+  return (await requestRemoteDirectAuthentication(input)).authToken;
 }
 
 export async function resolveRemoteDirectConnection(settings) {
@@ -192,7 +225,7 @@ export async function resolveRemoteDirectConnection(settings) {
   }
 
   const parsed = parseRemoteDirectServerInput(raw);
-  const authToken = await requestRemoteDirectAccessToken({
+  const authentication = await requestRemoteDirectAuthentication({
     authCenterUrl: parsed.authCenterUrl,
     credentialMode: remoteDirect.credentialMode,
     loginIdentifier: remoteDirect.userEmail,
@@ -202,7 +235,7 @@ export async function resolveRemoteDirectConnection(settings) {
 
   return {
     serverUrl: parsed.serverUrl,
-    authToken,
+    ...authentication,
   };
 }
 
@@ -480,6 +513,79 @@ export async function fetchRemoteDirectWorkspaceFile({ serverUrl, authToken, ses
   return response.json();
 }
 
+export async function downloadRemoteDirectWorkspaceFile({
+  serverUrl,
+  authToken,
+  sessionId,
+  filePath,
+  destinationPath,
+  maxBytes = MAX_REMOTE_PREVIEW_DOWNLOAD_BYTES,
+}) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Remote workspace file path is required.');
+  }
+  if (typeof destinationPath !== 'string' || !destinationPath.trim()) {
+    throw new Error('Remote workspace preview destination is required.');
+  }
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/content`,
+    serverUrl,
+  );
+  endpoint.searchParams.set('file', filePath);
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to download remote workspace file', response),
+    );
+  }
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`Remote file is too large to preview (${contentLength} bytes).`);
+  }
+  if (!response.body) {
+    throw new Error('Remote workspace file response did not contain a body.');
+  }
+
+  await fsp.mkdir(path.dirname(destinationPath), { recursive: true });
+  const partialPath = `${destinationPath}.partial-${process.pid}-${Date.now()}`;
+  const handle = await fsp.open(partialPath, 'wx');
+  let bytesWritten = 0;
+  try {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesWritten += value.byteLength;
+      if (bytesWritten > maxBytes) {
+        await reader.cancel();
+        throw new Error(`Remote file is too large to preview (more than ${maxBytes} bytes).`);
+      }
+      await handle.write(Buffer.from(value));
+    }
+  } catch (error) {
+    await handle.close();
+    await fsp.rm(partialPath, { force: true });
+    throw error;
+  }
+  await handle.close();
+  await fsp.rm(destinationPath, { force: true });
+  await fsp.rename(partialPath, destinationPath);
+  return { path: destinationPath, size: bytesWritten };
+}
+
 export async function resumeRemoteDirectSession({ serverUrl, authToken, sessionId }) {
   let response;
   try {
@@ -563,6 +669,7 @@ export function createRemoteDirectClient({ getSettings }) {
     getRemoteDirectWorkspace: (settings) => getRemoteDirectWorkspace(currentSettings(settings)),
     isRemoteDirectSessionNotFoundError,
     parseRemoteDirectServerInput,
+    requestRemoteDirectAuthentication,
     requestRemoteDirectAccessToken,
     resolveRemoteDirectConnection: (settings) => resolveRemoteDirectConnection(currentSettings(settings)),
     parseRemoteDirectError,

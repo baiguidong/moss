@@ -18,6 +18,7 @@ const electronExecutable = path.join(
 );
 const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
+  path.join(repoRoot, 'shared', 'workspace-preview.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
   path.join(uiRoot, 'src', 'appearance-settings.mjs'),
   path.join(uiRoot, 'src', 'desktop-settings.mjs'),

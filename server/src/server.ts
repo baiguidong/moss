@@ -1,8 +1,8 @@
 import http from 'http'
 import net from 'net'
 import { createHash } from 'crypto'
-import { existsSync } from 'fs'
-import { readFile, readdir, stat } from 'fs/promises'
+import { createReadStream, existsSync } from 'fs'
+import { open, readFile, readdir, realpath, stat } from 'fs/promises'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
@@ -32,6 +32,13 @@ import { handleAppRoute } from './apps/appRoutes.js'
 import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
+import {
+  decodeWorkspaceTextBuffer,
+  getWorkspaceFilePreviewInfo,
+  isBinaryPreviewContentType,
+  isLikelyBinaryBuffer,
+  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
+} from '../../shared/workspace-preview.mjs'
 
 type JsonBody = Record<string, unknown>
 
@@ -49,7 +56,6 @@ const MIME_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.webp': 'image/webp',
 }
-const MAX_WORKSPACE_FILE_BYTES = 200 * 1024
 
 class HttpError extends Error {
   constructor(
@@ -134,61 +140,27 @@ function resolveSessionWorkspacePath(
   return { root, targetPath }
 }
 
-function getWorkspaceFilePreviewInfo(targetPath: string): {
-  contentType: string
-  language: string
-  mimeType: string
-} {
-  const ext = extname(targetPath).toLowerCase().replace(/^\./, '')
-  const imageMimeByExt: Record<string, string> = {
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    bmp: 'image/bmp',
-    svg: 'image/svg+xml',
-    ico: 'image/x-icon',
-    avif: 'image/avif',
-    tif: 'image/tiff',
-    tiff: 'image/tiff',
+async function resolveExistingSessionWorkspacePath(
+  session: SessionRecord,
+  inputPath?: string | null,
+): Promise<{ root: string; targetPath: string }> {
+  const resolvedPath = resolveSessionWorkspacePath(session, inputPath)
+  const [realRoot, realTargetPath] = await Promise.all([
+    realpath(resolvedPath.root),
+    realpath(resolvedPath.targetPath),
+  ])
+  const rel = relative(realRoot, realTargetPath)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new HttpError(400, 'Path is outside the session workspace')
   }
-
-  if (imageMimeByExt[ext]) {
-    return { contentType: 'image', language: 'image', mimeType: imageMimeByExt[ext] }
-  }
-  if (ext === 'pdf') {
-    return { contentType: 'pdf', language: 'pdf', mimeType: 'application/pdf' }
-  }
-  if (ext === 'md' || ext === 'markdown') {
-    return { contentType: 'markdown', language: 'markdown', mimeType: 'text/markdown' }
-  }
-  if (ext === 'html' || ext === 'htm') {
-    return { contentType: 'html', language: 'html', mimeType: 'text/html' }
-  }
-  if (ext === 'diff' || ext === 'patch') {
-    return { contentType: 'diff', language: 'diff', mimeType: 'text/plain' }
-  }
-  if (['doc', 'docx', 'odt'].includes(ext)) {
-    return { contentType: 'word', language: ext || 'word', mimeType: 'application/octet-stream' }
-  }
-  if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) {
-    return { contentType: 'excel', language: ext || 'excel', mimeType: 'application/octet-stream' }
-  }
-  if (['ppt', 'pptx', 'odp'].includes(ext)) {
-    return { contentType: 'ppt', language: ext || 'ppt', mimeType: 'application/octet-stream' }
-  }
-  if (['txt', 'log', 'text'].includes(ext)) {
-    return { contentType: 'text', language: 'text', mimeType: 'text/plain' }
-  }
-  return { contentType: 'code', language: ext || 'text', mimeType: 'text/plain' }
+  return resolvedPath
 }
 
 async function listSessionWorkspaceDir(
   session: SessionRecord,
   dirPath?: string | null,
 ) {
-  const { root, targetPath } = resolveSessionWorkspacePath(session, dirPath)
+  const { root, targetPath } = await resolveExistingSessionWorkspacePath(session, dirPath)
   const targetStat = await stat(targetPath)
   if (!targetStat.isDirectory()) {
     throw new HttpError(400, 'Target is not a directory')
@@ -226,7 +198,7 @@ async function readSessionWorkspaceFile(
   if (!filePath?.trim()) {
     throw new HttpError(400, 'Missing file path')
   }
-  const { root, targetPath } = resolveSessionWorkspacePath(session, filePath)
+  const { root, targetPath } = await resolveExistingSessionWorkspacePath(session, filePath)
   const targetStat = await stat(targetPath)
   if (!targetStat.isFile()) {
     throw new HttpError(400, 'Target is not a file')
@@ -240,40 +212,40 @@ async function readSessionWorkspaceFile(
     contentType: previewInfo.contentType,
     language: previewInfo.language,
     mimeType: previewInfo.mimeType,
-    metadata: {},
+    metadata: {
+      modifiedAt: targetStat.mtimeMs,
+    },
   }
 
-  if (
-    previewInfo.contentType === 'image' ||
-    previewInfo.contentType === 'pdf' ||
-    previewInfo.contentType === 'word' ||
-    previewInfo.contentType === 'excel' ||
-    previewInfo.contentType === 'ppt'
-  ) {
-    return { ...baseResult, content: '' }
-  }
-
-  if (targetStat.size > MAX_WORKSPACE_FILE_BYTES) {
+  if (isBinaryPreviewContentType(previewInfo.contentType)) {
     return {
       ...baseResult,
-      truncated: true,
       metadata: {
+        ...baseResult.metadata,
         previewEditable: false,
         previewSaveable: false,
-        previewReason: 'truncated',
       },
-      content: `File too large to preview (${targetStat.size} bytes).`,
+      content: '',
     }
   }
 
-  const buffer = await readFile(targetPath)
-  if (buffer.includes(0)) {
+  const handle = await open(targetPath, 'r')
+  let buffer: Buffer
+  try {
+    buffer = Buffer.alloc(Math.min(targetStat.size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES))
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    buffer = buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+  if (isLikelyBinaryBuffer(buffer)) {
     return {
       ...baseResult,
       contentType: 'unsupported',
       language: 'binary',
       mimeType: 'application/octet-stream',
       metadata: {
+        ...baseResult.metadata,
         previewEditable: false,
         previewSaveable: false,
         previewReason: 'binary',
@@ -282,7 +254,49 @@ async function readSessionWorkspaceFile(
     }
   }
 
-  return { ...baseResult, content: buffer.toString('utf8') }
+  const truncated = targetStat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES
+  return {
+    ...baseResult,
+    truncated,
+    metadata: truncated
+      ? {
+          ...baseResult.metadata,
+          previewEditable: false,
+          previewSaveable: false,
+          previewReason: 'truncated',
+        }
+      : baseResult.metadata,
+    content: decodeWorkspaceTextBuffer(buffer, truncated),
+  }
+}
+
+async function writeSessionWorkspaceFileContent(
+  res: http.ServerResponse,
+  session: SessionRecord,
+  filePath?: string | null,
+): Promise<void> {
+  if (!filePath?.trim()) {
+    throw new HttpError(400, 'Missing file path')
+  }
+  const { targetPath } = await resolveExistingSessionWorkspacePath(session, filePath)
+  const targetStat = await stat(targetPath)
+  if (!targetStat.isFile()) {
+    throw new HttpError(400, 'Target is not a file')
+  }
+  const previewInfo = getWorkspaceFilePreviewInfo(targetPath)
+  res.writeHead(200, {
+    'accept-ranges': 'none',
+    'cache-control': 'no-store',
+    'content-type': previewInfo.mimeType || contentTypeForPath(targetPath),
+    'content-length': String(targetStat.size),
+  })
+  await new Promise<void>((resolveStream, rejectStream) => {
+    const stream = createReadStream(targetPath)
+    stream.once('error', rejectStream)
+    stream.once('end', resolveStream)
+    res.once('close', resolveStream)
+    stream.pipe(res)
+  })
 }
 
 function stableJson(value: unknown): string {
@@ -659,6 +673,10 @@ function writeError(
   res: http.ServerResponse,
   error: unknown,
 ): void {
+  if (res.headersSent) {
+    res.destroy(error instanceof Error ? error : undefined)
+    return
+  }
   if (error instanceof OAuthLoginError) {
     writeNoStoreJson(res, error.statusCode, { error: error.message })
     return
@@ -1505,6 +1523,24 @@ export function startServer(
           res,
           200,
           await readSessionWorkspaceFile(session, url.searchParams.get('file')),
+        )
+        return
+      }
+
+      const sessionWorkspaceContentMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/content$/)
+      if (req.method === 'GET' && sessionWorkspaceContentMatch) {
+        const sessionId = sessionWorkspaceContentMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) {
+          throw new HttpError(404, 'Session not found')
+        }
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        await writeSessionWorkspaceFileContent(
+          res,
+          session,
+          url.searchParams.get('file'),
         )
         return
       }

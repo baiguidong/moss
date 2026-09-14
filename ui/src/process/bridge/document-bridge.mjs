@@ -5,10 +5,14 @@ import { conversionService } from '../services/conversion-service.mjs';
 
 const { ipcMain } = electron;
 
-const WORD_EXTENSIONS = new Set(['.doc', '.docx', '.odt']);
-const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx', '.ods', '.csv']);
-const PPT_EXTENSIONS = new Set(['.ppt', '.pptx', '.odp']);
-const LIBREOFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.odt', '.odp', '.ods']);
+const MAMMOTH_EXTENSIONS = new Set(['.docx', '.docm', '.dotx']);
+const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx', '.xlsm', '.xlsb', '.ods', '.csv', '.tsv']);
+const PPT_XML_EXTENSIONS = new Set(['.pptx', '.pptm', '.ppsx']);
+const LIBREOFFICE_EXTENSIONS = new Set([
+  '.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt',
+  '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp',
+  '.xls', '.xlsx', '.xlsm', '.xlsb', '.ods',
+]);
 
 function ensureExtension(filePath, allowed) {
   return allowed.has(path.extname(filePath).toLowerCase());
@@ -22,19 +26,19 @@ export function registerDocumentIpcHandlers() {
   ipcMain.handle('document.convert', async (_event, { filePath, to }) => {
     switch (to) {
       case 'markdown':
-        if (!ensureExtension(filePath, WORD_EXTENSIONS)) return unsupportedResult(to, 'Only Word documents can be converted to markdown');
+        if (!ensureExtension(filePath, MAMMOTH_EXTENSIONS)) return unsupportedResult(to, 'Only OOXML Word documents can be converted to markdown without LibreOffice');
         return { to, result: await conversionService.wordToMarkdown(filePath) };
       case 'word-html':
-        if (!ensureExtension(filePath, WORD_EXTENSIONS)) return unsupportedResult(to, 'Only Word documents can be converted to HTML');
+        if (!ensureExtension(filePath, MAMMOTH_EXTENSIONS)) return unsupportedResult(to, 'Only OOXML Word documents can be converted to HTML without LibreOffice');
         return { to, result: await conversionService.wordToHtml(filePath) };
       case 'excel-json':
         if (!ensureExtension(filePath, EXCEL_EXTENSIONS)) return unsupportedResult(to, 'Only Excel files can be converted to JSON');
         return { to, result: await conversionService.excelToJson(filePath) };
       case 'ppt-json':
-        if (!ensureExtension(filePath, PPT_EXTENSIONS)) return unsupportedResult(to, 'Only PowerPoint files can be converted to JSON');
+        if (!ensureExtension(filePath, PPT_XML_EXTENSIONS)) return unsupportedResult(to, 'Only OOXML PowerPoint files can be converted to JSON without LibreOffice');
         return { to, result: await conversionService.pptToJson(filePath) };
       case 'pptx-arraybuffer':
-        if (!ensureExtension(filePath, PPT_EXTENSIONS)) return unsupportedResult(to, 'Only PowerPoint files can be read as ArrayBuffer');
+        if (!ensureExtension(filePath, PPT_XML_EXTENSIONS)) return unsupportedResult(to, 'Only OOXML PowerPoint files can be read as ArrayBuffer');
         try {
           const buffer = await fs.readFile(filePath);
           return {

@@ -69,7 +69,8 @@
         "from": "../shared",
         "to": "shared",
         "filter": [
-          "security/**/*.mjs"
+          "security/**/*.mjs",
+          "workspace-preview.mjs"
         ]
       },
       {

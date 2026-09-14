@@ -9,6 +9,13 @@ import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import {
+  decodeWorkspaceTextBuffer,
+  getWorkspaceFilePreviewInfo,
+  isBinaryPreviewContentType,
+  isLikelyBinaryBuffer,
+  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
+} from '../../shared/workspace-preview.mjs';
 import { getInstalledSkills, registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerPublicSkillHubIpcHandlers } from './public-skillhub-ipc.mjs';
 import {
@@ -208,6 +215,7 @@ import {
 import { createDecisionBroker } from './decision-broker.mjs';
 import {
   createRemoteDirectClient,
+  downloadRemoteDirectWorkspaceFile,
   parseRemoteDirectServerInput,
 } from './remote-direct-client.mjs';
 import {
@@ -268,10 +276,10 @@ const rendererHtml = path.join(uiRoot, 'dist', 'renderer', 'index.html');
 const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.env.VITE_DEV_SERVER_URL).trim();
 const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
-const MAX_FILE_BYTES = 200 * 1024;
 // 通用 fs IPC 读取上限, 防止指向超大文件时把主进程内存撑爆。
 const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
+const REMOTE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), `moss-remote-preview-${process.pid}`);
 const WORKSPACE_WATCH_DIRECTORY_LIMIT = 512;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
@@ -8331,118 +8339,77 @@ async function listDirectoryEntries(sessionRecord, dirPath) {
   };
 }
 
-function getWorkspaceFilePreviewInfo(targetPath) {
-  const ext = path.extname(targetPath).toLowerCase().replace(/^\./, '');
-
-  const imageMimeByExt = {
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    bmp: 'image/bmp',
-    svg: 'image/svg+xml',
-    ico: 'image/x-icon',
-    avif: 'image/avif',
-    tif: 'image/tiff',
-    tiff: 'image/tiff',
-  };
-
-  if (imageMimeByExt[ext]) {
-    return {
-      contentType: 'image',
-      language: 'image',
-      mimeType: imageMimeByExt[ext],
-    };
+async function readWorkspaceTextPrefix(targetPath, size) {
+  const handle = await fsp.open(targetPath, 'r');
+  try {
+    const buffer = Buffer.alloc(Math.min(size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
   }
-
-  if (ext === 'pdf') {
-    return {
-      contentType: 'pdf',
-      language: 'pdf',
-      mimeType: 'application/pdf',
-    };
-  }
-
-  if (ext === 'md' || ext === 'markdown') {
-    return {
-      contentType: 'markdown',
-      language: 'markdown',
-      mimeType: 'text/markdown',
-    };
-  }
-
-  if (ext === 'html' || ext === 'htm') {
-    return {
-      contentType: 'html',
-      language: 'html',
-      mimeType: 'text/html',
-    };
-  }
-
-  if (ext === 'diff' || ext === 'patch') {
-    return {
-      contentType: 'diff',
-      language: 'diff',
-      mimeType: 'text/plain',
-    };
-  }
-
-  if (['doc', 'docx', 'odt'].includes(ext)) {
-    return {
-      contentType: 'word',
-      language: ext || 'word',
-      mimeType: 'application/octet-stream',
-    };
-  }
-
-  if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) {
-    return {
-      contentType: 'excel',
-      language: ext || 'excel',
-      mimeType: 'application/octet-stream',
-    };
-  }
-
-  if (['ppt', 'pptx', 'odp'].includes(ext)) {
-    return {
-      contentType: 'ppt',
-      language: ext || 'ppt',
-      mimeType: 'application/octet-stream',
-    };
-  }
-
-  if (['txt', 'log', 'text'].includes(ext)) {
-    return {
-      contentType: 'text',
-      language: 'text',
-      mimeType: 'text/plain',
-    };
-  }
-
-  return {
-    contentType: 'code',
-    language: ext || 'text',
-    mimeType: 'text/plain',
-  };
 }
 
 async function readWorkspaceFile(sessionRecord, filePath) {
   if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
     try {
       const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      return await fetchRemoteDirectWorkspaceFile({
+      const remoteFile = await fetchRemoteDirectWorkspaceFile({
         serverUrl,
         authToken,
         sessionId: sessionRecord.underlyingSessionId,
         filePath,
       });
+      const metadata = {
+        ...(remoteFile.metadata || {}),
+        remote: true,
+        previewEditable: false,
+        previewSaveable: false,
+      };
+      if (isBinaryPreviewContentType(remoteFile.contentType)) {
+        if (remoteFile.contentType === 'image' && remoteFile.size > MAX_IMAGE_BASE64_BYTES) {
+          return {
+            ...remoteFile,
+            contentType: 'unsupported',
+            language: 'binary',
+            metadata: { ...metadata, previewReason: 'too-large' },
+            content: `Image is too large to preview (${remoteFile.size} bytes).`,
+          };
+        }
+        const sourcePath = String(remoteFile.path || filePath);
+        const rawExtension = path.extname(sourcePath);
+        const extension = /^\.[a-z0-9]{1,12}$/i.test(rawExtension) ? rawExtension.toLowerCase() : '';
+        const cacheKey = createHash('sha256')
+          .update(`${sessionRecord.underlyingSessionId}\0${filePath}\0${remoteFile.size || 0}\0${metadata.modifiedAt || 0}`)
+          .digest('hex');
+        const localPreviewPath = path.join(REMOTE_PREVIEW_CACHE_DIR, `${cacheKey}${extension}`);
+        let cached = false;
+        try {
+          const localStat = await fsp.stat(localPreviewPath);
+          cached = localStat.isFile() && localStat.size === remoteFile.size;
+        } catch {}
+        if (!cached) {
+          await downloadRemoteDirectWorkspaceFile({
+            serverUrl,
+            authToken,
+            sessionId: sessionRecord.underlyingSessionId,
+            filePath,
+            destinationPath: localPreviewPath,
+          });
+        }
+        metadata.localPreviewPath = localPreviewPath;
+      }
+      return { ...remoteFile, metadata };
     } catch (error) {
       mossLog('warn', 'workspace', 'Remote workspace read failed', {
         sessionId: sessionRecord.id,
         underlyingSessionId: sessionRecord.underlyingSessionId,
         error: error instanceof Error ? error.message : String(error),
       });
+      throw new Error(
+        `Failed to read remote workspace file: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -8455,6 +8422,11 @@ async function readWorkspaceFile(sessionRecord, filePath) {
   }
 
   const targetPath = ensureInsideRoot(root, filePath);
+  const [realRoot, realTargetPath] = await Promise.all([
+    fsp.realpath(root),
+    fsp.realpath(targetPath),
+  ]);
+  ensureInsideRoot(realRoot, realTargetPath);
   const stat = await fsp.stat(targetPath);
   if (!stat.isFile()) {
     throw new Error('Target is not a file.');
@@ -8468,38 +8440,40 @@ async function readWorkspaceFile(sessionRecord, filePath) {
     contentType: previewInfo.contentType,
     language: previewInfo.language,
     mimeType: previewInfo.mimeType,
-    metadata: {},
+    metadata: {
+      modifiedAt: stat.mtimeMs,
+    },
   };
 
-  if (
-    previewInfo.contentType === 'image' ||
-    previewInfo.contentType === 'pdf' ||
-    previewInfo.contentType === 'word' ||
-    previewInfo.contentType === 'excel' ||
-    previewInfo.contentType === 'ppt'
-  ) {
+  if (previewInfo.contentType === 'image' && stat.size > MAX_IMAGE_BASE64_BYTES) {
     return {
       ...baseResult,
-      content: '',
-    };
-  }
-
-  if (stat.size > MAX_FILE_BYTES) {
-    return {
-      ...baseResult,
-      truncated: true,
+      contentType: 'unsupported',
+      language: 'binary',
       metadata: {
         ...baseResult.metadata,
         previewEditable: false,
         previewSaveable: false,
-        previewReason: 'truncated',
+        previewReason: 'too-large',
       },
-      content: `File too large to preview (${stat.size} bytes).`,
+      content: `Image is too large to preview (${stat.size} bytes).`,
     };
   }
 
-  const buffer = await fsp.readFile(targetPath);
-  if (buffer.includes(0)) {
+  if (isBinaryPreviewContentType(previewInfo.contentType)) {
+    return {
+      ...baseResult,
+      metadata: {
+        ...baseResult.metadata,
+        previewEditable: false,
+        previewSaveable: false,
+      },
+      content: '',
+    };
+  }
+
+  const buffer = await readWorkspaceTextPrefix(targetPath, stat.size);
+  if (isLikelyBinaryBuffer(buffer)) {
     return {
       ...baseResult,
       contentType: 'unsupported',
@@ -8516,7 +8490,16 @@ async function readWorkspaceFile(sessionRecord, filePath) {
 
   return {
     ...baseResult,
-    content: buffer.toString('utf8'),
+    truncated: stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
+    metadata: stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES
+      ? {
+          ...baseResult.metadata,
+          previewEditable: false,
+          previewSaveable: false,
+          previewReason: 'truncated',
+        }
+      : baseResult.metadata,
+    content: decodeWorkspaceTextBuffer(buffer, stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES),
   };
 }
 const {
@@ -9474,6 +9457,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+  void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true });
   void agentMailPoller?.stop();
   agentMailPoller = null;
   feishuAdapterProcessManager?.dispose();

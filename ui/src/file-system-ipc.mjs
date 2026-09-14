@@ -18,13 +18,19 @@ export function registerFileSystemIpcHandlers({
       const mimeMap = {
         png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
         gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
-        svg: 'image/svg+xml', ico: 'image/x-icon',
+        svg: 'image/svg+xml', ico: 'image/x-icon', avif: 'image/avif',
+        tif: 'image/tiff', tiff: 'image/tiff',
       };
-      const mime = mimeMap[ext] || 'application/octet-stream';
       const stat = await fsp.stat(filePath);
       if (!stat.isFile() || stat.size > maxImageBase64Bytes) {
         return null;
       }
+      if (ext === 'tif' || ext === 'tiff') {
+        const { default: sharp } = await import('sharp');
+        const pngBuffer = await sharp(filePath, { limitInputPixels: 100_000_000 }).png().toBuffer();
+        return `data:image/png;base64,${pngBuffer.toString('base64')}`;
+      }
+      const mime = mimeMap[ext] || 'application/octet-stream';
       const base64 = await fsp.readFile(filePath, { encoding: 'base64' });
       return `data:${mime};base64,${base64}`;
     } catch {
