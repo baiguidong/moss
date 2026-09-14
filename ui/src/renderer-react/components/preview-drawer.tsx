@@ -49,6 +49,7 @@ import { PPTViewer } from "@/components/preview/viewers/PPTViewer";
 import { DiffViewer } from "@/components/preview/viewers/DiffViewer";
 import { URLViewer } from "@/components/preview/viewers/URLViewer";
 import { UnsupportedViewer } from "@/components/preview/viewers/UnsupportedViewer";
+import { LazyOpenFileViewer } from "@/components/preview/viewers/LazyOpenFileViewer";
 
 function getPreviewMeta(file: WorkspacePreviewData) {
   switch (file.contentType) {
@@ -72,6 +73,8 @@ function getPreviewMeta(file: WorkspacePreviewData) {
       return { label: "URL", icon: Globe };
     case "text":
       return { label: "Text", icon: FileText };
+    case "ofv":
+      return { label: "Open File Viewer", icon: Eye };
     case "unsupported":
       return { label: "Unsupported", icon: FileType2 };
     case "code":
@@ -97,7 +100,8 @@ function canPersistPreview(file: WorkspacePreviewData): boolean {
   return (
     Boolean(file.content) &&
     metadata.previewSaveable !== false &&
-    ["markdown", "html", "text", "code", "diff", "url", "unsupported"].includes(file.contentType)
+    (["markdown", "html", "text", "code", "diff", "url", "unsupported"].includes(file.contentType)
+      || (file.contentType === "ofv" && metadata.ofvText === true))
   );
 }
 
@@ -105,7 +109,8 @@ function canEditPreview(file: WorkspacePreviewData): boolean {
   const metadata = getPreviewMetadata(file);
   return (
     metadata.previewEditable !== false &&
-    ["markdown", "html", "text", "code", "diff", "url", "unsupported"].includes(file.contentType)
+    (["markdown", "html", "text", "code", "diff", "url", "unsupported"].includes(file.contentType)
+      || (file.contentType === "ofv" && metadata.ofvText === true))
   );
 }
 
@@ -123,6 +128,10 @@ type PreviewDrawerMetadata = Record<string, unknown> & {
   localPreviewPath?: string;
   modifiedAt?: number;
   remote?: boolean;
+  ofvText?: boolean;
+  previewEngine?: string;
+  previewFamily?: string;
+  previewCapability?: "full" | "basic" | "structure";
 };
 
 function getPreviewMetadata(file: WorkspacePreviewData | null | undefined): PreviewDrawerMetadata {
@@ -180,6 +189,17 @@ function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
       return <CodeViewer content={file.content} language={file.language} />;
     case "text":
       return <TextViewer content={file.content} />;
+    case "ofv":
+      return (
+        <LazyOpenFileViewer
+          filePath={previewPath}
+          fileName={file.relativePath || basename(previewPath)}
+          mimeType={file.mimeType}
+          rootPath={typeof metadata.workspace === "string" ? metadata.workspace : undefined}
+          capability={metadata.previewCapability}
+          content={metadata.ofvText === true && !file.truncated && metadata.remote !== true ? file.content : undefined}
+        />
+      );
     case "unsupported":
       return <UnsupportedViewer title="暂不支持预览" description={file.content || "当前文件类型无法在应用内展示。"} />;
     default:

@@ -354,6 +354,23 @@ async function main() {
   }
 
   const appPackage = JSON.parse(extractFile(asarPath, 'package.json').toString('utf8'));
+  if (appPackage.dependencies?.['@open-file-viewer/core'] !== '0.1.45') {
+    throw new Error('Packaged app does not pin @open-file-viewer/core 0.1.45.');
+  }
+  const rendererScripts = [...asarEntries].filter(
+    (entry) => entry.startsWith('/dist/renderer/assets/') && entry.endsWith('.js'),
+  );
+  let hasOfvArchive = false;
+  let hasOfvModel = false;
+  for (const entry of rendererScripts) {
+    const source = extractFile(asarPath, entry.slice(1)).toString('utf8');
+    hasOfvArchive ||= source.includes('ofv-archive');
+    hasOfvModel ||= source.includes('ofv-model-stage');
+    if (hasOfvArchive && hasOfvModel) break;
+  }
+  if (!hasOfvArchive || !hasOfvModel) {
+    throw new Error('Packaged renderer is missing Open File Viewer plugin code.');
+  }
   const rootPackage = JSON.parse(await fsp.readFile(path.resolve(uiRoot, '..', 'package.json'), 'utf8'));
   if (appPackage.version !== rootPackage.version) {
     throw new Error(`Desktop/root version mismatch: ${appPackage.version} != ${rootPackage.version}`);
@@ -378,6 +395,7 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
   requireFile(path.join(paths.resourcesDir, 'shared', 'security', 'credential-crypto.mjs'), 'credential crypto');
   requireFile(path.join(paths.resourcesDir, 'library', 'library_parser.py'), 'Library parser');
+  requireFile(path.join(paths.resourcesDir, 'licenses', 'open-file-viewer.LICENSE'), 'Open File Viewer license');
   requireFile(path.join(paths.resourcesDir, 'library', 'engine-manifest.json'), 'Library engine manifest');
   requireFile(path.join(paths.resourcesDir, 'skills', 'convert-skill-to-app', 'SKILL.md'), 'skill-to-app skill');
   requireFile(path.join(paths.resourcesDir, 'assistants', 'app-builder', 'assistant.md'), 'app-builder assistant');

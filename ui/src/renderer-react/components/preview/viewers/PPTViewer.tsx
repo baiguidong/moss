@@ -3,54 +3,23 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { documentIpc } from "@/ipc/document.ipc";
-import { libreOfficeIpc } from "@/ipc/libreoffice.ipc";
 import { shellIpc } from "@/ipc/shell.ipc";
-import { LibreOfficeInstallPrompt } from "@/components/preview/LibreOfficeInstallPrompt";
+import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
-import { UnsupportedViewer } from "./UnsupportedViewer";
 
 const pdfCache = new Map<string, { pdfPath: string; timestamp: number }>();
 const CACHE_TIMEOUT = 5 * 60 * 1000;
 
 export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVersion?: number }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
-  const [pptData, setPptData] = React.useState<any | null>(null);
+  const [useOfv, setUseOfv] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [needsInstall, setNeedsInstall] = React.useState(false);
-  const [installing, setInstalling] = React.useState(false);
-  const [installPercent, setInstallPercent] = React.useState<number>();
-  const [installPhase, setInstallPhase] = React.useState<string>();
-  const [reloadToken, setReloadToken] = React.useState(0);
-
-  React.useEffect(() => {
-    const unsubProgress = libreOfficeIpc.onInstallProgress(({ phase, percent }) => {
-      setInstalling(true);
-      setInstallPhase(phase);
-      if (percent != null) setInstallPercent((prev) => (prev != null ? Math.max(prev, percent) : percent));
-    });
-    const unsubResult = libreOfficeIpc.onInstallResult(({ success }) => {
-      setInstalling(false);
-      setInstallPercent(undefined);
-      setInstallPhase(undefined);
-      if (success) {
-        setNeedsInstall(false);
-        setReloadToken((n) => n + 1);
-      }
-    });
-    return () => {
-      unsubProgress();
-      unsubResult();
-    };
-  }, []);
-
   const cacheKey = `${filePath}:${fileVersion ?? "unknown"}`;
 
   const load = React.useCallback(async (bypassCache = false) => {
     setLoading(true);
-    setError(null);
     setPdfPath(undefined);
-    setPptData(null);
+    setUseOfv(false);
     try {
       const cached = pdfCache.get(cacheKey);
       if (!bypassCache && cached && Date.now() - cached.timestamp < CACHE_TIMEOUT) {
@@ -59,30 +28,17 @@ export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVer
       }
       if (cached) pdfCache.delete(cacheKey);
 
-      const libreOfficeAvailable = await documentIpc.libreOffice.isAvailable();
-      if (libreOfficeAvailable) {
-        const pdfResponse = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
-        if (pdfResponse?.result?.success && pdfResponse.result.data) {
-          setPdfPath(pdfResponse.result.data);
-          pdfCache.set(cacheKey, { pdfPath: pdfResponse.result.data, timestamp: Date.now() });
+      if (await documentIpc.libreOffice.isAvailable()) {
+        const response = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
+        if (response?.result?.success && response.result.data) {
+          setPdfPath(response.result.data);
+          pdfCache.set(cacheKey, { pdfPath: response.result.data, timestamp: Date.now() });
           return;
         }
       }
-
-      const canUseXmlFallback = /\.(pptx|pptm|ppsx)$/i.test(filePath);
-      const pptResponse = canUseXmlFallback
-        ? await documentIpc.convert({ filePath, to: "ppt-json" })
-        : null;
-      if (pptResponse?.result?.success && pptResponse.result.data?.slides?.length) {
-        setPptData(pptResponse.result.data);
-        return;
-      }
-
-      setNeedsInstall(true);
-      setError(pptResponse?.result?.error || "无法降级预览该 PowerPoint 文件。");
-    } catch (err) {
-      setNeedsInstall(true);
-      setError(err instanceof Error ? err.message : "PowerPoint 预览失败。");
+      setUseOfv(true);
+    } catch {
+      setUseOfv(true);
     } finally {
       setLoading(false);
     }
@@ -90,27 +46,18 @@ export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVer
 
   React.useEffect(() => {
     void load(false);
-  }, [load, reloadToken]);
-
-  const handleInstall = React.useCallback(async () => {
-    setInstalling(true);
-    await libreOfficeIpc.install();
-  }, []);
+  }, [load]);
 
   if (loading) {
-    return <UnsupportedViewer title="正在加载 PowerPoint 预览" description="正在尝试 LibreOffice 与降级解析链。" />;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在选择 PowerPoint 解析器...</div>;
   }
 
   if (pdfPath) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load(true)}>
-            刷新
-          </Button>
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void shellIpc.openFile(filePath)}>
-            用系统应用打开
-          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void load(true)}>刷新</Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void shellIpc.openFile(filePath)}>用系统应用打开</Button>
         </div>
         <div className="min-h-0 flex-1">
           <PDFViewer filePath={pdfPath} title={filePath} />
@@ -119,45 +66,9 @@ export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVer
     );
   }
 
-  if (pptData?.slides?.length) {
-    return (
-      <div className="h-full overflow-auto p-5">
-        <div className="mx-auto max-w-5xl space-y-4">
-          {pptData.slides.map((slide: any) => (
-            <section key={slide.slideNumber} className="rounded-[24px] border border-border/70 bg-card/80 p-5 shadow-[0_18px_60px_-48px_rgba(0,0,0,0.65)]">
-              <div className="mb-4 text-sm font-medium text-foreground">Slide {slide.slideNumber}</div>
-              <div className="space-y-4">
-                {(slide.content?.elements || []).map((element: any, index: number) => {
-                  if (element.type === "text") {
-                    return <div key={index} className="whitespace-pre-wrap text-sm leading-7 text-foreground">{element.content}</div>;
-                  }
-                  if (element.type === "image") {
-                    const src = pptData.raw?._mediaResources?.[element.ref];
-                    if (src) {
-                      return <img key={index} src={src} alt={element.ref} className="max-w-full rounded-2xl border border-border/70" />;
-                    }
-                  }
-                  return null;
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      </div>
-    );
+  if (useOfv) {
+    return <LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" />;
   }
 
-  if (needsInstall) {
-    return (
-      <LibreOfficeInstallPrompt
-        fileType="ppt"
-        installing={installing}
-        percent={installPercent}
-        phase={installPhase}
-        onInstall={handleInstall}
-      />
-    );
-  }
-
-  return <UnsupportedViewer title="PowerPoint 预览失败" description={error || "无法打开该 PowerPoint 文档。"} tone="warning" />;
+  return null;
 }

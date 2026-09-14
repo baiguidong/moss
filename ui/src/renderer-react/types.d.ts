@@ -950,6 +950,7 @@ export type WorkspacePreviewContentType =
   | 'url'
   | 'text'
   | 'code'
+  | 'ofv'
   | 'unsupported';
 
 export type WorkspacePreviewData = {

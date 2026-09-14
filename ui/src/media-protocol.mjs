@@ -2,7 +2,8 @@
  * Workspace media protocol moss-media://
  *
  * 取代「整文件 base64 IPC」方案: <img>/<video>/<audio> 直接用
- *   moss-media://local/<encodeURIComponent(绝对路径)>
+ *   moss-media://workspace/<encodeURIComponent(根目录)>/<相对路径>
+ * 旧的 moss-media://local/<encodeURIComponent(绝对路径)> 地址继续兼容。
  * 支持 HTTP Range 请求 -> 视频边下边播 / seek 不卡。
  *
  * 安全: 仅允许读取已登记白名单根目录下的文件,
@@ -33,25 +34,43 @@ function isPathAllowed(target) {
 }
 
 const MIME = {
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
-  '.bmp': 'image/bmp', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.heic': 'image/heic',
-  '.heif': 'image/heif', '.avif': 'image/avif',
-  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.jfif': 'image/jpeg', '.pjpe': 'image/pjpeg',
+  '.pjpeg': 'image/pjpeg', '.png': 'image/png', '.gif': 'image/gif', '.bmp': 'image/bmp',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.cur': 'image/x-icon',
+  '.heic': 'image/heic', '.heif': 'image/heif', '.avif': 'image/avif', '.jxl': 'image/jxl',
+  '.tif': 'image/tiff', '.tiff': 'image/tiff', '.apng': 'image/apng',
+  '.mp4': 'video/mp4', '.mpg': 'video/mpeg', '.mpeg': 'video/mpeg', '.mpe': 'video/mpeg',
+  '.mpv': 'video/mpv', '.webm': 'video/webm', '.ogv': 'video/ogg', '.mov': 'video/quicktime',
   '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.m4v': 'video/x-m4v',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac', '.aac': 'audio/aac',
-  '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+  '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv', '.3gp': 'video/3gpp', '.3g2': 'video/3gpp2',
+  '.m2ts': 'video/mp2t', '.ts': 'video/mp2t', '.m3u8': 'application/vnd.apple.mpegurl',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.aif': 'audio/aiff', '.aiff': 'audio/aiff',
+  '.aifc': 'audio/aiff', '.flac': 'audio/flac', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg', '.m4a': 'audio/mp4', '.opus': 'audio/opus', '.weba': 'audio/webm',
+  '.amr': 'audio/amr', '.mid': 'audio/midi', '.midi': 'audio/midi', '.caf': 'audio/x-caf',
+  '.au': 'audio/basic', '.snd': 'audio/basic', '.wma': 'audio/x-ms-wma',
 };
 
 function mimeFor(filePath) {
   return MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
 
-function decodeRequestPath(requestUrl) {
-  // moss-media://local/<encoded> -> 解出绝对路径
+export function decodeMediaRequestPath(requestUrl) {
   const u = new URL(requestUrl);
-  // pathname 形如 /<encoded>; host 为 local
-  let encoded = u.pathname.replace(/^\/+/, '');
-  return decodeURIComponent(encoded);
+  const encodedPath = u.pathname.replace(/^\/+/, '');
+  if (u.hostname === 'workspace') {
+    const segments = encodedPath.split('/').filter(Boolean);
+    if (segments.length < 2) throw new Error('Missing workspace media path.');
+    const root = path.resolve(decodeURIComponent(segments.shift()));
+    const target = path.resolve(root, ...segments.map((segment) => decodeURIComponent(segment)));
+    const relative = path.relative(root, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error('Workspace media path escapes its root.');
+    }
+    return target;
+  }
+  if (u.hostname !== 'local') throw new Error('Unknown media URL format.');
+  return decodeURIComponent(encodedPath);
 }
 
 /**
@@ -62,7 +81,7 @@ export function installMediaProtocol(protocol) {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     let filePath;
     try {
-      filePath = decodeRequestPath(request.url);
+      filePath = decodeMediaRequestPath(request.url);
     } catch {
       return new Response('Bad request', { status: 400 });
     }
@@ -105,6 +124,7 @@ export function installMediaProtocol(protocol) {
           'Content-Length': String(total),
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*',
         },
       });
     }
@@ -132,6 +152,7 @@ export function installMediaProtocol(protocol) {
         'Content-Range': `bytes ${start}-${end}/${total}`,
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
       },
     });
   });

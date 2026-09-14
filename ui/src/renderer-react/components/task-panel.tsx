@@ -97,6 +97,8 @@ function previewLabel(tab: WorkspacePreviewData): string {
       return "URL";
     case "text":
       return "文本";
+    case "ofv":
+      return "扩展预览";
     case "unsupported":
       return "不支持";
     case "code":

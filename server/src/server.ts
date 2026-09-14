@@ -214,10 +214,17 @@ async function readSessionWorkspaceFile(
     mimeType: previewInfo.mimeType,
     metadata: {
       modifiedAt: targetStat.mtimeMs,
+      ...(previewInfo.previewEngine ? { previewEngine: previewInfo.previewEngine } : {}),
+      ...(previewInfo.previewFamily ? { previewFamily: previewInfo.previewFamily } : {}),
+      ...(previewInfo.previewCapability ? { previewCapability: previewInfo.previewCapability } : {}),
+      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false ? { ofvText: true } : {}),
     },
   }
 
-  if (isBinaryPreviewContentType(previewInfo.contentType)) {
+  const isBinaryPreview = typeof previewInfo.binary === 'boolean'
+    ? previewInfo.binary
+    : isBinaryPreviewContentType(previewInfo.contentType)
+  if (isBinaryPreview) {
     return {
       ...baseResult,
       metadata: {

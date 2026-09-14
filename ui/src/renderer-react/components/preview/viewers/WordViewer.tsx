@@ -3,55 +3,23 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { documentIpc } from "@/ipc/document.ipc";
-import { libreOfficeIpc } from "@/ipc/libreoffice.ipc";
 import { shellIpc } from "@/ipc/shell.ipc";
-import { LibreOfficeInstallPrompt } from "@/components/preview/LibreOfficeInstallPrompt";
+import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
-import { MarkdownViewer } from "./MarkdownViewer";
-import { UnsupportedViewer } from "./UnsupportedViewer";
 
 const pdfCache = new Map<string, { pdfPath: string; timestamp: number }>();
 const CACHE_TIMEOUT = 5 * 60 * 1000;
 
 export function WordViewer({ filePath, fileVersion }: { filePath: string; fileVersion?: number }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
-  const [markdown, setMarkdown] = React.useState("");
+  const [useOfv, setUseOfv] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [needsInstall, setNeedsInstall] = React.useState(false);
-  const [installing, setInstalling] = React.useState(false);
-  const [installPercent, setInstallPercent] = React.useState<number>();
-  const [installPhase, setInstallPhase] = React.useState<string>();
-  const [reloadToken, setReloadToken] = React.useState(0);
-
-  React.useEffect(() => {
-    const unsubProgress = libreOfficeIpc.onInstallProgress(({ phase, percent }) => {
-      setInstalling(true);
-      setInstallPhase(phase);
-      if (percent != null) setInstallPercent((prev) => (prev != null ? Math.max(prev, percent) : percent));
-    });
-    const unsubResult = libreOfficeIpc.onInstallResult(({ success }) => {
-      setInstalling(false);
-      setInstallPercent(undefined);
-      setInstallPhase(undefined);
-      if (success) {
-        setNeedsInstall(false);
-        setReloadToken((n) => n + 1);
-      }
-    });
-    return () => {
-      unsubProgress();
-      unsubResult();
-    };
-  }, []);
-
   const cacheKey = `${filePath}:${fileVersion ?? "unknown"}`;
 
   const load = React.useCallback(async (bypassCache = false) => {
     setLoading(true);
-    setError(null);
     setPdfPath(undefined);
-    setMarkdown("");
+    setUseOfv(false);
     try {
       const cached = pdfCache.get(cacheKey);
       if (!bypassCache && cached && Date.now() - cached.timestamp < CACHE_TIMEOUT) {
@@ -60,30 +28,17 @@ export function WordViewer({ filePath, fileVersion }: { filePath: string; fileVe
       }
       if (cached) pdfCache.delete(cacheKey);
 
-      const libreOfficeAvailable = await documentIpc.libreOffice.isAvailable();
-      if (libreOfficeAvailable) {
-        const pdfResponse = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
-        if (pdfResponse?.result?.success && pdfResponse.result.data) {
-          setPdfPath(pdfResponse.result.data);
-          pdfCache.set(cacheKey, { pdfPath: pdfResponse.result.data, timestamp: Date.now() });
+      if (await documentIpc.libreOffice.isAvailable()) {
+        const response = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
+        if (response?.result?.success && response.result.data) {
+          setPdfPath(response.result.data);
+          pdfCache.set(cacheKey, { pdfPath: response.result.data, timestamp: Date.now() });
           return;
         }
       }
-
-      const canUseMammothFallback = /\.(docx|docm|dotx)$/i.test(filePath);
-      const markdownResponse = canUseMammothFallback
-        ? await documentIpc.convert({ filePath, to: "markdown" })
-        : null;
-      if (markdownResponse?.result?.success && markdownResponse.result.data && String(markdownResponse.result.data).trim()) {
-        setMarkdown(markdownResponse.result.data);
-        return;
-      }
-
-      setNeedsInstall(true);
-      setError(markdownResponse?.result?.error || "无法降级预览该 Word 文档。");
-    } catch (err) {
-      setNeedsInstall(true);
-      setError(err instanceof Error ? err.message : "Word 文档预览失败。");
+      setUseOfv(true);
+    } catch {
+      setUseOfv(true);
     } finally {
       setLoading(false);
     }
@@ -91,31 +46,18 @@ export function WordViewer({ filePath, fileVersion }: { filePath: string; fileVe
 
   React.useEffect(() => {
     void load(false);
-  }, [load, reloadToken]);
-
-  const handleInstall = React.useCallback(async () => {
-    setInstalling(true);
-    await libreOfficeIpc.install();
-  }, []);
-
-  const handleOpen = React.useCallback(async () => {
-    await shellIpc.openFile(filePath);
-  }, [filePath]);
+  }, [load]);
 
   if (loading) {
-    return <UnsupportedViewer title="正在加载 Word 预览" description="正在尝试 LibreOffice 与降级解析链。" />;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在选择 Word 解析器...</div>;
   }
 
   if (pdfPath) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load(true)}>
-            刷新
-          </Button>
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={handleOpen}>
-            用系统应用打开
-          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void load(true)}>刷新</Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void shellIpc.openFile(filePath)}>用系统应用打开</Button>
         </div>
         <div className="min-h-0 flex-1">
           <PDFViewer filePath={pdfPath} title={filePath} />
@@ -124,35 +66,9 @@ export function WordViewer({ filePath, fileVersion }: { filePath: string; fileVe
     );
   }
 
-  if (markdown) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load(true)}>
-            刷新
-          </Button>
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={handleOpen}>
-            用系统应用打开
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1">
-          <MarkdownViewer content={markdown} />
-        </div>
-      </div>
-    );
+  if (useOfv) {
+    return <LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" />;
   }
 
-  if (needsInstall) {
-    return (
-      <LibreOfficeInstallPrompt
-        fileType="word"
-        installing={installing}
-        percent={installPercent}
-        phase={installPhase}
-        onInstall={handleInstall}
-      />
-    );
-  }
-
-  return <UnsupportedViewer title="Word 预览失败" description={error || "无法打开该 Word 文档。"} tone="warning" />;
+  return null;
 }

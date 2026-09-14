@@ -164,6 +164,7 @@ type PreviewTabMetadata = Record<string, unknown> & {
   previewEditable?: boolean;
   previewSaveable?: boolean;
   previewReason?: string;
+  ofvText?: boolean;
 };
 
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
@@ -208,6 +209,9 @@ function enrichWorkspacePreviewFile(
   const existingMetadata = getPreviewTabMetadata(existing);
   const existingDirty = Boolean(existingMetadata.dirty);
   const content = existingDirty ? existing?.content || file.content : file.content;
+  const fileMetadata = getPreviewTabMetadata(file);
+  const editableContent = canEditPreviewType(file.contentType)
+    || (file.contentType === 'ofv' && fileMetadata.ofvText === true);
 
   return {
     ...file,
@@ -217,7 +221,7 @@ function enrichWorkspacePreviewFile(
       ...(existingDirty ? existingMetadata : {}),
       sessionId: sessionId || existingMetadata.sessionId,
       workspace: workspace || existingMetadata.workspace,
-      originalContent: canEditPreviewType(file.contentType)
+      originalContent: editableContent
         ? file.content
         : existingMetadata.originalContent,
       dirty: existingDirty ? true : false,

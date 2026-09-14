@@ -10,11 +10,40 @@ import {
 
 describe('workspace preview contract', () => {
   it('classifies the supported preview families', () => {
-    expect(getWorkspaceFilePreviewInfo('/tmp/photo.tiff')).toMatchObject({ contentType: 'image', mimeType: 'image/tiff' });
+    expect(getWorkspaceFilePreviewInfo('/tmp/photo.tiff')).toMatchObject({
+      contentType: 'ofv',
+      mimeType: 'image/tiff',
+      previewEngine: 'open-file-viewer',
+      previewFamily: 'image',
+      previewCapability: 'full',
+      binary: true,
+    });
     expect(getWorkspaceFilePreviewInfo('/tmp/report.docm')).toMatchObject({ contentType: 'word' });
     expect(getWorkspaceFilePreviewInfo('/tmp/data.tsv')).toMatchObject({ contentType: 'excel' });
     expect(getWorkspaceFilePreviewInfo('/tmp/deck.ppsx')).toMatchObject({ contentType: 'ppt' });
     expect(getWorkspaceFilePreviewInfo('/tmp/source.tsx')).toMatchObject({ contentType: 'code', language: 'tsx' });
+  });
+
+  it('routes OFV-only formats with an honest capability level', () => {
+    expect(getWorkspaceFilePreviewInfo('/tmp/book.epub')).toMatchObject({
+      contentType: 'ofv', previewFamily: 'ebook', previewCapability: 'full', binary: true,
+    });
+    expect(getWorkspaceFilePreviewInfo('/tmp/archive.rar')).toMatchObject({
+      contentType: 'ofv', previewFamily: 'archive-structure', previewCapability: 'structure', binary: true,
+    });
+    expect(getWorkspaceFilePreviewInfo('/tmp/model.sldprt')).toMatchObject({
+      contentType: 'ofv', previewFamily: 'cad-structure', previewCapability: 'structure', binary: true,
+    });
+    expect(getWorkspaceFilePreviewInfo('/tmp/diagram.mermaid')).toMatchObject({
+      contentType: 'ofv', previewFamily: 'rich-text', previewCapability: 'full', binary: false,
+    });
+  });
+
+  it('keeps shared formats on Moss until their product routing is selected', () => {
+    expect(getWorkspaceFilePreviewInfo('/tmp/report.pdf')).toMatchObject({ contentType: 'pdf' });
+    expect(getWorkspaceFilePreviewInfo('/tmp/photo.png')).toMatchObject({ contentType: 'image' });
+    expect(getWorkspaceFilePreviewInfo('/tmp/report.docx')).toMatchObject({ contentType: 'word' });
+    expect(getWorkspaceFilePreviewInfo('/tmp/data.csv')).toMatchObject({ contentType: 'excel' });
   });
 
   it('treats unknown extensions as text until binary detection proves otherwise', () => {

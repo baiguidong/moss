@@ -44,9 +44,12 @@ describe('desktop package contract', () => {
     expect(desktopPackage.build.files).toContain('dist/runtime/**/*');
     const buildSource = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
     const copySource = readFileSync(path.join(uiRoot, 'scripts', 'copy-build-resources.mjs'), 'utf8');
+    const rendererBuildSource = readFileSync(path.join(uiRoot, 'scripts', 'build-renderer.mjs'), 'utf8');
     expect(buildSource).toContain("--outfile=ui/electron-direct.mjs");
     expect(buildSource).not.toContain('bin/cli-node.js');
     expect(copySource).toContain("'dist', 'runtime', 'electron-direct.mjs'");
+    expect(desktopPackage.scripts['build:renderer']).toBe('node scripts/build-renderer.mjs');
+    expect(rendererBuildSource).toContain("'--max-old-space-size=6144'");
     const rootModules = desktopPackage.build.extraResources.find(
       (entry: { from?: string }) => entry.from === '../node_modules',
     );
@@ -55,7 +58,13 @@ describe('desktop package contract', () => {
     expect(desktopPackage.build.extraResources.some(
       (entry: { from?: string; to?: string }) => entry.from === '../vendor/ripgrep' && entry.to === 'ripgrep',
     )).toBe(true);
+    expect(desktopPackage.build.extraResources.some(
+      (entry: { from?: string; to?: string }) => entry.from === 'resources/licenses' && entry.to === 'licenses',
+    )).toBe(true);
     expect(desktopPackage.build.afterPack).toBe('scripts/after-pack.mjs');
+    expect(desktopPackage.dependencies['@open-file-viewer/core']).toBe('0.1.45');
+    expect(desktopPackage.dependencies.leaflet).toBe('1.9.4');
+    expect(desktopPackage.build.files).toContain('dist/renderer/**/*');
 
     const macRipgrep = path.join(repoRoot, 'vendor', 'ripgrep', 'arm64-darwin', 'rg');
     const winRipgrep = path.join(repoRoot, 'vendor', 'ripgrep', 'x64-win32', 'rg.exe');

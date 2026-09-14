@@ -245,6 +245,7 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       stream: true,
       bypassCSP: true,
+      corsEnabled: true,
     },
   },
   {
@@ -648,6 +649,7 @@ fs.mkdirSync(MOSS_LIBRARY_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
+allowMediaRoot(REMOTE_PREVIEW_CACHE_DIR);
 
 function getOrCreateDecisionSigningSecret() {
   try {
@@ -8427,6 +8429,7 @@ async function readWorkspaceFile(sessionRecord, filePath) {
     fsp.realpath(targetPath),
   ]);
   ensureInsideRoot(realRoot, realTargetPath);
+  allowMediaRoot(realRoot);
   const stat = await fsp.stat(targetPath);
   if (!stat.isFile()) {
     throw new Error('Target is not a file.');
@@ -8442,6 +8445,10 @@ async function readWorkspaceFile(sessionRecord, filePath) {
     mimeType: previewInfo.mimeType,
     metadata: {
       modifiedAt: stat.mtimeMs,
+      ...(previewInfo.previewEngine ? { previewEngine: previewInfo.previewEngine } : {}),
+      ...(previewInfo.previewFamily ? { previewFamily: previewInfo.previewFamily } : {}),
+      ...(previewInfo.previewCapability ? { previewCapability: previewInfo.previewCapability } : {}),
+      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false ? { ofvText: true } : {}),
     },
   };
 
@@ -8460,7 +8467,10 @@ async function readWorkspaceFile(sessionRecord, filePath) {
     };
   }
 
-  if (isBinaryPreviewContentType(previewInfo.contentType)) {
+  const isBinaryPreview = typeof previewInfo.binary === 'boolean'
+    ? previewInfo.binary
+    : isBinaryPreviewContentType(previewInfo.contentType);
+  if (isBinaryPreview) {
     return {
       ...baseResult,
       metadata: {

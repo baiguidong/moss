@@ -5,6 +5,10 @@ export type WorkspaceFilePreviewInfo = {
   contentType: string;
   language: string;
   mimeType: string;
+  previewEngine?: 'open-file-viewer';
+  previewFamily?: string;
+  previewCapability?: 'full' | 'basic' | 'structure';
+  binary?: boolean;
 };
 
 export function getWorkspaceFilePreviewInfo(targetPath: string): WorkspaceFilePreviewInfo;

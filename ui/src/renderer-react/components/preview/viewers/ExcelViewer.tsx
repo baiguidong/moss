@@ -3,9 +3,8 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { documentIpc } from "@/ipc/document.ipc";
-import { libreOfficeIpc } from "@/ipc/libreoffice.ipc";
 import { shellIpc } from "@/ipc/shell.ipc";
-import { LibreOfficeInstallPrompt } from "@/components/preview/LibreOfficeInstallPrompt";
+import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
 import { UnsupportedViewer } from "./UnsupportedViewer";
 
@@ -92,32 +91,7 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
   const [activeSheet, setActiveSheet] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [needsInstall, setNeedsInstall] = React.useState(false);
-  const [installing, setInstalling] = React.useState(false);
-  const [installPercent, setInstallPercent] = React.useState<number>();
-  const [installPhase, setInstallPhase] = React.useState<string>();
-  const [reloadToken, setReloadToken] = React.useState(0);
-
-  React.useEffect(() => {
-    const unsubProgress = libreOfficeIpc.onInstallProgress(({ phase, percent }) => {
-      setInstalling(true);
-      setInstallPhase(phase);
-      if (percent != null) setInstallPercent((prev) => (prev != null ? Math.max(prev, percent) : percent));
-    });
-    const unsubResult = libreOfficeIpc.onInstallResult(({ success }) => {
-      setInstalling(false);
-      setInstallPercent(undefined);
-      setInstallPhase(undefined);
-      if (success) {
-        setNeedsInstall(false);
-        setReloadToken((n) => n + 1);
-      }
-    });
-    return () => {
-      unsubProgress();
-      unsubResult();
-    };
-  }, []);
+  const [useOfv, setUseOfv] = React.useState(false);
 
   const cacheKey = `${filePath}:${fileVersion ?? "unknown"}`;
 
@@ -126,6 +100,7 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
     setError(null);
     setPdfPath(undefined);
     setExcelData(null);
+    setUseOfv(false);
     try {
       const cached = pdfCache.get(cacheKey);
       if (!bypassCache && cached && Date.now() - cached.timestamp < CACHE_TIMEOUT) {
@@ -133,6 +108,13 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
         return;
       }
       if (cached) pdfCache.delete(cacheKey);
+
+      const isDelimitedText = /\.(csv|tsv)$/i.test(filePath);
+      const libreOfficeAvailable = !isDelimitedText && await documentIpc.libreOffice.isAvailable();
+      if (!isDelimitedText && !libreOfficeAvailable) {
+        setUseOfv(true);
+        return;
+      }
 
       const jsonResponse = await documentIpc.convert({ filePath, to: "excel-json" });
       const workbookData = jsonResponse?.result?.success ? jsonResponse.result.data : null;
@@ -147,8 +129,6 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
       }, 0);
       const estimatedWidth = estimateTableContentWidth(workbookData?.sheets || []);
       const isWideTable = maxColumns > WIDE_TABLE_COLUMN_THRESHOLD || estimatedWidth > LANDSCAPE_CHAR_WIDTH;
-      const libreOfficeAvailable = await documentIpc.libreOffice.isAvailable();
-
       if (libreOfficeAvailable && !isWideTable) {
         const pdfResponse = await documentIpc.convert({ filePath, to: "libreoffice-pdf" });
         if (pdfResponse?.result?.success && pdfResponse.result.data) {
@@ -162,11 +142,10 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
         return;
       }
 
-      setNeedsInstall(true);
-      setError("无法使用降级解析预览该 Excel 文件。");
+      setUseOfv(true);
     } catch (err) {
-      setNeedsInstall(true);
       setError(err instanceof Error ? err.message : "Excel 预览失败。");
+      setUseOfv(true);
     } finally {
       setLoading(false);
     }
@@ -174,12 +153,7 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
 
   React.useEffect(() => {
     void load(false);
-  }, [load, reloadToken]);
-
-  const handleInstall = React.useCallback(async () => {
-    setInstalling(true);
-    await libreOfficeIpc.install();
-  }, []);
+  }, [load]);
 
   if (loading) {
     return <UnsupportedViewer title="正在加载 Excel 预览" description="正在尝试 LibreOffice 与降级解析链。" />;
@@ -201,6 +175,10 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
         </div>
       </div>
     );
+  }
+
+  if (useOfv) {
+    return <LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" />;
   }
 
   if (excelData?.sheets?.length) {
@@ -267,18 +245,6 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
           </div>
         </div>
       </div>
-    );
-  }
-
-  if (needsInstall) {
-    return (
-      <LibreOfficeInstallPrompt
-        fileType="excel"
-        installing={installing}
-        percent={installPercent}
-        phase={installPhase}
-        onInstall={handleInstall}
-      />
     );
   }
 
