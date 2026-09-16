@@ -10,7 +10,7 @@ import {
   SUPPORTED_RUNTIME_TARGETS,
 } from '../src/runtime/runtime-manifest.mjs';
 import { targetArch } from '../scripts/after-pack.mjs';
-import { assertUnsignedPe, normalizeAsarEntry } from '../scripts/verify-package.mjs';
+import { assertUnsignedPe, indexAsarEntries, normalizeAsarEntry } from '../scripts/verify-package.mjs';
 
 const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(uiRoot, '..');
@@ -204,6 +204,14 @@ describe('desktop package contract', () => {
     expect(normalizeAsarEntry('\\dist\\runtime\\electron-direct.mjs'))
       .toBe('/dist/runtime/electron-direct.mjs');
     expect(normalizeAsarEntry('/src/main.mjs')).toBe('/src/main.mjs');
+
+    const entries = indexAsarEntries([
+      '\\dist\\renderer\\assets\\3MFLoader.js',
+      '/src/main.mjs',
+    ]);
+    expect(entries.get('/dist/renderer/assets/3MFLoader.js'))
+      .toBe('dist\\renderer\\assets\\3MFLoader.js');
+    expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
   test('installs adapter dependencies in every clean CI build that compiles adapters', () => {

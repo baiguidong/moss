@@ -57,6 +57,13 @@ export function normalizeAsarEntry(entry) {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
 
+export function indexAsarEntries(entries) {
+  return new Map(entries.map((entry) => [
+    normalizeAsarEntry(entry),
+    String(entry).replace(/^[/\\]+/, ''),
+  ]));
+}
+
 function digestFile(filePath, algorithm, encoding) {
   return new Promise((resolve, reject) => {
     const hash = createHash(algorithm);
@@ -342,7 +349,14 @@ async function main() {
   requireDirectory(paths.appDir, 'packaged app');
   requireFile(paths.executable, 'packaged executable');
   const asarPath = requireFile(path.join(paths.resourcesDir, 'app.asar'), 'app.asar');
-  const asarEntries = new Set(listPackage(asarPath).map(normalizeAsarEntry));
+  const asarEntryIndex = indexAsarEntries(listPackage(asarPath));
+  const asarEntries = new Set(asarEntryIndex.keys());
+  const extractAsarFile = (entry) => {
+    const normalized = normalizeAsarEntry(entry);
+    const archiveEntry = asarEntryIndex.get(normalized);
+    if (!archiveEntry) throw new Error(`app.asar is missing ${normalized}`);
+    return extractFile(asarPath, archiveEntry);
+  };
   for (const entry of [
     '/dist/runtime/electron-direct.mjs',
     '/src/main.mjs',
@@ -353,7 +367,7 @@ async function main() {
     if (!asarEntries.has(entry)) throw new Error(`app.asar is missing ${entry}`);
   }
 
-  const appPackage = JSON.parse(extractFile(asarPath, 'package.json').toString('utf8'));
+  const appPackage = JSON.parse(extractAsarFile('/package.json').toString('utf8'));
   if (appPackage.dependencies?.['@open-file-viewer/core'] !== '0.1.45') {
     throw new Error('Packaged app does not pin @open-file-viewer/core 0.1.45.');
   }
@@ -363,7 +377,7 @@ async function main() {
   let hasOfvArchive = false;
   let hasOfvModel = false;
   for (const entry of rendererScripts) {
-    const source = extractFile(asarPath, entry.slice(1)).toString('utf8');
+    const source = extractAsarFile(entry).toString('utf8');
     hasOfvArchive ||= source.includes('ofv-archive');
     hasOfvModel ||= source.includes('ofv-model-stage');
     if (hasOfvArchive && hasOfvModel) break;
@@ -375,7 +389,7 @@ async function main() {
   if (appPackage.version !== rootPackage.version) {
     throw new Error(`Desktop/root version mismatch: ${appPackage.version} != ${rootPackage.version}`);
   }
-  const updateSource = extractFile(asarPath, 'src/update-ipc.mjs').toString('utf8');
+  const updateSource = extractAsarFile('/src/update-ipc.mjs').toString('utf8');
   if (!updateSource.includes("const DEFAULT_REPO = 'baiguidong/moss';")) {
     throw new Error('Packaged manual updater does not target baiguidong/moss.');
   }
