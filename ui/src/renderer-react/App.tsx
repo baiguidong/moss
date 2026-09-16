@@ -54,7 +54,6 @@ import type {
   InstalledAssistant,
   LibraryResource,
   Project,
-  ProjectTemplate,
   SessionDetail,
   SessionSummary,
   StoredApp,
@@ -460,7 +459,6 @@ export default function App() {
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
   const [projects, setProjects] = React.useState<Project[]>([]);
-  const [projectTemplates, setProjectTemplates] = React.useState<ProjectTemplate[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
@@ -597,12 +595,6 @@ export default function App() {
       refreshSummaries(),
     ]);
   }, [refreshProjects, refreshSummaries]);
-
-  const refreshProjectTemplates = React.useCallback(async () => {
-    const list = await window.agentDesktop.listProjectTemplates();
-    setProjectTemplates(Array.isArray(list) ? list : []);
-    return list;
-  }, []);
 
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
@@ -1082,7 +1074,6 @@ export default function App() {
           refreshApps(),
           refreshSummaries(),
           refreshProjects(),
-          refreshProjectTemplates(),
           refreshAssistants(nextSettings.agentMode ?? 'local'),
         ]);
         void refreshConnectors().catch(() => {});
@@ -1099,7 +1090,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshProjectTemplates, refreshAssistants, refreshConnectors]);
+  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshAssistants, refreshConnectors]);
 
   React.useEffect(() => {
     if (!desktopSettings?.remoteEnabled) return;
@@ -2590,7 +2581,6 @@ export default function App() {
           ) : activeView === 'projects' ? (
             <ProjectWorkspace
               projects={projects}
-              templates={projectTemplates}
               activeProjectId={activeProjectId}
               refreshSignal={projectRefreshSignal}
               onActiveProjectChange={setActiveProjectId}

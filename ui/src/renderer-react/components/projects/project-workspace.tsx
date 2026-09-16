@@ -8,6 +8,7 @@ import {
   Loader2,
   MessageSquarePlus,
   MoreHorizontal,
+  Pencil,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -22,6 +23,13 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProjectResourcePicker } from '@/components/projects/project-resource-picker';
 import { ProjectTasksTab } from '@/components/projects/project-tasks-tab';
@@ -37,14 +45,12 @@ import type {
   ProjectMemory,
   LibraryResource,
   ProjectTask,
-  ProjectTemplate,
 } from '@/types';
 
 type ProjectTab = 'activity' | 'decisions' | 'tasks' | 'assets';
 
 type ProjectWorkspaceProps = {
   projects: Project[];
-  templates: ProjectTemplate[];
   activeProjectId: string | null;
   refreshSignal: number;
   onActiveProjectChange: (projectId: string | null) => void;
@@ -107,12 +113,10 @@ function projectEventIcon(type: string) {
 
 function NewProjectDialog({
   open,
-  templates,
   onClose,
   onCreated,
 }: {
   open: boolean;
-  templates: ProjectTemplate[];
   onClose: () => void;
   onCreated: (project: Project) => void;
 }) {
@@ -130,33 +134,6 @@ function NewProjectDialog({
   }, [open]);
 
   if (!open) return null;
-
-  const applyTemplate = (templateId: string) => {
-    const template = templates.find((entry) => entry.id === templateId);
-    if (!template) {
-      setForm((prev) => ({ ...prev, templateId: null }));
-      return;
-    }
-    const dirty = Boolean(
-      form.name.trim() ||
-      form.instructions.trim() ||
-      form.connectorIds.length ||
-      form.expertIds.length ||
-      form.skillIds.length,
-    );
-    if (dirty && !window.confirm('切换场景会覆盖当前编辑内容')) {
-      return;
-    }
-    setForm({
-      name: template.nameSuggestion || template.name || '',
-      instructions: template.instructions || '',
-      templateId: template.id,
-      connectorIds: template.connectorIds || [],
-      expertIds: template.expertIds || [],
-      skillIds: template.skillIds || [],
-      decisionPolicy: { mode: 'auto_all' },
-    });
-  };
 
   const createProject = async () => {
     if (!form.name.trim()) {
@@ -219,29 +196,6 @@ function NewProjectDialog({
               />
             </div>
 
-            {templates.length > 0 && (
-              <div className="grid gap-2">
-                <div className="text-xs font-medium text-muted-foreground">场景</div>
-                <select
-                  value={form.templateId || ''}
-                  onChange={(event) => applyTemplate(event.target.value)}
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-                >
-                  <option value="">空白场景</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-                {templates.find((template) => template.id === form.templateId)?.description ? (
-                  <div className="text-xs leading-5 text-muted-foreground">
-                    {templates.find((template) => template.id === form.templateId)?.description}
-                  </div>
-                ) : null}
-              </div>
-            )}
-
             <div className="grid gap-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>指令</span>
@@ -301,6 +255,7 @@ function ProjectList({
   query,
   onQueryChange,
   onOpen,
+  onRename,
   onDelete,
   onNew,
 }: {
@@ -308,15 +263,71 @@ function ProjectList({
   query: string;
   onQueryChange: (query: string) => void;
   onOpen: (projectId: string) => void;
+  onRename: (project: Project, name: string) => Promise<void>;
   onDelete: (project: Project) => Promise<void>;
   onNew: () => void;
 }) {
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null);
   const [deleteError, setDeleteError] = React.useState('');
+  const [renameTarget, setRenameTarget] = React.useState<Project | null>(null);
+  const [renameValue, setRenameValue] = React.useState('');
+  const [renaming, setRenaming] = React.useState(false);
+  const [renameError, setRenameError] = React.useState('');
+  const renameInputRef = React.useRef<HTMLInputElement>(null);
+  const renameFocusRequestedRef = React.useRef(false);
   const filtered = projects.filter((project) =>
     project.name.toLowerCase().includes(query.toLowerCase()) ||
     project.id.toLowerCase().includes(query.toLowerCase())
   );
+
+  React.useEffect(() => {
+    if (!renameTarget) return;
+    const timer = window.setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [renameTarget]);
+
+  const openRenameDialog = (project: Project) => {
+    renameFocusRequestedRef.current = true;
+    setRenameTarget(project);
+    setRenameValue(project.name);
+    setRenameError('');
+  };
+
+  const closeRenameDialog = () => {
+    if (renaming) return;
+    renameFocusRequestedRef.current = false;
+    setRenameTarget(null);
+    setRenameValue('');
+    setRenameError('');
+  };
+
+  const renameProject = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!renameTarget) return;
+    const name = renameValue.trim();
+    if (!name) {
+      setRenameError('项目名称不能为空');
+      return;
+    }
+    if (name === renameTarget.name) {
+      closeRenameDialog();
+      return;
+    }
+    setRenaming(true);
+    setRenameError('');
+    try {
+      await onRename(renameTarget, name);
+      setRenameTarget(null);
+      setRenameValue('');
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const deleteProject = async (project: Project) => {
     if (!window.confirm(`删除项目「${project.name}」？\n\n项目将从列表中隐藏，相关任务、资产、会话和文件仍会保留。`)) return;
@@ -333,90 +344,169 @@ function ProjectList({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="border-b border-border px-6 py-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 border-b border-border/70 px-5 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground">项目</h1>
-            <p className="mt-1 text-sm text-muted-foreground">管理项目沉淀、任务和资产。</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">管理项目沉淀、任务和资产</p>
           </div>
           <Button onClick={onNew}>
             <Plus className="h-4 w-4" />
             新建项目
           </Button>
         </div>
-        <div className="relative mt-4 max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="查询项目"
-            className="pl-9"
-          />
-        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="grid gap-2 p-6">
+        <div className="mx-auto w-full max-w-[1180px] px-5 py-5 sm:px-6 sm:py-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-base font-semibold text-foreground">我的项目</h2>
+              <span className="text-xs text-muted-foreground">{filtered.length}</span>
+            </div>
+            <div className="relative w-full sm:w-[300px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => onQueryChange(event.target.value)}
+                placeholder="搜索项目"
+                className="pl-9"
+              />
+            </div>
+          </div>
           {deleteError ? (
-            <div className="mb-1 text-sm text-destructive">{deleteError}</div>
+            <div className="mt-3 text-sm text-destructive">{deleteError}</div>
           ) : null}
           {filtered.length > 0 ? (
-            filtered.map((project) => (
-              <div
-                key={project.id}
-                className="group grid min-h-[92px] grid-cols-[minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-lg border border-border bg-background transition hover:border-primary/50 hover:bg-accent/35"
-              >
-                <button
-                  type="button"
-                  onClick={() => onOpen(project.id)}
-                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
+              {filtered.map((project) => (
+                <div
+                  key={project.id}
+                  className="group relative flex min-h-[148px] overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/45 hover:bg-accent/25"
                 >
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <FolderKanban className="h-4 w-4 shrink-0 text-primary" />
-                      <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <Badge variant="outline">{project.sessionCount || 0} 会话</Badge>
-                      <Badge variant="outline">{project.taskCount || 0} 任务</Badge>
-                      <Badge variant="outline">{project.assetCount || 0} 资产</Badge>
-                      {project.pendingDecisionCount ? <Badge variant="destructive">{project.pendingDecisionCount} 待决策</Badge> : null}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs text-muted-foreground">
-                    <div>更新于</div>
-                    <div className="mt-1">{formatTime(project.updatedAt)}</div>
-                  </div>
-                </button>
-                <div className="flex items-center border-l border-border/70 px-2">
-                  <Button
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => void deleteProject(project)}
-                    disabled={deletingProjectId !== null}
-                    title={`删除项目 ${project.name}`}
-                    aria-label={`删除项目 ${project.name}`}
+                    onClick={() => onOpen(project.id)}
+                    className="flex min-w-0 flex-1 flex-col p-4 pr-12 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
-                    {deletingProjectId === project.id
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : <Trash2 className="h-4 w-4" />}
-                  </Button>
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <FolderKanban className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 pt-0.5">
+                        <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {formatTime(project.updatedAt)} 更新
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
+                      <span>{project.sessionCount || 0} 会话</span>
+                      <span>{project.taskCount || 0} 任务</span>
+                      <span>{project.assetCount || 0} 资产</span>
+                      {project.pendingDecisionCount ? (
+                        <span className="font-medium text-destructive">{project.pendingDecisionCount} 待决策</span>
+                      ) : null}
+                    </div>
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-3 top-3 text-muted-foreground hover:text-foreground"
+                        disabled={deletingProjectId !== null}
+                        title={`${project.name} 更多操作`}
+                        aria-label={`${project.name} 更多操作`}
+                      >
+                        {deletingProjectId === project.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <MoreHorizontal className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-36"
+                      onCloseAutoFocus={(event) => {
+                        if (!renameFocusRequestedRef.current) return;
+                        event.preventDefault();
+                        renameFocusRequestedRef.current = false;
+                      }}
+                    >
+                      <DropdownMenuItem onSelect={() => openRenameDialog(project)}>
+                        <Pencil className="h-4 w-4" />
+                        重命名
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onSelect={() => void deleteProject(project)}>
+                        <Trash2 className="h-4 w-4" />
+                        删除
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           ) : (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <div className="text-sm font-medium text-foreground">暂无项目</div>
-              <div className="mt-1 text-sm text-muted-foreground">可以继续直接创建会话，也可以新建项目组织复杂工作。</div>
-              <Button className="mt-4" onClick={onNew}>
-                <Plus className="h-4 w-4" />
-                新建项目
-              </Button>
+            <div className="mt-3 rounded-lg border border-dashed border-border px-6 py-12 text-center">
+              <div className="text-sm font-medium text-foreground">{query ? '未找到相关项目' : '暂无项目'}</div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {query ? '试试其他关键词' : '新建项目，开始组织会话、任务和项目资产。'}
+              </div>
+              {!query ? (
+                <Button className="mt-4" onClick={onNew}>
+                  <Plus className="h-4 w-4" />
+                  新建项目
+                </Button>
+              ) : null}
             </div>
           )}
         </div>
       </ScrollArea>
+      {renameTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) closeRenameDialog();
+          }}
+        >
+          <form
+            className="w-full max-w-sm overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
+            onSubmit={renameProject}
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">重命名项目</div>
+              <Button type="button" variant="ghost" size="icon-sm" onClick={closeRenameDialog} disabled={renaming}>
+                <X className="h-4 w-4" />
+                <span className="sr-only">关闭</span>
+              </Button>
+            </div>
+            <div className="p-4">
+              <label className="mb-2 block text-xs font-medium text-muted-foreground" htmlFor="rename-project-name">
+                项目名称
+              </label>
+              <Input
+                id="rename-project-name"
+                ref={renameInputRef}
+                maxLength={30}
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                disabled={renaming}
+              />
+              {renameError ? <div className="mt-2 text-xs text-destructive">{renameError}</div> : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+              <Button type="button" variant="outline" onClick={closeRenameDialog} disabled={renaming}>取消</Button>
+              <Button type="submit" disabled={renaming || !renameValue.trim()}>
+                {renaming ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                保存
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1281,7 +1371,6 @@ function ProjectDetail({
 
 export function ProjectWorkspace({
   projects,
-  templates,
   activeProjectId,
   refreshSignal,
   onActiveProjectChange,
@@ -1321,6 +1410,13 @@ export function ProjectWorkspace({
           query={query}
           onQueryChange={setQuery}
           onOpen={onActiveProjectChange}
+          onRename={async (project, name) => {
+            await window.agentDesktop.updateProject({
+              projectId: project.id,
+              updates: { name },
+            });
+            await onProjectsChange();
+          }}
           onDelete={async (project) => {
             await window.agentDesktop.archiveProject({ projectId: project.id });
             await onProjectsChange();
@@ -1330,7 +1426,6 @@ export function ProjectWorkspace({
       )}
       <NewProjectDialog
         open={dialogOpen}
-        templates={templates}
         onClose={() => setDialogOpen(false)}
         onCreated={async (project) => {
           await onProjectsChange();
