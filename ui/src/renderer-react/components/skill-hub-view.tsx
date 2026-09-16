@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  ArrowUpDown,
   Check,
   Download,
   Hammer,
@@ -533,8 +534,8 @@ export function SkillHubView() {
   }, [category, categoryNameByKey, deferredQuery, installedSkills]);
 
   const tabs: Array<{ id: SkillTab; label: string }> = [
-    { id: "hub", label: "SkillHub" },
-    { id: "installed", label: "我安装的" },
+    { id: "hub", label: "全部技能" },
+    { id: "installed", label: "已安装" },
   ];
   const sortOptions: Array<{ id: SkillSortMode; label: string }> = [
     { id: "score", label: "综合评分" },
@@ -544,9 +545,14 @@ export function SkillHubView() {
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/70 bg-background/92 px-4 py-2 backdrop-blur sm:px-5">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div className="relative flex h-full min-h-0 flex-col bg-background">
+      {notice ? (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 max-w-sm rounded-md border border-border/70 bg-card/95 px-3 py-2 text-xs text-foreground shadow-lg backdrop-blur" role="status">
+          {notice}
+        </div>
+      ) : null}
+      <div className="shrink-0 bg-background/92 px-4 py-1.5 backdrop-blur sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <div className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-muted/70 p-0.5">
             {tabs.map((item) => (
               <button
@@ -567,13 +573,39 @@ export function SkillHubView() {
               </button>
             ))}
           </div>
-          {notice ? (
-            <div className="min-w-[120px] flex-1 truncate text-xs text-muted-foreground">{notice}</div>
-          ) : (
-            <div className="hidden min-w-[80px] flex-1 truncate text-xs text-muted-foreground sm:block">
-              {tab === "installed" ? `${visibleInstalledSkills.length} 个已安装` : `${formatCount(total)} 个 Skill`}
-            </div>
-          )}
+          {tab === "hub" ? (
+            <>
+              <span className="mx-0.5 h-5 w-px shrink-0 bg-border/70" aria-hidden="true" />
+              <div
+                className="flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-muted/70 p-0.5"
+                role="group"
+                aria-label="排序方式"
+              >
+                <span className="flex h-7 shrink-0 items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  排序
+                </span>
+                {sortOptions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setSortMode(item.id);
+                      setPage(1);
+                    }}
+                    className={cn(
+                      "h-7 rounded-md px-2.5 text-xs font-medium transition-colors",
+                      sortMode === item.id
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
           <div className="relative ml-auto w-full sm:w-[300px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -618,34 +650,6 @@ export function SkillHubView() {
               </CategoryChip>
             ))}
           </div>
-          {tab === "hub" ? (
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <div className="flex h-7 shrink-0 items-center gap-0.5 rounded-md bg-muted/70 p-0.5">
-                {sortOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setSortMode(item.id);
-                      setPage(1);
-                    }}
-                    className={cn(
-                      "h-6 rounded-[5px] px-2.5 text-xs font-medium transition-colors",
-                      sortMode === item.id
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                第 {page} 页
-              </div>
-            </div>
-          ) : null}
 
           {error ? (
             <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -710,6 +714,9 @@ export function SkillHubView() {
                     <Button variant="outline" size="sm" className="h-8 rounded-lg px-3 text-xs" disabled={page <= 1 || loading} onClick={() => void loadRemote(page - 1)}>
                       上一页
                     </Button>
+                    <span className="min-w-14 text-center text-xs text-muted-foreground">
+                      {loading ? <Loader2 className="mx-auto h-3.5 w-3.5 animate-spin" /> : `第 ${page} 页`}
+                    </span>
                     <Button variant="outline" size="sm" className="h-8 rounded-lg px-3 text-xs" disabled={page * 18 >= total || loading} onClick={() => void loadRemote(page + 1)}>
                       下一页
                     </Button>

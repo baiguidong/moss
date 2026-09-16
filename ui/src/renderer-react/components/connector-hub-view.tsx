@@ -513,7 +513,7 @@ export function ConnectorHubView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/70 bg-background/92 px-4 py-2 backdrop-blur sm:px-5">
+      <div className="shrink-0 bg-background/92 px-4 py-2 backdrop-blur sm:px-5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-muted/70 p-0.5">
             {tabs.map((item) => (

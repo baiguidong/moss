@@ -201,7 +201,7 @@ function SystemMessage({
 }) {
   if (variant === "local_command") {
     return (
-      <div className="mb-5 flex justify-start gap-2">
+      <div className="flex justify-start gap-2" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <div className="max-w-[760px] rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
           <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">本地命令</div>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{content}</pre>
@@ -212,7 +212,7 @@ function SystemMessage({
 
   if (variant === "connector_auth") {
     return (
-      <div className="mb-5 flex justify-start gap-2">
+      <div className="flex justify-start gap-2" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <div className={cn(
           "max-w-[760px] rounded-xl border px-4 py-3 text-sm",
           status === "failed"
@@ -229,7 +229,7 @@ function SystemMessage({
   }
 
   return (
-    <div className="mb-4 flex justify-center">
+    <div className="flex justify-center" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
       <div className="max-w-[760px] rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs text-muted-foreground">
         {content}
         {meta && meta.length > 0 ? ` · ${meta.join(" · ")}` : ""}
@@ -246,7 +246,7 @@ function renderTranscriptItem(
 ) {
   if (item.kind === "tool_group") {
     return (
-      <div key={item.id} className="group mb-3 min-w-0 w-full">
+      <div key={item.id} className="group min-w-0 w-full" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <ToolCallGroup
           toolCalls={item.toolCalls}
           resultMap={resultMap}
@@ -329,35 +329,6 @@ function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; token
           <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
         )}
       </div>
-    </div>
-  );
-}
-
-const TIME_SEPARATOR_GAP_MS = 10 * 60 * 1000;
-
-function itemTimestamp(item: RenderItem): Date | null {
-  if (item.kind === "message") return item.message.timestamp ?? null;
-  return item.toolCalls[0]?.timestamp ?? null;
-}
-
-function formatSeparatorTime(date: Date) {
-  const now = new Date();
-  const sameDay = date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate();
-  const hm = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  if (sameDay) return hm;
-  const sameYear = date.getFullYear() === now.getFullYear();
-  const md = `${date.getMonth() + 1}月${date.getDate()}日`;
-  return sameYear ? `${md} ${hm}` : `${date.getFullYear()}年${md} ${hm}`;
-}
-
-function TimeSeparator({ date }: { date: Date }) {
-  return (
-    <div className="flex justify-center py-2">
-      <span className="rounded-full bg-muted/50 px-2.5 py-0.5 text-[10px] text-muted-foreground/80">
-        {formatSeparatorTime(date)}
-      </span>
     </div>
   );
 }
@@ -614,31 +585,24 @@ export const VirtualMessageList = React.forwardRef<
         initialTopMostItemIndex={Math.max(0, renderItems.length - 1)}
         increaseViewportBy={{ top: 400, bottom: 400 }}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
-        itemContent={(index, item) => {
-          const ts = itemTimestamp(item);
-          const prevTs = index > 0 ? itemTimestamp(renderItems[index - 1]!) : null;
-          const showSeparator = Boolean(
-            ts && prevTs && ts.getTime() - prevTs.getTime() > TIME_SEPARATOR_GAP_MS,
-          );
-          return (
-            <div
-              className={cn(
-                "mx-auto w-full min-w-0 py-0.5",
-                contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
-              )}
-              onContextMenu={(e) => {
-                const selection = window.getSelection()?.toString() ?? "";
-                const messageText = extractItemCopyText(item);
-                if (!selection && !messageText) return;
-                e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, messageText });
-              }}
-            >
-              {showSeparator && ts && <TimeSeparator date={ts} />}
-              {renderTranscriptItem(item, resultMap, childToolCallsByParent, focusedToolUseId)}
-            </div>
-          );
-        }}
+        itemContent={(_index, item) => (
+          <div
+            data-chat-message-list
+            className={cn(
+              "mx-auto w-full min-w-0 py-0.5",
+              contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+            )}
+            onContextMenu={(e) => {
+              const selection = window.getSelection()?.toString() ?? "";
+              const messageText = extractItemCopyText(item);
+              if (!selection && !messageText) return;
+              e.preventDefault();
+              setContextMenu({ x: e.clientX, y: e.clientY, messageText });
+            }}
+          >
+            {renderTranscriptItem(item, resultMap, childToolCallsByParent, focusedToolUseId)}
+          </div>
+        )}
       />
     </WorkspacePathProvider>
   );

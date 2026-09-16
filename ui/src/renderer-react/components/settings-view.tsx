@@ -9,7 +9,6 @@ import {
   Palette,
   RefreshCw,
   Search,
-  Server,
   SlidersHorizontal,
   SunMedium,
   Trash2,
@@ -21,6 +20,7 @@ import {
 import { BuddySummary } from '@/components/buddy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
@@ -43,6 +43,8 @@ type SettingsViewProps = {
   cssThemeId: string;
   setCssThemeId: (id: string) => void;
   onAutoCollapseToolCallsChange: (enabled: boolean) => void;
+  onAppearancePreview: (patch: Partial<DesktopSettings['appearance']>) => void;
+  onAppearanceCommit: (patch: Partial<DesktopSettings['appearance']>) => void;
   buddyEnabled: boolean;
   onBuddyEnabledChange: (enabled: boolean) => void;
 };
@@ -223,7 +225,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'appearance',
         title: '外观',
-        keywords: ['appearance', 'theme', 'background', 'collapse', '主题', '工具', '折叠'],
+        keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距'],
       },
       {
         id: 'buddy',
@@ -1072,20 +1074,22 @@ function RuntimeSettings({
   return (
     <div className="space-y-3">
       <SettingsGroup>
-        <RuntimeRow
-          name="Node.js"
-          runtime={node}
-          enabled={runtimeSettings.node}
-          busy={installingRuntime === 'node' || Boolean(status?.installing)}
-          onEnabledChange={(enabled) => void updateRuntimeEnabled('node', enabled)}
-        />
-        <RuntimeRow
-          name="Python"
-          runtime={python}
-          enabled={runtimeSettings.python}
-          busy={installingRuntime === 'python' || Boolean(status?.installing)}
-          onEnabledChange={(enabled) => void updateRuntimeEnabled('python', enabled)}
-        />
+        <div className="grid divide-y divide-sidebar-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+          <RuntimeRow
+            name="Node.js"
+            runtime={node}
+            enabled={runtimeSettings.node}
+            busy={installingRuntime === 'node' || Boolean(status?.installing)}
+            onEnabledChange={(enabled) => void updateRuntimeEnabled('node', enabled)}
+          />
+          <RuntimeRow
+            name="Python"
+            runtime={python}
+            enabled={runtimeSettings.python}
+            busy={installingRuntime === 'python' || Boolean(status?.installing)}
+            onEnabledChange={(enabled) => void updateRuntimeEnabled('python', enabled)}
+          />
+        </div>
         {!git.skipped ? (
           <RuntimeRow
             name="Git Bash"
@@ -1123,12 +1127,15 @@ export function SettingsView({
   cssThemeId,
   setCssThemeId,
   onAutoCollapseToolCallsChange,
+  onAppearancePreview,
+  onAppearanceCommit,
   buddyEnabled,
   onBuddyEnabledChange,
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [remoteAuthError, setRemoteAuthError] = React.useState('');
+  const [remoteIdentity, setRemoteIdentity] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>('basic');
   const [activeSection, setActiveSection] = React.useState<SectionId>('basic-info');
@@ -1193,6 +1200,22 @@ export function SettingsView({
       setActiveGroupId(SECTION_GROUP_IDS[firstVisibleSectionId]);
     }
   }, [activeSectionVisible, firstVisibleSectionId]);
+
+  React.useEffect(() => {
+    if (!settingsDraft?.remoteDirectServerUrl || !settingsDraft.remoteDirectApiKey) {
+      setRemoteIdentity(null);
+      return;
+    }
+    let cancelled = false;
+    void window.agentDesktop.getRemoteServerIdentity().then((identity) => {
+      if (!cancelled) setRemoteIdentity(identity);
+    }).catch(() => {
+      if (!cancelled) setRemoteIdentity(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsDraft?.remoteDirectApiKey, settingsDraft?.remoteDirectServerUrl]);
 
   React.useEffect(() => {
     const container = scrollRef.current;
@@ -1267,6 +1290,10 @@ export function SettingsView({
     try {
       const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
       setSettingsDraft(next);
+      setRemoteIdentity({
+        userName: next.remoteDirectUserName || '',
+        userEmail: next.remoteDirectUserEmail || '',
+      });
       setRemoteAuthState('success');
       window.setTimeout(() => setRemoteAuthState('idle'), 2000);
     } catch (error) {
@@ -1534,9 +1561,26 @@ export function SettingsView({
                         <SettingsRow
                           title="协作邮箱"
                           description="通过云端 Moss Server 接收其他智能体发来的协作邮件。"
-                          controlClassName="sm:w-[56px]"
+                          controlClassName="sm:w-[430px]"
                         >
-                          <div className="flex justify-start sm:justify-end">
+                          <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
+                            <select
+                              className={cn(SELECT_CLASS_NAME, 'w-[132px]')}
+                              value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
+                              disabled={
+                                !(settingsDraft.remoteEnabled ?? false) ||
+                                settingsDraft.agentMail?.enabled !== true
+                              }
+                              aria-label="协作邮箱会话模式"
+                              onChange={(event) => updateSetting('agentMail', {
+                                ...settingsDraft.agentMail,
+                                sessionMode: event.target.value === 'new' ? 'new' : 'fixed',
+                              })}
+                            >
+                              <option value="fixed">固定会话</option>
+                              <option value="new">新会话</option>
+                            </select>
+                            <span className="hidden h-6 w-px bg-sidebar-border sm:block" />
                             <Toggle
                               checked={
                                 (settingsDraft.remoteEnabled ?? false) &&
@@ -1565,6 +1609,7 @@ export function SettingsView({
                                 onChange={(event) => {
                                   setRemoteAuthState('idle');
                                   setRemoteAuthError('');
+                                  setRemoteIdentity(null);
                                   updateSetting('remoteDirectServerUrl', event.target.value);
                                 }}
                                 placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
@@ -1573,14 +1618,17 @@ export function SettingsView({
 
                             <SettingsRow
                               title="OAuth 认证"
-                              description="通过浏览器登录 Moss Server，无需手动填写密码或 API Key。"
                               controlClassName="sm:w-[320px]"
                             >
                               <div className="space-y-2">
                                 <div className="flex items-center justify-end gap-3">
                                   <span className="text-xs text-muted-foreground">
                                     {remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
-                                      ? '已认证'
+                                      ? (remoteIdentity?.userName
+                                          || settingsDraft.remoteDirectUserName
+                                          || remoteIdentity?.userEmail
+                                          || settingsDraft.remoteDirectUserEmail
+                                          || '已认证')
                                       : '未认证'}
                                   </span>
                                   <Button
@@ -2379,6 +2427,7 @@ export function SettingsView({
                       >
                         <div className="flex w-full gap-2">
                           <Input
+                            type="password"
                             className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
                             value={settingsDraft.apiKey || ''}
                             onChange={(event) => updateSetting('apiKey', event.target.value)}
@@ -2618,6 +2667,59 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
+                        title="聊天显示"
+                        stacked
+                      >
+                        <div className="grid gap-5 sm:grid-cols-3">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="font-medium text-foreground">字体大小</span>
+                              <span className="tabular-nums text-muted-foreground">{settingsDraft.appearance.chatFontSize ?? 14} px</span>
+                            </div>
+                            <Slider
+                              min={12}
+                              max={18}
+                              step={1}
+                              value={[settingsDraft.appearance.chatFontSize ?? 14]}
+                              onValueChange={([value]) => onAppearancePreview({ chatFontSize: value ?? 14 })}
+                              onValueCommit={([value]) => onAppearanceCommit({ chatFontSize: value ?? 14 })}
+                              aria-label="聊天字体大小"
+                            />
+                          </div>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="font-medium text-foreground">行间距</span>
+                              <span className="tabular-nums text-muted-foreground">{(settingsDraft.appearance.chatLineHeight ?? 1.55).toFixed(2)}</span>
+                            </div>
+                            <Slider
+                              min={1.3}
+                              max={2}
+                              step={0.05}
+                              value={[settingsDraft.appearance.chatLineHeight ?? 1.55]}
+                              onValueChange={([value]) => onAppearancePreview({ chatLineHeight: value ?? 1.55 })}
+                              onValueCommit={([value]) => onAppearanceCommit({ chatLineHeight: value ?? 1.55 })}
+                              aria-label="聊天行间距"
+                            />
+                          </div>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="font-medium text-foreground">消息间距</span>
+                              <span className="tabular-nums text-muted-foreground">{settingsDraft.appearance.chatMessageSpacing ?? 10} px</span>
+                            </div>
+                            <Slider
+                              min={4}
+                              max={24}
+                              step={1}
+                              value={[settingsDraft.appearance.chatMessageSpacing ?? 10]}
+                              onValueChange={([value]) => onAppearancePreview({ chatMessageSpacing: value ?? 10 })}
+                              onValueCommit={([value]) => onAppearanceCommit({ chatMessageSpacing: value ?? 10 })}
+                              aria-label="聊天消息间距"
+                            />
+                          </div>
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
                         title="自动折叠工具调用"
                         controlClassName="sm:w-[56px]"
                       >
@@ -2736,13 +2838,16 @@ function FeishuSettings() {
     }
   }
 
-  const handleApplyRunLocation = async () => {
+  const handleApplyRunLocation = async (nextLocation: 'desktop' | 'server') => {
+    const previousLocation = config.feishu?.runLocation === 'server' ? 'server' : 'desktop'
+    setFsRunLocation(nextLocation)
     setIsApplyingLocation(true)
     setApplyLocationError('')
     try {
-      const result = await applyRunLocation(fsRunLocation)
+      const result = await applyRunLocation(nextLocation)
       setFeishuStatus(result.status)
     } catch (err) {
+      setFsRunLocation(previousLocation)
       setApplyLocationError(err instanceof Error ? err.message : '切换运行位置失败')
       void window.agentDesktop.getAdapterStatus().then(setFeishuStatus).catch(() => {})
     } finally {
@@ -2785,8 +2890,6 @@ function FeishuSettings() {
   const pairingExpiry = pairingState?.expiresAt
   const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
   const minutesLeft = pairingExpiry ? Math.max(0, Math.ceil((pairingExpiry - Date.now()) / 60000)) : 0
-  const appliedRunLocation = config.feishu?.runLocation === 'server' ? 'server' : 'desktop'
-  const hasPendingRunLocation = fsRunLocation !== appliedRunLocation
 
   if (isLoading) {
     return (
@@ -2809,53 +2912,25 @@ function FeishuSettings() {
               <p className="text-[13px] font-medium text-foreground">运行位置</p>
               <p className="mt-0.5 text-xs text-muted-foreground">同一时间只运行一个飞书实例</p>
             </div>
-            <div className="flex flex-col items-stretch gap-2 sm:items-end">
-              <div className="grid grid-cols-2 rounded-md border border-sidebar-border bg-sidebar p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setFsRunLocation('desktop')}
-                  disabled={isApplyingLocation}
-                  className={cn(
-                    'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
-                    fsRunLocation === 'desktop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                  本机
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFsRunLocation('server')}
-                  disabled={isApplyingLocation}
-                  className={cn(
-                    'flex h-8 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
-                    fsRunLocation === 'server' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Server className="h-3.5 w-3.5" />
-                  Moss Server
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <span className="text-xs text-muted-foreground">
-                  当前：{appliedRunLocation === 'server' ? 'Moss Server' : '本机'}
-                  {hasPendingRunLocation ? ' · 待应用' : ''}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleApplyRunLocation}
-                  disabled={!hasPendingRunLocation || isApplyingLocation || isSaving}
-                  className="rounded-md"
-                >
-                  {isApplyingLocation ? '切换中…' : hasPendingRunLocation ? '应用切换' : '已应用'}
-                </Button>
-              </div>
-              {applyLocationError ? (
-                <p className="max-w-[420px] text-right text-xs text-destructive">{applyLocationError}</p>
-              ) : null}
+            <div className="flex items-center gap-2 sm:justify-end">
+              <select
+                className={cn(SELECT_CLASS_NAME, 'w-[148px]')}
+                value={fsRunLocation}
+                disabled={isApplyingLocation || isSaving}
+                aria-label="飞书运行位置"
+                onChange={(event) => void handleApplyRunLocation(
+                  event.target.value === 'server' ? 'server' : 'desktop',
+                )}
+              >
+                <option value="desktop">本机</option>
+                <option value="server">Moss Server</option>
+              </select>
+              {isApplyingLocation ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
             </div>
           </div>
+          {applyLocationError ? (
+            <p className="border-b border-sidebar-border pb-3 text-right text-xs text-destructive">{applyLocationError}</p>
+          ) : null}
           <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
             <span className={cn(
               'h-2 w-2 rounded-full',

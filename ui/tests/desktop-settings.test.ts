@@ -38,20 +38,29 @@ describe('desktop settings', () => {
   it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {
     expect(normalizeDesktopSettings({}).agentMail).toEqual({
       enabled: false,
+      sessionMode: 'fixed',
       consumerId: '',
       inboxSessionId: '',
+      inboxSessionIds: {},
     });
     expect(normalizeDesktopSettings({
       remoteEnabled: true,
       agentMail: {
         enabled: true,
+        sessionMode: 'new',
         consumerId: `  ${'x'.repeat(140)}  `,
         inboxSessionId: ' inbox-session ',
+        inboxSessionIds: {
+          'mailbox:abc': ' account-session ',
+          legacy: 'ignored-session',
+        },
       },
     }).agentMail).toEqual({
       enabled: true,
+      sessionMode: 'new',
       consumerId: 'x'.repeat(128),
       inboxSessionId: 'inbox-session',
+      inboxSessionIds: { 'mailbox:abc': 'account-session' },
     });
     expect(normalizeDesktopSettings({
       remoteEnabled: false,
@@ -61,6 +70,10 @@ describe('desktop settings', () => {
       { remoteEnabled: false },
       { remoteEnabled: true, agentMail: { enabled: true } },
     ).agentMail.enabled).toBe(false);
+    expect(normalizeDesktopSettings({
+      remoteEnabled: true,
+      agentMail: { sessionMode: 'unsupported' },
+    }).agentMail.sessionMode).toBe('fixed');
   });
 
   it('normalizes legacy and structured model settings into one runtime shape', () => {
@@ -259,6 +272,7 @@ describe('desktop settings', () => {
       ...store.value,
       remoteDirectServerUrl: 'https://moss.example.com',
       remoteDirectCredentialMode: 'api-key',
+      remoteDirectUserName: 'Moss User',
       remoteDirectApiKey: 'moss_sk_remote.secret',
       remoteDirectUserPassword: 'remote-password',
       remoteDirectProfileMode: 'session',
@@ -275,6 +289,7 @@ describe('desktop settings', () => {
     expect(persisted.remoteDirect).not.toHaveProperty('apiKey');
     expect(persisted.remoteDirect).not.toHaveProperty('userPassword');
     expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
+    expect(persisted.remoteDirect.userName).toBe('Moss User');
     expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
   });
 });

@@ -7,6 +7,7 @@ import {
   normalizeAppearance,
 } from './appearance-settings.mjs';
 import { normalizeMcpStore } from './desktop-mcp-settings.mjs';
+import { normalizeAgentMailSessionMode } from './agent-mail-context.mjs';
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 
@@ -90,12 +91,15 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   },
   agentMail: {
     enabled: false,
+    sessionMode: 'fixed',
     consumerId: '',
     inboxSessionId: '',
+    inboxSessionIds: {},
   },
   adapters: { feishu: { runLocation: 'desktop' } },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
+  remoteDirectUserName: '',
   remoteDirectUserEmail: '',
   remoteDirectUserPassword: '',
   remoteDirectApiKey: '',
@@ -384,6 +388,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
       DEFAULT_DESKTOP_SETTINGS.remoteDirectCredentialMode,
   );
 
+  result.remoteDirectUserName =
+    ownStringField(source, 'remoteDirectUserName') ??
+    ownStringField(sourceRemoteDirect, 'userName') ??
+    stringField(result, 'remoteDirectUserName') ??
+    stringField(existingRemoteDirect, 'userName') ??
+    DEFAULT_DESKTOP_SETTINGS.remoteDirectUserName;
+
   result.remoteDirectUserEmail =
     ownStringField(source, 'remoteDirectUserEmail') ??
     ownStringField(sourceRemoteDirect, 'userEmail') ??
@@ -417,6 +428,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
   result.remoteDirect = {
     serverUrl: result.remoteDirectServerUrl,
     credentialMode: result.remoteDirectCredentialMode,
+    userName: result.remoteDirectUserName,
     userEmail: result.remoteDirectUserEmail,
     userPassword: result.remoteDirectUserPassword,
     apiKey: result.remoteDirectApiKey,
@@ -646,6 +658,9 @@ export function normalizeDesktopSettings(input, existing = {}) {
             ? Boolean(existingAgentMail.enabled)
             : DEFAULT_DESKTOP_SETTINGS.agentMail.enabled
       ),
+    sessionMode: normalizeAgentMailSessionMode(
+      sourceAgentMail.sessionMode ?? existingAgentMail.sessionMode,
+    ),
     consumerId:
       typeof sourceAgentMail.consumerId === 'string'
         ? sourceAgentMail.consumerId.trim().slice(0, 128)
@@ -658,6 +673,21 @@ export function normalizeDesktopSettings(input, existing = {}) {
         : typeof existingAgentMail.inboxSessionId === 'string'
           ? existingAgentMail.inboxSessionId.trim()
           : DEFAULT_DESKTOP_SETTINGS.agentMail.inboxSessionId,
+    inboxSessionIds: Object.fromEntries(
+      Object.entries(
+        sourceAgentMail.inboxSessionIds && typeof sourceAgentMail.inboxSessionIds === 'object'
+          ? sourceAgentMail.inboxSessionIds
+          : existingAgentMail.inboxSessionIds && typeof existingAgentMail.inboxSessionIds === 'object'
+            ? existingAgentMail.inboxSessionIds
+            : {},
+      )
+        .filter(([key, value]) => (
+          key.startsWith('mailbox:') &&
+          typeof value === 'string' &&
+          value.trim()
+        ))
+        .map(([key, value]) => [key, value.trim()]),
+    ),
   };
 
   result.appearance = normalizeAppearance(source.appearance, result.appearance);
@@ -842,6 +872,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     credentialMode: normalizeRemoteDirectCredentialMode(
       normalizedSettings.remoteDirectCredentialMode,
     ),
+    userName: normalizedSettings.remoteDirectUserName || '',
     userEmail: normalizedSettings.remoteDirectUserEmail || '',
     workspace: normalizedSettings.remoteDirectWorkspace || '',
   };
@@ -876,6 +907,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   deleteLegacyServerSettings(toSave);
   delete toSave.remoteDirectServerUrl;
   delete toSave.remoteDirectCredentialMode;
+  delete toSave.remoteDirectUserName;
   delete toSave.remoteDirectUserEmail;
   delete toSave.remoteDirectUserPassword;
   delete toSave.remoteDirectApiKey;

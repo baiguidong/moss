@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -10,6 +11,8 @@ import {
   Globe2,
   Loader2,
   LockKeyhole,
+  Maximize2,
+  Minimize2,
   Plus,
   RefreshCw,
   X,
@@ -99,6 +102,7 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
   const [inputUrl, setInputUrl] = React.useState("");
   const [commandError, setCommandError] = React.useState<string | null>(null);
   const [nativeOverlayOpen, setNativeOverlayOpen] = React.useState(isNativeOverlayVisible);
+  const [isFullscreen, setIsFullscreen] = React.useState(false);
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId) || state?.tabs[0] || null;
 
   const applyState = React.useCallback(async (request: Promise<BrowserState>) => {
@@ -174,7 +178,20 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       window.removeEventListener("scroll", scheduleBounds, true);
       window.agentDesktop.browser.setHost({ sessionId: sessionKey, visible: false });
     };
-  }, [nativeOverlayOpen, sessionKey]);
+  }, [isFullscreen, nativeOverlayOpen, sessionKey]);
+
+  React.useEffect(() => {
+    setIsFullscreen(false);
+  }, [sessionKey]);
+
+  React.useEffect(() => {
+    if (!isFullscreen) return undefined;
+    const exitFullscreen = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsFullscreen(false);
+    };
+    window.addEventListener("keydown", exitFullscreen);
+    return () => window.removeEventListener("keydown", exitFullscreen);
+  }, [isFullscreen]);
 
   const processAuthNavigation = React.useCallback((navigation: BrowserAuthNavigation) => {
     if (navigation.sessionId !== sessionKey || pendingAuthNavigationIds.has(navigation.id)) return;
@@ -296,8 +313,11 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
     }
   }, [activeTab?.url]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+  const panel = (
+    <div className={cn(
+      "moss-no-drag flex min-h-0 flex-1 flex-col bg-background",
+      isFullscreen && "fixed inset-x-0 bottom-0 top-9 z-[70]",
+    )}>
       <div className="flex h-9 shrink-0 items-end gap-1 border-b border-border/80 bg-muted/35 px-1.5 pt-1">
         <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto" role="tablist" aria-label="浏览器标签页">
           {state?.tabs.map((tab) => {
@@ -438,6 +458,20 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </button>
+        <button
+          type="button"
+          onClick={() => setIsFullscreen((current) => !current)}
+          className={cn(
+            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors",
+            isFullscreen
+              ? "bg-primary/12 text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+          title={isFullscreen ? "退出全屏" : "全屏"}
+          aria-label={isFullscreen ? "退出全屏" : "全屏"}
+        >
+          {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </button>
       </div>
 
       {commandError ? (
@@ -486,4 +520,6 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       </div>
     </div>
   );
+
+  return isFullscreen ? createPortal(panel, document.body) : panel;
 }

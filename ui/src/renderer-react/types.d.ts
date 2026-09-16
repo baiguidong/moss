@@ -773,6 +773,9 @@ export type DesktopSettings = {
     themeMode: 'dark' | 'light' | 'system';
     cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme';
     autoCollapseToolCalls: boolean;
+    chatFontSize: number;
+    chatLineHeight: number;
+    chatMessageSpacing: number;
   };
   mcp?: {
     version?: number;
@@ -794,12 +797,15 @@ export type DesktopSettings = {
   };
   agentMail?: {
     enabled?: boolean;
+    sessionMode?: 'fixed' | 'new';
     consumerId?: string;
     inboxSessionId?: string;
+    inboxSessionIds?: Record<string, string>;
   };
   remoteDirect?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
+    userName: string;
     userEmail: string;
     userPassword: string;
     apiKey: string;
@@ -807,6 +813,7 @@ export type DesktopSettings = {
   };
   remoteDirectServerUrl: string;
   remoteDirectCredentialMode: 'password' | 'api-key';
+  remoteDirectUserName: string;
   // Legacy key name; stores either username or email for password login.
   remoteDirectUserEmail: string;
   remoteDirectUserPassword: string;
@@ -964,6 +971,14 @@ export type WorkspacePreviewData = {
   mimeType?: string;
   metadata?: Record<string, unknown>;
 };
+
+export type PreviewOpenPayload =
+  | { file: WorkspacePreviewData }
+  | {
+      content: string;
+      contentType: WorkspacePreviewContentType;
+      metadata?: Record<string, unknown>;
+    };
 
 export type PreviewHistoryTarget = {
   contentType: WorkspacePreviewContentType;
@@ -1198,6 +1213,7 @@ declare global {
       };
       authenticateRemoteServer: (payload: { serverUrl: string }) => Promise<DesktopSettings>;
       cancelRemoteServerAuthentication: () => Promise<{ canceled: boolean }>;
+      getRemoteServerIdentity: () => Promise<{ userName: string; userEmail: string }>;
       listMcpServers: () => Promise<McpSettingsPayload>;
       upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
       removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
@@ -1402,9 +1418,12 @@ declare global {
         getContent: (payload: { target: PreviewHistoryTarget; snapshotId: string }) => Promise<{ snapshot: PreviewSnapshotInfo; content: string } | null>;
       };
       preview: {
-        open: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => Promise<{ ok: boolean }>;
+        open: (payload: PreviewOpenPayload) => Promise<{ ok: boolean }>;
+        sync: (payload: { files: WorkspacePreviewData[] }) => Promise<{ ok: boolean }>;
+        ready: () => Promise<{ ok: boolean }>;
         close: () => Promise<{ ok: boolean }>;
-        onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) => () => void;
+        onOpen: (callback: (payload: PreviewOpenPayload) => void) => () => void;
+        onSync: (callback: (payload: { files: WorkspacePreviewData[] }) => void) => () => void;
       };
       browser: {
         getState: (payload: { sessionId?: string | null }) => Promise<BrowserState>;

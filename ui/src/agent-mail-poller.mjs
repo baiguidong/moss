@@ -50,18 +50,29 @@ export function createAgentMailPoller({
     if (connection) return connection;
     const resolved = await getConnection();
     connection = {
+      ...resolved,
       serverUrl: normalizeServerUrl(resolved?.serverUrl),
       authToken: String(resolved?.authToken || ''),
+      mailboxKey: String(resolved?.mailboxKey || normalizeServerUrl(resolved?.serverUrl)),
     };
-    if (!connection.serverUrl || !connection.authToken) throw new Error('Moss Server authentication is unavailable.');
-    const manualRecords = store.listManual(connection.serverUrl);
+    if (!connection.serverUrl || !connection.authToken || !connection.mailboxKey) {
+      throw new Error('Moss Server authentication is unavailable.');
+    }
+    const manualRecords = store.listManual(connection.mailboxKey);
     const activeManualRecords = manualRecords.filter((record) => {
       if (!record.message?.expiresAt || Number(record.message.expiresAt) > Date.now()) return true;
-      store.finish(connection.serverUrl, record.messageId, 'failed', 'Agent Mail expired while waiting for approval.');
+      store.finish(connection.mailboxKey, record.messageId, 'failed', 'Agent Mail expired while waiting for approval.');
       return false;
     });
     setStatus({ pendingManual: activeManualRecords.length });
-    for (const record of activeManualRecords) onManualMessage(record.message);
+    for (const record of activeManualRecords) {
+      onManualMessage(record.message, {
+        serverUrl: connection.serverUrl,
+        mailboxKey: connection.mailboxKey,
+        mailConnection: connection,
+        sessionId: record.sessionId,
+      });
+    }
     void drain();
     return connection;
   };
@@ -92,7 +103,7 @@ export function createAgentMailPoller({
     const activeController = controller;
     try {
       while (activeController && !activeController.signal.aborted) {
-        const record = store.nextRunnable(activeConnection.serverUrl);
+        const record = store.nextRunnable(activeConnection.mailboxKey);
         if (!record) return;
         try {
           await api.updateAgentMailMessage(activeConnection, record.messageId, 'heartbeat', {
@@ -106,7 +117,7 @@ export function createAgentMailPoller({
           });
           return;
         }
-        store.markRunning(activeConnection.serverUrl, record.messageId);
+        store.markRunning(activeConnection.mailboxKey, record.messageId);
         const heartbeat = setInterval(() => {
           void api.updateAgentMailMessage(activeConnection, record.messageId, 'heartbeat', {
             consumerId: record.consumerId,
@@ -115,12 +126,17 @@ export function createAgentMailPoller({
         }, 30_000);
         heartbeat.unref?.();
         try {
-          await runMessage(record.message);
-          store.finish(activeConnection.serverUrl, record.messageId, 'completed');
+          await runMessage(record.message, {
+            serverUrl: activeConnection.serverUrl,
+            mailboxKey: activeConnection.mailboxKey,
+            mailConnection: activeConnection,
+            sessionId: record.sessionId,
+          });
+          store.finish(activeConnection.mailboxKey, record.messageId, 'completed');
           await reportTerminal(activeConnection, record, 'complete');
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          store.finish(activeConnection.serverUrl, record.messageId, 'failed', message);
+          store.finish(activeConnection.mailboxKey, record.messageId, 'failed', message);
           await reportTerminal(activeConnection, record, 'fail', message);
         } finally {
           clearInterval(heartbeat);
@@ -139,7 +155,7 @@ export function createAgentMailPoller({
     if (!result?.leaseToken || !Array.isArray(result.messages)) return;
     for (const message of result.messages) {
       let record = store.putLeased(
-        activeConnection.serverUrl,
+        activeConnection.mailboxKey,
         consumerId,
         result.leaseToken,
         result.leaseUntil,
@@ -149,12 +165,19 @@ export function createAgentMailPoller({
         consumerId,
         leaseToken: result.leaseToken,
       });
-      record = store.markAccepted(activeConnection.serverUrl, message.messageId, message.deliveryMode);
+      record = store.markAccepted(activeConnection.mailboxKey, message.messageId, message.deliveryMode);
       if (record.state === 'completed') await reportTerminal(activeConnection, record, 'complete');
       else if (record.state === 'failed') await reportTerminal(activeConnection, record, 'fail', record.error);
-      else if (record.state === 'manual') onManualMessage(message);
+      else if (record.state === 'manual') {
+        onManualMessage(message, {
+          serverUrl: activeConnection.serverUrl,
+          mailboxKey: activeConnection.mailboxKey,
+          mailConnection: activeConnection,
+          sessionId: record.sessionId,
+        });
+      }
     }
-    setStatus({ pendingManual: store.listManual(activeConnection.serverUrl).length });
+    setStatus({ pendingManual: store.listManual(activeConnection.mailboxKey).length });
     void drain();
   };
 
@@ -213,40 +236,40 @@ export function createAgentMailPoller({
     },
     async approve(messageId, { trustSender = false } = {}) {
       const resolved = await resolveConnection();
-      const current = store.get(resolved.serverUrl, messageId);
+      const current = store.get(resolved.mailboxKey, messageId);
       if (!current || current.state !== 'manual') throw new Error('Agent Mail message is not waiting for approval.');
       if (trustSender) {
         await api.updateAgentMailAcl(resolved, current.message.fromUserId, 'auto');
       }
-      const record = store.approve(resolved.serverUrl, messageId);
-      setStatus({ pendingManual: store.listManual(resolved.serverUrl).length });
+      const record = store.approve(resolved.mailboxKey, messageId);
+      setStatus({ pendingManual: store.listManual(resolved.mailboxKey).length });
       void drain();
       return record;
     },
     async reject(messageId, reason = 'Rejected by mailbox owner.') {
       const resolved = await resolveConnection();
-      const record = store.get(resolved.serverUrl, messageId);
+      const record = store.get(resolved.mailboxKey, messageId);
       if (!record || record.state !== 'manual') throw new Error('Agent Mail message is not waiting for approval.');
-      store.finish(resolved.serverUrl, messageId, 'failed', reason);
+      store.finish(resolved.mailboxKey, messageId, 'failed', reason);
       await reportTerminal(resolved, record, 'fail', reason);
-      setStatus({ pendingManual: store.listManual(resolved.serverUrl).length });
-      return store.get(resolved.serverUrl, messageId);
+      setStatus({ pendingManual: store.listManual(resolved.mailboxKey).length });
+      return store.get(resolved.mailboxKey, messageId);
     },
     async block(messageId) {
       const resolved = await resolveConnection();
-      const record = store.get(resolved.serverUrl, messageId);
+      const record = store.get(resolved.mailboxKey, messageId);
       if (!record || record.state !== 'manual') throw new Error('Agent Mail message is not waiting for approval.');
       await api.updateAgentMailAcl(resolved, record.message.fromUserId, 'blocked');
-      store.finish(resolved.serverUrl, messageId, 'failed', 'Sender blocked by mailbox owner.');
+      store.finish(resolved.mailboxKey, messageId, 'failed', 'Sender blocked by mailbox owner.');
       await reportTerminal(resolved, record, 'fail', 'Sender blocked by mailbox owner.');
-      setStatus({ pendingManual: store.listManual(resolved.serverUrl).length });
-      return store.get(resolved.serverUrl, messageId);
+      setStatus({ pendingManual: store.listManual(resolved.mailboxKey).length });
+      return store.get(resolved.mailboxKey, messageId);
     },
     getStatus() {
       return { ...status };
     },
     listManual() {
-      return connection ? store.listManual(connection.serverUrl) : [];
+      return connection ? store.listManual(connection.mailboxKey) : [];
     },
   };
 }

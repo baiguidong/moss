@@ -7,6 +7,7 @@ import {
   Monitor,
   MessageSquareText,
   Mail,
+  MoreHorizontal,
   MoonStar,
   PenSquare,
   PanelLeftClose,
@@ -22,10 +23,8 @@ import {
   ChevronDown,
   ChevronRight,
   FolderKanban,
-  Hammer,
   Plug,
   ShieldCheck,
-  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -73,6 +72,32 @@ export interface SidebarSession {
 
 export type MainView = "chat" | "projects" | "library" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
+export type SidebarMoreView = Extract<MainView, "library" | "mail" | "cron" | "audit">;
+
+export function getSidebarMoreViews({
+  libraryEnabled,
+  remoteEnabled,
+  agentMailEnabled,
+}: {
+  libraryEnabled: boolean;
+  remoteEnabled: boolean;
+  agentMailEnabled: boolean;
+}): SidebarMoreView[] {
+  return [
+    ...(libraryEnabled ? ["library" as const] : []),
+    ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
+    "audit",
+    "cron",
+  ];
+}
+
+const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
+  library: { label: "资料库", icon: BookOpen },
+  mail: { label: "协作邮箱", icon: Mail },
+  audit: { label: "审计中心", icon: ShieldCheck },
+  cron: { label: "定时任务", icon: AlarmClock },
+};
+
 interface AppSidebarProps {
   sessions: SidebarSession[];
   apps: StoredApp[];
@@ -113,6 +138,8 @@ function SessionItem({
   onRename,
   onTogglePin,
   childSessions = [],
+  childrenExpanded = false,
+  onToggleChildren,
 }: {
   session: SidebarSession;
   isActive: boolean;
@@ -121,6 +148,8 @@ function SessionItem({
   onRename: (newTitle: string) => void;
   onTogglePin: () => void;
   childSessions?: SidebarSession[];
+  childrenExpanded?: boolean;
+  onToggleChildren?: () => void;
 }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(session.title);
@@ -219,13 +248,22 @@ function SessionItem({
           </span>
         )}
         {childSessions.length > 0 ? (
-          <span
+          <button
+            type="button"
             className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-sidebar-accent px-1.5 text-[10px] tabular-nums text-sidebar-foreground/65"
-            title={`${childSessions.length} 个子任务`}
+            title={childrenExpanded ? "折叠子会话" : "展开子会话"}
+            aria-label={`${childrenExpanded ? "折叠" : "展开"}“${session.title}”的 ${childSessions.length} 个子会话`}
+            aria-expanded={childrenExpanded}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleChildren?.();
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
           >
+            {childrenExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             <Bot className="h-3 w-3" />
             {childSessions.length}
-          </span>
+          </button>
         ) : null}
       </div>
     </div>
@@ -320,6 +358,7 @@ export function AppSidebar({
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedSessionGroups, setCollapsedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedProjects, setCollapsedProjects] = React.useState<Record<string, boolean>>({});
+  const [expandedSessionRoots, setExpandedSessionRoots] = React.useState<Record<string, boolean>>({});
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -347,6 +386,8 @@ export function AppSidebar({
     )
   ));
   const projectTrees = groupProjectSessionTrees(displaySessions);
+  const moreViews = getSidebarMoreViews({ libraryEnabled, remoteEnabled, agentMailEnabled });
+  const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
     feishu: Bot,
     'agent-mail': Mail,
@@ -364,9 +405,17 @@ export function AppSidebar({
         : getSessionNodePreview(groupSessionNodes(group.sessions), activeSessionId),
   }));
   const orderedSessions = [
-    ...visibleSessionGroups.flatMap((group) => group.visibleNodes.flatMap((node) => [node.session, ...node.children])),
-    ...projectTrees.flatMap((project) => project.sessions.flatMap((node) => [node.session, ...node.children])),
+    ...visibleSessionGroups.flatMap((group) => group.visibleNodes.map((node) => node.session)),
+    ...projectTrees.flatMap((project) => project.sessions.map((node) => node.session)),
   ];
+
+  const isSessionRootExpanded = (sessionId: string) => Boolean(searchQuery.trim()) || Boolean(expandedSessionRoots[sessionId]);
+  const toggleSessionRootExpanded = (sessionId: string) => {
+    setExpandedSessionRoots((current) => ({
+      ...current,
+      [sessionId]: !current[sessionId],
+    }));
+  };
 
   const toggleSessionGroupCollapsed = (groupId: SessionGroupId) => {
     setCollapsedSessionGroups((current) => ({
@@ -426,73 +475,52 @@ export function AppSidebar({
             <FolderKanban className="h-4 w-4" />
             {!collapsed && "项目"}
           </Button>
-          {libraryEnabled ? (
-            <Button
-              variant={activeView === "library" ? "secondary" : "ghost"}
-              className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-              onClick={() => onChangeView("library")}
-              title="资料库"
-            >
-              <BookOpen className="h-4 w-4" />
-              {!collapsed && "资料库"}
-            </Button>
-          ) : null}
-          {remoteEnabled && agentMailEnabled ? (
-            <Button
-              variant={activeView === "mail" ? "secondary" : "ghost"}
-              className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-              onClick={() => onChangeView("mail")}
-              title="协作邮箱"
-            >
-              <Mail className="h-4 w-4" />
-              {!collapsed && "协作邮箱"}
-            </Button>
-          ) : null}
           <Button
-            variant={activeView === "skills" ? "secondary" : "ghost"}
+            variant={activeView === "connectors" || activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("skills")}
-            title="技能"
-          >
-            <Hammer className="h-4 w-4" />
-            {!collapsed && "技能"}
-          </Button>
-          <Button
-            variant={activeView === "connectors" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("connectors")}
-            title="连接器"
+            title="技能·专家·连接器"
           >
             <Plug className="h-4 w-4" />
-            {!collapsed && "连接器"}
+            {!collapsed && (
+              <span className="flex min-w-0 items-center">
+                <span>技能</span>
+                <span className="mx-px text-[8px] text-muted-foreground" aria-hidden="true" data-resource-nav-separator>·</span>
+                <span>专家</span>
+                <span className="mx-px text-[8px] text-muted-foreground" aria-hidden="true" data-resource-nav-separator>·</span>
+                <span>连接器</span>
+              </span>
+            )}
           </Button>
-          <Button
-            variant={activeView === "experts" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("experts")}
-            title="专家"
-          >
-            <UsersRound className="h-4 w-4" />
-            {!collapsed && "专家"}
-          </Button>
-          <Button
-            variant={activeView === "cron" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("cron")}
-            title="定时任务"
-          >
-            <AlarmClock className="h-4 w-4" />
-            {!collapsed && "定时任务"}
-          </Button>
-          <Button
-            variant={activeView === "audit" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("audit")}
-            title="审计中心"
-          >
-            <ShieldCheck className="h-4 w-4" />
-            {!collapsed && "审计中心"}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={isMoreViewActive ? "secondary" : "ghost"}
+                className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
+                title="更多"
+                aria-label="更多功能"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+                {!collapsed && "更多"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start" sideOffset={6} className="w-40">
+              {moreViews.map((view) => {
+                const item = SIDEBAR_MORE_VIEW_CONFIG[view];
+                const ItemIcon = item.icon;
+                return (
+                  <DropdownMenuItem
+                    key={view}
+                    className={cn(activeView === view && "bg-accent text-accent-foreground")}
+                    onSelect={() => onChangeView(view)}
+                  >
+                    <ItemIcon className="h-4 w-4" />
+                    {item.label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -636,30 +664,35 @@ export function AppSidebar({
                       </div>
                       {!isCollapsed && (
                         <div className="space-y-0.5">
-                          {group.visibleNodes.map((node) => (
-                            <React.Fragment key={node.session.id}>
-                              <SessionItem
-                                session={node.session}
-                                childSessions={node.children}
-                                isActive={activeSessionId === node.session.id}
-                                onClick={() => onSelectSession(node.session.id)}
-                                onDelete={() => onDeleteSession(node.session.id)}
-                                onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
-                                onTogglePin={() => onTogglePin(node.session.id)}
-                              />
-                              {node.children.map((child, childIndex) => (
-                                <SessionTreeChildItem
-                                  key={child.id}
-                                  title={child.title}
-                                  busy={child.busy}
-                                  status={child.subagentStatus}
-                                  isLastChild={childIndex === node.children.length - 1}
-                                  isActive={activeSessionId === child.id}
-                                  onClick={() => onSelectSession(child.id)}
+                          {group.visibleNodes.map((node) => {
+                            const childrenExpanded = isSessionRootExpanded(node.session.id);
+                            return (
+                              <React.Fragment key={node.session.id}>
+                                <SessionItem
+                                  session={node.session}
+                                  childSessions={node.children}
+                                  childrenExpanded={childrenExpanded}
+                                  onToggleChildren={() => toggleSessionRootExpanded(node.session.id)}
+                                  isActive={activeSessionId === node.session.id}
+                                  onClick={() => onSelectSession(node.session.id)}
+                                  onDelete={() => onDeleteSession(node.session.id)}
+                                  onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
+                                  onTogglePin={() => onTogglePin(node.session.id)}
                                 />
-                              ))}
-                            </React.Fragment>
-                          ))}
+                                {childrenExpanded && node.children.map((child, childIndex) => (
+                                  <SessionTreeChildItem
+                                    key={child.id}
+                                    title={child.title}
+                                    busy={child.busy}
+                                    status={child.subagentStatus}
+                                    isLastChild={childIndex === node.children.length - 1}
+                                    isActive={activeSessionId === child.id}
+                                    onClick={() => onSelectSession(child.id)}
+                                  />
+                                ))}
+                              </React.Fragment>
+                            );
+                          })}
                         </div>
                       )}
                     </section>
@@ -689,30 +722,35 @@ export function AppSidebar({
                       </button>
                       {!isCollapsed ? (
                         <div className="space-y-0.5">
-                          {project.sessions.map((node) => (
-                            <React.Fragment key={node.session.id}>
-                              <SessionItem
-                                session={node.session}
-                                childSessions={node.children}
-                                isActive={activeSessionId === node.session.id}
-                                onClick={() => onSelectSession(node.session.id)}
-                                onDelete={() => onDeleteSession(node.session.id)}
-                                onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
-                                onTogglePin={() => onTogglePin(node.session.id)}
-                              />
-                              {node.children.map((child, childIndex) => (
-                                <SessionTreeChildItem
-                                  key={child.id}
-                                  title={child.title}
-                                  busy={child.busy}
-                                  status={child.subagentStatus}
-                                  isLastChild={childIndex === node.children.length - 1}
-                                  isActive={activeSessionId === child.id}
-                                  onClick={() => onSelectSession(child.id)}
+                          {project.sessions.map((node) => {
+                            const childrenExpanded = isSessionRootExpanded(node.session.id);
+                            return (
+                              <React.Fragment key={node.session.id}>
+                                <SessionItem
+                                  session={node.session}
+                                  childSessions={node.children}
+                                  childrenExpanded={childrenExpanded}
+                                  onToggleChildren={() => toggleSessionRootExpanded(node.session.id)}
+                                  isActive={activeSessionId === node.session.id}
+                                  onClick={() => onSelectSession(node.session.id)}
+                                  onDelete={() => onDeleteSession(node.session.id)}
+                                  onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
+                                  onTogglePin={() => onTogglePin(node.session.id)}
                                 />
-                              ))}
-                            </React.Fragment>
-                          ))}
+                                {childrenExpanded && node.children.map((child, childIndex) => (
+                                  <SessionTreeChildItem
+                                    key={child.id}
+                                    title={child.title}
+                                    busy={child.busy}
+                                    status={child.subagentStatus}
+                                    isLastChild={childIndex === node.children.length - 1}
+                                    isActive={activeSessionId === child.id}
+                                    onClick={() => onSelectSession(child.id)}
+                                  />
+                                ))}
+                              </React.Fragment>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </section>

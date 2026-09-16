@@ -460,8 +460,6 @@ function ComposerPanel({
     setAttachmentsRef.current = setAttachments;
   }, [setAttachments]);
   const isHomeComposer = !hasActiveSession;
-  const activeIntentOption = [chatIntentOption, ...intentOptions]
-    .find((option) => option.id === composerIntent) ?? chatIntentOption;
   // Sending while loading is allowed: the message is queued and dispatched
   // when the current turn ends (REPL type-while-busy behavior).
   const submitDisabled =
@@ -1236,11 +1234,6 @@ function ComposerPanel({
                 onToggleConnector={onToggleConnector}
                 onOpenConnectorHub={onOpenConnectorHub}
               />
-
-              <span className="text-xs text-muted-foreground">模式：</span>
-              <span className="inline-flex items-center rounded-full border border-green-500/50 bg-green-500/15 px-2 py-1 text-xs text-green-600">
-                {activeIntentOption.title}
-              </span>
 
             </div>
 

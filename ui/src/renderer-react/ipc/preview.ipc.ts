@@ -1,9 +1,14 @@
-import type { WorkspacePreviewContentType } from '@/types';
+import type { PreviewOpenPayload, WorkspacePreviewData } from '@/types';
 
 export const previewIpc = {
-  open: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) =>
+  open: (payload: PreviewOpenPayload) =>
     window.agentDesktop.preview.open(payload),
+  sync: (payload: { files: WorkspacePreviewData[] }) =>
+    window.agentDesktop.preview.sync(payload),
+  ready: () => window.agentDesktop.preview.ready(),
   close: () => window.agentDesktop.preview.close(),
-  onOpen: (callback: (payload: { content: string; contentType: WorkspacePreviewContentType; metadata?: Record<string, unknown> }) => void) =>
+  onOpen: (callback: (payload: PreviewOpenPayload) => void) =>
     window.agentDesktop.preview.onOpen(callback),
+  onSync: (callback: (payload: { files: WorkspacePreviewData[] }) => void) =>
+    window.agentDesktop.preview.onSync(callback),
 };

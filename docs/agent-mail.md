@@ -12,6 +12,9 @@ Agent Mail 是 Moss 客户端之间通过同一个 `moss-server` 交换任务的
 - 接收方式：客户端使用最长 25 秒的长轮询；没有 Server 主动回调，也不要求公网可达。
 - 投递语义：at-least-once。发送由 `client_message_id` 幂等；接收依靠 consumer lease、message lease 和本地 SQLite 队列去重。
 - 默认信任：同一用户自动执行；其他用户默认手动确认，可改为 auto 或 blocked。
+- 会话模式：默认使用固定协作邮箱会话；也可配置为每封邮件创建新会话。两种模式都不把其他会话的隐藏推理或工具轨迹带入新邮件。
+- 推理隔离：协作邮箱 UI 时间线与模型推理上下文分离。固定模式只按 `threadId` 注入持久化的纯文本领域摘要；新会话模式不注入历史邮件上下文。
+- 账号隔离：队列、固定会话和线程摘要按 Server、`orgId`、`userId` 组成的 mailbox scope 隔离。同一客户端切换登录用户时不复用另一个账号的邮箱上下文。
 
 ## 组件图
 
@@ -74,8 +77,8 @@ sequenceDiagram
     C->>L: state = queued
     C->>S: heartbeat
     C->>L: state = running
-    C->>A: execute as untrusted user input
-    A-->>C: completed or failed
+    C->>A: clean context + current thread summary + untrusted mail
+    A-->>C: structured success or API/tool failure
     C->>L: persist terminal state
     C->>S: complete / fail
   else unknown sender
@@ -85,6 +88,10 @@ sequenceDiagram
 ```
 
 关键顺序是 `本地落盘 -> Server accept -> 执行 -> 本地终态 -> Server 终态`。如果客户端在执行中退出，启动时把本地 `running` 恢复为 `queued`，然后先 heartbeat 验证 Server lease。若 Server 没收到终态，lease 到期后重新投递；本地已有 terminal 记录时只补报终态，不重复执行。
+
+固定会话模式不会直接恢复上一封邮件的模型 transcript。每封新邮件开始前都会创建干净的底层推理 runtime，只注入当前 `threadId` 的纯文本摘要和当前邮件。摘要保留收到的请求、最终结论以及实际成功发送的回复，排除 `thinking`、`redacted_thinking`、`tool_use`、`tool_result`、流事件、权限过程消息和 synthetic API error。不同账号和 thread 的摘要使用 `(mailbox_scope, thread_id)` 独立存储。执行中的邮件固定使用拉取该邮件时的账号凭据，即使客户端中途切换用户也不会改变发信身份。
+
+模型返回 `isApiErrorMessage`、错误 result，或最后一次 `MossMail` 发送失败/被拒绝时，本轮必须标记 `failed`，不能报告 `completed`。加密推理内容无法验证时，客户端隐藏首次错误、清理无效推理状态并自动重试一次；重试仍失败才向 UI 和 Server 报告失败。
 
 ## Server API
 
@@ -133,9 +140,10 @@ expired lease -> queued (attempts < 5) or failed
 
 1. 在桌面端基础设置中开启“云端模式”，配置并认证 Moss Server。
 2. 在“云端模式”下方打开“协作邮箱”；关闭云端模式会同时停用协作邮箱。
-3. 普通会话可调用动态 `MossMail` Tool 搜索用户、发送，并用 `list_outbox` 查看执行状态。
-4. 未信任发件人的邮件显示在通知中心；可选择允许一次、允许并信任发件人、拒绝一次，或拒绝并屏蔽发件人。
-5. 收信记录与发信记录在侧栏“协作邮箱”中按日期查看；删除只影响当前用户自己的列表。
+3. 选择“固定会话”可在同一个 UI 会话中连续处理邮件，并按 thread 继承纯文本结论；选择“每封新会话”则为每封邮件创建独立会话，不继承此前上下文。
+4. 普通会话可调用动态 `MossMail` Tool 搜索用户、发送，并用 `list_outbox` 查看执行状态。
+5. 未信任发件人的邮件显示在通知中心；可选择允许一次、允许并信任发件人、拒绝一次，或拒绝并屏蔽发件人。
+6. 收信记录与发信记录在侧栏“协作邮箱”中按日期查看；删除只影响当前用户自己的列表。
 
 手工创建的长期 API Key 只有在 scopes 中包含 `agent-mail:send` / `agent-mail:receive` 时才能使用对应接口。桌面浏览器 OAuth 管理的登录 Key 会在换取 access token 时同步用户当前角色的默认 scopes，旧登录凭据无需手工重建。
 

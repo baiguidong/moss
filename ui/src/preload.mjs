@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   authenticateRemoteServer: (payload) => ipcRenderer.invoke('agent:remote-authenticate', payload),
   cancelRemoteServerAuthentication: () => ipcRenderer.invoke('agent:remote-authenticate-cancel'),
+  getRemoteServerIdentity: () => ipcRenderer.invoke('agent:get-remote-identity'),
   listMcpServers: () => ipcRenderer.invoke('agent:mcp-list'),
   upsertMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-upsert', payload),
   removeMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-remove', payload),
@@ -185,11 +186,18 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   preview: {
     open: (payload) => ipcRenderer.invoke('preview.open', payload),
+    sync: (payload) => ipcRenderer.invoke('preview.sync', payload),
+    ready: () => ipcRenderer.invoke('preview.ready'),
     close: () => ipcRenderer.invoke('preview.close'),
     onOpen: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on('preview.open', handler);
       return () => ipcRenderer.off('preview.open', handler);
+    },
+    onSync: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('preview.sync', handler);
+      return () => ipcRenderer.off('preview.sync', handler);
     },
   },
   browser: {

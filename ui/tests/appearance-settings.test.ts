@@ -16,6 +16,9 @@ describe('desktop appearance settings', () => {
       themeMode: 'system',
       cssThemeId: 'dot-theme',
       autoCollapseToolCalls: true,
+      chatFontSize: 16,
+      chatLineHeight: 1.7,
+      chatMessageSpacing: 14,
     };
 
     expect(normalizeAppearance(appearance)).toEqual(appearance);
@@ -30,10 +33,25 @@ describe('desktop appearance settings', () => {
       themeMode: 'dark',
       cssThemeId: 'gradient-theme',
       autoCollapseToolCalls: false,
+      chatFontSize: 14,
+      chatLineHeight: 1.55,
+      chatMessageSpacing: 10,
     });
 
     expect(hasPersistedAppearance({
       appearance: { themeMode: 'dark', cssThemeId: 'custom-theme' },
     })).toBe(true);
+  });
+
+  it('bounds chat typography and spacing controls', () => {
+    expect(normalizeAppearance({
+      chatFontSize: 30,
+      chatLineHeight: 1.333,
+      chatMessageSpacing: 1,
+    })).toMatchObject({
+      chatFontSize: 18,
+      chatLineHeight: 1.33,
+      chatMessageSpacing: 4,
+    });
   });
 });

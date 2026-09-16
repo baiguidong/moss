@@ -10,6 +10,7 @@ function toRecord(row) {
     consumerId: row.consumer_id,
     leaseToken: row.lease_token,
     leaseUntil: Number(row.lease_until) || 0,
+    sessionId: row.session_id || null,
     message: parseJson(row.message_json),
     state: row.state,
     error: row.error || null,
@@ -26,6 +27,7 @@ export function createAgentMailStore(db, { now = () => Date.now() } = {}) {
       consumer_id TEXT NOT NULL,
       lease_token TEXT NOT NULL,
       lease_until INTEGER NOT NULL,
+      session_id TEXT,
       message_json TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('received','manual','queued','running','completed','failed')),
       error TEXT,
@@ -35,7 +37,15 @@ export function createAgentMailStore(db, { now = () => Date.now() } = {}) {
     );
     CREATE INDEX IF NOT EXISTS agent_mail_local_queue_state_idx
       ON agent_mail_local_queue (server_url, state, received_at);
+    CREATE TABLE IF NOT EXISTS agent_mail_thread_context (
+      server_url TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      summary_text TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (server_url, thread_id)
+    );
   `);
+  try { db.exec(`ALTER TABLE agent_mail_local_queue ADD COLUMN session_id TEXT`); } catch {}
   db.prepare(`
     UPDATE agent_mail_local_queue SET state = 'queued', updated_at = ? WHERE state = 'running'
   `).run(now());
@@ -48,6 +58,13 @@ export function createAgentMailStore(db, { now = () => Date.now() } = {}) {
     SELECT * FROM agent_mail_local_queue
     WHERE server_url = ? AND state = 'queued'
     ORDER BY received_at ASC LIMIT 1
+  `);
+  const mailboxKeyForSessionStmt = db.prepare(`
+    SELECT server_url
+    FROM agent_mail_local_queue
+    WHERE session_id = ? AND server_url LIKE 'mailbox:%'
+    ORDER BY updated_at DESC
+    LIMIT 1
   `);
 
   return {
@@ -89,6 +106,13 @@ export function createAgentMailStore(db, { now = () => Date.now() } = {}) {
       `).run(now(), serverUrl, messageId);
       return toRecord(getStmt.get(serverUrl, messageId));
     },
+    assignSession(serverUrl, messageId, sessionId) {
+      db.prepare(`
+        UPDATE agent_mail_local_queue SET session_id = ?, updated_at = ?
+        WHERE server_url = ? AND message_id = ?
+      `).run(String(sessionId || ''), now(), serverUrl, messageId);
+      return toRecord(getStmt.get(serverUrl, messageId));
+    },
     nextRunnable(serverUrl) {
       return toRecord(nextRunnableStmt.get(serverUrl));
     },
@@ -112,6 +136,31 @@ export function createAgentMailStore(db, { now = () => Date.now() } = {}) {
     },
     remove(serverUrl, messageId) {
       db.prepare(`DELETE FROM agent_mail_local_queue WHERE server_url = ? AND message_id = ?`).run(serverUrl, messageId);
+    },
+    getThreadContext(serverUrl, threadId) {
+      const row = db.prepare(`
+        SELECT summary_text, updated_at
+        FROM agent_mail_thread_context
+        WHERE server_url = ? AND thread_id = ?
+      `).get(serverUrl, threadId);
+      return row
+        ? { summaryText: row.summary_text || '', updatedAt: Number(row.updated_at) || 0 }
+        : { summaryText: '', updatedAt: 0 };
+    },
+    saveThreadContext(serverUrl, threadId, summaryText) {
+      const timestamp = now();
+      db.prepare(`
+        INSERT INTO agent_mail_thread_context (server_url, thread_id, summary_text, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (server_url, thread_id) DO UPDATE SET
+          summary_text = excluded.summary_text,
+          updated_at = excluded.updated_at
+      `).run(serverUrl, threadId, String(summaryText || ''), timestamp);
+      return { summaryText: String(summaryText || ''), updatedAt: timestamp };
+    },
+    findMailboxKeyForSession(sessionId) {
+      const row = mailboxKeyForSessionStmt.get(String(sessionId || ''));
+      return row?.server_url || '';
     },
   };
 }

@@ -32,7 +32,10 @@ export function AssistantMessage({
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length);
 
   return (
-    <div className="group mb-5 flex justify-start gap-2">
+    <div
+      className="group flex justify-start gap-2"
+      style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
+    >
       <img
         src="./build/icon.png"
         alt="Moss"
@@ -43,8 +46,8 @@ export function AssistantMessage({
         data-layout={documentLayout ? "document" : "bubble"}
         className={
           documentLayout
-            ? "flex w-full min-w-0 flex-col items-start gap-2"
-            : "flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]"
+            ? "relative flex w-full min-w-0 flex-col items-start gap-2"
+            : "relative flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]"
         }
       >
         {beforeContent}
@@ -52,7 +55,12 @@ export function AssistantMessage({
         {(hasText || attachments.length > 0) && (
           <div className="w-full max-w-full rounded-[20px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)] select-text">
             {hasText && (
-              <MarkdownRenderer content={message.content} variant={documentLayout ? "document" : "default"} sourceId={message.id} />
+              <MarkdownRenderer
+                content={message.content}
+                variant={documentLayout ? "document" : "default"}
+                sourceId={message.id}
+                chatDensity
+              />
             )}
 
             {attachments.length > 0 && (
@@ -91,7 +99,8 @@ export function AssistantMessage({
             copyText={message.content}
             copyLabel="复制回复"
             align="start"
-            className="w-auto"
+            className={documentLayout ? "left-auto right-1 top-1 w-auto" : "w-auto"}
+            floating
           />
         )}
       </div>

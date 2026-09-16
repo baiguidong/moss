@@ -4,24 +4,14 @@ import * as React from "react";
 import {
   ExternalLink,
   Eye,
-  FileCode2,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileType2,
-  Globe,
   History,
-  MonitorUp,
   MoreHorizontal,
   Pencil,
-  Presentation,
   RotateCcw,
   Save,
   X,
 } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
@@ -50,38 +40,6 @@ import { DiffViewer } from "@/components/preview/viewers/DiffViewer";
 import { URLViewer } from "@/components/preview/viewers/URLViewer";
 import { UnsupportedViewer } from "@/components/preview/viewers/UnsupportedViewer";
 import { LazyOpenFileViewer } from "@/components/preview/viewers/LazyOpenFileViewer";
-
-function getPreviewMeta(file: WorkspacePreviewData) {
-  switch (file.contentType) {
-    case "markdown":
-      return { label: "Markdown", icon: FileText };
-    case "html":
-      return { label: "HTML", icon: Globe };
-    case "image":
-      return { label: "Image", icon: FileImage };
-    case "pdf":
-      return { label: "PDF", icon: FileType2 };
-    case "word":
-      return { label: "Word", icon: FileText };
-    case "excel":
-      return { label: "Excel", icon: FileSpreadsheet };
-    case "ppt":
-      return { label: "PPT", icon: Presentation };
-    case "diff":
-      return { label: "Diff", icon: FileCode2 };
-    case "url":
-      return { label: "URL", icon: Globe };
-    case "text":
-      return { label: "Text", icon: FileText };
-    case "ofv":
-      return { label: "Open File Viewer", icon: Eye };
-    case "unsupported":
-      return { label: "Unsupported", icon: FileType2 };
-    case "code":
-    default:
-      return { label: "Code", icon: FileCode2 };
-  }
-}
 
 function buildHistoryTarget(file: WorkspacePreviewData): PreviewHistoryTarget {
   const metadata = ((file.metadata as Record<string, unknown> | undefined) || {}) as Record<string, unknown>;
@@ -217,6 +175,7 @@ export function PreviewDrawer({
   onCloseOthers,
   onCloseAll,
   onCloseDrawer,
+  standalone = false,
 }: {
   visible: boolean;
   tabs: WorkspacePreviewData[];
@@ -227,6 +186,7 @@ export function PreviewDrawer({
   onCloseOthers: (path: string) => void;
   onCloseAll: () => void;
   onCloseDrawer: () => void;
+  standalone?: boolean;
 }) {
   const activeFile = React.useMemo(
     () => tabs.find((entry) => entry.path === activePath) || tabs[0] || null,
@@ -237,6 +197,7 @@ export function PreviewDrawer({
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const [editMode, setEditMode] = React.useState(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
+  const activeTabRef = React.useRef<HTMLButtonElement | null>(null);
   const autoSavedContentRef = React.useRef<Map<string, string>>(new Map());
   const historyTarget = React.useMemo(
     () => (activeFile ? buildHistoryTarget(activeFile) : null),
@@ -294,6 +255,13 @@ export function PreviewDrawer({
   }, [activeFile?.path]);
 
   React.useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeFile?.path, tabs.length]);
+
+  React.useEffect(() => {
     if (!activeFile || !persistable) return;
     const draftToken = activeMetadata.draftToken;
     if (!draftToken) return;
@@ -330,8 +298,6 @@ export function PreviewDrawer({
 
   if (!visible || !activeFile) return null;
 
-  const meta = getPreviewMeta(activeFile);
-  const MetaIcon = meta.icon;
   const isVirtualPreview = activeFile.path.startsWith("preview:");
 
   const confirmDiscard = (targets: WorkspacePreviewData[], message: string) => {
@@ -474,155 +440,55 @@ export function PreviewDrawer({
   };
 
   const handleCloseDrawerWithConfirm = () => {
-    if (!confirmDiscard(dirtyTabs, `有 ${dirtyTabs.length} 个预览存在未保存修改，确认关闭预览抽屉？`)) return;
+    const targetName = standalone ? "预览窗口" : "预览抽屉";
+    if (!confirmDiscard(dirtyTabs, `有 ${dirtyTabs.length} 个预览存在未保存修改，确认关闭${targetName}？`)) return;
     onCloseDrawer();
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-r border-border/70 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--card)_94%,transparent),color-mix(in_oklab,var(--background)_92%,transparent))]">
-      <div className="border-b border-border/70 px-3 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <MonitorUp className="h-4 w-4 text-primary" />
-              <span>文件预览</span>
-            </div>
-            <p className="mt-1 truncate text-xs text-muted-foreground">{activeFile.relativePath}</p>
-          </div>
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-full" onClick={handleCloseDrawerWithConfirm}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
-      <ScrollArea className="border-b border-border/70">
-        <div className="flex gap-2 px-3 py-2.5">
-          {tabs.map((tab) => (
-            <button
-              key={tab.path}
-              type="button"
-              onClick={() => onActivate(tab.path)}
-              className={cn(
-                "group flex max-w-full shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
-                tab.path === activeFile.path
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <span className="truncate">{isDirtyPreview(tab) ? `*${basename(tab.path)}` : basename(tab.path)}</span>
-              <span
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleCloseTabWithConfirm(tab.path);
-                }}
-                className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+    <div className={cn(
+      "relative flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,color-mix(in_oklab,var(--card)_94%,transparent),color-mix(in_oklab,var(--background)_92%,transparent))]",
+      standalone ? "" : "border-r border-border/70",
+    )}>
+      <div data-preview-header-row="tabs" className="flex h-10 shrink-0 items-center border-b border-border/70 bg-background/72">
+        <div aria-label="预览标签" className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
+          <div className="flex w-max min-w-full items-center gap-1.5 px-2">
+            {tabs.map((tab) => (
+              <button
+                key={tab.path}
+                ref={tab.path === activeFile.path ? activeTabRef : null}
+                type="button"
+                onClick={() => onActivate(tab.path)}
+                title={tab.relativePath || tab.path}
+                className={cn(
+                  "group flex h-7 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-2.5 text-xs transition-colors",
+                  tab.path === activeFile.path
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
+                )}
               >
-                <X className="h-3 w-3" />
-              </span>
-            </button>
-          ))}
+                <span>
+                  {isDirtyPreview(tab)
+                    ? `*${basename(tab.relativePath || tab.path)}`
+                    : basename(tab.relativePath || tab.path)}
+                </span>
+                <span
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleCloseTabWithConfirm(tab.path);
+                  }}
+                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+                  title="关闭标签"
+                >
+                  <X className="h-3 w-3" />
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      </ScrollArea>
-
-      <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2.5 text-xs text-muted-foreground">
-        <MetaIcon className="h-3.5 w-3.5" />
-        <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">
-          {meta.label}
-        </Badge>
-        <span>{formatFileSize(activeFile.size)}</span>
-        {activeFile.truncated ? <span>仅展示摘要</span> : null}
-        {activeDirty ? <span>未保存</span> : null}
-        {activeMetadata.lastSavedAt ? (
-          <span>保存于 {new Date(Number(activeMetadata.lastSavedAt)).toLocaleTimeString()}</span>
-        ) : null}
-        {activeFile.metadata?.autoSavedAt ? (
-          <span>自动保存于 {new Date(Number(activeFile.metadata.autoSavedAt)).toLocaleTimeString()}</span>
-        ) : null}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-full px-3 text-xs"
-            onClick={() => void handleOpenInSystem()}
-            disabled={activeFile.contentType !== "url" && (isVirtualPreview || !externalOpenPath)}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            打开
-          </Button>
-          <Button
-            variant={activeDirty ? "default" : "ghost"}
-            size="sm"
-            className="h-8 rounded-full px-3 text-xs"
-            onClick={() => void handleSaveToWorkspace()}
-            disabled={!saveable || !activeDirty || saveBusy}
-          >
-            <Save className="h-3.5 w-3.5" />
-            保存
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-full px-3 text-xs"
-            onClick={() => void handleSaveSnapshot()}
-            disabled={!persistable}
-          >
-            <Save className="h-3.5 w-3.5" />
-            快照
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-full px-3 text-xs"
-            onClick={handleRevertChanges}
-            disabled={!activeDirty}
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            撤销
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-full px-3 text-xs"
-            onClick={() => setEditMode((current) => !current)}
-            disabled={!editable}
-          >
-            {editMode ? <Eye className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-            {editMode ? "查看" : "编辑"}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 rounded-full px-3 text-xs" disabled={!persistable}>
-                <History className="h-3.5 w-3.5" />
-                历史
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-72">
-              <DropdownMenuLabel>预览历史</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {historyBusy ? (
-                <DropdownMenuItem disabled>正在加载...</DropdownMenuItem>
-              ) : historyItems.length === 0 ? (
-                <DropdownMenuItem disabled>暂无历史快照</DropdownMenuItem>
-              ) : (
-                historyItems.slice(0, 12).map((item) => (
-                  <DropdownMenuItem key={item.id} onClick={() => void handleLoadSnapshot(item.id)}>
-                    <div className="min-w-0">
-                      <div className="truncate">{new Date(item.createdAt).toLocaleString()}</div>
-                      <div className="truncate text-xs text-muted-foreground">{formatFileSize(item.size)}</div>
-                    </div>
-                  </DropdownMenuItem>
-                ))
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="rounded-full">
+            <Button variant="ghost" size="icon-sm" className="mr-1 h-7 w-7 shrink-0 rounded-md" title="标签操作">
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -634,10 +500,103 @@ export function PreviewDrawer({
             <DropdownMenuItem onClick={handleCloseAllWithConfirm}>关闭全部</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="mr-2 h-7 w-7 shrink-0 rounded-md"
+          onClick={handleCloseDrawerWithConfirm}
+          title={standalone ? "关闭预览窗口" : "关闭预览"}
+          aria-label={standalone ? "关闭预览窗口" : "关闭预览"}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
+        <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
+          <div className="flex w-max items-center gap-1 px-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-md px-2 text-xs"
+              onClick={() => void handleOpenInSystem()}
+              disabled={activeFile.contentType !== "url" && (isVirtualPreview || !externalOpenPath)}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              打开
+            </Button>
+            <Button
+              variant={activeDirty ? "default" : "ghost"}
+              size="sm"
+              className="h-7 rounded-md px-2 text-xs"
+              onClick={() => void handleSaveToWorkspace()}
+              disabled={!saveable || !activeDirty || saveBusy}
+            >
+              <Save className="h-3.5 w-3.5" />
+              保存
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-md px-2 text-xs"
+              onClick={() => void handleSaveSnapshot()}
+              disabled={!persistable}
+            >
+              <Save className="h-3.5 w-3.5" />
+              快照
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-md px-2 text-xs"
+              onClick={handleRevertChanges}
+              disabled={!activeDirty}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              撤销
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-md px-2 text-xs"
+              onClick={() => setEditMode((current) => !current)}
+              disabled={!editable}
+            >
+              {editMode ? <Eye className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+              {editMode ? "查看" : "编辑"}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 rounded-md px-2 text-xs" disabled={!persistable}>
+                  <History className="h-3.5 w-3.5" />
+                  历史
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72">
+                <DropdownMenuLabel>预览历史</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {historyBusy ? (
+                  <DropdownMenuItem disabled>正在加载...</DropdownMenuItem>
+                ) : historyItems.length === 0 ? (
+                  <DropdownMenuItem disabled>暂无历史快照</DropdownMenuItem>
+                ) : (
+                  historyItems.slice(0, 12).map((item) => (
+                    <DropdownMenuItem key={item.id} onClick={() => void handleLoadSnapshot(item.id)}>
+                      <div className="min-w-0">
+                        <div className="truncate">{new Date(item.createdAt).toLocaleString()}</div>
+                        <div className="truncate text-xs text-muted-foreground">{formatFileSize(item.size)}</div>
+                      </div>
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
       </div>
 
       {actionNotice ? (
-        <div className="border-b border-border/70 px-4 py-2 text-xs text-muted-foreground">
+        <div className="pointer-events-none absolute right-3 top-[84px] z-30 rounded-md border border-border/70 bg-popover/95 px-3 py-1.5 text-xs text-popover-foreground shadow-lg backdrop-blur">
           {actionNotice}
         </div>
       ) : null}

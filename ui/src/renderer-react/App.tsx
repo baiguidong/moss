@@ -11,13 +11,10 @@ import {
   ToolDisplaySettingsProvider,
 } from '@/components/chat/tool-display-settings';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
-import { SkillHubView } from '@/components/skill-hub-view';
-import { ExpertHubView } from '@/components/expert-hub-view';
-import { ConnectorHubView } from '@/components/connector-hub-view';
-import { PreviewDrawer } from '@/components/preview-drawer';
+import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
-import { TaskPanel, type PreviewTabData } from '@/components/task-panel';
+import { TaskPanel } from '@/components/task-panel';
 import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
@@ -110,7 +107,6 @@ function loadPanelLayout(): LayoutState {
     const parsed = JSON.parse(raw);
     return {
       leftWidth: clamp(Number(parsed.leftWidth) || DEFAULT_LAYOUT.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
-      previewWidth: clamp(Number(parsed.previewWidth) || DEFAULT_LAYOUT.previewWidth, PREVIEW_WIDTH_RANGE.min, PREVIEW_WIDTH_RANGE.max),
       rightWidth: clamp(Number(parsed.rightWidth) || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
       leftCollapsed: Boolean(parsed.leftCollapsed),
       rightCollapsed: Boolean(parsed.rightCollapsed),
@@ -149,7 +145,6 @@ type QueuedMessage = {
 };
 type LayoutState = {
   leftWidth: number;
-  previewWidth: number;
   rightWidth: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
@@ -171,13 +166,11 @@ const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
 const APP_SHORTCUTS_STORAGE_KEY = 'ui.appShortcuts.v1';
 const DEFAULT_LAYOUT: LayoutState = {
   leftWidth: 224,
-  previewWidth: 420,
   rightWidth: 280,
   leftCollapsed: false,
   rightCollapsed: false,
 };
 const LEFT_WIDTH_RANGE = { min: 210, max: 420 };
-const PREVIEW_WIDTH_RANGE = { min: 320, max: 760 };
 const RIGHT_WIDTH_RANGE = { min: 280, max: 560 };
 
 function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): boolean {
@@ -192,16 +185,12 @@ function getStoredAppKey(app: Pick<StoredApp, 'id' | 'name'>): string {
   return app.id || app.name;
 }
 
-function isDirtyPreviewTab(file: WorkspacePreviewData | null | undefined): boolean {
-  return Boolean(getPreviewTabMetadata(file).dirty);
-}
-
 function enrichWorkspacePreviewFile(
   file: WorkspacePreviewData,
   sessionId: string | null,
   workspace: string | null | undefined,
   existing?: WorkspacePreviewData | null
-): PreviewTabData {
+): WorkspacePreviewData {
   if (file.path.startsWith('preview:')) {
     return file;
   }
@@ -453,6 +442,9 @@ export default function App() {
     themeMode,
     cssThemeId,
     autoCollapseToolCalls: false,
+    chatFontSize: 14,
+    chatLineHeight: 1.55,
+    chatMessageSpacing: 10,
   });
   const committedAppearanceRef = React.useRef(appearanceRef.current);
   const appearanceSaveRequestRef = React.useRef(0);
@@ -547,8 +539,7 @@ export default function App() {
   const [expandedDirs, setExpandedDirs] = React.useState<Set<string>>(new Set());
   const [directoryCache, setDirectoryCache] = React.useState<Map<string, any>>(new Map());
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null);
-  const [previewTabs, setPreviewTabs] = React.useState<PreviewTabData[]>([]);
-  const [activePreviewPath, setActivePreviewPath] = React.useState<string | null>(null);
+  const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
@@ -557,8 +548,6 @@ export default function App() {
   const agentMailEnabled =
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
-  const previewAutoCollapsedRightRef = React.useRef(false);
-  const previewAutoCollapsedBySessionRef = React.useRef<string | null>(null);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshTimerRef = React.useRef<number | null>(null);
   const layoutRef = React.useRef(layout);
@@ -572,25 +561,12 @@ export default function App() {
   // activeSessionId — e.g. a fast double-send, or a retry after an errored
   // first turn. Holds the id of the session created in-flight.
   const creatingSessionRef = React.useRef<Promise<string | undefined> | null>(null);
-  const getDirtyPreviewTabs = React.useCallback(
-    () => previewTabsRef.current.filter((tab) => isDirtyPreviewTab(tab)),
-    []
-  );
-  const confirmDiscardDirtyPreviewTabs = React.useCallback((message?: string) => {
-    const dirtyTabs = getDirtyPreviewTabs();
-    if (dirtyTabs.length === 0) return true;
-    return window.confirm(message || `有 ${dirtyTabs.length} 个预览存在未保存修改，确认放弃？`);
-  }, [getDirtyPreviewTabs]);
-
   const clearSessionWorkspaceState = React.useCallback(() => {
     setDirectoryCache(new Map());
     setExpandedDirs(new Set());
     setSelectedFilePath(null);
     setPreviewTabs([]);
-    setActivePreviewPath(null);
     setWorkspaceQuery('');
-    previewAutoCollapsedRightRef.current = false;
-    previewAutoCollapsedBySessionRef.current = null;
   }, []);
 
   const persistPinned = React.useCallback((next: Set<string>) => {
@@ -783,9 +759,6 @@ export default function App() {
   }, [activeDetail?.history]);
 
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
-    if (!options?.forceDiscardDirty && !confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认离开当前会话？')) {
-      return false;
-    }
     setActiveView('chat');
     setActiveSessionId(null);
     setActiveDetail(null);
@@ -802,14 +775,9 @@ export default function App() {
       setSelectedAppName('');
     }
     return true;
-  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
+  }, [clearSessionWorkspaceState]);
 
   const openSession = React.useCallback(async (sessionId: string) => {
-    if (activeSessionIdRef.current !== sessionId) {
-      if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认切换到其他会话？')) {
-        return false;
-      }
-    }
     const requestId = ++openSessionRequestIdRef.current;
     let detail;
     try {
@@ -829,7 +797,7 @@ export default function App() {
     setActiveDetail(detail);
     clearSessionWorkspaceState();
     return true;
-  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
+  }, [clearSessionWorkspaceState]);
 
   const createAndOpenSession = React.useCallback(async (
     title?: string,
@@ -965,16 +933,6 @@ export default function App() {
   }, [previewTabs]);
 
   React.useEffect(() => {
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (getDirtyPreviewTabs().length === 0) return;
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [getDirtyPreviewTabs]);
-
-  React.useEffect(() => {
     const root = document.documentElement;
     const resolved = resolveTheme(themeMode);
     root.setAttribute('data-theme', resolved);
@@ -1098,13 +1056,10 @@ export default function App() {
       })
     );
 
-    const nextTabs = refreshedTabs.filter(Boolean) as PreviewTabData[];
+    const nextTabs = refreshedTabs.filter(Boolean) as WorkspacePreviewData[];
     setPreviewTabs(nextTabs);
+    void previewIpc.sync({ files: nextTabs }).catch(() => undefined);
     setSelectedFilePath((prev) => (prev && nextTabs.some((tab) => tab.path === prev) ? prev : null));
-    setActivePreviewPath((prev) => {
-      if (prev && nextTabs.some((tab) => tab.path === prev)) return prev;
-      return nextTabs[0]?.path || null;
-    });
   }, []);
 
   React.useEffect(() => {
@@ -1418,84 +1373,20 @@ export default function App() {
     return filterVisibleNodes(root.items, workspaceQuery, directoryCache, expandedDirs);
   }, [activeDetail?.workspace, directoryCache, expandedDirs, workspaceQuery]);
 
-  const activePreview = React.useMemo(
-    () => previewTabs.find((entry) => entry.path === activePreviewPath) || null,
-    [previewTabs, activePreviewPath]
-  );
-  const previewDrawerVisible = Boolean(
-    activeView === 'chat' && activeSessionId && previewTabs.length > 0 && activePreview !== null
-  );
-
-  const restoreWorkspacePanelAfterPreview = React.useCallback(() => {
-    if (!activeSessionId) return;
-    if (!previewAutoCollapsedRightRef.current) return;
-    if (previewAutoCollapsedBySessionRef.current !== activeSessionId) return;
-    previewAutoCollapsedRightRef.current = false;
-    previewAutoCollapsedBySessionRef.current = null;
-    setLayout((prev) => (prev.rightCollapsed ? { ...prev, rightCollapsed: false } : prev));
-  }, [activeSessionId]);
-
-  const openPreviewDrawer = React.useCallback((file: WorkspacePreviewData) => {
+  const openPreviewWindow = React.useCallback((file: WorkspacePreviewData) => {
+    const existing = previewTabsRef.current.find((entry) => entry.path === file.path);
+    const nextFile = enrichWorkspacePreviewFile(file, activeSessionId, activeDetail?.workspace, existing);
     setSelectedFilePath(file.path);
     setPreviewTabs((prev) => {
-      const existing = prev.find((entry) => entry.path === file.path);
-      const nextFile = enrichWorkspacePreviewFile(file, activeSessionId, activeDetail?.workspace, existing);
       if (existing) {
         return prev.map((entry) => (entry.path === file.path ? nextFile : entry));
       }
       return [...prev, nextFile];
     });
-    setActivePreviewPath(file.path);
-    setActiveView('chat');
-    setLayout((prev) => {
-      if (prev.rightCollapsed) return prev;
-      previewAutoCollapsedRightRef.current = true;
-      previewAutoCollapsedBySessionRef.current = activeSessionId;
-      return { ...prev, rightCollapsed: true };
+    void previewIpc.open({ file: nextFile }).catch((error) => {
+      console.warn('[preview] failed to open preview window:', error instanceof Error ? error.message : error);
     });
   }, [activeDetail?.workspace, activeSessionId]);
-
-  const handleClosePreviewTab = React.useCallback((path: string) => {
-    setPreviewTabs((prev) => {
-      const next = prev.filter((entry) => entry.path !== path);
-      const nextActivePath = next[0]?.path || null;
-      setActivePreviewPath((current) => {
-        if (current !== path) return current;
-        return nextActivePath;
-      });
-      setSelectedFilePath((current) => (current === path ? nextActivePath : current));
-      if (next.length === 0) {
-        restoreWorkspacePanelAfterPreview();
-      }
-      return next;
-    });
-  }, [restoreWorkspacePanelAfterPreview]);
-
-  const handleClosePreviewDrawer = React.useCallback(() => {
-    setPreviewTabs([]);
-    setActivePreviewPath(null);
-    setSelectedFilePath(null);
-    restoreWorkspacePanelAfterPreview();
-  }, [restoreWorkspacePanelAfterPreview]);
-
-  const handleUpdatePreviewTab = React.useCallback((path: string, patch: Partial<WorkspacePreviewData>) => {
-    setPreviewTabs((prev) => prev.map((entry) => (entry.path === path ? { ...entry, ...patch } : entry)));
-  }, []);
-
-  const handleCloseOtherPreviewTabs = React.useCallback((path: string) => {
-    setPreviewTabs((prev) => {
-      const active = prev.find((entry) => entry.path === path) || null;
-      const next = active ? [active] : [];
-      setActivePreviewPath(active?.path || null);
-      setSelectedFilePath(active?.path || null);
-      if (next.length === 0) restoreWorkspacePanelAfterPreview();
-      return next;
-    });
-  }, [restoreWorkspacePanelAfterPreview]);
-
-  const handleCloseAllPreviewTabs = React.useCallback(() => {
-    handleClosePreviewDrawer();
-  }, [handleClosePreviewDrawer]);
 
   const openRightBrowser = React.useCallback(async (payload: {
     url?: string;
@@ -1545,31 +1436,6 @@ export default function App() {
     return unsubscribe;
   }, [openRightBrowser]);
 
-  React.useEffect(() => {
-    if (previewTabs.length === 0) {
-      setActivePreviewPath(null);
-      restoreWorkspacePanelAfterPreview();
-    }
-  }, [previewTabs.length, restoreWorkspacePanelAfterPreview]);
-
-  React.useEffect(() => {
-    const unsubscribe = previewIpc.onOpen((payload) => {
-      const path = `preview:${payload.contentType}:${payload.metadata?.title || payload.content.slice(0, 48)}`;
-      openPreviewDrawer({
-        path,
-        relativePath: String(payload.metadata?.title || payload.metadata?.fileName || path),
-        content: payload.content,
-        contentType: payload.contentType,
-        language: String(payload.metadata?.language || ''),
-        mimeType: undefined,
-        metadata: payload.metadata,
-        size: typeof payload.content === 'string' ? payload.content.length : 0,
-        truncated: false,
-      });
-    });
-    return unsubscribe;
-  }, [openPreviewDrawer]);
-
   const toggleSidebar = React.useCallback((side: 'left' | 'right') => {
     setLayout((prev) => (
       side === 'left'
@@ -1578,7 +1444,7 @@ export default function App() {
     ));
   }, []);
 
-  const startResize = React.useCallback((side: 'left' | 'preview' | 'right', clientX: number) => {
+  const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
     const start = layoutRef.current;
     if (side === 'left' && start.leftCollapsed) return;
     if (side === 'right' && start.rightCollapsed) return;
@@ -1593,14 +1459,9 @@ export default function App() {
               ...prev,
               leftWidth: clamp(start.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
             }
-          : side === 'right'
-            ? {
+          : {
               ...prev,
               rightWidth: clamp(start.rightWidth - delta, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
-            }
-            : {
-              ...prev,
-              previewWidth: clamp(start.previewWidth - delta, PREVIEW_WIDTH_RANGE.min, PREVIEW_WIDTH_RANGE.max),
             }
       ));
     };
@@ -2019,7 +1880,6 @@ export default function App() {
     selectionId: string;
     collectionId: string;
   }) => {
-    if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认返回新会话并准备资料整理任务？')) return;
     const prepared = await window.agentDesktop.library.prepareDirectoryImport(payload);
     const draftPrompt = typeof prepared.draftPrompt === 'string' ? prepared.draftPrompt.trim() : '';
     if (!draftPrompt) throw new Error('资料整理任务准备失败，请重启 Moss 后重新选择目录。');
@@ -2045,7 +1905,7 @@ export default function App() {
     setInput(draftPrompt);
     setComposerAttachments([]);
     clearSessionWorkspaceState();
-  }, [clearSessionWorkspaceState, confirmDiscardDirtyPreviewTabs]);
+  }, [clearSessionWorkspaceState]);
 
   const handleHomeWorkspaceChange = React.useCallback((workspace?: string) => {
     if (!pendingNewSessionContext || workspace === pendingNewSessionContext.workspace) return;
@@ -2156,9 +2016,6 @@ export default function App() {
 
   const handlePickWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
-    if (!confirmDiscardDirtyPreviewTabs('当前存在未保存的预览修改，确认切换工作区？')) {
-      return;
-    }
     const dir = await window.agentDesktop.pickDirectory();
     if (!dir) return;
     const detail = await window.agentDesktop.setSessionWorkspace({ sessionId: activeSessionId, workspace: dir });
@@ -2168,8 +2025,7 @@ export default function App() {
     setExpandedDirs(new Set());
     setSelectedFilePath(null);
     setPreviewTabs([]);
-    setActivePreviewPath(null);
-  }, [activeSessionId, confirmDiscardDirtyPreviewTabs]);
+  }, [activeSessionId]);
 
   const handleRefreshWorkspace = React.useCallback(async () => {
     await refreshWorkspaceSnapshot();
@@ -2208,15 +2064,15 @@ export default function App() {
     if (!activeSessionId) return;
     const existing = previewTabsRef.current.find((entry) => entry.path === path);
     if (existing) {
-      openPreviewDrawer(existing);
+      openPreviewWindow(existing);
       return;
     }
     const data = await window.agentDesktop.readWorkspaceFile({
       sessionId: activeSessionId,
       filePath: path,
     });
-    openPreviewDrawer(data);
-  }, [activeSessionId, openPreviewDrawer]);
+    openPreviewWindow(data);
+  }, [activeSessionId, openPreviewWindow]);
 
   const handleLaunchApp = React.useCallback(async (name: string) => {
     try {
@@ -2460,6 +2316,10 @@ export default function App() {
     saveAppearance({ cssThemeId: id as DesktopSettings['appearance']['cssThemeId'] });
   }, [saveAppearance]);
 
+  const previewAppearance = React.useCallback((patch: Partial<DesktopSettings['appearance']>) => {
+    applyAppearanceOptimistically({ ...appearanceRef.current, ...patch });
+  }, [applyAppearanceOptimistically]);
+
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
     const refreshPromise = refreshAssistants(mode);
     await autoSaveSettings('agentMode', mode);
@@ -2480,6 +2340,8 @@ export default function App() {
       onAutoCollapseToolCallsChange={(enabled) => {
         saveAppearance({ autoCollapseToolCalls: enabled });
       }}
+      onAppearancePreview={previewAppearance}
+      onAppearanceCommit={saveAppearance}
       buddyEnabled={isBuddyEnabled()}
       onBuddyEnabledChange={(enabled) => {
         setBuddyEnabled(enabled);
@@ -2492,7 +2354,18 @@ export default function App() {
     <ToolDisplaySettingsProvider
       autoCollapseToolCalls={desktopSettings?.appearance.autoCollapseToolCalls ?? false}
     >
-    <div className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}>
+    <div
+      className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
+      style={{
+        '--chat-font-size': `${desktopSettings?.appearance.chatFontSize ?? 14}px`,
+        '--chat-line-height': desktopSettings?.appearance.chatLineHeight ?? 1.55,
+        '--chat-message-spacing': `${desktopSettings?.appearance.chatMessageSpacing ?? 10}px`,
+        '--chat-bubble-padding-y': `${Math.max(
+          6,
+          Math.min(12, Math.round((desktopSettings?.appearance.chatMessageSpacing ?? 10) * 0.5 + 3)),
+        )}px`,
+      } as React.CSSProperties}
+    >
       <div className="moss-window-chrome relative shrink-0">
         <div
           className="moss-window-drag h-9"
@@ -2704,18 +2577,16 @@ export default function App() {
               enabled={agentMailEnabled}
               onOpenSettings={() => setActiveView('settings')}
             />
-          ) : activeView === 'skills' ? (
-            <SkillHubView />
-          ) : activeView === 'connectors' ? (
-            <ConnectorHubView
+          ) : activeView === 'skills' || activeView === 'connectors' || activeView === 'experts' ? (
+            <ResourceHubView
+              activeTab={activeView}
+              onChangeTab={setActiveView}
               onConnectorsChanged={refreshConnectors}
               onRunCliSetup={handleRunCliConnectorSetup}
               onAuthenticateMcp={handleAuthenticateMcpConnector}
               onUseConnector={handleUseConnector}
               onError={handleConnectorHubError}
             />
-          ) : activeView === 'experts' ? (
-            <ExpertHubView />
           ) : activeView === 'projects' ? (
             <ProjectWorkspace
               projects={projects}
@@ -2751,39 +2622,6 @@ export default function App() {
           )}
         </div>
 
-        {previewDrawerVisible && (
-          <>
-            <div
-              className={`
-                relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
-                before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
-                hover:before:bg-primary/60 lg:block
-              `}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                startResize('preview', event.clientX);
-              }}
-            />
-
-            <div
-              className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
-              style={{ width: layout.previewWidth }}
-            >
-              <PreviewDrawer
-                visible={previewDrawerVisible}
-                tabs={previewTabs}
-                activePath={activePreviewPath}
-                onActivate={setActivePreviewPath}
-                onUpdateTab={handleUpdatePreviewTab}
-                onCloseTab={handleClosePreviewTab}
-                onCloseOthers={handleCloseOtherPreviewTabs}
-                onCloseAll={handleCloseAllPreviewTabs}
-                onCloseDrawer={handleClosePreviewDrawer}
-              />
-            </div>
-          </>
-        )}
-
         {activeView === 'chat' && activeSessionId && (
           <>
             <div
@@ -2804,7 +2642,6 @@ export default function App() {
             >
               <TaskPanel
                 collapsed={layout.rightCollapsed}
-                onToggleCollapse={() => toggleSidebar('right')}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}
                 onRefresh={handleRefreshWorkspace}
@@ -2812,14 +2649,10 @@ export default function App() {
                 treeItems={workspaceTree}
                 expandedPaths={expandedDirs}
                 selectedFilePath={selectedFilePath}
+                onFocusFile={setSelectedFilePath}
                 onToggleFolder={handleToggleFolder}
                 onSelectFile={handleSelectFile}
-                previewTabs={previewTabs}
-                activePreviewPath={activePreviewPath}
-                onActivatePreview={setActivePreviewPath}
-                previewTitle={activePreview?.relativePath || '未选择文件'}
                 sessionId={activeSessionId}
-                sessionTasks={activeDetail?.tasks || []}
                 projectName={activeDetail?.projectName || null}
                 browserOpenSignal={browserOpenSignal}
                 onBrowserOpen={() => {
